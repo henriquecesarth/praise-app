@@ -24,6 +24,15 @@ class CreateFolderEvent extends FolderListEvent {
   List<Object?> get props => [name, description];
 }
 
+class UpdateFolderEvent extends FolderListEvent {
+  final String folderId;
+  final String name;
+  final String? description;
+  const UpdateFolderEvent(this.folderId, this.name, {this.description});
+  @override
+  List<Object?> get props => [folderId, name, description];
+}
+
 class DeleteFolderEvent extends FolderListEvent {
   final String folderId;
   const DeleteFolderEvent(this.folderId);
@@ -77,6 +86,7 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
         super(const FolderListInitial()) {
     on<LoadFolders>(_onLoadFolders);
     on<CreateFolderEvent>(_onCreateFolder);
+    on<UpdateFolderEvent>(_onUpdateFolder);
     on<DeleteFolderEvent>(_onDeleteFolder);
   }
 
@@ -100,6 +110,24 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
       _ministryId,
       event.name,
       description: event.description,
+    );
+    result.fold(
+      (dynamic failure) => emit(FolderListError(failure.message)),
+      (_) => add(const LoadFolders()),
+    );
+  }
+
+  Future<void> _onUpdateFolder(
+    UpdateFolderEvent event,
+    Emitter<FolderListState> emit,
+  ) async {
+    final result = await _folderRepository.updateFolder(
+      _ministryId,
+      event.folderId,
+      {
+        'name': event.name,
+        'description': event.description,
+      },
     );
     result.fold(
       (dynamic failure) => emit(FolderListError(failure.message)),

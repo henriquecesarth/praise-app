@@ -6,13 +6,13 @@ export function validate(schema: ZodSchema, source: 'body' | 'query' | 'params' 
   return (req: Request, _res: Response, next: NextFunction): void => {
     try {
       const data = schema.parse(req[source]);
-      req[source] = data;
+      Object.defineProperty(req, source, { value: data, writable: true, enumerable: true, configurable: true });
       next();
     } catch (error) {
       if (error instanceof ZodError) {
         next(
           new AppError(400, 'Dados inválidos.', {
-            errors: error.errors.map((e) => ({
+            errors: (error as any).issues.map((e: any) => ({
               field: e.path.join('.'),
               message: e.message,
             })),

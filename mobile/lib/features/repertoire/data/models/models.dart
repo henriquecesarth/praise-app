@@ -17,6 +17,7 @@ class SongModel {
   final String? chordSheetUrl;
   final String? youtubeUrl;
   final String? audioUrl;
+  final Map<String, String>? externalLinks;
   final String createdAt;
   final String updatedAt;
 
@@ -36,6 +37,7 @@ class SongModel {
     this.chordSheetUrl,
     this.youtubeUrl,
     this.audioUrl,
+    this.externalLinks,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -60,6 +62,9 @@ class SongModel {
       chordSheetUrl: json['chord_sheet_url'] as String?,
       youtubeUrl: json['youtube_url'] as String?,
       audioUrl: json['audio_url'] as String?,
+      externalLinks: json['external_links'] != null
+          ? Map<String, String>.from(json['external_links'] as Map)
+          : null,
       createdAt: json['created_at'] as String,
       updatedAt: json['updated_at'] as String,
     );
@@ -82,6 +87,7 @@ class SongModel {
       chordSheetUrl: chordSheetUrl,
       youtubeUrl: youtubeUrl,
       audioUrl: audioUrl,
+      externalLinks: externalLinks,
       createdAt: DateTime.parse(createdAt),
       updatedAt: DateTime.parse(updatedAt),
     );
@@ -177,6 +183,7 @@ class FolderModel {
   final String name;
   final String? description;
   final int songCount;
+  final List<SongModel> songs;
   final String createdAt;
   final String updatedAt;
 
@@ -186,6 +193,7 @@ class FolderModel {
     required this.name,
     this.description,
     this.songCount = 0,
+    this.songs = const [],
     required this.createdAt,
     required this.updatedAt,
   });
@@ -197,6 +205,7 @@ class FolderModel {
       name: json['name'] as String,
       description: json['description'] as String?,
       songCount: json['song_count'] as int? ?? 0,
+      songs: (json['songs'] as List<dynamic>?)?.map((s) => SongModel.fromJson(s as Map<String, dynamic>)).toList() ?? [],
       createdAt: json['created_at'] as String,
       updatedAt: json['updated_at'] as String,
     );
@@ -209,6 +218,7 @@ class FolderModel {
       name: name,
       description: description,
       songCount: songCount,
+      songs: songs.map((s) => s.toEntity()).toList(),
       createdAt: DateTime.parse(createdAt),
       updatedAt: DateTime.parse(updatedAt),
     );

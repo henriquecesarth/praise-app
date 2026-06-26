@@ -253,6 +253,18 @@ class FolderRepositoryImpl implements FolderRepository {
   }
 
   @override
+  Future<Either<Failure, Folder>> getFolderById(String ministryId, String folderId) async {
+    try {
+      final response = await _dataSource.getFolderById(ministryId, folderId);
+      final data = response['data'] ?? response;
+      final folder = FolderModel.fromJson(data as Map<String, dynamic>).toEntity();
+      return Right(folder);
+    } catch (e) {
+      return Left(ServerFailure(message: e.toString()));
+    }
+  }
+
+  @override
   Future<Either<Failure, Folder>> createFolder(
     String ministryId,
     String name, {

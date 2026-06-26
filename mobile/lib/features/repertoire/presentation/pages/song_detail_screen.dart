@@ -1,19 +1,45 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../domain/entities/entities.dart';
 import '../widgets/widgets.dart';
+import 'song_form_screen.dart';
 
 /// Song Detail Screen — Shows full info for a single song
-class SongDetailScreen extends StatelessWidget {
+class SongDetailScreen extends StatefulWidget {
   final Song song;
 
   const SongDetailScreen({super.key, required this.song});
 
+  @override
+  State<SongDetailScreen> createState() => _SongDetailScreenState();
+}
+
+class _SongDetailScreenState extends State<SongDetailScreen> {
+  late Song _song;
+
+  @override
+  void initState() {
+    super.initState();
+    _song = widget.song;
+  }
+
   Future<void> _launchUrl(String url) async {
-    final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
+    var formattedUrl = url.trim();
+    if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
+      formattedUrl = 'https://$formattedUrl';
+    }
+    
+    final uri = Uri.parse(formattedUrl);
+    try {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Não foi possível abrir o link. Verifique se ele é válido.')),
+        );
+      }
     }
   }
 
@@ -44,7 +70,7 @@ class SongDetailScreen extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
                         Text(
-                          song.title,
+                          _song.title,
                           style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                                 color: Colors.white,
                               ),
@@ -53,7 +79,7 @@ class SongDetailScreen extends StatelessWidget {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          song.artistName ?? 'Artista desconhecido',
+                          _song.artistName ?? 'Artista desconhecido',
                           style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                                 color: Colors.white70,
                               ),
@@ -78,13 +104,13 @@ class SongDetailScreen extends StatelessWidget {
                   const SizedBox(height: 24),
 
                   // External links
-                  if (song.hasLinks) ...[
+                  if (_song.hasLinks) ...[
                     _buildLinksSection(context),
                     const SizedBox(height: 24),
                   ],
 
                   // Lyrics
-                  if (song.lyrics != null && song.lyrics!.isNotEmpty) ...[
+                  if (_song.lyrics != null && _song.lyrics!.isNotEmpty) ...[
                     _buildLyricsSection(context),
                   ],
 
@@ -96,8 +122,22 @@ class SongDetailScreen extends StatelessWidget {
         ],
       ),
 
-      // Bottom action bar
-      bottomNavigationBar: _buildBottomBar(context),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () async {
+          final updatedSong = await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => SongFormScreen(song: _song),
+            ),
+          );
+          if (updatedSong != null && updatedSong is Song) {
+            setState(() {
+              _song = updatedSong;
+            });
+          }
+        },
+        child: const Icon(Icons.edit),
+      ),
     );
   }
 
@@ -106,59 +146,151 @@ class SongDetailScreen extends StatelessWidget {
       spacing: 10,
       runSpacing: 10,
       children: [
-        if (song.classificationName != null)
+        if (_song.classificationName != null)
           ClassificationBadge(
-            name: song.classificationName!,
-            color: song.classificationColor,
+            name: _song.classificationName!,
+            color: _song.classificationColor,
           ),
-        if (song.originalKey != null)
+        if (_song.originalKey != null)
           _InfoChip(
             icon: Icons.music_note_rounded,
-            label: 'Tom: ${song.originalKey}',
+            label: 'Tom: ${_song.originalKey}',
           ),
-        if (song.bpm != null)
+        if (_song.bpm != null)
           _InfoChip(
             icon: Icons.speed_rounded,
-            label: '${song.bpm!.toInt()} BPM',
+            label: '${_song.bpm!.toInt()} BPM',
           ),
-        if (song.duration != null && song.duration!.isNotEmpty)
+        if (_song.duration != null && _song.duration!.isNotEmpty)
           _InfoChip(
             icon: Icons.timer_rounded,
-            label: song.duration!,
+            label: _song.duration!,
           ),
       ],
     );
   }
 
   Widget _buildLinksSection(BuildContext context) {
+    final extLinks = _song.externalLinks ?? {};
+    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('Links & Recursos', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 12),
-        if (song.chordSheetUrl != null && song.chordSheetUrl!.isNotEmpty)
+        if (_song.chordSheetUrl != null && _song.chordSheetUrl!.isNotEmpty)
+          Builder(builder: (context) {
+            final url = _song.chordSheetUrl!.toLowerCase();
+            String? svg;
+            IconData? icon = Icons.description_rounded;
+            Color color = AppColors.success;
+            String title = 'Cifra';
+
+            if (url.contains('cifraclub.com.br')) {
+              svg = 'assets/icons/cifraclub.png';
+              icon = null;
+              color = const Color(0xFFFF6600);
+              title = 'Cifra Club';
+            } else if (url.contains('drive.google.com')) {
+              svg = 'assets/icons/googledrive.svg';
+              icon = null;
+              color = const Color(0xFF4285F4);
+              title = 'Cifra (Google Drive)';
+            }
+
+            return _LinkTile(
+              icon: icon,
+              imagePath: svg,
+              title: title,
+              subtitle: 'Abrir arquivo de cifra',
+              color: color,
+              onTap: () => _launchUrl(_song.chordSheetUrl!),
+            );
+          }),
+        if (extLinks['letras'] != null && extLinks['letras']!.isNotEmpty)
+          Builder(builder: (context) {
+            final url = extLinks['letras']!.toLowerCase();
+            String? svg;
+            IconData? icon = Icons.lyrics_rounded;
+            Color color = AppColors.primary;
+            String title = 'Letra';
+
+            if (url.contains('letras.mus.br')) {
+              svg = 'assets/icons/letras.png';
+              icon = null;
+              color = const Color(0xFFF58A07);
+              title = 'Letras.mus.br';
+            } else if (url.contains('drive.google.com')) {
+              svg = 'assets/icons/googledrive.svg';
+              icon = null;
+              color = const Color(0xFF4285F4);
+              title = 'Letra (Google Drive)';
+            }
+
+            return _LinkTile(
+              icon: icon,
+              imagePath: svg,
+              title: title,
+              subtitle: 'Ver letra completa',
+              color: color,
+              onTap: () => _launchUrl(extLinks['letras']!),
+            );
+          }),
+        if (_song.youtubeUrl != null && _song.youtubeUrl!.isNotEmpty)
           _LinkTile(
-            icon: Icons.description_rounded,
-            title: 'Cifra',
-            subtitle: 'Abrir arquivo de cifra',
-            color: AppColors.success,
-            onTap: () => _launchUrl(song.chordSheetUrl!),
-          ),
-        if (song.youtubeUrl != null && song.youtubeUrl!.isNotEmpty)
-          _LinkTile(
-            icon: Icons.play_circle_fill_rounded,
+            icon: Icons.video_library_rounded,
             title: 'Vídeo',
-            subtitle: 'Assistir no YouTube',
+            subtitle: 'Assistir vídeo de referência',
             color: AppColors.error,
-            onTap: () => _launchUrl(song.youtubeUrl!),
+            onTap: () => _launchUrl(_song.youtubeUrl!),
           ),
-        if (song.audioUrl != null && song.audioUrl!.isNotEmpty)
+        if (_song.audioUrl != null && _song.audioUrl!.isNotEmpty)
           _LinkTile(
             icon: Icons.headphones_rounded,
             title: 'Áudio',
             subtitle: 'Ouvir áudio de referência',
             color: AppColors.secondary,
-            onTap: () => _launchUrl(song.audioUrl!),
+            onTap: () => _launchUrl(_song.audioUrl!),
+          ),
+        if (extLinks['spotify'] != null && extLinks['spotify']!.isNotEmpty)
+          _LinkTile(
+            imagePath: 'assets/icons/spotify.svg',
+            title: 'Spotify',
+            subtitle: 'Ouvir no Spotify',
+            color: const Color(0xFF1DB954),
+            onTap: () => _launchUrl(extLinks['spotify']!),
+          ),
+        if (extLinks['deezer'] != null && extLinks['deezer']!.isNotEmpty)
+          _LinkTile(
+            imagePath: 'assets/icons/deezer.svg',
+            title: 'Deezer',
+            subtitle: 'Ouvir no Deezer',
+            color: const Color(0xFFFEAA2D),
+            onTap: () => _launchUrl(extLinks['deezer']!),
+          ),
+        if (extLinks['apple_music'] != null && extLinks['apple_music']!.isNotEmpty)
+          _LinkTile(
+            imagePath: 'assets/icons/applemusic.svg',
+            title: 'Apple Music',
+            subtitle: 'Ouvir no Apple Music',
+            color: const Color(0xFFFA243C),
+            onTap: () => _launchUrl(extLinks['apple_music']!),
+          ),
+        if (extLinks['amazon_music'] != null && extLinks['amazon_music']!.isNotEmpty)
+          _LinkTile(
+            icon: Icons.music_note,
+            title: 'Amazon Music',
+            subtitle: 'Ouvir no Amazon Music',
+            color: const Color(0xFF00A8E1),
+            onTap: () => _launchUrl(extLinks['amazon_music']!),
+          ),
+        if (extLinks['youtube_music'] != null && extLinks['youtube_music']!.isNotEmpty)
+          _LinkTile(
+            imagePath: 'assets/icons/youtubemusic.svg',
+            title: 'YouTube Music',
+            subtitle: 'Ouvir no YouTube Music',
+            color: const Color(0xFFFF0000),
+            onTap: () => _launchUrl(extLinks['youtube_music']!),
           ),
       ],
     );
@@ -179,7 +311,7 @@ class SongDetailScreen extends StatelessWidget {
             border: Border.all(color: AppColors.border),
           ),
           child: SelectableText(
-            song.lyrics!,
+            _song.lyrics!,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   height: 1.8,
                   letterSpacing: 0.3,
@@ -187,44 +319,6 @@ class SongDetailScreen extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-
-  Widget _buildBottomBar(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: const BoxDecoration(
-        color: AppColors.surface,
-        border: Border(
-          top: BorderSide(color: AppColors.border, width: 1),
-        ),
-      ),
-      child: SafeArea(
-        child: Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: () {
-                  Navigator.pop(context);
-                  // TODO: Navigate to edit
-                },
-                icon: const Icon(Icons.edit_rounded, size: 18),
-                label: const Text('Editar'),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  // TODO: Share or add to scale
-                },
-                icon: const Icon(Icons.share_rounded, size: 18),
-                label: const Text('Compartilhar'),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -264,16 +358,17 @@ class _InfoChip extends StatelessWidget {
   }
 }
 
-/// Link tile for external resources
 class _LinkTile extends StatelessWidget {
-  final IconData icon;
+  final IconData? icon;
+  final String? imagePath;
   final String title;
   final String subtitle;
   final Color color;
   final VoidCallback onTap;
 
   const _LinkTile({
-    required this.icon,
+    this.icon,
+    this.imagePath,
     required this.title,
     required this.subtitle,
     required this.color,
@@ -305,7 +400,25 @@ class _LinkTile extends StatelessWidget {
                     color: color.withOpacity(0.15),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: Icon(icon, color: color, size: 20),
+                  child: imagePath != null
+                      ? Padding(
+                          padding: const EdgeInsets.all(10.0),
+                          child: imagePath!.toLowerCase().endsWith('.png')
+                              ? Image.asset(
+                                  imagePath!,
+                                  width: 20,
+                                  height: 20,
+                                  fit: BoxFit.contain,
+                                )
+                              : SvgPicture.asset(
+                                  imagePath!,
+                                  width: 20,
+                                  height: 20,
+                                  fit: BoxFit.contain,
+                                  colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+                                ),
+                        )
+                      : Icon(icon, color: color, size: 20),
                 ),
                 const SizedBox(width: 14),
                 Expanded(

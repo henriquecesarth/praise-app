@@ -8,6 +8,7 @@ import '../../domain/repositories/repositories.dart';
 import '../bloc/song_list_bloc.dart';
 import '../bloc/artist_list_bloc.dart';
 import '../bloc/folder_list_bloc.dart';
+import 'folder_detail_screen.dart';
 import '../widgets/widgets.dart';
 import 'song_detail_screen.dart';
 import 'song_form_screen.dart';
@@ -86,7 +87,10 @@ class _RepertoireScreenState extends State<RepertoireScreen>
       MaterialPageRoute(
         builder: (_) => SongDetailScreen(song: song),
       ),
-    );
+    ).then((_) {
+      if (!mounted) return;
+      context.read<SongListBloc>().add(const LoadSongs());
+    });
   }
 
   void _navigateToCreateSong() {
@@ -96,6 +100,7 @@ class _RepertoireScreenState extends State<RepertoireScreen>
         builder: (_) => const SongFormScreen(),
       ),
     ).then((_) {
+      if (!mounted) return;
       context.read<SongListBloc>().add(const RefreshSongs());
     });
   }
@@ -174,6 +179,54 @@ class _RepertoireScreenState extends State<RepertoireScreen>
               }
             },
             child: const Text('Criar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showEditFolderDialog(Folder folder) {
+    final nameController = TextEditingController(text: folder.name);
+    final descController = TextEditingController(text: folder.description ?? '');
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Editar Pasta'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              autofocus: true,
+              decoration: const InputDecoration(hintText: 'Nome da pasta'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: descController,
+              decoration: const InputDecoration(hintText: 'Descrição (opcional)'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (nameController.text.trim().isNotEmpty) {
+                context.read<FolderListBloc>().add(UpdateFolderEvent(
+                      folder.id,
+                      nameController.text.trim(),
+                      description: descController.text.trim().isEmpty
+                          ? null
+                          : descController.text.trim(),
+                    ));
+                Navigator.pop(dialogContext);
+              }
+            },
+            child: const Text('Salvar'),
           ),
         ],
       ),
@@ -411,7 +464,15 @@ class _RepertoireScreenState extends State<RepertoireScreen>
               return FolderCard(
                 folder: folder,
                 onTap: () {
-                  // TODO: Navigate to folder detail
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => FolderDetailScreen(folder: folder),
+                    ),
+                  );
+                },
+                onEdit: () {
+                  _showEditFolderDialog(folder);
                 },
                 onDelete: () {
                   context

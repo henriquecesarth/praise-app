@@ -19,6 +19,7 @@ export const createSongSchema = z.object({
   chord_sheet_url: z.string().url().nullable().optional().or(z.literal('')),
   youtube_url: z.string().url().nullable().optional().or(z.literal('')),
   audio_url: z.string().url().nullable().optional().or(z.literal('')),
+  external_links: z.record(z.string()).optional().default({}),
 });
 
 export const updateSongSchema = createSongSchema.partial();
@@ -80,6 +81,7 @@ export interface Song {
   chord_sheet_url: string | null;
   youtube_url: string | null;
   audio_url: string | null;
+  external_links?: Record<string, string>;
   created_at: string;
   updated_at: string;
   // Joined fields

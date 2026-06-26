@@ -104,6 +104,7 @@ export async function createSong(
       chord_sheet_url: songData.chord_sheet_url || null,
       youtube_url: songData.youtube_url || null,
       audio_url: songData.audio_url || null,
+      external_links: songData.external_links || {},
     })
     .select('*, artist:artists(id, name), classification:classifications(id, name, color)')
     .single();
@@ -125,6 +126,7 @@ export async function updateSong(
       chord_sheet_url: songData.chord_sheet_url || null,
       youtube_url: songData.youtube_url || null,
       audio_url: songData.audio_url || null,
+      external_links: songData.external_links !== undefined ? songData.external_links : undefined,
     })
     .eq('id', songId)
     .eq('ministry_id', ministryId)

@@ -139,6 +139,7 @@ abstract class ClassificationRepository {
 /// Abstract repository for Folder operations
 abstract class FolderRepository {
   Future<Either<Failure, List<Folder>>> getFolders(String ministryId);
+  Future<Either<Failure, Folder>> getFolderById(String ministryId, String folderId);
 
   Future<Either<Failure, Folder>> createFolder(
     String ministryId,

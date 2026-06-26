@@ -17,6 +17,7 @@ class Song extends Equatable {
   final String? chordSheetUrl;
   final String? youtubeUrl;
   final String? audioUrl;
+  final Map<String, String>? externalLinks;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -36,6 +37,7 @@ class Song extends Equatable {
     this.chordSheetUrl,
     this.youtubeUrl,
     this.audioUrl,
+    this.externalLinks,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -47,7 +49,8 @@ class Song extends Equatable {
   bool get hasLinks =>
       (chordSheetUrl?.isNotEmpty ?? false) ||
       (youtubeUrl?.isNotEmpty ?? false) ||
-      (audioUrl?.isNotEmpty ?? false);
+      (audioUrl?.isNotEmpty ?? false) ||
+      (externalLinks?.isNotEmpty ?? false);
 
   /// Checks if the song has a YouTube link
   bool get hasYoutube => youtubeUrl?.isNotEmpty ?? false;
@@ -66,6 +69,7 @@ class Song extends Equatable {
         chordSheetUrl,
         youtubeUrl,
         audioUrl,
+        externalLinks,
         createdAt,
         updatedAt,
       ];
@@ -125,6 +129,7 @@ class Folder extends Equatable {
   final String name;
   final String? description;
   final int songCount;
+  final List<Song> songs;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -134,12 +139,13 @@ class Folder extends Equatable {
     required this.name,
     this.description,
     this.songCount = 0,
+    this.songs = const [],
     required this.createdAt,
     required this.updatedAt,
   });
 
   @override
-  List<Object?> get props => [id, ministryId, name, description, songCount, createdAt, updatedAt];
+  List<Object?> get props => [id, ministryId, name, description, songCount, songs, createdAt, updatedAt];
 }
 
 /// Repertoire counts for tab badges

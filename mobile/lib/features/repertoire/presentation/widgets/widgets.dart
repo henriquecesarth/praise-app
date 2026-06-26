@@ -376,12 +376,14 @@ class ArtistCard extends StatelessWidget {
 class FolderCard extends StatelessWidget {
   final Folder folder;
   final VoidCallback? onTap;
+  final VoidCallback? onEdit;
   final VoidCallback? onDelete;
 
   const FolderCard({
     super.key,
     required this.folder,
     this.onTap,
+    this.onEdit,
     this.onDelete,
   });
 
@@ -418,12 +420,41 @@ class FolderCard extends StatelessWidget {
                     ),
                   ),
                   const Spacer(),
-                  if (onDelete != null)
-                    IconButton(
+                  if (onDelete != null || onEdit != null)
+                    PopupMenuButton<String>(
                       icon: const Icon(Icons.more_vert, color: AppColors.textTertiary, size: 18),
-                      onPressed: onDelete,
                       padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
+                      onSelected: (value) {
+                        if (value == 'edit' && onEdit != null) {
+                          onEdit!();
+                        } else if (value == 'delete' && onDelete != null) {
+                          onDelete!();
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        if (onEdit != null)
+                          const PopupMenuItem(
+                            value: 'edit',
+                            child: Row(
+                              children: [
+                                Icon(Icons.edit, size: 18, color: AppColors.textSecondary),
+                                SizedBox(width: 8),
+                                Text('Editar'),
+                              ],
+                            ),
+                          ),
+                        if (onDelete != null)
+                          const PopupMenuItem(
+                            value: 'delete',
+                            child: Row(
+                              children: [
+                                Icon(Icons.delete, size: 18, color: AppColors.error),
+                                SizedBox(width: 8),
+                                Text('Excluir', style: TextStyle(color: AppColors.error)),
+                              ],
+                            ),
+                          ),
+                      ],
                     ),
                 ],
               ),

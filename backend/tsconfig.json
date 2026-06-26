@@ -21,7 +21,8 @@
       "@middleware/*": ["middleware/*"],
       "@lib/*": ["lib/*"],
       "@types/*": ["types/*"]
-    }
+    },
+    "ignoreDeprecations": "6.0"
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:praise/core/constants/app_constants.dart';
-import '../models/models.dart';
+
 
 /// Remote data source — Communicates with the backend API
 class RepertoireRemoteDataSource {
@@ -220,6 +220,14 @@ class RepertoireRemoteDataSource {
   Future<Map<String, dynamic>> getFolders(String ministryId) async {
     final response = await _client
         .get(Uri.parse(_url(ministryId, 'folders')), headers: _headers)
+        .timeout(ApiConstants.timeout);
+
+    return _handleResponse(response);
+  }
+
+  Future<Map<String, dynamic>> getFolderById(String ministryId, String folderId) async {
+    final response = await _client
+        .get(Uri.parse(_url(ministryId, 'folders/$folderId')), headers: _headers)
         .timeout(ApiConstants.timeout);
 
     return _handleResponse(response);
