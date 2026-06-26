@@ -87,7 +87,7 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
     emit(const FolderListLoading());
     final result = await _folderRepository.getFolders(_ministryId);
     result.fold(
-      (failure) => emit(FolderListError(failure.message)),
+      (dynamic failure) => emit(FolderListError(failure.message)),
       (folders) => emit(FolderListLoaded(folders: folders)),
     );
   }
@@ -102,7 +102,7 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
       description: event.description,
     );
     result.fold(
-      (failure) => emit(FolderListError(failure.message)),
+      (dynamic failure) => emit(FolderListError(failure.message)),
       (_) => add(const LoadFolders()),
     );
   }
@@ -113,7 +113,7 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
   ) async {
     final result = await _folderRepository.deleteFolder(_ministryId, event.folderId);
     result.fold(
-      (failure) => emit(FolderListError(failure.message)),
+      (dynamic failure) => emit(FolderListError(failure.message)),
       (_) => add(const LoadFolders()),
     );
   }

@@ -135,7 +135,7 @@ class SongListBloc extends Bloc<SongListEvent, SongListState> {
     final result = await _songRepository.getSongs(_ministryId, _currentFilters);
 
     result.fold(
-      (failure) => emit(SongListError(failure.message)),
+      (dynamic failure) => emit(SongListError(failure.message)),
       (paginatedResult) => emit(SongListLoaded(
         songs: paginatedResult.data,
         totalCount: paginatedResult.total,
@@ -192,7 +192,7 @@ class SongListBloc extends Bloc<SongListEvent, SongListState> {
     final result = await _songRepository.deleteSong(_ministryId, event.songId);
 
     result.fold(
-      (failure) => emit(SongListError(failure.message)),
+      (dynamic failure) => emit(SongListError(failure.message)),
       (_) {
         emit(const SongDeleted());
         add(LoadSongs(filters: _currentFilters));

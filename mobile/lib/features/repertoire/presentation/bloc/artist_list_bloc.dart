@@ -117,7 +117,7 @@ class ArtistListBloc extends Bloc<ArtistListEvent, ArtistListState> {
     );
 
     result.fold(
-      (failure) => emit(ArtistListError(failure.message)),
+      (dynamic failure) => emit(ArtistListError(failure.message)),
       (artists) => emit(ArtistListLoaded(artists: artists)),
     );
   }
@@ -129,7 +129,7 @@ class ArtistListBloc extends Bloc<ArtistListEvent, ArtistListState> {
     final result = await _artistRepository.createArtist(_ministryId, event.name);
 
     result.fold(
-      (failure) => emit(ArtistListError(failure.message)),
+      (dynamic failure) => emit(ArtistListError(failure.message)),
       (artist) {
         emit(ArtistCreated(artist));
         add(const LoadArtists());
@@ -144,7 +144,7 @@ class ArtistListBloc extends Bloc<ArtistListEvent, ArtistListState> {
     final result = await _artistRepository.deleteArtist(_ministryId, event.artistId);
 
     result.fold(
-      (failure) => emit(ArtistListError(failure.message)),
+      (dynamic failure) => emit(ArtistListError(failure.message)),
       (_) => add(const LoadArtists()),
     );
   }

@@ -1,6 +1,6 @@
 import 'package:dartz/dartz.dart';
-import '../../../core/errors/failures.dart';
-import '../domain/entities/entities.dart';
+import 'package:praise/core/errors/failures.dart';
+import 'package:praise/features/repertoire/domain/entities/entities.dart';
 
 /// Filters for song queries
 class SongFilters {

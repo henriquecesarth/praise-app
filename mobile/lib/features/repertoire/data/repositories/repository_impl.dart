@@ -1,9 +1,9 @@
 import 'package:dartz/dartz.dart';
-import '../../../core/errors/failures.dart';
-import '../domain/entities/entities.dart';
-import '../domain/repositories/repositories.dart';
-import '../data/datasources/remote_datasource.dart';
-import '../data/models/models.dart';
+import 'package:praise/core/errors/failures.dart';
+import 'package:praise/features/repertoire/domain/entities/entities.dart';
+import 'package:praise/features/repertoire/domain/repositories/repositories.dart';
+import 'package:praise/features/repertoire/data/datasources/remote_datasource.dart';
+import 'package:praise/features/repertoire/data/models/models.dart';
 
 /// Concrete implementation of SongRepository
 class SongRepositoryImpl implements SongRepository {

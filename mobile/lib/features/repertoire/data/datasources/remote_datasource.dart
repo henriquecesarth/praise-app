@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import '../../../core/constants/app_constants.dart';
+import 'package:praise/core/constants/app_constants.dart';
 import '../models/models.dart';
 
 /// Remote data source — Communicates with the backend API

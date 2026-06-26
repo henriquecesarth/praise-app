@@ -111,7 +111,7 @@ class _SongFormScreenState extends State<SongFormScreen> {
     setState(() => _isLoading = false);
 
     result.fold(
-      (failure) {
+      (dynamic failure) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(failure.message)),
         );
