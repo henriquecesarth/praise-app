@@ -4,7 +4,7 @@ class ApiConstants {
 
   /// Base URL for the backend API
   /// Substitua pela URL gerada pelo Ngrok (ex: 'https://abc-123.ngrok-free.app/api/v1')
-  static const String baseUrl = 'https://771021ffb33811.lhr.life/api/v1';
+  static const String baseUrl = 'https://praise-app-gray.vercel.app/api/v1';
 
   /// Default ministry ID for development (no auth)
   static const String defaultMinistryId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
