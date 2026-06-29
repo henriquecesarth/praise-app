@@ -14,6 +14,21 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', service: 'praise-backend', timestamp: new Date().toISOString() });
 });
 
+// ─── Diagnostic Endpoint ──────────────────────────────────────
+app.get('/api/diag', (_req, res) => {
+  const envConfig = {
+    supabaseUrl_defined: !!process.env.SUPABASE_URL,
+    supabaseUrl_length: (process.env.SUPABASE_URL || '').length,
+    supabaseUrl_startsWith: (process.env.SUPABASE_URL || '').substring(0, 8),
+    supabaseAnonKey_defined: !!process.env.SUPABASE_ANON_KEY,
+    supabaseAnonKey_length: (process.env.SUPABASE_ANON_KEY || '').length,
+    supabaseServiceRoleKey_defined: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+    supabaseServiceRoleKey_length: (process.env.SUPABASE_SERVICE_ROLE_KEY || '').length,
+    defaultMinistryId: process.env.DEFAULT_MINISTRY_ID || 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+  };
+  res.json(envConfig);
+});
+
 // ─── Feature Routes ──────────────────────────────────────────
 app.use('/api/v1/ministries/:ministryId', repertoireRoutes);
 
