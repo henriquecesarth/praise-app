@@ -11,7 +11,7 @@ import package_info_plus
 import passkeys_darwin
 import path_provider_foundation
 import shared_preferences_foundation
-import sqflite_darwin
+import sqflite
 import ua_client_hints
 import url_launcher_macos
 

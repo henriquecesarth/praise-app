@@ -3,8 +3,8 @@ class ApiConstants {
   ApiConstants._();
 
   /// Base URL for the backend API
-  /// Change this to your production URL when deploying
-  static const String baseUrl = 'http://127.0.0.1:3000/api/v1';
+  /// Substitua pela URL gerada pelo Ngrok (ex: 'https://abc-123.ngrok-free.app/api/v1')
+  static const String baseUrl = 'https://771021ffb33811.lhr.life/api/v1';
 
   /// Default ministry ID for development (no auth)
   static const String defaultMinistryId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';

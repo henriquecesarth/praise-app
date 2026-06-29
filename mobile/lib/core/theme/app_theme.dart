@@ -40,7 +40,7 @@ class AppTheme {
       ),
 
       // ─── TabBar ──────────────────────────────────────────
-      tabBarTheme: TabBarThemeData(
+      tabBarTheme: TabBarTheme(
         labelColor: AppColors.primary,
         unselectedLabelColor: AppColors.textSecondary,
         indicatorColor: AppColors.primary,
@@ -57,7 +57,7 @@ class AppTheme {
       ),
 
       // ─── Card ────────────────────────────────────────────
-      cardTheme: CardThemeData(
+      cardTheme: CardTheme(
         color: AppColors.surface,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
@@ -159,7 +159,7 @@ class AppTheme {
       ),
 
       // ─── Dialog ──────────────────────────────────────────
-      dialogTheme: DialogThemeData(
+      dialogTheme: DialogTheme(
         backgroundColor: AppColors.surface,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
