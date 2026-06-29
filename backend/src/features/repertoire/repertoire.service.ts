@@ -41,9 +41,23 @@ export async function getSongs(
     .range(offset, offset + limit - 1);
 
   if (filters.search) {
-    query = query.or(
-      `title.ilike.%${filters.search}%,artists.name.ilike.%${filters.search}%`
-    );
+    // PostgREST limits cross-table filtering inside .or() conditions.
+    // Fetch matching artist IDs first
+    const { data: matchingArtists } = await supabase()
+      .from('artists')
+      .select('id')
+      .eq('ministry_id', ministryId)
+      .ilike('name', `%${filters.search}%`);
+
+    const artistIds = (matchingArtists || []).map(a => a.id);
+
+    if (artistIds.length > 0) {
+      query = query.or(
+        `title.ilike.%${filters.search}%,artist_id.in.(${artistIds.map(id => `"${id}"`).join(',')})`
+      );
+    } else {
+      query = query.ilike('title', `%${filters.search}%`);
+    }
   }
 
   if (filters.classification_id) {
