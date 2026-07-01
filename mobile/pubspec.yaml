@@ -41,6 +41,7 @@ dependencies:
   # Utils
   url_launcher: ^6.3.0
   intl: any
+  file_picker: ^8.0.0
 
 dev_dependencies:
   flutter_test:

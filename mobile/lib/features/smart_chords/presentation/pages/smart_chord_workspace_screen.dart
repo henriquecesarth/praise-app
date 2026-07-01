@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:file_picker/file_picker.dart';
 import '../../../../core/di/injection.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/smart_chord_utils.dart';
@@ -323,6 +325,144 @@ class _SmartChordWorkspaceScreenState extends State<SmartChordWorkspaceScreen> {
     }
   }
 
+  Future<void> _importFromPdf() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+        withData: true,
+      );
+
+      if (result == null || result.files.isEmpty) return;
+
+      final file = result.files.first;
+      final bytes = file.bytes;
+      if (bytes == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Não foi possível ler os bytes do arquivo selecionado.')),
+        );
+        return;
+      }
+
+      setState(() => _isLoading = true);
+
+      final base64String = base64Encode(bytes);
+      final response = await _service.importSmartChord(
+        type: 'pdf',
+        fileBase64: base64String,
+      );
+
+      _titleController.text = response['title'] ?? 'Sem Título';
+      _newSongTitleController.text = response['title'] ?? 'Sem Título';
+      _contentController.text = response['content'] ?? '';
+      
+      if (response['key'] != null && response['key'].isNotEmpty) {
+        setState(() {
+          _selectedKey = response['key'];
+        });
+      }
+
+      if (response['artist'] != null && response['artist'].isNotEmpty) {
+        final foundArtist = _artists.firstWhere(
+          (a) => a.name.toLowerCase().contains(response['artist'].toLowerCase()) ||
+                 response['artist'].toLowerCase().contains(a.name.toLowerCase()),
+          orElse: () => Artist(id: '', name: '', ministryId: ''),
+        );
+        if (foundArtist.id.isNotEmpty) {
+          setState(() {
+            _selectedArtistId = foundArtist.id;
+          });
+        }
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cifra importada com sucesso!')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao importar PDF: $e')),
+      );
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _importFromUrl() async {
+    final urlController = TextEditingController();
+    final url = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Importar Cifra de Link', style: TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: urlController,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            hintText: 'Cole o link da cifra (ex: Cifra Club)...',
+            hintStyle: TextStyle(color: Colors.grey),
+            enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white30)),
+            focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppColors.primary)),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, urlController.text),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+            child: const Text('Importar', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (url == null || url.trim().isEmpty) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      final response = await _service.importSmartChord(
+        type: 'url',
+        url: url.trim(),
+      );
+
+      _titleController.text = response['title'] ?? 'Sem Título';
+      _newSongTitleController.text = response['title'] ?? 'Sem Título';
+      _contentController.text = response['content'] ?? '';
+      
+      if (response['key'] != null && response['key'].isNotEmpty) {
+        setState(() {
+          _selectedKey = response['key'];
+        });
+      }
+
+      if (response['artist'] != null && response['artist'].isNotEmpty) {
+        final foundArtist = _artists.firstWhere(
+          (a) => a.name.toLowerCase().contains(response['artist'].toLowerCase()) ||
+                 response['artist'].toLowerCase().contains(a.name.toLowerCase()),
+          orElse: () => Artist(id: '', name: '', ministryId: ''),
+        );
+        if (foundArtist.id.isNotEmpty) {
+          setState(() {
+            _selectedArtistId = foundArtist.id;
+          });
+        }
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cifra importada com sucesso!')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao importar link: $e')),
+      );
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
   // Auto scroll logic
   void _toggleAutoScroll() {
     setState(() {
@@ -547,6 +687,54 @@ class _SmartChordWorkspaceScreenState extends State<SmartChordWorkspaceScreen> {
                             ),
                           ),
                         ],
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: AppColors.surface,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: AppColors.border),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const Text(
+                                '📥 Importar Cifra Automática (Gemini AI)',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.primaryLight),
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: ElevatedButton.icon(
+                                      onPressed: _isLoading ? null : _importFromPdf,
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: AppColors.surfaceVariant,
+                                        foregroundColor: Colors.white,
+                                        padding: const EdgeInsets.symmetric(vertical: 10),
+                                      ),
+                                      icon: const Icon(Icons.picture_as_pdf, size: 16),
+                                      label: const Text('Selecionar PDF', style: TextStyle(fontSize: 12)),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: ElevatedButton.icon(
+                                      onPressed: _isLoading ? null : _importFromUrl,
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: AppColors.primary,
+                                        foregroundColor: Colors.white,
+                                        padding: const EdgeInsets.symmetric(vertical: 10),
+                                      ),
+                                      icon: const Icon(Icons.link, size: 16),
+                                      label: const Text('Importar Link', style: TextStyle(fontSize: 12)),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
                   ),

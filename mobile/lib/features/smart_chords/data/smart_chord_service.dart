@@ -71,4 +71,29 @@ class SmartChordService {
       throw Exception('Erro ao excluir cifra.');
     }
   }
+
+  Future<Map<String, dynamic>> importSmartChord({
+    required String type,
+    String? fileBase64,
+    String? url,
+  }) async {
+    final uri = Uri.parse('$_baseUrl/smart-chords/import');
+    final response = await _client.post(
+      uri,
+      headers: _headers,
+      body: json.encode({
+        'type': type,
+        if (fileBase64 != null) 'fileBase64': fileBase64,
+        if (url != null) 'url': url,
+      }),
+    ).timeout(ApiConstants.timeout);
+
+    if (response.statusCode != 200) {
+      final body = json.decode(response.body);
+      final message = body['error']?['message'] ?? 'Erro ao importar cifra.';
+      throw Exception(message);
+    }
+
+    return json.decode(response.body) as Map<String, dynamic>;
+  }
 }

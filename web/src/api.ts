@@ -1,7 +1,7 @@
 import { Song, Artist, Folder, Classification, RepertoireCounts } from './types';
 
 // Use env variable or default production backend
-const API_URL = (import.meta as any).env.VITE_API_URL || 'https://praise-app-gray.vercel.app/api/v1';
+const API_URL = import.meta.env.VITE_API_URL || 'https://praise-app-gray.vercel.app/api/v1';
 export const DEFAULT_MINISTRY_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
 
 const getHeaders = () => ({
@@ -331,6 +331,15 @@ export const api = {
       headers: getHeaders(),
     });
     await handleResponse<void>(response);
+  },
+
+  importSmartChord: async (params: { type: 'pdf' | 'url'; fileBase64?: string; url?: string }): Promise<{ title: string; artist: string; key: string; content: string }> => {
+    const response = await fetch(`${API_URL}/smart-chords/import`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(params),
+    });
+    return handleResponse<any>(response);
   },
 };
 

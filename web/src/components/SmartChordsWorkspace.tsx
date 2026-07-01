@@ -85,6 +85,12 @@ export const SmartChordsWorkspace: React.FC = () => {
   const [autoCreateSong, setAutoCreateSong] = useState(true);
   const [userModifiedNewSongTitle, setUserModifiedNewSongTitle] = useState(false);
 
+  // Gemini Importer states
+  const [isImporting, setIsImporting] = useState(false);
+  const [importUrl, setImportUrl] = useState('');
+  const [importFileName, setImportFileName] = useState('');
+  const [importError, setImportError] = useState('');
+
   // Load relation data
   const loadRelations = async () => {
     try {
@@ -161,6 +167,96 @@ export const SmartChordsWorkspace: React.FC = () => {
     setTitle(val);
     if (!userModifiedNewSongTitle) {
       setNewSongTitle(val);
+    }
+  };
+
+  const handlePdfImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImportFileName(file.name);
+    setImportError('');
+    setIsImporting(true);
+
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const result = reader.result as string;
+          const base64 = result.split(',')[1];
+          
+          const imported = await api.importSmartChord({
+            type: 'pdf',
+            fileBase64: base64
+          });
+
+          setTitle(imported.title);
+          setContent(imported.content);
+          
+          if (imported.key) {
+            setOriginalKey(imported.key);
+          }
+
+          if (imported.artist) {
+            const foundArtist = artists.find(a => 
+              a.name.toLowerCase().includes(imported.artist.toLowerCase()) ||
+              imported.artist.toLowerCase().includes(a.name.toLowerCase())
+            );
+            if (foundArtist) {
+              setArtistId(foundArtist.id);
+            }
+          }
+        } catch (err: any) {
+          setImportError(err.message || 'Erro ao importar cifra do PDF.');
+        } finally {
+          setIsImporting(false);
+        }
+      };
+      reader.onerror = () => {
+        setImportError('Erro ao ler arquivo local.');
+        setIsImporting(false);
+      };
+      reader.readAsDataURL(file);
+    } catch (err: any) {
+      setImportError(err.message || 'Erro ao carregar PDF.');
+      setIsImporting(false);
+    }
+  };
+
+  const handleUrlImport = async () => {
+    if (!importUrl.trim()) return;
+
+    setImportError('');
+    setIsImporting(true);
+
+    try {
+      const imported = await api.importSmartChord({
+        type: 'url',
+        url: importUrl.trim()
+      });
+
+      setTitle(imported.title);
+      setContent(imported.content);
+      
+      if (imported.key) {
+        setOriginalKey(imported.key);
+      }
+
+      if (imported.artist) {
+        const foundArtist = artists.find(a => 
+          a.name.toLowerCase().includes(imported.artist.toLowerCase()) ||
+          imported.artist.toLowerCase().includes(a.name.toLowerCase())
+        );
+        if (foundArtist) {
+          setArtistId(foundArtist.id);
+        }
+      }
+      
+      setImportUrl('');
+    } catch (err: any) {
+      setImportError(err.message || 'Erro ao importar link.');
+    } finally {
+      setIsImporting(false);
     }
   };
 
@@ -566,6 +662,70 @@ export const SmartChordsWorkspace: React.FC = () => {
                       <option key={key} value={key}>{key}</option>
                     ))}
                   </select>
+                </div>
+              </div>
+
+              {/* Importador Inteligente */}
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: '12px', marginTop: '4px' }}>
+                <label className="form-label" style={{ fontWeight: 600, color: 'var(--primary-light)' }}>
+                  📥 Importar Cifra Automática (Gemini AI)
+                </label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '6px' }}>
+                  {/* Option 1: PDF File */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <button 
+                      className="btn btn-secondary" 
+                      onClick={() => document.getElementById('pdf-import-input')?.click()}
+                      style={{ fontSize: '0.8rem', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                      disabled={isImporting}
+                    >
+                      📄 Selecionar PDF
+                    </button>
+                    <input 
+                      type="file" 
+                      id="pdf-import-input" 
+                      accept=".pdf" 
+                      onChange={handlePdfImport}
+                      style={{ display: 'none' }}
+                    />
+                    <span style={{ fontSize: '0.75rem', opacity: 0.6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
+                      {importFileName || 'Nenhum arquivo selecionado'}
+                    </span>
+                  </div>
+
+                  {/* Option 2: Link URL */}
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <input 
+                      type="text" 
+                      className="form-control" 
+                      placeholder="Cole o link do Cifra Club ou outro site..." 
+                      style={{ fontSize: '0.8rem', padding: '6px 10px', flex: 1 }}
+                      value={importUrl}
+                      onChange={e => setImportUrl(e.target.value)}
+                      disabled={isImporting}
+                    />
+                    <button 
+                      className="btn btn-primary" 
+                      onClick={handleUrlImport}
+                      style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+                      disabled={isImporting || !importUrl.trim()}
+                    >
+                      Importar
+                    </button>
+                  </div>
+
+                  {isImporting && (
+                    <div style={{ fontSize: '0.75rem', color: 'var(--secondary-light)', display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
+                      <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" style={{ width: '12px', height: '12px', borderWidth: '1.5px', display: 'inline-block', borderRadius: '50%', border: '1.5px solid var(--secondary-light)', borderTopColor: 'transparent', animation: 'spin 1s linear infinite' }}></span>
+                      <span>Analisando cifra com IA...</span>
+                    </div>
+                  )}
+
+                  {importError && (
+                    <div style={{ fontSize: '0.75rem', color: 'var(--danger-light)', marginTop: '4px' }}>
+                      ⚠️ {importError}
+                    </div>
+                  )}
                 </div>
               </div>
 
