@@ -461,7 +461,7 @@ export const SmartChordsWorkspace: React.FC = () => {
       `}</style>
 
       {/* ─── Web Sidebar: Saved SmartChords List ─── */}
-      <div className="glass-panel no-print" style={{ width: '320px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px', shrink: 0 }}>
+      <div className="glass-panel no-print" style={{ width: '320px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px', flexShrink: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Minhas Cifras</h2>
           <button className="btn btn-primary" style={{ padding: '8px 12px', fontSize: '0.85rem' }} onClick={handleCreateNew}>
