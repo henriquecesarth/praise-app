@@ -17,7 +17,11 @@ export function errorHandler(
   res: Response,
   _next: NextFunction
 ): void {
+  console.error('API Error:', err.message);
   if (err instanceof AppError) {
+    if (err.details) {
+      console.error('API Error Details:', JSON.stringify(err.details, null, 2));
+    }
     res.status(err.statusCode).json({
       error: {
         message: err.message,
@@ -34,3 +38,4 @@ export function errorHandler(
     },
   });
 }
+

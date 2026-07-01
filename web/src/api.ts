@@ -7,6 +7,7 @@ export const DEFAULT_MINISTRY_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
 const getHeaders = () => ({
   'Content-Type': 'application/json',
   'Accept': 'application/json',
+  'x-user-id': 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22',
 });
 
 const handleResponse = async <T>(response: Response): Promise<T> => {
@@ -33,6 +34,7 @@ const handleResponse = async <T>(response: Response): Promise<T> => {
 const mapSongFromApi = (apiSong: any): Song => ({
   id: apiSong.id,
   ministryId: apiSong.ministry_id,
+  userId: apiSong.user_id,
   title: apiSong.title,
   artistId: apiSong.artist_id || undefined,
   artistName: apiSong.artist?.name || undefined,
@@ -49,6 +51,11 @@ const mapSongFromApi = (apiSong: any): Song => ({
   externalLinks: apiSong.external_links || {},
   createdAt: apiSong.created_at,
   updatedAt: apiSong.updated_at,
+  smartChord: apiSong.smart_chord ? {
+    id: apiSong.smart_chord.id,
+    originalKey: apiSong.smart_chord.original_key,
+    content: apiSong.smart_chord.content,
+  } : undefined,
 });
 
 const mapSongToApi = (song: Partial<Song>): any => {
@@ -283,4 +290,90 @@ export const api = {
     });
     await handleResponse<void>(response);
   },
+
+  getSmartChords: async (search?: string): Promise<SmartChord[]> => {
+    const url = new URL(`${API_URL}/smart-chords`);
+    if (search) url.searchParams.append('search', search);
+    const response = await fetch(url.toString(), {
+      headers: getHeaders(),
+    });
+    return handleResponse<any>(response).then(res => res.data.map(mapSmartChordFromApi));
+  },
+
+  getSmartChordById: async (id: string): Promise<SmartChord> => {
+    const response = await fetch(`${API_URL}/smart-chords/${id}`, {
+      headers: getHeaders(),
+    });
+    return handleResponse<any>(response).then(mapSmartChordFromApi);
+  },
+
+  createSmartChord: async (sc: Partial<SmartChord>): Promise<SmartChord> => {
+    const response = await fetch(`${API_URL}/smart-chords`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(mapSmartChordToApi(sc)),
+    });
+    return handleResponse<any>(response).then(mapSmartChordFromApi);
+  },
+
+  updateSmartChord: async (id: string, sc: Partial<SmartChord>): Promise<SmartChord> => {
+    const response = await fetch(`${API_URL}/smart-chords/${id}`, {
+      method: 'PUT',
+      headers: getHeaders(),
+      body: JSON.stringify(mapSmartChordToApi(sc)),
+    });
+    return handleResponse<any>(response).then(mapSmartChordFromApi);
+  },
+
+  deleteSmartChord: async (id: string): Promise<void> => {
+    const response = await fetch(`${API_URL}/smart-chords/${id}`, {
+      method: 'DELETE',
+      headers: getHeaders(),
+    });
+    await handleResponse<void>(response);
+  },
+};
+
+export interface SmartChord {
+  id: string;
+  userId: string;
+  title: string;
+  artistId?: string;
+  songId?: string;
+  originalKey: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+  artist?: {
+    id: string;
+    name: string;
+  };
+  song?: {
+    id: string;
+    title: string;
+  };
+}
+
+const mapSmartChordFromApi = (apiSC: any): SmartChord => ({
+  id: apiSC.id,
+  userId: apiSC.user_id,
+  title: apiSC.title,
+  artistId: apiSC.artist_id || undefined,
+  songId: apiSC.song_id || undefined,
+  originalKey: apiSC.original_key,
+  content: apiSC.content,
+  createdAt: apiSC.created_at,
+  updatedAt: apiSC.updated_at,
+  artist: apiSC.artist || undefined,
+  song: apiSC.song || undefined,
+});
+
+const mapSmartChordToApi = (sc: Partial<SmartChord>): any => {
+  const apiSC: any = {};
+  if (sc.title !== undefined) apiSC.title = sc.title;
+  if (sc.artistId !== undefined) apiSC.artist_id = sc.artistId || null;
+  if (sc.songId !== undefined) apiSC.song_id = sc.songId || null;
+  if (sc.originalKey !== undefined) apiSC.original_key = sc.originalKey;
+  if (sc.content !== undefined) apiSC.content = sc.content;
+  return apiSC;
 };

@@ -1,6 +1,18 @@
 import { Request, Response, NextFunction } from 'express';
 import * as service from './repertoire.service';
 
+function getUserId(req: Request): string {
+  const headerUserId = req.headers['x-user-id'];
+  if (headerUserId && typeof headerUserId === 'string') {
+    return headerUserId;
+  }
+  const anyReq = req as any;
+  if (anyReq.user?.id) {
+    return anyReq.user.id;
+  }
+  return 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22';
+}
+
 // ============================================================
 // SONGS
 // ============================================================
@@ -8,7 +20,8 @@ import * as service from './repertoire.service';
 export async function listSongs(req: Request, res: Response, next: NextFunction) {
   try {
     const { ministryId } = req.params as Record<string, string>;
-    const result = await service.getSongs(ministryId, req.query as any);
+    const userId = getUserId(req);
+    const result = await service.getSongs(ministryId, userId, req.query as any);
     res.json(result);
   } catch (error) {
     next(error);
@@ -18,7 +31,8 @@ export async function listSongs(req: Request, res: Response, next: NextFunction)
 export async function getSong(req: Request, res: Response, next: NextFunction) {
   try {
     const { ministryId, songId } = req.params as Record<string, string>;
-    const song = await service.getSongById(ministryId, songId);
+    const userId = getUserId(req);
+    const song = await service.getSongById(ministryId, songId, userId);
     res.json({ data: song });
   } catch (error) {
     next(error);
@@ -28,7 +42,8 @@ export async function getSong(req: Request, res: Response, next: NextFunction) {
 export async function createSong(req: Request, res: Response, next: NextFunction) {
   try {
     const { ministryId } = req.params as Record<string, string>;
-    const song = await service.createSong(ministryId, req.body);
+    const userId = getUserId(req);
+    const song = await service.createSong(ministryId, userId, req.body);
     res.status(201).json({ data: song });
   } catch (error) {
     next(error);
@@ -38,7 +53,8 @@ export async function createSong(req: Request, res: Response, next: NextFunction
 export async function updateSong(req: Request, res: Response, next: NextFunction) {
   try {
     const { ministryId, songId } = req.params as Record<string, string>;
-    const song = await service.updateSong(ministryId, songId, req.body);
+    const userId = getUserId(req);
+    const song = await service.updateSong(ministryId, songId, userId, req.body);
     res.json({ data: song });
   } catch (error) {
     next(error);
@@ -48,7 +64,8 @@ export async function updateSong(req: Request, res: Response, next: NextFunction
 export async function deleteSong(req: Request, res: Response, next: NextFunction) {
   try {
     const { ministryId, songId } = req.params as Record<string, string>;
-    await service.deleteSong(ministryId, songId);
+    const userId = getUserId(req);
+    await service.deleteSong(ministryId, songId, userId);
     res.status(204).send();
   } catch (error) {
     next(error);
@@ -161,7 +178,8 @@ export async function listFolders(req: Request, res: Response, next: NextFunctio
 export async function getFolder(req: Request, res: Response, next: NextFunction) {
   try {
     const { ministryId, folderId } = req.params as Record<string, string>;
-    const folder = await service.getFolderById(ministryId, folderId);
+    const userId = getUserId(req);
+    const folder = await service.getFolderById(ministryId, folderId, userId);
     res.json({ data: folder });
   } catch (error) {
     next(error);
@@ -226,7 +244,8 @@ export async function removeSongFromFolder(req: Request, res: Response, next: Ne
 export async function getCounts(req: Request, res: Response, next: NextFunction) {
   try {
     const { ministryId } = req.params as Record<string, string>;
-    const counts = await service.getRepertoireCounts(ministryId);
+    const userId = getUserId(req);
+    const counts = await service.getRepertoireCounts(ministryId, userId);
     res.json({ data: counts });
   } catch (error) {
     next(error);

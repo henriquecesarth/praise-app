@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/utils/smart_chord_utils.dart';
+
+import '../../../../core/di/injection.dart';
+import '../../../../core/constants/app_constants.dart';
 import '../../domain/entities/entities.dart';
+import '../../domain/repositories/repositories.dart';
 import '../widgets/widgets.dart';
 import 'song_form_screen.dart';
 
@@ -18,11 +24,43 @@ class SongDetailScreen extends StatefulWidget {
 
 class _SongDetailScreenState extends State<SongDetailScreen> {
   late Song _song;
+  int _semitones = 0;
+  String _activeTab = 'cifra';
+  bool _isLoadingDetails = false;
 
   @override
   void initState() {
     super.initState();
     _song = widget.song;
+    _activeTab = _song.smartChord != null ? 'cifra' : 'lyrics';
+    _loadFullDetails();
+  }
+
+  Future<void> _loadFullDetails() async {
+    setState(() => _isLoadingDetails = true);
+    final repository = getIt<SongRepository>();
+    final result = await repository.getSongById(
+      ApiConstants.defaultMinistryId,
+      _song.id,
+    );
+    result.fold(
+      (failure) => null,
+      (fullSong) {
+        if (mounted) {
+          setState(() {
+            _song = fullSong;
+            if (_song.smartChord != null && _activeTab == 'lyrics' && widget.song.lyrics == null) {
+              _activeTab = 'cifra';
+            } else if (_song.smartChord != null && widget.song.smartChord == null) {
+              _activeTab = 'cifra';
+            }
+          });
+        }
+      },
+    );
+    if (mounted) {
+      setState(() => _isLoadingDetails = false);
+    }
   }
 
   Future<void> _launchUrl(String url) async {
@@ -53,6 +91,7 @@ class _SongDetailScreenState extends State<SongDetailScreen> {
             expandedHeight: 200,
             pinned: true,
             backgroundColor: AppColors.background,
+
             flexibleSpace: FlexibleSpaceBar(
               background: Container(
                 decoration: const BoxDecoration(
@@ -109,8 +148,38 @@ class _SongDetailScreenState extends State<SongDetailScreen> {
                     const SizedBox(height: 24),
                   ],
 
-                  // Lyrics
-                  if (_song.lyrics != null && _song.lyrics!.isNotEmpty) ...[
+                  // Tab selector
+                  if (_song.smartChord != null) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ChoiceChip(
+                            label: const Center(child: Text('Cifra Inteligente 🎵')),
+                            selected: _activeTab == 'cifra',
+                            onSelected: (val) {
+                              if (val) setState(() => _activeTab = 'cifra');
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ChoiceChip(
+                            label: const Center(child: Text('Letra')),
+                            selected: _activeTab == 'lyrics',
+                            onSelected: (val) {
+                              if (val) setState(() => _activeTab = 'lyrics');
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // Active Tab View Content
+                  if (_activeTab == 'cifra' && _song.smartChord != null) ...[
+                    _buildSmartChordSection(context),
+                  ] else if (_song.lyrics != null && _song.lyrics!.isNotEmpty) ...[
                     _buildLyricsSection(context),
                   ],
 
@@ -133,6 +202,7 @@ class _SongDetailScreenState extends State<SongDetailScreen> {
           if (updatedSong != null && updatedSong is Song) {
             setState(() {
               _song = updatedSong;
+              _activeTab = _song.smartChord != null ? 'cifra' : 'lyrics';
             });
           }
         },
@@ -292,6 +362,131 @@ class _SongDetailScreenState extends State<SongDetailScreen> {
             color: const Color(0xFFFF0000),
             onTap: () => _launchUrl(extLinks['youtube_music']!),
           ),
+      ],
+    );
+  }
+
+  Widget _buildSmartChordSection(BuildContext context) {
+    final originalKey = _song.smartChord!.originalKey;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header
+        Text('Cifra Inteligente', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 12),
+
+        // Transposer controls
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.music_note_rounded, size: 16, color: AppColors.primaryLight),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Tom: ${SmartChordUtils.transposeChord(originalKey, _semitones)}',
+                    style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.primaryLight, fontSize: 13),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '(Original: $originalKey)',
+                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                  ),
+                ],
+              ),
+              Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.remove_circle_outline, size: 18),
+                    onPressed: () => setState(() => _semitones--),
+                    constraints: const BoxConstraints(),
+                    padding: const EdgeInsets.all(4),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    _semitones > 0 ? '+$_semitones' : '$_semitones',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    icon: const Icon(Icons.add_circle_outline, size: 18),
+                    onPressed: () => setState(() => _semitones++),
+                    constraints: const BoxConstraints(),
+                    padding: const EdgeInsets.all(4),
+                  ),
+                  if (_semitones != 0) ...[
+                    const SizedBox(width: 8),
+                    TextButton(
+                      onPressed: () => setState(() => _semitones = 0),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      child: const Text('Reset', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 12),
+
+        // Sheet segments
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: _song.smartChord!.content.split('\n').map((lineText) {
+                final line = SmartChordUtils.renderSmartChordLine(lineText, _semitones);
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (line.chordLine.trim().isNotEmpty)
+                        Text(
+                          line.chordLine,
+                          style: GoogleFonts.robotoMono(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.primaryLight,
+                          ),
+                        )
+                      else
+                        const SizedBox(height: 14),
+                      Text(
+                        line.lyricsLine.isEmpty ? '\u00A0' : line.lyricsLine,
+                        style: GoogleFonts.robotoMono(
+                          fontSize: 13,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ),
       ],
     );
   }

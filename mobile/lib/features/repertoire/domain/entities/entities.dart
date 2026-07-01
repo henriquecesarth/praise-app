@@ -1,9 +1,22 @@
 import 'package:equatable/equatable.dart';
 
+class SongSmartChord {
+  final String id;
+  final String originalKey;
+  final String content;
+
+  const SongSmartChord({
+    required this.id,
+    required this.originalKey,
+    required this.content,
+  });
+}
+
 /// Song entity — Pure domain object
 class Song extends Equatable {
   final String id;
   final String ministryId;
+  final String? userId;
   final String title;
   final String? artistId;
   final String? artistName;
@@ -20,10 +33,12 @@ class Song extends Equatable {
   final Map<String, String>? externalLinks;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final SongSmartChord? smartChord;
 
   const Song({
     required this.id,
     required this.ministryId,
+    this.userId,
     required this.title,
     this.artistId,
     this.artistName,
@@ -40,6 +55,7 @@ class Song extends Equatable {
     this.externalLinks,
     required this.createdAt,
     required this.updatedAt,
+    this.smartChord,
   });
 
   /// Gets the first letter of the title for avatar display
@@ -59,6 +75,7 @@ class Song extends Equatable {
   List<Object?> get props => [
         id,
         ministryId,
+        userId,
         title,
         artistId,
         classificationId,
@@ -72,6 +89,7 @@ class Song extends Equatable {
         externalLinks,
         createdAt,
         updatedAt,
+        smartChord,
       ];
 }
 

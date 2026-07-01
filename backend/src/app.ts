@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import repertoireRoutes from './features/repertoire/repertoire.routes';
+import smartChordRoutes from './features/smart_chords/smart_chord.routes';
 import { errorHandler } from './middleware/error-handler';
 
 const app = express();
@@ -31,6 +32,7 @@ app.get('/api/diag', (_req, res) => {
 
 // ─── Feature Routes ──────────────────────────────────────────
 app.use('/api/v1/ministries/:ministryId', repertoireRoutes);
+app.use('/api/v1/smart-chords', smartChordRoutes);
 
 // ─── Error Handler (must be last) ───────────────────────────
 app.use(errorHandler);

@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Song } from '../types';
+import { renderSmartChordLine, transposeChord } from '../utils/smart_chord';
 import { ArrowLeft, Edit2, Play, Headphones, Music, FileText, Globe, ExternalLink, Trash2 } from 'lucide-react';
 
 interface SongDetailProps {
@@ -10,6 +11,9 @@ interface SongDetailProps {
 }
 
 export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, onDelete }) => {
+  const [activeView, setActiveView] = useState<'lyrics' | 'cifra'>(song.smartChord ? 'cifra' : 'lyrics');
+  const [semitones, setSemitones] = useState(0);
+
   const extLinks = song.externalLinks || {};
   const hasLinks = !!(
     song.chordSheetUrl ||
@@ -136,6 +140,11 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
     );
   };
 
+  // Parsing & pitch shifting details preview
+  const originalKey = song.smartChord?.originalKey || song.originalKey || 'C';
+  const currentKeyTransposed = transposeChord(originalKey, semitones);
+  const rawLines = song.smartChord ? song.smartChord.content.split('\n') : [];
+
   return (
     <div className="detail-view">
       <div className="back-btn-row">
@@ -166,16 +175,88 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
 
       <div className="detail-content-layout">
         <div className="detail-main-content">
-          {song.lyrics ? (
+          {/* Sub Navigation tabs (Lyrics vs Cifra) */}
+          {song.smartChord && (
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+              <button
+                className={`btn ${activeView === 'cifra' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+                onClick={() => setActiveView('cifra')}
+              >
+                Cifra Inteligente 🎵
+              </button>
+              <button
+                className={`btn ${activeView === 'lyrics' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+                onClick={() => setActiveView('lyrics')}
+              >
+                Letra
+              </button>
+            </div>
+          )}
+
+          {activeView === 'cifra' && song.smartChord ? (
             <div>
-              <h2 className="detail-section-title">Letra</h2>
-              <div className="lyrics-box">{song.lyrics}</div>
+              {/* Pitch shifter toolbar */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderRadius: '10px', backgroundColor: 'var(--surface-variant)', border: '1px solid var(--border-color)', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontSize: '0.85rem', opacity: 0.7 }}>Tom Original:</span>
+                  <strong style={{ color: 'var(--primary-light)', fontSize: '0.95rem' }}>{originalKey}</strong>
+                  <span style={{ fontSize: '0.85rem', opacity: 0.7, marginLeft: '12px' }}>Tom Atual:</span>
+                  <strong style={{ color: 'var(--secondary-light)', fontSize: '0.95rem' }}>{currentKeyTransposed}</strong>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <button className="btn btn-secondary" style={{ width: '28px', height: '28px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center' }} onClick={() => setSemitones(prev => prev - 1)}>
+                    -
+                  </button>
+                  <span style={{ fontSize: '0.85rem', width: '32px', textAlign: 'center' }}>
+                    {semitones > 0 ? `+${semitones}` : semitones}
+                  </span>
+                  <button className="btn btn-secondary" style={{ width: '28px', height: '28px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center' }} onClick={() => setSemitones(prev => prev + 1)}>
+                    +
+                  </button>
+                  {semitones !== 0 && (
+                    <button className="btn btn-link" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', padding: '0 4px' }} onClick={() => setSemitones(0)}>
+                      Reset
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Formatted bracket sheet music visualizer */}
+              <div className="lyrics-box" style={{ fontFamily: 'monospace', fontSize: '0.9rem', whiteSpace: 'pre', overflowX: 'auto', lineHeight: '1.5' }}>
+                {rawLines.map((lineText, lineIdx) => {
+                  const lineData = renderSmartChordLine(lineText, semitones);
+                  return (
+                    <div key={lineIdx} style={{ display: 'flex', flexDirection: 'column', marginBottom: '4px' }}>
+                      {/* Chords Line */}
+                      <div style={{ color: 'var(--primary-light)', fontWeight: 'bold', height: '1.2rem', userSelect: 'none' }}>
+                        {lineData.chordLine}
+                      </div>
+                      {/* Lyrics Line */}
+                      <div>
+                        {lineData.lyricsLine || '\u00A0'}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           ) : (
-            <div className="empty-state" style={{ padding: '40px 20px' }}>
-              <div className="empty-icon">📝</div>
-              <div className="empty-title">Sem letra cadastrada</div>
-              <div className="empty-desc">Esta música ainda não possui letra cadastrada. Clique em editar para adicioná-la.</div>
+            <div>
+              {song.lyrics ? (
+                <div>
+                  <h2 className="detail-section-title">Letra</h2>
+                  <div className="lyrics-box">{song.lyrics}</div>
+                </div>
+              ) : (
+                <div className="empty-state" style={{ padding: '40px 20px' }}>
+                  <div className="empty-icon">📝</div>
+                  <div className="empty-title">Sem letra cadastrada</div>
+                  <div className="empty-desc">Esta música ainda não possui letra cadastrada. Clique em editar para adicioná-la.</div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -203,7 +284,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
             
             <div className="chip" style={{ padding: '10px 14px', fontSize: '0.85rem', justifyContent: 'flex-start' }}>
               <Music size={14} style={{ marginRight: '6px' }} />
-              <strong>Tom Original:</strong> {song.originalKey || 'Não definido'}
+              <strong>Tom Original:</strong> {originalKey}
             </div>
 
             <div className="chip" style={{ padding: '10px 14px', fontSize: '0.85rem', justifyContent: 'flex-start' }}>

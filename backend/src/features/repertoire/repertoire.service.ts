@@ -17,6 +17,7 @@ const supabase = () => getSupabaseClient();
 
 export async function getSongs(
   ministryId: string,
+  userId: string,
   filters: {
     search?: string;
     classification_id?: string;
@@ -37,6 +38,7 @@ export async function getSongs(
       count: 'exact',
     })
     .eq('ministry_id', ministryId)
+    .eq('user_id', userId)
     .order('title', { ascending: true })
     .range(offset, offset + limit - 1);
 
@@ -92,22 +94,35 @@ export async function getSongs(
 
 export async function getSongById(
   ministryId: string,
-  songId: string
-): Promise<Song> {
+  songId: string,
+  userId: string
+): Promise<any> {
   const { data, error } = await supabase()
     .from('songs')
     .select('*, artist:artists(id, name), classification:classifications(id, name, color)')
     .eq('id', songId)
     .eq('ministry_id', ministryId)
+    .eq('user_id', userId)
     .single();
 
   if (error || !data) throw new AppError(404, 'Música não encontrada.');
 
-  return data as Song;
+  const { data: smartChord } = await supabase()
+    .from('smart_chords')
+    .select('id, original_key, content')
+    .eq('song_id', songId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  return {
+    ...data,
+    smart_chord: smartChord || null,
+  };
 }
 
 export async function createSong(
   ministryId: string,
+  userId: string,
   songData: Partial<Song>
 ): Promise<Song> {
   const { data, error } = await supabase()
@@ -115,6 +130,7 @@ export async function createSong(
     .insert({
       ...songData,
       ministry_id: ministryId,
+      user_id: userId,
       chord_sheet_url: songData.chord_sheet_url || null,
       youtube_url: songData.youtube_url || null,
       audio_url: songData.audio_url || null,
@@ -131,6 +147,7 @@ export async function createSong(
 export async function updateSong(
   ministryId: string,
   songId: string,
+  userId: string,
   songData: Partial<Song>
 ): Promise<Song> {
   const { data, error } = await supabase()
@@ -144,6 +161,7 @@ export async function updateSong(
     })
     .eq('id', songId)
     .eq('ministry_id', ministryId)
+    .eq('user_id', userId)
     .select('*, artist:artists(id, name), classification:classifications(id, name, color)')
     .single();
 
@@ -154,13 +172,15 @@ export async function updateSong(
 
 export async function deleteSong(
   ministryId: string,
-  songId: string
+  songId: string,
+  userId: string
 ): Promise<void> {
   const { error } = await supabase()
     .from('songs')
     .delete()
     .eq('id', songId)
-    .eq('ministry_id', ministryId);
+    .eq('ministry_id', ministryId)
+    .eq('user_id', userId);
 
   if (error) throw new AppError(400, 'Erro ao excluir música.', error);
 }
@@ -340,7 +360,8 @@ export async function getFolders(
 
 export async function getFolderById(
   ministryId: string,
-  folderId: string
+  folderId: string,
+  userId: string
 ): Promise<Folder & { songs: Song[] }> {
   const { data: folder, error: folderError } = await supabase()
     .from('folders')
@@ -355,13 +376,16 @@ export async function getFolderById(
     .from('folder_songs')
     .select('position, song:songs(*, artist:artists(id, name), classification:classifications(id, name, color))')
     .eq('folder_id', folderId)
+    .eq('songs.user_id', userId)
     .order('position', { ascending: true });
 
   if (songsError) throw new AppError(500, 'Erro ao buscar músicas da pasta.', songsError);
 
   return {
     ...(folder as Folder),
-    songs: (folderSongs || []).map((fs: any) => ({ ...fs.song, position: fs.position })),
+    songs: (folderSongs || [])
+      .filter((fs: any) => fs.song !== null)
+      .map((fs: any) => ({ ...fs.song, position: fs.position })),
   };
 }
 
@@ -455,10 +479,11 @@ export async function removeSongFromFolder(
 // ============================================================
 
 export async function getRepertoireCounts(
-  ministryId: string
+  ministryId: string,
+  userId: string
 ): Promise<RepertoireCounts> {
   const [songsRes, foldersRes, artistsRes] = await Promise.all([
-    supabase().from('songs').select('id', { count: 'exact', head: true }).eq('ministry_id', ministryId),
+    supabase().from('songs').select('id', { count: 'exact', head: true }).eq('ministry_id', ministryId).eq('user_id', userId),
     supabase().from('folders').select('id', { count: 'exact', head: true }).eq('ministry_id', ministryId),
     supabase().from('artists').select('id', { count: 'exact', head: true }).eq('ministry_id', ministryId),
   ]);

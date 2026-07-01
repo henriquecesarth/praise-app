@@ -4,6 +4,7 @@ import '../../domain/entities/entities.dart';
 class SongModel {
   final String id;
   final String ministryId;
+  final String? userId;
   final String title;
   final String? artistId;
   final String? artistName;
@@ -20,10 +21,12 @@ class SongModel {
   final Map<String, String>? externalLinks;
   final String createdAt;
   final String updatedAt;
+  final SongSmartChord? smartChord;
 
   const SongModel({
     required this.id,
     required this.ministryId,
+    this.userId,
     required this.title,
     this.artistId,
     this.artistName,
@@ -40,15 +43,25 @@ class SongModel {
     this.externalLinks,
     required this.createdAt,
     required this.updatedAt,
+    this.smartChord,
   });
 
   factory SongModel.fromJson(Map<String, dynamic> json) {
     final artist = json['artist'] as Map<String, dynamic>?;
     final classification = json['classification'] as Map<String, dynamic>?;
+    final smartChordJson = json['smart_chord'] as Map<String, dynamic>?;
+    final smartChordObj = smartChordJson != null
+        ? SongSmartChord(
+            id: smartChordJson['id'] as String,
+            originalKey: smartChordJson['original_key'] as String,
+            content: smartChordJson['content'] as String,
+          )
+        : null;
 
     return SongModel(
       id: json['id'] as String,
       ministryId: json['ministry_id'] as String,
+      userId: json['user_id'] as String?,
       title: json['title'] as String,
       artistId: json['artist_id'] as String?,
       artistName: artist?['name'] as String?,
@@ -67,6 +80,7 @@ class SongModel {
           : null,
       createdAt: json['created_at'] as String,
       updatedAt: json['updated_at'] as String,
+      smartChord: smartChordObj,
     );
   }
 
@@ -74,6 +88,7 @@ class SongModel {
     return Song(
       id: id,
       ministryId: ministryId,
+      userId: userId,
       title: title,
       artistId: artistId,
       artistName: artistName,
@@ -90,6 +105,7 @@ class SongModel {
       externalLinks: externalLinks,
       createdAt: DateTime.parse(createdAt),
       updatedAt: DateTime.parse(updatedAt),
+      smartChord: smartChord,
     );
   }
 }

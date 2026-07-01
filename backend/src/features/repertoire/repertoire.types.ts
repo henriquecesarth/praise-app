@@ -22,7 +22,19 @@ export const createSongSchema = z.object({
   external_links: z.record(z.string(), z.string()).optional().default({}),
 });
 
-export const updateSongSchema = createSongSchema.partial();
+export const updateSongSchema = z.object({
+  title: z.string().min(1, 'Título é obrigatório.').max(255).optional(),
+  artist_id: z.string().uuid().nullable().optional(),
+  classification_id: z.string().uuid().nullable().optional(),
+  original_key: z.string().max(5).nullable().optional(),
+  bpm: z.number().positive().max(999).nullable().optional(),
+  duration: z.string().nullable().optional(),
+  lyrics: z.string().nullable().optional(),
+  chord_sheet_url: z.string().url().nullable().optional().or(z.literal('')),
+  youtube_url: z.string().url().nullable().optional().or(z.literal('')),
+  audio_url: z.string().url().nullable().optional().or(z.literal('')),
+  external_links: z.record(z.string(), z.string()).optional(),
+});
 
 export const createArtistSchema = z.object({
   name: z.string().min(1, 'Nome é obrigatório.').max(255),
@@ -71,6 +83,7 @@ export const songsQuerySchema = z.object({
 export interface Song {
   id: string;
   ministry_id: string;
+  user_id: string | null;
   title: string;
   artist_id: string | null;
   classification_id: string | null;

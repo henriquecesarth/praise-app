@@ -10,6 +10,7 @@ import 'features/repertoire/presentation/bloc/artist_list_bloc.dart';
 import 'features/repertoire/presentation/bloc/folder_list_bloc.dart';
 import 'features/repertoire/presentation/bloc/classification_list_bloc.dart';
 import 'features/repertoire/presentation/pages/repertoire_screen.dart';
+import 'features/smart_chords/presentation/pages/main_navigation_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -84,7 +85,7 @@ class PraiseApp extends StatelessWidget {
           title: 'Praise',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.darkTheme,
-          home: const RepertoireScreen(),
+          home: const MainNavigationScreen(),
         ),
       ),
     );

@@ -1,6 +1,7 @@
 export interface Song {
   id: string;
   ministryId: string;
+  userId?: string;
   title: string;
   artistId?: string;
   artistName?: string;
@@ -17,6 +18,11 @@ export interface Song {
   externalLinks?: Record<string, string>;
   createdAt: string;
   updatedAt: string;
+  smartChord?: {
+    id: string;
+    originalKey: string;
+    content: string;
+  };
 }
 
 export interface Artist {
