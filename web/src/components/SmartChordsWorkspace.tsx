@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api, SmartChord } from '../api';
 import { Artist, Song } from '../types';
-import { renderSmartChordLine, transposeChord, rawToVisual, visualToRaw } from '../utils/smart_chord';
+import { transposeChord, rawToVisual, visualToRaw } from '../utils/smart_chord';
 
 function getHarmonicFieldChords(originalKey: string): string[] {
   let key = originalKey;
