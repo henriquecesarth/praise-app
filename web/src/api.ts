@@ -1,14 +1,21 @@
-import { Song, Artist, Folder, Classification, RepertoireCounts } from './types';
+import { Song, Artist, Folder, Classification, RepertoireCounts, Group, GroupInvite, Liturgy } from './types';
 
-// Use env variable or default production backend
-const API_URL = (import.meta as any).env.VITE_API_URL || 'https://praise-app-gray.vercel.app/api/v1';
+// Usar variável de ambiente ou fallback para backend local/produção
+const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3000/api/v1';
 export const DEFAULT_MINISTRY_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
 
-const getHeaders = () => ({
-  'Content-Type': 'application/json',
-  'Accept': 'application/json',
-  'x-user-id': 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22',
-});
+const getHeaders = () => {
+  const token = localStorage.getItem('praise_auth_token');
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+    'x-user-id': 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+};
 
 const handleResponse = async <T>(response: Response): Promise<T> => {
   if (response.status === 204) {
@@ -33,7 +40,8 @@ const handleResponse = async <T>(response: Response): Promise<T> => {
 
 const mapSongFromApi = (apiSong: any): Song => ({
   id: apiSong.id,
-  ministryId: apiSong.ministry_id,
+  ministryId: apiSong.ministry_id || apiSong.group_id,
+  groupId: apiSong.group_id || apiSong.ministry_id,
   userId: apiSong.user_id,
   title: apiSong.title,
   artistId: apiSong.artist_id || undefined,
@@ -76,7 +84,8 @@ const mapSongToApi = (song: Partial<Song>): any => {
 
 const mapArtistFromApi = (apiArtist: any): Artist => ({
   id: apiArtist.id,
-  ministryId: apiArtist.ministry_id,
+  ministryId: apiArtist.ministry_id || apiArtist.group_id,
+  groupId: apiArtist.group_id || apiArtist.ministry_id,
   name: apiArtist.name,
   createdAt: apiArtist.created_at,
   updatedAt: apiArtist.updated_at,
@@ -84,7 +93,8 @@ const mapArtistFromApi = (apiArtist: any): Artist => ({
 
 const mapClassificationFromApi = (apiClassification: any): Classification => ({
   id: apiClassification.id,
-  ministryId: apiClassification.ministry_id,
+  ministryId: apiClassification.ministry_id || apiClassification.group_id,
+  groupId: apiClassification.group_id || apiClassification.ministry_id,
   name: apiClassification.name,
   description: apiClassification.description || undefined,
   color: apiClassification.color || undefined,
@@ -94,7 +104,8 @@ const mapClassificationFromApi = (apiClassification: any): Classification => ({
 
 const mapFolderFromApi = (apiFolder: any): Folder => ({
   id: apiFolder.id,
-  ministryId: apiFolder.ministry_id,
+  ministryId: apiFolder.ministry_id || apiFolder.group_id,
+  groupId: apiFolder.group_id || apiFolder.ministry_id,
   name: apiFolder.name,
   description: apiFolder.description || undefined,
   songCount: apiFolder.song_count || 0,
@@ -103,10 +114,147 @@ const mapFolderFromApi = (apiFolder: any): Folder => ({
   updatedAt: apiFolder.updated_at,
 });
 
+const mapGroupFromApi = (apiGroup: any): Group => ({
+  id: apiGroup.id,
+  name: apiGroup.name,
+  slug: apiGroup.slug,
+  ownerUserId: apiGroup.owner_user_id,
+  subscriptionStatus: apiGroup.subscription_status,
+  role: apiGroup.role || 'member',
+  createdAt: apiGroup.created_at,
+  updatedAt: apiGroup.updated_at,
+});
+
+const mapLiturgyFromApi = (apiLiturgy: any): Liturgy => ({
+  id: apiLiturgy.id,
+  groupId: apiLiturgy.group_id,
+  title: apiLiturgy.title,
+  date: apiLiturgy.date,
+  description: apiLiturgy.description,
+  createdBy: apiLiturgy.created_by,
+  items: (apiLiturgy.liturgy_items || []).map((item: any) => ({
+    id: item.id,
+    liturgyId: item.liturgy_id,
+    songId: item.song_id,
+    song: item.song ? mapSongFromApi(item.song) : undefined,
+    type: item.type,
+    title: item.title,
+    notes: item.notes,
+    position: item.position,
+  })),
+  createdAt: apiLiturgy.created_at,
+  updatedAt: apiLiturgy.updated_at,
+});
+
 export const api = {
+  // Autenticação
+  login: async (email: string, password: string): Promise<{ user: { id: string; email: string; name: string }; token: string }> => {
+    const response = await fetch(`${API_URL}/auth/login`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ email, password }),
+    });
+    return handleResponse<any>(response);
+  },
+
+  signUp: async (name: string, email: string, password: string): Promise<{ user: { id: string; email: string; name: string }; token: string }> => {
+    const response = await fetch(`${API_URL}/auth/signup`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ name, email, password }),
+    });
+    return handleResponse<any>(response);
+  },
+
+  getMe: async (): Promise<{ id: string; email: string; name: string }> => {
+    const response = await fetch(`${API_URL}/auth/me`, {
+      headers: getHeaders(),
+    });
+    return handleResponse<any>(response);
+  },
+
+  // Grupos e Convites
+  getMyGroups: async (): Promise<Group[]> => {
+    const response = await fetch(`${API_URL}/groups/my-groups`, {
+      headers: getHeaders(),
+    });
+    const result = await handleResponse<any[]>(response);
+    return (result || []).map(mapGroupFromApi);
+  },
+
+  createGroup: async (name: string): Promise<Group> => {
+    const response = await fetch(`${API_URL}/groups`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ name }),
+    });
+    const result = await handleResponse<any>(response);
+    return mapGroupFromApi(result);
+  },
+
+  joinGroupByCode: async (code: string): Promise<{ message: string; group: Group; role: string }> => {
+    const response = await fetch(`${API_URL}/groups/join`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ code }),
+    });
+    const result = await handleResponse<any>(response);
+    return {
+      message: result.message,
+      group: mapGroupFromApi(result.group),
+      role: result.role,
+    };
+  },
+
+  createInviteCode: async (groupId: string, expiresInDays = 7): Promise<GroupInvite> => {
+    const response = await fetch(`${API_URL}/groups/${groupId}/invites`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ expiresInDays }),
+    });
+    const result = await handleResponse<any>(response);
+    return {
+      id: result.id,
+      groupId: result.group_id,
+      code: result.code,
+      createdBy: result.created_by,
+      maxUses: result.max_uses,
+      usesCount: result.uses_count,
+      expiresAt: result.expires_at,
+      createdAt: result.created_at,
+    };
+  },
+
+  // Liturgias
+  getLiturgies: async (groupId: string): Promise<Liturgy[]> => {
+    const response = await fetch(`${API_URL}/groups/${groupId}/liturgies`, {
+      headers: getHeaders(),
+    });
+    const result = await handleResponse<any[]>(response);
+    return (result || []).map(mapLiturgyFromApi);
+  },
+
+  createLiturgy: async (groupId: string, liturgyData: { title: string; date: string; description?: string; items?: any[] }): Promise<Liturgy> => {
+    const response = await fetch(`${API_URL}/groups/${groupId}/liturgies`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(liturgyData),
+    });
+    const result = await handleResponse<any>(response);
+    return mapLiturgyFromApi(result);
+  },
+
+  deleteLiturgy: async (groupId: string, liturgyId: string): Promise<void> => {
+    const response = await fetch(`${API_URL}/groups/${groupId}/liturgies/${liturgyId}`, {
+      method: 'DELETE',
+      headers: getHeaders(),
+    });
+    await handleResponse<void>(response);
+  },
+
   // Counts
   getCounts: async (ministryId = DEFAULT_MINISTRY_ID): Promise<RepertoireCounts> => {
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/counts`, {
+    const response = await fetch(`${API_URL}/groups/${ministryId}/counts`, {
       headers: getHeaders(),
     });
     const result = await handleResponse<{ data: RepertoireCounts }>(response);
@@ -126,7 +274,7 @@ export const api = {
   ): Promise<{ songs: Song[]; totalCount: number }> => {
     const params = new URLSearchParams();
     params.append('page', '1');
-    params.append('limit', '100'); // Higher limit for web dashboard display
+    params.append('limit', '100');
     
     if (filters.search) params.append('search', filters.search);
     if (filters.classificationId) params.append('classification_id', filters.classificationId);
@@ -134,7 +282,7 @@ export const api = {
     if (filters.artistId) params.append('artist_id', filters.artistId);
     if (filters.hasYoutube) params.append('has_youtube', 'true');
 
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/songs?${params.toString()}`, {
+    const response = await fetch(`${API_URL}/groups/${ministryId}/songs?${params.toString()}`, {
       headers: getHeaders(),
     });
     const result = await handleResponse<{ data: any[]; total: number }>(response);
@@ -145,7 +293,7 @@ export const api = {
   },
 
   getSongById: async (songId: string, ministryId = DEFAULT_MINISTRY_ID): Promise<Song> => {
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/songs/${songId}`, {
+    const response = await fetch(`${API_URL}/groups/${ministryId}/songs/${songId}`, {
       headers: getHeaders(),
     });
     const result = await handleResponse<{ data: any }>(response);
@@ -153,7 +301,7 @@ export const api = {
   },
 
   createSong: async (songData: Partial<Song>, ministryId = DEFAULT_MINISTRY_ID): Promise<Song> => {
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/songs`, {
+    const response = await fetch(`${API_URL}/groups/${ministryId}/songs`, {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify(mapSongToApi(songData)),
@@ -163,7 +311,7 @@ export const api = {
   },
 
   updateSong: async (songId: string, songData: Partial<Song>, ministryId = DEFAULT_MINISTRY_ID): Promise<Song> => {
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/songs/${songId}`, {
+    const response = await fetch(`${API_URL}/groups/${ministryId}/songs/${songId}`, {
       method: 'PUT',
       headers: getHeaders(),
       body: JSON.stringify(mapSongToApi(songData)),
@@ -173,7 +321,7 @@ export const api = {
   },
 
   deleteSong: async (songId: string, ministryId = DEFAULT_MINISTRY_ID): Promise<void> => {
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/songs/${songId}`, {
+    const response = await fetch(`${API_URL}/groups/${ministryId}/songs/${songId}`, {
       method: 'DELETE',
       headers: getHeaders(),
     });
@@ -185,7 +333,7 @@ export const api = {
     const params = new URLSearchParams();
     if (search) params.append('search', search);
     
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/artists?${params.toString()}`, {
+    const response = await fetch(`${API_URL}/groups/${ministryId}/artists?${params.toString()}`, {
       headers: getHeaders(),
     });
     const result = await handleResponse<{ data: any[] }>(response);
@@ -193,7 +341,7 @@ export const api = {
   },
 
   createArtist: async (name: string, ministryId = DEFAULT_MINISTRY_ID): Promise<Artist> => {
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/artists`, {
+    const response = await fetch(`${API_URL}/groups/${ministryId}/artists`, {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify({ name }),
@@ -203,7 +351,7 @@ export const api = {
   },
 
   updateArtist: async (artistId: string, name: string, ministryId = DEFAULT_MINISTRY_ID): Promise<Artist> => {
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/artists/${artistId}`, {
+    const response = await fetch(`${API_URL}/groups/${ministryId}/artists/${artistId}`, {
       method: 'PUT',
       headers: getHeaders(),
       body: JSON.stringify({ name }),
@@ -213,7 +361,7 @@ export const api = {
   },
 
   deleteArtist: async (artistId: string, ministryId = DEFAULT_MINISTRY_ID): Promise<void> => {
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/artists/${artistId}`, {
+    const response = await fetch(`${API_URL}/groups/${ministryId}/artists/${artistId}`, {
       method: 'DELETE',
       headers: getHeaders(),
     });
@@ -222,7 +370,7 @@ export const api = {
 
   // Classifications
   getClassifications: async (ministryId = DEFAULT_MINISTRY_ID): Promise<Classification[]> => {
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/classifications`, {
+    const response = await fetch(`${API_URL}/groups/${ministryId}/classifications`, {
       headers: getHeaders(),
     });
     const result = await handleResponse<{ data: any[] }>(response);
@@ -231,7 +379,7 @@ export const api = {
 
   // Folders
   getFolders: async (ministryId = DEFAULT_MINISTRY_ID): Promise<Folder[]> => {
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/folders`, {
+    const response = await fetch(`${API_URL}/groups/${ministryId}/folders`, {
       headers: getHeaders(),
     });
     const result = await handleResponse<{ data: any[] }>(response);
@@ -239,7 +387,7 @@ export const api = {
   },
 
   getFolderById: async (folderId: string, ministryId = DEFAULT_MINISTRY_ID): Promise<Folder> => {
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/folders/${folderId}`, {
+    const response = await fetch(`${API_URL}/groups/${ministryId}/folders/${folderId}`, {
       headers: getHeaders(),
     });
     const result = await handleResponse<{ data: any }>(response);
@@ -247,7 +395,7 @@ export const api = {
   },
 
   createFolder: async (name: string, description?: string, ministryId = DEFAULT_MINISTRY_ID): Promise<Folder> => {
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/folders`, {
+    const response = await fetch(`${API_URL}/groups/${ministryId}/folders`, {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify({ name, description }),
@@ -257,7 +405,7 @@ export const api = {
   },
 
   updateFolder: async (folderId: string, data: { name: string; description?: string | null }, ministryId = DEFAULT_MINISTRY_ID): Promise<Folder> => {
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/folders/${folderId}`, {
+    const response = await fetch(`${API_URL}/groups/${ministryId}/folders/${folderId}`, {
       method: 'PUT',
       headers: getHeaders(),
       body: JSON.stringify(data),
@@ -267,7 +415,7 @@ export const api = {
   },
 
   deleteFolder: async (folderId: string, ministryId = DEFAULT_MINISTRY_ID): Promise<void> => {
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/folders/${folderId}`, {
+    const response = await fetch(`${API_URL}/groups/${ministryId}/folders/${folderId}`, {
       method: 'DELETE',
       headers: getHeaders(),
     });
@@ -275,7 +423,7 @@ export const api = {
   },
 
   addSongToFolder: async (folderId: string, songId: string, ministryId = DEFAULT_MINISTRY_ID): Promise<void> => {
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/folders/${folderId}/songs`, {
+    const response = await fetch(`${API_URL}/groups/${ministryId}/folders/${folderId}/songs`, {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify({ song_id: songId }),
@@ -284,7 +432,7 @@ export const api = {
   },
 
   removeSongFromFolder: async (folderId: string, songId: string, ministryId = DEFAULT_MINISTRY_ID): Promise<void> => {
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/folders/${folderId}/songs/${songId}`, {
+    const response = await fetch(`${API_URL}/groups/${ministryId}/folders/${folderId}/songs/${songId}`, {
       method: 'DELETE',
       headers: getHeaders(),
     });

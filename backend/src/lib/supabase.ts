@@ -3,20 +3,13 @@ import { env } from '../config/env';
 
 let supabaseInstance: SupabaseClient | null = null;
 
-class DummyWebSocket {
-  addEventListener() {}
-  removeEventListener() {}
-}
-
 export function getSupabaseClient(): SupabaseClient {
   if (!supabaseInstance) {
-    supabaseInstance = createClient(env.supabaseUrl, env.supabaseServiceRoleKey, {
+    const keyToUse = env.supabaseSecretKey || env.supabasePublishableKey;
+    supabaseInstance = createClient(env.supabaseUrl, keyToUse, {
       auth: {
         autoRefreshToken: false,
         persistSession: false,
-      },
-      realtime: {
-        websocket: DummyWebSocket as any,
       },
     });
   }

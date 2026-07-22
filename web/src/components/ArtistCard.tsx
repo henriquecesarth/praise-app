@@ -4,7 +4,7 @@ import { Trash2 } from 'lucide-react';
 
 interface ArtistCardProps {
   artist: Artist;
-  onDelete: () => void;
+  onDelete?: () => void;
 }
 
 export const ArtistCard: React.FC<ArtistCardProps> = ({ artist, onDelete }) => {
@@ -18,16 +18,18 @@ export const ArtistCard: React.FC<ArtistCardProps> = ({ artist, onDelete }) => {
           {artist.name}
         </div>
       </div>
-      <button
-        className="action-icon-btn delete"
-        title="Excluir artista"
-        onClick={(e) => {
-          e.stopPropagation();
-          onDelete();
-        }}
-      >
-        <Trash2 size={16} />
-      </button>
+      {onDelete && (
+        <button
+          className="action-icon-btn delete"
+          title="Excluir artista"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+        >
+          <Trash2 size={16} />
+        </button>
+      )}
     </div>
   );
 };

@@ -1,6 +1,62 @@
+export type GroupRole = 'admin' | 'member';
+
+export interface Group {
+  id: string;
+  name: string;
+  slug?: string;
+  ownerUserId: string;
+  subscriptionStatus: 'trialing' | 'active' | 'past_due' | 'canceled';
+  role: GroupRole;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GroupMember {
+  id: string;
+  groupId: string;
+  userId: string;
+  role: GroupRole;
+  joinedAt: string;
+}
+
+export interface GroupInvite {
+  id: string;
+  groupId: string;
+  code: string;
+  createdBy: string;
+  maxUses?: number;
+  usesCount: number;
+  expiresAt?: string;
+  createdAt: string;
+}
+
+export interface LiturgyItem {
+  id: string;
+  liturgyId: string;
+  songId?: string;
+  song?: Song;
+  type: 'song' | 'reading' | 'prayer' | 'custom';
+  title: string;
+  notes?: string;
+  position: number;
+}
+
+export interface Liturgy {
+  id: string;
+  groupId: string;
+  title: string;
+  date: string;
+  description?: string;
+  createdBy: string;
+  items?: LiturgyItem[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Song {
   id: string;
   ministryId: string;
+  groupId?: string;
   userId?: string;
   title: string;
   artistId?: string;
@@ -28,6 +84,7 @@ export interface Song {
 export interface Artist {
   id: string;
   ministryId: string;
+  groupId?: string;
   name: string;
   createdAt: string;
   updatedAt: string;
@@ -36,6 +93,7 @@ export interface Artist {
 export interface Classification {
   id: string;
   ministryId: string;
+  groupId?: string;
   name: string;
   description?: string;
   color?: string;
@@ -46,6 +104,7 @@ export interface Classification {
 export interface Folder {
   id: string;
   ministryId: string;
+  groupId?: string;
   name: string;
   description?: string;
   songCount: number;

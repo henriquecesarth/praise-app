@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from './api';
-import { Song, Artist, Folder, Classification, RepertoireCounts, SongFilters } from './types';
+import { Song, Artist, Folder, Classification, RepertoireCounts, SongFilters, Group, GroupRole } from './types';
 import { SongCard } from './components/SongCard';
 import { FolderCard } from './components/FolderCard';
 import { ArtistCard } from './components/ArtistCard';
@@ -9,7 +9,14 @@ import { SongDetail } from './components/SongDetail';
 import { SongFormModal } from './components/SongFormModal';
 import { FolderDetail } from './components/FolderDetail';
 import { SmartChordsWorkspace } from './components/SmartChordsWorkspace';
-import { Search, SlidersHorizontal, Plus, CheckCircle, XCircle, Menu, Music, Edit3 } from 'lucide-react';
+import { JoinGroupModal } from './components/JoinGroupModal';
+import { InviteCodeModal } from './components/InviteCodeModal';
+import { CreateGroupModal } from './components/CreateGroupModal';
+import { LoginPage } from './components/LoginPage';
+import { DashboardView } from './components/DashboardView';
+import { SchedulesView } from './components/SchedulesView';
+import { CreateScheduleModal, ScheduleItem } from './components/CreateScheduleModal';
+import { Search, SlidersHorizontal, Plus, CheckCircle, XCircle, Menu, Music, Edit3, KeyRound, UserPlus, LogOut, Building2, Home, Calendar as CalendarIcon } from 'lucide-react';
 
 interface Toast {
   id: string;
@@ -17,9 +24,27 @@ interface Toast {
   type: 'success' | 'error';
 }
 
+interface UserState {
+  id: string;
+  email: string;
+  name: string;
+}
+
 export default function App() {
+  // User Auth State
+  const [currentUser, setCurrentUser] = useState<UserState | null>(null);
+
+  // Groups & Role States
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [activeGroup, setActiveGroup] = useState<Group | null>(null);
+  const [showJoinModal, setShowJoinModal] = useState(false);
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
+
   // Navigation & Detail States
-  const [mainModule, setMainModule] = useState<'repertoire' | 'cifrador'>('repertoire');
+  const [mainModule, setMainModule] = useState<'dashboard' | 'repertoire' | 'cifrador' | 'schedules'>('dashboard');
+  const [schedules, setSchedules] = useState<ScheduleItem[]>([]);
+  const [showCreateScheduleModal, setShowCreateScheduleModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'songs' | 'folders' | 'artists'>('songs');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [selectedSong, setSelectedSong] = useState<Song | null>(null);
@@ -59,21 +84,35 @@ export default function App() {
   // Search debounce timer
   const searchTimeoutRef = useRef<number | null>(null);
 
-  // Load initial configurations
+  // Check initial user authentication session
   useEffect(() => {
-    loadCounts();
-    loadClassifications();
-    loadFolders();
-    loadArtists();
+    checkCurrentUser();
   }, []);
+
+  // Reload data when activeGroup changes
+  useEffect(() => {
+    if (activeGroup) {
+      loadCounts();
+      loadClassifications();
+      loadFolders();
+      loadArtists();
+      loadSongs();
+    } else {
+      setSongs([]);
+      setFolders([]);
+      setArtists([]);
+      setCounts({ songs: 0, folders: 0, artists: 0 });
+    }
+  }, [activeGroup]);
 
   // Reload songs when search or filters change
   useEffect(() => {
+    if (!activeGroup) return;
+
     if (searchTimeoutRef.current) {
       window.clearTimeout(searchTimeoutRef.current);
     }
 
-    // Debounce search input to avoid hitting api too frequently
     setLoadingSongs(true);
     searchTimeoutRef.current = window.setTimeout(() => {
       loadSongs();
@@ -84,7 +123,43 @@ export default function App() {
     };
   }, [search, filters]);
 
-  // Toast Notification handler
+  const checkCurrentUser = async () => {
+    const token = localStorage.getItem('praise_auth_token');
+    if (token) {
+      try {
+        const user = await api.getMe();
+        setCurrentUser(user);
+      } catch (err) {
+        console.warn('Sessão expirada:', err);
+      }
+    }
+    loadUserGroups();
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('praise_auth_token');
+    setCurrentUser(null);
+    setActiveGroup(null);
+    setGroups([]);
+    showToast('Você saiu da sua conta.');
+  };
+
+  const loadUserGroups = async () => {
+    try {
+      const userGroups = await api.getMyGroups();
+      setGroups(userGroups);
+
+      if (userGroups.length > 0) {
+        setActiveGroup(userGroups[0]);
+      } else {
+        setActiveGroup(null);
+      }
+    } catch (err: any) {
+      console.error('Erro ao carregar grupos do usuário:', err);
+      setActiveGroup(null);
+    }
+  };
+
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     const id = Date.now().toString();
     setToasts((prev) => [...prev, { id, message, type }]);
@@ -93,9 +168,13 @@ export default function App() {
     }, 4000);
   };
 
+  const groupId = activeGroup ? activeGroup.id : '';
+  const userRole: GroupRole = activeGroup?.role || 'member';
+
   const loadCounts = async () => {
+    if (!groupId) return;
     try {
-      const data = await api.getCounts();
+      const data = await api.getCounts(groupId);
       setCounts(data);
     } catch (err: any) {
       console.error(err);
@@ -103,8 +182,9 @@ export default function App() {
   };
 
   const loadClassifications = async () => {
+    if (!groupId) return;
     try {
-      const data = await api.getClassifications();
+      const data = await api.getClassifications(groupId);
       setClassifications(data);
     } catch (err: any) {
       console.error(err);
@@ -112,14 +192,18 @@ export default function App() {
   };
 
   const loadSongs = async () => {
+    if (!groupId) {
+      setSongs([]);
+      setLoadingSongs(false);
+      return;
+    }
     try {
-      const result = await api.getSongs(undefined, {
+      const result = await api.getSongs(groupId, {
         search,
         originalKey: filters.originalKey || undefined,
         hasYoutube: filters.hasYoutube || undefined,
       });
       setSongs(result.songs);
-      // Update count badge dynamically for songs
       setCounts((prev) => ({ ...prev, songs: result.totalCount }));
     } catch (err: any) {
       showToast(err.message || 'Erro ao carregar músicas.', 'error');
@@ -129,9 +213,14 @@ export default function App() {
   };
 
   const loadFolders = async () => {
+    if (!groupId) {
+      setFolders([]);
+      setLoadingFolders(false);
+      return;
+    }
     setLoadingFolders(true);
     try {
-      const data = await api.getFolders();
+      const data = await api.getFolders(groupId);
       setFolders(data);
       setCounts((prev) => ({ ...prev, folders: data.length }));
     } catch (err: any) {
@@ -142,9 +231,14 @@ export default function App() {
   };
 
   const loadArtists = async () => {
+    if (!groupId) {
+      setArtists([]);
+      setLoadingArtists(false);
+      return;
+    }
     setLoadingArtists(true);
     try {
-      const data = await api.getArtists();
+      const data = await api.getArtists(groupId);
       setArtists(data);
       setCounts((prev) => ({ ...prev, artists: data.length }));
     } catch (err: any) {
@@ -154,18 +248,17 @@ export default function App() {
     }
   };
 
-  // Song operations
   const handleSaveSong = async (songData: Partial<Song>) => {
+    if (!groupId) return;
     try {
       if (songToEdit) {
-        const updated = await api.updateSong(songToEdit.id, songData);
+        const updated = await api.updateSong(songToEdit.id, songData, groupId);
         showToast('Música atualizada com sucesso!');
-        // Update local views
         if (selectedSong && selectedSong.id === songToEdit.id) {
           setSelectedSong(updated);
         }
       } else {
-        await api.createSong(songData);
+        await api.createSong(songData, groupId);
         showToast('Música criada com sucesso!');
       }
       setShowSongModal(false);
@@ -173,41 +266,36 @@ export default function App() {
       loadSongs();
       loadCounts();
     } catch (err: any) {
-      throw err; // Form modal handles validation error rendering
+      throw err;
     }
   };
 
   const handleDeleteSong = async (songId: string) => {
-    if (!window.confirm('Tem certeza que deseja excluir esta música definitivamente?')) return;
-    try {
-      await api.deleteSong(songId);
-      showToast('Música excluída com sucesso!');
-      setSelectedSong(null);
-      loadSongs();
-      loadCounts();
-    } catch (err: any) {
-      showToast(err.message || 'Erro ao excluir música.', 'error');
+    if (!groupId) return;
+    if (window.confirm('Tem certeza que deseja excluir esta música?')) {
+      try {
+        await api.deleteSong(songId, groupId);
+        showToast('Música excluída com sucesso.');
+        setSelectedSong(null);
+        loadSongs();
+        loadCounts();
+      } catch (err: any) {
+        showToast(err.message || 'Erro ao excluir música.', 'error');
+      }
     }
   };
 
-  // Folder operations
-  const handleSaveFolder = async (e: React.FormEvent) => {
+  const handleCreateFolder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!folderName.trim()) return;
+    if (!groupId || !folderName.trim()) return;
 
     try {
       if (folderToEdit) {
-        const updated = await api.updateFolder(folderToEdit.id, {
-          name: folderName.trim(),
-          description: folderDesc.trim() || null,
-        });
-        showToast('Pasta atualizada com sucesso!');
-        if (selectedFolder && selectedFolder.id === folderToEdit.id) {
-          setSelectedFolder({ ...selectedFolder, name: updated.name, description: updated.description });
-        }
+        await api.updateFolder(folderToEdit.id, { name: folderName, description: folderDesc }, groupId);
+        showToast('Pasta atualizada com sucesso.');
       } else {
-        await api.createFolder(folderName.trim(), folderDesc.trim() || undefined);
-        showToast('Pasta criada com sucesso!');
+        await api.createFolder(folderName, folderDesc, groupId);
+        showToast('Pasta criada com sucesso.');
       }
       setShowFolderModal(false);
       setFolderToEdit(null);
@@ -220,19 +308,6 @@ export default function App() {
     }
   };
 
-  const handleDeleteFolder = async (folderId: string) => {
-    if (!window.confirm('Tem certeza que deseja excluir esta pasta definitivamente? As músicas não serão excluídas.')) return;
-    try {
-      await api.deleteFolder(folderId);
-      showToast('Pasta excluída com sucesso!');
-      setSelectedFolder(null);
-      loadFolders();
-      loadCounts();
-    } catch (err: any) {
-      showToast(err.message || 'Erro ao excluir pasta.', 'error');
-    }
-  };
-
   const handleOpenEditFolder = (folder: Folder) => {
     setFolderToEdit(folder);
     setFolderName(folder.name);
@@ -240,92 +315,107 @@ export default function App() {
     setShowFolderModal(true);
   };
 
-  const handleSelectFolder = async (folder: Folder) => {
-    setLoadingFolders(true);
-    try {
-      const details = await api.getFolderById(folder.id);
-      setSelectedFolder(details);
-    } catch (err: any) {
-      showToast(err.message || 'Erro ao carregar detalhes da pasta.', 'error');
-    } finally {
-      setLoadingFolders(false);
+  const handleDeleteFolder = async (folderId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!groupId) return;
+    if (window.confirm('Tem certeza que deseja excluir esta pasta?')) {
+      try {
+        await api.deleteFolder(folderId, groupId);
+        showToast('Pasta excluída com sucesso.');
+        if (selectedFolder && selectedFolder.id === folderId) {
+          setSelectedFolder(null);
+        }
+        loadFolders();
+        loadCounts();
+      } catch (err: any) {
+        showToast(err.message || 'Erro ao excluir pasta.', 'error');
+      }
     }
   };
 
   const handleAddSongToFolder = async (songId: string) => {
-    if (!selectedFolder) return;
+    if (!groupId || !selectedFolder) return;
     try {
-      await api.addSongToFolder(selectedFolder.id, songId);
-      showToast('Música adicionada à pasta!');
-      // Reload details
-      const details = await api.getFolderById(selectedFolder.id);
-      setSelectedFolder(details);
-      loadFolders(); // Reload count on card
+      await api.addSongToFolder(selectedFolder.id, songId, groupId);
+      showToast('Música adicionada à pasta.');
+      const updatedFolder = await api.getFolderById(selectedFolder.id, groupId);
+      setSelectedFolder(updatedFolder);
+      loadFolders();
     } catch (err: any) {
-      showToast(err.message || 'Erro ao adicionar música.', 'error');
+      showToast(err.message || 'Erro ao adicionar música à pasta.', 'error');
     }
   };
 
   const handleRemoveSongFromFolder = async (songId: string) => {
-    if (!selectedFolder) return;
+    if (!groupId || !selectedFolder) return;
     try {
-      await api.removeSongFromFolder(selectedFolder.id, songId);
+      await api.removeSongFromFolder(selectedFolder.id, songId, groupId);
       showToast('Música removida da pasta.');
-      const details = await api.getFolderById(selectedFolder.id);
-      setSelectedFolder(details);
+      const updatedFolder = await api.getFolderById(selectedFolder.id, groupId);
+      setSelectedFolder(updatedFolder);
       loadFolders();
     } catch (err: any) {
-      showToast(err.message || 'Erro ao remover música.', 'error');
+      showToast(err.message || 'Erro ao remover música da pasta.', 'error');
     }
   };
 
-  // Artist operations
-  const handleSaveArtist = async (e: React.FormEvent) => {
+  const handleCreateArtist = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!artistName.trim()) return;
+    if (!groupId || !artistName.trim()) return;
 
     try {
-      await api.createArtist(artistName.trim());
-      showToast('Artista criado com sucesso!');
+      await api.createArtist(artistName, groupId);
+      showToast('Artista criado com sucesso.');
       setShowArtistModal(false);
       setArtistName('');
       loadArtists();
       loadCounts();
     } catch (err: any) {
-      showToast(err.message || 'Erro ao salvar artista.', 'error');
+      showToast(err.message || 'Erro ao criar artista.', 'error');
     }
   };
 
   const handleDeleteArtist = async (artistId: string) => {
-    if (!window.confirm('Tem certeza que deseja excluir este artista definitivamente?')) return;
-    try {
-      await api.deleteArtist(artistId);
-      showToast('Artista excluído com sucesso!');
-      loadArtists();
-      loadCounts();
-    } catch (err: any) {
-      showToast(err.message || 'Erro ao excluir artista.', 'error');
+    if (!groupId) return;
+    if (window.confirm('Tem certeza que deseja excluir este artista?')) {
+      try {
+        await api.deleteArtist(artistId, groupId);
+        showToast('Artista excluído com sucesso.');
+        loadArtists();
+        loadCounts();
+      } catch (err: any) {
+        showToast(err.message || 'Erro ao excluir artista.', 'error');
+      }
     }
   };
 
-  // Group artists by first letter
-  const getGroupedArtists = () => {
-    const sorted = [...artists].sort((a, b) => a.name.localeCompare(b.name));
-    const groups: Record<string, Artist[]> = {};
-    
-    sorted.forEach((artist) => {
-      const letter = artist.name ? artist.name.charAt(0).toUpperCase() : '?';
-      if (!groups[letter]) {
-        groups[letter] = [];
-      }
-      groups[letter].push(artist);
-    });
-
-    return groups;
+  const handleSelectFolder = async (folder: Folder) => {
+    if (!groupId) return;
+    try {
+      const fullFolder = await api.getFolderById(folder.id, groupId);
+      setSelectedFolder(fullFolder);
+    } catch (err: any) {
+      showToast(err.message || 'Erro ao carregar detalhes da pasta.', 'error');
+    }
   };
 
-  // Global Floating Button target click handler
+  const groupedArtists = () => {
+    const grouped: { [key: string]: Artist[] } = {};
+    artists.forEach((artist) => {
+      const letter = artist.name ? artist.name.charAt(0).toUpperCase() : '#';
+      if (!grouped[letter]) grouped[letter] = [];
+      grouped[letter].push(artist);
+    });
+
+    Object.keys(grouped).forEach((key) => {
+      grouped[key].sort((a, b) => a.name.localeCompare(b.name));
+    });
+
+    return grouped;
+  };
+
   const handleFABClick = () => {
+    if (userRole !== 'admin') return;
     if (activeTab === 'songs') {
       setSongToEdit(null);
       setShowSongModal(true);
@@ -340,58 +430,169 @@ export default function App() {
     }
   };
 
-  // Close details and go back
   const handleBackToMain = () => {
     setSelectedSong(null);
     setSelectedFolder(null);
-    // Reload data to ensure sync
     loadSongs();
     loadFolders();
   };
 
   const handleSelectSong = async (song: Song) => {
-    // Show immediate partial view
+    if (!groupId) return;
     setSelectedSong(song);
     try {
-      const fullSong = await api.getSongById(song.id);
+      const fullSong = await api.getSongById(song.id, groupId);
       setSelectedSong(fullSong);
     } catch (err: any) {
       showToast(err.message || 'Erro ao carregar detalhes da música.', 'error');
     }
   };
 
-
-  // Active filter state detection
   const hasActiveFilters = filters.originalKey !== null || filters.hasYoutube !== null;
+
+  if (!currentUser) {
+    return (
+      <LoginPage
+        onLoginSuccess={(user) => {
+          setCurrentUser(user);
+          loadUserGroups();
+          showToast(`Bem-vindo, ${user.name}!`);
+        }}
+      />
+    );
+  }
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--bg-color)' }}>
-      {/* ─── Global Collapsible Sidebar ─── */}
+      {/* Sidebar */}
       <aside
         className="no-print"
         style={{
-          width: sidebarOpen ? '240px' : '72px',
+          width: sidebarOpen ? '260px' : '72px',
           backgroundColor: 'var(--surface-color)',
           borderRight: '1px solid var(--border-color)',
           padding: '24px 12px',
           display: 'flex',
           flexDirection: 'column',
           gap: '24px',
-          transition: 'width 0.2s ease',
-          overflow: 'hidden',
-          flexShrink: 0,
+          transition: 'width 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+          zIndex: 10,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', paddingLeft: '8px' }}>
-          <span style={{ fontSize: '1.5rem' }}>🎵</span>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 4px' }}>
           {sidebarOpen && (
-            <span style={{ fontSize: '1.25rem', fontWeight: 700, whiteSpace: 'nowrap' }}>
+            <div className="brand-title" style={{ fontSize: '1.4rem' }}>
+              <div style={{ fontSize: '1.6rem' }}>🎵</div>
               Praise App
-            </span>
+            </div>
           )}
+          <button
+            className="action-icon-btn"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            title={sidebarOpen ? 'Recolher Menu' : 'Expandir Menu'}
+          >
+            <Menu size={20} />
+          </button>
         </div>
 
+        {/* User Account Widget */}
+        {sidebarOpen && currentUser && (
+          <div className="sidebar-user-widget">
+            <div className="sidebar-user-header">
+              <div className="sidebar-user-avatar">
+                {currentUser.name.charAt(0).toUpperCase()}
+              </div>
+              <div className="sidebar-user-info">
+                <div className="sidebar-user-name">{currentUser.name}</div>
+                <div className="sidebar-user-email">{currentUser.email}</div>
+              </div>
+            </div>
+            <button onClick={handleLogout} className="sidebar-logout-btn">
+              <LogOut size={14} />
+              Sair da Conta
+            </button>
+          </div>
+        )}
+
+        {/* Group Selection Card */}
+        {sidebarOpen && activeGroup && (
+          <div className="sidebar-group-card">
+            <div className="sidebar-group-header">
+              <span className="sidebar-group-label">Grupo de Louvor</span>
+              <span className={`sidebar-role-badge ${userRole === 'admin' ? 'admin' : 'member'}`}>
+                {userRole.toUpperCase()}
+              </span>
+            </div>
+            <select
+              value={activeGroup.id}
+              onChange={(e) => {
+                const selected = groups.find((g) => g.id === e.target.value);
+                if (selected) setActiveGroup(selected);
+              }}
+              className="sidebar-group-select"
+            >
+              {groups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Group Action Buttons */}
+        {sidebarOpen && (
+          <div className="sidebar-actions-group">
+            <button
+              onClick={() => setShowCreateGroupModal(true)}
+              className="sidebar-action-btn primary"
+            >
+              <Plus size={14} />
+              <span>Criar Novo Grupo</span>
+            </button>
+            <button
+              onClick={() => setShowJoinModal(true)}
+              className="sidebar-action-btn secondary"
+            >
+              <KeyRound size={14} />
+              <span>Entrar com Código</span>
+            </button>
+            {activeGroup && userRole === 'admin' && (
+              <button
+                onClick={() => setShowInviteModal(true)}
+                className="sidebar-action-btn secondary"
+              >
+                <UserPlus size={14} />
+                <span>Gerar Convite</span>
+              </button>
+            )}
+          </div>
+        )}
+
         <nav style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
+          <button
+            onClick={() => {
+              setMainModule('dashboard');
+              handleBackToMain();
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              padding: '12px 16px',
+              borderRadius: '8px',
+              border: 'none',
+              backgroundColor: mainModule === 'dashboard' ? 'var(--primary-color)' : 'transparent',
+              color: 'var(--text-primary)',
+              cursor: 'pointer',
+              fontWeight: 600,
+              textAlign: 'left',
+            }}
+          >
+            <Home size={20} />
+            {sidebarOpen && <span>Início</span>}
+          </button>
+
           <button
             onClick={() => {
               setMainModule('repertoire');
@@ -408,15 +609,12 @@ export default function App() {
               backgroundColor: mainModule === 'repertoire' ? 'var(--primary-color)' : 'transparent',
               color: 'var(--text-primary)',
               cursor: 'pointer',
-              textAlign: 'left',
               fontWeight: 600,
-              width: '100%',
-              transition: 'background-color 0.2s',
+              textAlign: 'left',
             }}
-            title="Repertório"
           >
-            <Music size={18} />
-            {sidebarOpen && <span style={{ whiteSpace: 'nowrap' }}>Repertório</span>}
+            <Music size={20} />
+            {sidebarOpen && <span>Repertório</span>}
           </button>
 
           <button
@@ -434,103 +632,104 @@ export default function App() {
               backgroundColor: mainModule === 'cifrador' ? 'var(--primary-color)' : 'transparent',
               color: 'var(--text-primary)',
               cursor: 'pointer',
-              textAlign: 'left',
               fontWeight: 600,
-              width: '100%',
-              transition: 'background-color 0.2s',
+              textAlign: 'left',
             }}
-            title="Cifrador"
           >
-            <Edit3 size={18} />
-            {sidebarOpen && <span style={{ whiteSpace: 'nowrap' }}>Cifrador</span>}
+            <Edit3 size={20} />
+            {sidebarOpen && <span>Cifras Inteligentes</span>}
+          </button>
+
+          <button
+            onClick={() => {
+              setMainModule('schedules');
+              handleBackToMain();
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              padding: '12px 16px',
+              borderRadius: '8px',
+              border: 'none',
+              backgroundColor: mainModule === 'schedules' ? 'var(--primary-color)' : 'transparent',
+              color: 'var(--text-primary)',
+              cursor: 'pointer',
+              fontWeight: 600,
+              textAlign: 'left',
+            }}
+          >
+            <CalendarIcon size={20} />
+            {sidebarOpen && <span>Escalas</span>}
           </button>
         </nav>
       </aside>
 
-      {/* ─── Main View Container ─── */}
+      {/* Main Container Layout */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-        {/* Toast Notifications */}
-        <div className="toast-container">
-          {toasts.map((toast) => (
-            <div key={toast.id} className={`toast ${toast.type}`}>
-              {toast.type === 'success' ? <CheckCircle size={16} /> : <XCircle size={16} />}
-              {toast.message}
-            </div>
-          ))}
-        </div>
-
-        {/* Header toolbar */}
+        {/* Module Header Bar */}
         {!selectedSong && !selectedFolder && (
-          <header className="app-header no-print" style={{ padding: '24px 24px 0 24px', margin: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: '20px', flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-              <button
-                className="icon-btn"
-                onClick={() => setSidebarOpen(!sidebarOpen)}
-                style={{
-                  padding: '8px',
-                  borderRadius: '8px',
-                  border: '1px solid var(--border-color)',
-                  backgroundColor: 'var(--surface-color)',
-                  cursor: 'pointer',
-                  color: 'var(--text-primary)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-                title={sidebarOpen ? "Recolher menu" : "Expandir menu"}
-              >
-                <Menu size={18} />
-              </button>
+          <header
+            className="no-print"
+            style={{
+              padding: '16px 24px',
+              backgroundColor: 'var(--surface-color)',
+              borderBottom: '1px solid var(--border-color)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
-                <h1 className="brand-title" style={{ fontSize: '1.25rem', margin: 0 }}>
-                  {mainModule === 'repertoire' ? 'Louvores & Repertório' : 'Cifrador Inteligente'}
+                <h1 style={{ fontSize: '1.25rem', fontWeight: 700 }}>
+                  {mainModule === 'dashboard' && 'Painel Inicial'}
+                  {mainModule === 'repertoire' && 'Repertório do Louvor'}
+                  {mainModule === 'cifrador' && 'Estúdio de Cifras Inteligentes'}
+                  {mainModule === 'schedules' && 'Escalas do Louvor'}
                 </h1>
-                <span className="brand-subtitle" style={{ fontSize: '0.8rem', opacity: 0.7 }}>
-                  {mainModule === 'repertoire' ? 'Gestão de Músicas, Pastas e Artistas' : 'Criação e transposição de cifras autônomas'}
-                </span>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                  {activeGroup ? activeGroup.name : 'Nenhum grupo selecionado'}
+                </p>
               </div>
-            </div>
 
-            {mainModule === 'repertoire' && (
-              <nav className="tab-bar" style={{ margin: 0, borderBottom: 'none' }}>
-                <button
-                  className={`tab-btn ${activeTab === 'songs' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('songs')}
-                >
-                  Músicas
-                  <span className="badge-count">{counts.songs}</span>
-                </button>
-                <button
-                  className={`tab-btn ${activeTab === 'folders' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('folders')}
-                >
-                  Pastas
-                  <span className="badge-count">{counts.folders}</span>
-                </button>
-                <button
-                  className={`tab-btn ${activeTab === 'artists' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('artists')}
-                >
-                  Artistas
-                  <span className="badge-count">{counts.artists}</span>
-                </button>
-              </nav>
-            )}
+              {mainModule === 'repertoire' && (
+                <nav className="tab-bar" style={{ borderBottom: 'none' }}>
+                  <button
+                    className={`tab-btn ${activeTab === 'songs' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('songs')}
+                  >
+                    Músicas
+                    <span className="badge-count">{counts.songs}</span>
+                  </button>
+                  <button
+                    className={`tab-btn ${activeTab === 'folders' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('folders')}
+                  >
+                    Pastas
+                    <span className="badge-count">{counts.folders}</span>
+                  </button>
+                  <button
+                    className={`tab-btn ${activeTab === 'artists' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('artists')}
+                  >
+                    Artistas
+                    <span className="badge-count">{counts.artists}</span>
+                  </button>
+                </nav>
+              )}
+            </div>
           </header>
         )}
 
         {/* View contents wrapper */}
         <div className="app-container" style={{ flex: 1, padding: '24px', maxWidth: 'none', margin: 0 }}>
-          {/* Detail Views */}
           {selectedSong && (
             <SongDetail
               song={selectedSong}
               onBack={handleBackToMain}
-              onEdit={() => {
+              onEdit={userRole === 'admin' ? () => {
                 setSongToEdit(selectedSong);
                 setShowSongModal(true);
-              }}
-              onDelete={() => handleDeleteSong(selectedSong.id)}
+              } : undefined}
+              onDelete={userRole === 'admin' ? () => handleDeleteSong(selectedSong.id) : undefined}
             />
           )}
 
@@ -539,34 +738,68 @@ export default function App() {
               folder={selectedFolder}
               allSongs={songs}
               onBack={handleBackToMain}
-              onEdit={() => handleOpenEditFolder(selectedFolder)}
-              onAddSong={handleAddSongToFolder}
-              onRemoveSong={handleRemoveSongFromFolder}
+              onEdit={userRole === 'admin' ? () => handleOpenEditFolder(selectedFolder) : undefined}
+              onAddSong={userRole === 'admin' ? handleAddSongToFolder : undefined}
+              onRemoveSong={userRole === 'admin' ? handleRemoveSongFromFolder : undefined}
               onSongSelect={handleSelectSong}
             />
           )}
 
-          {/* Navigation Views */}
-          {!selectedSong && !selectedFolder && (
+          {!selectedSong && !selectedFolder && !activeGroup && (
+            <div className="empty-state" style={{ minHeight: '400px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '40px 20px' }}>
+              <div style={{ fontSize: '3.5rem', marginBottom: '16px' }}>👥</div>
+              <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '8px', color: '#FFF' }}>Nenhum Grupo de Louvor Selecionado</h2>
+              <p style={{ color: 'var(--text-secondary)', maxWidth: '480px', marginBottom: '24px', lineHeight: 1.5 }}>
+                Você ainda não faz parte de nenhum grupo de louvor cadastrado. Crie o seu grupo como líder ou digite um código de convite (ex: PR-8X2K) para ingressar.
+              </p>
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                <button className="btn btn-primary" onClick={() => setShowCreateGroupModal(true)} style={{ padding: '12px 24px' }}>
+                  <Building2 size={18} /> Criar Meu Grupo de Louvor
+                </button>
+                <button className="btn btn-secondary" onClick={() => setShowJoinModal(true)} style={{ padding: '12px 24px' }}>
+                  <KeyRound size={18} /> Entrar com Código de Convite
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!selectedSong && !selectedFolder && activeGroup && (
             <main style={{ position: 'relative' }}>
+              {mainModule === 'dashboard' && (
+                <DashboardView
+                  currentUser={currentUser}
+                  groups={groups}
+                  activeGroup={activeGroup}
+                  schedules={schedules}
+                  onSelectGroup={(g) => setActiveGroup(g)}
+                  onCreateGroup={() => setShowCreateGroupModal(true)}
+                  onJoinGroup={() => setShowJoinModal(true)}
+                  onNavigateToRepertoire={() => {
+                    setMainModule('repertoire');
+                    setActiveTab('songs');
+                    handleBackToMain();
+                  }}
+                  onNavigateToSchedules={() => setMainModule('schedules')}
+                />
+              )}
               {mainModule === 'repertoire' && activeTab === 'songs' && (
                 <>
-                  {/* Search & Filter Controls */}
                   <div className="search-filter-row">
                     <div className="search-wrapper">
                       <Search size={18} className="search-icon" />
                       <input
                         type="text"
+                        placeholder="Buscar músicas por título, artista ou letra..."
                         className="search-input"
-                        placeholder="Buscar por título ou artista..."
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
                       />
                       {search && (
-                        <button className="clear-search-btn" onClick={() => setSearch('')}>✕</button>
+                        <button className="clear-search-btn" onClick={() => setSearch('')}>
+                          ✕
+                        </button>
                       )}
                     </div>
-                    
                     <div style={{ position: 'relative' }}>
                       <button
                         ref={filterBtnRef}
@@ -575,9 +808,8 @@ export default function App() {
                         title="Filtros"
                       >
                         <SlidersHorizontal size={20} />
-                        {hasActiveFilters && <span className="active-dot"></span>}
+                        {hasActiveFilters && <span className="active-dot" />}
                       </button>
-
                       {showFilters && (
                         <FilterPopover
                           filters={filters}
@@ -588,21 +820,16 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Songs List */}
                   {loadingSongs ? (
                     <div className="songs-list">
-                      {[...Array(5)].map((_, i) => (
-                        <div key={i} className="song-card-shimmer shimmer"></div>
-                      ))}
+                      <div className="shimmer song-card-shimmer" />
+                      <div className="shimmer song-card-shimmer" />
+                      <div className="shimmer song-card-shimmer" />
                     </div>
                   ) : songs.length > 0 ? (
                     <div className="songs-list">
                       {songs.map((song) => (
-                        <SongCard
-                          key={song.id}
-                          song={song}
-                          onTap={() => handleSelectSong(song)}
-                        />
+                        <SongCard key={song.id} song={song} onTap={() => handleSelectSong(song)} />
                       ))}
                     </div>
                   ) : (
@@ -610,16 +837,18 @@ export default function App() {
                       <div className="empty-icon">🎵</div>
                       <div className="empty-title">Nenhuma música encontrada</div>
                       <div className="empty-desc">
-                        {hasActiveFilters
-                          ? 'Tente limpar alguns filtros para ver mais resultados.'
-                          : 'Adicione sua primeira música clicando no botão abaixo.'}
+                        {search || hasActiveFilters
+                          ? 'Tente alterar os termos da busca ou remover os filtros aplicados.'
+                          : 'Adicione músicas ao repertório do seu grupo.'}
                       </div>
-                      {!hasActiveFilters && (
-                        <button className="btn btn-primary" onClick={handleFABClick}>
-                          <Plus size={16} /> Adicionar Música
-                        </button>
-                      )}
                     </div>
+                  )}
+
+                  {userRole === 'admin' && (
+                    <button className="extended-fab" onClick={handleFABClick}>
+                      <Plus size={20} />
+                      Nova Música
+                    </button>
                   )}
                 </>
               )}
@@ -628,9 +857,8 @@ export default function App() {
                 <>
                   {loadingFolders ? (
                     <div className="folders-grid">
-                      {[...Array(4)].map((_, i) => (
-                        <div key={i} className="folder-card-shimmer shimmer"></div>
-                      ))}
+                      <div className="shimmer folder-card-shimmer" />
+                      <div className="shimmer folder-card-shimmer" />
                     </div>
                   ) : folders.length > 0 ? (
                     <div className="folders-grid">
@@ -639,8 +867,11 @@ export default function App() {
                           key={folder.id}
                           folder={folder}
                           onTap={() => handleSelectFolder(folder)}
-                          onEdit={() => handleOpenEditFolder(folder)}
-                          onDelete={() => handleDeleteFolder(folder.id)}
+                          onEdit={userRole === 'admin' ? (e) => {
+                            e.stopPropagation();
+                            handleOpenEditFolder(folder);
+                          } : undefined}
+                          onDelete={userRole === 'admin' ? (e) => handleDeleteFolder(folder.id, e) : undefined}
                         />
                       ))}
                     </div>
@@ -648,11 +879,15 @@ export default function App() {
                     <div className="empty-state">
                       <div className="empty-icon">📁</div>
                       <div className="empty-title">Nenhuma pasta cadastrada</div>
-                      <div className="empty-desc">Crie pastas temáticas para organizar seu repertório.</div>
-                      <button className="btn btn-primary" onClick={handleFABClick}>
-                        <Plus size={16} /> Criar Pasta
-                      </button>
+                      <div className="empty-desc">Crie pastas para organizar os momentos do culto.</div>
                     </div>
+                  )}
+
+                  {userRole === 'admin' && (
+                    <button className="extended-fab" onClick={handleFABClick}>
+                      <Plus size={20} />
+                      Nova Pasta
+                    </button>
                   )}
                 </>
               )}
@@ -660,18 +895,20 @@ export default function App() {
               {mainModule === 'repertoire' && activeTab === 'artists' && (
                 <>
                   {loadingArtists ? (
-                    <div style={{ padding: '40px 0', textAlign: 'center' }}>Carregando artistas...</div>
-                  ) : artists.length > 0 ? (
                     <div className="artists-list">
-                      {Object.entries(getGroupedArtists()).map(([letter, group]) => (
+                      <div className="shimmer song-card-shimmer" />
+                    </div>
+                  ) : Object.keys(groupedArtists()).length > 0 ? (
+                    <div className="artists-list">
+                      {Object.entries(groupedArtists()).map(([letter, groupArtists]) => (
                         <div key={letter}>
                           <div className="artist-group-header">{letter}</div>
                           <div className="artist-group-items">
-                            {group.map((artist) => (
+                            {groupArtists.map((artist) => (
                               <ArtistCard
                                 key={artist.id}
                                 artist={artist}
-                                onDelete={() => handleDeleteArtist(artist.id)}
+                                onDelete={userRole === 'admin' ? () => handleDeleteArtist(artist.id) : undefined}
                               />
                             ))}
                           </div>
@@ -680,13 +917,17 @@ export default function App() {
                     </div>
                   ) : (
                     <div className="empty-state">
-                      <div className="empty-icon">👤</div>
+                      <div className="empty-icon">🎤</div>
                       <div className="empty-title">Nenhum artista cadastrado</div>
-                      <div className="empty-desc">Cadastre artistas para associar às suas músicas.</div>
-                      <button className="btn btn-primary" onClick={handleFABClick}>
-                        <Plus size={16} /> Adicionar Artista
-                      </button>
+                      <div className="empty-desc">Cadastre cantores ou ministérios de referência.</div>
                     </div>
+                  )}
+
+                  {userRole === 'admin' && (
+                    <button className="extended-fab" onClick={handleFABClick}>
+                      <Plus size={20} />
+                      Novo Artista
+                    </button>
                   )}
                 </>
               )}
@@ -695,71 +936,69 @@ export default function App() {
                 <SmartChordsWorkspace />
               )}
 
-              {/* Floating Action Button (FAB) */}
-              {mainModule === 'repertoire' && (
-                <button className="extended-fab" onClick={handleFABClick}>
-                  <Plus size={18} />
-                  <span>
-                    {activeTab === 'songs' ? 'Nova Música' : activeTab === 'folders' ? 'Nova Pasta' : 'Novo Artista'}
-                  </span>
-                </button>
+              {mainModule === 'schedules' && (
+                <SchedulesView
+                  groupId={groupId}
+                  userRole={userRole}
+                  allSongs={songs}
+                  schedules={schedules}
+                  onCreateSchedule={() => setShowCreateScheduleModal(true)}
+                />
               )}
             </main>
           )}
         </div>
       </div>
 
-      {/* Song Add/Edit Modal */}
+      {/* Modais Globais */}
       {showSongModal && (
         <SongFormModal
           song={songToEdit}
           artists={artists}
           classifications={classifications}
           onSave={handleSaveSong}
-          onClose={() => {
-            setShowSongModal(false);
-            setSongToEdit(null);
-          }}
+          onClose={() => setShowSongModal(false)}
         />
       )}
 
-      {/* Folder Add/Edit Modal */}
       {showFolderModal && (
         <div className="modal-overlay" onClick={() => setShowFolderModal(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <div className="modal-title">{folderToEdit ? 'Editar Pasta' : 'Nova Pasta'}</div>
-              <button className="action-icon-btn" onClick={() => setShowFolderModal(false)} style={{ fontSize: '1.25rem' }}>✕</button>
+              <div className="modal-title">
+                {folderToEdit ? 'Editar Pasta' : 'Nova Pasta'}
+              </div>
+              <button className="action-icon-btn" onClick={() => setShowFolderModal(false)}>
+                ✕
+              </button>
             </div>
-            <form onSubmit={handleSaveFolder}>
+            <form onSubmit={handleCreateFolder} className="login-form">
               <div className="form-group">
-                <label>Nome da Pasta *</label>
+                <label>Nome da Pasta</label>
                 <input
                   type="text"
-                  className="input-field"
-                  placeholder="Ex: Músicas Rápidas / Celebração"
                   value={folderName}
                   onChange={(e) => setFolderName(e.target.value)}
+                  placeholder="Ex: Culto de Domingo, Ceia, Jovens..."
+                  className="input-field"
                   required
-                  autoFocus
                 />
               </div>
               <div className="form-group">
-                <label>Descrição (opcional)</label>
-                <input
-                  type="text"
-                  className="input-field"
-                  placeholder="Ex: Para abertura do culto"
+                <label>Descrição (Opcional)</label>
+                <textarea
                   value={folderDesc}
                   onChange={(e) => setFolderDesc(e.target.value)}
+                  placeholder="Descreva o propósito ou momento desta pasta..."
+                  className="textarea-field"
                 />
               </div>
               <div className="form-actions">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowFolderModal(false)}>
                   Cancelar
                 </button>
-                <button type="submit" className="btn btn-primary" disabled={!folderName.trim()}>
-                  {folderToEdit ? 'Salvar' : 'Criar'}
+                <button type="submit" className="btn btn-primary">
+                  {folderToEdit ? 'Salvar Alterações' : 'Criar Pasta'}
                 </button>
               </div>
             </form>
@@ -767,23 +1006,24 @@ export default function App() {
         </div>
       )}
 
-      {/* Artist Add Modal */}
       {showArtistModal && (
         <div className="modal-overlay" onClick={() => setShowArtistModal(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <div className="modal-title">Novo Artista</div>
-              <button className="action-icon-btn" onClick={() => setShowArtistModal(false)} style={{ fontSize: '1.25rem' }}>✕</button>
+              <button className="action-icon-btn" onClick={() => setShowArtistModal(false)}>
+                ✕
+              </button>
             </div>
-            <form onSubmit={handleSaveArtist}>
+            <form onSubmit={handleCreateArtist} className="login-form">
               <div className="form-group">
-                <label>Nome do Artista ou Banda *</label>
+                <label>Nome do Artista ou Banda</label>
                 <input
                   type="text"
-                  className="input-field"
-                  placeholder="Ex: Fernandinho / Hillsong"
                   value={artistName}
                   onChange={(e) => setArtistName(e.target.value)}
+                  placeholder="Ex: Fernandinho, Gabriela Rocha, Hillsong..."
+                  className="input-field"
                   required
                   autoFocus
                 />
@@ -792,14 +1032,66 @@ export default function App() {
                 <button type="button" className="btn btn-secondary" onClick={() => setShowArtistModal(false)}>
                   Cancelar
                 </button>
-                <button type="submit" className="btn btn-primary" disabled={!artistName.trim()}>
-                  Criar
+                <button type="submit" className="btn btn-primary">
+                  Criar Artista
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
+
+      <JoinGroupModal
+        isOpen={showJoinModal}
+        onClose={() => setShowJoinModal(false)}
+        onSuccess={(newGroup) => {
+          loadUserGroups();
+          setActiveGroup(newGroup);
+          showToast(`Você entrou no grupo "${newGroup.name}"!`);
+        }}
+      />
+
+      {activeGroup && (
+        <InviteCodeModal
+          isOpen={showInviteModal}
+          groupId={activeGroup.id}
+          groupName={activeGroup.name}
+          onClose={() => setShowInviteModal(false)}
+        />
+      )}
+
+      {showCreateGroupModal && (
+        <CreateGroupModal
+          onClose={() => setShowCreateGroupModal(false)}
+          onSuccess={(newGroup) => {
+            setGroups((prev) => [...prev, newGroup]);
+            setActiveGroup(newGroup);
+            showToast(`Grupo "${newGroup.name}" criado com sucesso!`);
+          }}
+        />
+      )}
+
+      {showCreateScheduleModal && (
+        <CreateScheduleModal
+          allSongs={songs}
+          onClose={() => setShowCreateScheduleModal(false)}
+          onSave={(newSchedule) => {
+            setSchedules((prev) => [newSchedule as ScheduleItem, ...prev]);
+            setShowCreateScheduleModal(false);
+            showToast(`Escala "${newSchedule.title}" criada com sucesso!`);
+          }}
+        />
+      )}
+
+      {/* Toast Notifications container */}
+      <div className="toast-container">
+        {toasts.map((toast) => (
+          <div key={toast.id} className={`toast ${toast.type}`}>
+            {toast.type === 'success' ? <CheckCircle size={18} /> : <XCircle size={18} />}
+            <span>{toast.message}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

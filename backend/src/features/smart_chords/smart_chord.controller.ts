@@ -6,14 +6,11 @@ import {
   smartChordsQuerySchema,
 } from './smart_chord.types';
 
-// Helper to extract x-user-id header with a fallback dev user
 function getUserId(req: Request): string {
-  const userId = req.headers['x-user-id'];
-  if (!userId) {
-    // Default development user fallback
-    return 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22';
-  }
-  return String(userId);
+  return (
+    (req.headers['x-user-id'] as string) ||
+    'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22'
+  );
 }
 
 export async function listSmartChords(
@@ -27,10 +24,9 @@ export async function listSmartChords(
 
     const result = await smartChordService.getSmartChords(userId, {
       search: query.search,
-      page: query.page ? parseInt(query.page) : undefined,
-      limit: query.limit ? parseInt(query.limit) : undefined,
+      page: query.page ? Number(query.page) : undefined,
+      limit: query.limit ? Number(query.limit) : undefined,
     });
-
     res.json(result);
   } catch (error) {
     next(error);
@@ -44,7 +40,7 @@ export async function getSmartChord(
 ): Promise<void> {
   try {
     const userId = getUserId(req);
-    const { id } = req.params;
+    const id = req.params.id as string;
 
     const result = await smartChordService.getSmartChordById(id, userId);
     res.json(result);
@@ -76,7 +72,7 @@ export async function updateSmartChord(
 ): Promise<void> {
   try {
     const userId = getUserId(req);
-    const { id } = req.params;
+    const id = req.params.id as string;
     const body = updateSmartChordSchema.parse(req.body);
 
     const result = await smartChordService.updateSmartChord(id, userId, body);
@@ -93,7 +89,7 @@ export async function deleteSmartChord(
 ): Promise<void> {
   try {
     const userId = getUserId(req);
-    const { id } = req.params;
+    const id = req.params.id as string;
 
     await smartChordService.deleteSmartChord(id, userId);
     res.status(204).end();

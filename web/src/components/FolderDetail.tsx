@@ -6,9 +6,9 @@ interface FolderDetailProps {
   folder: Folder;
   allSongs: Song[];
   onBack: () => void;
-  onEdit: () => void;
-  onAddSong: (songId: string) => Promise<void>;
-  onRemoveSong: (songId: string) => Promise<void>;
+  onEdit?: () => void;
+  onAddSong?: (songId: string) => Promise<void>;
+  onRemoveSong?: (songId: string) => Promise<void>;
   onSongSelect: (song: Song) => void;
 }
 
@@ -29,7 +29,8 @@ export const FolderDetail: React.FC<FolderDetailProps> = ({
   const existingSongIds = new Set(folder.songs.map((s) => s.id));
   const availableSongs = allSongs.filter((s) => !existingSongIds.has(s.id));
 
-  const handleAddSong = async (songId: string) => {
+  const handleAdd = async (songId: string) => {
+    if (!onAddSong) return;
     setAddingId(songId);
     try {
       await onAddSong(songId);
@@ -38,9 +39,9 @@ export const FolderDetail: React.FC<FolderDetailProps> = ({
     }
   };
 
-  const handleRemoveSong = async (e: React.MouseEvent, songId: string) => {
+  const handleRemove = async (songId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm('Tem certeza que deseja remover esta música da pasta?')) return;
+    if (!onRemoveSong) return;
     setRemovingId(songId);
     try {
       await onRemoveSong(songId);
@@ -64,14 +65,18 @@ export const FolderDetail: React.FC<FolderDetailProps> = ({
           <span className="detail-subtitle">{folder.description || 'Sem descrição cadastrada.'}</span>
         </div>
         <div style={{ display: 'flex', gap: '12px' }}>
-          <button className="btn btn-secondary" onClick={onEdit}>
-            <Edit2 size={16} />
-            Editar pasta
-          </button>
-          <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>
-            <Plus size={16} />
-            Adicionar música
-          </button>
+          {onEdit && (
+            <button className="btn btn-secondary" onClick={onEdit}>
+              <Edit2 size={16} />
+              Editar pasta
+            </button>
+          )}
+          {onAddSong && (
+            <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>
+              <Plus size={16} />
+              Adicionar música
+            </button>
+          )}
         </div>
       </div>
 
@@ -127,98 +132,78 @@ export const FolderDetail: React.FC<FolderDetailProps> = ({
                     )}
                   </div>
                 </div>
-                
-                <button
-                  className="action-icon-btn delete"
-                  title="Remover da pasta"
-                  onClick={(e) => handleRemoveSong(e, song.id)}
-                  disabled={removingId === song.id}
-                  style={{
-                    padding: '8px',
-                    borderRadius: '50%',
-                    position: 'absolute',
-                    right: '16px',
-                    top: '50%',
-                    transform: 'translateY(-50%)',
-                  }}
-                >
-                  <Minus size={18} />
-                </button>
+
+                {onRemoveSong && (
+                  <button
+                    className="action-icon-btn delete"
+                    title="Remover da pasta"
+                    onClick={(e) => handleRemove(song.id, e)}
+                    disabled={removingId === song.id}
+                    style={{ position: 'absolute', right: '16px', top: '16px' }}
+                  >
+                    <Minus size={16} />
+                  </button>
+                )}
               </div>
             );
           })}
         </div>
       ) : (
-        <div className="empty-state">
-          <div className="empty-icon">📁</div>
-          <div className="empty-title">Pasta vazia</div>
-          <div className="empty-desc">Nenhuma música adicionada a esta pasta ainda.</div>
-          <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>
-            <Plus size={16} />
-            Adicionar primeira música
-          </button>
+        <div className="empty-state" style={{ minHeight: '200px' }}>
+          <div className="empty-icon">📂</div>
+          <div className="empty-title">Nenhuma música nesta pasta</div>
+          <div className="empty-desc">Adicione músicas do seu repertório a esta pasta.</div>
+          {onAddSong && (
+            <button className="btn btn-primary" onClick={() => setShowAddModal(true)} style={{ marginTop: '12px' }}>
+              <Plus size={16} /> Adicionar Música
+            </button>
+          )}
         </div>
       )}
 
-      {/* Add Songs Modal */}
+      {/* Modal para adicionar músicas à pasta */}
       {showAddModal && (
         <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '460px' }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <div className="modal-title">Adicionar Música</div>
-              <button className="action-icon-btn" onClick={() => setShowAddModal(false)} style={{ fontSize: '1.25rem' }}>✕</button>
+              <div className="modal-title">Adicionar Músicas</div>
+              <button className="action-icon-btn" onClick={() => setShowAddModal(false)} style={{ fontSize: '1.25rem' }}>
+                ✕
+              </button>
             </div>
-            
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '16px' }}>
-              Selecione uma música do repertório para adicionar a esta pasta:
-            </p>
 
-            <div style={{ maxHeight: '350px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', paddingRight: '4px' }}>
-              {availableSongs.length > 0 ? (
-                availableSongs.map((song) => (
+            {availableSongs.length > 0 ? (
+              <div className="songs-list" style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                {availableSongs.map((song) => (
                   <div
                     key={song.id}
-                    onClick={() => addingId !== song.id && handleAddSong(song.id)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '12px',
-                      backgroundColor: 'var(--surface-variant)',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: 'var(--border-radius-sm)',
-                      cursor: addingId === song.id ? 'not-allowed' : 'pointer',
-                      transition: 'var(--transition-fast)',
-                    }}
-                    className="add-song-row"
+                    className="song-card"
+                    style={{ padding: '12px', cursor: 'default' }}
                   >
-                    <div style={{ minWidth: 0, flex: 1, paddingRight: '8px' }}>
-                      <div style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <div className="song-info">
+                      <div className="song-card-title" style={{ fontSize: '0.95rem' }}>
                         {song.title}
                       </div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                      <div className="song-card-artist" style={{ fontSize: '0.8rem' }}>
                         {song.artistName || 'Artista desconhecido'}
                       </div>
                     </div>
                     <button
-                      className="action-icon-btn"
-                      style={{ color: 'var(--primary-light)', backgroundColor: 'transparent' }}
+                      className="btn btn-primary"
+                      style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                      onClick={() => handleAdd(song.id)}
                       disabled={addingId === song.id}
                     >
-                      {addingId === song.id ? (
-                        <span style={{ fontSize: '12px' }}>Aguarde...</span>
-                      ) : (
-                        <Plus size={18} />
-                      )}
+                      {addingId === song.id ? 'Adicionando...' : 'Adicionar'}
                     </button>
                   </div>
-                ))
-              ) : (
-                <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                  Nenhuma música nova disponível para adicionar.
-                </div>
-              )}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-state" style={{ padding: '30px 0' }}>
+                <div className="empty-desc">Todas as músicas cadastradas já estão nesta pasta.</div>
+              </div>
+            )}
 
             <div className="form-actions" style={{ marginTop: '20px' }}>
               <button className="btn btn-secondary" onClick={() => setShowAddModal(false)}>

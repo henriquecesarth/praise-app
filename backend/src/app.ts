@@ -2,7 +2,11 @@ import express from 'express';
 import cors from 'cors';
 import repertoireRoutes from './features/repertoire/repertoire.routes';
 import smartChordRoutes from './features/smart_chords/smart_chord.routes';
+import groupRoutes from './features/groups/group.routes';
+import liturgyRoutes from './features/liturgies/liturgy.routes';
+import authRoutes from './features/auth/auth.routes';
 import { errorHandler } from './middleware/error-handler';
+import { env } from './config/env';
 
 const app = express();
 
@@ -18,19 +22,23 @@ app.get('/api/health', (_req, res) => {
 // ─── Diagnostic Endpoint ──────────────────────────────────────
 app.get('/api/diag', (_req, res) => {
   const envConfig = {
-    supabaseUrl_defined: !!process.env.SUPABASE_URL,
-    supabaseUrl_length: (process.env.SUPABASE_URL || '').length,
-    supabaseUrl_startsWith: (process.env.SUPABASE_URL || '').substring(0, 8),
-    supabaseAnonKey_defined: !!process.env.SUPABASE_ANON_KEY,
-    supabaseAnonKey_length: (process.env.SUPABASE_ANON_KEY || '').length,
-    supabaseServiceRoleKey_defined: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
-    supabaseServiceRoleKey_length: (process.env.SUPABASE_SERVICE_ROLE_KEY || '').length,
-    defaultMinistryId: process.env.DEFAULT_MINISTRY_ID || 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+    supabaseUrl_defined: !!env.supabaseUrl,
+    supabaseUrl_length: (env.supabaseUrl || '').length,
+    supabasePublishableKey_defined: !!env.supabasePublishableKey,
+    supabasePublishableKey_length: (env.supabasePublishableKey || '').length,
+    supabaseSecretKey_defined: !!env.supabaseSecretKey,
+    supabaseSecretKey_length: (env.supabaseSecretKey || '').length,
+    defaultMinistryId: env.defaultMinistryId,
   };
   res.json(envConfig);
 });
 
 // ─── Feature Routes ──────────────────────────────────────────
+app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/groups', groupRoutes);
+app.use('/api/v1/groups/:groupId/liturgies', liturgyRoutes);
+app.use('/api/v1/ministries/:ministryId/liturgies', liturgyRoutes);
+app.use('/api/v1/groups/:groupId', repertoireRoutes);
 app.use('/api/v1/ministries/:ministryId', repertoireRoutes);
 app.use('/api/v1/smart-chords', smartChordRoutes);
 
