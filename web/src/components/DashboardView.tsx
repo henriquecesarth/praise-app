@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Building2, Plus, Calendar, Cake, ArrowRight, CheckCircle2, Clock, Sparkles, Megaphone, ChevronRight } from 'lucide-react';
-import { Group } from '../types';
+import { Ministry } from '../types';
 import { ScheduleItem } from './CreateScheduleModal';
 
 interface UserState {
@@ -11,14 +11,21 @@ interface UserState {
 
 interface DashboardViewProps {
   currentUser: UserState;
-  groups: Group[];
-  activeGroup: Group | null;
+  ministries?: Ministry[];
+  groups?: Ministry[];
+  activeMinistry?: Ministry | null;
+  activeGroup?: Ministry | null;
   schedules: ScheduleItem[];
-  onSelectGroup: (group: Group) => void;
-  onCreateGroup: () => void;
-  onJoinGroup: () => void;
+  userRole?: 'admin' | 'member';
+  onSelectMinistry?: (ministry: Ministry) => void;
+  onSelectGroup?: (group: Ministry) => void;
+  onCreateMinistry?: () => void;
+  onCreateGroup?: () => void;
+  onJoinMinistry?: () => void;
+  onJoinGroup?: () => void;
   onNavigateToRepertoire: () => void;
   onNavigateToSchedules: () => void;
+  onSelectSchedule: (schedule: ScheduleItem) => void;
 }
 
 // Sample announcements for worship team
@@ -69,17 +76,30 @@ const isUpcoming = (dateStr: string) => {
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   currentUser,
+  ministries,
   groups,
+  activeMinistry,
   activeGroup,
   schedules,
+  userRole = 'member',
+  onSelectMinistry,
   onSelectGroup,
+  onCreateMinistry,
   onCreateGroup,
+  onJoinMinistry,
   onJoinGroup,
   onNavigateToRepertoire,
   onNavigateToSchedules,
+  onSelectSchedule,
 }) => {
   const [showAllAnnouncements, setShowAllAnnouncements] = useState(false);
   const [showAllBirthdays, setShowAllBirthdays] = useState(false);
+
+  const ministryList = ministries || groups || [];
+  const currentActive = activeMinistry !== undefined ? activeMinistry : activeGroup;
+  const handleSelect = onSelectMinistry || onSelectGroup || (() => {});
+  const handleCreate = onCreateMinistry || onCreateGroup || (() => {});
+  const handleJoin = onJoinMinistry || onJoinGroup || (() => {});
 
   // Upcoming schedules sorted by date ascending
   const upcomingSchedules = schedules
@@ -112,7 +132,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* 4 Block Grid */}
       <div className="dashboard-grid">
-        {/* Block 1: Ministérios / Grupos */}
+        {/* Block 1: Ministérios */}
         <div className="dashboard-card">
           <div className="dashboard-card-header">
             <div className="dashboard-card-title-group">
@@ -121,36 +141,36 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
               <div>
                 <h2 className="dashboard-card-title">Ministérios</h2>
-                <span className="dashboard-card-subtitle">{groups.length} grupo(s) vinculado(s)</span>
+                <span className="dashboard-card-subtitle">{ministryList.length} ministério(s) vinculado(s)</span>
               </div>
             </div>
-            <button className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={onCreateGroup}>
+            <button className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={handleCreate}>
               <Plus size={14} /> Adicionar
             </button>
           </div>
 
           <div className="dashboard-card-body">
-            {groups.length > 0 ? (
+            {ministryList.length > 0 ? (
               <div className="dashboard-list">
-                {groups.map((group) => {
-                  const isActive = activeGroup?.id === group.id;
-                  const isAdmin = group.role === 'admin';
+                {ministryList.map((m) => {
+                  const isActive = currentActive?.id === m.id;
+                  const isAdmin = m.role === 'admin';
                   return (
                     <div
-                      key={group.id}
+                      key={m.id}
                       className={`dashboard-item-card ${isActive ? 'active' : ''}`}
-                      onClick={() => onSelectGroup(group)}
+                      onClick={() => handleSelect(m)}
                     >
                       <div className="dashboard-item-avatar">
-                        {group.name.charAt(0).toUpperCase()}
+                        {m.name.charAt(0).toUpperCase()}
                       </div>
                       <div className="dashboard-item-info">
                         <div className="dashboard-item-title-row">
-                          <span className="dashboard-item-title">{group.name}</span>
+                          <span className="dashboard-item-title">{m.name}</span>
                           {isActive && <span className="dashboard-item-active-tag">Ativo</span>}
                         </div>
                         <span className="dashboard-item-desc">
-                          {isAdmin ? 'Administrador do Grupo' : 'Integrante / Músico'}
+                          {isAdmin ? 'Administrador do Ministério' : 'Integrante / Músico'}
                         </span>
                       </div>
                       <span className={`sidebar-role-badge ${isAdmin ? 'admin' : 'member'}`}>
@@ -164,10 +184,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <div className="empty-state" style={{ padding: '20px 0' }}>
                 <p className="empty-desc" style={{ marginBottom: '12px' }}>Você ainda não pertence a nenhum ministério.</p>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                  <button className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={onCreateGroup}>
-                    Criar Grupo
+                  <button className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={handleCreate}>
+                    Criar Ministério
                   </button>
-                  <button className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={onJoinGroup}>
+                  <button className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={handleJoin}>
                     Entrar com Código
                   </button>
                 </div>
@@ -248,7 +268,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <div
                     key={sch.id}
                     className="dashboard-schedule-card"
-                    onClick={onNavigateToSchedules}
+                    onClick={() => onSelectSchedule(sch)}
                     style={{ cursor: 'pointer' }}
                   >
                     <div className="dashboard-schedule-info">
@@ -290,13 +310,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <p className="empty-desc" style={{ marginBottom: '12px' }}>
                   Nenhuma escala criada ainda.
                 </p>
-                <button
-                  className="btn btn-primary"
-                  style={{ padding: '6px 16px', fontSize: '0.8rem' }}
-                  onClick={onNavigateToSchedules}
-                >
-                  Criar Primeira Escala
-                </button>
+                {userRole === 'admin' ? (
+                  <button
+                    className="btn btn-primary"
+                    style={{ padding: '6px 16px', fontSize: '0.8rem' }}
+                    onClick={onNavigateToSchedules}
+                  >
+                    Criar Primeira Escala
+                  </button>
+                ) : (
+                  <button
+                    className="btn btn-secondary"
+                    style={{ padding: '6px 16px', fontSize: '0.8rem' }}
+                    onClick={onNavigateToSchedules}
+                  >
+                    Ver Escalas
+                  </button>
+                )}
               </div>
             )}
           </div>

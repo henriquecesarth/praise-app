@@ -1,89 +1,80 @@
 import { Response, NextFunction } from 'express';
+import { BaseController } from '../../controllers/BaseController';
 import { AuthenticatedRequest } from '../../middleware/auth';
 import { GroupService } from './group.service';
 
-export async function getUserGroups(
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction
-): Promise<void> {
-  try {
-    const userId = req.user!.id;
-    const groups = await GroupService.getUserGroups(userId);
-    res.json(groups);
-  } catch (err) {
-    next(err);
+export class GroupController extends BaseController {
+  constructor(private readonly groupService: GroupService = new GroupService()) {
+    super();
   }
+
+  getUserGroups = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user!.id;
+      const groups = await this.groupService.getUserGroups(userId);
+      this.handleSuccess(res, groups);
+    } catch (err) {
+      this.handleError(err, res, next);
+    }
+  };
+
+  getGroupById = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user!.id;
+      const groupId = req.params.groupId as string;
+      const group = await this.groupService.getGroupById(groupId, userId);
+      this.handleSuccess(res, group);
+    } catch (err) {
+      this.handleError(err, res, next);
+    }
+  };
+
+  createGroup = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user!.id;
+      const group = await this.groupService.createGroup(userId, req.body);
+      this.handleCreated(res, group);
+    } catch (err) {
+      this.handleError(err, res, next);
+    }
+  };
+
+  createInviteCode = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user!.id;
+      const groupId = req.params.groupId as string;
+      const invite = await this.groupService.createInviteCode(groupId, userId, req.body);
+      this.handleCreated(res, invite);
+    } catch (err) {
+      this.handleError(err, res, next);
+    }
+  };
+
+  joinGroupByCode = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user!.id;
+      const result = await this.groupService.joinGroupByCode(userId, req.body);
+      this.handleSuccess(res, result);
+    } catch (err) {
+      this.handleError(err, res, next);
+    }
+  };
+
+  getGroupMembers = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const groupId = req.params.groupId as string;
+      const members = await this.groupService.getGroupMembers(groupId);
+      this.handleSuccess(res, members);
+    } catch (err) {
+      this.handleError(err, res, next);
+    }
+  };
 }
 
-export async function getGroupById(
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction
-): Promise<void> {
-  try {
-    const userId = req.user!.id;
-    const groupId = req.params.groupId as string;
-    const group = await GroupService.getGroupById(groupId, userId);
-    res.json(group);
-  } catch (err) {
-    next(err);
-  }
-}
-
-export async function createGroup(
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction
-): Promise<void> {
-  try {
-    const userId = req.user!.id;
-    const group = await GroupService.createGroup(userId, req.body);
-    res.status(201).json(group);
-  } catch (err) {
-    next(err);
-  }
-}
-
-export async function createInviteCode(
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction
-): Promise<void> {
-  try {
-    const userId = req.user!.id;
-    const groupId = req.params.groupId as string;
-    const invite = await GroupService.createInviteCode(groupId, userId, req.body);
-    res.status(201).json(invite);
-  } catch (err) {
-    next(err);
-  }
-}
-
-export async function joinGroupByCode(
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction
-): Promise<void> {
-  try {
-    const userId = req.user!.id;
-    const result = await GroupService.joinGroupByCode(userId, req.body);
-    res.json(result);
-  } catch (err) {
-    next(err);
-  }
-}
-
-export async function getGroupMembers(
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction
-): Promise<void> {
-  try {
-    const groupId = req.params.groupId as string;
-    const members = await GroupService.getGroupMembers(groupId);
-    res.json(members);
-  } catch (err) {
-    next(err);
-  }
-}
+const instance = new GroupController();
+export const getUserGroups = instance.getUserGroups;
+export const getGroupById = instance.getGroupById;
+export const createGroup = instance.createGroup;
+export const createInviteCode = instance.createInviteCode;
+export const joinGroupByCode = instance.joinGroupByCode;
+export const getGroupMembers = instance.getGroupMembers;

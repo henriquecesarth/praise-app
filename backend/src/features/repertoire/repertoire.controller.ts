@@ -1,253 +1,274 @@
 import { Request, Response, NextFunction } from 'express';
+import { BaseController } from '../../controllers/BaseController';
+import { AppError } from '../../middleware/error-handler';
 import * as service from './repertoire.service';
 
 function getUserId(req: Request): string {
-  const headerUserId = req.headers['x-user-id'];
-  if (headerUserId && typeof headerUserId === 'string') {
-    return headerUserId;
-  }
   const anyReq = req as any;
-  if (anyReq.user?.id) {
-    return anyReq.user.id;
-  }
-  return 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22';
+  return anyReq.user?.id || 'anonymous';
 }
 
-// ============================================================
-// SONGS
-// ============================================================
-
-export async function listSongs(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { ministryId } = req.params as Record<string, string>;
-    const userId = getUserId(req);
-    const result = await service.getSongs(ministryId, userId, req.query as any);
-    res.json(result);
-  } catch (error) {
-    next(error);
+function getTargetGroupId(req: Request): string {
+  const params = req.params as Record<string, string>;
+  const groupId = params.groupId || params.ministryId;
+  if (!groupId || groupId === 'undefined') {
+    throw new AppError(400, 'ID do grupo não informado.');
   }
+  return groupId;
 }
 
-export async function getSong(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { ministryId, songId } = req.params as Record<string, string>;
-    const userId = getUserId(req);
-    const song = await service.getSongById(ministryId, songId, userId);
-    res.json({ data: song });
-  } catch (error) {
-    next(error);
-  }
+export class RepertoireController extends BaseController {
+  listSongs = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const groupId = getTargetGroupId(req);
+      const userId = getUserId(req);
+      const result = await service.getSongs(groupId, userId, req.query as any);
+      this.handleSuccess(res, result);
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  getSong = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const groupId = getTargetGroupId(req);
+      const { songId } = req.params as Record<string, string>;
+      const userId = getUserId(req);
+      const song = await service.getSongById(groupId, songId, userId);
+      this.handleSuccess(res, { data: song });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  createSong = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const groupId = getTargetGroupId(req);
+      const userId = getUserId(req);
+      const song = await service.createSong(groupId, userId, req.body);
+      this.handleCreated(res, { data: song });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  updateSong = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const groupId = getTargetGroupId(req);
+      const { songId } = req.params as Record<string, string>;
+      const userId = getUserId(req);
+      const song = await service.updateSong(groupId, songId, userId, req.body);
+      this.handleSuccess(res, { data: song });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  deleteSong = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const groupId = getTargetGroupId(req);
+      const { songId } = req.params as Record<string, string>;
+      const userId = getUserId(req);
+      await service.deleteSong(groupId, songId, userId);
+      this.handleNoContent(res);
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  getCounts = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const groupId = getTargetGroupId(req);
+      const counts = await service.getCounts(groupId);
+      this.handleSuccess(res, { data: counts });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  listArtists = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const groupId = getTargetGroupId(req);
+      const { search } = req.query as { search?: string };
+      const artists = await service.getArtists(groupId, search);
+      this.handleSuccess(res, { data: artists });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  createArtist = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const groupId = getTargetGroupId(req);
+      const { name } = req.body;
+      const artist = await service.createArtist(groupId, name);
+      this.handleCreated(res, { data: artist });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  updateArtist = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const groupId = getTargetGroupId(req);
+      const { artistId } = req.params as Record<string, string>;
+      const { name } = req.body;
+      const artist = await service.updateArtist(groupId, artistId, name);
+      this.handleSuccess(res, { data: artist });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  deleteArtist = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const groupId = getTargetGroupId(req);
+      const { artistId } = req.params as Record<string, string>;
+      await service.deleteArtist(groupId, artistId);
+      this.handleNoContent(res);
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  listClassifications = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const groupId = getTargetGroupId(req);
+      const classifications = await service.getClassifications(groupId);
+      this.handleSuccess(res, { data: classifications });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  createClassification = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const groupId = getTargetGroupId(req);
+      const classification = await service.createClassification(groupId, req.body);
+      this.handleCreated(res, { data: classification });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  updateClassification = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { classificationId } = req.params as Record<string, string>;
+      const classification = await service.updateClassification(classificationId, req.body);
+      this.handleSuccess(res, { data: classification });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  deleteClassification = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { classificationId } = req.params as Record<string, string>;
+      await service.deleteClassification(classificationId);
+      this.handleNoContent(res);
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  listFolders = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const groupId = getTargetGroupId(req);
+      const folders = await service.getFolders(groupId);
+      this.handleSuccess(res, { data: folders });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  getFolder = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const groupId = getTargetGroupId(req);
+      const { folderId } = req.params as Record<string, string>;
+      const folder = await service.getFolderById(groupId, folderId);
+      this.handleSuccess(res, { data: folder });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  createFolder = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const groupId = getTargetGroupId(req);
+      const { name, description } = req.body;
+      const folder = await service.createFolder(groupId, name, description);
+      this.handleCreated(res, { data: folder });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  updateFolder = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const groupId = getTargetGroupId(req);
+      const { folderId } = req.params as Record<string, string>;
+      const folder = await service.updateFolder(groupId, folderId, req.body);
+      this.handleSuccess(res, { data: folder });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  deleteFolder = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const groupId = getTargetGroupId(req);
+      const { folderId } = req.params as Record<string, string>;
+      await service.deleteFolder(groupId, folderId);
+      this.handleNoContent(res);
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  addSongToFolder = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const groupId = getTargetGroupId(req);
+      const { folderId } = req.params as Record<string, string>;
+      const { song_id } = req.body;
+      await service.addSongToFolder(groupId, folderId, song_id);
+      this.handleCreated(res, { message: 'Música adicionada à pasta com sucesso.' });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  removeSongFromFolder = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const groupId = getTargetGroupId(req);
+      const { folderId, songId } = req.params as Record<string, string>;
+      await service.removeSongFromFolder(groupId, folderId, songId);
+      this.handleNoContent(res);
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
 }
 
-export async function createSong(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { ministryId } = req.params as Record<string, string>;
-    const userId = getUserId(req);
-    const song = await service.createSong(ministryId, userId, req.body);
-    res.status(201).json({ data: song });
-  } catch (error) {
-    next(error);
-  }
-}
+const repInstance = new RepertoireController();
 
-export async function updateSong(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { ministryId, songId } = req.params as Record<string, string>;
-    const userId = getUserId(req);
-    const song = await service.updateSong(ministryId, songId, userId, req.body);
-    res.json({ data: song });
-  } catch (error) {
-    next(error);
-  }
-}
-
-export async function deleteSong(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { ministryId, songId } = req.params as Record<string, string>;
-    const userId = getUserId(req);
-    await service.deleteSong(ministryId, songId, userId);
-    res.status(204).send();
-  } catch (error) {
-    next(error);
-  }
-}
-
-// ============================================================
-// ARTISTS
-// ============================================================
-
-export async function listArtists(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { ministryId } = req.params as Record<string, string>;
-    const search = req.query.search as string | undefined;
-    const artists = await service.getArtists(ministryId, search);
-    res.json({ data: artists });
-  } catch (error) {
-    next(error);
-  }
-}
-
-export async function createArtist(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { ministryId } = req.params as Record<string, string>;
-    const artist = await service.createArtist(ministryId, req.body);
-    res.status(201).json({ data: artist });
-  } catch (error) {
-    next(error);
-  }
-}
-
-export async function updateArtist(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { ministryId, artistId } = req.params as Record<string, string>;
-    const artist = await service.updateArtist(ministryId, artistId, req.body);
-    res.json({ data: artist });
-  } catch (error) {
-    next(error);
-  }
-}
-
-export async function deleteArtist(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { ministryId, artistId } = req.params as Record<string, string>;
-    await service.deleteArtist(ministryId, artistId);
-    res.status(204).send();
-  } catch (error) {
-    next(error);
-  }
-}
-
-// ============================================================
-// CLASSIFICATIONS
-// ============================================================
-
-export async function listClassifications(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { ministryId } = req.params as Record<string, string>;
-    const classifications = await service.getClassifications(ministryId);
-    res.json({ data: classifications });
-  } catch (error) {
-    next(error);
-  }
-}
-
-export async function createClassification(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { ministryId } = req.params as Record<string, string>;
-    const classification = await service.createClassification(ministryId, req.body);
-    res.status(201).json({ data: classification });
-  } catch (error) {
-    next(error);
-  }
-}
-
-export async function updateClassification(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { ministryId, classificationId } = req.params as Record<string, string>;
-    const classification = await service.updateClassification(ministryId, classificationId, req.body);
-    res.json({ data: classification });
-  } catch (error) {
-    next(error);
-  }
-}
-
-export async function deleteClassification(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { ministryId, classificationId } = req.params as Record<string, string>;
-    await service.deleteClassification(ministryId, classificationId);
-    res.status(204).send();
-  } catch (error) {
-    next(error);
-  }
-}
-
-// ============================================================
-// FOLDERS
-// ============================================================
-
-export async function listFolders(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { ministryId } = req.params as Record<string, string>;
-    const folders = await service.getFolders(ministryId);
-    res.json({ data: folders });
-  } catch (error) {
-    next(error);
-  }
-}
-
-export async function getFolder(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { ministryId, folderId } = req.params as Record<string, string>;
-    const userId = getUserId(req);
-    const folder = await service.getFolderById(ministryId, folderId, userId);
-    res.json({ data: folder });
-  } catch (error) {
-    next(error);
-  }
-}
-
-export async function createFolder(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { ministryId } = req.params as Record<string, string>;
-    const folder = await service.createFolder(ministryId, req.body);
-    res.status(201).json({ data: folder });
-  } catch (error) {
-    next(error);
-  }
-}
-
-export async function updateFolder(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { ministryId, folderId } = req.params as Record<string, string>;
-    const folder = await service.updateFolder(ministryId, folderId, req.body);
-    res.json({ data: folder });
-  } catch (error) {
-    next(error);
-  }
-}
-
-export async function deleteFolder(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { ministryId, folderId } = req.params as Record<string, string>;
-    await service.deleteFolder(ministryId, folderId);
-    res.status(204).send();
-  } catch (error) {
-    next(error);
-  }
-}
-
-export async function addSongToFolder(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { folderId } = req.params as Record<string, string>;
-    const { song_id, position } = req.body;
-    await service.addSongToFolder(folderId, song_id, position);
-    res.status(201).json({ message: 'Música adicionada à pasta.' });
-  } catch (error) {
-    next(error);
-  }
-}
-
-export async function removeSongFromFolder(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { folderId, songId } = req.params as Record<string, string>;
-    await service.removeSongFromFolder(folderId, songId);
-    res.status(204).send();
-  } catch (error) {
-    next(error);
-  }
-}
-
-// ============================================================
-// COUNTS
-// ============================================================
-
-export async function getCounts(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { ministryId } = req.params as Record<string, string>;
-    const userId = getUserId(req);
-    const counts = await service.getRepertoireCounts(ministryId, userId);
-    res.json({ data: counts });
-  } catch (error) {
-    next(error);
-  }
-}
+export const listSongs = repInstance.listSongs;
+export const getSong = repInstance.getSong;
+export const createSong = repInstance.createSong;
+export const updateSong = repInstance.updateSong;
+export const deleteSong = repInstance.deleteSong;
+export const getCounts = repInstance.getCounts;
+export const listArtists = repInstance.listArtists;
+export const createArtist = repInstance.createArtist;
+export const updateArtist = repInstance.updateArtist;
+export const deleteArtist = repInstance.deleteArtist;
+export const listClassifications = repInstance.listClassifications;
+export const createClassification = repInstance.createClassification;
+export const updateClassification = repInstance.updateClassification;
+export const deleteClassification = repInstance.deleteClassification;
+export const listFolders = repInstance.listFolders;
+export const getFolder = repInstance.getFolder;
+export const createFolder = repInstance.createFolder;
+export const updateFolder = repInstance.updateFolder;
+export const deleteFolder = repInstance.deleteFolder;
+export const addSongToFolder = repInstance.addSongToFolder;
+export const removeSongFromFolder = repInstance.removeSongFromFolder;

@@ -25,20 +25,12 @@ export interface ScheduleItem {
 }
 
 interface CreateScheduleModalProps {
+  groupId?: string;
   allSongs: Song[];
+  initialSchedule?: Partial<ScheduleItem>;
   onClose: () => void;
   onSave: (schedule: Partial<ScheduleItem>) => void;
 }
-
-// Sample group members for selection
-const MOCK_GROUP_MEMBERS = [
-  { id: 'm1', name: 'Henrique Hermógenes', role: 'Líder / Violão' },
-  { id: 'm2', name: 'Matheus Silva', role: 'Bateria' },
-  { id: 'm3', name: 'Ana Clara Santos', role: 'Vocalista' },
-  { id: 'm4', name: 'Lucas Oliveira', role: 'Teclado' },
-  { id: 'm5', name: 'Gabriel Souza', role: 'Contrabaixo' },
-  { id: 'm6', name: 'Camila Rocha', role: 'Vocalista de Apoio' },
-];
 
 const EASY_COLORS = [
   { name: 'Preto', hex: '#000000' },
@@ -94,7 +86,9 @@ const LITURGY_TEMPLATES = [
 ];
 
 export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
+  groupId,
   allSongs,
+  initialSchedule,
   onClose,
   onSave,
 }) => {
@@ -108,30 +102,63 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
   const [showSongSelectPage, setShowSongSelectPage] = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
 
+  // Group members from database
+  const [groupMembers, setGroupMembers] = useState<Array<{ id: string; name: string; role: string }>>([]);
+  const [loadingMembers, setLoadingMembers] = useState(false);
+
   // Dress code color palette states
-  const [clothingPieces, setClothingPieces] = useState<ClothingPiece[]>(INITIAL_CLOTHING_PIECES);
+  const [clothingPieces, setClothingPieces] = useState<ClothingPiece[]>(
+    initialSchedule?.clothingPieces || INITIAL_CLOTHING_PIECES
+  );
   const [activePieceIdForColor, setActivePieceIdForColor] = useState<string | null>(null);
   const [colorMode, setColorMode] = useState<'facil' | 'avancado'>('facil');
   const [selectedColorHex, setSelectedColorHex] = useState('#000000');
 
   // Form Fields State
-  const [title, setTitle] = useState('Culto de Domingo');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  const [time, setTime] = useState('19:00');
-  const [notes, setNotes] = useState('');
-  const [isVisible, setIsVisible] = useState(true);
-  const [requireConfirmation, setRequireConfirmation] = useState(true);
+  const [title, setTitle] = useState(initialSchedule?.title || 'Culto de Domingo');
+  const [date, setDate] = useState(initialSchedule?.date || new Date().toISOString().split('T')[0]);
+  const [time, setTime] = useState(initialSchedule?.time || '19:00');
+  const [notes, setNotes] = useState(initialSchedule?.notes || '');
+  const [isVisible, setIsVisible] = useState(initialSchedule?.isVisible !== undefined ? initialSchedule.isVisible : true);
+  const [requireConfirmation, setRequireConfirmation] = useState(
+    initialSchedule?.requireConfirmation !== undefined ? initialSchedule.requireConfirmation : true
+  );
 
   // Lists
-  const [selectedParticipants, setSelectedParticipants] = useState<Array<{ id: string; name: string; role: string }>>([
-    MOCK_GROUP_MEMBERS[0],
-    MOCK_GROUP_MEMBERS[1],
-  ]);
-  const [selectedSongs, setSelectedSongs] = useState<Song[]>(allSongs.slice(0, 2));
-  const [timelineItems, setTimelineItems] = useState<Array<{ id: string; title: string; time?: string; type: string }>>([
-    { id: '1', title: 'Oração Inicial', time: '5 min', type: 'Oração' },
-    { id: '2', title: 'Bloco de Louvor (Músicas 1 e 2)', time: '15 min', type: 'Louvor' },
-  ]);
+  const [selectedParticipants, setSelectedParticipants] = useState<Array<{ id: string; name: string; role: string }>>(
+    initialSchedule?.participants || []
+  );
+  const [selectedSongs, setSelectedSongs] = useState<Song[]>(initialSchedule?.songs || allSongs.slice(0, 2));
+  const [timelineItems, setTimelineItems] = useState<Array<{ id: string; title: string; time?: string; type: string }>>(
+    initialSchedule?.timeline || [
+      { id: '1', title: 'Oração Inicial', time: '5 min', type: 'Oração' },
+      { id: '2', title: 'Bloco de Louvor (Músicas 1 e 2)', time: '15 min', type: 'Louvor' },
+    ]
+  );
+
+  // Carregar membros reais do grupo do backend
+  React.useEffect(() => {
+    if (!groupId) return;
+    setLoadingMembers(true);
+    import('../api').then(({ api }) => {
+      api.getGroupMembers(groupId)
+        .then((members) => {
+          const mapped = members.map((m) => ({
+            id: m.id || m.userId,
+            name: m.name,
+            role: m.role === 'admin' ? 'Líder / Administrador' : 'Integrante do Louvor',
+          }));
+          setGroupMembers(mapped);
+          if (!initialSchedule && selectedParticipants.length === 0 && mapped.length > 0) {
+            setSelectedParticipants(mapped.slice(0, 2));
+          }
+        })
+        .catch((err) => {
+          console.warn('Erro ao carregar membros do grupo:', err);
+        })
+        .finally(() => setLoadingMembers(false));
+    });
+  }, [groupId]);
 
   // Vestimentas Piece Card Handlers
   const handleAddPieceCard = () => {
@@ -463,7 +490,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                         <div>
                           <div className="schedule-toggle-title">Visibilidade da Escala</div>
                           <div className="schedule-toggle-desc">
-                            {isVisible ? 'Visível para todos os membros do grupo' : 'Privado (apenas para admins)'}
+                            {isVisible ? 'Visível para todos os membros do ministério' : 'Privado (apenas para admins)'}
                           </div>
                         </div>
                       </div>
@@ -533,7 +560,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                     <div className="empty-state">
                       <div className="empty-icon">👥</div>
                       <div className="empty-title">Nenhum integrante adicionado</div>
-                      <div className="empty-desc">Clique no botão "+ Adicionar" para escalar os membros do grupo.</div>
+                      <div className="empty-desc">Clique no botão "+ Adicionar" para escalar os membros do ministério.</div>
                     </div>
                   )}
                 </div>
@@ -577,7 +604,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                     <div className="empty-state">
                       <div className="empty-icon">🎵</div>
                       <div className="empty-title">Nenhuma música escalada</div>
-                      <div className="empty-desc">Selecione músicas do repertório do grupo para este culto.</div>
+                      <div className="empty-desc">Selecione músicas do repertório do ministério para este culto.</div>
                     </div>
                   )}
                 </div>
@@ -753,7 +780,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                     className={`schedule-tab-btn ${memberTab === 'todos' ? 'active' : ''}`}
                     onClick={() => setMemberTab('todos')}
                   >
-                    Todos ({MOCK_GROUP_MEMBERS.length})
+                    Todos ({groupMembers.length})
                   </button>
                   <button
                     className={`schedule-tab-btn ${memberTab === 'selecionados' ? 'active' : ''}`}
@@ -764,27 +791,33 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                 </div>
               </div>
 
-              <div className="schedule-items-list" style={{ maxHeight: '320px', overflowY: 'auto' }}>
-                {(memberTab === 'todos' ? MOCK_GROUP_MEMBERS : selectedParticipants).map((member) => {
-                  const isSelected = selectedParticipants.some((p) => p.id === member.id);
-                  return (
-                    <div
-                      key={member.id}
-                      className={`schedule-member-select-item ${isSelected ? 'selected' : ''}`}
-                      onClick={() => handleToggleMember(member)}
-                    >
-                      <div className="dashboard-item-avatar">{member.name.charAt(0).toUpperCase()}</div>
-                      <div className="dashboard-item-info">
-                        <div className="dashboard-item-title">{member.name}</div>
-                        <div className="dashboard-item-desc">{member.role}</div>
+              {loadingMembers ? (
+                <div className="empty-state" style={{ padding: '20px' }}>
+                  <p className="empty-desc">Carregando membros do grupo...</p>
+                </div>
+              ) : (
+                <div className="schedule-items-list" style={{ maxHeight: '320px', overflowY: 'auto' }}>
+                  {(memberTab === 'todos' ? groupMembers : selectedParticipants).map((member) => {
+                    const isSelected = selectedParticipants.some((p) => p.id === member.id);
+                    return (
+                      <div
+                        key={member.id}
+                        className={`schedule-member-select-item ${isSelected ? 'selected' : ''}`}
+                        onClick={() => handleToggleMember(member)}
+                      >
+                        <div className="dashboard-item-avatar">{member.name.charAt(0).toUpperCase()}</div>
+                        <div className="dashboard-item-info">
+                          <div className="dashboard-item-title">{member.name}</div>
+                          <div className="dashboard-item-desc">{member.role}</div>
+                        </div>
+                        <div className={`checkbox-circle ${isSelected ? 'checked' : ''}`}>
+                          {isSelected && <Check size={14} />}
+                        </div>
                       </div>
-                      <div className={`checkbox-circle ${isSelected ? 'checked' : ''}`}>
-                        {isSelected && <Check size={14} />}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
 
               <div className="form-actions" style={{ marginTop: '16px' }}>
                 <button type="button" className="btn btn-primary" onClick={() => setShowMemberSelectPage(false)}>

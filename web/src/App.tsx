@@ -15,7 +15,9 @@ import { CreateGroupModal } from './components/CreateGroupModal';
 import { LoginPage } from './components/LoginPage';
 import { DashboardView } from './components/DashboardView';
 import { SchedulesView } from './components/SchedulesView';
+import { ScheduleDetailView } from './components/ScheduleDetailView';
 import { CreateScheduleModal, ScheduleItem } from './components/CreateScheduleModal';
+import { MinistryView } from './components/MinistryView';
 import { Search, SlidersHorizontal, Plus, CheckCircle, XCircle, Menu, Music, Edit3, KeyRound, UserPlus, LogOut, Building2, Home, Calendar as CalendarIcon } from 'lucide-react';
 
 interface Toast {
@@ -42,8 +44,10 @@ export default function App() {
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
 
   // Navigation & Detail States
-  const [mainModule, setMainModule] = useState<'dashboard' | 'repertoire' | 'cifrador' | 'schedules'>('dashboard');
+  const [mainModule, setMainModule] = useState<'dashboard' | 'repertoire' | 'cifrador' | 'schedules' | 'ministry'>('dashboard');
   const [schedules, setSchedules] = useState<ScheduleItem[]>([]);
+  const [selectedSchedule, setSelectedSchedule] = useState<ScheduleItem | null>(null);
+  const [scheduleToEdit, setScheduleToEdit] = useState<ScheduleItem | null>(null);
   const [showCreateScheduleModal, setShowCreateScheduleModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'songs' | 'folders' | 'artists'>('songs');
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -97,13 +101,25 @@ export default function App() {
       loadFolders();
       loadArtists();
       loadSongs();
+      loadSchedules();
     } else {
       setSongs([]);
       setFolders([]);
       setArtists([]);
+      setSchedules([]);
       setCounts({ songs: 0, folders: 0, artists: 0 });
     }
   }, [activeGroup]);
+
+  const loadSchedules = async () => {
+    if (!activeGroup) return;
+    try {
+      const list = await api.getSchedules(activeGroup.id);
+      setSchedules(list);
+    } catch (err) {
+      console.warn('Erro ao carregar escalas:', err);
+    }
+  };
 
   // Reload songs when search or filters change
   useEffect(() => {
@@ -518,7 +534,7 @@ export default function App() {
         {sidebarOpen && activeGroup && (
           <div className="sidebar-group-card">
             <div className="sidebar-group-header">
-              <span className="sidebar-group-label">Grupo de Louvor</span>
+              <span className="sidebar-group-label">Ministério</span>
               <span className={`sidebar-role-badge ${userRole === 'admin' ? 'admin' : 'member'}`}>
                 {userRole.toUpperCase()}
               </span>
@@ -548,7 +564,7 @@ export default function App() {
               className="sidebar-action-btn primary"
             >
               <Plus size={14} />
-              <span>Criar Novo Grupo</span>
+              <span>Criar Ministério</span>
             </button>
             <button
               onClick={() => setShowJoinModal(true)}
@@ -662,6 +678,29 @@ export default function App() {
             <CalendarIcon size={20} />
             {sidebarOpen && <span>Escalas</span>}
           </button>
+
+          <button
+            onClick={() => {
+              setMainModule('ministry');
+              handleBackToMain();
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              padding: '12px 16px',
+              borderRadius: '8px',
+              border: 'none',
+              backgroundColor: mainModule === 'ministry' ? 'var(--primary-color)' : 'transparent',
+              color: 'var(--text-primary)',
+              cursor: 'pointer',
+              fontWeight: 600,
+              textAlign: 'left',
+            }}
+          >
+            <Building2 size={20} />
+            {sidebarOpen && <span>Ministério</span>}
+          </button>
         </nav>
       </aside>
 
@@ -684,9 +723,10 @@ export default function App() {
                   {mainModule === 'repertoire' && 'Repertório do Louvor'}
                   {mainModule === 'cifrador' && 'Estúdio de Cifras Inteligentes'}
                   {mainModule === 'schedules' && 'Escalas do Louvor'}
+                  {mainModule === 'ministry' && 'Ministério'}
                 </h1>
                 <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                  {activeGroup ? activeGroup.name : 'Nenhum grupo selecionado'}
+                  {activeGroup ? activeGroup.name : 'Nenhum ministério selecionado'}
                 </p>
               </div>
 
@@ -748,13 +788,13 @@ export default function App() {
           {!selectedSong && !selectedFolder && !activeGroup && (
             <div className="empty-state" style={{ minHeight: '400px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '40px 20px' }}>
               <div style={{ fontSize: '3.5rem', marginBottom: '16px' }}>👥</div>
-              <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '8px', color: '#FFF' }}>Nenhum Grupo de Louvor Selecionado</h2>
+              <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '8px', color: '#FFF' }}>Nenhum Ministério Selecionado</h2>
               <p style={{ color: 'var(--text-secondary)', maxWidth: '480px', marginBottom: '24px', lineHeight: 1.5 }}>
-                Você ainda não faz parte de nenhum grupo de louvor cadastrado. Crie o seu grupo como líder ou digite um código de convite (ex: PR-8X2K) para ingressar.
+                Você ainda não faz parte de nenhum ministério cadastrado. Crie o seu ministério como líder ou digite um código de convite (ex: PR-8X2K) para ingressar.
               </p>
               <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'center' }}>
                 <button className="btn btn-primary" onClick={() => setShowCreateGroupModal(true)} style={{ padding: '12px 24px' }}>
-                  <Building2 size={18} /> Criar Meu Grupo de Louvor
+                  <Building2 size={18} /> Criar Meu Ministério
                 </button>
                 <button className="btn btn-secondary" onClick={() => setShowJoinModal(true)} style={{ padding: '12px 24px' }}>
                   <KeyRound size={18} /> Entrar com Código de Convite
@@ -771,6 +811,7 @@ export default function App() {
                   groups={groups}
                   activeGroup={activeGroup}
                   schedules={schedules}
+                  userRole={userRole}
                   onSelectGroup={(g) => setActiveGroup(g)}
                   onCreateGroup={() => setShowCreateGroupModal(true)}
                   onJoinGroup={() => setShowJoinModal(true)}
@@ -780,6 +821,10 @@ export default function App() {
                     handleBackToMain();
                   }}
                   onNavigateToSchedules={() => setMainModule('schedules')}
+                  onSelectSchedule={(schedule) => {
+                    setSelectedSchedule(schedule);
+                    setMainModule('schedules');
+                  }}
                 />
               )}
               {mainModule === 'repertoire' && activeTab === 'songs' && (
@@ -936,14 +981,65 @@ export default function App() {
                 <SmartChordsWorkspace />
               )}
 
-              {mainModule === 'schedules' && (
-                <SchedulesView
-                  groupId={groupId}
+              {mainModule === 'ministry' && activeGroup && currentUser && (
+                <MinistryView
+                  activeMinistry={activeGroup}
                   userRole={userRole}
-                  allSongs={songs}
-                  schedules={schedules}
-                  onCreateSchedule={() => setShowCreateScheduleModal(true)}
+                  currentUserId={currentUser.id}
+                  onMinistryUpdated={(updated) => {
+                    setGroups((prev) => prev.map((g) => (g.id === updated.id ? { ...g, ...updated } : g)));
+                    setActiveGroup((prev) => (prev?.id === updated.id ? { ...prev, ...updated } : prev));
+                    showToast(`Ministério "${updated.name}" atualizado!`);
+                  }}
+                  onMinistryLeft={() => {
+                    loadUserGroups();
+                    setMainModule('dashboard');
+                  }}
+                  onMinistryDeleted={() => {
+                    loadUserGroups();
+                    setMainModule('dashboard');
+                  }}
+                  onGenerateInvite={() => setShowInviteModal(true)}
+                  showToast={showToast}
                 />
+              )}
+
+              {mainModule === 'schedules' && (
+                selectedSchedule ? (
+                  <ScheduleDetailView
+                    schedule={selectedSchedule}
+                    userRole={userRole}
+                    currentUserId={currentUser?.id}
+                    onBack={() => setSelectedSchedule(null)}
+                    onEdit={userRole === 'admin' ? () => {
+                      setScheduleToEdit(selectedSchedule);
+                      setShowCreateScheduleModal(true);
+                    } : undefined}
+                    onUpdateSchedule={async (updatedSchedule) => {
+                      if (!activeGroup) return;
+                      try {
+                        const updated = await api.updateSchedule(activeGroup.id, updatedSchedule.id, updatedSchedule);
+                        setSelectedSchedule(updated);
+                        setSchedules((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+                        showToast('Sua resposta de presença foi salva!');
+                      } catch (err: any) {
+                        showToast(err.message || 'Erro ao atualizar confirmação.', 'error');
+                      }
+                    }}
+                  />
+                ) : (
+                  <SchedulesView
+                    groupId={groupId}
+                    userRole={userRole}
+                    allSongs={songs}
+                    schedules={schedules}
+                    onCreateSchedule={() => {
+                      setScheduleToEdit(null);
+                      setShowCreateScheduleModal(true);
+                    }}
+                    onSelectSchedule={(schedule) => setSelectedSchedule(schedule)}
+                  />
+                )
               )}
             </main>
           )}
@@ -1047,7 +1143,7 @@ export default function App() {
         onSuccess={(newGroup) => {
           loadUserGroups();
           setActiveGroup(newGroup);
-          showToast(`Você entrou no grupo "${newGroup.name}"!`);
+          showToast(`Você entrou no ministério "${newGroup.name}"!`);
         }}
       />
 
@@ -1066,19 +1162,39 @@ export default function App() {
           onSuccess={(newGroup) => {
             setGroups((prev) => [...prev, newGroup]);
             setActiveGroup(newGroup);
-            showToast(`Grupo "${newGroup.name}" criado com sucesso!`);
+            showToast(`Ministério "${newGroup.name}" criado com sucesso!`);
           }}
         />
       )}
 
-      {showCreateScheduleModal && (
+      {showCreateScheduleModal && activeGroup && (
         <CreateScheduleModal
+          groupId={activeGroup.id}
           allSongs={songs}
-          onClose={() => setShowCreateScheduleModal(false)}
-          onSave={(newSchedule) => {
-            setSchedules((prev) => [newSchedule as ScheduleItem, ...prev]);
+          initialSchedule={scheduleToEdit || undefined}
+          onClose={() => {
             setShowCreateScheduleModal(false);
-            showToast(`Escala "${newSchedule.title}" criada com sucesso!`);
+            setScheduleToEdit(null);
+          }}
+          onSave={async (newScheduleData) => {
+            try {
+              if (scheduleToEdit?.id) {
+                const updated = await api.updateSchedule(activeGroup.id, scheduleToEdit.id, newScheduleData);
+                setSchedules((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+                if (selectedSchedule?.id === updated.id) {
+                  setSelectedSchedule(updated);
+                }
+                showToast(`Escala "${updated.title}" atualizada no banco de dados!`);
+              } else {
+                const created = await api.createSchedule(activeGroup.id, newScheduleData);
+                setSchedules((prev) => [created, ...prev]);
+                showToast(`Escala "${created.title}" salva no banco de dados!`);
+              }
+              setShowCreateScheduleModal(false);
+              setScheduleToEdit(null);
+            } catch (err: any) {
+              showToast(err.message || 'Erro ao salvar escala no banco de dados.', 'error');
+            }
           }}
         />
       )}

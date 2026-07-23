@@ -6,8 +6,8 @@ import { z } from 'zod';
 
 export const createSongSchema = z.object({
   title: z.string().min(1, 'Título é obrigatório.').max(255),
-  artist_id: z.string().uuid().nullable().optional(),
-  classification_id: z.string().uuid().nullable().optional(),
+  artist_id: z.string().nullable().optional(),
+  classification_id: z.string().nullable().optional(),
   original_key: z
     .string()
     .max(5)
@@ -24,8 +24,8 @@ export const createSongSchema = z.object({
 
 export const updateSongSchema = z.object({
   title: z.string().min(1, 'Título é obrigatório.').max(255).optional(),
-  artist_id: z.string().uuid().nullable().optional(),
-  classification_id: z.string().uuid().nullable().optional(),
+  artist_id: z.string().nullable().optional(),
+  classification_id: z.string().nullable().optional(),
   original_key: z.string().max(5).nullable().optional(),
   bpm: z.number().positive().max(999).nullable().optional(),
   duration: z.string().nullable().optional(),
@@ -50,7 +50,7 @@ export const createFolderSchema = z.object({
 export const updateFolderSchema = createFolderSchema.partial();
 
 export const addSongToFolderSchema = z.object({
-  song_id: z.string().uuid('ID da música inválido.'),
+  song_id: z.string().min(1, 'ID da música é obrigatório.'),
   position: z.number().int().min(0).optional(),
 });
 
@@ -68,9 +68,9 @@ export const updateClassificationSchema = createClassificationSchema.partial();
 
 export const songsQuerySchema = z.object({
   search: z.string().optional(),
-  classification_id: z.string().uuid().optional(),
+  classification_id: z.string().optional(),
   original_key: z.string().max(5).optional(),
-  artist_id: z.string().uuid().optional(),
+  artist_id: z.string().optional(),
   has_youtube: z.enum(['true', 'false']).optional(),
   page: z.string().regex(/^\d+$/).optional().default('1'),
   limit: z.string().regex(/^\d+$/).optional().default('50'),

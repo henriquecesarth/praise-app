@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from './error-handler';
-import { getSupabaseClient } from '../lib/supabase';
+import { UserRepository } from '../repositories/UserRepository';
 
 export interface AuthenticatedRequest extends Request {
   user?: {
@@ -9,6 +9,8 @@ export interface AuthenticatedRequest extends Request {
   };
 }
 
+const userRepository = new UserRepository();
+
 export async function authenticate(
   req: AuthenticatedRequest,
   _res: Response,
@@ -16,27 +18,22 @@ export async function authenticate(
 ): Promise<void> {
   try {
     const authHeader = req.headers.authorization;
-    const customHeader = req.headers['x-user-id'] as string;
 
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.substring(7);
-      if (token && token !== 'dev-jwt-token-access') {
-        const supabase = getSupabaseClient();
-        const { data, error } = await supabase.auth.getUser(token);
-        if (!error && data.user) {
-          req.user = {
-            id: data.user.id,
-            email: data.user.email,
-          };
-          return next();
-        }
-      }
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      throw new AppError(401, 'Token de autenticação não fornecido.');
     }
 
-    // Fallback de desenvolvimento ou header customizado
-    const userId = customHeader || 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22';
+    const token = authHeader.substring(7);
+
+    if (!token) {
+      throw new AppError(401, 'Token de autenticação inválido.');
+    }
+
+    const decoded = userRepository.verifyAuthToken(token);
+
     req.user = {
-      id: userId,
+      id: decoded.uid,
+      email: decoded.email,
     };
 
     next();

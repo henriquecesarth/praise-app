@@ -1,496 +1,145 @@
-import { getSupabaseClient } from '../../lib/supabase';
-import { AppError } from '../../middleware/error-handler';
-import type {
-  Song,
-  Artist,
-  Folder,
-  Classification,
-  PaginatedResponse,
-  RepertoireCounts,
-} from './repertoire.types';
+import { RepertoireRepository } from '../../repositories/RepertoireRepository';
+import { PaginatedResponse, Song, Artist, Folder, Classification, RepertoireCounts } from './repertoire.types';
 
-const supabase = () => getSupabaseClient();
+export class RepertoireService {
+  constructor(private readonly repertoireRepository: RepertoireRepository = new RepertoireRepository()) {}
 
-// ============================================================
-// SONGS
-// ============================================================
-
-export async function getSongs(
-  ministryId: string,
-  userId: string,
-  filters: {
-    search?: string;
-    classification_id?: string;
-    original_key?: string;
-    artist_id?: string;
-    has_youtube?: string;
-    page?: string;
-    limit?: string;
+  async getCounts(ministryId: string): Promise<RepertoireCounts> {
+    return this.repertoireRepository.getCounts(ministryId);
   }
-): Promise<PaginatedResponse<Song>> {
-  const page = parseInt(filters.page || '1', 10);
-  const limit = parseInt(filters.limit || '50', 10);
-  const offset = (page - 1) * limit;
 
-  let query = supabase()
-    .from('songs')
-    .select('*, artist:artists(id, name), classification:classifications(id, name, color)', {
-      count: 'exact',
-    })
-    .eq('ministry_id', ministryId)
-    .eq('user_id', userId)
-    .order('title', { ascending: true })
-    .range(offset, offset + limit - 1);
-
-  if (filters.search) {
-    // PostgREST limits cross-table filtering inside .or() conditions.
-    // Fetch matching artist IDs first
-    const { data: matchingArtists } = await supabase()
-      .from('artists')
-      .select('id')
-      .eq('ministry_id', ministryId)
-      .ilike('name', `%${filters.search}%`);
-
-    const artistIds = (matchingArtists || []).map(a => a.id);
-
-    if (artistIds.length > 0) {
-      query = query.or(
-        `title.ilike.%${filters.search}%,artist_id.in.(${artistIds.map(id => `"${id}"`).join(',')})`
-      );
-    } else {
-      query = query.ilike('title', `%${filters.search}%`);
+  async getSongs(
+    ministryId: string,
+    _userId: string,
+    filters: {
+      search?: string;
+      classification_id?: string;
+      original_key?: string;
+      artist_id?: string;
+      has_youtube?: string;
+      page?: string;
+      limit?: string;
     }
-  }
-
-  if (filters.classification_id) {
-    query = query.eq('classification_id', filters.classification_id);
-  }
-
-  if (filters.original_key) {
-    query = query.eq('original_key', filters.original_key);
-  }
-
-  if (filters.artist_id) {
-    query = query.eq('artist_id', filters.artist_id);
-  }
-
-  if (filters.has_youtube === 'true') {
-    query = query.not('youtube_url', 'is', null).neq('youtube_url', '');
-  }
-
-  const { data, error, count } = await query;
-
-  if (error) throw new AppError(500, 'Erro ao buscar músicas.', error);
-
-  const total = count || 0;
-  return {
-    data: (data as Song[]) || [],
-    total,
-    page,
-    limit,
-    totalPages: Math.ceil(total / limit),
-  };
-}
-
-export async function getSongById(
-  ministryId: string,
-  songId: string,
-  userId: string
-): Promise<any> {
-  const { data, error } = await supabase()
-    .from('songs')
-    .select('*, artist:artists(id, name), classification:classifications(id, name, color)')
-    .eq('id', songId)
-    .eq('ministry_id', ministryId)
-    .eq('user_id', userId)
-    .single();
-
-  if (error || !data) throw new AppError(404, 'Música não encontrada.');
-
-  const { data: smartChord } = await supabase()
-    .from('smart_chords')
-    .select('id, original_key, content')
-    .eq('song_id', songId)
-    .eq('user_id', userId)
-    .maybeSingle();
-
-  return {
-    ...data,
-    smart_chord: smartChord || null,
-  };
-}
-
-export async function createSong(
-  ministryId: string,
-  userId: string,
-  songData: Partial<Song>
-): Promise<Song> {
-  const { data, error } = await supabase()
-    .from('songs')
-    .insert({
-      ...songData,
-      ministry_id: ministryId,
-      user_id: userId,
-      chord_sheet_url: songData.chord_sheet_url || null,
-      youtube_url: songData.youtube_url || null,
-      audio_url: songData.audio_url || null,
-      external_links: songData.external_links || {},
-    })
-    .select('*, artist:artists(id, name), classification:classifications(id, name, color)')
-    .single();
-
-  if (error) throw new AppError(400, 'Erro ao criar música.', error);
-
-  return data as Song;
-}
-
-export async function updateSong(
-  ministryId: string,
-  songId: string,
-  userId: string,
-  songData: Partial<Song>
-): Promise<Song> {
-  const { data, error } = await supabase()
-    .from('songs')
-    .update({
-      ...songData,
-      chord_sheet_url: songData.chord_sheet_url || null,
-      youtube_url: songData.youtube_url || null,
-      audio_url: songData.audio_url || null,
-      external_links: songData.external_links !== undefined ? songData.external_links : undefined,
-    })
-    .eq('id', songId)
-    .eq('ministry_id', ministryId)
-    .eq('user_id', userId)
-    .select('*, artist:artists(id, name), classification:classifications(id, name, color)')
-    .single();
-
-  if (error) throw new AppError(400, 'Erro ao atualizar música.', error);
-
-  return data as Song;
-}
-
-export async function deleteSong(
-  ministryId: string,
-  songId: string,
-  userId: string
-): Promise<void> {
-  const { error } = await supabase()
-    .from('songs')
-    .delete()
-    .eq('id', songId)
-    .eq('ministry_id', ministryId)
-    .eq('user_id', userId);
-
-  if (error) throw new AppError(400, 'Erro ao excluir música.', error);
-}
-
-// ============================================================
-// ARTISTS
-// ============================================================
-
-export async function getArtists(
-  ministryId: string,
-  search?: string
-): Promise<Artist[]> {
-  let query = supabase()
-    .from('artists')
-    .select('*')
-    .eq('ministry_id', ministryId)
-    .order('name', { ascending: true });
-
-  if (search) {
-    query = query.ilike('name', `%${search}%`);
-  }
-
-  const { data, error } = await query;
-
-  if (error) throw new AppError(500, 'Erro ao buscar artistas.', error);
-
-  return (data as Artist[]) || [];
-}
-
-export async function createArtist(
-  ministryId: string,
-  artistData: { name: string }
-): Promise<Artist> {
-  const { data, error } = await supabase()
-    .from('artists')
-    .insert({
-      ministry_id: ministryId,
-      name: artistData.name,
-    })
-    .select('*')
-    .single();
-
-  if (error) {
-    if (error.code === '23505') {
-      throw new AppError(409, 'Artista com este nome já existe neste ministério.');
-    }
-    throw new AppError(400, 'Erro ao criar artista.', error);
-  }
-
-  return data as Artist;
-}
-
-export async function updateArtist(
-  ministryId: string,
-  artistId: string,
-  artistData: { name?: string }
-): Promise<Artist> {
-  const { data, error } = await supabase()
-    .from('artists')
-    .update(artistData)
-    .eq('id', artistId)
-    .eq('ministry_id', ministryId)
-    .select('*')
-    .single();
-
-  if (error) throw new AppError(400, 'Erro ao atualizar artista.', error);
-
-  return data as Artist;
-}
-
-export async function deleteArtist(
-  ministryId: string,
-  artistId: string
-): Promise<void> {
-  const { error } = await supabase()
-    .from('artists')
-    .delete()
-    .eq('id', artistId)
-    .eq('ministry_id', ministryId);
-
-  if (error) throw new AppError(400, 'Erro ao excluir artista.', error);
-}
-
-// ============================================================
-// CLASSIFICATIONS
-// ============================================================
-
-export async function getClassifications(
-  ministryId: string
-): Promise<Classification[]> {
-  const { data, error } = await supabase()
-    .from('classifications')
-    .select('*')
-    .eq('ministry_id', ministryId)
-    .order('name', { ascending: true });
-
-  if (error) throw new AppError(500, 'Erro ao buscar classificações.', error);
-
-  return (data as Classification[]) || [];
-}
-
-export async function createClassification(
-  ministryId: string,
-  classificationData: { name: string; description?: string | null; color?: string | null }
-): Promise<Classification> {
-  const { data, error } = await supabase()
-    .from('classifications')
-    .insert({
-      ministry_id: ministryId,
-      ...classificationData,
-    })
-    .select('*')
-    .single();
-
-  if (error) {
-    if (error.code === '23505') {
-      throw new AppError(409, 'Classificação com este nome já existe neste ministério.');
-    }
-    throw new AppError(400, 'Erro ao criar classificação.', error);
-  }
-
-  return data as Classification;
-}
-
-export async function updateClassification(
-  ministryId: string,
-  classificationId: string,
-  classificationData: { name?: string; description?: string | null; color?: string | null }
-): Promise<Classification> {
-  const { data, error } = await supabase()
-    .from('classifications')
-    .update(classificationData)
-    .eq('id', classificationId)
-    .eq('ministry_id', ministryId)
-    .select('*')
-    .single();
-
-  if (error) throw new AppError(400, 'Erro ao atualizar classificação.', error);
-
-  return data as Classification;
-}
-
-export async function deleteClassification(
-  ministryId: string,
-  classificationId: string
-): Promise<void> {
-  const { error } = await supabase()
-    .from('classifications')
-    .delete()
-    .eq('id', classificationId)
-    .eq('ministry_id', ministryId);
-
-  if (error) throw new AppError(400, 'Erro ao excluir classificação.', error);
-}
-
-// ============================================================
-// FOLDERS
-// ============================================================
-
-export async function getFolders(
-  ministryId: string
-): Promise<Folder[]> {
-  const { data, error } = await supabase()
-    .from('folders')
-    .select('*, folder_songs(count)')
-    .eq('ministry_id', ministryId)
-    .order('name', { ascending: true });
-
-  if (error) throw new AppError(500, 'Erro ao buscar pastas.', error);
-
-  return ((data as any[]) || []).map((folder) => ({
-    ...folder,
-    song_count: folder.folder_songs?.[0]?.count || 0,
-    folder_songs: undefined,
-  })) as Folder[];
-}
-
-export async function getFolderById(
-  ministryId: string,
-  folderId: string,
-  userId: string
-): Promise<Folder & { songs: Song[] }> {
-  const { data: folder, error: folderError } = await supabase()
-    .from('folders')
-    .select('*')
-    .eq('id', folderId)
-    .eq('ministry_id', ministryId)
-    .single();
-
-  if (folderError || !folder) throw new AppError(404, 'Pasta não encontrada.');
-
-  const { data: folderSongs, error: songsError } = await supabase()
-    .from('folder_songs')
-    .select('position, song:songs(*, artist:artists(id, name), classification:classifications(id, name, color))')
-    .eq('folder_id', folderId)
-    .eq('songs.user_id', userId)
-    .order('position', { ascending: true });
-
-  if (songsError) throw new AppError(500, 'Erro ao buscar músicas da pasta.', songsError);
-
-  return {
-    ...(folder as Folder),
-    songs: (folderSongs || [])
-      .filter((fs: any) => fs.song !== null)
-      .map((fs: any) => ({ ...fs.song, position: fs.position })),
-  };
-}
-
-export async function createFolder(
-  ministryId: string,
-  folderData: { name: string; description?: string | null }
-): Promise<Folder> {
-  const { data, error } = await supabase()
-    .from('folders')
-    .insert({
-      ministry_id: ministryId,
-      ...folderData,
-    })
-    .select('*')
-    .single();
-
-  if (error) throw new AppError(400, 'Erro ao criar pasta.', error);
-
-  return { ...(data as Folder), song_count: 0 };
-}
-
-export async function updateFolder(
-  ministryId: string,
-  folderId: string,
-  folderData: { name?: string; description?: string | null }
-): Promise<Folder> {
-  const { data, error } = await supabase()
-    .from('folders')
-    .update(folderData)
-    .eq('id', folderId)
-    .eq('ministry_id', ministryId)
-    .select('*')
-    .single();
-
-  if (error) throw new AppError(400, 'Erro ao atualizar pasta.', error);
-
-  return data as Folder;
-}
-
-export async function deleteFolder(
-  ministryId: string,
-  folderId: string
-): Promise<void> {
-  const { error } = await supabase()
-    .from('folders')
-    .delete()
-    .eq('id', folderId)
-    .eq('ministry_id', ministryId);
-
-  if (error) throw new AppError(400, 'Erro ao excluir pasta.', error);
-}
-
-export async function addSongToFolder(
-  folderId: string,
-  songId: string,
-  position?: number
-): Promise<void> {
-  const pos = position ?? 0;
-
-  const { error } = await supabase()
-    .from('folder_songs')
-    .insert({
-      folder_id: folderId,
-      song_id: songId,
-      position: pos,
+  ): Promise<PaginatedResponse<Song>> {
+    const page = parseInt(filters.page || '1', 10);
+    const limit = parseInt(filters.limit || '50', 10);
+
+    const { data, total } = await this.repertoireRepository.getSongs(ministryId, {
+      search: filters.search,
+      classification_id: filters.classification_id,
+      original_key: filters.original_key,
+      artist_id: filters.artist_id,
+      has_youtube: filters.has_youtube === 'true',
+      page,
+      limit,
     });
 
-  if (error) {
-    if (error.code === '23505') {
-      throw new AppError(409, 'Música já está nesta pasta.');
-    }
-    throw new AppError(400, 'Erro ao adicionar música à pasta.', error);
+    return {
+      data: data as Song[],
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 1,
+    };
+  }
+
+  async getSongById(ministryId: string, songId: string, _userId: string): Promise<any> {
+    return this.repertoireRepository.getSongById(songId);
+  }
+
+  async createSong(ministryId: string, userId: string, songData: any): Promise<Song> {
+    return this.repertoireRepository.createSong(ministryId, userId, songData) as unknown as Song;
+  }
+
+  async updateSong(ministryId: string, songId: string, _userId: string, songData: any): Promise<Song> {
+    return this.repertoireRepository.updateSong(songId, songData) as unknown as Song;
+  }
+
+  async deleteSong(ministryId: string, songId: string, _userId: string): Promise<void> {
+    await this.repertoireRepository.deleteSong(songId);
+  }
+
+  async getArtists(ministryId: string, search?: string): Promise<Artist[]> {
+    return this.repertoireRepository.getArtists(ministryId, search) as unknown as Artist[];
+  }
+
+  async createArtist(ministryId: string, name: string): Promise<Artist> {
+    return this.repertoireRepository.createArtist(ministryId, name) as unknown as Artist;
+  }
+
+  async updateArtist(ministryId: string, artistId: string, name: string): Promise<Artist> {
+    return this.repertoireRepository.updateArtist(artistId, name) as unknown as Artist;
+  }
+
+  async deleteArtist(ministryId: string, artistId: string): Promise<void> {
+    await this.repertoireRepository.deleteArtist(artistId);
+  }
+
+  async getClassifications(ministryId: string): Promise<Classification[]> {
+    return this.repertoireRepository.getClassifications(ministryId) as unknown as Classification[];
+  }
+
+  async createClassification(ministryId: string, data: { name: string; description?: string; color?: string }): Promise<Classification> {
+    return this.repertoireRepository.createClassification(ministryId, data) as unknown as Classification;
+  }
+
+  async updateClassification(id: string, data: { name: string; description?: string; color?: string }): Promise<Classification> {
+    return this.repertoireRepository.updateClassification(id, data) as unknown as Classification;
+  }
+
+  async deleteClassification(id: string): Promise<void> {
+    await this.repertoireRepository.deleteClassification(id);
+  }
+
+  async getFolders(ministryId: string): Promise<Folder[]> {
+    return this.repertoireRepository.getFolders(ministryId) as unknown as Folder[];
+  }
+
+  async getFolderById(ministryId: string, folderId: string): Promise<Folder> {
+    return this.repertoireRepository.getFolderById(folderId) as unknown as Folder;
+  }
+
+  async createFolder(ministryId: string, name: string, description?: string): Promise<Folder> {
+    return this.repertoireRepository.createFolder(ministryId, name, description) as unknown as Folder;
+  }
+
+  async updateFolder(ministryId: string, folderId: string, data: { name: string; description?: string | null }): Promise<Folder> {
+    return this.repertoireRepository.updateFolder(folderId, data.name, data.description) as unknown as Folder;
+  }
+
+  async deleteFolder(ministryId: string, folderId: string): Promise<void> {
+    await this.repertoireRepository.deleteFolder(folderId);
+  }
+
+  async addSongToFolder(ministryId: string, folderId: string, songId: string): Promise<void> {
+    await this.repertoireRepository.addSongToFolder(folderId, songId);
+  }
+
+  async removeSongFromFolder(ministryId: string, folderId: string, songId: string): Promise<void> {
+    await this.repertoireRepository.removeSongFromFolder(folderId, songId);
   }
 }
 
-export async function removeSongFromFolder(
-  folderId: string,
-  songId: string
-): Promise<void> {
-  const { error } = await supabase()
-    .from('folder_songs')
-    .delete()
-    .eq('folder_id', folderId)
-    .eq('song_id', songId);
+const serviceInstance = new RepertoireService();
 
-  if (error) throw new AppError(400, 'Erro ao remover música da pasta.', error);
-}
-
-// ============================================================
-// COUNTS (for tab badges)
-// ============================================================
-
-export async function getRepertoireCounts(
-  ministryId: string,
-  userId: string
-): Promise<RepertoireCounts> {
-  const [songsRes, foldersRes, artistsRes] = await Promise.all([
-    supabase().from('songs').select('id', { count: 'exact', head: true }).eq('ministry_id', ministryId).eq('user_id', userId),
-    supabase().from('folders').select('id', { count: 'exact', head: true }).eq('ministry_id', ministryId),
-    supabase().from('artists').select('id', { count: 'exact', head: true }).eq('ministry_id', ministryId),
-  ]);
-
-  return {
-    songs: songsRes.count || 0,
-    folders: foldersRes.count || 0,
-    artists: artistsRes.count || 0,
-  };
-}
+export const getCounts = (m: string) => serviceInstance.getCounts(m);
+export const getSongs = (m: string, u: string, f: any) => serviceInstance.getSongs(m, u, f);
+export const getSongById = (m: string, s: string, u: string) => serviceInstance.getSongById(m, s, u);
+export const createSong = (m: string, u: string, d: any) => serviceInstance.createSong(m, u, d);
+export const updateSong = (m: string, s: string, u: string, d: any) => serviceInstance.updateSong(m, s, u, d);
+export const deleteSong = (m: string, s: string, u: string) => serviceInstance.deleteSong(m, s, u);
+export const getArtists = (m: string, s?: string) => serviceInstance.getArtists(m, s);
+export const createArtist = (m: string, n: string) => serviceInstance.createArtist(m, n);
+export const updateArtist = (m: string, a: string, n: string) => serviceInstance.updateArtist(m, a, n);
+export const deleteArtist = (m: string, a: string) => serviceInstance.deleteArtist(m, a);
+export const getClassifications = (m: string) => serviceInstance.getClassifications(m);
+export const createClassification = (m: string, d: any) => serviceInstance.createClassification(m, d);
+export const updateClassification = (id: string, d: any) => serviceInstance.updateClassification(id, d);
+export const deleteClassification = (id: string) => serviceInstance.deleteClassification(id);
+export const getFolders = (m: string) => serviceInstance.getFolders(m);
+export const getFolderById = (m: string, f: string) => serviceInstance.getFolderById(m, f);
+export const createFolder = (m: string, n: string, d?: string) => serviceInstance.createFolder(m, n, d);
+export const updateFolder = (m: string, f: string, d: any) => serviceInstance.updateFolder(m, f, d);
+export const deleteFolder = (m: string, f: string) => serviceInstance.deleteFolder(m, f);
+export const addSongToFolder = (m: string, f: string, s: string) => serviceInstance.addSongToFolder(m, f, s);
+export const removeSongFromFolder = (m: string, f: string, s: string) => serviceInstance.removeSongFromFolder(m, f, s);

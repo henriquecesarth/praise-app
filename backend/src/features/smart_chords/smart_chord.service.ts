@@ -1,8 +1,6 @@
-import { getSupabaseClient } from '../../lib/supabase';
+import { SmartChordRepository } from '../../repositories/SmartChordRepository';
 import { SmartChord } from './smart_chord.types';
-import { AppError } from '../../middleware/error-handler';
 
-// Local paginated response definition to avoid coupling
 export interface PaginatedResponse<T> {
   data: T[];
   total: number;
@@ -11,115 +9,53 @@ export interface PaginatedResponse<T> {
   totalPages: number;
 }
 
-const supabase = () => getSupabaseClient();
+export class SmartChordService {
+  constructor(private readonly smartChordRepository: SmartChordRepository = new SmartChordRepository()) {}
 
-export async function getSmartChords(
-  userId: string,
-  filters: {
-    search?: string;
-    page?: number;
-    limit?: number;
+  async getSmartChords(
+    userId: string,
+    filters: {
+      search?: string;
+      page?: number;
+      limit?: number;
+    }
+  ): Promise<PaginatedResponse<SmartChord>> {
+    const page = filters.page || 1;
+    const limit = filters.limit || 50;
+
+    const list = await this.smartChordRepository.getSmartChords(userId, filters.search);
+    const total = list.length;
+
+    return {
+      data: list as SmartChord[],
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 1,
+    };
   }
-): Promise<PaginatedResponse<SmartChord>> {
-  const page = filters.page || 1;
-  const limit = filters.limit || 50;
-  const offset = (page - 1) * limit;
 
-  let query = supabase()
-    .from('smart_chords')
-    .select('*, artist:artists(id, name), song:songs(id, title)', { count: 'exact' })
-    .eq('user_id', userId);
-
-  if (filters.search) {
-    query = query.ilike('title', `%${filters.search}%`);
+  async getSmartChordById(id: string, _userId: string): Promise<SmartChord> {
+    return this.smartChordRepository.getSmartChordById(id) as unknown as SmartChord;
   }
 
-  const { data, count, error } = await query
-    .order('title', { ascending: true })
-    .range(offset, offset + limit - 1);
+  async createSmartChord(userId: string, data: Partial<SmartChord>): Promise<SmartChord> {
+    return this.smartChordRepository.createSmartChord(userId, data) as unknown as SmartChord;
+  }
 
-  if (error) throw new AppError(500, 'Erro ao buscar cifras inteligentes.', error);
+  async updateSmartChord(id: string, _userId: string, data: Partial<SmartChord>): Promise<SmartChord> {
+    return this.smartChordRepository.updateSmartChord(id, data) as unknown as SmartChord;
+  }
 
-  const total = count || 0;
-  const totalPages = Math.ceil(total / limit);
-
-  return {
-    data: (data || []) as SmartChord[],
-    total,
-    page,
-    limit,
-    totalPages,
-  };
+  async deleteSmartChord(id: string, _userId: string): Promise<void> {
+    await this.smartChordRepository.deleteSmartChord(id);
+  }
 }
 
-export async function getSmartChordById(
-  id: string,
-  userId: string
-): Promise<SmartChord> {
-  const { data, error } = await supabase()
-    .from('smart_chords')
-    .select('*, artist:artists(id, name), song:songs(id, title)')
-    .eq('id', id)
-    .eq('user_id', userId)
-    .single();
+const instance = new SmartChordService();
 
-  if (error || !data) throw new AppError(404, 'Cifra inteligente não encontrada.');
-
-  return data as SmartChord;
-}
-
-export async function createSmartChord(
-  userId: string,
-  data: Partial<SmartChord>
-): Promise<SmartChord> {
-  const { data: created, error } = await supabase()
-    .from('smart_chords')
-    .insert({
-      ...data,
-      user_id: userId,
-    })
-    .select('*, artist:artists(id, name), song:songs(id, title)')
-    .single();
-
-  if (error) throw new AppError(400, 'Erro ao criar cifra inteligente.', error);
-
-  return created as SmartChord;
-}
-
-export async function updateSmartChord(
-  id: string,
-  userId: string,
-  data: Partial<SmartChord>
-): Promise<SmartChord> {
-  const { data: updated, error } = await supabase()
-    .from('smart_chords')
-    .update({
-      title: data.title,
-      artist_id: data.artist_id,
-      song_id: data.song_id,
-      original_key: data.original_key,
-      content: data.content,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', id)
-    .eq('user_id', userId)
-    .select('*, artist:artists(id, name), song:songs(id, title)')
-    .single();
-
-  if (error) throw new AppError(400, 'Erro ao atualizar cifra inteligente.', error);
-
-  return updated as SmartChord;
-}
-
-export async function deleteSmartChord(
-  id: string,
-  userId: string
-): Promise<void> {
-  const { error } = await supabase()
-    .from('smart_chords')
-    .delete()
-    .eq('id', id)
-    .eq('user_id', userId);
-
-  if (error) throw new AppError(400, 'Erro ao excluir cifra inteligente.', error);
-}
+export const getSmartChords = (u: string, f: any) => instance.getSmartChords(u, f);
+export const getSmartChordById = (id: string, u: string) => instance.getSmartChordById(id, u);
+export const createSmartChord = (u: string, d: any) => instance.createSmartChord(u, d);
+export const updateSmartChord = (id: string, u: string, d: any) => instance.updateSmartChord(id, u, d);
+export const deleteSmartChord = (id: string, u: string) => instance.deleteSmartChord(id, u);

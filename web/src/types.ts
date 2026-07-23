@@ -1,27 +1,32 @@
-export type GroupRole = 'admin' | 'member';
+export type MinistryRole = 'admin' | 'member';
+export type GroupRole = MinistryRole;
 
-export interface Group {
+export interface Ministry {
   id: string;
   name: string;
   slug?: string;
   ownerUserId: string;
   subscriptionStatus: 'trialing' | 'active' | 'past_due' | 'canceled';
-  role: GroupRole;
+  role: MinistryRole;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface GroupMember {
+export type Group = Ministry;
+
+export interface MinistryMember {
   id: string;
-  groupId: string;
+  ministryId: string;
   userId: string;
-  role: GroupRole;
+  role: MinistryRole;
   joinedAt: string;
 }
 
-export interface GroupInvite {
+export type GroupMember = MinistryMember;
+
+export interface MinistryInvite {
   id: string;
-  groupId: string;
+  ministryId: string;
   code: string;
   createdBy: string;
   maxUses?: number;
@@ -29,6 +34,8 @@ export interface GroupInvite {
   expiresAt?: string;
   createdAt: string;
 }
+
+export type GroupInvite = MinistryInvite;
 
 export interface LiturgyItem {
   id: string;
@@ -43,7 +50,7 @@ export interface LiturgyItem {
 
 export interface Liturgy {
   id: string;
-  groupId: string;
+  ministryId: string;
   title: string;
   date: string;
   description?: string;
@@ -56,7 +63,6 @@ export interface Liturgy {
 export interface Song {
   id: string;
   ministryId: string;
-  groupId?: string;
   userId?: string;
   title: string;
   artistId?: string;
@@ -84,7 +90,6 @@ export interface Song {
 export interface Artist {
   id: string;
   ministryId: string;
-  groupId?: string;
   name: string;
   createdAt: string;
   updatedAt: string;
@@ -93,7 +98,6 @@ export interface Artist {
 export interface Classification {
   id: string;
   ministryId: string;
-  groupId?: string;
   name: string;
   description?: string;
   color?: string;
@@ -104,7 +108,6 @@ export interface Classification {
 export interface Folder {
   id: string;
   ministryId: string;
-  groupId?: string;
   name: string;
   description?: string;
   songCount: number;
