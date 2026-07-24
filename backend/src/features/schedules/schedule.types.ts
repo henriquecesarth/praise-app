@@ -29,3 +29,7 @@ export const createScheduleSchema = z.object({
 });
 
 export const updateScheduleSchema = createScheduleSchema.partial();
+
+export const createScheduleCommentSchema = z.object({
+  content: z.string().min(1, 'O comentário não pode ser vazio.').max(1000),
+});

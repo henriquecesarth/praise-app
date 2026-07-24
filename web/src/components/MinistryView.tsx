@@ -19,7 +19,27 @@ interface MinistryMemberItem {
   email: string;
   role: string;
   birthDate?: string;
+  birth_date?: string;
   isManual?: boolean;
+  roleIds?: string[];
+  role_ids?: string[];
+}
+
+interface MinistryFunctionRole {
+  id: string;
+  name: string;
+  icon: string;
+}
+
+function formatDateBR(dateStr?: string | null): string {
+  if (!dateStr) return '';
+  const cleanStr = dateStr.split('T')[0];
+  const parts = cleanStr.split('-');
+  if (parts.length === 3) {
+    const [year, month, day] = parts;
+    return `${day.padStart(2, '0')}/${month.padStart(2, '0')}/${year}`;
+  }
+  return dateStr;
 }
 
 interface Props {
@@ -65,7 +85,18 @@ export function MinistryView({
 
   // Edit member modal
   const [editingMember, setEditingMember] = useState<MinistryMemberItem | null>(null);
-  const [editRole, setEditRole] = useState<'admin' | 'member'>('member');
+  const [editForm, setEditForm] = useState({
+    name: '',
+    email: '',
+    birthDate: '',
+    role: 'member' as 'admin' | 'member',
+    roleIds: [] as string[],
+    password: '',
+  });
+  const [showPasswordSection, setShowPasswordSection] = useState(false);
+  const [showRolesSection, setShowRolesSection] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [availableRoles, setAvailableRoles] = useState<MinistryFunctionRole[]>([]);
 
   // Add member manually modal
   const [showAddManualModal, setShowAddManualModal] = useState(false);
@@ -91,8 +122,18 @@ export function MinistryView({
   useEffect(() => {
     if (activeTab === 'members') {
       loadMembers();
+      loadRoles();
     }
   }, [activeTab, activeMinistry.id]);
+
+  const loadRoles = async () => {
+    try {
+      const data = await api.getRoles(activeMinistry.id);
+      setAvailableRoles(data || []);
+    } catch (err) {
+      console.warn('Erro ao carregar funções:', err);
+    }
+  };
 
   const loadMembers = async () => {
     setLoadingMembers(true);
@@ -162,20 +203,44 @@ export function MinistryView({
 
   const handleOpenEditMember = (member: MinistryMemberItem) => {
     setEditingMember(member);
-    setEditRole(member.role as 'admin' | 'member');
+    setEditForm({
+      name: member.name || '',
+      email: member.email || '',
+      birthDate: ((member.birthDate || member.birth_date || '') as string).split('T')[0],
+      role: (member.role === 'admin' ? 'admin' : 'member'),
+      roleIds: member.roleIds || member.role_ids || [],
+      password: '',
+    });
+    setShowPasswordSection(false);
+    setShowRolesSection(false);
     setOpenMenuId(null);
   };
 
-  const handleSaveEditMember = async () => {
+  const handleSaveEditMember = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!editingMember) return;
+    if (!editForm.name.trim() || !editForm.email.trim()) {
+      showToast('Nome e e-mail são obrigatórios.', 'error');
+      return;
+    }
+    setSavingEdit(true);
     try {
-      await api.updateMemberRole(activeMinistry.id, editingMember.id, editRole);
-      showToast(`Papel de "${editingMember.name}" atualizado para ${editRole === 'admin' ? 'Administrador' : 'Integrante'}.`);
+      await api.updateMember(activeMinistry.id, editingMember.id, {
+        name: editForm.name.trim(),
+        email: editForm.email.trim(),
+        birthDate: editForm.birthDate || undefined,
+        role: editForm.role,
+        roleIds: editForm.roleIds,
+        password: editForm.password ? editForm.password : undefined,
+      });
+      showToast(`Membro "${editForm.name.trim()}" atualizado com sucesso!`);
+      setEditingMember(null);
       loadMembers();
     } catch (err: any) {
-      showToast(err.message || 'Erro ao atualizar papel.', 'error');
+      showToast(err.message || 'Erro ao atualizar membro.', 'error');
+    } finally {
+      setSavingEdit(false);
     }
-    setEditingMember(null);
   };
 
   const handleAddManual = async (e: React.FormEvent) => {
@@ -576,9 +641,26 @@ export function MinistryView({
                     {member.birthDate && (
                       <div className="member-card-birth">
                         <CalendarDays size={12} />
-                        {new Date(member.birthDate).toLocaleDateString('pt-BR')}
+                        {formatDateBR(member.birthDate)}
                       </div>
                     )}
+                    {(() => {
+                      const assignedIds = member.roleIds || member.role_ids || [];
+                      const memberFunctions = assignedIds
+                        .map((rId) => availableRoles.find((r) => r.id === rId))
+                        .filter(Boolean);
+                      if (memberFunctions.length === 0) return null;
+                      return (
+                        <div className="member-card-functions-row">
+                          {memberFunctions.map((fn) => (
+                            <span key={fn!.id} className="member-function-tag">
+                              <span>{fn!.icon || '🎵'}</span>
+                              <span>{fn!.name}</span>
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                   <div className="member-card-right">
                     <span className={`member-role-badge ${member.role}`}>
@@ -600,7 +682,7 @@ export function MinistryView({
                               onClick={() => handleOpenEditMember(member)}
                             >
                               <Edit2 size={14} />
-                              Editar Papel
+                              Editar Membro
                             </button>
                             <button
                               className="member-menu-item danger"
@@ -621,35 +703,190 @@ export function MinistryView({
         </div>
       )}
 
-      {/* ── MODAL: Edit member role ── */}
+      {/* ── MODAL: Edit member ── */}
       {editingMember && (
         <div className="modal-overlay" onClick={() => setEditingMember(null)}>
-          <div className="modal-content" style={{ maxWidth: '380px' }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal-content" style={{ maxWidth: '480px' }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <div className="modal-title">Editar Papel — {editingMember.name}</div>
+              <div className="modal-title">Editar Membro</div>
               <button className="action-icon-btn" onClick={() => setEditingMember(null)}>✕</button>
             </div>
-            <div style={{ padding: '20px 0 8px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                Papel no Ministério
-              </label>
-              <div style={{ display: 'flex', gap: '10px' }}>
-                {(['member', 'admin'] as const).map((r) => (
-                  <button
-                    key={r}
-                    onClick={() => setEditRole(r)}
-                    className={`role-select-btn ${editRole === r ? 'active' : ''}`}
-                  >
-                    {editRole === r && <CheckCircle size={14} />}
-                    {r === 'admin' ? 'Administrador' : 'Integrante'}
-                  </button>
-                ))}
+            <form onSubmit={handleSaveEditMember} className="login-form">
+              {/* Nome */}
+              <div className="form-group">
+                <label>Nome Completo *</label>
+                <input
+                  type="text"
+                  className="input-field"
+                  value={editForm.name}
+                  onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+                  required
+                  autoFocus
+                />
               </div>
-            </div>
-            <div className="form-actions" style={{ marginTop: '20px' }}>
-              <button className="btn btn-secondary" onClick={() => setEditingMember(null)}>Cancelar</button>
-              <button className="btn btn-primary" onClick={handleSaveEditMember}>Salvar</button>
-            </div>
+
+              {/* Email */}
+              <div className="form-group">
+                <label>E-mail *</label>
+                <input
+                  type="email"
+                  className="input-field"
+                  value={editForm.email}
+                  onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))}
+                  required
+                />
+              </div>
+
+              {/* Data de Nascimento (Opcional) */}
+              <div className="form-group">
+                <label>Data de Nascimento (Opcional)</label>
+                <input
+                  type="date"
+                  className="input-field"
+                  value={editForm.birthDate}
+                  onChange={(e) => setEditForm((f) => ({ ...f, birthDate: e.target.value }))}
+                />
+              </div>
+
+              {/* Papel no Ministério */}
+              <div className="form-group">
+                <label>Papel no Ministério</label>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  {(['member', 'admin'] as const).map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => setEditForm((f) => ({ ...f, role: r }))}
+                      className={`role-select-btn ${editForm.role === r ? 'active' : ''}`}
+                    >
+                      {editForm.role === r && <CheckCircle size={14} />}
+                      {r === 'admin' ? 'Administrador' : 'Integrante'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Botão: Selecionar Funções */}
+              <div className="form-group" style={{ marginTop: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <label style={{ margin: 0 }}>Funções do Integrante</label>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+                    onClick={() => setShowRolesSection(!showRolesSection)}
+                  >
+                    <Tag size={14} />
+                    {showRolesSection ? 'Ocultar Funções' : 'Selecionar Funções'}
+                  </button>
+                </div>
+
+                {/* Badges das funções selecionadas */}
+                <div className="member-roles-badges-row" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', minHeight: '32px', alignItems: 'center' }}>
+                  {editForm.roleIds.length === 0 ? (
+                    <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>Nenhuma função atribuída</span>
+                  ) : (
+                    editForm.roleIds.map((rId) => {
+                      const rObj = availableRoles.find((r) => r.id === rId);
+                      return (
+                        <span key={rId} className="member-role-badge">
+                          <span>{rObj?.icon || '🎵'}</span>
+                          <span>{rObj?.name || 'Função'}</span>
+                          <button
+                            type="button"
+                            className="badge-remove-btn"
+                            onClick={() =>
+                              setEditForm((f) => ({ ...f, roleIds: f.roleIds.filter((id) => id !== rId) }))
+                            }
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Grid de seleção de funções */}
+                {showRolesSection && (
+                  <div className="roles-picker-container" style={{ marginTop: '10px', padding: '12px', background: 'var(--surface-elevated)', borderRadius: 'var(--border-radius-md)', border: '1px solid var(--border-color)' }}>
+                    <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                      Clique nas funções para ativar/desativar para este integrante:
+                    </p>
+                    {availableRoles.length === 0 ? (
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>Nenhuma função cadastrada neste ministério.</p>
+                    ) : (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', maxHeight: '180px', overflowY: 'auto' }}>
+                        {availableRoles.map((role) => {
+                          const isSelected = editForm.roleIds.includes(role.id);
+                          return (
+                            <button
+                              key={role.id}
+                              type="button"
+                              className={`role-chip-btn ${isSelected ? 'selected' : ''}`}
+                              onClick={() => {
+                                setEditForm((f) => ({
+                                  ...f,
+                                  roleIds: isSelected
+                                    ? f.roleIds.filter((id) => id !== role.id)
+                                    : [...f.roleIds, role.id],
+                                }));
+                              }}
+                            >
+                              <span>{role.icon || '🎵'}</span>
+                              <span>{role.name}</span>
+                              {isSelected && <Check size={12} />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Botão: Alterar Senha */}
+              <div className="form-group" style={{ marginTop: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <label style={{ margin: 0 }}>Segurança de Acesso</label>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+                    onClick={() => setShowPasswordSection(!showPasswordSection)}
+                  >
+                    <Shield size={14} />
+                    {showPasswordSection ? 'Cancelar Alteração de Senha' : 'Alterar Senha'}
+                  </button>
+                </div>
+
+                {showPasswordSection && (
+                  <div style={{ marginTop: '10px', padding: '12px', background: 'var(--surface-elevated)', borderRadius: 'var(--border-radius-md)', border: '1px solid var(--border-color)' }}>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label style={{ fontSize: '0.8rem' }}>Nova Senha</label>
+                      <input
+                        type="password"
+                        className="input-field"
+                        placeholder="Digite a nova senha (mínimo 6 caracteres)..."
+                        value={editForm.password}
+                        onChange={(e) => setEditForm((f) => ({ ...f, password: e.target.value }))}
+                        minLength={6}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Form Actions */}
+              <div className="form-actions" style={{ marginTop: '20px' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setEditingMember(null)}>
+                  Cancelar
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={savingEdit}>
+                  {savingEdit ? 'Salvando...' : 'Salvar Alterações'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

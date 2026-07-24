@@ -1,4 +1,4 @@
-import { ScheduleRepository, ScheduleRecord } from '../../repositories/ScheduleRepository';
+import { ScheduleRepository, ScheduleRecord, ScheduleCommentRecord } from '../../repositories/ScheduleRepository';
 
 export class ScheduleService {
   constructor(private readonly scheduleRepository: ScheduleRepository = new ScheduleRepository()) {}
@@ -21,5 +21,25 @@ export class ScheduleService {
 
   async deleteSchedule(scheduleId: string): Promise<void> {
     await this.scheduleRepository.deleteSchedule(scheduleId);
+  }
+
+  async getScheduleComments(
+    scheduleId: string,
+    userId: string,
+    userName: string,
+    userRole?: string
+  ): Promise<ScheduleCommentRecord[]> {
+    return this.scheduleRepository.getScheduleComments(scheduleId, userId, userName, userRole);
+  }
+
+  async addScheduleComment(
+    ministryId: string,
+    scheduleId: string,
+    userId: string,
+    userName: string,
+    content: string,
+    userRole?: string
+  ): Promise<ScheduleCommentRecord> {
+    return this.scheduleRepository.addScheduleComment(ministryId, scheduleId, userId, userName, content, userRole);
   }
 }

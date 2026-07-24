@@ -49,9 +49,27 @@ export class MinistryService {
   async updateMemberRole(
     ministryId: string,
     memberUserId: string,
-    role: 'admin' | 'member'
+    data: any
   ): Promise<any> {
-    return this.repo.updateMemberRole(ministryId, memberUserId, role);
+    if (typeof data === 'string') {
+      return this.repo.updateMemberDetails(ministryId, memberUserId, { role: data as any });
+    }
+    return this.repo.updateMemberDetails(ministryId, memberUserId, data);
+  }
+
+  async updateMemberDetails(
+    ministryId: string,
+    memberUserId: string,
+    data: {
+      name?: string;
+      email?: string;
+      birthDate?: string | null;
+      role?: 'admin' | 'member';
+      roleIds?: string[];
+      password?: string;
+    }
+  ): Promise<any> {
+    return this.repo.updateMemberDetails(ministryId, memberUserId, data);
   }
 
   async addMemberManually(

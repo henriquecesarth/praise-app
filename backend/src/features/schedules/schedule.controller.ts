@@ -58,6 +58,42 @@ export class ScheduleController extends BaseController {
       this.handleError(err, res, next);
     }
   };
+
+  getScheduleComments = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const scheduleId = req.params.scheduleId as string;
+      const userId = req.user!.id;
+      const userName = (req.user as any)?.name || req.user!.email || 'Usuário';
+      const userRole = (req as any).ministryRole || 'member';
+
+      const comments = await this.scheduleService.getScheduleComments(scheduleId, userId, userName, userRole);
+      this.handleSuccess(res, comments);
+    } catch (err) {
+      this.handleError(err, res, next);
+    }
+  };
+
+  addScheduleComment = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const ministryId = (req.params.groupId || req.params.ministryId) as string;
+      const scheduleId = req.params.scheduleId as string;
+      const userId = req.user!.id;
+      const userName = (req.user as any)?.name || req.user!.email || 'Usuário';
+      const userRole = (req as any).ministryRole || 'member';
+
+      const comment = await this.scheduleService.addScheduleComment(
+        ministryId,
+        scheduleId,
+        userId,
+        userName,
+        req.body.content,
+        userRole
+      );
+      this.handleCreated(res, comment);
+    } catch (err) {
+      this.handleError(err, res, next);
+    }
+  };
 }
 
 const controllerInstance = new ScheduleController();
@@ -66,3 +102,5 @@ export const getScheduleById = controllerInstance.getScheduleById;
 export const createSchedule = controllerInstance.createSchedule;
 export const updateSchedule = controllerInstance.updateSchedule;
 export const deleteSchedule = controllerInstance.deleteSchedule;
+export const getScheduleComments = controllerInstance.getScheduleComments;
+export const addScheduleComment = controllerInstance.addScheduleComment;

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, ListOrdered, Plus, Users, Eye, EyeOff, CheckSquare, ArrowLeft, Check, LayoutTemplate, Trash2, ChevronRight } from 'lucide-react';
+import { X, ListOrdered, Plus, Users, Eye, EyeOff, CheckSquare, ArrowLeft, Check, LayoutTemplate, Trash2, ChevronRight, Layers, Music, Clock, AlertTriangle, GripVertical } from 'lucide-react';
 import { Song } from '../types';
 
 export interface ClothingPiece {
@@ -22,6 +22,22 @@ export interface ScheduleItem {
   participants: Array<{ id: string; name: string; role: string; confirmed?: boolean }>;
   songs: Song[];
   timeline: Array<{ id: string; title: string; time?: string; type: string }>;
+}
+
+interface ScheduleTemplateItem {
+  id: string;
+  type: 'song' | 'event';
+  title: string;
+  description?: string;
+  durationSeconds?: number;
+  icon?: string;
+  order: number;
+}
+
+interface ScheduleTemplate {
+  id: string;
+  name: string;
+  items: ScheduleTemplateItem[];
 }
 
 interface CreateScheduleModalProps {
@@ -62,28 +78,17 @@ const INITIAL_CLOTHING_PIECES: ClothingPiece[] = [
   },
 ];
 
-const LITURGY_TEMPLATES = [
-  {
-    name: 'Culto de Domingo Tradicional',
-    items: [
-      { id: 't1', title: 'Oração Inicial & Acolhida', time: '5 min', type: 'Oração' },
-      { id: 't2', title: 'Bloco de Louvor Principal (3 Músicas)', time: '20 min', type: 'Louvor' },
-      { id: 't3', title: 'Momento de Ofertório & Avisos', time: '10 min', type: 'Avisos' },
-      { id: 't4', title: 'Ministração da Palavra', time: '40 min', type: 'Pregação' },
-      { id: 't5', title: 'Música de Apelo / Fechamento', time: '10 min', type: 'Louvor' },
-    ],
-  },
-  {
-    name: 'Culto de Jovens / Noite de Louvor',
-    items: [
-      { id: 't1', title: 'Abertura & Louvor Agitado (2 Músicas)', time: '15 min', type: 'Louvor' },
-      { id: 't2', title: 'Oração & Quebra-gelo', time: '10 min', type: 'Interação' },
-      { id: 't3', title: 'Louvor Adoração / Intimidade (3 Músicas)', time: '25 min', type: 'Louvor' },
-      { id: 't4', title: 'Mensagem para os Jovens', time: '30 min', type: 'Pregação' },
-      { id: 't5', title: 'Oração Final & Comunhão', time: '10 min', type: 'Oração' },
-    ],
-  },
-];
+function formatTemplateDuration(seconds?: number): string {
+  if (!seconds) return '';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  const parts: string[] = [];
+  if (h > 0) parts.push(`${h}h`);
+  if (m > 0) parts.push(`${m}min`);
+  if (s > 0) parts.push(`${s}s`);
+  return parts.join(' ');
+}
 
 export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
   groupId,
@@ -102,9 +107,27 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
   const [showSongSelectPage, setShowSongSelectPage] = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
 
+  // Template apply mode: when a template is selected, confirm how to apply it
+  const [pendingTemplate, setPendingTemplate] = useState<ScheduleTemplate | null>(null);
+
+  // Real schedule templates from backend
+  const [scheduleTemplates, setScheduleTemplates] = useState<ScheduleTemplate[]>([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+
   // Group members from database
   const [groupMembers, setGroupMembers] = useState<Array<{ id: string; name: string; role: string }>>([]);
   const [loadingMembers, setLoadingMembers] = useState(false);
+
+  // Ministry teams from database
+  interface MinistryTeamRef {
+    id: string;
+    name: string;
+    description?: string | null;
+    memberIds: string[];
+  }
+  const [ministryTeams, setMinistryTeams] = useState<MinistryTeamRef[]>([]);
+  const [loadingTeams, setLoadingTeams] = useState(false);
+  const [showTeamSelectModal, setShowTeamSelectModal] = useState(false);
 
   // Dress code color palette states
   const [clothingPieces, setClothingPieces] = useState<ClothingPiece[]>(
@@ -136,21 +159,52 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
     ]
   );
 
-  // Carregar membros reais do grupo do backend
+  // Drag-and-drop state
+  const [dragSongIndex, setDragSongIndex] = useState<number | null>(null);
+  const [dragTimelineIndex, setDragTimelineIndex] = useState<number | null>(null);
+
+  // Carregar membros reais do grupo e funções do backend
   React.useEffect(() => {
     if (!groupId) return;
     setLoadingMembers(true);
     import('../api').then(({ api }) => {
-      api.getGroupMembers(groupId)
-        .then((members) => {
-          const mapped = members.map((m) => ({
-            id: m.id || m.userId,
-            name: m.name,
-            role: m.role === 'admin' ? 'Líder / Administrador' : 'Integrante do Louvor',
-          }));
+      Promise.all([api.getGroupMembers(groupId), api.getRoles(groupId)])
+        .then(([members, roles]) => {
+          const rolesMap = new Map<string, { id: string; name: string; icon: string }>();
+          (roles || []).forEach((r: any) => rolesMap.set(r.id, r));
+
+          const mapped = (members || []).map((m: any) => {
+            const assignedIds: string[] = m.roleIds || m.role_ids || [];
+            const memberRoles = assignedIds
+              .map((rId) => rolesMap.get(rId))
+              .filter(Boolean);
+
+            const roleDisplay = memberRoles.length > 0
+              ? memberRoles.map((r) => `${r?.icon || ''} ${r?.name}`.trim()).join(' • ')
+              : 'Integrante do Louvor';
+
+            return {
+              id: m.id || m.userId,
+              name: m.name,
+              role: roleDisplay,
+            };
+          });
+
           setGroupMembers(mapped);
+
           if (!initialSchedule && selectedParticipants.length === 0 && mapped.length > 0) {
             setSelectedParticipants(mapped.slice(0, 2));
+          } else if (mapped.length > 0) {
+            // Update selected participants display role to match mapped functions
+            setSelectedParticipants((prev) =>
+              prev.map((p) => {
+                const found = mapped.find((m) => m.id === p.id);
+                if (found) {
+                  return { ...p, role: found.role };
+                }
+                return p;
+              })
+            );
           }
         })
         .catch((err) => {
@@ -159,6 +213,73 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
         .finally(() => setLoadingMembers(false));
     });
   }, [groupId]);
+
+  // Carregar modelos de roteiro do backend
+  React.useEffect(() => {
+    if (!groupId) return;
+    setLoadingTemplates(true);
+    import('../api').then(({ api }) => {
+      api.getScheduleTemplates(groupId)
+        .then((templates) => {
+          // Map backend response to frontend ScheduleTemplate type
+          const mapped: ScheduleTemplate[] = (templates || []).map((t: any) => ({
+            id: t.id,
+            name: t.name,
+            items: ((t.items || []) as any[]).map((it: any, idx: number) => ({
+              id: it.id || `item_${idx}`,
+              type: it.type || 'event',
+              title: it.title,
+              description: it.description,
+              durationSeconds: it.durationSeconds,
+              icon: it.icon,
+              order: it.order ?? idx,
+            })).sort((a: any, b: any) => a.order - b.order),
+          }));
+          setScheduleTemplates(mapped);
+        })
+        .catch((err) => {
+          console.warn('Erro ao carregar modelos de roteiro:', err);
+        })
+        .finally(() => setLoadingTemplates(false));
+    });
+  }, [groupId]);
+
+  // Carregar equipes do ministério
+  React.useEffect(() => {
+    if (!groupId) return;
+    setLoadingTeams(true);
+    import('../api').then(({ api }) => {
+      api.getTeams(groupId)
+        .then((teams: any[]) => {
+          setMinistryTeams(
+            (teams || []).map((t: any) => ({
+              id: t.id,
+              name: t.name,
+              description: t.description || null,
+              memberIds: t.member_ids || t.memberIds || [],
+            }))
+          );
+        })
+        .catch((err) => console.warn('Erro ao carregar equipes:', err))
+        .finally(() => setLoadingTeams(false));
+    });
+  }, [groupId]);
+
+  /**
+   * Imports all members of a team into selectedParticipants (deduplication by id).
+   */
+  const handleImportTeam = (team: { id: string; name: string; memberIds: string[] }) => {
+    const teamParticipants = team.memberIds
+      .map((memberId) => groupMembers.find((m) => m.id === memberId || (m as any).userId === memberId))
+      .filter((m): m is typeof groupMembers[0] => !!m);
+
+    setSelectedParticipants((prev) => {
+      const existing = new Set(prev.map((p) => p.id));
+      const toAdd = teamParticipants.filter((m) => !existing.has(m.id));
+      return [...prev, ...toAdd];
+    });
+    setShowTeamSelectModal(false);
+  };
 
   // Vestimentas Piece Card Handlers
   const handleAddPieceCard = () => {
@@ -216,6 +337,83 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
     }
   };
 
+  /**
+   * Re-synchronizes timeline items of type 'Música' with the current selectedSongs list.
+   * The Nth song slot in the roteiro gets the Nth selected song's title (or "Música N" as fallback).
+   */
+  const syncTimelineSongSlots = (
+    currentTimeline: Array<{ id: string; title: string; time?: string; type: string }>,
+    currentSongs: Song[]
+  ): Array<{ id: string; title: string; time?: string; type: string }> => {
+    let songSlotIndex = 0;
+    return currentTimeline.map((item) => {
+      if (item.type === 'Música') {
+        const realSong = currentSongs[songSlotIndex];
+        songSlotIndex++;
+        return {
+          ...item,
+          title: realSong ? realSong.title : `Música ${songSlotIndex}`,
+        };
+      }
+      return item;
+    });
+  };
+
+  // Auto-sync roteiro song slots whenever selectedSongs changes:
+  // 1. Update titles of existing 'Música' slots with real song names or generic fallback.
+  // 2. If selectedSongs has more songs than available slots, append new slots at the end.
+  React.useEffect(() => {
+    setTimelineItems((prev) => {
+      const musicSlotCount = prev.filter((it) => it.type === 'Música').length;
+      const songCount = selectedSongs.length;
+
+      // First, sync names on existing slots
+      let updated = prev;
+      if (musicSlotCount > 0) {
+        updated = syncTimelineSongSlots(prev, selectedSongs);
+      }
+
+      // Then, if more songs than slots, append the missing ones
+      if (songCount > musicSlotCount) {
+        const newSlots = selectedSongs.slice(musicSlotCount).map((song, i) => ({
+          id: `song_slot_${Date.now()}_${i}`,
+          title: song.title,
+          time: '',
+          type: 'Música' as const,
+        }));
+        updated = [...updated, ...newSlots];
+      }
+
+      return updated;
+    });
+  }, [selectedSongs]);
+
+  // ── Drag handlers: Songs ──
+  const handleSongDragStart = (index: number) => setDragSongIndex(index);
+  const handleSongDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    if (dragSongIndex === null || dragSongIndex === index) return;
+    const reordered = [...selectedSongs];
+    const [moved] = reordered.splice(dragSongIndex, 1);
+    reordered.splice(index, 0, moved);
+    setDragSongIndex(index);
+    setSelectedSongs(reordered);
+  };
+  const handleSongDragEnd = () => setDragSongIndex(null);
+
+  // ── Drag handlers: Timeline ──
+  const handleTimelineDragStart = (index: number) => setDragTimelineIndex(index);
+  const handleTimelineDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    if (dragTimelineIndex === null || dragTimelineIndex === index) return;
+    const reordered = [...timelineItems];
+    const [moved] = reordered.splice(dragTimelineIndex, 1);
+    reordered.splice(index, 0, moved);
+    setDragTimelineIndex(index);
+    setTimelineItems(reordered);
+  };
+  const handleTimelineDragEnd = () => setDragTimelineIndex(null);
+
   const handleToggleSong = (song: Song) => {
     if (selectedSongs.some((s) => s.id === song.id)) {
       setSelectedSongs(selectedSongs.filter((s) => s.id !== song.id));
@@ -234,8 +432,48 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
     setTimelineItems([...timelineItems, newItem]);
   };
 
-  const handleApplyTemplate = (template: typeof LITURGY_TEMPLATES[0]) => {
-    setTimelineItems(template.items);
+  /**
+   * Converts a real ScheduleTemplate's items into timeline items.
+   * Song slots get filled with real songs from selectedSongs in order;
+   * surplus song slots become generic "Música X" placeholders.
+   * Event items become timeline events with type from icon or 'Evento'.
+   */
+  const convertTemplateToTimeline = (
+    template: ScheduleTemplate
+  ): Array<{ id: string; title: string; time?: string; type: string }> => {
+    const songs = [...selectedSongs];
+    let songSlotIndex = 0;
+
+    return template.items.map((item) => {
+      if (item.type === 'song') {
+        const realSong = songs[songSlotIndex];
+        songSlotIndex++;
+        return {
+          id: `tl_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+          title: realSong ? realSong.title : item.title,
+          time: '',
+          type: realSong ? 'Música' : 'Música',
+        };
+      } else {
+        // event
+        return {
+          id: `tl_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+          title: item.title,
+          time: formatTemplateDuration(item.durationSeconds),
+          type: item.icon || 'Evento',
+        };
+      }
+    });
+  };
+
+  const handleApplyTemplate = (template: ScheduleTemplate, mode: 'replace' | 'append') => {
+    const newItems = convertTemplateToTimeline(template);
+    if (mode === 'replace') {
+      setTimelineItems(newItems);
+    } else {
+      setTimelineItems((prev) => [...prev, ...newItems]);
+    }
+    setPendingTemplate(null);
     setShowTemplateModal(false);
   };
 
@@ -531,7 +769,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                     <button
                       type="button"
                       className="btn btn-secondary"
-                      onClick={() => alert('Equipes cadastradas: Equipe A (Domingo), Equipe B (Jovens)')}
+                      onClick={() => setShowTeamSelectModal(true)}
                     >
                       <Users size={16} /> Equipes
                     </button>
@@ -582,7 +820,17 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                   {selectedSongs.length > 0 ? (
                     <div className="schedule-items-list">
                       {selectedSongs.map((song, index) => (
-                        <div key={song.id} className="schedule-song-item">
+                        <div
+                          key={song.id}
+                          className={`schedule-song-item draggable-row ${dragSongIndex === index ? 'dragging' : ''}`}
+                          draggable
+                          onDragStart={() => handleSongDragStart(index)}
+                          onDragOver={(e) => handleSongDragOver(e, index)}
+                          onDragEnd={handleSongDragEnd}
+                        >
+                          <div className="drag-grip" title="Arraste para reordenar">
+                            <GripVertical size={16} />
+                          </div>
                           <div className="schedule-song-index">{index + 1}</div>
                           <div className="dashboard-item-info">
                             <div className="dashboard-item-title">{song.title}</div>
@@ -632,7 +880,17 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
 
                   <div className="schedule-items-list">
                     {timelineItems.map((item, idx) => (
-                      <div key={item.id} className="schedule-timeline-item">
+                      <div
+                        key={item.id}
+                        className={`schedule-timeline-item draggable-row ${dragTimelineIndex === idx ? 'dragging' : ''}`}
+                        draggable
+                        onDragStart={() => handleTimelineDragStart(idx)}
+                        onDragOver={(e) => handleTimelineDragOver(e, idx)}
+                        onDragEnd={handleTimelineDragEnd}
+                      >
+                        <div className="drag-grip" title="Arraste para reordenar">
+                          <GripVertical size={16} />
+                        </div>
                         <div className="schedule-timeline-dot" />
                         <div className="dashboard-item-info">
                           <input
@@ -870,31 +1128,241 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
         )}
 
         {/* Template Selector Modal Overlay */}
-        {showTemplateModal && (
-          <div className="modal-overlay" style={{ zIndex: 1100 }}>
-            <div className="modal-content" style={{ maxWidth: '480px' }}>
+        {showTemplateModal && !pendingTemplate && (
+          <div className="modal-overlay" style={{ zIndex: 1100 }} onClick={() => setShowTemplateModal(false)}>
+            <div className="modal-content" style={{ maxWidth: '500px' }} onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
-                <div className="modal-title">Modelos de Roteiro</div>
+                <div className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Layers size={18} />
+                  Modelos de Roteiro
+                </div>
                 <button className="action-icon-btn" onClick={() => setShowTemplateModal(false)}>
                   <X size={18} />
                 </button>
               </div>
 
-              <div className="schedule-items-list" style={{ margin: '16px 0' }}>
-                {LITURGY_TEMPLATES.map((tmpl, i) => (
-                  <div
-                    key={i}
-                    className="dashboard-item-card"
-                    onClick={() => handleApplyTemplate(tmpl)}
-                  >
-                    <div className="dashboard-item-info">
-                      <div className="dashboard-item-title">{tmpl.name}</div>
-                      <div className="dashboard-item-desc">{tmpl.items.length} momentos cadastrados</div>
-                    </div>
-                    <ChevronRight size={18} />
+              {loadingTemplates ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', margin: '16px 0' }}>
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="shimmer" style={{ height: '68px', borderRadius: '10px' }} />
+                  ))}
+                </div>
+              ) : scheduleTemplates.length === 0 ? (
+                <div className="empty-state" style={{ minHeight: '180px', margin: '16px 0' }}>
+                  <div className="empty-icon">📜</div>
+                  <div className="empty-title">Nenhum modelo cadastrado</div>
+                  <div className="empty-desc">
+                    Crie modelos de roteiro na página do Ministério para reutilizá-los nas escalas.
                   </div>
-                ))}
+                </div>
+              ) : (
+                <>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '8px 0 14px' }}>
+                    Selecione um modelo para preencher o roteiro desta escala.
+                    {selectedSongs.length > 0 && (
+                      <span style={{ color: 'var(--primary-light)', fontWeight: 600 }}> As {selectedSongs.length} músicas selecionadas serão posicionadas automaticamente nos slots de música do modelo.</span>
+                    )}
+                  </p>
+
+                  <div className="schedule-items-list" style={{ margin: '0 0 16px', maxHeight: '360px', overflowY: 'auto' }}>
+                    {scheduleTemplates.map((tmpl) => {
+                      const songsCount = tmpl.items.filter((it) => it.type === 'song').length;
+                      const eventsCount = tmpl.items.filter((it) => it.type === 'event').length;
+                      return (
+                        <div
+                          key={tmpl.id}
+                          className="template-selector-card"
+                          onClick={() => setPendingTemplate(tmpl)}
+                        >
+                          <div className="template-selector-icon">
+                            <Layers size={20} />
+                          </div>
+                          <div className="dashboard-item-info">
+                            <div className="dashboard-item-title">{tmpl.name}</div>
+                            <div className="dashboard-item-desc" style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                              {songsCount > 0 && (
+                                <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                  <Music size={11} /> {songsCount} música{songsCount !== 1 ? 's' : ''}
+                                </span>
+                              )}
+                              {eventsCount > 0 && (
+                                <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                  📅 {eventsCount} evento{eventsCount !== 1 ? 's' : ''}
+                                </span>
+                              )}
+                              <span>• {tmpl.items.length} itens no total</span>
+                            </div>
+                          </div>
+                          <ChevronRight size={16} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Apply Template Confirmation Modal */}
+        {pendingTemplate && (
+          <div className="modal-overlay" style={{ zIndex: 1200 }} onClick={() => setPendingTemplate(null)}>
+            <div className="modal-content" style={{ maxWidth: '420px' }} onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <div className="modal-title">
+                  <Layers size={18} />
+                  Aplicar "{pendingTemplate.name}"
+                </div>
+                <button className="action-icon-btn" onClick={() => setPendingTemplate(null)}>
+                  <X size={18} />
+                </button>
               </div>
+
+              {/* Preview of what will be imported */}
+              <div style={{ margin: '12px 0' }}>
+                <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '12px', lineHeight: 1.6 }}>
+                  Como deseja aplicar este modelo ao roteiro atual?
+                </p>
+
+                {/* Preview list */}
+                <div style={{ background: 'var(--surface-elevated)', borderRadius: '10px', padding: '12px', maxHeight: '200px', overflowY: 'auto', marginBottom: '16px' }}>
+                  <p style={{ fontSize: '0.73rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: '8px' }}>Prévia do roteiro</p>
+                  {(() => {
+                    let songIdx = 0;
+                    return pendingTemplate.items.map((item, idx) => {
+                      let displayTitle = item.title;
+                      if (item.type === 'song') {
+                        const realSong = selectedSongs[songIdx];
+                        displayTitle = realSong ? realSong.title : item.title;
+                        songIdx++;
+                      }
+                      return (
+                        <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 0', borderBottom: idx < pendingTemplate.items.length - 1 ? '1px solid var(--border-color)' : 'none' }}>
+                          <span style={{ fontSize: '1rem' }}>{item.type === 'song' ? '🎵' : (item.icon || '📅')}</span>
+                          <span style={{ fontSize: '0.83rem', color: 'var(--text-primary)' }}>{displayTitle}</span>
+                          {item.durationSeconds ? (
+                            <span style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                              <Clock size={10} />{formatTemplateDuration(item.durationSeconds)}
+                            </span>
+                          ) : null}
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+
+                {timelineItems.length > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', background: 'rgba(251, 191, 36, 0.08)', borderRadius: '8px', padding: '10px', border: '1px solid rgba(251, 191, 36, 0.25)' }}>
+                    <AlertTriangle size={15} style={{ color: '#F59E0B', flexShrink: 0, marginTop: '1px' }} />
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0 }}>
+                      O roteiro atual tem <strong style={{ color: 'var(--text-primary)' }}>{timelineItems.length} itens</strong>. Escolha abaixo o que fazer.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="form-actions" style={{ flexDirection: 'column', gap: '8px' }}>
+                {timelineItems.length > 0 && (
+                  <button
+                    className="btn btn-secondary"
+                    style={{ width: '100%', justifyContent: 'center' }}
+                    onClick={() => handleApplyTemplate(pendingTemplate, 'append')}
+                  >
+                    Adicionar ao final do roteiro atual
+                  </button>
+                )}
+                <button
+                  className="btn btn-primary"
+                  style={{ width: '100%', justifyContent: 'center' }}
+                  onClick={() => handleApplyTemplate(pendingTemplate, 'replace')}
+                >
+                  {timelineItems.length > 0 ? 'Substituir roteiro atual' : 'Aplicar modelo'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Team Selector Modal */}
+        {showTeamSelectModal && (
+          <div className="modal-overlay" style={{ zIndex: 1100 }} onClick={() => setShowTeamSelectModal(false)}>
+            <div className="modal-content" style={{ maxWidth: '460px' }} onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <div className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Users size={18} />
+                  Importar Equipe
+                </div>
+                <button className="action-icon-btn" onClick={() => setShowTeamSelectModal(false)}>
+                  <X size={18} />
+                </button>
+              </div>
+
+              <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '8px 0 14px', lineHeight: 1.6 }}>
+                Selecione uma equipe para adicionar todos os seus integrantes como participantes da escala.
+                Membros já adicionados não serão duplicados.
+              </p>
+
+              {loadingTeams || loadingMembers ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', margin: '8px 0 16px' }}>
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="shimmer" style={{ height: '64px', borderRadius: '10px' }} />
+                  ))}
+                </div>
+              ) : ministryTeams.length === 0 ? (
+                <div className="empty-state" style={{ minHeight: '160px', margin: '8px 0 16px' }}>
+                  <div className="empty-icon">👥</div>
+                  <div className="empty-title">Nenhuma equipe cadastrada</div>
+                  <div className="empty-desc">
+                    Crie equipes na página do Ministério para importá-las nas escalas.
+                  </div>
+                </div>
+              ) : (
+                <div className="schedule-items-list" style={{ margin: '8px 0 16px', maxHeight: '360px', overflowY: 'auto' }}>
+                  {ministryTeams.map((team) => {
+                    const membersInTeam = team.memberIds
+                      .map((mid) => groupMembers.find((m) => m.id === mid || (m as any).userId === mid))
+                      .filter(Boolean);
+                    const alreadyAdded = membersInTeam.filter((m) =>
+                      m && selectedParticipants.some((p) => p.id === m.id)
+                    ).length;
+                    const newCount = membersInTeam.length - alreadyAdded;
+
+                    return (
+                      <div
+                        key={team.id}
+                        className="template-selector-card"
+                        onClick={() => handleImportTeam(team)}
+                      >
+                        <div className="template-selector-icon">
+                          <Users size={20} />
+                        </div>
+                        <div className="dashboard-item-info">
+                          <div className="dashboard-item-title">{team.name}</div>
+                          <div className="dashboard-item-desc" style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                            <span>{membersInTeam.length} integrante{membersInTeam.length !== 1 ? 's' : ''}</span>
+                            {alreadyAdded > 0 && (
+                              <span style={{ color: 'var(--text-tertiary)' }}>
+                                • {alreadyAdded} já escalado{alreadyAdded !== 1 ? 's' : ''}
+                              </span>
+                            )}
+                            {newCount > 0 && (
+                              <span style={{ color: 'var(--primary-light)', fontWeight: 600 }}>
+                                + {newCount} novo{newCount !== 1 ? 's' : ''}
+                              </span>
+                            )}
+                          </div>
+                          {team.description && (
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '2px' }}>
+                              {team.description}
+                            </div>
+                          )}
+                        </div>
+                        <ChevronRight size={16} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         )}

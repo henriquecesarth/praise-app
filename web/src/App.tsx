@@ -449,6 +449,7 @@ export default function App() {
   const handleBackToMain = () => {
     setSelectedSong(null);
     setSelectedFolder(null);
+    setSelectedSchedule(null);
     loadSongs();
     loadFolders();
   };
@@ -820,7 +821,10 @@ export default function App() {
                     setActiveTab('songs');
                     handleBackToMain();
                   }}
-                  onNavigateToSchedules={() => setMainModule('schedules')}
+                  onNavigateToSchedules={() => {
+                    setSelectedSchedule(null);
+                    setMainModule('schedules');
+                  }}
                   onSelectSchedule={(schedule) => {
                     setSelectedSchedule(schedule);
                     setMainModule('schedules');
@@ -1008,6 +1012,7 @@ export default function App() {
                 selectedSchedule ? (
                   <ScheduleDetailView
                     schedule={selectedSchedule}
+                    groupId={activeGroup?.id}
                     userRole={userRole}
                     currentUserId={currentUser?.id}
                     onBack={() => setSelectedSchedule(null)}

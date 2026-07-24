@@ -249,6 +249,7 @@ export class MinistryRepository {
           name,
           email,
           birth_date: birthDate,
+          role_ids: member.role_ids || [],
         };
       })
     );
@@ -309,24 +310,84 @@ export class MinistryRepository {
   }
 
   async updateMemberRole(ministryId: string, memberUserId: string, role: 'admin' | 'member'): Promise<any> {
+    return this.updateMemberDetails(ministryId, memberUserId, { role });
+  }
+
+  async updateMemberDetails(
+    ministryId: string,
+    memberUserId: string,
+    data: {
+      name?: string;
+      email?: string;
+      birthDate?: string | null;
+      role?: 'admin' | 'member';
+      roleIds?: string[];
+      password?: string;
+    }
+  ): Promise<any> {
+    let memberRef: any = null;
+    let memberData: any = null;
+
     // Try doc directly first
     const directDoc = await this.membersCol.doc(memberUserId).get();
     if (directDoc.exists && directDoc.data()?.ministry_id === ministryId) {
-      await directDoc.ref.update({ role });
-      return { id: directDoc.id, ...directDoc.data(), role };
+      memberRef = directDoc.ref;
+      memberData = directDoc.data();
+    } else {
+      // Query by user_id
+      const memberSnap = await this.membersCol
+        .where('ministry_id', '==', ministryId)
+        .where('user_id', '==', memberUserId)
+        .limit(1)
+        .get();
+
+      if (!memberSnap.empty) {
+        memberRef = memberSnap.docs[0].ref;
+        memberData = memberSnap.docs[0].data();
+      }
     }
 
-    // Query by user_id
-    const memberSnap = await this.membersCol
-      .where('ministry_id', '==', ministryId)
-      .where('user_id', '==', memberUserId)
-      .limit(1)
-      .get();
+    if (!memberRef) throw new AppError(404, 'Membro não encontrado.');
 
-    if (memberSnap.empty) throw new AppError(404, 'Membro não encontrado.');
+    const updates: any = {};
+    if (data.name !== undefined) updates.name = data.name;
+    if (data.email !== undefined) updates.email = data.email;
+    if (data.birthDate !== undefined) updates.birth_date = data.birthDate;
+    if (data.role !== undefined) updates.role = data.role;
+    if (data.roleIds !== undefined) updates.role_ids = data.roleIds;
 
-    await memberSnap.docs[0].ref.update({ role });
-    return { id: memberSnap.docs[0].id, ...memberSnap.docs[0].data(), role };
+    await memberRef.update(updates);
+
+    // If member has real user_id, update users collection and Firebase Auth if password/email/name changed
+    const userId = memberData.user_id;
+    if (userId && !memberData.is_manual) {
+      try {
+        const usersCol = db.collection('users');
+        const userUpdates: any = {};
+        if (data.name) userUpdates.name = data.name;
+        if (data.email) userUpdates.email = data.email;
+        if (data.birthDate !== undefined) userUpdates.birth_date = data.birthDate;
+
+        if (Object.keys(userUpdates).length > 0) {
+          await usersCol.doc(userId).set(userUpdates, { merge: true });
+        }
+
+        const { authAdmin } = await import('../lib/firebase');
+        const authUpdates: any = {};
+        if (data.name) authUpdates.displayName = data.name;
+        if (data.email) authUpdates.email = data.email;
+        if (data.password) authUpdates.password = data.password;
+
+        if (Object.keys(authUpdates).length > 0 && authAdmin && authAdmin.updateUser) {
+          await authAdmin.updateUser(userId, authUpdates);
+        }
+      } catch (err) {
+        console.warn('Nota: Erro ao sincronizar com Firebase Auth:', err);
+      }
+    }
+
+    const updatedDoc = await memberRef.get();
+    return { id: updatedDoc.id, ...updatedDoc.data() };
   }
 
   async deleteMinistry(ministryId: string, userId: string): Promise<void> {

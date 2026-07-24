@@ -12,17 +12,19 @@ import {
   CheckCircle2,
   XCircle,
   AlertCircle,
-  User,
   ChevronRight,
   FileText,
   Pencil,
   Sparkles,
+  MessageSquare,
+  Send,
 } from 'lucide-react';
 import { ScheduleItem } from './CreateScheduleModal';
 import { GroupRole } from '../types';
 
 interface ScheduleDetailViewProps {
   schedule: ScheduleItem;
+  groupId?: string;
   userRole: GroupRole;
   currentUserId?: string;
   onBack: () => void;
@@ -49,8 +51,26 @@ const isUpcoming = (dateStr: string) => {
   return scheduleDate >= new Date();
 };
 
+const formatChatTime = (isoStr: string) => {
+  try {
+    const date = new Date(isoStr);
+    const timeStr = date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const todayStr = new Date().toISOString().split('T')[0];
+    const msgDateStr = date.toISOString().split('T')[0];
+    if (msgDateStr === todayStr) {
+      return `Hoje às ${timeStr}`;
+    }
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    return `${day}/${month} às ${timeStr}`;
+  } catch {
+    return isoStr;
+  }
+};
+
 export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
   schedule,
+  groupId,
   userRole,
   currentUserId,
   onBack,
@@ -59,6 +79,89 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
 }) => {
   const upcoming = isUpcoming(schedule.date);
   const [updating, setUpdating] = useState(false);
+  const [memberFunctionsMap, setMemberFunctionsMap] = useState<Map<string, string>>(new Map());
+
+  const effectiveGroupId = groupId || (schedule as any).groupId || (schedule as any).ministryId || (schedule as any).ministry_id;
+
+  // Comments / Chat State
+  const [comments, setComments] = useState<Array<{ id: string; userId: string; userName: string; content: string; createdAt: string }>>([]);
+  const [loadingComments, setLoadingComments] = useState(false);
+  const [showChatModal, setShowChatModal] = useState(false);
+  const [newCommentText, setNewCommentText] = useState('');
+  const [sendingComment, setSendingComment] = useState(false);
+
+  const isParticipant = (schedule.participants || []).some(
+    (p) => p.id === currentUserId || (currentUserId && (p as any).userId === currentUserId)
+  ) || userRole === 'admin';
+
+  const loadComments = React.useCallback(() => {
+    if (!effectiveGroupId || !schedule.id) return;
+    setLoadingComments(true);
+    import('../api').then(({ api }) => {
+      api.getScheduleComments(effectiveGroupId, schedule.id)
+        .then((data) => {
+          setComments(
+            (data || []).map((c: any) => ({
+              id: c.id,
+              userId: c.user_id || c.userId,
+              userName: c.user_name || c.userName || 'Integrante',
+              content: c.content,
+              createdAt: c.created_at || c.createdAt,
+            }))
+          );
+        })
+        .catch((err) => console.warn('Erro ao carregar comentários:', err))
+        .finally(() => setLoadingComments(false));
+    });
+  }, [effectiveGroupId, schedule.id]);
+
+  React.useEffect(() => {
+    loadComments();
+  }, [loadComments]);
+
+  const handleSendComment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCommentText.trim() || sendingComment || !effectiveGroupId || !schedule.id) return;
+
+    setSendingComment(true);
+    try {
+      const { api } = await import('../api');
+      await api.createScheduleComment(effectiveGroupId, schedule.id, newCommentText.trim());
+      setNewCommentText('');
+      loadComments();
+    } catch (err: any) {
+      alert(err.message || 'Erro ao enviar comentário.');
+    } finally {
+      setSendingComment(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (!effectiveGroupId) return;
+    import('../api').then(({ api }) => {
+      Promise.all([api.getGroupMembers(effectiveGroupId), api.getRoles(effectiveGroupId)])
+        .then(([members, roles]) => {
+          const rolesMap = new Map<string, { id: string; name: string; icon: string }>();
+          (roles || []).forEach((r: any) => rolesMap.set(r.id, r));
+
+          const funcMap = new Map<string, string>();
+          (members || []).forEach((m: any) => {
+            const assignedIds: string[] = m.roleIds || m.role_ids || [];
+            const mRoles = assignedIds.map((id) => rolesMap.get(id)).filter(Boolean);
+            const display = mRoles.length > 0
+              ? mRoles.map((r) => `${r?.icon || ''} ${r?.name}`.trim()).join(' • ')
+              : '';
+
+            if (m.id) funcMap.set(m.id, display);
+            if (m.userId) funcMap.set(m.userId, display);
+            if (m.user_id) funcMap.set(m.user_id, display);
+            if (m.name) funcMap.set(m.name.toLowerCase().trim(), display);
+          });
+          setMemberFunctionsMap(funcMap);
+        })
+        .catch((err) => console.warn('Erro ao carregar funções dos participantes:', err));
+    });
+  }, [effectiveGroupId]);
 
   // Encontrar se o usuário logado está escalado como participante nesta escala
   const userParticipant = schedule.participants.find(
@@ -101,6 +204,14 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
         </button>
 
         <div className="schedule-detail-status-row">
+          <button
+            className="btn btn-secondary icon-btn-text"
+            onClick={() => setShowChatModal(true)}
+            style={{ padding: '6px 14px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+          >
+            <MessageSquare size={16} style={{ color: 'var(--primary-light)' }} />
+            <span>Comentários ({comments.length})</span>
+          </button>
           <span className={`schedule-detail-status-badge ${upcoming ? 'upcoming' : 'past'}`}>
             {upcoming ? '🟢 Próxima' : '⏰ Passada'}
           </span>
@@ -244,15 +355,23 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
               <h2 className="schedule-detail-section-title">Participantes da Equipe</h2>
             </div>
             <div className="schedule-detail-list">
-              {schedule.participants.map((member) => (
-                <div key={member.id} className="schedule-detail-member-item">
-                  <div className="dashboard-item-avatar">{member.name.charAt(0).toUpperCase()}</div>
-                  <div className="dashboard-item-info">
-                    <div className="dashboard-item-title">{member.name}</div>
-                    <div className="dashboard-item-desc">
-                      <User size={12} /> {member.role}
+              {schedule.participants.map((member) => {
+                const foundFunc = memberFunctionsMap.get(member.id)
+                  || memberFunctionsMap.get((member as any).userId)
+                  || memberFunctionsMap.get((member as any).user_id)
+                  || memberFunctionsMap.get(member.name.toLowerCase().trim());
+
+                let displayRole = foundFunc || member.role;
+                if (!displayRole || displayRole === 'Líder / Administrador' || displayRole === 'admin' || displayRole === 'member' || displayRole === 'Integrante do Louvor') {
+                  displayRole = foundFunc || 'Sem função atribuída';
+                }
+                return (
+                  <div key={member.id} className="schedule-detail-member-item">
+                    <div className="dashboard-item-avatar">{member.name.charAt(0).toUpperCase()}</div>
+                    <div className="dashboard-item-info">
+                      <div className="dashboard-item-title">{member.name}</div>
+                      <div className="dashboard-item-desc">{displayRole}</div>
                     </div>
-                  </div>
                   {schedule.requireConfirmation && (
                     <div className="schedule-detail-confirm-badge">
                       {member.confirmed === true && (
@@ -272,8 +391,9 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
                       )}
                     </div>
                   )}
-                </div>
-              ))}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -363,6 +483,110 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* Schedule Chat Modal */}
+      {showChatModal && (
+        <div className="modal-overlay" onClick={() => setShowChatModal(false)}>
+          <div
+            className="modal-content schedule-chat-modal"
+            style={{ maxWidth: '540px', width: '100%', height: '82vh', display: 'flex', flexDirection: 'column', padding: '20px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingBottom: '14px', borderBottom: '1px solid var(--border-color)' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)' }}>
+                  <MessageSquare size={18} style={{ color: 'var(--primary-light)' }} />
+                  Chat da Escala — {schedule.title}
+                </h2>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '2px', display: 'block' }}>
+                  {isParticipant
+                    ? `${comments.length} comentário(s) enviado(s)`
+                    : 'Acesso exclusivo para participantes da escala'}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="action-icon-btn"
+                onClick={() => setShowChatModal(false)}
+                style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '1.2rem', cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Body Content */}
+            {!isParticipant ? (
+              <div className="empty-state" style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '30px 20px', textAlign: 'center' }}>
+                <div style={{ fontSize: '2.5rem', marginBottom: '12px' }}>🔒</div>
+                <h3 style={{ margin: '0 0 6px 0', fontSize: '1rem', color: 'var(--text-primary)' }}>Acesso Restrito ao Chat</h3>
+                <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)', maxWidth: '340px' }}>
+                  Apenas os voluntários e líderes integrados na equipe desta escala possuem permissão para visualizar e enviar comentários.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="schedule-chat-messages-container" style={{ flex: 1, overflowY: 'auto', padding: '16px 0', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {loadingComments ? (
+                    <div style={{ textAlign: 'center', padding: '30px', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                      Carregando comentários da equipe...
+                    </div>
+                  ) : comments.length === 0 ? (
+                    <div className="empty-state" style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center' }}>
+                      <div style={{ fontSize: '2.2rem', marginBottom: '8px' }}>💬</div>
+                      <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>Nenhum comentário enviado</div>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Seja o primeiro a enviar uma mensagem sobre esta escala!</div>
+                    </div>
+                  ) : (
+                    comments.map((msg) => {
+                      const isMe = msg.userId === currentUserId;
+                      return (
+                        <div
+                          key={msg.id}
+                          className={`schedule-chat-bubble-row ${isMe ? 'me' : 'other'}`}
+                        >
+                          {!isMe && (
+                            <div className="dashboard-item-avatar chat-avatar">
+                              {(msg.userName || 'U').charAt(0).toUpperCase()}
+                            </div>
+                          )}
+                          <div className="schedule-chat-bubble-content">
+                            {!isMe && <div className="schedule-chat-sender-name">{msg.userName}</div>}
+                            <div className="schedule-chat-bubble-text">{msg.content}</div>
+                            <div className="schedule-chat-timestamp">{formatChatTime(msg.createdAt)}</div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Footer Form Input */}
+                <form onSubmit={handleSendComment} style={{ display: 'flex', gap: '8px', paddingTop: '12px', borderTop: '1px solid var(--border-color)' }}>
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="Escreva um comentário para a equipe..."
+                    value={newCommentText}
+                    onChange={(e) => setNewCommentText(e.target.value)}
+                    disabled={sendingComment}
+                    style={{ flex: 1, borderRadius: '20px', padding: '10px 16px', fontSize: '0.88rem' }}
+                  />
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    disabled={sendingComment || !newCommentText.trim()}
+                    style={{ borderRadius: '20px', padding: '0 18px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <Send size={15} />
+                    <span>Enviar</span>
+                  </button>
+                </form>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

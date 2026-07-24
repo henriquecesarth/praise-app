@@ -20,8 +20,19 @@ export interface ScheduleRecord {
   updated_at: string;
 }
 
+export interface ScheduleCommentRecord {
+  id: string;
+  schedule_id: string;
+  ministry_id: string;
+  user_id: string;
+  user_name: string;
+  content: string;
+  created_at: string;
+}
+
 export class ScheduleRepository {
   private readonly schedulesCol = db.collection('schedules');
+  private readonly commentsCol = db.collection('schedule_comments');
 
   async getSchedulesByMinistry(ministryId: string): Promise<ScheduleRecord[]> {
     const snap = await this.schedulesCol.where('ministry_id', '==', ministryId).get();
@@ -85,5 +96,71 @@ export class ScheduleRepository {
 
   async deleteSchedule(scheduleId: string): Promise<void> {
     await this.schedulesCol.doc(scheduleId).delete();
+  }
+
+  async getScheduleComments(
+    scheduleId: string,
+    userId: string,
+    userName: string,
+    userRole?: string
+  ): Promise<ScheduleCommentRecord[]> {
+    const scheduleDoc = await this.schedulesCol.doc(scheduleId).get();
+    if (!scheduleDoc.exists) {
+      throw new AppError(404, 'Escala não encontrada.');
+    }
+    const schedule = scheduleDoc.data() as ScheduleRecord;
+
+    const isParticipant = (schedule.participants || []).some(
+      (p) => p.id === userId || (p as any).userId === userId || (p.name && p.name.toLowerCase().trim() === userName.toLowerCase().trim())
+    );
+    const isOwnerOrAdmin = schedule.created_by === userId || userRole === 'admin';
+
+    if (!isParticipant && !isOwnerOrAdmin) {
+      throw new AppError(403, 'Apenas participantes escalados nesta escala têm acesso aos comentários.');
+    }
+
+    const snap = await this.commentsCol.where('schedule_id', '==', scheduleId).get();
+    const list = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as ScheduleCommentRecord));
+    list.sort((a, b) => (a.created_at > b.created_at ? 1 : -1));
+    return list;
+  }
+
+  async addScheduleComment(
+    ministryId: string,
+    scheduleId: string,
+    userId: string,
+    userName: string,
+    content: string,
+    userRole?: string
+  ): Promise<ScheduleCommentRecord> {
+    const scheduleDoc = await this.schedulesCol.doc(scheduleId).get();
+    if (!scheduleDoc.exists) {
+      throw new AppError(404, 'Escala não encontrada.');
+    }
+    const schedule = scheduleDoc.data() as ScheduleRecord;
+
+    const isParticipant = (schedule.participants || []).some(
+      (p) => p.id === userId || (p as any).userId === userId || (p.name && p.name.toLowerCase().trim() === userName.toLowerCase().trim())
+    );
+    const isOwnerOrAdmin = schedule.created_by === userId || userRole === 'admin';
+
+    if (!isParticipant && !isOwnerOrAdmin) {
+      throw new AppError(403, 'Apenas participantes escalados nesta escala têm acesso aos comentários.');
+    }
+
+    const now = new Date().toISOString();
+    const ref = this.commentsCol.doc();
+    const commentData: ScheduleCommentRecord = {
+      id: ref.id,
+      schedule_id: scheduleId,
+      ministry_id: ministryId,
+      user_id: userId,
+      user_name: userName,
+      content,
+      created_at: now,
+    };
+
+    await ref.set(commentData);
+    return commentData;
   }
 }

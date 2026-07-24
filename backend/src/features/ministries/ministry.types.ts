@@ -19,7 +19,12 @@ export const joinMinistrySchema = z.object({
 });
 
 export const updateMemberRoleSchema = z.object({
-  role: z.enum(['admin', 'member']),
+  name: z.string().min(1).max(100).optional(),
+  email: z.string().email('E-mail inválido.').optional(),
+  birthDate: z.string().nullable().optional(),
+  role: z.enum(['admin', 'member']).optional(),
+  roleIds: z.array(z.string()).optional(),
+  password: z.string().min(6, 'A nova senha deve ter no mínimo 6 caracteres.').optional(),
 });
 
 export const addMemberManuallySchema = z.object({

@@ -108,8 +108,7 @@ export class MinistryController extends BaseController {
     try {
       const ministryId = req.params.ministryId as string;
       const memberId = req.params.memberId as string;
-      const { role } = req.body;
-      const updated = await this.ministryService.updateMemberRole(ministryId, memberId, role);
+      const updated = await this.ministryService.updateMemberDetails(ministryId, memberId, req.body);
       this.handleSuccess(res, updated);
     } catch (err) {
       this.handleError(err, res, next);

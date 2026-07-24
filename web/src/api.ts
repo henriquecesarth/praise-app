@@ -236,7 +236,7 @@ export const api = {
     };
   },
 
-  getMinistryMembers: async (ministryId: string): Promise<Array<{ id: string; userId: string; name: string; email: string; role: string; birthDate?: string; isManual?: boolean }>> => {
+  getMinistryMembers: async (ministryId: string): Promise<Array<{ id: string; userId: string; name: string; email: string; role: string; birthDate?: string; isManual?: boolean; roleIds?: string[] }>> => {
     const response = await fetch(`${API_URL}/ministries/${ministryId}/members`, {
       headers: getHeaders(),
     });
@@ -249,6 +249,7 @@ export const api = {
       role: m.role || 'member',
       birthDate: m.birth_date || undefined,
       isManual: m.is_manual || false,
+      roleIds: m.role_ids || m.roleIds || [],
     }));
   },
 
@@ -295,6 +296,26 @@ export const api = {
       method: 'PATCH',
       headers: getHeaders(),
       body: JSON.stringify({ role }),
+    });
+    return handleResponse<any>(response);
+  },
+
+  updateMember: async (
+    ministryId: string,
+    memberId: string,
+    data: {
+      name?: string;
+      email?: string;
+      birthDate?: string;
+      role?: 'admin' | 'member';
+      roleIds?: string[];
+      password?: string;
+    }
+  ): Promise<any> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/members/${memberId}`, {
+      method: 'PATCH',
+      headers: getHeaders(),
+      body: JSON.stringify(data),
     });
     return handleResponse<any>(response);
   },
@@ -813,5 +834,23 @@ export const api = {
       headers: getHeaders(),
     });
     return handleResponse<void>(response);
+  },
+
+  // Comentários da Escala
+  getScheduleComments: async (ministryId: string, scheduleId: string): Promise<any[]> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/schedules/${scheduleId}/comments`, {
+      headers: getHeaders(),
+    });
+    const result = await handleResponse<any>(response);
+    return Array.isArray(result) ? result : (result?.data || []);
+  },
+
+  createScheduleComment: async (ministryId: string, scheduleId: string, content: string): Promise<any> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/schedules/${scheduleId}/comments`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ content }),
+    });
+    return handleResponse<any>(response);
   },
 };
