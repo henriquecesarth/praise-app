@@ -1015,21 +1015,29 @@ export default function App() {
                     groupId={activeGroup?.id}
                     userRole={userRole}
                     currentUserId={currentUser?.id}
+                    currentUserName={currentUser?.name}
                     onBack={() => setSelectedSchedule(null)}
                     onEdit={userRole === 'admin' ? () => {
                       setScheduleToEdit(selectedSchedule);
                       setShowCreateScheduleModal(true);
                     } : undefined}
-                    onUpdateSchedule={async (updatedSchedule) => {
-                      if (!activeGroup) return;
-                      try {
-                        const updated = await api.updateSchedule(activeGroup.id, updatedSchedule.id, updatedSchedule);
-                        setSelectedSchedule(updated);
-                        setSchedules((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-                        showToast('Sua resposta de presença foi salva!');
-                      } catch (err: any) {
-                        showToast(err.message || 'Erro ao atualizar confirmação.', 'error');
+                    onDelete={userRole === 'admin' ? async () => {
+                      if (!activeGroup || !selectedSchedule) return;
+                      if (window.confirm(`Tem certeza que deseja excluir a escala "${selectedSchedule.title}"? Esta ação não poderá ser desfeita.`)) {
+                        try {
+                          await api.deleteSchedule(selectedSchedule.id, activeGroup.id);
+                          showToast('Escala excluída com sucesso.');
+                          setSelectedSchedule(null);
+                          setSchedules((prev) => prev.filter((s) => s.id !== selectedSchedule.id));
+                        } catch (err: any) {
+                          showToast(err.message || 'Erro ao excluir escala.', 'error');
+                        }
                       }
+                    } : undefined}
+                    onUpdateSchedule={(updatedSchedule) => {
+                      setSelectedSchedule(updatedSchedule);
+                      setSchedules((prev) => prev.map((s) => (s.id === updatedSchedule.id ? updatedSchedule : s)));
+                      showToast('Sua resposta de presença foi salva com sucesso!');
                     }}
                   />
                 ) : (
@@ -1176,6 +1184,8 @@ export default function App() {
         <CreateScheduleModal
           groupId={activeGroup.id}
           allSongs={songs}
+          currentUserId={currentUser?.id}
+          currentUserName={currentUser?.name}
           initialSchedule={scheduleToEdit || undefined}
           onClose={() => {
             setShowCreateScheduleModal(false);

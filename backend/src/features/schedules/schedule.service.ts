@@ -23,6 +23,15 @@ export class ScheduleService {
     await this.scheduleRepository.deleteSchedule(scheduleId);
   }
 
+  async updateConfirmation(
+    scheduleId: string,
+    userId: string,
+    userName: string,
+    confirmed: boolean
+  ): Promise<ScheduleRecord> {
+    return this.scheduleRepository.updateParticipantConfirmation(scheduleId, userId, userName, confirmed);
+  }
+
   async getScheduleComments(
     scheduleId: string,
     userId: string,

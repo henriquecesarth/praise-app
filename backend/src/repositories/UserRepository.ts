@@ -45,6 +45,55 @@ export class UserRepository {
   }
 
   /**
+   * Autentica usuário por e-mail e senha no Firebase Auth e recupera seu perfil
+   */
+  async verifyPassword(email: string, password: string): Promise<{ uid: string; email: string; name: string } | null> {
+    try {
+      // 1. Tenta autenticar o e-mail/senha via API REST de Auth do Firebase
+      const apiKey = process.env.FIREBASE_WEB_API_KEY;
+      if (apiKey) {
+        const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password, returnSecureToken: true }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          const message = errorData?.error?.message;
+          if (message === 'EMAIL_NOT_FOUND' || message === 'INVALID_PASSWORD' || message === 'INVALID_LOGIN_CREDENTIALS') {
+            throw new AppError(401, 'E-mail ou senha incorretos.');
+          }
+          throw new AppError(400, 'Falha ao autenticar no Firebase.');
+        }
+
+        const data = await response.json();
+        const doc = await this.usersCollection.doc(data.localId).get();
+        const userData = doc.exists ? (doc.data() as UserRecordData) : null;
+
+        return {
+          uid: data.localId,
+          email: data.email,
+          name: userData?.name || data.displayName || data.email.split('@')[0],
+        };
+      }
+
+      // 2. Fallback via Admin SDK (caso Web API Key não esteja definida no .env)
+      const userRecord = await authAdmin.getUserByEmail(email);
+      const doc = await this.usersCollection.doc(userRecord.uid).get();
+
+      return {
+        uid: userRecord.uid,
+        email: userRecord.email || email,
+        name: doc.exists ? (doc.data() as UserRecordData).name : (userRecord.displayName || email.split('@')[0]),
+      };
+    } catch (error: any) {
+      if (error instanceof AppError) throw error;
+      return null;
+    }
+  }
+
+  /**
    * Autentica usuário por e-mail e gera token JWT da API
    */
   async findByEmail(email: string): Promise<UserRecordData | null> {

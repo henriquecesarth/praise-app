@@ -228,6 +228,7 @@ export class GroupRepository {
 
         return {
           ...member,
+          userId: member.user_id || member.id,
           name,
           email,
         };

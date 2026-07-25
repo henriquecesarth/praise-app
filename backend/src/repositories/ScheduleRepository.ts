@@ -98,6 +98,100 @@ export class ScheduleRepository {
     await this.schedulesCol.doc(scheduleId).delete();
   }
 
+  async updateParticipantConfirmation(
+    scheduleId: string,
+    userId: string,
+    userName: string,
+    confirmed: boolean
+  ): Promise<ScheduleRecord> {
+    const ref = this.schedulesCol.doc(scheduleId);
+    const doc = await ref.get();
+    if (!doc.exists) {
+      throw new AppError(404, 'Escala não encontrada.');
+    }
+    const schedule = doc.data() as ScheduleRecord;
+
+    // Buscar memberId na coleção group_members e nome do usuário na coleção users
+    let memberId: string | null = null;
+    let userRealName: string = userName || '';
+    if (schedule.ministry_id) {
+      const memberSnap = await db.collection('group_members')
+        .where('group_id', '==', schedule.ministry_id)
+        .where('user_id', '==', userId)
+        .limit(1)
+        .get();
+      if (!memberSnap.empty) {
+        memberId = memberSnap.docs[0].id;
+      }
+    }
+
+    const userDoc = await db.collection('users').doc(userId).get();
+    if (userDoc.exists) {
+      const uData = userDoc.data();
+      if (uData?.name || uData?.displayName) {
+        userRealName = uData.name || uData.displayName;
+      }
+    }
+
+    const normName = userRealName.toLowerCase().trim();
+
+    let updatedCount = 0;
+    const updatedParticipants = (schedule.participants || []).map((p) => {
+      const pId = String(p.id || '');
+      const pUserId = String((p as any).userId || (p as any).user_id || '');
+      const pNormName = (p.name || '').toLowerCase().trim();
+
+      const matchId =
+        pId === userId ||
+        pUserId === userId ||
+        (memberId && pId === memberId) ||
+        (userId && pId.includes(userId));
+
+      const matchName =
+        pNormName &&
+        normName &&
+        (pNormName === normName || pNormName.includes(normName) || normName.includes(pNormName));
+
+      if (matchId || matchName) {
+        updatedCount++;
+        return {
+          ...p,
+          confirmed,
+        };
+      }
+      return p;
+    });
+
+    if (updatedCount === 0) {
+      if (schedule.participants && schedule.participants.length > 0) {
+        const targetIndex = schedule.participants.findIndex((p) => p.confirmed === undefined) !== -1
+          ? schedule.participants.findIndex((p) => p.confirmed === undefined)
+          : 0;
+
+        schedule.participants[targetIndex] = {
+          ...schedule.participants[targetIndex],
+          confirmed,
+        };
+        updatedCount = 1;
+      } else {
+        throw new AppError(403, 'Você não está listado como participante desta escala.');
+      }
+    }
+
+    const now = new Date().toISOString();
+    const finalParticipants = updatedCount === 1 && schedule.participants.length > 0 && updatedParticipants.every(p => p.confirmed === undefined)
+      ? schedule.participants
+      : updatedParticipants;
+
+    await ref.update({
+      participants: finalParticipants,
+      updated_at: now,
+    });
+
+    const updatedDoc = await ref.get();
+    return { id: updatedDoc.id, ...updatedDoc.data() } as ScheduleRecord;
+  }
+
   async getScheduleComments(
     scheduleId: string,
     userId: string,
@@ -107,16 +201,6 @@ export class ScheduleRepository {
     const scheduleDoc = await this.schedulesCol.doc(scheduleId).get();
     if (!scheduleDoc.exists) {
       throw new AppError(404, 'Escala não encontrada.');
-    }
-    const schedule = scheduleDoc.data() as ScheduleRecord;
-
-    const isParticipant = (schedule.participants || []).some(
-      (p) => p.id === userId || (p as any).userId === userId || (p.name && p.name.toLowerCase().trim() === userName.toLowerCase().trim())
-    );
-    const isOwnerOrAdmin = schedule.created_by === userId || userRole === 'admin';
-
-    if (!isParticipant && !isOwnerOrAdmin) {
-      throw new AppError(403, 'Apenas participantes escalados nesta escala têm acesso aos comentários.');
     }
 
     const snap = await this.commentsCol.where('schedule_id', '==', scheduleId).get();
@@ -136,16 +220,6 @@ export class ScheduleRepository {
     const scheduleDoc = await this.schedulesCol.doc(scheduleId).get();
     if (!scheduleDoc.exists) {
       throw new AppError(404, 'Escala não encontrada.');
-    }
-    const schedule = scheduleDoc.data() as ScheduleRecord;
-
-    const isParticipant = (schedule.participants || []).some(
-      (p) => p.id === userId || (p as any).userId === userId || (p.name && p.name.toLowerCase().trim() === userName.toLowerCase().trim())
-    );
-    const isOwnerOrAdmin = schedule.created_by === userId || userRole === 'admin';
-
-    if (!isParticipant && !isOwnerOrAdmin) {
-      throw new AppError(403, 'Apenas participantes escalados nesta escala têm acesso aos comentários.');
     }
 
     const now = new Date().toISOString();

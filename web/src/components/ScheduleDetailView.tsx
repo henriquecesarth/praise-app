@@ -18,6 +18,7 @@ import {
   Sparkles,
   MessageSquare,
   Send,
+  Trash2,
 } from 'lucide-react';
 import { ScheduleItem } from './CreateScheduleModal';
 import { GroupRole } from '../types';
@@ -27,8 +28,10 @@ interface ScheduleDetailViewProps {
   groupId?: string;
   userRole: GroupRole;
   currentUserId?: string;
+  currentUserName?: string;
   onBack: () => void;
   onEdit?: () => void;
+  onDelete?: () => void;
   onUpdateSchedule?: (updatedSchedule: ScheduleItem) => void;
 }
 
@@ -73,8 +76,10 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
   groupId,
   userRole,
   currentUserId,
+  currentUserName,
   onBack,
   onEdit,
+  onDelete,
   onUpdateSchedule,
 }) => {
   const upcoming = isUpcoming(schedule.date);
@@ -90,9 +95,7 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
   const [newCommentText, setNewCommentText] = useState('');
   const [sendingComment, setSendingComment] = useState(false);
 
-  const isParticipant = (schedule.participants || []).some(
-    (p) => p.id === currentUserId || (currentUserId && (p as any).userId === currentUserId)
-  ) || userRole === 'admin';
+  const isParticipant = true; // Membros do grupo possuem acesso ao chat e detalhes da escala
 
   const loadComments = React.useCallback(() => {
     if (!effectiveGroupId || !schedule.id) return;
@@ -163,33 +166,33 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
     });
   }, [effectiveGroupId]);
 
-  // Encontrar se o usuário logado está escalado como participante nesta escala
-  const userParticipant = schedule.participants.find(
-    (p) => p.id === currentUserId || (currentUserId && p.id.includes(currentUserId))
-  ) || (schedule.participants.length > 0 ? schedule.participants[0] : null);
+  // Encontrar participante correspondente na escala
+  const userParticipant = (schedule.participants || []).find((p) => {
+    if (currentUserId && (p.id === currentUserId || (p as any).userId === currentUserId || (typeof p.id === 'string' && p.id.includes(currentUserId)))) {
+      return true;
+    }
+    if (currentUserName && p.name) {
+      const pName = p.name.toLowerCase().trim();
+      const uName = currentUserName.toLowerCase().trim();
+      if (pName === uName || pName.includes(uName) || uName.includes(pName)) {
+        return true;
+      }
+    }
+    return false;
+  }) || (schedule.participants && schedule.participants.length === 1 ? schedule.participants[0] : (schedule.participants && schedule.participants.length > 0 ? schedule.participants[0] : null));
 
-  const handleConfirmationChange = async (memberId: string, confirmed: boolean | null) => {
-    if (!onUpdateSchedule) return;
+  const handleConfirmationChange = async (_memberId: string, confirmed: boolean) => {
+    if (!effectiveGroupId || !schedule.id) return;
     setUpdating(true);
     try {
-      const updatedParticipants = schedule.participants.map((p) => {
-        if (p.id === memberId || (userParticipant && p.id === userParticipant.id)) {
-          return {
-            ...p,
-            confirmed: confirmed === true,
-          };
-        }
-        return p;
-      });
-
-      const updatedSchedule: ScheduleItem = {
-        ...schedule,
-        participants: updatedParticipants,
-      };
-
-      await onUpdateSchedule(updatedSchedule);
-    } catch (err) {
+      const { api } = await import('../api');
+      const updatedScheduleFromApi = await api.confirmSchedulePresence(effectiveGroupId, schedule.id, confirmed);
+      if (onUpdateSchedule && updatedScheduleFromApi) {
+        onUpdateSchedule(updatedScheduleFromApi);
+      }
+    } catch (err: any) {
       console.error('Erro ao atualizar confirmação:', err);
+      alert(err?.message || 'Erro ao registrar confirmação.');
     } finally {
       setUpdating(false);
     }
@@ -225,6 +228,21 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
           {userRole === 'admin' && onEdit && (
             <button className="btn btn-primary" style={{ padding: '6px 14px', fontSize: '0.85rem' }} onClick={onEdit}>
               <Pencil size={15} /> Editar Escala
+            </button>
+          )}
+          {userRole === 'admin' && onDelete && (
+            <button
+              className="btn btn-secondary icon-btn-text"
+              style={{
+                padding: '6px 14px',
+                fontSize: '0.85rem',
+                color: '#EF4444',
+                borderColor: 'rgba(239, 68, 68, 0.3)',
+                backgroundColor: 'rgba(239, 68, 68, 0.08)',
+              }}
+              onClick={onDelete}
+            >
+              <Trash2 size={15} /> Excluir Escala
             </button>
           )}
         </div>

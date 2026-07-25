@@ -59,6 +59,30 @@ export class ScheduleController extends BaseController {
     }
   };
 
+  updateConfirmation = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const scheduleId = req.params.scheduleId as string;
+      const userId = req.user!.id;
+
+      // Buscar perfil e nome do usuário no Firestore
+      const { db } = await import('../../lib/firebase');
+      const userDoc = await db.collection('users').doc(userId).get();
+      const userName = userDoc.exists
+        ? (userDoc.data()?.name || userDoc.data()?.displayName || req.user?.email || 'Usuário')
+        : (req.user as any)?.name || req.user?.email || 'Usuário';
+
+      const schedule = await this.scheduleService.updateConfirmation(
+        scheduleId,
+        userId,
+        userName,
+        req.body.confirmed
+      );
+      this.handleSuccess(res, schedule);
+    } catch (err) {
+      this.handleError(err, res, next);
+    }
+  };
+
   getScheduleComments = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
       const scheduleId = req.params.scheduleId as string;
@@ -102,5 +126,7 @@ export const getScheduleById = controllerInstance.getScheduleById;
 export const createSchedule = controllerInstance.createSchedule;
 export const updateSchedule = controllerInstance.updateSchedule;
 export const deleteSchedule = controllerInstance.deleteSchedule;
+export const updateConfirmation = controllerInstance.updateConfirmation;
 export const getScheduleComments = controllerInstance.getScheduleComments;
 export const addScheduleComment = controllerInstance.addScheduleComment;
+

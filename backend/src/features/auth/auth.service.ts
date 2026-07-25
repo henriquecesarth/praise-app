@@ -31,17 +31,17 @@ export class AuthService {
    * Realiza login de usuário
    */
   async login(input: LoginInput) {
-    const user = await this.userRepository.findByEmail(input.email);
+    const user = await this.userRepository.verifyPassword(input.email, input.password);
 
     if (!user) {
       throw new AppError(401, 'E-mail ou senha incorretos.');
     }
 
-    const token = this.userRepository.generateAuthToken(user.id, user.email);
+    const token = this.userRepository.generateAuthToken(user.uid, user.email);
 
     return {
       user: {
-        id: user.id,
+        id: user.uid,
         email: user.email,
         name: user.name,
       },

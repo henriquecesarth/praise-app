@@ -43,6 +43,8 @@ interface ScheduleTemplate {
 interface CreateScheduleModalProps {
   groupId?: string;
   allSongs: Song[];
+  currentUserId?: string;
+  currentUserName?: string;
   initialSchedule?: Partial<ScheduleItem>;
   onClose: () => void;
   onSave: (schedule: Partial<ScheduleItem>) => void;
@@ -93,6 +95,8 @@ function formatTemplateDuration(seconds?: number): string {
 export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
   groupId,
   allSongs,
+  currentUserId,
+  currentUserName,
   initialSchedule,
   onClose,
   onSave,
@@ -147,23 +151,20 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
     initialSchedule?.requireConfirmation !== undefined ? initialSchedule.requireConfirmation : true
   );
 
-  // Lists
+  // Lists - Inicialização limpa conforme solicitado
   const [selectedParticipants, setSelectedParticipants] = useState<Array<{ id: string; name: string; role: string }>>(
     initialSchedule?.participants || []
   );
-  const [selectedSongs, setSelectedSongs] = useState<Song[]>(initialSchedule?.songs || allSongs.slice(0, 2));
+  const [selectedSongs, setSelectedSongs] = useState<Song[]>(initialSchedule?.songs || []);
   const [timelineItems, setTimelineItems] = useState<Array<{ id: string; title: string; time?: string; type: string }>>(
-    initialSchedule?.timeline || [
-      { id: '1', title: 'Oração Inicial', time: '5 min', type: 'Oração' },
-      { id: '2', title: 'Bloco de Louvor (Músicas 1 e 2)', time: '15 min', type: 'Louvor' },
-    ]
+    initialSchedule?.timeline || []
   );
 
   // Drag-and-drop state
   const [dragSongIndex, setDragSongIndex] = useState<number | null>(null);
   const [dragTimelineIndex, setDragTimelineIndex] = useState<number | null>(null);
 
-  // Carregar membros reais do grupo e funções do backend
+  // Carregar membros reais do grupo e selecionar APENAS o criador da escala
   React.useEffect(() => {
     if (!groupId) return;
     setLoadingMembers(true);
@@ -183,8 +184,11 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
               ? memberRoles.map((r) => `${r?.icon || ''} ${r?.name}`.trim()).join(' • ')
               : 'Integrante do Louvor';
 
+            const uId = m.userId || m.user_id || m.id;
             return {
-              id: m.id || m.userId,
+              id: uId,
+              userId: uId,
+              memberId: m.id,
               name: m.name,
               role: roleDisplay,
             };
@@ -193,7 +197,13 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
           setGroupMembers(mapped);
 
           if (!initialSchedule && selectedParticipants.length === 0 && mapped.length > 0) {
-            setSelectedParticipants(mapped.slice(0, 2));
+            const creator = mapped.find(
+              (m) =>
+                (currentUserId && (m.id === currentUserId || m.userId === currentUserId || (typeof m.id === 'string' && m.id.includes(currentUserId)))) ||
+                (currentUserName && m.name && m.name.toLowerCase().trim() === currentUserName.toLowerCase().trim())
+            ) || mapped[0];
+
+            setSelectedParticipants([creator]);
           } else if (mapped.length > 0) {
             // Update selected participants display role to match mapped functions
             setSelectedParticipants((prev) =>

@@ -536,6 +536,15 @@ export const api = {
     return handleResponse<void>(response);
   },
 
+  confirmSchedulePresence: async (ministryId: string, scheduleId: string, confirmed: boolean): Promise<any> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/schedules/${scheduleId}/confirmation`, {
+      method: 'PATCH',
+      headers: getHeaders(),
+      body: JSON.stringify({ confirmed }),
+    });
+    return handleResponse<any>(response);
+  },
+
   // Liturgias
   getLiturgies: async (ministryId = DEFAULT_MINISTRY_ID): Promise<Liturgy[]> => {
     const response = await fetch(`${API_URL}/ministries/${ministryId}/liturgies`, {
