@@ -39,6 +39,7 @@ dependencies:
   http: ^1.2.2
 
   # Utils
+  shared_preferences: ^2.2.3
   url_launcher: ^6.3.0
   intl: any
 

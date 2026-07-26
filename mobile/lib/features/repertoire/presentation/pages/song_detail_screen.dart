@@ -33,7 +33,9 @@ class _SongDetailScreenState extends State<SongDetailScreen> {
     super.initState();
     _song = widget.song;
     _activeTab = _song.smartChord != null ? 'cifra' : 'lyrics';
-    _loadFullDetails();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadFullDetails();
+    });
   }
 
   Future<void> _loadFullDetails() async {

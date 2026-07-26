@@ -53,16 +53,15 @@ praise-app/
 ### 2. 🌐 Web (`/web`)
 - **Tech Stack**: React 18, TypeScript, Vite, Lucide React (Ícones), Vanilla CSS.
 - **Estrutura Interna (`web/src/`)**:
-  - `App.tsx`: Navegação principal, alternância de grupo ativo, verificação de perfil de acesso (`admin` vs `member`) e renderização condicional de ações de escrita.
-  - `api.ts`: Cliente HTTP com suporte a Grupos, Convites, Liturgias e Repertório.
-  - `types.ts`: Definições TypeScript para `Group`, `GroupMember`, `GroupInvite`, `Liturgy`, `Song`, etc.
+  - `App.tsx`: Navegação principal, alternância de grupo ativo, alternância de tema (Sol/Lua com persistência no `localStorage`), verificação de perfil de acesso (`admin` vs `member`) e renderização condicional de ações de escrita.
+  - `api.ts`: Cliente HTTP com suporte a Grupos, Convites, Liturgias, Escalas, Integrantes, Equipes, Funções, Classificações e Repertório.
+  - `types.ts`: Definições TypeScript para `Group`, `GroupMember`, `GroupInvite`, `Liturgy`, `Song`, `Schedule`, `Team`, `Role`, `Classification`, etc.
+  - `index.css`: Sistema de design CSS com variáveis de tema para Modo Claro (`:root`) e Modo Escuro (`.dark`), suporte a glassmorphism e alto contraste.
   - `components/`:
-    - `JoinGroupModal.tsx`: Modal para o músico digitar o código curto do convite e entrar no grupo.
-    - `InviteCodeModal.tsx`: Modal para administradores gerarem códigos curtos de convite.
-    - `CreateGroupModal.tsx`: Modal para criação de novos grupos de louvor.
-    - `DashboardView.tsx`: Painel inicial pós-login com Ministérios, Avisos, Minhas Escalas e Aniversariantes.
-    - `SchedulesView.tsx`: Gestão de escalas com abas centralizadas (Próximas e Anteriores).
-    - `CreateScheduleModal.tsx`: Formulário de nova escala com 4 abas (Detalhes, Participantes, Músicas, Roteiro).
+    - `JoinGroupModal.tsx`, `JoinMinistryModal.tsx`, `InviteCodeModal.tsx`, `CreateGroupModal.tsx`, `CreateMinistryModal.tsx`.
+    - `DashboardView.tsx`: Painel inicial pós-login com Ministérios, Avisos Recentes, Próximas Escalas e Aniversariantes do Mês.
+    - `SchedulesView.tsx`, `ScheduleDetailView.tsx`, `CreateScheduleModal.tsx`.
+    - `MinistryView.tsx`, `TeamsView.tsx`, `RolesView.tsx`, `ClassificationsView.tsx`, `AdminsView.tsx`, `TemplatesView.tsx`.
     - `SongCard.tsx`, `SongDetail.tsx`, `FolderCard.tsx`, `FolderDetail.tsx`, `SmartChordsWorkspace.tsx`.
 
 ---
@@ -70,8 +69,8 @@ praise-app/
 ### 3. 📱 Mobile (`/mobile`)
 - **Tech Stack**: Flutter (Dart), `flutter_bloc` (Gerenciamento de Estado), `equatable`, `http`, `shared_preferences`, `google_fonts`, `url_launcher`.
 - **Estrutura Interna (`mobile/lib/`)**:
-  - `main.dart`: Ponto de entrada do Flutter, injeção de dependências e tema.
-  - `core/`: Constantes (`app_constants.dart`), serviços de rede e utilitários.
+  - `main.dart`: Ponto de entrada do Flutter, injeção de dependências e tema (`ThemeData`).
+  - `core/`: Constantes (`app_constants.dart`), tema/paleta de cores (`app_theme.dart` / `app_colors.dart`), serviços de rede e utilitários.
   - `features/`:
     - `groups/`: Repositórios e BLoCs para gestão e troca de grupos.
     - `liturgies/`: Visualização das ordens de culto.
@@ -88,6 +87,35 @@ praise-app/
   - `003_add_smart_chords_and_multiuser.sql`: Suporte inicial a multi-usuários.
   - `004_create_smart_chords_table.sql`: Cifras inteligentes standalone.
   - `005_groups_and_liturgies.sql`: **Multi-Tenant completo** com tabelas `groups`, `group_members`, `group_invites` (código curto), `liturgies`, `liturgy_items` e RLS.
+
+---
+
+## 🎨 Sistema de Design & Paleta de Cores (Sage & Forest Green)
+
+O Praise App utiliza um sistema de cores harmonioso baseado em tons de Verde Floresta e Sálvia:
+
+### Tokens Globais:
+- **Primary Brand**: `#2B3B30` (Verde Floresta)
+- **Primary Hover**: `#415748` (Light) / `#3B4F41` (Dark)
+- **Accent**: `#86A38F` (Sálvia)
+
+### Modo Claro (`:root`):
+- `--bg-main`: `#F4F6F4` (Cinza claro sálvia)
+- `--bg-surface`: `#FFFFFF`
+- `--border-color`: `#DCE2DD`
+- `--text-main`: `#0F1411` (Preto ardósia escuro para legibilidade máxima)
+- `--text-muted`: `#3A4A3E` (Verde escuro de alto contraste)
+- `--text-tertiary`: `#526356`
+- `--primary-light`: `#233B2B`
+- `--danger`: `#DC2626` (Reduzido tom lavado para alto contraste)
+
+### Modo Escuro (`.dark` - Padrão):
+- `--bg-main`: `#131614`
+- `--bg-surface`: `#1C221E`
+- `--border-color`: `#2B3B30`
+- `--text-main`: `#ECEFE2`
+- `--text-muted`: `#9DA79F`
+- Tema padrão de inicialização no app, com suporte a salvamento de preferência do usuário em `localStorage` / `SharedPreferences`.
 
 ---
 
@@ -126,3 +154,7 @@ npm run dev       # Iniciar dev server (Vite)
    - Os convites devem utilizar o padrão de **código curto** (ex: `PR-8X2K`), gerados aleatoriamente com expiração recomendada de 7 dias.
 3. **Manutenção do Banco de Dados**:
    - Qualquer alteração em esquemas deve ser adicionada como uma nova migration numerada sequencialmente em `supabase/migrations/`.
+4. **Padrão de Temas**:
+   - O aplicativo deve sempre inicializar no **Modo Escuro (Dark Mode)** por padrão.
+   - Caso o usuário altere explicitamente para o Modo Claro (Light Mode), essa preferência deve ser persistida localmente.
+   - Em Modo Claro, utilizar obrigatoriamente textos de alto contraste (`#0F1411` / `#3A4A3E` / `#DC2626`) em vez de tons desbotados ou texto branco sobre fundos claros.

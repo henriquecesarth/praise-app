@@ -21,7 +21,9 @@ class _CifradorTabScreenState extends State<CifradorTabScreen> {
   @override
   void initState() {
     super.initState();
-    _loadChords();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadChords();
+    });
   }
 
   @override

@@ -25,7 +25,9 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
   void initState() {
     super.initState();
     _folder = widget.folder;
-    _loadFolderData();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadFolderData();
+    });
   }
 
   Future<void> _loadFolderData() async {

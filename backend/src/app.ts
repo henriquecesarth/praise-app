@@ -16,7 +16,11 @@ import { config } from './config/unifiedConfig';
 const app = express();
 
 // ─── Global Middleware ───────────────────────────────────────
-app.use(cors());
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
+}));
 app.use(express.json());
 
 // ─── Health Check ────────────────────────────────────────────

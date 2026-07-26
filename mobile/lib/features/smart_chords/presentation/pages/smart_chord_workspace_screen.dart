@@ -67,7 +67,9 @@ class _SmartChordWorkspaceScreenState extends State<SmartChordWorkspaceScreen> {
     _selectedSongId = widget.smartChord?.songId ?? '';
     _scrollController = ScrollController();
 
-    _loadRelations();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadRelations();
+    });
   }
 
   @override

@@ -1,7 +1,8 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:praise/core/constants/app_constants.dart';
-
 
 /// Remote data source — Communicates with the backend API
 class RepertoireRemoteDataSource {
@@ -14,13 +15,25 @@ class RepertoireRemoteDataSource {
   })  : _client = client ?? http.Client(),
         _baseUrl = baseUrl ?? ApiConstants.baseUrl;
 
-  String _url(String ministryId, String path) =>
-      '$_baseUrl/ministries/$ministryId/$path';
+  String get _effectiveBaseUrl => _baseUrl;
 
-  Map<String, String> get _headers => {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      };
+  String _url(String ministryId, String path) =>
+      '$_effectiveBaseUrl/ministries/$ministryId/$path';
+
+  Future<Map<String, String>> _getHeaders() async {
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    };
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('praise_auth_token');
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+    } catch (_) {}
+    return headers;
+  }
 
   // ─── Songs ──────────────────────────────────────────────────
 
@@ -45,7 +58,7 @@ class RepertoireRemoteDataSource {
     if (hasYoutube == true) queryParams['has_youtube'] = 'true';
 
     final uri = Uri.parse(_url(ministryId, 'songs')).replace(queryParameters: queryParams);
-    final response = await _client.get(uri, headers: _headers).timeout(ApiConstants.timeout);
+    final response = await _client.get(uri, headers: await _getHeaders()).timeout(ApiConstants.timeout);
 
     return _handleResponse(response);
   }
@@ -55,7 +68,7 @@ class RepertoireRemoteDataSource {
     String songId,
   ) async {
     final response = await _client
-        .get(Uri.parse(_url(ministryId, 'songs/$songId')), headers: _headers)
+        .get(Uri.parse(_url(ministryId, 'songs/$songId')), headers: await _getHeaders())
         .timeout(ApiConstants.timeout);
 
     return _handleResponse(response);
@@ -68,7 +81,7 @@ class RepertoireRemoteDataSource {
     final response = await _client
         .post(
           Uri.parse(_url(ministryId, 'songs')),
-          headers: _headers,
+          headers: await _getHeaders(),
           body: jsonEncode(songData),
         )
         .timeout(ApiConstants.timeout);
@@ -84,7 +97,7 @@ class RepertoireRemoteDataSource {
     final response = await _client
         .put(
           Uri.parse(_url(ministryId, 'songs/$songId')),
-          headers: _headers,
+          headers: await _getHeaders(),
           body: jsonEncode(songData),
         )
         .timeout(ApiConstants.timeout);
@@ -94,7 +107,7 @@ class RepertoireRemoteDataSource {
 
   Future<void> deleteSong(String ministryId, String songId) async {
     final response = await _client
-        .delete(Uri.parse(_url(ministryId, 'songs/$songId')), headers: _headers)
+        .delete(Uri.parse(_url(ministryId, 'songs/$songId')), headers: await _getHeaders())
         .timeout(ApiConstants.timeout);
 
     if (response.statusCode != 204) {
@@ -112,7 +125,7 @@ class RepertoireRemoteDataSource {
     if (search != null && search.isNotEmpty) queryParams['search'] = search;
 
     final uri = Uri.parse(_url(ministryId, 'artists')).replace(queryParameters: queryParams.isEmpty ? null : queryParams);
-    final response = await _client.get(uri, headers: _headers).timeout(ApiConstants.timeout);
+    final response = await _client.get(uri, headers: await _getHeaders()).timeout(ApiConstants.timeout);
 
     return _handleResponse(response);
   }
@@ -124,7 +137,7 @@ class RepertoireRemoteDataSource {
     final response = await _client
         .post(
           Uri.parse(_url(ministryId, 'artists')),
-          headers: _headers,
+          headers: await _getHeaders(),
           body: jsonEncode({'name': name}),
         )
         .timeout(ApiConstants.timeout);
@@ -140,7 +153,7 @@ class RepertoireRemoteDataSource {
     final response = await _client
         .put(
           Uri.parse(_url(ministryId, 'artists/$artistId')),
-          headers: _headers,
+          headers: await _getHeaders(),
           body: jsonEncode({'name': name}),
         )
         .timeout(ApiConstants.timeout);
@@ -150,7 +163,7 @@ class RepertoireRemoteDataSource {
 
   Future<void> deleteArtist(String ministryId, String artistId) async {
     final response = await _client
-        .delete(Uri.parse(_url(ministryId, 'artists/$artistId')), headers: _headers)
+        .delete(Uri.parse(_url(ministryId, 'artists/$artistId')), headers: await _getHeaders())
         .timeout(ApiConstants.timeout);
 
     if (response.statusCode != 204) {
@@ -162,7 +175,7 @@ class RepertoireRemoteDataSource {
 
   Future<Map<String, dynamic>> getClassifications(String ministryId) async {
     final response = await _client
-        .get(Uri.parse(_url(ministryId, 'classifications')), headers: _headers)
+        .get(Uri.parse(_url(ministryId, 'classifications')), headers: await _getHeaders())
         .timeout(ApiConstants.timeout);
 
     return _handleResponse(response);
@@ -175,7 +188,7 @@ class RepertoireRemoteDataSource {
     final response = await _client
         .post(
           Uri.parse(_url(ministryId, 'classifications')),
-          headers: _headers,
+          headers: await _getHeaders(),
           body: jsonEncode(data),
         )
         .timeout(ApiConstants.timeout);
@@ -191,7 +204,7 @@ class RepertoireRemoteDataSource {
     final response = await _client
         .put(
           Uri.parse(_url(ministryId, 'classifications/$classificationId')),
-          headers: _headers,
+          headers: await _getHeaders(),
           body: jsonEncode(data),
         )
         .timeout(ApiConstants.timeout);
@@ -206,7 +219,7 @@ class RepertoireRemoteDataSource {
     final response = await _client
         .delete(
           Uri.parse(_url(ministryId, 'classifications/$classificationId')),
-          headers: _headers,
+          headers: await _getHeaders(),
         )
         .timeout(ApiConstants.timeout);
 
@@ -219,7 +232,7 @@ class RepertoireRemoteDataSource {
 
   Future<Map<String, dynamic>> getFolders(String ministryId) async {
     final response = await _client
-        .get(Uri.parse(_url(ministryId, 'folders')), headers: _headers)
+        .get(Uri.parse(_url(ministryId, 'folders')), headers: await _getHeaders())
         .timeout(ApiConstants.timeout);
 
     return _handleResponse(response);
@@ -227,7 +240,7 @@ class RepertoireRemoteDataSource {
 
   Future<Map<String, dynamic>> getFolderById(String ministryId, String folderId) async {
     final response = await _client
-        .get(Uri.parse(_url(ministryId, 'folders/$folderId')), headers: _headers)
+        .get(Uri.parse(_url(ministryId, 'folders/$folderId')), headers: await _getHeaders())
         .timeout(ApiConstants.timeout);
 
     return _handleResponse(response);
@@ -241,7 +254,7 @@ class RepertoireRemoteDataSource {
     final response = await _client
         .post(
           Uri.parse(_url(ministryId, 'folders')),
-          headers: _headers,
+          headers: await _getHeaders(),
           body: jsonEncode({
             'name': name,
             if (description != null) 'description': description,
@@ -260,7 +273,7 @@ class RepertoireRemoteDataSource {
     final response = await _client
         .put(
           Uri.parse(_url(ministryId, 'folders/$folderId')),
-          headers: _headers,
+          headers: await _getHeaders(),
           body: jsonEncode(data),
         )
         .timeout(ApiConstants.timeout);
@@ -270,7 +283,7 @@ class RepertoireRemoteDataSource {
 
   Future<void> deleteFolder(String ministryId, String folderId) async {
     final response = await _client
-        .delete(Uri.parse(_url(ministryId, 'folders/$folderId')), headers: _headers)
+        .delete(Uri.parse(_url(ministryId, 'folders/$folderId')), headers: await _getHeaders())
         .timeout(ApiConstants.timeout);
 
     if (response.statusCode != 204) {
@@ -287,7 +300,7 @@ class RepertoireRemoteDataSource {
     final response = await _client
         .post(
           Uri.parse(_url(ministryId, 'folders/$folderId/songs')),
-          headers: _headers,
+          headers: await _getHeaders(),
           body: jsonEncode({
             'song_id': songId,
             if (position != null) 'position': position,
@@ -308,7 +321,7 @@ class RepertoireRemoteDataSource {
     final response = await _client
         .delete(
           Uri.parse(_url(ministryId, 'folders/$folderId/songs/$songId')),
-          headers: _headers,
+          headers: await _getHeaders(),
         )
         .timeout(ApiConstants.timeout);
 
@@ -321,7 +334,7 @@ class RepertoireRemoteDataSource {
 
   Future<Map<String, dynamic>> getCounts(String ministryId) async {
     final response = await _client
-        .get(Uri.parse(_url(ministryId, 'counts')), headers: _headers)
+        .get(Uri.parse(_url(ministryId, 'counts')), headers: await _getHeaders())
         .timeout(ApiConstants.timeout);
 
     return _handleResponse(response);
