@@ -298,7 +298,7 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
       </div>
 
       {/* Interactive Confirmation Panel */}
-      {schedule.requireConfirmation && userParticipant && (
+      {upcoming && schedule.requireConfirmation && userParticipant && (
         <div className="confirmation-interactive-box">
           <div className="confirmation-box-header">
             <div className="dashboard-card-icon green" style={{ width: '40px', height: '40px' }}>

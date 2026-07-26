@@ -59,7 +59,7 @@ export class UserRepository {
         });
 
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
+          const errorData = (await response.json().catch(() => ({}))) as any;
           const message = errorData?.error?.message;
           if (message === 'EMAIL_NOT_FOUND' || message === 'INVALID_PASSWORD' || message === 'INVALID_LOGIN_CREDENTIALS') {
             throw new AppError(401, 'E-mail ou senha incorretos.');
@@ -67,7 +67,7 @@ export class UserRepository {
           throw new AppError(400, 'Falha ao autenticar no Firebase.');
         }
 
-        const data = await response.json();
+        const data = (await response.json()) as any;
         const doc = await this.usersCollection.doc(data.localId).get();
         const userData = doc.exists ? (doc.data() as UserRecordData) : null;
 

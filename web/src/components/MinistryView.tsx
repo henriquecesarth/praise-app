@@ -481,18 +481,20 @@ export function MinistryView({
               <ChevronRight size={16} className="ministry-chevron" />
             </button>
             {/* Administradores — ACTIVE */}
-            <button className="ministry-action-row-btn" onClick={() => setShowAdmins(true)}>
-              <div className="ministry-action-row-left">
-                <div className="ministry-action-icon primary">
-                  <User size={18} />
+            {userRole === 'admin' && (
+              <button className="ministry-action-row-btn" onClick={() => setShowAdmins(true)}>
+                <div className="ministry-action-row-left">
+                  <div className="ministry-action-icon primary">
+                    <User size={18} />
+                  </div>
+                  <div>
+                    <div className="ministry-action-title">Administradores</div>
+                    <div className="ministry-action-desc">Defina quem são os administradores</div>
+                  </div>
                 </div>
-                <div>
-                  <div className="ministry-action-title">Administradores</div>
-                  <div className="ministry-action-desc">Defina quem são os administradores</div>
-                </div>
-              </div>
-              <ChevronRight size={16} className="ministry-chevron" />
-            </button>
+                <ChevronRight size={16} className="ministry-chevron" />
+              </button>
+            )}
             {/* Modelos de Roteiro — ACTIVE */}
             <button className="ministry-action-row-btn" onClick={() => setShowTemplates(true)}>
               <div className="ministry-action-row-left">

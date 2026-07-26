@@ -393,7 +393,7 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast }: Props) {
                         </div>
                       ) : (
                         filteredMembers.map((member) => {
-                          const selected = form.memberIds.includes(member.id);
+                          const selected = form.memberIds.includes(member.id) || (!!member.userId && form.memberIds.includes(member.userId));
                           return (
                             <button
                               key={member.id}

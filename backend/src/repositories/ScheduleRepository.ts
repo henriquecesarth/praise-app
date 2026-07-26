@@ -111,7 +111,10 @@ export class ScheduleRepository {
     }
     const schedule = doc.data() as ScheduleRecord;
 
-    // Buscar memberId na coleção group_members e nome do usuário na coleção users
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (schedule.date < todayStr) {
+      throw new AppError(400, 'Não é possível alterar a confirmação de presença de uma escala que já passou.');
+    }
     let memberId: string | null = null;
     let userRealName: string = userName || '';
     if (schedule.ministry_id) {

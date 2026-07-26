@@ -276,16 +276,27 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
   }, [groupId]);
 
   /**
-   * Imports all members of a team into selectedParticipants (deduplication by id).
+   * Imports all members of a team into selectedParticipants (deduplication by id/memberId).
    */
   const handleImportTeam = (team: { id: string; name: string; memberIds: string[] }) => {
     const teamParticipants = team.memberIds
-      .map((memberId) => groupMembers.find((m) => m.id === memberId || (m as any).userId === memberId))
+      .map((memberId) =>
+        groupMembers.find(
+          (m) =>
+            m.id === memberId ||
+            (m as any).userId === memberId ||
+            (m as any).memberId === memberId
+        )
+      )
       .filter((m): m is typeof groupMembers[0] => !!m);
 
     setSelectedParticipants((prev) => {
-      const existing = new Set(prev.map((p) => p.id));
-      const toAdd = teamParticipants.filter((m) => !existing.has(m.id));
+      const existing = new Set(
+        prev.flatMap((p) => [p.id, (p as any).userId, (p as any).memberId].filter(Boolean))
+      );
+      const toAdd = teamParticipants.filter(
+        (m) => !existing.has(m.id) && !existing.has((m as any).memberId) && !existing.has((m as any).userId)
+      );
       return [...prev, ...toAdd];
     });
     setShowTeamSelectModal(false);
@@ -1330,10 +1341,24 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                 <div className="schedule-items-list" style={{ margin: '8px 0 16px', maxHeight: '360px', overflowY: 'auto' }}>
                   {ministryTeams.map((team) => {
                     const membersInTeam = team.memberIds
-                      .map((mid) => groupMembers.find((m) => m.id === mid || (m as any).userId === mid))
+                      .map((mid) =>
+                        groupMembers.find(
+                          (m) =>
+                            m.id === mid ||
+                            (m as any).userId === mid ||
+                            (m as any).memberId === mid
+                        )
+                      )
                       .filter(Boolean);
                     const alreadyAdded = membersInTeam.filter((m) =>
-                      m && selectedParticipants.some((p) => p.id === m.id)
+                      m &&
+                      selectedParticipants.some(
+                        (p) =>
+                          p.id === m.id ||
+                          p.id === (m as any).memberId ||
+                          (p as any).userId === m.id ||
+                          ((p as any).memberId && (p as any).memberId === (m as any).memberId)
+                      )
                     ).length;
                     const newCount = membersInTeam.length - alreadyAdded;
 
