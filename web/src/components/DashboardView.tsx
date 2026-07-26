@@ -534,7 +534,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       style={{
                         background: bday.isToday
                           ? 'linear-gradient(135deg, #EC4899, #BE185D)'
-                          : 'linear-gradient(135deg, #7C3AED, #4C1D95)',
+                          : 'linear-gradient(135deg, var(--primary-brand), var(--primary-hover))',
                       }}
                     >
                       {bday.avatar}

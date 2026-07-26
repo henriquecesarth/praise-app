@@ -250,7 +250,7 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
 
       {/* Hero */}
       <div className="schedule-detail-hero">
-        <div className="schedule-detail-color-bar" style={{ backgroundColor: schedule.colorPalette || '#7C3AED' }} />
+        <div className="schedule-detail-color-bar" style={{ backgroundColor: schedule.colorPalette || 'var(--primary-brand)' }} />
         <div className="schedule-detail-hero-content">
           <h1 className="schedule-detail-title">{schedule.title}</h1>
           <div className="schedule-detail-date">

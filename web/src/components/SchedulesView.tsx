@@ -83,7 +83,7 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
               {/* Color accent bar */}
               <div
                 className="schedule-card-color-bar"
-                style={{ backgroundColor: schedule.colorPalette || '#7C3AED' }}
+                style={{ backgroundColor: schedule.colorPalette || 'var(--primary-brand)' }}
               />
 
               <div className="schedule-card-item-header">

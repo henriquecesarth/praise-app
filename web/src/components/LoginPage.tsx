@@ -80,7 +80,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
             {/* Feature Cards Grid */}
             <div className="login-features-grid">
               <div className="login-feature-card">
-                <div className="login-feature-icon" style={{ backgroundColor: 'rgba(124, 58, 237, 0.15)', color: 'var(--primary-light)' }}>
+                <div className="login-feature-icon" style={{ backgroundColor: 'rgba(134, 163, 143, 0.15)', color: 'var(--primary-light)' }}>
                   <Music size={18} />
                 </div>
                 <div className="login-feature-title">Repertórios & Pastas</div>

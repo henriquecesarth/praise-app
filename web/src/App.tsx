@@ -18,7 +18,7 @@ import { SchedulesView } from './components/SchedulesView';
 import { ScheduleDetailView } from './components/ScheduleDetailView';
 import { CreateScheduleModal, ScheduleItem } from './components/CreateScheduleModal';
 import { MinistryView } from './components/MinistryView';
-import { Search, SlidersHorizontal, Plus, CheckCircle, XCircle, Menu, Music, Edit3, KeyRound, UserPlus, LogOut, Building2, Home, Calendar as CalendarIcon } from 'lucide-react';
+import { Search, SlidersHorizontal, Plus, CheckCircle, XCircle, Menu, Music, Edit3, KeyRound, UserPlus, LogOut, Building2, Home, Calendar as CalendarIcon, Sun, Moon } from 'lucide-react';
 
 interface Toast {
   id: string;
@@ -33,6 +33,21 @@ interface UserState {
 }
 
 export default function App() {
+  // Theme state (dark vs light)
+  const [darkMode, setDarkMode] = useState<boolean>(() => {
+    const saved = localStorage.getItem('praise_theme');
+    return saved !== null ? saved === 'dark' : true;
+  });
+
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem('praise_theme', darkMode ? 'dark' : 'light');
+  }, [darkMode]);
+
   // User Auth State
   const [currentUser, setCurrentUser] = useState<UserState | null>(null);
 
@@ -503,13 +518,22 @@ export default function App() {
               Praise App
             </div>
           )}
-          <button
-            className="action-icon-btn"
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            title={sidebarOpen ? 'Recolher Menu' : 'Expandir Menu'}
-          >
-            <Menu size={20} />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <button
+              className="action-icon-btn"
+              onClick={() => setDarkMode(!darkMode)}
+              title={darkMode ? 'Mudar para Modo Claro' : 'Mudar para Modo Escuro'}
+            >
+              {darkMode ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+            <button
+              className="action-icon-btn"
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              title={sidebarOpen ? 'Recolher Menu' : 'Expandir Menu'}
+            >
+              <Menu size={20} />
+            </button>
+          </div>
         </div>
 
         {/* User Account Widget */}
@@ -600,7 +624,7 @@ export default function App() {
               borderRadius: '8px',
               border: 'none',
               backgroundColor: mainModule === 'dashboard' ? 'var(--primary-color)' : 'transparent',
-              color: 'var(--text-primary)',
+              color: mainModule === 'dashboard' ? '#FFFFFF' : 'var(--text-primary)',
               cursor: 'pointer',
               fontWeight: 600,
               textAlign: 'left',
@@ -624,7 +648,7 @@ export default function App() {
               borderRadius: '8px',
               border: 'none',
               backgroundColor: mainModule === 'repertoire' ? 'var(--primary-color)' : 'transparent',
-              color: 'var(--text-primary)',
+              color: mainModule === 'repertoire' ? '#FFFFFF' : 'var(--text-primary)',
               cursor: 'pointer',
               fontWeight: 600,
               textAlign: 'left',
@@ -647,7 +671,7 @@ export default function App() {
               borderRadius: '8px',
               border: 'none',
               backgroundColor: mainModule === 'cifrador' ? 'var(--primary-color)' : 'transparent',
-              color: 'var(--text-primary)',
+              color: mainModule === 'cifrador' ? '#FFFFFF' : 'var(--text-primary)',
               cursor: 'pointer',
               fontWeight: 600,
               textAlign: 'left',
@@ -670,7 +694,7 @@ export default function App() {
               borderRadius: '8px',
               border: 'none',
               backgroundColor: mainModule === 'schedules' ? 'var(--primary-color)' : 'transparent',
-              color: 'var(--text-primary)',
+              color: mainModule === 'schedules' ? '#FFFFFF' : 'var(--text-primary)',
               cursor: 'pointer',
               fontWeight: 600,
               textAlign: 'left',
@@ -693,7 +717,7 @@ export default function App() {
               borderRadius: '8px',
               border: 'none',
               backgroundColor: mainModule === 'ministry' ? 'var(--primary-color)' : 'transparent',
-              color: 'var(--text-primary)',
+              color: mainModule === 'ministry' ? '#FFFFFF' : 'var(--text-primary)',
               cursor: 'pointer',
               fontWeight: 600,
               textAlign: 'left',
@@ -789,7 +813,7 @@ export default function App() {
           {!selectedSong && !selectedFolder && !activeGroup && (
             <div className="empty-state" style={{ minHeight: '400px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '40px 20px' }}>
               <div style={{ fontSize: '3.5rem', marginBottom: '16px' }}>👥</div>
-              <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '8px', color: '#FFF' }}>Nenhum Ministério Selecionado</h2>
+              <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '8px', color: 'var(--text-primary)' }}>Nenhum Ministério Selecionado</h2>
               <p style={{ color: 'var(--text-secondary)', maxWidth: '480px', marginBottom: '24px', lineHeight: 1.5 }}>
                 Você ainda não faz parte de nenhum ministério cadastrado. Crie o seu ministério como líder ou digite um código de convite (ex: PR-8X2K) para ingressar.
               </p>

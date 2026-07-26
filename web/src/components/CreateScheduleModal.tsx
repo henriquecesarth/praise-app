@@ -509,7 +509,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
       time,
       notes,
       isVisible,
-      colorPalette: clothingPieces.length > 0 ? clothingPieces[0].colors[0] || '#7C3AED' : '#7C3AED',
+      colorPalette: clothingPieces.length > 0 ? clothingPieces[0].colors[0] || 'var(--primary-brand)' : 'var(--primary-brand)',
       clothingPieces,
       requireConfirmation,
       participants: selectedParticipants,
@@ -714,7 +714,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                       onClick={() => setShowColorPalettePage(true)}
                     >
                       <div className="schedule-action-card-left">
-                        <div className="color-palette-dot" style={{ backgroundColor: clothingPieces[0]?.colors[0] || '#7C3AED' }} />
+                        <div className="color-palette-dot" style={{ backgroundColor: clothingPieces[0]?.colors[0] || 'var(--primary-brand)' }} />
                         <div>
                           <div className="schedule-action-card-title">Paleta de Cores & Vestimentas</div>
                           <div className="schedule-action-card-sub">{clothingPieces.length} peça(s) configurada(s)</div>
