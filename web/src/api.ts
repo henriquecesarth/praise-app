@@ -3,8 +3,13 @@ import { Song, Artist, Folder, Classification, RepertoireCounts, Ministry, Minis
 export type SmartChord = any;
 
 // Usar variável de ambiente ou fallback para backend local/produção
-const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3000/api/v1';
+const rawUrl = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3000/api/v1';
 export const DEFAULT_MINISTRY_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+
+// Garante que a URL comece com http:// ou https://
+export const API_URL = rawUrl.startsWith('http')
+  ? rawUrl
+  : `https://${rawUrl}`;
 
 const getHeaders = () => {
   const token = localStorage.getItem('praise_auth_token');
@@ -22,7 +27,7 @@ const handleResponse = async <T>(response: Response): Promise<T> => {
   if (response.status === 204) {
     return {} as T;
   }
-  
+
   const text = await response.text();
   let body;
   try {
