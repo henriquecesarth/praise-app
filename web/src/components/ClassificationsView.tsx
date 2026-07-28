@@ -144,19 +144,19 @@ export function ClassificationsView({ ministryId, isAdmin, onBack, showToast, on
     <div className="classifications-view">
       {/* Header */}
       <div className="classifications-header">
-        <button className="classifications-back-btn" onClick={onBack}>
-          <ChevronLeft size={18} />
-
+        <button className="classifications-back-btn" onClick={onBack} title="Voltar" aria-label="Voltar">
+          <ChevronLeft size={20} />
         </button>
         <h2 className="classifications-title">
           <Tag size={20} />
           Classificações
         </h2>
-        {isAdmin && (
-          <button className="btn btn-primary classifications-create-btn" onClick={openCreateModal}>
-            <Plus size={16} />
-
+        {isAdmin ? (
+          <button className="btn btn-primary classifications-create-btn" onClick={openCreateModal} title="Nova Classificação" aria-label="Nova Classificação">
+            <Plus size={18} />
           </button>
+        ) : (
+          <div style={{ width: '40px', height: '40px', flexShrink: 0 }} />
         )}
       </div>
 

@@ -148,19 +148,19 @@ export function RolesView({ ministryId, isAdmin, onBack, showToast, onModalState
     <div className="roles-view">
       {/* Header */}
       <div className="roles-header">
-        <button className="roles-back-btn" onClick={onBack}>
-          <ChevronLeft size={18} />
-          Ministério
+        <button className="roles-back-btn" onClick={onBack} title="Voltar" aria-label="Voltar">
+          <ChevronLeft size={20} />
         </button>
         <h2 className="roles-title">
           <Shield size={20} />
           Funções
         </h2>
-        {isAdmin && (
-          <button className="btn btn-primary roles-create-btn" onClick={openCreateModal}>
-            <Plus size={16} />
-            Nova Função
+        {isAdmin ? (
+          <button className="btn btn-primary roles-create-btn" onClick={openCreateModal} title="Nova Função" aria-label="Nova Função">
+            <Plus size={18} />
           </button>
+        ) : (
+          <div style={{ width: '40px', height: '40px', flexShrink: 0 }} />
         )}
       </div>
 

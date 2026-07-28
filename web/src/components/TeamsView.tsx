@@ -200,19 +200,19 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast, onModalState
     <div className="teams-view">
       {/* Header */}
       <div className="teams-header">
-        <button className="teams-back-btn" onClick={onBack}>
-          <ChevronLeft size={18} />
-          Ministério
+        <button className="teams-back-btn" onClick={onBack} title="Voltar" aria-label="Voltar">
+          <ChevronLeft size={20} />
         </button>
         <h2 className="teams-title">
           <Users size={20} />
           Equipes
         </h2>
-        {isAdmin && (
-          <button className="btn btn-primary teams-create-btn" onClick={openCreateModal}>
-            <Plus size={16} />
-            Nova Equipe
+        {isAdmin ? (
+          <button className="btn btn-primary teams-create-btn" onClick={openCreateModal} title="Nova Equipe" aria-label="Nova Equipe">
+            <Plus size={18} />
           </button>
+        ) : (
+          <div style={{ width: '40px', height: '40px', flexShrink: 0 }} />
         )}
       </div>
 

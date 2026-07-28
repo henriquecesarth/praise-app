@@ -39,36 +39,45 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
 
   return (
     <div className="schedules-view-container">
-      {/* Page Header & Centralized Tabs */}
-      <div className="schedules-top-header">
-        <div className="schedules-title-section">
-          <h1 className="schedules-page-title">Escalas de Louvor</h1>
-          <p className="schedules-page-desc">Gerencie a presença dos integrantes, repertório e o roteiro dos cultos.</p>
+      {/* Top Header Row with Centered Tabs and Aligned Create Button */}
+      <div className="schedules-top-header" style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', width: '100%' }}>
+        {/* Left Spacer for symmetry */}
+        <div style={{ width: '40px', height: '40px', flexShrink: 0 }} />
+
+        {/* Centered Tabs */}
+        <div className="schedule-tabs-wrapper centered" style={{ flex: 1, display: 'flex', justifyContent: 'center', margin: 0 }}>
+          <div className="schedule-tabs" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'var(--surface-variant)', padding: '4px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+            <button
+              className={`schedule-tab-btn ${activeTab === 'proximas' ? 'active' : ''}`}
+              onClick={() => setActiveTab('proximas')}
+              style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '0.85rem', fontWeight: 600, border: 'none', background: activeTab === 'proximas' ? 'var(--surface-color)' : 'transparent', color: activeTab === 'proximas' ? 'var(--primary-light)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.2s' }}
+            >
+              Próximas ({upcomingSchedules.length})
+            </button>
+            <button
+              className={`schedule-tab-btn ${activeTab === 'anteriores' ? 'active' : ''}`}
+              onClick={() => setActiveTab('anteriores')}
+              style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '0.85rem', fontWeight: 600, border: 'none', background: activeTab === 'anteriores' ? 'var(--surface-color)' : 'transparent', color: activeTab === 'anteriores' ? 'var(--primary-light)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.2s' }}
+            >
+              Anteriores ({pastSchedules.length})
+            </button>
+          </div>
         </div>
 
-        {userRole === 'admin' && (
-          <button className="btn btn-primary" onClick={onCreateSchedule}>
-            <Plus size={18} /> Criar Escala
+        {/* Right Aligned Create Button */}
+        {userRole === 'admin' ? (
+          <button
+            className="btn btn-primary schedules-create-btn"
+            onClick={onCreateSchedule}
+            title="Criar Escala"
+            aria-label="Criar Escala"
+            style={{ width: '40px', height: '40px', minWidth: '40px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px', flexShrink: 0 }}
+          >
+            <Plus size={18} />
           </button>
+        ) : (
+          <div style={{ width: '40px', height: '40px', flexShrink: 0 }} />
         )}
-      </div>
-
-      {/* Centralized Tabs (Próximas & Anteriores) */}
-      <div className="schedule-tabs-wrapper centered" style={{ marginBottom: '24px' }}>
-        <div className="schedule-tabs">
-          <button
-            className={`schedule-tab-btn ${activeTab === 'proximas' ? 'active' : ''}`}
-            onClick={() => setActiveTab('proximas')}
-          >
-            Próximas ({upcomingSchedules.length})
-          </button>
-          <button
-            className={`schedule-tab-btn ${activeTab === 'anteriores' ? 'active' : ''}`}
-            onClick={() => setActiveTab('anteriores')}
-          >
-            Anteriores ({pastSchedules.length})
-          </button>
-        </div>
       </div>
 
       {/* Schedules Cards List */}

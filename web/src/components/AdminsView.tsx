@@ -84,14 +84,14 @@ export function AdminsView({ ministryId, currentUserId, isAdmin, onBack, showToa
     <div className="admins-view">
       {/* Header */}
       <div className="admins-header">
-        <button className="admins-back-btn" onClick={onBack}>
-          <ChevronLeft size={18} />
-          Ministério
+        <button className="admins-back-btn" onClick={onBack} title="Voltar" aria-label="Voltar">
+          <ChevronLeft size={20} />
         </button>
         <h2 className="admins-title">
           <User size={20} />
           Administradores
         </h2>
+        <div style={{ width: '40px', height: '40px', flexShrink: 0 }} />
       </div>
 
       {/* Info card */}

@@ -3779,6 +3779,7 @@ input:checked + .switch-slider:before {
 .teams-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
   margin-bottom: 20px;
 }
@@ -3786,14 +3787,15 @@ input:checked + .switch-slider:before {
 .teams-back-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border-radius: var(--border-radius-sm);
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  padding: 0;
+  border-radius: 10px;
   border: 1px solid var(--border-color);
   background: var(--surface-color);
   color: var(--text-secondary);
-  font-size: 0.85rem;
-  font-weight: 600;
   cursor: pointer;
   transition: all var(--transition-fast);
   flex-shrink: 0;
@@ -3808,6 +3810,7 @@ input:checked + .switch-slider:before {
 .teams-title {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   font-size: 1.15rem;
   font-weight: 700;
@@ -3816,18 +3819,20 @@ input:checked + .switch-slider:before {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: center;
   margin: 0;
 }
 
 .teams-create-btn {
-  margin-left: auto;
-  font-size: 0.875rem;
-  padding: 8px 16px;
-  white-space: nowrap;
-  flex-shrink: 0;
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  padding: 0;
+  border-radius: 10px;
+  flex-shrink: 0;
 }
 
 /* Team list */
@@ -4096,6 +4101,7 @@ input:checked + .switch-slider:before {
 .roles-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
   margin-bottom: 20px;
 }
@@ -4103,14 +4109,15 @@ input:checked + .switch-slider:before {
 .roles-back-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border-radius: var(--border-radius-sm);
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  padding: 0;
+  border-radius: 10px;
   border: 1px solid var(--border-color);
   background: var(--surface-color);
   color: var(--text-secondary);
-  font-size: 0.85rem;
-  font-weight: 600;
   cursor: pointer;
   transition: all var(--transition-fast);
   flex-shrink: 0;
@@ -4125,6 +4132,7 @@ input:checked + .switch-slider:before {
 .roles-title {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   font-size: 1.15rem;
   font-weight: 700;
@@ -4133,18 +4141,20 @@ input:checked + .switch-slider:before {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: center;
   margin: 0;
 }
 
 .roles-create-btn {
-  margin-left: auto;
-  font-size: 0.875rem;
-  padding: 8px 16px;
-  white-space: nowrap;
-  flex-shrink: 0;
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  padding: 0;
+  border-radius: 10px;
+  flex-shrink: 0;
 }
 
 /* Roles Grid */
@@ -4270,6 +4280,7 @@ input:checked + .switch-slider:before {
 .classifications-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
   margin-bottom: 20px;
 }
@@ -4277,14 +4288,15 @@ input:checked + .switch-slider:before {
 .classifications-back-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border-radius: var(--border-radius-sm);
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  padding: 0;
+  border-radius: 10px;
   border: 1px solid var(--border-color);
   background: var(--surface-color);
   color: var(--text-secondary);
-  font-size: 0.85rem;
-  font-weight: 600;
   cursor: pointer;
   transition: all var(--transition-fast);
   flex-shrink: 0;
@@ -4299,6 +4311,7 @@ input:checked + .switch-slider:before {
 .classifications-title {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   font-size: 1.15rem;
   font-weight: 700;
@@ -4307,18 +4320,20 @@ input:checked + .switch-slider:before {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: center;
   margin: 0;
 }
 
 .classifications-create-btn {
-  margin-left: auto;
-  font-size: 0.875rem;
-  padding: 8px 16px;
-  white-space: nowrap;
-  flex-shrink: 0;
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  padding: 0;
+  border-radius: 10px;
+  flex-shrink: 0;
 }
 
 /* List */
@@ -4412,6 +4427,7 @@ input:checked + .switch-slider:before {
 .admins-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
   margin-bottom: 20px;
 }
@@ -4419,16 +4435,18 @@ input:checked + .switch-slider:before {
 .admins-back-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border-radius: var(--border-radius-sm);
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  padding: 0;
+  border-radius: 10px;
   border: 1px solid var(--border-color);
   background: var(--surface-color);
   color: var(--text-secondary);
-  font-size: 0.85rem;
-  font-weight: 600;
   cursor: pointer;
   transition: all var(--transition-fast);
+  flex-shrink: 0;
 }
 
 .admins-back-btn:hover {
@@ -4440,10 +4458,17 @@ input:checked + .switch-slider:before {
 .admins-title {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
+  gap: 8px;
   font-size: 1.15rem;
   font-weight: 700;
   flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+  margin: 0;
 }
 
 /* Summary Card */

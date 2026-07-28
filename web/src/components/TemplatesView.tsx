@@ -562,19 +562,19 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
     <div className="templates-view">
       {/* Header */}
       <div className="templates-header">
-        <button className="templates-back-btn" onClick={onBack}>
-          <ChevronLeft size={18} />
-          Ministério
+        <button className="templates-back-btn" onClick={onBack} title="Voltar" aria-label="Voltar">
+          <ChevronLeft size={20} />
         </button>
         <h2 className="templates-title">
           <Layers size={20} />
           Modelos de Roteiro
         </h2>
-        {isAdmin && (
-          <button className="btn btn-primary templates-create-btn" onClick={openCreateEditor}>
-            <Plus size={16} />
-            Novo Modelo
+        {isAdmin ? (
+          <button className="btn btn-primary templates-create-btn" onClick={openCreateEditor} title="Novo Modelo" aria-label="Novo Modelo">
+            <Plus size={18} />
           </button>
+        ) : (
+          <div style={{ width: '40px', height: '40px', flexShrink: 0 }} />
         )}
       </div>
 
