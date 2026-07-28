@@ -3,8 +3,24 @@ import { Song, Artist, Folder, Classification, RepertoireCounts, Ministry, Minis
 export type SmartChord = any;
 
 // Usar variável de ambiente ou fallback para backend local/produção
-const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3000/api/v1';
+const getCleanApiUrl = (): string => {
+  const envUrl = (import.meta as any).env?.VITE_API_URL as string | undefined;
+  let rawUrl = (envUrl && envUrl.trim()) ? envUrl.trim() : 'http://localhost:3000/api/v1';
+
+  // Remove barras iniciais acidentais (ex: /praise-app-gray.vercel.app/api/v1)
+  rawUrl = rawUrl.replace(/^\/+/, '');
+
+  // Garante o protocolo http:// ou https://
+  if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
+    rawUrl = `https://${rawUrl}`;
+  }
+
+  // Remove barras no final para evitar dupla barra na concatenação de rotas
+  return rawUrl.replace(/\/+$/, '');
+};
+
 export const DEFAULT_MINISTRY_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+export const API_URL = getCleanApiUrl();
 
 const getHeaders = () => {
   const token = localStorage.getItem('praise_auth_token');
@@ -22,7 +38,7 @@ const handleResponse = async <T>(response: Response): Promise<T> => {
   if (response.status === 204) {
     return {} as T;
   }
-  
+
   const text = await response.text();
   let body;
   try {
