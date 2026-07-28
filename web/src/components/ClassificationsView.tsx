@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api';
 import {
-  Plus, MoreVertical, Edit2, Trash2, Tag, ChevronLeft,
+  Plus, MoreVertical, Edit2, Trash2, Tag, ChevronLeft, Check,
 } from 'lucide-react';
 
 interface Classification {
@@ -19,16 +19,23 @@ interface Props {
   isAdmin: boolean;
   onBack: () => void;
   showToast: (msg: string, type?: 'success' | 'error') => void;
+  onModalStateChange?: (isOpen: boolean) => void;
 }
 
 type ModalMode = 'create' | 'edit';
 
-export function ClassificationsView({ ministryId, isAdmin, onBack, showToast }: Props) {
+export function ClassificationsView({ ministryId, isAdmin, onBack, showToast, onModalStateChange }: Props) {
   const [classifications, setClassifications] = useState<Classification[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Modal state
   const [showModal, setShowModal] = useState(false);
+
+  useEffect(() => {
+    if (onModalStateChange) {
+      onModalStateChange(showModal);
+    }
+  }, [showModal, onModalStateChange]);
   const [modalMode, setModalMode] = useState<ModalMode>('create');
   const [editingItem, setEditingItem] = useState<Classification | null>(null);
   const [name, setName] = useState('');
@@ -139,7 +146,7 @@ export function ClassificationsView({ ministryId, isAdmin, onBack, showToast }: 
       <div className="classifications-header">
         <button className="classifications-back-btn" onClick={onBack}>
           <ChevronLeft size={18} />
-          Ministério
+
         </button>
         <h2 className="classifications-title">
           <Tag size={20} />
@@ -148,7 +155,7 @@ export function ClassificationsView({ ministryId, isAdmin, onBack, showToast }: 
         {isAdmin && (
           <button className="btn btn-primary classifications-create-btn" onClick={openCreateModal}>
             <Plus size={16} />
-            Nova Classificação
+
           </button>
         )}
       </div>
@@ -231,11 +238,29 @@ export function ClassificationsView({ ministryId, isAdmin, onBack, showToast }: 
         <div className="modal-overlay" onClick={closeModal}>
           <div className="modal-content classification-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <div className="modal-title">
+              <button
+                type="button"
+                className="action-icon-btn"
+                onClick={closeModal}
+                title="Voltar / Fechar"
+                style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <ChevronLeft size={22} />
+              </button>
+
+              <div className="modal-title" style={{ textAlign: 'center', flex: 1, margin: 0 }}>
                 {modalMode === 'create' ? 'Nova Classificação' : 'Editar Classificação'}
               </div>
-              <button className="action-icon-btn" onClick={closeModal}>
-                ✕
+
+              <button
+                type="submit"
+                form="classification-form"
+                className="btn btn-primary"
+                onClick={(e) => handleSubmit(e)}
+                disabled={saving || !name.trim()}
+                style={{ padding: '6px 14px', fontSize: '0.85rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+              >
+                <Check size={16} /> {saving ? 'Salvando...' : 'Salvar'}
               </button>
             </div>
 
@@ -276,8 +301,8 @@ export function ClassificationsView({ ministryId, isAdmin, onBack, showToast }: 
                   {saving
                     ? 'Salvando...'
                     : modalMode === 'create'
-                    ? 'Criar Classificação'
-                    : 'Salvar Alterações'}
+                      ? 'Criar Classificação'
+                      : 'Salvar Alterações'}
                 </button>
               </div>
             </form>

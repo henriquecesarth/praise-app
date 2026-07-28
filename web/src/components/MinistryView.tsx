@@ -51,6 +51,7 @@ interface Props {
   onMinistryDeleted: () => void;
   onGenerateInvite: () => void;
   showToast: (msg: string, type?: 'success' | 'error') => void;
+  onTeamModalStateChange?: (isOpen: boolean) => void;
 }
 
 type ActiveTab = 'info' | 'members';
@@ -64,6 +65,7 @@ export function MinistryView({
   onMinistryDeleted,
   onGenerateInvite,
   showToast,
+  onTeamModalStateChange,
 }: Props) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('info');
   const [showTeams, setShowTeams] = useState(false);
@@ -285,6 +287,7 @@ export function MinistryView({
         isAdmin={userRole === 'admin'}
         onBack={() => setShowTeams(false)}
         showToast={showToast}
+        onModalStateChange={onTeamModalStateChange}
       />
     );
   }
@@ -297,6 +300,7 @@ export function MinistryView({
         isAdmin={userRole === 'admin'}
         onBack={() => setShowRoles(false)}
         showToast={showToast}
+        onModalStateChange={onTeamModalStateChange}
       />
     );
   }
@@ -309,6 +313,7 @@ export function MinistryView({
         isAdmin={userRole === 'admin'}
         onBack={() => setShowClassifications(false)}
         showToast={showToast}
+        onModalStateChange={onTeamModalStateChange}
       />
     );
   }

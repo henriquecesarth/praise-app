@@ -28,6 +28,7 @@ interface Props {
   isAdmin: boolean;
   onBack: () => void;
   showToast: (msg: string, type?: 'success' | 'error') => void;
+  onModalStateChange?: (isOpen: boolean) => void;
 }
 
 type ModalMode = 'create' | 'edit';
@@ -40,13 +41,19 @@ interface TeamFormData {
 
 const EMPTY_FORM: TeamFormData = { name: '', description: '', memberIds: [] };
 
-export function TeamsView({ ministryId, isAdmin, onBack, showToast }: Props) {
+export function TeamsView({ ministryId, isAdmin, onBack, showToast, onModalStateChange }: Props) {
   const [teams, setTeams] = useState<Team[]>([]);
   const [members, setMembers] = useState<MinistryMember[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Modal state
   const [showModal, setShowModal] = useState(false);
+
+  useEffect(() => {
+    if (onModalStateChange) {
+      onModalStateChange(showModal);
+    }
+  }, [showModal, onModalStateChange]);
   const [modalMode, setModalMode] = useState<ModalMode>('create');
   const [editingTeam, setEditingTeam] = useState<Team | null>(null);
   const [form, setForm] = useState<TeamFormData>(EMPTY_FORM);
@@ -316,10 +323,29 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast }: Props) {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-header">
-              <div className="modal-title">
+              <button
+                type="button"
+                className="action-icon-btn"
+                onClick={closeModal}
+                title="Voltar / Fechar"
+                style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <ChevronLeft size={22} />
+              </button>
+
+              <div className="modal-title" style={{ textAlign: 'center', flex: 1, margin: 0 }}>
                 {modalMode === 'create' ? 'Nova Equipe' : 'Editar Equipe'}
               </div>
-              <button className="action-icon-btn" onClick={closeModal}>✕</button>
+
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={(e) => handleSubmit(e)}
+                disabled={saving || !form.name.trim()}
+                style={{ padding: '6px 14px', fontSize: '0.85rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+              >
+                <Check size={16} /> {saving ? 'Salvando...' : 'Salvar'}
+              </button>
             </div>
 
             <form onSubmit={handleSubmit} className="login-form">
@@ -393,13 +419,17 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast }: Props) {
                         </div>
                       ) : (
                         filteredMembers.map((member) => {
-                          const selected = form.memberIds.includes(member.id) || (!!member.userId && form.memberIds.includes(member.userId));
+                          const selected =
+                            form.memberIds.includes(member.id) ||
+                            (!!member.userId && form.memberIds.includes(member.userId)) ||
+                            (!!(member as any).user_id && form.memberIds.includes((member as any).user_id));
                           return (
                             <button
                               key={member.id}
                               type="button"
                               className={`team-member-row ${selected ? 'selected' : ''}`}
                               onClick={() => toggleMember(member.id)}
+                              style={{ minHeight: '48px', padding: '10px 14px' }}
                             >
                               <div className="team-member-row-avatar">
                                 {getInitials(member.name)}
@@ -407,11 +437,11 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast }: Props) {
                               <div className="team-member-row-info">
                                 <span className="team-member-row-name">{member.name}</span>
                                 <span className="team-member-row-role">
-                                  {member.role === 'admin' ? 'Admin' : 'Integrante'}
+                                  {member.role === 'admin' ? 'Administrador' : 'Integrante'}
                                 </span>
                               </div>
                               <div className={`team-member-row-check ${selected ? 'checked' : ''}`}>
-                                {selected && <Check size={13} />}
+                                {selected && <Check size={14} />}
                               </div>
                             </button>
                           );

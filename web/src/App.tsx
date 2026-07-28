@@ -96,6 +96,7 @@ export default function App() {
 
   const [showArtistModal, setShowArtistModal] = useState(false);
   const [artistName, setArtistName] = useState('');
+  const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
 
   // Loading & Feedback
   const [loadingSongs, setLoadingSongs] = useState(true);
@@ -753,7 +754,7 @@ export default function App() {
       {/* Main Container Layout */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         {/* Module Header Bar */}
-        {!selectedSong && !selectedFolder && (
+        {!selectedSong && !selectedFolder && !selectedSchedule && !showCreateScheduleModal && !isTeamModalOpen && (
           <Header
             title={
               mainModule === 'dashboard' ? 'Painel Inicial' :
@@ -763,37 +764,13 @@ export default function App() {
             }
             subtitle={activeGroup ? activeGroup.name : 'Nenhum ministério selecionado'}
             rightActions={
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <button
-                  className="action-icon-btn"
-                  onClick={() => setDarkMode(!darkMode)}
-                  title={darkMode ? 'Alternar para Modo Claro' : 'Alternar para Modo Escuro'}
-                >
-                  {darkMode ? <Sun size={18} /> : <Moon size={18} />}
-                </button>
-                {mainModule === 'repertoire' && (
-                  <nav className="tab-bar" style={{ borderBottom: 'none' }}>
-                    <button
-                      className={`tab-btn ${activeTab === 'songs' ? 'active' : ''}`}
-                      onClick={() => setActiveTab('songs')}
-                    >
-                      Músicas <span className="badge-count">{counts.songs}</span>
-                    </button>
-                    <button
-                      className={`tab-btn ${activeTab === 'folders' ? 'active' : ''}`}
-                      onClick={() => setActiveTab('folders')}
-                    >
-                      Pastas <span className="badge-count">{counts.folders}</span>
-                    </button>
-                    <button
-                      className={`tab-btn ${activeTab === 'artists' ? 'active' : ''}`}
-                      onClick={() => setActiveTab('artists')}
-                    >
-                      Artistas <span className="badge-count">{counts.artists}</span>
-                    </button>
-                  </nav>
-                )}
-              </div>
+              <button
+                className="action-icon-btn"
+                onClick={() => setDarkMode(!darkMode)}
+                title={darkMode ? 'Alternar para Modo Claro' : 'Alternar para Modo Escuro'}
+              >
+                {darkMode ? <Sun size={18} /> : <Moon size={18} />}
+              </button>
             }
           />
         )}
@@ -868,6 +845,30 @@ export default function App() {
                     setMainModule('schedules');
                   }}
                 />
+              )}
+              {mainModule === 'repertoire' && (
+                <div className="repertoire-subnav-bar">
+                  <nav className="tab-bar">
+                    <button
+                      className={`tab-btn ${activeTab === 'songs' ? 'active' : ''}`}
+                      onClick={() => setActiveTab('songs')}
+                    >
+                      Músicas <span className="badge-count">{counts.songs}</span>
+                    </button>
+                    <button
+                      className={`tab-btn ${activeTab === 'folders' ? 'active' : ''}`}
+                      onClick={() => setActiveTab('folders')}
+                    >
+                      Pastas <span className="badge-count">{counts.folders}</span>
+                    </button>
+                    <button
+                      className={`tab-btn ${activeTab === 'artists' ? 'active' : ''}`}
+                      onClick={() => setActiveTab('artists')}
+                    >
+                      Artistas <span className="badge-count">{counts.artists}</span>
+                    </button>
+                  </nav>
+                </div>
               )}
               {mainModule === 'repertoire' && activeTab === 'songs' && (
                 <>
@@ -1043,6 +1044,7 @@ export default function App() {
                   }}
                   onGenerateInvite={() => setShowInviteModal(true)}
                   showToast={showToast}
+                  onTeamModalStateChange={setIsTeamModalOpen}
                 />
               )}
 
@@ -1263,7 +1265,7 @@ export default function App() {
       </div>
 
       {/* Bottom Navigation para Dispositivos Móveis (< 768px) */}
-      {currentUser && (
+      {currentUser && !showCreateScheduleModal && !selectedSchedule && !isTeamModalOpen && (
         <BottomNav
           currentModule={mainModule}
           onSelectModule={(module) => {

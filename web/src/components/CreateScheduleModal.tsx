@@ -618,11 +618,29 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
           </div>
         ) : (
           <>
-            {/* Modal Top Bar */}
+            {/* Modal Top Bar (Refactored for 3-Section Ergonomic Mobile Layout) */}
             <div className="schedule-modal-header">
-              <div className="schedule-modal-title">Nova Escala de Louvor</div>
-              <button className="action-icon-btn" onClick={onClose}>
+              <button
+                type="button"
+                className="action-icon-btn"
+                onClick={onClose}
+                title="Cancelar / Fechar"
+                style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
                 <X size={20} />
+              </button>
+
+              <div className="schedule-modal-title">
+                {initialSchedule?.id ? 'Editar Escala' : 'Nova Escala de Louvor'}
+              </div>
+
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => handleSaveSchedule()}
+                style={{ padding: '6px 14px', fontSize: '0.85rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+              >
+                <Check size={16} /> Salvar
               </button>
             </div>
 

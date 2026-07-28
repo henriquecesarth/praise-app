@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api';
 import {
-  Plus, MoreVertical, Edit2, Trash2, Shield, ChevronLeft,
+  Plus, MoreVertical, Edit2, Trash2, Shield, ChevronLeft, Check,
 } from 'lucide-react';
 
 interface Role {
@@ -19,6 +19,7 @@ interface Props {
   isAdmin: boolean;
   onBack: () => void;
   showToast: (msg: string, type?: 'success' | 'error') => void;
+  onModalStateChange?: (isOpen: boolean) => void;
 }
 
 type ModalMode = 'create' | 'edit';
@@ -29,12 +30,18 @@ const PRESET_ICONS = [
   '🎻', '🪗', '🔊', '📻', '📢', '💻', '📽️', '✝️',
 ];
 
-export function RolesView({ ministryId, isAdmin, onBack, showToast }: Props) {
+export function RolesView({ ministryId, isAdmin, onBack, showToast, onModalStateChange }: Props) {
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Modal state
   const [showModal, setShowModal] = useState(false);
+
+  useEffect(() => {
+    if (onModalStateChange) {
+      onModalStateChange(showModal);
+    }
+  }, [showModal, onModalStateChange]);
   const [modalMode, setModalMode] = useState<ModalMode>('create');
   const [editingRole, setEditingRole] = useState<Role | null>(null);
   const [name, setName] = useState('');
@@ -230,11 +237,29 @@ export function RolesView({ ministryId, isAdmin, onBack, showToast }: Props) {
         <div className="modal-overlay" onClick={closeModal}>
           <div className="modal-content role-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <div className="modal-title">
-                {modalMode === 'create' ? 'Nova Função' : 'Editar Função'}
+              <button
+                type="button"
+                className="action-icon-btn"
+                onClick={closeModal}
+                title="Voltar / Fechar"
+                style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <ChevronLeft size={22} />
+              </button>
+
+              <div className="modal-title" style={{ textAlign: 'center', flex: 1, margin: 0 }}>
+                {modalMode === 'create' ? 'Nova Função Musical' : 'Editar Função Musical'}
               </div>
-              <button className="action-icon-btn" onClick={closeModal}>
-                ✕
+
+              <button
+                type="submit"
+                form="role-form"
+                className="btn btn-primary"
+                onClick={(e) => handleSubmit(e)}
+                disabled={saving || !name.trim()}
+                style={{ padding: '6px 14px', fontSize: '0.85rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+              >
+                <Check size={16} /> {saving ? 'Salvando...' : 'Salvar'}
               </button>
             </div>
 
