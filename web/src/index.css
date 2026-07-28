@@ -5314,6 +5314,259 @@ input:checked + .switch-slider:before {
   text-align: right;
 }
 
+/* ── Mobile-First & PWA Ergonomics ──────────────────────────── */
+
+:root {
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.btn,
+.tab-btn,
+.action-icon-btn,
+.icon-btn,
+.sidebar-action-btn,
+.bottom-nav-item {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+.btn,
+.action-icon-btn {
+  min-height: 44px;
+}
+
+/* ── Bottom Navigation Bar (Mobile < 768px) ─────────────────── */
+.bottom-nav {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: rgba(28, 34, 30, 0.94);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-top: 1px solid var(--border-color);
+  padding-bottom: max(6px, var(--safe-area-bottom));
+  padding-top: 6px;
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.3);
+}
+
+:root:not(.dark) .bottom-nav {
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.bottom-nav-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 0 8px;
+}
+
+.bottom-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  padding: 6px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  flex: 1;
+  min-height: 48px;
+  transition: color var(--transition-fast), transform var(--transition-fast);
+}
+
+.bottom-nav-item.active {
+  color: var(--primary-light);
+}
+
+:root:not(.dark) .bottom-nav-item.active {
+  color: var(--primary-color);
+}
+
+.bottom-nav-icon-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bottom-nav-badge {
+  position: absolute;
+  top: -4px;
+  right: -8px;
+  background: #EF4444;
+  color: #FFFFFF;
+  font-size: 0.65rem;
+  font-weight: 700;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+}
+
+.bottom-nav-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+/* ── PWA Install Banner ─────────────────────────────────────── */
+.pwa-install-banner {
+  position: fixed;
+  bottom: calc(68px + var(--safe-area-bottom));
+  left: 12px;
+  right: 12px;
+  z-index: 1050;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--surface-color);
+  border: 1px solid var(--primary-color);
+  border-radius: var(--border-radius-lg);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.pwa-install-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pwa-install-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: rgba(124, 58, 237, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.pwa-install-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.pwa-install-title {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.pwa-install-desc {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.pwa-install-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pwa-install-btn {
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  min-height: 36px;
+  border-radius: 8px;
+}
+
+.pwa-dismiss-btn {
+  padding: 6px;
+  min-height: 36px;
+  min-width: 36px;
+}
+
+/* ── Mobile Layout (< 768px) ───────────────────────────────── */
+@media (max-width: 767px) {
+  aside.no-print {
+    display: none !important;
+  }
+
+  .bottom-nav {
+    display: block;
+  }
+
+  body {
+    padding-bottom: calc(72px + var(--safe-area-bottom));
+  }
+
+  header.no-print {
+    padding-top: max(12px, var(--safe-area-top)) !important;
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+
+  .dashboard-container {
+    padding: 12px !important;
+  }
+
+  .dashboard-grid {
+    grid-template-columns: 1fr !important;
+    gap: 14px !important;
+  }
+
+  .modal-overlay {
+    align-items: flex-end !important;
+    padding: 0 !important;
+  }
+
+  .modal-content {
+    width: 100% !important;
+    max-width: 100% !important;
+    border-bottom-left-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+    border-top-left-radius: 20px !important;
+    border-top-right-radius: 20px !important;
+    max-height: 90vh !important;
+    padding-bottom: max(20px, var(--safe-area-bottom)) !important;
+    animation: slideUpBottomSheet 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  }
+
+  @keyframes slideUpBottomSheet {
+    from {
+      transform: translateY(100%);
+    }
+    to {
+      transform: translateY(0);
+    }
+  }
+
+  .schedule-detail-container {
+    padding: 12px 12px calc(80px + var(--safe-area-bottom)) 12px !important;
+  }
+
+  .schedule-detail-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
 
 
 

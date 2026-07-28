@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1C221E" />
+      <stop offset="100%" stop-color="#131614" />
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#A855F7" />
+      <stop offset="100%" stop-color="#7C3AED" />
+    </linearGradient>
+    <linearGradient id="sageGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#86A38F" />
+      <stop offset="100%" stop-color="#2B3B30" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#7C3AED" flood-opacity="0.4" />
+    </filter>
+  </defs>
+
+  <!-- Background Card -->
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)" />
+  <rect width="504" height="504" x="4" y="4" rx="108" fill="none" stroke="url(#accentGrad)" stroke-width="4" stroke-opacity="0.3" />
+
+  <!-- Outer Ring -->
+  <circle cx="256" cy="256" r="180" fill="none" stroke="url(#accentGrad)" stroke-width="8" opacity="0.25" />
+
+  <!-- Central Musical Note Icon with Sparkles -->
+  <g filter="url(#glow)">
+    <!-- Double Musical Note -->
+    <path d="M192 344 C192 366.09 174.09 384 152 384 C129.91 384 112 366.09 112 344 C112 321.91 129.91 304 152 304 C163.6 304 173.97 308.93 181.25 316.84 L184 160 L328 128 L328 296 C328 318.09 310.09 336 288 336 C265.91 336 248 318.09 248 296 C248 273.91 265.91 256 288 256 C299.6 256 309.97 260.93 317.25 268.84 L320 168 L192 196 Z" fill="url(#accentGrad)" />
+    
+    <!-- Top Sparkle -->
+    <path d="M360 120 L368 140 L388 148 L368 156 L360 176 L352 156 L332 148 L352 140 Z" fill="#86A38F" />
+    <path d="M140 120 L145 132 L157 137 L145 142 L140 154 L135 142 L123 137 L135 132 Z" fill="#A855F7" />
+  </g>
+</svg>

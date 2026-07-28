@@ -18,6 +18,8 @@ import { SchedulesView } from './components/SchedulesView';
 import { ScheduleDetailView } from './components/ScheduleDetailView';
 import { CreateScheduleModal, ScheduleItem } from './components/CreateScheduleModal';
 import { MinistryView } from './components/MinistryView';
+import { BottomNav } from './components/BottomNav';
+import { InstallPWAPrompt } from './components/InstallPWAPrompt';
 import { Search, SlidersHorizontal, Plus, CheckCircle, XCircle, Menu, Music, Edit3, KeyRound, UserPlus, LogOut, Building2, Home, Calendar as CalendarIcon, Sun, Moon } from 'lucide-react';
 
 interface Toast {
@@ -1247,6 +1249,30 @@ export default function App() {
           </div>
         ))}
       </div>
+
+      {/* Bottom Navigation para Dispositivos Móveis (< 768px) */}
+      {currentUser && (
+        <BottomNav
+          currentModule={mainModule}
+          onSelectModule={(module) => {
+            setMainModule(module);
+            handleBackToMain();
+          }}
+          upcomingSchedulesCount={schedules.filter((s) => {
+            try {
+              const [y, m, d] = s.date.split('-').map(Number);
+              const dt = new Date(y, m - 1, d);
+              dt.setHours(23, 59, 59);
+              return dt >= new Date();
+            } catch {
+              return false;
+            }
+          }).length}
+        />
+      )}
+
+      {/* Prompt de Instalação PWA */}
+      <InstallPWAPrompt />
     </div>
   );
 }
