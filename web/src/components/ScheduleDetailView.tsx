@@ -3,8 +3,6 @@ import {
   ArrowLeft,
   Calendar,
   Clock,
-  Eye,
-  EyeOff,
   Users,
   Music,
   ListOrdered,
@@ -22,6 +20,7 @@ import {
 } from 'lucide-react';
 import { ScheduleItem } from './CreateScheduleModal';
 import { GroupRole } from '../types';
+import { Header } from './Header';
 
 interface ScheduleDetailViewProps {
   schedule: ScheduleItem;
@@ -200,53 +199,52 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
 
   return (
     <div className="schedule-detail-container">
-      {/* Header */}
-      <div className="schedule-detail-header">
-        <button className="btn btn-secondary icon-btn-text" onClick={onBack}>
-          <ArrowLeft size={18} /> Voltar às Escalas
-        </button>
-
-        <div className="schedule-detail-status-row">
-          <button
-            className="btn btn-secondary icon-btn-text"
-            onClick={() => setShowChatModal(true)}
-            style={{ padding: '6px 14px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}
-          >
-            <MessageSquare size={16} style={{ color: 'var(--primary-light)' }} />
-            <span>Comentários ({comments.length})</span>
+      {/* Standardized Glassmorphism Header */}
+      <Header
+        leftAction={
+          <button className="btn btn-secondary icon-btn-text" onClick={onBack} title="Voltar às Escalas">
+            <ArrowLeft size={18} />
+            <span style={{ fontSize: '0.85rem' }}>Voltar</span>
           </button>
-          <span className={`schedule-detail-status-badge ${upcoming ? 'upcoming' : 'past'}`}>
-            {upcoming ? '🟢 Próxima' : '⏰ Passada'}
-          </span>
-          <span className="schedule-detail-visibility">
-            {schedule.isVisible ? (
-              <><Eye size={16} /> Visível aos membros</>
-            ) : (
-              <><EyeOff size={16} /> Privada</>
-            )}
-          </span>
-          {userRole === 'admin' && onEdit && (
-            <button className="btn btn-primary" style={{ padding: '6px 14px', fontSize: '0.85rem' }} onClick={onEdit}>
-              <Pencil size={15} /> Editar Escala
-            </button>
-          )}
-          {userRole === 'admin' && onDelete && (
+        }
+        title={schedule.title}
+        subtitle={formatDate(schedule.date, schedule.time)}
+        rightActions={
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <button
               className="btn btn-secondary icon-btn-text"
-              style={{
-                padding: '6px 14px',
-                fontSize: '0.85rem',
-                color: '#EF4444',
-                borderColor: 'rgba(239, 68, 68, 0.3)',
-                backgroundColor: 'rgba(239, 68, 68, 0.08)',
-              }}
-              onClick={onDelete}
+              onClick={() => setShowChatModal(true)}
+              style={{ padding: '6px 12px', fontSize: '0.85rem' }}
+              title="Chat e Comentários da Escala"
             >
-              <Trash2 size={15} /> Excluir Escala
+              <MessageSquare size={16} style={{ color: 'var(--primary-light)' }} />
+              <span>Chat ({comments.length})</span>
             </button>
-          )}
-        </div>
-      </div>
+            {userRole === 'admin' && onEdit && (
+              <button className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '0.85rem' }} onClick={onEdit}>
+                <Pencil size={15} />
+                <span>Editar</span>
+              </button>
+            )}
+            {userRole === 'admin' && onDelete && (
+              <button
+                className="btn btn-secondary icon-btn-text"
+                style={{
+                  padding: '6px 12px',
+                  fontSize: '0.85rem',
+                  color: '#EF4444',
+                  borderColor: 'rgba(239, 68, 68, 0.3)',
+                  backgroundColor: 'rgba(239, 68, 68, 0.08)',
+                }}
+                onClick={onDelete}
+                title="Excluir Escala"
+              >
+                <Trash2 size={15} />
+              </button>
+            )}
+          </div>
+        }
+      />
 
       {/* Hero */}
       <div className="schedule-detail-hero">

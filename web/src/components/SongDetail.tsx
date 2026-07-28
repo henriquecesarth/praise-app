@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Song } from '../types';
 import { renderSmartChordLine, transposeChord } from '../utils/smart_chord';
 import { ArrowLeft, Edit2, Play, Headphones, Music, FileText, Globe, ExternalLink, Trash2 } from 'lucide-react';
+import { Header } from './Header';
 
 interface SongDetailProps {
   song: Song;
@@ -144,33 +145,42 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
 
   return (
     <div className="detail-view">
-      <div className="back-btn-row">
-        <span className="back-link" onClick={onBack}>
-          <ArrowLeft size={16} />
-          Voltar para músicas
-        </span>
-      </div>
-
-      <div className="detail-header-card">
-        <div className="detail-title-block">
-          <h1 className="detail-title">{song.title}</h1>
-          <span className="detail-subtitle">{song.artistName || 'Artista desconhecido'}</span>
-        </div>
-        <div style={{ display: 'flex', gap: '12px' }}>
-          {onDelete && (
-            <button className="btn btn-danger" onClick={onDelete}>
-              <Trash2 size={16} />
-              Excluir
-            </button>
-          )}
-          {onEdit && (
-            <button className="btn btn-primary" onClick={onEdit}>
-              <Edit2 size={16} />
-              Editar música
-            </button>
-          )}
-        </div>
-      </div>
+      <Header
+        leftAction={
+          <button className="btn btn-secondary icon-btn-text" onClick={onBack} title="Voltar para músicas">
+            <ArrowLeft size={18} />
+            <span style={{ fontSize: '0.85rem' }}>Voltar</span>
+          </button>
+        }
+        title={song.title}
+        subtitle={song.artistName || 'Artista desconhecido'}
+        rightActions={
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {onEdit && (
+              <button className="btn btn-primary" onClick={onEdit} style={{ padding: '6px 12px', fontSize: '0.85rem' }}>
+                <Edit2 size={15} />
+                <span>Editar</span>
+              </button>
+            )}
+            {onDelete && (
+              <button
+                className="btn btn-secondary icon-btn-text"
+                style={{
+                  padding: '6px 12px',
+                  fontSize: '0.85rem',
+                  color: '#EF4444',
+                  borderColor: 'rgba(239, 68, 68, 0.3)',
+                  backgroundColor: 'rgba(239, 68, 68, 0.08)',
+                }}
+                onClick={onDelete}
+                title="Excluir Música"
+              >
+                <Trash2 size={15} />
+              </button>
+            )}
+          </div>
+        }
+      />
 
       <div className="detail-content-layout">
         <div className="detail-main-content">

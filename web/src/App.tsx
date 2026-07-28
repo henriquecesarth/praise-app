@@ -20,6 +20,7 @@ import { CreateScheduleModal, ScheduleItem } from './components/CreateScheduleMo
 import { MinistryView } from './components/MinistryView';
 import { BottomNav } from './components/BottomNav';
 import { InstallPWAPrompt } from './components/InstallPWAPrompt';
+import { Header } from './components/Header';
 import { Search, SlidersHorizontal, Plus, CheckCircle, XCircle, Menu, Music, Edit3, KeyRound, UserPlus, LogOut, Building2, Home, Calendar as CalendarIcon, Sun, Moon } from 'lucide-react';
 
 interface Toast {
@@ -513,29 +514,37 @@ export default function App() {
           zIndex: 10,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 4px' }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: sidebarOpen ? 'space-between' : 'center',
+            padding: sidebarOpen ? '0 4px' : '0',
+            width: '100%',
+            minHeight: '44px',
+          }}
+        >
           {sidebarOpen && (
             <div className="brand-title" style={{ fontSize: '1.4rem' }}>
               <div style={{ fontSize: '1.6rem' }}>🎵</div>
               Praise App
             </div>
           )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <button
-              className="action-icon-btn"
-              onClick={() => setDarkMode(!darkMode)}
-              title={darkMode ? 'Mudar para Modo Claro' : 'Mudar para Modo Escuro'}
-            >
-              {darkMode ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
-            <button
-              className="action-icon-btn"
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              title={sidebarOpen ? 'Recolher Menu' : 'Expandir Menu'}
-            >
-              <Menu size={20} />
-            </button>
-          </div>
+          <button
+            className="action-icon-btn"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            title={sidebarOpen ? 'Recolher Menu' : 'Expandir Menu'}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '44px',
+              height: '44px',
+              margin: sidebarOpen ? 0 : '0 auto',
+            }}
+          >
+            <Menu size={20} />
+          </button>
         </div>
 
         {/* User Account Widget */}
@@ -618,11 +627,13 @@ export default function App() {
               setMainModule('dashboard');
               handleBackToMain();
             }}
+            title={sidebarOpen ? undefined : 'Início'}
             style={{
               display: 'flex',
               alignItems: 'center',
+              justifyContent: sidebarOpen ? 'flex-start' : 'center',
               gap: '12px',
-              padding: '12px 16px',
+              padding: sidebarOpen ? '12px 16px' : '12px 0',
               borderRadius: '8px',
               border: 'none',
               backgroundColor: mainModule === 'dashboard' ? 'var(--primary-color)' : 'transparent',
@@ -642,11 +653,13 @@ export default function App() {
               setActiveTab('songs');
               handleBackToMain();
             }}
+            title={sidebarOpen ? undefined : 'Repertório'}
             style={{
               display: 'flex',
               alignItems: 'center',
+              justifyContent: sidebarOpen ? 'flex-start' : 'center',
               gap: '12px',
-              padding: '12px 16px',
+              padding: sidebarOpen ? '12px 16px' : '12px 0',
               borderRadius: '8px',
               border: 'none',
               backgroundColor: mainModule === 'repertoire' ? 'var(--primary-color)' : 'transparent',
@@ -665,11 +678,13 @@ export default function App() {
               setMainModule('cifrador');
               handleBackToMain();
             }}
+            title={sidebarOpen ? undefined : 'Cifras Inteligentes'}
             style={{
               display: 'flex',
               alignItems: 'center',
+              justifyContent: sidebarOpen ? 'flex-start' : 'center',
               gap: '12px',
-              padding: '12px 16px',
+              padding: sidebarOpen ? '12px 16px' : '12px 0',
               borderRadius: '8px',
               border: 'none',
               backgroundColor: mainModule === 'cifrador' ? 'var(--primary-color)' : 'transparent',
@@ -688,11 +703,13 @@ export default function App() {
               setMainModule('schedules');
               handleBackToMain();
             }}
+            title={sidebarOpen ? undefined : 'Escalas'}
             style={{
               display: 'flex',
               alignItems: 'center',
+              justifyContent: sidebarOpen ? 'flex-start' : 'center',
               gap: '12px',
-              padding: '12px 16px',
+              padding: sidebarOpen ? '12px 16px' : '12px 0',
               borderRadius: '8px',
               border: 'none',
               backgroundColor: mainModule === 'schedules' ? 'var(--primary-color)' : 'transparent',
@@ -711,11 +728,13 @@ export default function App() {
               setMainModule('ministry');
               handleBackToMain();
             }}
+            title={sidebarOpen ? undefined : 'Ministério'}
             style={{
               display: 'flex',
               alignItems: 'center',
+              justifyContent: sidebarOpen ? 'flex-start' : 'center',
               gap: '12px',
-              padding: '12px 16px',
+              padding: sidebarOpen ? '12px 16px' : '12px 0',
               borderRadius: '8px',
               border: 'none',
               backgroundColor: mainModule === 'ministry' ? 'var(--primary-color)' : 'transparent',
@@ -735,55 +754,48 @@ export default function App() {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         {/* Module Header Bar */}
         {!selectedSong && !selectedFolder && (
-          <header
-            className="no-print"
-            style={{
-              padding: '16px 24px',
-              backgroundColor: 'var(--surface-color)',
-              borderBottom: '1px solid var(--border-color)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div>
-                <h1 style={{ fontSize: '1.25rem', fontWeight: 700 }}>
-                  {mainModule === 'dashboard' && 'Painel Inicial'}
-                  {mainModule === 'repertoire' && 'Repertório do Louvor'}
-                  {mainModule === 'cifrador' && 'Estúdio de Cifras Inteligentes'}
-                  {mainModule === 'schedules' && 'Escalas do Louvor'}
-                  {mainModule === 'ministry' && 'Ministério'}
-                </h1>
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                  {activeGroup ? activeGroup.name : 'Nenhum ministério selecionado'}
-                </p>
+          <Header
+            title={
+              mainModule === 'dashboard' ? 'Painel Inicial' :
+                mainModule === 'repertoire' ? 'Repertório do Louvor' :
+                  mainModule === 'cifrador' ? 'Estúdio de Cifras Inteligentes' :
+                    mainModule === 'schedules' ? 'Escalas do Louvor' : 'Ministério'
+            }
+            subtitle={activeGroup ? activeGroup.name : 'Nenhum ministério selecionado'}
+            rightActions={
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button
+                  className="action-icon-btn"
+                  onClick={() => setDarkMode(!darkMode)}
+                  title={darkMode ? 'Alternar para Modo Claro' : 'Alternar para Modo Escuro'}
+                >
+                  {darkMode ? <Sun size={18} /> : <Moon size={18} />}
+                </button>
+                {mainModule === 'repertoire' && (
+                  <nav className="tab-bar" style={{ borderBottom: 'none' }}>
+                    <button
+                      className={`tab-btn ${activeTab === 'songs' ? 'active' : ''}`}
+                      onClick={() => setActiveTab('songs')}
+                    >
+                      Músicas <span className="badge-count">{counts.songs}</span>
+                    </button>
+                    <button
+                      className={`tab-btn ${activeTab === 'folders' ? 'active' : ''}`}
+                      onClick={() => setActiveTab('folders')}
+                    >
+                      Pastas <span className="badge-count">{counts.folders}</span>
+                    </button>
+                    <button
+                      className={`tab-btn ${activeTab === 'artists' ? 'active' : ''}`}
+                      onClick={() => setActiveTab('artists')}
+                    >
+                      Artistas <span className="badge-count">{counts.artists}</span>
+                    </button>
+                  </nav>
+                )}
               </div>
-
-              {mainModule === 'repertoire' && (
-                <nav className="tab-bar" style={{ borderBottom: 'none' }}>
-                  <button
-                    className={`tab-btn ${activeTab === 'songs' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('songs')}
-                  >
-                    Músicas
-                    <span className="badge-count">{counts.songs}</span>
-                  </button>
-                  <button
-                    className={`tab-btn ${activeTab === 'folders' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('folders')}
-                  >
-                    Pastas
-                    <span className="badge-count">{counts.folders}</span>
-                  </button>
-                  <button
-                    className={`tab-btn ${activeTab === 'artists' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('artists')}
-                  >
-                    Artistas
-                    <span className="badge-count">{counts.artists}</span>
-                  </button>
-                </nav>
-              )}
-            </div>
-          </header>
+            }
+          />
         )}
 
         {/* View contents wrapper */}

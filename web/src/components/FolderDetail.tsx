@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Folder, Song } from '../types';
 import { ArrowLeft, Edit2, Plus, Minus, Music, Gauge, Clock } from 'lucide-react';
+import { Header } from './Header';
 
 interface FolderDetailProps {
   folder: Folder;
@@ -52,33 +53,32 @@ export const FolderDetail: React.FC<FolderDetailProps> = ({
 
   return (
     <div className="detail-view">
-      <div className="back-btn-row">
-        <span className="back-link" onClick={onBack}>
-          <ArrowLeft size={16} />
-          Voltar para pastas
-        </span>
-      </div>
-
-      <div className="detail-header-card">
-        <div className="detail-title-block">
-          <h1 className="detail-title">{folder.name}</h1>
-          <span className="detail-subtitle">{folder.description || 'Sem descrição cadastrada.'}</span>
-        </div>
-        <div style={{ display: 'flex', gap: '12px' }}>
-          {onEdit && (
-            <button className="btn btn-secondary" onClick={onEdit}>
-              <Edit2 size={16} />
-              Editar pasta
-            </button>
-          )}
-          {onAddSong && (
-            <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>
-              <Plus size={16} />
-              Adicionar música
-            </button>
-          )}
-        </div>
-      </div>
+      <Header
+        leftAction={
+          <button className="btn btn-secondary icon-btn-text" onClick={onBack} title="Voltar para pastas">
+            <ArrowLeft size={18} />
+            <span style={{ fontSize: '0.85rem' }}>Voltar</span>
+          </button>
+        }
+        title={folder.name}
+        subtitle={folder.description || 'Sem descrição cadastrada.'}
+        rightActions={
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {onEdit && (
+              <button className="btn btn-secondary icon-btn-text" onClick={onEdit} style={{ padding: '6px 12px', fontSize: '0.85rem' }}>
+                <Edit2 size={15} />
+                <span>Editar</span>
+              </button>
+            )}
+            {onAddSong && (
+              <button className="btn btn-primary" onClick={() => setShowAddModal(true)} style={{ padding: '6px 12px', fontSize: '0.85rem' }}>
+                <Plus size={15} />
+                <span>Adicionar música</span>
+              </button>
+            )}
+          </div>
+        }
+      />
 
       <h2 className="detail-section-title" style={{ marginTop: '24px' }}>Músicas na Pasta</h2>
 
