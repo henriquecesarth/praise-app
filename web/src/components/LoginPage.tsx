@@ -42,7 +42,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   };
 
   return (
-    <div className="login-page-container">
+    <div className="login-page-container" style={{ paddingTop: 'max(16px, var(--safe-area-top))', paddingBottom: 'max(24px, var(--safe-area-bottom))' }}>
       {/* Background Ambient Glows */}
       <div className="login-bg-glow-1" />
       <div className="login-bg-glow-2" />
@@ -80,24 +80,24 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
             {/* Feature Cards Grid */}
             <div className="login-features-grid">
               <div className="login-feature-card">
-                <div className="login-feature-icon" style={{ backgroundColor: 'rgba(134, 163, 143, 0.15)', color: 'var(--primary-light)' }}>
-                  <Music size={18} />
+                <div className="login-feature-icon" style={{ backgroundColor: 'rgba(134, 163, 143, 0.15)', color: 'var(--primary-light)', width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Music size={20} />
                 </div>
                 <div className="login-feature-title">Repertórios & Pastas</div>
                 <div className="login-feature-desc">Organize músicas por tom, BPM, artista e momentos do culto.</div>
               </div>
 
               <div className="login-feature-card">
-                <div className="login-feature-icon" style={{ backgroundColor: 'rgba(6, 182, 212, 0.15)', color: 'var(--secondary-light)' }}>
-                  <BookOpen size={18} />
+                <div className="login-feature-icon" style={{ backgroundColor: 'rgba(6, 182, 212, 0.15)', color: 'var(--secondary-light)', width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <BookOpen size={20} />
                 </div>
                 <div className="login-feature-title">Ordens do Culto</div>
                 <div className="login-feature-desc">Monte escalas e sequências da liturgia semanal.</div>
               </div>
 
               <div className="login-feature-card">
-                <div className="login-feature-icon" style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', color: 'var(--success-color)' }}>
-                  <Layers size={18} />
+                <div className="login-feature-icon" style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', color: 'var(--success-color)', width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Layers size={20} />
                 </div>
                 <div className="login-feature-title">Cifras Inteligentes</div>
                 <div className="login-feature-desc">Transposição automática de tons para toda a equipe.</div>
@@ -118,8 +118,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                   : 'Cadastre-se como líder para gerenciar seu ministério'}
               </div>
 
-              {/* Mode Toggle */}
-              <div className="login-tabs">
+              {/* Mode Toggle com Touch Targets de 44px */}
+              <div className="login-tabs" style={{ display: 'flex', gap: '6px', background: 'var(--surface-variant)', padding: '4px', borderRadius: '12px', minHeight: '44px' }}>
                 <button
                   type="button"
                   onClick={() => {
@@ -127,9 +127,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                     setError(null);
                   }}
                   className={`login-tab-btn ${mode === 'login' ? 'active' : ''}`}
+                  style={{ flex: 1, minHeight: '44px', padding: '10px 16px', borderRadius: '8px', fontSize: '0.9rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer' }}
                 >
-                  <LogIn size={16} />
-                  Entrar
+                  <LogIn size={18} />
+                  <span>Entrar</span>
                 </button>
                 <button
                   type="button"
@@ -138,32 +139,34 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                     setError(null);
                   }}
                   className={`login-tab-btn ${mode === 'signup' ? 'active' : ''}`}
+                  style={{ flex: 1, minHeight: '44px', padding: '10px 16px', borderRadius: '8px', fontSize: '0.9rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer' }}
                 >
-                  <UserPlus size={16} />
-                  Criar Conta
+                  <UserPlus size={18} />
+                  <span>Criar Conta</span>
                 </button>
               </div>
 
               {error && (
-                <div className="login-error-box animate-shake">
-                  <AlertCircle size={18} />
-                  <span>{error}</span>
+                <div className="login-error-box animate-shake" style={{ minHeight: '44px', display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', borderRadius: '10px' }}>
+                  <AlertCircle size={20} style={{ flexShrink: 0 }} />
+                  <span style={{ fontSize: '0.88rem' }}>{error}</span>
                 </div>
               )}
 
-              {/* Auth Form */}
+              {/* Auth Form com Touch Targets de 44px */}
               <form onSubmit={handleSubmit} className="login-form">
                 {mode === 'signup' && (
                   <div className="form-group">
-                    <label>Seu Nome ou Nome do Ministério</label>
-                    <div className="login-input-wrapper">
-                      <User size={16} className="login-input-icon" />
+                    <label style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>Seu Nome ou Nome do Ministério</label>
+                    <div className="login-input-wrapper" style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                      <User size={18} className="login-input-icon" style={{ position: 'absolute', left: '14px', color: 'var(--text-tertiary)' }} />
                       <input
                         type="text"
                         value={name}
                         onChange={(e) => setName(e.target.value)}
                         placeholder="Ex: Pr. Gabriel Santos"
                         className="login-input"
+                        style={{ width: '100%', minHeight: '44px', paddingLeft: '44px', paddingRight: '14px', fontSize: '0.95rem', borderRadius: '10px' }}
                         required
                       />
                     </div>
@@ -171,38 +174,41 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 )}
 
                 <div className="form-group">
-                  <label>Endereço de E-mail</label>
-                  <div className="login-input-wrapper">
-                    <Mail size={16} className="login-input-icon" />
+                  <label style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>Endereço de E-mail</label>
+                  <div className="login-input-wrapper" style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                    <Mail size={18} className="login-input-icon" style={{ position: 'absolute', left: '14px', color: 'var(--text-tertiary)' }} />
                     <input
                       type="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       placeholder="lider@igreja.com"
                       className="login-input"
+                      style={{ width: '100%', minHeight: '44px', paddingLeft: '44px', paddingRight: '14px', fontSize: '0.95rem', borderRadius: '10px' }}
                       required
                     />
                   </div>
                 </div>
 
                 <div className="form-group">
-                  <label>Senha</label>
-                  <div className="login-input-wrapper">
-                    <Lock size={16} className="login-input-icon" />
+                  <label style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>Senha</label>
+                  <div className="login-input-wrapper" style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                    <Lock size={18} className="login-input-icon" style={{ position: 'absolute', left: '14px', color: 'var(--text-tertiary)' }} />
                     <input
                       type={showPassword ? 'text' : 'password'}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="••••••••"
                       className="login-input"
+                      style={{ width: '100%', minHeight: '44px', paddingLeft: '44px', paddingRight: '48px', fontSize: '0.95rem', borderRadius: '10px' }}
                       required
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
                       className="login-input-toggle"
+                      style={{ position: 'absolute', right: '2px', width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
                     >
-                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                      {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                     </button>
                   </div>
                 </div>
@@ -211,17 +217,18 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                   type="submit"
                   disabled={loading}
                   className="login-submit-btn"
+                  style={{ width: '100%', minHeight: '44px', padding: '12px 24px', fontSize: '0.95rem', fontWeight: 700, borderRadius: '10px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer', marginTop: '8px' }}
                 >
                   {loading ? (
                     <span>Autenticando...</span>
                   ) : mode === 'login' ? (
                     <>
-                      <LogIn size={16} />
+                      <LogIn size={18} />
                       <span>Entrar no Praise App</span>
                     </>
                   ) : (
                     <>
-                      <UserPlus size={16} />
+                      <UserPlus size={18} />
                       <span>Cadastrar Meu Ministério</span>
                     </>
                   )}
@@ -239,3 +246,4 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     </div>
   );
 };
+

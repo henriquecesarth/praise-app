@@ -198,13 +198,13 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
   };
 
   return (
-    <div className="schedule-detail-container">
-      {/* Standardized Glassmorphism Header */}
+    <div className="schedule-detail-container" style={{ paddingBottom: 'max(24px, var(--safe-area-bottom))' }}>
+      {/* Standardized Glassmorphism Header com Touch Targets 44x44px */}
       <Header
         leftAction={
-          <button className="btn btn-secondary icon-btn-text" onClick={onBack} title="Voltar às Escalas">
+          <button className="btn btn-secondary icon-btn-text" onClick={onBack} title="Voltar às Escalas" style={{ minHeight: '44px', minWidth: '44px', padding: '8px 14px', borderRadius: '10px' }}>
             <ArrowLeft size={18} />
-            <span style={{ fontSize: '0.85rem' }}>Voltar</span>
+            <span style={{ fontSize: '0.88rem', fontWeight: 600 }}>Voltar</span>
           </button>
         }
         title={schedule.title}
@@ -214,24 +214,30 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
             <button
               className="btn btn-secondary icon-btn-text"
               onClick={() => setShowChatModal(true)}
-              style={{ padding: '6px 12px', fontSize: '0.85rem' }}
+              style={{ minHeight: '44px', minWidth: '44px', padding: '8px 14px', borderRadius: '10px' }}
               title="Chat e Comentários da Escala"
             >
-              <MessageSquare size={16} style={{ color: 'var(--primary-light)' }} />
-              <span>Chat ({comments.length})</span>
+              <MessageSquare size={18} style={{ color: 'var(--primary-light)' }} />
+              <span className="hidden sm:inline" style={{ fontSize: '0.88rem' }}>Chat ({comments.length})</span>
             </button>
             {userRole === 'admin' && onEdit && (
-              <button className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '0.85rem' }} onClick={onEdit}>
-                <Pencil size={15} />
-                <span>Editar</span>
+              <button className="btn btn-primary" style={{ minHeight: '44px', minWidth: '44px', padding: '8px 14px', borderRadius: '10px' }} onClick={onEdit}>
+                <Pencil size={18} />
+                <span className="hidden sm:inline" style={{ fontSize: '0.88rem' }}>Editar</span>
               </button>
             )}
             {userRole === 'admin' && onDelete && (
               <button
                 className="btn btn-secondary icon-btn-text"
                 style={{
-                  padding: '6px 12px',
-                  fontSize: '0.85rem',
+                  minHeight: '44px',
+                  width: '44px',
+                  minWidth: '44px',
+                  padding: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: '10px',
                   color: '#EF4444',
                   borderColor: 'rgba(239, 68, 68, 0.3)',
                   backgroundColor: 'rgba(239, 68, 68, 0.08)',
@@ -239,7 +245,7 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
                 onClick={onDelete}
                 title="Excluir Escala"
               >
-                <Trash2 size={15} />
+                <Trash2 size={18} />
               </button>
             )}
           </div>
@@ -295,16 +301,16 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
         </div>
       </div>
 
-      {/* Interactive Confirmation Panel */}
+      {/* Interactive Confirmation Panel com Touch Targets de 44px */}
       {upcoming && schedule.requireConfirmation && userParticipant && (
         <div className="confirmation-interactive-box">
           <div className="confirmation-box-header">
-            <div className="dashboard-card-icon green" style={{ width: '40px', height: '40px' }}>
-              <Sparkles size={20} />
+            <div className="dashboard-card-icon green" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px' }}>
+              <Sparkles size={22} />
             </div>
             <div>
-              <div className="confirmation-box-title">Confirmação de Presença na Escala</div>
-              <div className="confirmation-box-desc">
+              <div className="confirmation-box-title" style={{ fontSize: '1rem', fontWeight: 700 }}>Confirmação de Presença na Escala</div>
+              <div className="confirmation-box-desc" style={{ fontSize: '0.85rem' }}>
                 Confirme se você poderá estar presente para o serviço deste culto.
               </div>
             </div>
@@ -329,19 +335,26 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
             )}
           </div>
 
-          <div className="confirmation-actions-row">
+          <div className="confirmation-actions-row" style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
             <button
               disabled={updating}
               onClick={() => handleConfirmationChange(userParticipant.id, true)}
               className="btn btn-primary"
               style={{
                 backgroundColor: userParticipant.confirmed === true ? '#059669' : undefined,
-                padding: '8px 16px',
-                fontSize: '0.85rem',
+                minHeight: '44px',
+                padding: '10px 18px',
+                fontSize: '0.9rem',
+                flex: 1,
+                borderRadius: '10px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
               }}
             >
-              <CheckCircle2 size={16} />
-              {userParticipant.confirmed === true ? 'Presença Confirmada' : 'Confirmar Presença'}
+              <CheckCircle2 size={18} />
+              <span>{userParticipant.confirmed === true ? 'Presença Confirmada' : 'Confirmar Presença'}</span>
             </button>
             <button
               disabled={updating}
@@ -350,12 +363,19 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
               style={{
                 borderColor: userParticipant.confirmed === false ? '#EF4444' : undefined,
                 color: userParticipant.confirmed === false ? '#EF4444' : undefined,
-                padding: '8px 16px',
-                fontSize: '0.85rem',
+                minHeight: '44px',
+                padding: '10px 18px',
+                fontSize: '0.9rem',
+                flex: 1,
+                borderRadius: '10px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
               }}
             >
-              <XCircle size={16} />
-              {userParticipant.confirmed === false ? 'Presença Recusada' : 'Não Poderei Ir'}
+              <XCircle size={18} />
+              <span>{userParticipant.confirmed === false ? 'Presença Recusada' : 'Não Poderei Ir'}</span>
             </button>
           </div>
         </div>
@@ -382,7 +402,7 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
                   displayRole = foundFunc || 'Sem função atribuída';
                 }
                 return (
-                  <div key={member.id} className="schedule-detail-member-item">
+                  <div key={member.id} className="schedule-detail-member-item" style={{ minHeight: '52px', padding: '10px 14px' }}>
                     <div className="dashboard-item-avatar">{member.name.charAt(0).toUpperCase()}</div>
                     <div className="dashboard-item-info">
                       <div className="dashboard-item-title">{member.name}</div>
@@ -414,7 +434,7 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
           </div>
         )}
 
-        {/* Songs Section */}
+        {/* Songs Section com Touch Targets 44px */}
         {schedule.songs.length > 0 && (
           <div className="schedule-detail-section">
             <div className="schedule-detail-section-header">
@@ -423,16 +443,16 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
             </div>
             <div className="schedule-detail-list">
               {schedule.songs.map((song, idx) => (
-                <div key={song.id} className="schedule-detail-song-item">
-                  <div className="schedule-song-index">{idx + 1}</div>
+                <div key={song.id} className="schedule-detail-song-item" style={{ minHeight: '52px', padding: '10px 14px', cursor: 'pointer' }}>
+                  <div className="schedule-song-index" style={{ width: '28px', height: '28px', fontSize: '0.85rem' }}>{idx + 1}</div>
                   <div className="dashboard-item-info">
-                    <div className="dashboard-item-title">{song.title}</div>
+                    <div className="dashboard-item-title" style={{ fontSize: '0.95rem', fontWeight: 600 }}>{song.title}</div>
                     <div className="dashboard-item-desc">
                       {song.artistName || 'Artista não informado'}
                       {song.originalKey && <> · <strong>Tom: {song.originalKey}</strong></>}
                     </div>
                   </div>
-                  <ChevronRight size={16} style={{ color: 'var(--text-secondary)' }} />
+                  <ChevronRight size={18} style={{ color: 'var(--text-secondary)' }} />
                 </div>
               ))}
             </div>
@@ -473,7 +493,7 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
             </div>
             <div className="schedule-detail-list">
               {schedule.clothingPieces.map((piece) => (
-                <div key={piece.id} className="schedule-detail-clothing-item">
+                <div key={piece.id} className="schedule-detail-clothing-item" style={{ padding: '12px 14px' }}>
                   <div className="schedule-detail-clothing-info">
                     <div className="dashboard-item-title">{piece.name}</div>
                     {piece.description && (
@@ -486,6 +506,8 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
                         key={color}
                         className="schedule-detail-swatch"
                         style={{
+                          width: '32px',
+                          height: '32px',
                           backgroundColor: color,
                           border: color === '#FFFFFF' ? '2px solid #CBD5E1' : '2px solid rgba(255,255,255,0.15)',
                         }}
@@ -500,32 +522,33 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
         )}
       </div>
 
-      {/* Schedule Chat Modal */}
+      {/* Schedule Chat Modal (Full-Screen no Mobile < 768px com Safe Areas) */}
       {showChatModal && (
         <div className="modal-overlay" onClick={() => setShowChatModal(false)}>
           <div
             className="modal-content schedule-chat-modal"
-            style={{ maxWidth: '540px', width: '100%', height: '82vh', display: 'flex', flexDirection: 'column', padding: '20px' }}
+            style={{ maxWidth: '540px', width: '100%', height: '85vh', display: 'flex', flexDirection: 'column', padding: 0 }}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingBottom: '14px', borderBottom: '1px solid var(--border-color)' }}>
+            <div className="modal-header-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px', borderBottom: '1px solid var(--border-color)', gap: '12px' }}>
               <div>
-                <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)' }}>
-                  <MessageSquare size={18} style={{ color: 'var(--primary-light)' }} />
-                  Chat da Escala — {schedule.title}
+                <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)' }}>
+                  <MessageSquare size={20} style={{ color: 'var(--primary-light)' }} />
+                  <span>Chat da Escala</span>
                 </h2>
                 <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '2px', display: 'block' }}>
                   {isParticipant
                     ? `${comments.length} comentário(s) enviado(s)`
-                    : 'Acesso exclusivo para participantes da escala'}
+                    : 'Acesso exclusivo para participantes'}
                 </span>
               </div>
               <button
                 type="button"
                 className="action-icon-btn"
                 onClick={() => setShowChatModal(false)}
-                style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '1.2rem', cursor: 'pointer' }}
+                title="Fechar"
+                style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}
               >
                 ✕
               </button>
@@ -542,16 +565,16 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
               </div>
             ) : (
               <>
-                <div className="schedule-chat-messages-container" style={{ flex: 1, overflowY: 'auto', padding: '16px 0', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div className="schedule-chat-messages-container" style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   {loadingComments ? (
                     <div style={{ textAlign: 'center', padding: '30px', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
                       Carregando comentários da equipe...
                     </div>
                   ) : comments.length === 0 ? (
-                    <div className="empty-state" style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center' }}>
-                      <div style={{ fontSize: '2.2rem', marginBottom: '8px' }}>💬</div>
-                      <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>Nenhum comentário enviado</div>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Seja o primeiro a enviar uma mensagem sobre esta escala!</div>
+                    <div className="empty-state" style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center', padding: '32px 16px' }}>
+                      <div style={{ fontSize: '2.5rem', marginBottom: '8px' }}>💬</div>
+                      <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px', fontSize: '1rem' }}>Nenhum comentário enviado</div>
+                      <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: '300px' }}>Seja o primeiro a enviar uma mensagem sobre esta escala!</div>
                     </div>
                   ) : (
                     comments.map((msg) => {
@@ -577,8 +600,8 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
                   )}
                 </div>
 
-                {/* Footer Form Input */}
-                <form onSubmit={handleSendComment} style={{ display: 'flex', gap: '8px', paddingTop: '12px', borderTop: '1px solid var(--border-color)' }}>
+                {/* Footer Form Input com Touch Targets de 44px e Safe Area Bottom */}
+                <form onSubmit={handleSendComment} style={{ display: 'flex', gap: '8px', padding: '12px 16px', borderTop: '1px solid var(--border-color)', background: 'var(--surface-color)' }}>
                   <input
                     type="text"
                     className="input-field"
@@ -586,16 +609,16 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
                     value={newCommentText}
                     onChange={(e) => setNewCommentText(e.target.value)}
                     disabled={sendingComment}
-                    style={{ flex: 1, borderRadius: '20px', padding: '10px 16px', fontSize: '0.88rem' }}
+                    style={{ flex: 1, minHeight: '44px', borderRadius: '22px', padding: '10px 18px', fontSize: '0.9rem' }}
                   />
                   <button
                     type="submit"
                     className="btn btn-primary"
                     disabled={sendingComment || !newCommentText.trim()}
-                    style={{ borderRadius: '20px', padding: '0 18px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                    style={{ minHeight: '44px', minWidth: '44px', borderRadius: '22px', padding: '0 20px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
                   >
-                    <Send size={15} />
-                    <span>Enviar</span>
+                    <Send size={18} />
+                    <span className="hidden sm:inline">Enviar</span>
                   </button>
                 </form>
               </>
@@ -606,3 +629,4 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
     </div>
   );
 };
+

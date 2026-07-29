@@ -22,18 +22,68 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header
       className={`app-header no-print ${sticky ? 'sticky' : ''} ${className}`}
-      style={style}
+      style={{
+        paddingTop: 'max(12px, var(--safe-area-top))',
+        paddingBottom: '8px',
+        paddingLeft: '16px',
+        paddingRight: '16px',
+        minHeight: '64px',
+        display: 'flex',
+        alignItems: 'center',
+        background: 'var(--surface-color)',
+        borderBottom: '1px solid var(--border-color)',
+        zIndex: 50,
+        ...style,
+      }}
     >
-      <div className="app-header-container">
-        {/* Esquerda: Navegação / Botão Voltar / Menu */}
-        <div className="app-header-left">
+      <div
+        className="app-header-container"
+        style={{
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px',
+        }}
+      >
+        {/* Esquerda: Navegação / Botão Voltar / Menu (Touch target min 44x44px) */}
+        <div
+          className="app-header-left"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            minWidth: leftAction ? '44px' : 'auto',
+            minHeight: '44px',
+          }}
+        >
           {leftAction}
         </div>
 
         {/* Centro: Título e Subtítulo Truncados */}
-        <div className="app-header-center">
+        <div
+          className="app-header-center"
+          style={{
+            flex: 1,
+            minWidth: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+          }}
+        >
           {typeof title === 'string' ? (
-            <h1 className="app-header-title" title={title}>
+            <h1
+              className="app-header-title"
+              title={title}
+              style={{
+                margin: 0,
+                fontSize: '1.05rem',
+                fontWeight: 700,
+                color: 'var(--text-primary)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
               {title}
             </h1>
           ) : (
@@ -41,7 +91,17 @@ export const Header: React.FC<HeaderProps> = ({
           )}
           {subtitle && (
             typeof subtitle === 'string' ? (
-              <span className="app-header-subtitle" title={subtitle}>
+              <span
+                className="app-header-subtitle"
+                title={subtitle}
+                style={{
+                  fontSize: '0.8rem',
+                  color: 'var(--text-secondary)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
                 {subtitle}
               </span>
             ) : (
@@ -50,11 +110,21 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </div>
 
-        {/* Direita: Ações Secundárias / Ícones de Ação */}
-        <div className="app-header-right">
+        {/* Direita: Ações Secundárias / Ícones de Ação (Touch target min 44x44px) */}
+        <div
+          className="app-header-right"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            minWidth: rightActions ? '44px' : 'auto',
+            minHeight: '44px',
+          }}
+        >
           {rightActions}
         </div>
       </div>
     </header>
   );
 };
+

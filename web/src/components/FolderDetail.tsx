@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Folder, Song } from '../types';
-import { ArrowLeft, Edit2, Plus, Minus, Music, Gauge, Clock } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, Edit2, Plus, Minus, Music, Gauge, Clock, X } from 'lucide-react';
 import { Header } from './Header';
 
 interface FolderDetailProps {
@@ -52,12 +52,17 @@ export const FolderDetail: React.FC<FolderDetailProps> = ({
   };
 
   return (
-    <div className="detail-view">
+    <div className="detail-view folder-detail-container" style={{ paddingTop: 'max(12px, var(--safe-area-top))', paddingBottom: 'max(24px, var(--safe-area-bottom))' }}>
       <Header
         leftAction={
-          <button className="btn btn-secondary icon-btn-text" onClick={onBack} title="Voltar para pastas">
-            <ArrowLeft size={18} />
-            <span style={{ fontSize: '0.85rem' }}>Voltar</span>
+          <button 
+            type="button"
+            className="action-icon-btn" 
+            onClick={onBack} 
+            title="Voltar para pastas"
+            style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}
+          >
+            <ArrowLeft size={20} />
           </button>
         }
         title={folder.name}
@@ -65,15 +70,27 @@ export const FolderDetail: React.FC<FolderDetailProps> = ({
         rightActions={
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {onEdit && (
-              <button className="btn btn-secondary icon-btn-text" onClick={onEdit} style={{ padding: '6px 12px', fontSize: '0.85rem' }}>
-                <Edit2 size={15} />
-                <span>Editar</span>
+              <button 
+                type="button"
+                className="btn btn-secondary icon-btn-text" 
+                onClick={onEdit}
+                title="Editar Pasta"
+                style={{ minHeight: '44px', minWidth: '44px', padding: '8px 14px', fontSize: '0.88rem', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                <Edit2 size={16} />
+                <span className="desktop-only">Editar</span>
               </button>
             )}
             {onAddSong && (
-              <button className="btn btn-primary" onClick={() => setShowAddModal(true)} style={{ padding: '6px 12px', fontSize: '0.85rem' }}>
-                <Plus size={15} />
-                <span>Adicionar música</span>
+              <button 
+                type="button"
+                className="btn btn-primary" 
+                onClick={() => setShowAddModal(true)}
+                title="Adicionar música"
+                style={{ minHeight: '44px', minWidth: '44px', padding: '8px 16px', fontSize: '0.88rem', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                <Plus size={18} />
+                <span className="desktop-only">Adicionar música</span>
               </button>
             )}
           </div>
@@ -91,7 +108,7 @@ export const FolderDetail: React.FC<FolderDetailProps> = ({
                 key={song.id}
                 className="song-card"
                 onClick={() => onSongSelect(song)}
-                style={{ position: 'relative' }}
+                style={{ position: 'relative', cursor: 'pointer', minHeight: '64px', paddingRight: onRemoveSong ? '64px' : '16px' }}
               >
                 <div className="song-avatar">{avatarLetter}</div>
                 <div className="song-info">
@@ -135,13 +152,14 @@ export const FolderDetail: React.FC<FolderDetailProps> = ({
 
                 {onRemoveSong && (
                   <button
+                    type="button"
                     className="action-icon-btn delete"
                     title="Remover da pasta"
                     onClick={(e) => handleRemove(song.id, e)}
                     disabled={removingId === song.id}
-                    style={{ position: 'absolute', right: '16px', top: '16px' }}
+                    style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}
                   >
-                    <Minus size={16} />
+                    <Minus size={18} />
                   </button>
                 )}
               </div>
@@ -154,43 +172,56 @@ export const FolderDetail: React.FC<FolderDetailProps> = ({
           <div className="empty-title">Nenhuma música nesta pasta</div>
           <div className="empty-desc">Adicione músicas do seu repertório a esta pasta.</div>
           {onAddSong && (
-            <button className="btn btn-primary" onClick={() => setShowAddModal(true)} style={{ marginTop: '12px' }}>
-              <Plus size={16} /> Adicionar Música
+            <button type="button" className="btn btn-primary" onClick={() => setShowAddModal(true)} style={{ marginTop: '12px', minHeight: '44px', padding: '10px 20px', borderRadius: '10px' }}>
+              <Plus size={18} /> Adicionar Música
             </button>
           )}
         </div>
       )}
 
-      {/* Modal para adicionar músicas à pasta */}
+      {/* Modal Responsivo para adicionar músicas à pasta */}
       {showAddModal && (
-        <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
+        <div className="modal-overlay folder-add-modal" onClick={() => setShowAddModal(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <div className="modal-title">Adicionar Músicas</div>
-              <button className="action-icon-btn" onClick={() => setShowAddModal(false)} style={{ fontSize: '1.25rem' }}>
-                ✕
+            <div className="modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <button 
+                type="button"
+                className="action-icon-btn" 
+                onClick={() => setShowAddModal(false)}
+                title="Fechar"
+                style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}
+              >
+                <ChevronLeft size={22} className="mobile-only" />
+                <X size={20} className="desktop-only" />
               </button>
+
+              <div className="modal-title" style={{ flex: 1, textAlign: 'center', margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>
+                Adicionar Músicas
+              </div>
+
+              <div style={{ width: '44px', height: '44px', flexShrink: 0 }} />
             </div>
 
             {availableSongs.length > 0 ? (
-              <div className="songs-list" style={{ maxHeight: '400px', overflowY: 'auto' }}>
+              <div className="songs-list" style={{ maxHeight: '400px', overflowY: 'auto', padding: '16px' }}>
                 {availableSongs.map((song) => (
                   <div
                     key={song.id}
                     className="song-card"
-                    style={{ padding: '12px', cursor: 'default' }}
+                    style={{ padding: '12px 16px', cursor: 'default', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}
                   >
-                    <div className="song-info">
-                      <div className="song-card-title" style={{ fontSize: '0.95rem' }}>
+                    <div className="song-info" style={{ flex: 1, minWidth: 0 }}>
+                      <div className="song-card-title" style={{ fontSize: '0.95rem', fontWeight: 600 }}>
                         {song.title}
                       </div>
-                      <div className="song-card-artist" style={{ fontSize: '0.8rem' }}>
+                      <div className="song-card-artist" style={{ fontSize: '0.8rem', opacity: 0.8 }}>
                         {song.artistName || 'Artista desconhecido'}
                       </div>
                     </div>
                     <button
+                      type="button"
                       className="btn btn-primary"
-                      style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                      style={{ minHeight: '44px', padding: '8px 16px', fontSize: '0.85rem', borderRadius: '10px', flexShrink: 0 }}
                       onClick={() => handleAdd(song.id)}
                       disabled={addingId === song.id}
                     >
@@ -200,13 +231,13 @@ export const FolderDetail: React.FC<FolderDetailProps> = ({
                 ))}
               </div>
             ) : (
-              <div className="empty-state" style={{ padding: '30px 0' }}>
+              <div className="empty-state" style={{ padding: '30px 16px' }}>
                 <div className="empty-desc">Todas as músicas cadastradas já estão nesta pasta.</div>
               </div>
             )}
 
-            <div className="form-actions" style={{ marginTop: '20px' }}>
-              <button className="btn btn-secondary" onClick={() => setShowAddModal(false)}>
+            <div className="form-actions" style={{ padding: '12px 16px' }}>
+              <button type="button" className="btn btn-secondary" onClick={() => setShowAddModal(false)} style={{ width: '100%', minHeight: '44px', borderRadius: '10px' }}>
                 Fechar
               </button>
             </div>
@@ -216,3 +247,4 @@ export const FolderDetail: React.FC<FolderDetailProps> = ({
     </div>
   );
 };
+

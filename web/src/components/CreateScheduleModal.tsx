@@ -526,7 +526,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
           <div className="schedule-subpage">
             <div className="schedule-subpage-header" style={{ justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <button className="btn btn-secondary icon-btn-text" onClick={() => setShowColorPalettePage(false)}>
+                <button className="btn btn-secondary icon-btn-text" style={{ minHeight: '44px', minWidth: '44px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowColorPalettePage(false)}>
                   <ArrowLeft size={18} /> Voltar
                 </button>
                 <div>
@@ -535,7 +535,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                 </div>
               </div>
 
-              <button className="btn btn-primary" onClick={handleAddPieceCard} style={{ padding: '8px 14px' }}>
+              <button className="btn btn-primary" onClick={handleAddPieceCard} style={{ minHeight: '44px', padding: '8px 14px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                 <Plus size={16} /> Adicionar
               </button>
             </div>
@@ -556,6 +556,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                       type="button"
                       className="action-icon-btn danger"
                       title="Excluir Card"
+                      style={{ width: '44px', height: '44px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
                       onClick={() => handleDeletePieceCard(piece.id)}
                     >
                       <Trash2 size={16} />
@@ -581,7 +582,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                         <div
                           key={colorHex}
                           className="color-swatch-chip"
-                          style={{ backgroundColor: colorHex, borderColor: colorHex === '#FFFFFF' ? '#CBD5E1' : colorHex }}
+                          style={{ backgroundColor: colorHex, borderColor: colorHex === '#FFFFFF' ? '#CBD5E1' : colorHex, minWidth: '36px', minHeight: '36px' }}
                           title={`Remover ${colorHex}`}
                           onClick={() => handleRemoveColorFromPiece(piece.id, colorHex)}
                         >
@@ -592,6 +593,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                       <button
                         type="button"
                         className="btn-add-color"
+                        style={{ minHeight: '44px', minWidth: '44px', padding: '8px 14px' }}
                         onClick={() => {
                           setActivePieceIdForColor(piece.id);
                           setSelectedColorHex(piece.colors[0] || '#000000');
@@ -609,7 +611,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
               <button
                 type="button"
                 className="btn btn-primary"
-                style={{ width: '100%', padding: '12px' }}
+                style={{ width: '100%', minHeight: '44px', padding: '12px' }}
                 onClick={() => setShowColorPalettePage(false)}
               >
                 Salvar Paleta
@@ -638,7 +640,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                 type="button"
                 className="btn btn-primary"
                 onClick={() => handleSaveSchedule()}
-                style={{ padding: '6px 14px', fontSize: '0.85rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                style={{ padding: '8px 16px', minHeight: '44px', minWidth: '44px', fontSize: '0.85rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
               >
                 <Check size={16} /> Salvar
               </button>
@@ -801,6 +803,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                     <button
                       type="button"
                       className="btn btn-primary"
+                      style={{ minHeight: '44px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                       onClick={() => setShowMemberSelectPage(true)}
                     >
                       <Plus size={16} /> Adicionar
@@ -808,6 +811,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                     <button
                       type="button"
                       className="btn btn-secondary"
+                      style={{ minHeight: '44px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                       onClick={() => setShowTeamSelectModal(true)}
                     >
                       <Users size={16} /> Equipes
@@ -826,6 +830,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                           <button
                             type="button"
                             className="action-icon-btn danger"
+                            style={{ width: '44px', height: '44px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
                             onClick={() => setSelectedParticipants(selectedParticipants.filter((p) => p.id !== member.id))}
                           >
                             <Trash2 size={16} />
@@ -850,6 +855,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                     <button
                       type="button"
                       className="btn btn-primary"
+                      style={{ minHeight: '44px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                       onClick={() => setShowSongSelectPage(true)}
                     >
                       <Plus size={16} /> Adicionar Música
@@ -867,7 +873,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                           onDragOver={(e) => handleSongDragOver(e, index)}
                           onDragEnd={handleSongDragEnd}
                         >
-                          <div className="drag-grip" title="Arraste para reordenar">
+                          <div className="drag-grip" title="Arraste para reordenar" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'grab', touchAction: 'none', flexShrink: 0 }}>
                             <GripVertical size={16} />
                           </div>
                           <div className="schedule-song-index">{index + 1}</div>
@@ -880,6 +886,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                           <button
                             type="button"
                             className="action-icon-btn danger"
+                            style={{ width: '44px', height: '44px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
                             onClick={() => setSelectedSongs(selectedSongs.filter((s) => s.id !== song.id))}
                           >
                             <Trash2 size={16} />
@@ -904,6 +911,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                     <button
                       type="button"
                       className="btn btn-primary"
+                      style={{ minHeight: '44px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                       onClick={handleAddTimelineItem}
                     >
                       <Plus size={16} /> Evento
@@ -911,6 +919,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                     <button
                       type="button"
                       className="btn btn-secondary"
+                      style={{ minHeight: '44px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                       onClick={() => setShowTemplateModal(true)}
                     >
                       <LayoutTemplate size={16} /> Modelos
@@ -927,7 +936,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                         onDragOver={(e) => handleTimelineDragOver(e, idx)}
                         onDragEnd={handleTimelineDragEnd}
                       >
-                        <div className="drag-grip" title="Arraste para reordenar">
+                        <div className="drag-grip" title="Arraste para reordenar" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'grab', touchAction: 'none', flexShrink: 0 }}>
                           <GripVertical size={16} />
                         </div>
                         <div className="schedule-timeline-dot" />
@@ -950,6 +959,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                         <button
                           type="button"
                           className="action-icon-btn danger"
+                          style={{ width: '44px', height: '44px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
                           onClick={() => setTimelineItems(timelineItems.filter((t) => t.id !== item.id))}
                         >
                           <Trash2 size={16} />
@@ -962,10 +972,10 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
 
               {/* Modal Footer Actions */}
               <div className="schedule-modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={onClose}>
+                <button type="button" className="btn btn-secondary" style={{ minHeight: '44px' }} onClick={onClose}>
                   Cancelar
                 </button>
-                <button type="button" className="btn btn-primary" onClick={() => handleSaveSchedule()}>
+                <button type="button" className="btn btn-primary" style={{ minHeight: '44px' }} onClick={() => handleSaveSchedule()}>
                   Salvar Escala
                 </button>
               </div>
@@ -976,10 +986,10 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
         {/* Modal: Adicionar Cor (Fácil vs Avançado) */}
         {activePieceIdForColor && (
           <div className="modal-overlay" style={{ zIndex: 1200 }}>
-            <div className="modal-content" style={{ maxWidth: '440px', maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
+            <div className="modal-content schedule-submodal-content" style={{ maxWidth: '440px', maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
               <div className="modal-header">
                 <div className="modal-title">Adicionar Cor</div>
-                <button className="action-icon-btn" onClick={() => setActivePieceIdForColor(null)}>
+                <button className="action-icon-btn" style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setActivePieceIdForColor(null)}>
                   <X size={18} />
                 </button>
               </div>
@@ -1049,10 +1059,10 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
               </div>
 
               <div className="form-actions" style={{ marginTop: '16px' }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setActivePieceIdForColor(null)}>
+                <button type="button" className="btn btn-secondary" style={{ minHeight: '44px' }} onClick={() => setActivePieceIdForColor(null)}>
                   Cancelar
                 </button>
-                <button type="button" className="btn btn-primary" onClick={handleConfirmAddColor}>
+                <button type="button" className="btn btn-primary" style={{ minHeight: '44px' }} onClick={handleConfirmAddColor}>
                   Selecionar
                 </button>
               </div>
@@ -1063,10 +1073,10 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
         {/* Member Selector Modal Overlay */}
         {showMemberSelectPage && (
           <div className="modal-overlay" style={{ zIndex: 1100 }}>
-            <div className="modal-content" style={{ maxWidth: '480px' }}>
+            <div className="modal-content schedule-submodal-content" style={{ maxWidth: '480px' }}>
               <div className="modal-header">
                 <div className="modal-title">Selecionar Membros</div>
-                <button className="action-icon-btn" onClick={() => setShowMemberSelectPage(false)}>
+                <button className="action-icon-btn" style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowMemberSelectPage(false)}>
                   <X size={18} />
                 </button>
               </div>
@@ -1117,7 +1127,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
               )}
 
               <div className="form-actions" style={{ marginTop: '16px' }}>
-                <button type="button" className="btn btn-primary" onClick={() => setShowMemberSelectPage(false)}>
+                <button type="button" className="btn btn-primary" style={{ minHeight: '44px', width: '100%', justifyContent: 'center' }} onClick={() => setShowMemberSelectPage(false)}>
                   Concluir Seleção
                 </button>
               </div>
@@ -1128,10 +1138,10 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
         {/* Song Selector Modal Overlay */}
         {showSongSelectPage && (
           <div className="modal-overlay" style={{ zIndex: 1100 }}>
-            <div className="modal-content" style={{ maxWidth: '520px' }}>
+            <div className="modal-content schedule-submodal-content" style={{ maxWidth: '520px' }}>
               <div className="modal-header">
                 <div className="modal-title">Selecionar Músicas do Repertório</div>
-                <button className="action-icon-btn" onClick={() => setShowSongSelectPage(false)}>
+                <button className="action-icon-btn" style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowSongSelectPage(false)}>
                   <X size={18} />
                 </button>
               </div>
@@ -1158,7 +1168,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
               </div>
 
               <div className="form-actions">
-                <button type="button" className="btn btn-primary" onClick={() => setShowSongSelectPage(false)}>
+                <button type="button" className="btn btn-primary" style={{ minHeight: '44px', width: '100%', justifyContent: 'center' }} onClick={() => setShowSongSelectPage(false)}>
                   Concluir ({selectedSongs.length} selecionadas)
                 </button>
               </div>
@@ -1169,13 +1179,13 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
         {/* Template Selector Modal Overlay */}
         {showTemplateModal && !pendingTemplate && (
           <div className="modal-overlay" style={{ zIndex: 1100 }} onClick={() => setShowTemplateModal(false)}>
-            <div className="modal-content" style={{ maxWidth: '500px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-content schedule-submodal-content" style={{ maxWidth: '500px' }} onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
                 <div className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <Layers size={18} />
                   Modelos de Roteiro
                 </div>
-                <button className="action-icon-btn" onClick={() => setShowTemplateModal(false)}>
+                <button className="action-icon-btn" style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowTemplateModal(false)}>
                   <X size={18} />
                 </button>
               </div>
@@ -1246,13 +1256,13 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
         {/* Apply Template Confirmation Modal */}
         {pendingTemplate && (
           <div className="modal-overlay" style={{ zIndex: 1200 }} onClick={() => setPendingTemplate(null)}>
-            <div className="modal-content" style={{ maxWidth: '420px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-content schedule-submodal-content" style={{ maxWidth: '420px' }} onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
                 <div className="modal-title">
                   <Layers size={18} />
                   Aplicar "{pendingTemplate.name}"
                 </div>
-                <button className="action-icon-btn" onClick={() => setPendingTemplate(null)}>
+                <button className="action-icon-btn" style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setPendingTemplate(null)}>
                   <X size={18} />
                 </button>
               </div>
@@ -1304,7 +1314,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                 {timelineItems.length > 0 && (
                   <button
                     className="btn btn-secondary"
-                    style={{ width: '100%', justifyContent: 'center' }}
+                    style={{ width: '100%', minHeight: '44px', justifyContent: 'center' }}
                     onClick={() => handleApplyTemplate(pendingTemplate, 'append')}
                   >
                     Adicionar ao final do roteiro atual
@@ -1312,7 +1322,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                 )}
                 <button
                   className="btn btn-primary"
-                  style={{ width: '100%', justifyContent: 'center' }}
+                  style={{ width: '100%', minHeight: '44px', justifyContent: 'center' }}
                   onClick={() => handleApplyTemplate(pendingTemplate, 'replace')}
                 >
                   {timelineItems.length > 0 ? 'Substituir roteiro atual' : 'Aplicar modelo'}
@@ -1325,13 +1335,13 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
         {/* Team Selector Modal */}
         {showTeamSelectModal && (
           <div className="modal-overlay" style={{ zIndex: 1100 }} onClick={() => setShowTeamSelectModal(false)}>
-            <div className="modal-content" style={{ maxWidth: '460px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-content schedule-submodal-content" style={{ maxWidth: '460px' }} onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
                 <div className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <Users size={18} />
                   Importar Equipe
                 </div>
-                <button className="action-icon-btn" onClick={() => setShowTeamSelectModal(false)}>
+                <button className="action-icon-btn" style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowTeamSelectModal(false)}>
                   <X size={18} />
                 </button>
               </div>

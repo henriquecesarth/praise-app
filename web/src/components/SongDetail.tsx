@@ -117,24 +117,37 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
         style={{
           backgroundColor: `${color}0D`,
           borderColor: `${color}33`,
+          minHeight: '48px',
+          padding: '10px 14px',
+          borderRadius: '10px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
         }}
       >
-        <div className="link-tile-info">
+        <div className="link-tile-info" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div
             className="link-tile-icon-wrapper"
             style={{
               backgroundColor: `${color}26`,
               color: color,
+              width: '36px',
+              height: '36px',
+              borderRadius: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
             }}
           >
             {icon}
           </div>
           <div>
-            <div className="link-tile-title">{title}</div>
-            <div className="link-tile-subtitle">{subtitle}</div>
+            <div className="link-tile-title" style={{ fontWeight: 600, fontSize: '0.9rem' }}>{title}</div>
+            <div className="link-tile-subtitle" style={{ fontSize: '0.75rem', opacity: 0.8 }}>{subtitle}</div>
           </div>
         </div>
-        <ExternalLink size={14} style={{ color: color, opacity: 0.8 }} />
+        <ExternalLink size={16} style={{ color: color, opacity: 0.8, flexShrink: 0 }} />
       </a>
     );
   };
@@ -144,12 +157,17 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
   const rawLines = song.smartChord ? song.smartChord.content.split('\n') : [];
 
   return (
-    <div className="detail-view">
+    <div className="detail-view song-detail-container" style={{ paddingTop: 'max(12px, var(--safe-area-top))', paddingBottom: 'max(24px, var(--safe-area-bottom))' }}>
       <Header
         leftAction={
-          <button className="btn btn-secondary icon-btn-text" onClick={onBack} title="Voltar para músicas">
-            <ArrowLeft size={18} />
-            <span style={{ fontSize: '0.85rem' }}>Voltar</span>
+          <button 
+            type="button"
+            className="action-icon-btn" 
+            onClick={onBack} 
+            title="Voltar para músicas"
+            style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}
+          >
+            <ArrowLeft size={20} />
           </button>
         }
         title={song.title}
@@ -157,25 +175,38 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
         rightActions={
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {onEdit && (
-              <button className="btn btn-primary" onClick={onEdit} style={{ padding: '6px 12px', fontSize: '0.85rem' }}>
-                <Edit2 size={15} />
-                <span>Editar</span>
+              <button 
+                type="button"
+                className="btn btn-primary" 
+                onClick={onEdit} 
+                title="Editar Música"
+                style={{ minHeight: '44px', padding: '8px 16px', fontSize: '0.88rem', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}
+              >
+                <Edit2 size={16} />
+                <span className="desktop-only">Editar</span>
               </button>
             )}
             {onDelete && (
               <button
+                type="button"
                 className="btn btn-secondary icon-btn-text"
                 style={{
-                  padding: '6px 12px',
-                  fontSize: '0.85rem',
+                  width: '44px',
+                  height: '44px',
+                  minWidth: '44px',
+                  padding: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                   color: '#EF4444',
                   borderColor: 'rgba(239, 68, 68, 0.3)',
                   backgroundColor: 'rgba(239, 68, 68, 0.08)',
+                  borderRadius: '10px',
                 }}
                 onClick={onDelete}
                 title="Excluir Música"
               >
-                <Trash2 size={15} />
+                <Trash2 size={18} />
               </button>
             )}
           </div>
@@ -185,29 +216,29 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
       <div className="detail-content-layout">
         <div className="detail-main-content">
           {song.smartChord && (
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
               <button
                 className={`btn ${activeView === 'cifra' ? 'btn-primary' : 'btn-secondary'}`}
-                style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+                style={{ minHeight: '44px', padding: '10px 18px', fontSize: '0.88rem', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}
                 onClick={() => setActiveView('cifra')}
               >
-                <Music size={16} />
+                <Music size={18} />
                 Cifra Inteligente
               </button>
               <button
                 className={`btn ${activeView === 'lyrics' ? 'btn-primary' : 'btn-secondary'}`}
-                style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+                style={{ minHeight: '44px', padding: '10px 18px', fontSize: '0.88rem', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}
                 onClick={() => setActiveView('lyrics')}
               >
-                <FileText size={16} />
+                <FileText size={18} />
                 Apenas Letra
               </button>
             </div>
           )}
 
           {activeView === 'cifra' && song.smartChord ? (
-            <div className="lyrics-box" style={{ fontFamily: 'monospace' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px solid var(--border-color)' }}>
+            <div className="lyrics-box" style={{ fontFamily: 'monospace', overflowX: 'auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px solid var(--border-color)' }}>
                 <div>
                   <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Tom Original: </span>
                   <strong style={{ color: 'var(--primary-light)' }}>{originalKey}</strong>
@@ -218,10 +249,11 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
                   )}
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                   <button
-                    className="btn btn-secondary"
-                    style={{ padding: '4px 10px', fontSize: '0.8rem' }}
+                    type="button"
+                    className="btn btn-secondary transposition-btn"
+                    style={{ minHeight: '44px', minWidth: '44px', padding: '8px 14px', fontSize: '0.85rem', borderRadius: '10px' }}
                     onClick={() => setSemitones(semitones - 1)}
                   >
                     -1 Semitom
@@ -229,8 +261,9 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
 
                   {semitones !== 0 && (
                     <button
-                      className="btn btn-secondary"
-                      style={{ padding: '4px 10px', fontSize: '0.8rem' }}
+                      type="button"
+                      className="btn btn-secondary transposition-btn"
+                      style={{ minHeight: '44px', minWidth: '44px', padding: '8px 14px', fontSize: '0.85rem', borderRadius: '10px' }}
                       onClick={() => setSemitones(0)}
                     >
                       Resetar
@@ -238,8 +271,9 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
                   )}
 
                   <button
-                    className="btn btn-secondary"
-                    style={{ padding: '4px 10px', fontSize: '0.8rem' }}
+                    type="button"
+                    className="btn btn-secondary transposition-btn"
+                    style={{ minHeight: '44px', minWidth: '44px', padding: '8px 14px', fontSize: '0.85rem', borderRadius: '10px' }}
                     onClick={() => setSemitones(semitones + 1)}
                   >
                     +1 Semitom
@@ -262,7 +296,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
               })}
             </div>
           ) : (
-            <div className="lyrics-box">
+            <div className="lyrics-box" style={{ overflowX: 'auto', whiteSpace: 'pre-wrap' }}>
               {song.lyrics || 'Nenhuma letra cadastrada para esta música.'}
             </div>
           )}
@@ -272,7 +306,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
           {hasLinks && (
             <div style={{ marginBottom: '24px' }}>
               <h2 className="detail-section-title">Links & Arquivos</h2>
-              <div className="links-grid">
+              <div className="links-grid" style={{ display: 'grid', gap: '8px' }}>
                 {renderLinkTile('chordSheet', song.chordSheetUrl)}
                 {renderLinkTile('youtube', song.youtubeUrl)}
                 {renderLinkTile('audio', song.audioUrl)}
@@ -325,3 +359,4 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
     </div>
   );
 };
+

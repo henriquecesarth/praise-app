@@ -754,7 +754,7 @@ export default function App() {
       {/* Main Container Layout */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         {/* Module Header Bar */}
-        {!selectedSong && !selectedFolder && !selectedSchedule && !showCreateScheduleModal && !isTeamModalOpen && (
+        {!selectedSong && !selectedFolder && !selectedSchedule && !showCreateScheduleModal && !showCreateGroupModal && !showInviteModal && !showJoinModal && !isTeamModalOpen && !showSongModal && (
           <Header
             title={
               mainModule === 'dashboard' ? 'Painel Inicial' :
@@ -1265,7 +1265,7 @@ export default function App() {
       </div>
 
       {/* Bottom Navigation para Dispositivos Móveis (< 768px) */}
-      {currentUser && !showCreateScheduleModal && !selectedSchedule && !isTeamModalOpen && (
+      {currentUser && !showCreateScheduleModal && !showCreateGroupModal && !showInviteModal && !showJoinModal && !selectedSchedule && !selectedSong && !selectedFolder && !isTeamModalOpen && !showSongModal && (
         <BottomNav
           currentModule={mainModule}
           onSelectModule={(module) => {

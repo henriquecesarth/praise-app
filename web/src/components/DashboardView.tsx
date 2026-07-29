@@ -207,7 +207,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const displayedSchedules = upcomingSchedules.slice(0, 3);
 
   return (
-    <div className="dashboard-container">
+    <div className="dashboard-container" style={{ paddingTop: 'max(16px, var(--safe-area-top))', paddingBottom: 'max(24px, var(--safe-area-bottom))' }}>
       {/* Welcome Banner */}
       <div className="dashboard-welcome-card">
         <div className="dashboard-welcome-text">
@@ -222,8 +222,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </p>
         </div>
         <div className="dashboard-welcome-actions">
-          <button className="btn btn-primary" onClick={onNavigateToRepertoire}>
-            Acessar Repertório <ArrowRight size={16} />
+          <button className="btn btn-primary" onClick={onNavigateToRepertoire} style={{ minHeight: '44px', padding: '10px 20px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+            <span>Acessar Repertório</span> <ArrowRight size={18} />
           </button>
         </div>
       </div>
@@ -232,24 +232,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <div className="dashboard-grid">
         {/* Block 1: Ministérios */}
         <div className="dashboard-card">
-          <div className="dashboard-card-header">
-            <div className="dashboard-card-title-group">
-              <div className="dashboard-card-icon purple">
+          <div className="dashboard-card-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+            <div className="dashboard-card-title-group" style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
+              <div className="dashboard-card-icon purple" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                 <Building2 size={20} />
               </div>
-              <div>
-                <h2 className="dashboard-card-title">Ministérios</h2>
-                <span className="dashboard-card-subtitle">{ministryList.length} ministério(s) vinculado(s)</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h2 className="dashboard-card-title" style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700 }}>Ministérios</h2>
+                <span className="dashboard-card-subtitle" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{ministryList.length} ministério(s) vinculado(s)</span>
               </div>
             </div>
-            <button className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={handleCreate}>
-              <Plus size={14} /> Adicionar
+            <button className="btn btn-primary" style={{ minHeight: '44px', minWidth: '44px', padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '6px', borderRadius: '10px', flexShrink: 0 }} onClick={handleCreate}>
+              <Plus size={18} /> <span>Adicionar</span>
             </button>
           </div>
 
           <div className="dashboard-card-body">
             {ministryList.length > 0 ? (
-              <div className="dashboard-list">
+              <div className="dashboard-list" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {ministryList.map((m) => {
                   const isActive = currentActive?.id === m.id;
                   const isAdmin = m.role === 'admin';
@@ -258,20 +258,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       key={m.id}
                       className={`dashboard-item-card ${isActive ? 'active' : ''}`}
                       onClick={() => handleSelect(m)}
+                      style={{ minHeight: '56px', padding: '12px 14px', borderRadius: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px' }}
                     >
-                      <div className="dashboard-item-avatar">
+                      <div className="dashboard-item-avatar" style={{ width: '44px', height: '44px', borderRadius: '10px', fontSize: '1rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                         {m.name.charAt(0).toUpperCase()}
                       </div>
-                      <div className="dashboard-item-info">
-                        <div className="dashboard-item-title-row">
-                          <span className="dashboard-item-title">{m.name}</span>
-                          {isActive && <span className="dashboard-item-active-tag">Ativo</span>}
+                      <div className="dashboard-item-info" style={{ flex: 1, minWidth: 0 }}>
+                        <div className="dashboard-item-title-row" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span className="dashboard-item-title" style={{ fontWeight: 700, fontSize: '0.95rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.name}</span>
+                          {isActive && <span className="dashboard-item-active-tag" style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', background: 'var(--primary-surface)', color: 'var(--primary-light)', fontWeight: 700 }}>Ativo</span>}
                         </div>
-                        <span className="dashboard-item-desc">
+                        <span className="dashboard-item-desc" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                           {isAdmin ? 'Administrador do Ministério' : 'Integrante / Músico'}
                         </span>
                       </div>
-                      <span className={`sidebar-role-badge ${isAdmin ? 'admin' : 'member'}`}>
+                      <span className={`sidebar-role-badge ${isAdmin ? 'admin' : 'member'}`} style={{ flexShrink: 0 }}>
                         {isAdmin ? 'ADMIN' : 'MEMBRO'}
                       </span>
                     </div>
@@ -279,13 +280,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 })}
               </div>
             ) : (
-              <div className="empty-state" style={{ padding: '20px 0' }}>
-                <p className="empty-desc" style={{ marginBottom: '12px' }}>Você ainda não pertence a nenhum ministério.</p>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                  <button className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={handleCreate}>
+              <div className="empty-state" style={{ padding: '24px 0', textAlign: 'center' }}>
+                <p className="empty-desc" style={{ marginBottom: '16px', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Você ainda não pertence a nenhum ministério.</p>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                  <button className="btn btn-primary" style={{ minHeight: '44px', padding: '10px 18px', fontSize: '0.88rem', borderRadius: '10px' }} onClick={handleCreate}>
                     Criar Ministério
                   </button>
-                  <button className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={handleJoin}>
+                  <button className="btn btn-secondary" style={{ minHeight: '44px', padding: '10px 18px', fontSize: '0.88rem', borderRadius: '10px' }} onClick={handleJoin}>
                     Entrar com Código
                   </button>
                 </div>
@@ -296,19 +297,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Block 2: Avisos Recentes */}
         <div className="dashboard-card">
-          <div className="dashboard-card-header">
-            <div className="dashboard-card-title-group">
-              <div className="dashboard-card-icon amber">
+          <div className="dashboard-card-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+            <div className="dashboard-card-title-group" style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
+              <div className="dashboard-card-icon amber" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                 <Megaphone size={20} />
               </div>
-              <div>
-                <h2 className="dashboard-card-title">Avisos Recentes</h2>
-                <span className="dashboard-card-subtitle">Recados e orientações da equipe</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h2 className="dashboard-card-title" style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700 }}>Avisos Recentes</h2>
+                <span className="dashboard-card-subtitle" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Recados e orientações da equipe</span>
               </div>
             </div>
             <button
               className="btn btn-secondary"
-              style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+              style={{ minHeight: '44px', padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600, borderRadius: '10px', flexShrink: 0 }}
               onClick={() => setShowAllAnnouncements(!showAllAnnouncements)}
             >
               {showAllAnnouncements ? 'Ocultar' : 'Ver todos'}
@@ -316,15 +317,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           <div className="dashboard-card-body">
-            <div className="dashboard-list">
+            <div className="dashboard-list" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {(showAllAnnouncements ? MOCK_ANNOUNCEMENTS : MOCK_ANNOUNCEMENTS.slice(0, 2)).map((ann) => (
-                <div key={ann.id} className="dashboard-notice-card">
-                  <div className="dashboard-notice-header">
-                    <span className="dashboard-notice-title">{ann.title}</span>
-                    {ann.important && <span className="dashboard-badge-important">Importante</span>}
+                <div key={ann.id} className="dashboard-notice-card" style={{ padding: '14px', borderRadius: '12px', background: 'var(--surface-color)', border: '1px solid var(--border-color)' }}>
+                  <div className="dashboard-notice-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '8px' }}>
+                    <span className="dashboard-notice-title" style={{ fontWeight: 700, fontSize: '0.95rem' }}>{ann.title}</span>
+                    {ann.important && <span className="dashboard-badge-important" style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', background: 'rgba(239, 68, 68, 0.15)', color: '#EF4444', fontWeight: 700, flexShrink: 0 }}>Importante</span>}
                   </div>
-                  <p className="dashboard-notice-content">{ann.content}</p>
-                  <div className="dashboard-notice-footer">
+                  <p className="dashboard-notice-content" style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5, margin: '0 0 10px' }}>{ann.content}</p>
+                  <div className="dashboard-notice-footer" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
                     <span>{ann.author}</span>
                     <span>{ann.date}</span>
                   </div>
@@ -336,14 +337,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Block 3: Minhas Escalas */}
         <div className="dashboard-card">
-          <div className="dashboard-card-header">
-            <div className="dashboard-card-title-group">
-              <div className="dashboard-card-icon cyan">
+          <div className="dashboard-card-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+            <div className="dashboard-card-title-group" style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
+              <div className="dashboard-card-icon cyan" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                 <Calendar size={20} />
               </div>
-              <div>
-                <h2 className="dashboard-card-title">Minhas Escalas</h2>
-                <span className="dashboard-card-subtitle">
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h2 className="dashboard-card-title" style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700 }}>Minhas Escalas</h2>
+                <span className="dashboard-card-subtitle" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                   {upcomingSchedules.length > 0
                     ? `${upcomingSchedules.length} escala(s) próxima(s)`
                     : 'Nenhuma escala próxima'}
@@ -352,7 +353,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
             <button
               className="btn btn-secondary"
-              style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+              style={{ minHeight: '44px', padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600, borderRadius: '10px', flexShrink: 0 }}
               onClick={onNavigateToSchedules}
             >
               Ver todas as escalas
@@ -361,7 +362,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
           <div className="dashboard-card-body">
             {displayedSchedules.length > 0 ? (
-              <div className="dashboard-list">
+              <div className="dashboard-list" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 {displayedSchedules.map((sch) => {
                   const totalParticipants = sch.participants?.length || 0;
                   const confirmedCount = sch.participants?.filter((p) => p.confirmed === true).length || 0;
@@ -376,6 +377,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       key={sch.id}
                       className="dashboard-schedule-card enhanced"
                       onClick={() => onSelectSchedule(sch)}
+                      style={{ minHeight: '72px', cursor: 'pointer', borderRadius: '12px' }}
                     >
                       {paletteColor && (
                         <div
@@ -388,34 +390,37 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         {/* Header Title & Date */}
                         <div className="dashboard-schedule-top-row">
                           <div>
-                            <div className="dashboard-schedule-event">{sch.title}</div>
-                            <div className="dashboard-schedule-date">
-                              <Clock size={13} /> {formatScheduleDate(sch.date, sch.time)}
+                            <div className="dashboard-schedule-event" style={{ fontWeight: 700, fontSize: '1rem' }}>{sch.title}</div>
+                            <div className="dashboard-schedule-date" style={{ fontSize: '0.83rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
+                              <Clock size={14} /> {formatScheduleDate(sch.date, sch.time)}
                             </div>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <span className={`sidebar-role-badge ${sch.isVisible ? 'admin' : 'member'}`}>
                               {sch.isVisible ? 'VISÍVEL' : 'PRIVADO'}
                             </span>
-                            <ChevronRight size={16} style={{ color: 'var(--text-tertiary)' }} />
+                            <div style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <ChevronRight size={18} style={{ color: 'var(--text-tertiary)' }} />
+                            </div>
                           </div>
                         </div>
 
-                        {/* Avatars Stack */}
+                        {/* Avatars Stack com Touch Targets */}
                         {totalParticipants > 0 && (
-                          <div className="dashboard-schedule-avatars-row">
-                            <div className="dashboard-avatar-stack">
+                          <div className="dashboard-schedule-avatars-row" style={{ marginTop: '10px' }}>
+                            <div className="dashboard-avatar-stack" style={{ display: 'flex', alignItems: 'center' }}>
                               {sch.participants.slice(0, 4).map((p, idx) => (
                                 <div
                                   key={p.id || idx}
                                   className="dashboard-avatar-bubble"
                                   title={`${p.name} (${p.role || 'Integrante'})`}
+                                  style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'var(--primary-surface)', border: '2px solid var(--surface-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', fontWeight: 700, color: 'var(--primary-light)', marginLeft: idx > 0 ? '-8px' : '0' }}
                                 >
                                   {p.name.charAt(0).toUpperCase()}
                                 </div>
                               ))}
                               {totalParticipants > 4 && (
-                                <div className="dashboard-avatar-bubble more">
+                                <div className="dashboard-avatar-bubble more" style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'var(--surface-variant)', border: '2px solid var(--surface-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginLeft: '-8px' }}>
                                   +{totalParticipants - 4}
                                 </div>
                               )}
@@ -424,7 +429,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         )}
 
                         {/* Stats Preview Grid with Icons */}
-                        <div className="dashboard-schedule-stats-grid">
+                        <div className="dashboard-schedule-stats-grid" style={{ marginTop: '10px', display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                           <div className="dashboard-stat-chip">
                             <Users size={13} style={{ color: 'var(--primary-light)' }} />
                             <span><strong>{totalParticipants}</strong> participante{totalParticipants !== 1 ? 's' : ''}</span>
@@ -453,7 +458,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                               <span>Paleta</span>
                               <div
                                 className="palette-swatch-dot"
-                                style={{ backgroundColor: paletteColor }}
+                                style={{ backgroundColor: paletteColor, width: '10px', height: '10px', borderRadius: '50%' }}
                                 title="Cor de vestimenta"
                               />
                             </div>
@@ -472,15 +477,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 })}
               </div>
             ) : (
-              <div className="empty-state" style={{ padding: '20px 0' }}>
-                <div style={{ fontSize: '2rem', marginBottom: '8px' }}>📅</div>
-                <p className="empty-desc" style={{ marginBottom: '12px' }}>
+              <div className="empty-state" style={{ padding: '24px 0', textAlign: 'center' }}>
+                <div style={{ fontSize: '2.5rem', marginBottom: '12px' }}>📅</div>
+                <p className="empty-desc" style={{ marginBottom: '16px', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
                   Nenhuma escala criada ainda.
                 </p>
                 {userRole === 'admin' ? (
                   <button
                     className="btn btn-primary"
-                    style={{ padding: '6px 16px', fontSize: '0.8rem' }}
+                    style={{ minHeight: '44px', padding: '10px 20px', fontSize: '0.88rem', borderRadius: '10px' }}
                     onClick={onNavigateToSchedules}
                   >
                     Criar Primeira Escala
@@ -488,7 +493,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 ) : (
                   <button
                     className="btn btn-secondary"
-                    style={{ padding: '6px 16px', fontSize: '0.8rem' }}
+                    style={{ minHeight: '44px', padding: '10px 20px', fontSize: '0.88rem', borderRadius: '10px' }}
                     onClick={onNavigateToSchedules}
                   >
                     Ver Escalas
@@ -501,19 +506,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Block 4: Aniversariantes do Mês */}
         <div className="dashboard-card">
-          <div className="dashboard-card-header">
-            <div className="dashboard-card-title-group">
-              <div className="dashboard-card-icon rose">
+          <div className="dashboard-card-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+            <div className="dashboard-card-title-group" style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
+              <div className="dashboard-card-icon rose" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                 <Cake size={20} />
               </div>
-              <div>
-                <h2 className="dashboard-card-title">Aniversariantes</h2>
-                <span className="dashboard-card-subtitle">Aniversários deste mês</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h2 className="dashboard-card-title" style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700 }}>Aniversariantes</h2>
+                <span className="dashboard-card-subtitle" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Aniversários deste mês</span>
               </div>
             </div>
             <button
               className="btn btn-secondary"
-              style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+              style={{ minHeight: '44px', padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600, borderRadius: '10px', flexShrink: 0 }}
               onClick={() => setShowAllBirthdays(!showAllBirthdays)}
             >
               {showAllBirthdays ? 'Ocultar' : 'Ver todos'}
@@ -522,16 +527,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
           <div className="dashboard-card-body">
             {loadingBirthdays ? (
-              <div className="empty-state" style={{ padding: '20px 0' }}>
-                <p className="empty-desc">Carregando aniversariantes...</p>
+              <div className="empty-state" style={{ padding: '24px 0', textAlign: 'center' }}>
+                <p className="empty-desc" style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Carregando aniversariantes...</p>
               </div>
             ) : birthdays.length > 0 ? (
-              <div className="dashboard-list">
+              <div className="dashboard-list" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {(showAllBirthdays ? birthdays : birthdays.slice(0, 3)).map((bday) => (
-                  <div key={bday.id} className={`dashboard-birthday-card ${bday.isToday ? 'today' : ''}`}>
+                  <div key={bday.id} className={`dashboard-birthday-card ${bday.isToday ? 'today' : ''}`} style={{ minHeight: '56px', padding: '12px 14px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <div
                       className="dashboard-item-avatar"
                       style={{
+                        width: '44px',
+                        height: '44px',
+                        borderRadius: '10px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '1rem',
+                        fontWeight: 700,
+                        color: '#fff',
+                        flexShrink: 0,
                         background: bday.isToday
                           ? 'linear-gradient(135deg, #EC4899, #BE185D)'
                           : 'linear-gradient(135deg, var(--primary-brand), var(--primary-hover))',
@@ -539,16 +554,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     >
                       {bday.avatar}
                     </div>
-                    <div className="dashboard-item-info">
+                    <div className="dashboard-item-info" style={{ flex: 1, minWidth: 0 }}>
                       <div className="dashboard-item-title-row" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span className="dashboard-item-title">{bday.name}</span>
+                        <span className="dashboard-item-title" style={{ fontWeight: 700, fontSize: '0.95rem' }}>{bday.name}</span>
                         {bday.isToday && (
-                          <span className="dashboard-badge-important" style={{ background: 'rgba(236,72,153,0.2)', color: '#EC4899' }}>
+                          <span className="dashboard-badge-important" style={{ background: 'rgba(236,72,153,0.2)', color: '#EC4899', fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', fontWeight: 700 }}>
                             Hoje! 🎂
                           </span>
                         )}
                       </div>
-                      <div className="dashboard-item-desc">
+                      <div className="dashboard-item-desc" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
                         {bday.dateDisplay}
                       </div>
                     </div>
@@ -556,10 +571,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 ))}
               </div>
             ) : (
-              <div className="empty-state" style={{ padding: '20px 0' }}>
-                <div style={{ fontSize: '2rem', marginBottom: '8px' }}>🎂</div>
-                <p className="empty-desc" style={{ marginBottom: '4px' }}>Nenhum aniversariante encontrado.</p>
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+              <div className="empty-state" style={{ padding: '24px 0', textAlign: 'center' }}>
+                <div style={{ fontSize: '2.5rem', marginBottom: '12px' }}>🎂</div>
+                <p className="empty-desc" style={{ marginBottom: '4px', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Nenhum aniversariante encontrado.</p>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
                   Cadastre as datas de nascimento na aba Membros.
                 </span>
               </div>
@@ -570,3 +585,4 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     </div>
   );
 };
+

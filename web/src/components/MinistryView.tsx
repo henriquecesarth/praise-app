@@ -344,24 +344,27 @@ export function MinistryView({
   }
 
   return (
-    <div className="ministry-page">
-      {/* Page header with tab bar */}
-      <div className="ministry-tab-header">
+    <div className="ministry-page" style={{ paddingTop: 'max(16px, var(--safe-area-top))', paddingBottom: 'max(24px, var(--safe-area-bottom))' }}>
+      {/* Page header with tab bar (Touch Targets 44px) */}
+      <div className="ministry-tab-header" style={{ display: 'flex', gap: '6px', background: 'var(--surface-variant)', padding: '4px', borderRadius: '12px', border: '1px solid var(--border-color)', minHeight: '44px', marginBottom: '20px' }}>
         <button
           className={`ministry-tab-btn ${activeTab === 'info' ? 'active' : ''}`}
           onClick={() => setActiveTab('info')}
+          style={{ flex: 1, minHeight: '44px', padding: '10px 16px', borderRadius: '8px', fontSize: '0.9rem', fontWeight: 600, border: 'none', background: activeTab === 'info' ? 'var(--surface-color)' : 'transparent', color: activeTab === 'info' ? 'var(--primary-light)' : 'var(--text-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
         >
-          <Info size={16} />
-          Informações
+          <Info size={18} />
+          <span>Informações</span>
         </button>
         <button
           className={`ministry-tab-btn ${activeTab === 'members' ? 'active' : ''}`}
           onClick={() => setActiveTab('members')}
+          style={{ flex: 1, minHeight: '44px', padding: '10px 16px', borderRadius: '8px', fontSize: '0.9rem', fontWeight: 600, border: 'none', background: activeTab === 'members' ? 'var(--surface-color)' : 'transparent', color: activeTab === 'members' ? 'var(--primary-light)' : 'var(--text-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
         >
-          <Users size={16} />
-          Membros
+          <Users size={18} />
+          <span>Membros</span>
         </button>
       </div>
+
 
       {/* ── INFORMAÇÕES ── */}
       {activeTab === 'info' && (
@@ -581,23 +584,24 @@ export function MinistryView({
                 <button
                   ref={addBtnRef}
                   className="btn btn-primary"
-                  style={{ gap: '8px', padding: '10px 18px', fontSize: '0.85rem' }}
+                  style={{ gap: '8px', padding: '10px 18px', fontSize: '0.88rem', minHeight: '44px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
                   onClick={() => setShowAddOptions(!showAddOptions)}
                 >
-                  <Plus size={16} />
-                  Adicionar Membro
+                  <Plus size={18} />
+                  <span>Adicionar Membro</span>
                 </button>
                 {showAddOptions && (
-                  <div className="member-add-dropdown">
+                  <div className="member-add-dropdown" style={{ right: 0, top: '100%', minWidth: '180px', zIndex: 20 }}>
                     <button
                       className="member-add-option"
                       onClick={() => {
                         setShowAddOptions(false);
                         onGenerateInvite();
                       }}
+                      style={{ minHeight: '44px', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: '10px' }}
                     >
-                      <Copy size={15} />
-                      Criar Convite
+                      <Copy size={16} />
+                      <span>Criar Convite</span>
                     </button>
                     <button
                       className="member-add-option"
@@ -605,9 +609,10 @@ export function MinistryView({
                         setShowAddOptions(false);
                         setShowAddManualModal(true);
                       }}
+                      style={{ minHeight: '44px', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: '10px' }}
                     >
-                      <User size={15} />
-                      Adicionar Manualmente
+                      <User size={16} />
+                      <span>Adicionar Manualmente</span>
                     </button>
                   </div>
                 )}
@@ -616,39 +621,39 @@ export function MinistryView({
           </div>
 
           {loadingMembers ? (
-            <div className="ministry-members-list">
+            <div className="ministry-members-list" style={{ marginTop: '16px' }}>
               {[1, 2, 3].map((i) => (
-                <div key={i} className="shimmer member-card-shimmer" />
+                <div key={i} className="shimmer member-card-shimmer" style={{ height: '72px', borderRadius: '12px', marginBottom: '12px' }} />
               ))}
             </div>
           ) : members.length === 0 ? (
-            <div className="empty-state" style={{ minHeight: '260px' }}>
-              <div className="empty-icon">👥</div>
-              <div className="empty-title">Nenhum membro cadastrado</div>
-              <div className="empty-desc">Gere um código de convite ou adicione membros manualmente.</div>
+            <div className="empty-state" style={{ minHeight: '260px', marginTop: '16px', background: 'var(--surface-color)', borderRadius: 'var(--border-radius-lg)', padding: '32px', textAlign: 'center' }}>
+              <div className="empty-icon" style={{ fontSize: '3rem', marginBottom: '12px' }}>👥</div>
+              <div className="empty-title" style={{ fontWeight: 700, fontSize: '1.1rem' }}>Nenhum membro cadastrado</div>
+              <div className="empty-desc" style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginTop: '4px' }}>Gere um código de convite ou adicione membros manualmente.</div>
             </div>
           ) : (
-            <div className="ministry-members-list">
+            <div className="ministry-members-list" style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {members.map((member) => (
-                <div key={member.id} className="member-card">
-                  <div className="member-card-avatar">
+                <div key={member.id} className="member-card" style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 16px', borderRadius: '12px', background: 'var(--surface-color)', border: '1px solid var(--border-color)', minHeight: '64px' }}>
+                  <div className="member-card-avatar" style={{ width: '44px', height: '44px', borderRadius: '50%', background: 'var(--surface-variant)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)', flexShrink: 0 }}>
                     {getInitials(member.name)}
                   </div>
-                  <div className="member-card-info">
-                    <div className="member-card-name">
-                      {member.name}
+                  <div className="member-card-info" style={{ flex: 1, minWidth: 0 }}>
+                    <div className="member-card-name" style={{ fontWeight: 700, fontSize: '0.95rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span>{member.name}</span>
                       {member.isManual && (
-                        <span className="member-manual-badge">Manual</span>
+                        <span className="member-manual-badge" style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', background: 'var(--surface-variant)', color: 'var(--text-secondary)' }}>Manual</span>
                       )}
                     </div>
-                    <div className="member-card-email">
+                    <div className="member-card-email" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       <AtSign size={12} />
-                      {member.email || '—'}
+                      <span>{member.email || '—'}</span>
                     </div>
                     {member.birthDate && (
-                      <div className="member-card-birth">
+                      <div className="member-card-birth" style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
                         <CalendarDays size={12} />
-                        {formatDateBR(member.birthDate)}
+                        <span>{formatDateBR(member.birthDate)}</span>
                       </div>
                     )}
                     {(() => {
@@ -658,9 +663,9 @@ export function MinistryView({
                         .filter(Boolean);
                       if (memberFunctions.length === 0) return null;
                       return (
-                        <div className="member-card-functions-row">
+                        <div className="member-card-functions-row" style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
                           {memberFunctions.map((fn) => (
-                            <span key={fn!.id} className="member-function-tag">
+                            <span key={fn!.id} className="member-function-tag" style={{ fontSize: '0.75rem', padding: '2px 6px', borderRadius: '6px', background: 'var(--primary-surface)', color: 'var(--primary-light)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                               <span>{fn!.icon || '🎵'}</span>
                               <span>{fn!.name}</span>
                             </span>
@@ -669,8 +674,8 @@ export function MinistryView({
                       );
                     })()}
                   </div>
-                  <div className="member-card-right">
-                    <span className={`member-role-badge ${member.role}`}>
+                  <div className="member-card-right" style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+                    <span className={`member-role-badge ${member.role}`} style={{ fontSize: '0.78rem', fontWeight: 600, padding: '4px 8px', borderRadius: '6px' }}>
                       {member.role === 'admin' ? 'Admin' : 'Integrante'}
                     </span>
                     {userRole === 'admin' && (
@@ -679,24 +684,27 @@ export function MinistryView({
                           className="member-menu-btn"
                           onClick={() => setOpenMenuId(openMenuId === member.id ? null : member.id)}
                           title="Opções"
+                          style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}
                         >
-                          <MoreVertical size={16} />
+                          <MoreVertical size={18} />
                         </button>
                         {openMenuId === member.id && (
-                          <div className="member-menu-dropdown">
+                          <div className="member-menu-dropdown" style={{ right: 0, top: '100%', minWidth: '160px', zIndex: 20 }}>
                             <button
                               className="member-menu-item"
                               onClick={() => handleOpenEditMember(member)}
+                              style={{ minHeight: '44px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '8px' }}
                             >
-                              <Edit2 size={14} />
-                              Editar Membro
+                              <Edit2 size={16} />
+                              <span>Editar Membro</span>
                             </button>
                             <button
                               className="member-menu-item danger"
                               onClick={() => handleRemoveMember(member)}
+                              style={{ minHeight: '44px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '8px' }}
                             >
-                              <Trash2 size={14} />
-                              Remover
+                              <Trash2 size={16} />
+                              <span>Remover</span>
                             </button>
                           </div>
                         )}

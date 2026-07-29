@@ -197,64 +197,76 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast, onModalState
   );
 
   return (
-    <div className="teams-view">
-      {/* Header */}
-      <div className="teams-header">
-        <button className="teams-back-btn" onClick={onBack} title="Voltar" aria-label="Voltar">
-          <ChevronLeft size={20} />
+    <div className="teams-view" style={{ paddingBottom: 'max(24px, var(--safe-area-bottom))' }}>
+      {/* Header com Touch Targets 44x44px */}
+      <div className="teams-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+        <button
+          className="teams-back-btn"
+          onClick={onBack}
+          title="Voltar"
+          aria-label="Voltar"
+          style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px', padding: 0 }}
+        >
+          <ChevronLeft size={22} />
         </button>
-        <h2 className="teams-title">
-          <Users size={20} />
-          Equipes
+        <h2 className="teams-title" style={{ flex: 1, textAlign: 'center', margin: 0, fontSize: '1.1rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+          <Users size={20} style={{ color: 'var(--primary-light)' }} />
+          <span>Equipes</span>
         </h2>
         {isAdmin ? (
-          <button className="btn btn-primary teams-create-btn" onClick={openCreateModal} title="Nova Equipe" aria-label="Nova Equipe">
-            <Plus size={18} />
+          <button
+            className="btn btn-primary teams-create-btn"
+            onClick={openCreateModal}
+            title="Nova Equipe"
+            aria-label="Nova Equipe"
+            style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px', padding: 0 }}
+          >
+            <Plus size={20} />
           </button>
         ) : (
-          <div style={{ width: '40px', height: '40px', flexShrink: 0 }} />
+          <div style={{ width: '44px', height: '44px', flexShrink: 0 }} />
         )}
       </div>
 
       {/* Teams list */}
       {loading ? (
-        <div className="teams-list">
+        <div className="teams-list" style={{ marginTop: '16px' }}>
           {[1, 2, 3].map((i) => (
-            <div key={i} className="shimmer team-card-shimmer" />
+            <div key={i} className="shimmer team-card-shimmer" style={{ height: '72px', borderRadius: '12px', marginBottom: '12px' }} />
           ))}
         </div>
       ) : teams.length === 0 ? (
-        <div className="empty-state" style={{ minHeight: '300px' }}>
-          <div className="empty-icon">👥</div>
-          <div className="empty-title">Nenhuma equipe cadastrada</div>
-          <div className="empty-desc">
+        <div className="empty-state" style={{ minHeight: '300px', marginTop: '16px', background: 'var(--surface-color)', borderRadius: 'var(--border-radius-lg)', padding: '32px', textAlign: 'center' }}>
+          <div className="empty-icon" style={{ fontSize: '3rem', marginBottom: '16px' }}>👥</div>
+          <div className="empty-title" style={{ fontWeight: 700, fontSize: '1.15rem' }}>Nenhuma equipe cadastrada</div>
+          <div className="empty-desc" style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '6px', maxWidth: '340px', margin: '6px auto 0' }}>
             {isAdmin
               ? 'Crie equipes para organizar os músicos do ministério.'
               : 'Nenhuma equipe foi criada ainda.'}
           </div>
           {isAdmin && (
-            <button className="btn btn-primary" style={{ marginTop: '16px' }} onClick={openCreateModal}>
-              <Plus size={16} /> Criar primeira equipe
+            <button className="btn btn-primary" style={{ marginTop: '20px', minHeight: '44px', padding: '12px 24px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '8px' }} onClick={openCreateModal}>
+              <Plus size={18} /> <span>Criar primeira equipe</span>
             </button>
           )}
         </div>
       ) : (
-        <div className="teams-list">
+        <div className="teams-list" style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {teams.map((team) => {
             const extra = team.memberIds.length - 4;
             return (
-              <div key={team.id} className="team-card">
-                <div className="team-card-icon">
+              <div key={team.id} className="team-card" style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 16px', borderRadius: '12px', background: 'var(--surface-color)', border: '1px solid var(--border-color)', minHeight: '64px' }}>
+                <div className="team-card-icon" style={{ width: '44px', height: '44px', borderRadius: '10px', background: 'var(--primary-surface)', color: 'var(--primary-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   <Users size={22} />
                 </div>
-                <div className="team-card-info">
-                  <div className="team-card-name">{team.name}</div>
+                <div className="team-card-info" style={{ flex: 1, minWidth: 0 }}>
+                  <div className="team-card-name" style={{ fontWeight: 700, fontSize: '1rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{team.name}</div>
                   {team.description && (
-                    <div className="team-card-desc">{team.description}</div>
+                    <div className="team-card-desc" style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{team.description}</div>
                   )}
-                  <div className="team-card-members">
+                  <div className="team-card-members" style={{ marginTop: '6px' }}>
                     {team.memberIds.length === 0 ? (
-                      <span className="team-no-members">Sem integrantes</span>
+                      <span className="team-no-members" style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>Sem integrantes</span>
                     ) : (
                       <>
                         <div className="team-member-avatars">
@@ -272,7 +284,7 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast, onModalState
                             <div className="team-member-avatar more">+{extra}</div>
                           )}
                         </div>
-                        <span className="team-member-count">
+                        <span className="team-member-count" style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginLeft: '8px' }}>
                           {team.memberIds.length} integrante{team.memberIds.length !== 1 ? 's' : ''}
                         </span>
                       </>
@@ -286,24 +298,27 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast, onModalState
                       className="member-menu-btn"
                       onClick={() => setOpenMenuId(openMenuId === team.id ? null : team.id)}
                       title="Opções"
+                      style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}
                     >
-                      <MoreVertical size={16} />
+                      <MoreVertical size={18} />
                     </button>
                     {openMenuId === team.id && (
-                      <div className="member-menu-dropdown">
+                      <div className="member-menu-dropdown" style={{ right: 0, top: '100%', minWidth: '140px', zIndex: 20 }}>
                         <button
                           className="member-menu-item"
                           onClick={() => openEditModal(team)}
+                          style={{ minHeight: '44px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '8px' }}
                         >
-                          <Edit2 size={14} />
-                          Editar
+                          <Edit2 size={16} />
+                          <span>Editar</span>
                         </button>
                         <button
                           className="member-menu-item danger"
                           onClick={() => { setDeletingTeam(team); setOpenMenuId(null); }}
+                          style={{ minHeight: '44px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '8px' }}
                         >
-                          <Trash2 size={14} />
-                          Excluir
+                          <Trash2 size={16} />
+                          <span>Excluir</span>
                         </button>
                       </div>
                     )}
@@ -321,6 +336,7 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast, onModalState
           <div
             className="modal-content team-modal"
             onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '480px' }}
           >
             <div className="modal-header">
               <button
@@ -328,12 +344,12 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast, onModalState
                 className="action-icon-btn"
                 onClick={closeModal}
                 title="Voltar / Fechar"
-                style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}
               >
                 <ChevronLeft size={22} />
               </button>
 
-              <div className="modal-title" style={{ textAlign: 'center', flex: 1, margin: 0 }}>
+              <div className="modal-title" style={{ textAlign: 'center', flex: 1, margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>
                 {modalMode === 'create' ? 'Nova Equipe' : 'Editar Equipe'}
               </div>
 
@@ -342,22 +358,23 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast, onModalState
                 className="btn btn-primary"
                 onClick={(e) => handleSubmit(e)}
                 disabled={saving || !form.name.trim()}
-                style={{ padding: '6px 14px', fontSize: '0.85rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                style={{ minHeight: '44px', minWidth: '44px', padding: '8px 16px', fontSize: '0.9rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '6px', borderRadius: '10px' }}
               >
-                <Check size={16} /> {saving ? 'Salvando...' : 'Salvar'}
+                <Check size={18} /> <span>{saving ? 'Salvando...' : 'Salvar'}</span>
               </button>
             </div>
 
             <form onSubmit={handleSubmit} className="login-form">
               {/* Name */}
               <div className="form-group">
-                <label>Nome da Equipe *</label>
+                <label style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>Nome da Equipe *</label>
                 <input
                   type="text"
                   className="input-field"
                   placeholder="Ex: Banda de Louvor, Coral, Técnica de Som..."
                   value={form.name}
                   onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                  style={{ minHeight: '44px', fontSize: '0.95rem' }}
                   required
                   autoFocus
                 />
@@ -365,56 +382,63 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast, onModalState
 
               {/* Description */}
               <div className="form-group">
-                <label>Descrição <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>(opcional)</span></label>
+                <label style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>Descrição <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>(opcional)</span></label>
                 <textarea
                   className="textarea-field"
                   placeholder="Descreva o propósito ou responsabilidade desta equipe..."
                   value={form.description}
                   onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
                   rows={2}
+                  style={{ minHeight: '64px', fontSize: '0.95rem' }}
                 />
               </div>
 
               {/* Members selector */}
               <div className="form-group">
-                <label>
-                  <UserCheck size={14} style={{ display: 'inline', marginRight: '6px' }} />
-                  Integrantes
+                <label style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <UserCheck size={16} />
+                    Integrantes
+                  </span>
                   {form.memberIds.length > 0 && (
-                    <span className="team-selected-badge">{form.memberIds.length} selecionado{form.memberIds.length !== 1 ? 's' : ''}</span>
+                    <span className="team-selected-badge" style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '10px', background: 'var(--primary-surface)', color: 'var(--primary-light)', fontWeight: 700 }}>
+                      {form.memberIds.length} selecionado{form.memberIds.length !== 1 ? 's' : ''}
+                    </span>
                   )}
                 </label>
 
                 {members.length === 0 ? (
-                  <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '6px' }}>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '6px' }}>
                     Nenhum membro disponível. Adicione membros ao ministério primeiro.
                   </p>
                 ) : (
-                  <div className="team-member-picker">
+                  <div className="team-member-picker" style={{ border: '1px solid var(--border-color)', borderRadius: '12px', overflow: 'hidden' }}>
                     {/* Search within members */}
-                    <div className="team-member-search">
-                      <Search size={14} className="team-member-search-icon" />
+                    <div className="team-member-search" style={{ padding: '8px 12px', background: 'var(--surface-color)', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Search size={16} className="team-member-search-icon" style={{ color: 'var(--text-tertiary)' }} />
                       <input
                         type="text"
                         placeholder="Buscar membro..."
                         className="team-member-search-input"
                         value={memberSearch}
                         onChange={(e) => setMemberSearch(e.target.value)}
+                        style={{ minHeight: '36px', fontSize: '0.9rem', border: 'none', background: 'transparent', width: '100%', outline: 'none', color: 'var(--text-primary)' }}
                       />
                       {memberSearch && (
                         <button
                           type="button"
                           className="clear-search-btn"
                           onClick={() => setMemberSearch('')}
+                          style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
                         >
                           ✕
                         </button>
                       )}
                     </div>
 
-                    <div className="team-member-list">
+                    <div className="team-member-list" style={{ maxHeight: '220px', overflowY: 'auto' }}>
                       {filteredMembers.length === 0 ? (
-                        <div style={{ padding: '12px', fontSize: '0.82rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                        <div style={{ padding: '16px', fontSize: '0.85rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
                           Nenhum membro encontrado
                         </div>
                       ) : (
@@ -429,19 +453,19 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast, onModalState
                               type="button"
                               className={`team-member-row ${selected ? 'selected' : ''}`}
                               onClick={() => toggleMember(member.id)}
-                              style={{ minHeight: '48px', padding: '10px 14px' }}
+                              style={{ minHeight: '48px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '12px', width: '100%', textAlign: 'left', background: selected ? 'var(--primary-surface)' : 'transparent', border: 'none', borderBottom: '1px solid var(--border-color)', cursor: 'pointer' }}
                             >
-                              <div className="team-member-row-avatar">
+                              <div className="team-member-row-avatar" style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'var(--surface-variant)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)' }}>
                                 {getInitials(member.name)}
                               </div>
-                              <div className="team-member-row-info">
-                                <span className="team-member-row-name">{member.name}</span>
-                                <span className="team-member-row-role">
+                              <div className="team-member-row-info" style={{ flex: 1, minWidth: 0 }}>
+                                <div className="team-member-row-name" style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>{member.name}</div>
+                                <div className="team-member-row-role" style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
                                   {member.role === 'admin' ? 'Administrador' : 'Integrante'}
-                                </span>
+                                </div>
                               </div>
-                              <div className={`team-member-row-check ${selected ? 'checked' : ''}`}>
-                                {selected && <Check size={14} />}
+                              <div className={`team-member-row-check ${selected ? 'checked' : ''}`} style={{ width: '24px', height: '24px', borderRadius: '6px', border: `2px solid ${selected ? 'var(--primary-light)' : 'var(--border-color)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', background: selected ? 'var(--primary-light)' : 'transparent', color: selected ? '#000' : 'transparent' }}>
+                                {selected && <Check size={16} />}
                               </div>
                             </button>
                           );
@@ -452,11 +476,11 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast, onModalState
                 )}
               </div>
 
-              <div className="form-actions">
-                <button type="button" className="btn btn-secondary" onClick={closeModal}>
+              <div className="form-actions" style={{ marginTop: 'auto', paddingTop: '20px', display: 'flex', gap: '12px' }}>
+                <button type="button" className="btn btn-secondary" onClick={closeModal} style={{ minHeight: '44px', flex: 1, borderRadius: '10px' }}>
                   Cancelar
                 </button>
-                <button type="submit" className="btn btn-primary" disabled={saving || !form.name.trim()}>
+                <button type="submit" className="btn btn-primary" disabled={saving || !form.name.trim()} style={{ minHeight: '44px', flex: 1, borderRadius: '10px' }}>
                   {saving ? 'Salvando...' : modalMode === 'create' ? 'Criar Equipe' : 'Salvar Alterações'}
                 </button>
               </div>
@@ -470,24 +494,24 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast, onModalState
         <div className="modal-overlay" onClick={() => setDeletingTeam(null)}>
           <div className="modal-content" style={{ maxWidth: '400px' }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <div className="modal-title" style={{ color: 'var(--error-color)' }}>
-                <Trash2 size={18} />
+              <div className="modal-title" style={{ color: 'var(--error-color)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1.1rem', fontWeight: 700 }}>
+                <Trash2 size={20} />
                 Excluir Equipe
               </div>
-              <button className="action-icon-btn" onClick={() => setDeletingTeam(null)}>✕</button>
+              <button className="action-icon-btn" onClick={() => setDeletingTeam(null)} style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
             </div>
-            <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, margin: '12px 0 24px' }}>
+            <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, margin: '16px 0 24px', fontSize: '0.92rem' }}>
               Tem certeza que deseja excluir a equipe{' '}
               <strong style={{ color: 'var(--text-primary)' }}>"{deletingTeam.name}"</strong>?
               Esta ação não pode ser desfeita.
             </p>
-            <div className="form-actions">
-              <button className="btn btn-secondary" onClick={() => setDeletingTeam(null)}>
+            <div className="form-actions" style={{ display: 'flex', gap: '12px' }}>
+              <button className="btn btn-secondary" onClick={() => setDeletingTeam(null)} style={{ minHeight: '44px', flex: 1, borderRadius: '10px' }}>
                 Cancelar
               </button>
               <button
                 className="btn"
-                style={{ backgroundColor: 'var(--error-color)', color: '#fff' }}
+                style={{ backgroundColor: 'var(--error-color)', color: '#fff', minHeight: '44px', flex: 1, borderRadius: '10px' }}
                 onClick={handleDelete}
               >
                 Excluir Equipe
@@ -507,3 +531,4 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast, onModalState
     </div>
   );
 }
+

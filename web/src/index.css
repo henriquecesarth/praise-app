@@ -2165,6 +2165,12 @@ input:checked + .switch-slider:before {
   width: 100%;
   border-bottom: 1px solid var(--border-color);
   padding-bottom: 12px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.schedule-tabs-wrapper::-webkit-scrollbar {
+  display: none;
 }
 .schedule-tabs-wrapper.centered {
   justify-content: center;
@@ -2178,10 +2184,16 @@ input:checked + .switch-slider:before {
   padding: 4px;
   border-radius: var(--border-radius);
   border: 1px solid var(--border-color);
+  min-width: max-content;
 }
 
 .schedule-tab-btn {
-  padding: 8px 18px;
+  padding: 10px 18px;
+  min-height: 44px;
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: var(--border-radius-sm);
   border: none;
   background: transparent;
@@ -5674,7 +5686,7 @@ button,
     display: flex !important;
     align-items: center !important;
     justify-content: space-between !important;
-    padding: max(12px, var(--safe-area-top)) 16px 12px 16px !important;
+    padding: max(12px, env(safe-area-inset-top, 12px)) 16px 12px 16px !important;
     background: rgba(28, 34, 30, 0.94) !important;
     backdrop-filter: blur(14px) !important;
     -webkit-backdrop-filter: blur(14px) !important;
@@ -5703,7 +5715,26 @@ button,
   .schedule-form-content {
     flex: 1 !important;
     overflow-y: auto !important;
-    padding: 16px 16px max(24px, var(--safe-area-bottom)) 16px !important;
+    padding: 16px 16px max(24px, env(safe-area-inset-bottom, 24px)) 16px !important;
+  }
+
+  .schedule-subpage-header {
+    padding: max(12px, env(safe-area-inset-top, 12px)) 16px 12px 16px !important;
+  }
+
+  .schedule-subpage-footer {
+    padding: 12px 16px max(16px, calc(12px + env(safe-area-inset-bottom, 0px))) 16px !important;
+  }
+
+  .modal-content.schedule-submodal-content {
+    width: 100% !important;
+    max-width: 100% !important;
+    border-bottom-left-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+    border-top-left-radius: 20px !important;
+    border-top-right-radius: 20px !important;
+    max-height: 90vh !important;
+    padding-bottom: max(20px, env(safe-area-inset-bottom, 20px)) !important;
   }
 
   /* Full-Screen Team Creation/Edition Modal on Mobile */
@@ -5843,7 +5874,734 @@ button,
     overflow-y: auto !important;
     padding: 16px 16px max(24px, var(--safe-area-bottom)) 16px !important;
   }
+
+  /* Full-Screen Song Creation/Edition Modal on Mobile */
+  .modal-content.song-form-modal {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    background-color: var(--bg-main) !important;
+    z-index: 100 !important;
+    padding: 0 !important;
+  }
+
+  .modal-content.song-form-modal .modal-header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: max(12px, var(--safe-area-top)) 16px 12px 16px !important;
+    background: rgba(28, 34, 30, 0.94) !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+    border-bottom: 1px solid var(--border-color) !important;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 10 !important;
+    gap: 12px !important;
+  }
+
+  :root:not(.dark) .modal-content.song-form-modal .modal-header {
+    background: rgba(255, 255, 255, 0.94) !important;
+  }
+
+  .modal-content.song-form-modal form {
+    flex: 1 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow-y: auto !important;
+    min-height: 0 !important;
+  }
+
+  .modal-content.song-form-modal .song-form-body {
+    flex: 1 !important;
+    overflow-y: auto !important;
+    padding: 16px !important;
+  }
+
+  .modal-content.song-form-modal .song-form-grid {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 16px !important;
+  }
+
+  .modal-content.song-form-modal .form-group.row-2,
+  .modal-content.song-form-modal .form-group.row-3 {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+
+  .modal-content.song-form-modal .form-actions {
+    position: sticky !important;
+    bottom: 0 !important;
+    padding: 12px 16px max(16px, calc(12px + var(--safe-area-bottom))) 16px !important;
+    background: rgba(28, 34, 30, 0.94) !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+    border-top: 1px solid var(--border-color) !important;
+    margin-top: auto !important;
+    z-index: 10 !important;
+    display: flex !important;
+    gap: 12px !important;
+  }
+
+  .modal-content.song-form-modal .form-actions button {
+    min-height: 44px !important;
+    flex: 1 !important;
+  }
+
+  :root:not(.dark) .modal-content.song-form-modal .form-actions {
+    background: rgba(255, 255, 255, 0.94) !important;
+  }
 }
+
+/* ── Song Detail View PWA Responsiveness & Touch Targets ────── */
+.song-detail-container,
+.detail-view {
+  padding-top: max(12px, var(--safe-area-top));
+  padding-bottom: max(24px, var(--safe-area-bottom));
+  width: 100%;
+}
+
+.song-detail-container .link-tile,
+.detail-view .link-tile {
+  min-height: 48px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-radius: 10px;
+  transition: transform var(--transition-fast);
+}
+
+.song-detail-container .link-tile:active,
+.detail-view .link-tile:active {
+  transform: scale(0.98);
+}
+
+.song-detail-container .transposition-btn,
+.detail-view .transposition-btn {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 8px 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+/* ── Folder Detail View PWA Responsiveness & Touch Targets ────── */
+.folder-detail-container {
+  padding-top: max(12px, var(--safe-area-top));
+  padding-bottom: max(24px, var(--safe-area-bottom));
+  width: 100%;
+}
+
+@media (max-width: 767px) {
+  .folder-add-modal .modal-content {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    background-color: var(--bg-main) !important;
+    z-index: 100 !important;
+    padding: 0 !important;
+  }
+
+  .folder-add-modal .modal-header {
+    padding: max(12px, var(--safe-area-top)) 16px 12px 16px !important;
+    background: rgba(28, 34, 30, 0.94) !important;
+    backdrop-filter: blur(14px) !important;
+    border-bottom: 1px solid var(--border-color) !important;
+  }
+
+  .folder-add-modal .songs-list {
+    max-height: none !important;
+    flex: 1 !important;
+    overflow-y: auto !important;
+    padding: 16px !important;
+  }
+
+  .folder-add-modal .form-actions {
+    position: sticky !important;
+    bottom: 0 !important;
+    padding: 12px 16px max(16px, calc(12px + var(--safe-area-bottom))) 16px !important;
+    background: rgba(28, 34, 30, 0.94) !important;
+    backdrop-filter: blur(14px) !important;
+    border-top: 1px solid var(--border-color) !important;
+  }
+
+  /* Full-Screen Create Ministry Modal on Mobile */
+  .modal-content.create-ministry-modal {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    background-color: var(--bg-main) !important;
+    z-index: 100 !important;
+    padding: 0 !important;
+  }
+
+  .modal-content.create-ministry-modal .modal-header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: max(12px, var(--safe-area-top)) 16px 12px 16px !important;
+    background: rgba(28, 34, 30, 0.94) !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+    border-bottom: 1px solid var(--border-color) !important;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 10 !important;
+    gap: 12px !important;
+  }
+
+  :root:not(.dark) .modal-content.create-ministry-modal .modal-header {
+    background: rgba(255, 255, 255, 0.94) !important;
+  }
+
+  .modal-content.create-ministry-modal .login-form {
+    flex: 1 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow-y: auto !important;
+    padding: 20px 16px !important;
+  }
+
+  .modal-content.create-ministry-modal .form-actions {
+    position: sticky !important;
+    bottom: 0 !important;
+    padding: 12px 16px max(16px, calc(12px + var(--safe-area-bottom))) 16px !important;
+    background: rgba(28, 34, 30, 0.94) !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+    border-top: 1px solid var(--border-color) !important;
+    margin-top: auto !important;
+    z-index: 10 !important;
+    display: flex !important;
+    gap: 12px !important;
+  }
+
+  .modal-content.create-ministry-modal .form-actions button {
+    min-height: 44px !important;
+    flex: 1 !important;
+  }
+
+  :root:not(.dark) .modal-content.create-ministry-modal .form-actions {
+    background: rgba(255, 255, 255, 0.94) !important;
+  }
+
+  /* Full-Screen Invite Code Modal on Mobile */
+  .modal-content.invite-code-modal {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    background-color: var(--bg-main) !important;
+    z-index: 100 !important;
+    padding: 0 !important;
+  }
+
+  .modal-content.invite-code-modal .modal-header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: max(12px, var(--safe-area-top)) 16px 12px 16px !important;
+    background: rgba(28, 34, 30, 0.94) !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+    border-bottom: 1px solid var(--border-color) !important;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 10 !important;
+    gap: 12px !important;
+  }
+
+  :root:not(.dark) .modal-content.invite-code-modal .modal-header {
+    background: rgba(255, 255, 255, 0.94) !important;
+  }
+
+  .modal-content.invite-code-modal .invite-modal-body {
+    flex: 1 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow-y: auto !important;
+    padding: 20px 16px !important;
+  }
+
+  .modal-content.invite-code-modal .form-actions {
+    position: sticky !important;
+    bottom: 0 !important;
+    padding: 12px 16px max(16px, calc(12px + var(--safe-area-bottom))) 16px !important;
+    background: rgba(28, 34, 30, 0.94) !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+    border-top: 1px solid var(--border-color) !important;
+    margin-top: auto !important;
+    z-index: 10 !important;
+    display: flex !important;
+    gap: 12px !important;
+  }
+
+  .modal-content.invite-code-modal .form-actions button {
+    min-height: 44px !important;
+    flex: 1 !important;
+  }
+
+  :root:not(.dark) .modal-content.invite-code-modal .form-actions {
+    background: rgba(255, 255, 255, 0.94) !important;
+  }
+
+  /* Full-Screen Join Ministry Modal on Mobile */
+  .modal-content.join-ministry-modal {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    background-color: var(--bg-main) !important;
+    z-index: 100 !important;
+    padding: 0 !important;
+  }
+
+  .modal-content.join-ministry-modal .modal-header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: max(12px, var(--safe-area-top)) 16px 12px 16px !important;
+    background: rgba(28, 34, 30, 0.94) !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+    border-bottom: 1px solid var(--border-color) !important;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 10 !important;
+    gap: 12px !important;
+  }
+
+  :root:not(.dark) .modal-content.join-ministry-modal .modal-header {
+    background: rgba(255, 255, 255, 0.94) !important;
+  }
+
+  .modal-content.join-ministry-modal .login-form {
+    flex: 1 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow-y: auto !important;
+    padding: 20px 16px !important;
+  }
+
+  .modal-content.join-ministry-modal .form-actions {
+    position: sticky !important;
+    bottom: 0 !important;
+    padding: 12px 16px max(16px, calc(12px + var(--safe-area-bottom))) 16px !important;
+    background: rgba(28, 34, 30, 0.94) !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+    border-top: 1px solid var(--border-color) !important;
+    margin-top: auto !important;
+    z-index: 10 !important;
+    display: flex !important;
+    gap: 12px !important;
+  }
+
+  .modal-content.join-ministry-modal .form-actions button {
+    min-height: 44px !important;
+    flex: 1 !important;
+  }
+
+  :root:not(.dark) .modal-content.join-ministry-modal .form-actions {
+    background: rgba(255, 255, 255, 0.94) !important;
+  }
+
+  /* SmartChords Workspace PWA Responsiveness & Touch Targets */
+  .smart-chords-workspace {
+    padding-top: max(12px, var(--safe-area-top));
+    padding-bottom: max(24px, var(--safe-area-bottom));
+    width: 100%;
+  }
+
+  .smart-chords-workspace {
+    flex-direction: column !important;
+    height: auto !important;
+    min-height: 100% !important;
+    gap: 16px !important;
+  }
+
+  .smart-chords-sidebar {
+    width: 100% !important;
+    max-height: 250px !important;
+  }
+
+  .smart-chords-touch-btn {
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 1.1rem !important;
+  }
+
+  /* Full-Screen Template Event Modal on Mobile */
+  .modal-content.template-event-modal {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    background-color: var(--bg-main) !important;
+    z-index: 100 !important;
+    padding: 0 !important;
+  }
+
+  .modal-content.template-event-modal .modal-header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: max(12px, var(--safe-area-top)) 16px 12px 16px !important;
+    background: rgba(28, 34, 30, 0.94) !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+    border-bottom: 1px solid var(--border-color) !important;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 10 !important;
+    gap: 12px !important;
+  }
+
+  :root:not(.dark) .modal-content.template-event-modal .modal-header {
+    background: rgba(255, 255, 255, 0.94) !important;
+  }
+
+  .modal-content.template-event-modal .login-form {
+    flex: 1 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow-y: auto !important;
+    padding: 20px 16px !important;
+  }
+
+  .modal-content.template-event-modal .form-actions {
+    position: sticky !important;
+    bottom: 0 !important;
+    padding: 12px 16px max(16px, calc(12px + var(--safe-area-bottom))) 16px !important;
+    background: rgba(28, 34, 30, 0.94) !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+    border-top: 1px solid var(--border-color) !important;
+    margin-top: auto !important;
+    z-index: 10 !important;
+    display: flex !important;
+    gap: 12px !important;
+  }
+
+  .modal-content.template-event-modal .form-actions button {
+    min-height: 44px !important;
+    flex: 1 !important;
+  }
+
+  :root:not(.dark) .modal-content.template-event-modal .form-actions {
+    background: rgba(255, 255, 255, 0.94) !important;
+  }
+
+  /* Full-Screen Liturgy Creation Modal on Mobile */
+  .modal-content.liturgy-modal {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    background-color: var(--bg-main) !important;
+    z-index: 100 !important;
+    padding: 0 !important;
+  }
+
+  .modal-content.liturgy-modal .modal-header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: max(12px, var(--safe-area-top)) 16px 12px 16px !important;
+    background: rgba(18, 20, 26, 0.96) !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 10 !important;
+  }
+
+  .modal-content.liturgy-modal form {
+    flex: 1 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow-y: auto !important;
+    padding: 20px 16px !important;
+  }
+
+  .modal-content.liturgy-modal .form-actions {
+    position: sticky !important;
+    bottom: 0 !important;
+    padding: 12px 16px max(16px, calc(12px + var(--safe-area-bottom))) 16px !important;
+    background: rgba(18, 20, 26, 0.96) !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.1) !important;
+    margin-top: auto !important;
+    z-index: 10 !important;
+    display: flex !important;
+    gap: 12px !important;
+  }
+
+  .modal-content.liturgy-modal .form-actions button {
+    min-height: 44px !important;
+    flex: 1 !important;
+  }
+
+  /* Full-Screen Schedule Chat Modal on Mobile */
+  .modal-content.schedule-chat-modal {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    background-color: var(--bg-main) !important;
+    z-index: 100 !important;
+    padding: 0 !important;
+  }
+
+  .modal-content.schedule-chat-modal .modal-header-row {
+    padding: max(12px, var(--safe-area-top)) 16px 12px 16px !important;
+    background: rgba(28, 34, 30, 0.94) !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+    border-bottom: 1px solid var(--border-color) !important;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 10 !important;
+  }
+
+  .modal-content.schedule-chat-modal form {
+    position: sticky !important;
+    bottom: 0 !important;
+    padding: 12px 16px max(16px, calc(12px + var(--safe-area-bottom))) 16px !important;
+    background: rgba(28, 34, 30, 0.94) !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+    border-top: 1px solid var(--border-color) !important;
+    margin-top: auto !important;
+    z-index: 10 !important;
+  }
+
+  /* Full-Screen Classification Modal on Mobile */
+  .modal-content.classification-modal {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    background-color: var(--bg-main) !important;
+    z-index: 100 !important;
+    padding: 0 !important;
+  }
+
+  .modal-content.classification-modal .modal-header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: max(12px, var(--safe-area-top)) 16px 12px 16px !important;
+    background: rgba(28, 34, 30, 0.94) !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+    border-bottom: 1px solid var(--border-color) !important;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 10 !important;
+  }
+
+  .modal-content.classification-modal .login-form {
+    flex: 1 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow-y: auto !important;
+    padding: 20px 16px !important;
+  }
+
+  .modal-content.classification-modal .form-actions {
+    position: sticky !important;
+    bottom: 0 !important;
+    padding: 12px 16px max(16px, calc(12px + var(--safe-area-bottom))) 16px !important;
+    background: rgba(28, 34, 30, 0.94) !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+    border-top: 1px solid var(--border-color) !important;
+    margin-top: auto !important;
+    z-index: 10 !important;
+    display: flex !important;
+    gap: 12px !important;
+  }
+
+  .modal-content.classification-modal .form-actions button {
+    min-height: 44px !important;
+    flex: 1 !important;
+  }
+
+  /* Full-Screen Role Modal on Mobile */
+  .modal-content.role-modal {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    background-color: var(--bg-main) !important;
+    z-index: 100 !important;
+    padding: 0 !important;
+  }
+
+  .modal-content.role-modal .modal-header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: max(12px, var(--safe-area-top)) 16px 12px 16px !important;
+    background: rgba(28, 34, 30, 0.94) !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+    border-bottom: 1px solid var(--border-color) !important;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 10 !important;
+  }
+
+  .modal-content.role-modal .login-form {
+    flex: 1 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow-y: auto !important;
+    padding: 20px 16px !important;
+  }
+
+  .modal-content.role-modal .form-actions {
+    position: sticky !important;
+    bottom: 0 !important;
+    padding: 12px 16px max(16px, calc(12px + var(--safe-area-bottom))) 16px !important;
+    background: rgba(28, 34, 30, 0.94) !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+    border-top: 1px solid var(--border-color) !important;
+    margin-top: auto !important;
+    z-index: 10 !important;
+    display: flex !important;
+    gap: 12px !important;
+  }
+
+  .modal-content.role-modal .form-actions button {
+    min-height: 44px !important;
+    flex: 1 !important;
+  }
+}
+
+
+
+
+
+
+
+
+
+
 
 /* ── Standard App Header (Glassmorphism & Safe Areas) ────────── */
 .app-header {

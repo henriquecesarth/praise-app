@@ -308,58 +308,72 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
   // ── EDITOR VIEW ──
   if (viewMode === 'editor') {
     return (
-      <div className="templates-view animate-fade-in">
+      <div className="templates-view animate-fade-in" style={{ paddingBottom: 'max(24px, var(--safe-area-bottom))' }}>
         {/* Top Header */}
-        <div className="templates-header">
-          <button className="templates-back-btn" onClick={() => setViewMode('list')}>
-            <ChevronLeft size={18} />
-            Modelos de Roteiro
+        <div className="templates-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+          <button
+            type="button"
+            className="templates-back-btn"
+            onClick={() => setViewMode('list')}
+            title="Voltar para lista"
+            style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px', padding: 0 }}
+          >
+            <ChevronLeft size={22} />
           </button>
-          <h2 className="templates-title">
-            {editingTemplate ? 'Editar Modelo' : 'Novo Modelo de Roteiro'}
+
+          <h2 className="templates-title" style={{ flex: 1, textAlign: 'center', margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>
+            {editingTemplate ? 'Editar Modelo' : 'Novo Modelo'}
           </h2>
-          <button className="btn btn-primary" onClick={handleSaveTemplate} disabled={saving || !templateName.trim()}>
-            {saving ? 'Salvando...' : 'Salvar Modelo'}
+
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={handleSaveTemplate}
+            disabled={saving || !templateName.trim()}
+            style={{ minHeight: '44px', padding: '10px 18px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+          >
+            <span>{saving ? 'Salvando...' : 'Salvar'}</span>
           </button>
         </div>
 
         {/* Template Title Input */}
-        <div className="template-editor-card">
+        <div className="template-editor-card" style={{ marginTop: '16px' }}>
           <div className="form-group" style={{ marginBottom: 0 }}>
-            <label>Título do Modelo *</label>
+            <label style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>Título do Modelo *</label>
             <input
               type="text"
               className="input-field"
               placeholder="Ex: Culto de Domingo Noturno, Culto de Jovens..."
               value={templateName}
               onChange={(e) => setTemplateName(e.target.value)}
+              style={{ minHeight: '44px', fontSize: '0.95rem' }}
               autoFocus
               required
             />
           </div>
         </div>
 
-        {/* Actions bar: + Música & + Evento */}
-        <div className="template-actions-bar">
-          <button type="button" className="btn-add-item song" onClick={handleAddSong}>
+        {/* Actions bar: + Música & + Evento com Touch Targets de 44px */}
+        <div className="template-actions-bar" style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
+          <button type="button" className="btn-add-item song" onClick={handleAddSong} style={{ flex: 1, minHeight: '44px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
             <Music size={18} />
-            + Música
+            <span>+ Música</span>
           </button>
-          <button type="button" className="btn-add-item event" onClick={openAddEventModal}>
+          <button type="button" className="btn-add-item event" onClick={openAddEventModal} style={{ flex: 1, minHeight: '44px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
             <Plus size={18} />
-            + Evento
+            <span>+ Evento</span>
           </button>
         </div>
 
         {/* Sequence List */}
         {items.length === 0 ? (
-          <div className="empty-state" style={{ minHeight: '220px', background: 'var(--surface-color)', borderRadius: 'var(--border-radius-lg)' }}>
-            <div className="empty-icon">📜</div>
-            <div className="empty-title">Nenhum item no roteiro</div>
-            <div className="empty-desc">Clique em "+ Música" ou "+ Evento" para começar a montar a ordem do culto.</div>
+          <div className="empty-state" style={{ minHeight: '220px', marginTop: '16px', background: 'var(--surface-color)', borderRadius: 'var(--border-radius-lg)', padding: '24px', textAlign: 'center' }}>
+            <div className="empty-icon" style={{ fontSize: '2.5rem', marginBottom: '12px' }}>📜</div>
+            <div className="empty-title" style={{ fontWeight: 700, fontSize: '1.1rem' }}>Nenhum item no roteiro</div>
+            <div className="empty-desc" style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginTop: '4px' }}>Clique em "+ Música" ou "+ Evento" para começar a montar a ordem do culto.</div>
           </div>
         ) : (
-          <div className="template-items-list">
+          <div className="template-items-list" style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {items.map((item, idx) => (
               <div
                 key={item.id}
@@ -368,43 +382,45 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
                 onDragStart={() => handleDragStart(idx)}
                 onDragOver={(e) => handleDragOver(e, idx)}
                 onDragEnd={handleDragEnd}
+                style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 12px', borderRadius: '12px', background: 'var(--surface-color)', border: '1px solid var(--border-color)' }}
               >
-                <div className="template-item-drag-handle" title="Arraste para reordenar">
-                  <GripVertical size={18} />
+                <div className="template-item-drag-handle" title="Arraste para reordenar" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'grab', touchAction: 'none', flexShrink: 0 }}>
+                  <GripVertical size={20} />
                 </div>
 
-                <div className={`template-item-icon ${item.type}`}>
+                <div className={`template-item-icon ${item.type}`} style={{ width: '36px', height: '36px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   {item.type === 'song' ? <Music size={18} /> : item.icon || '📢'}
                 </div>
 
-                <div className="template-item-content">
-                  <div className="template-item-title">
-                    {item.title}
+                <div className="template-item-content" style={{ flex: 1, minWidth: 0 }}>
+                  <div className="template-item-title" style={{ fontWeight: 600, fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.title}</span>
                     {item.type === 'song' && (
-                      <span className="template-song-badge">Música</span>
+                      <span className="template-song-badge" style={{ fontSize: '0.72rem', padding: '2px 6px', borderRadius: '4px', background: 'var(--primary-surface)', color: 'var(--primary-light)', fontWeight: 700 }}>Música</span>
                     )}
                   </div>
                   {item.description && (
-                    <div className="template-item-desc">{item.description}</div>
+                    <div className="template-item-desc" style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.description}</div>
                   )}
                   {item.durationSeconds && (
-                    <div className="template-item-duration">
+                    <div className="template-item-duration" style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
                       <Clock size={12} />
-                      {formatDuration(item.durationSeconds)}
+                      <span>{formatDuration(item.durationSeconds)}</span>
                     </div>
                   )}
                 </div>
 
-                {/* Move & Action Controls */}
-                <div className="template-item-controls">
+                {/* Move & Action Controls com Touch Targets 44x44px */}
+                <div className="template-item-controls" style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
                   {item.type === 'event' && (
                     <button
                       type="button"
                       className="item-icon-btn"
                       onClick={() => openEditEventModal(idx)}
                       title="Editar evento"
+                      style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px' }}
                     >
-                      <Edit2 size={14} />
+                      <Edit2 size={16} />
                     </button>
                   )}
 
@@ -414,8 +430,9 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
                     onClick={() => moveItem(idx, 'up')}
                     disabled={idx === 0}
                     title="Mover para cima"
+                    style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', opacity: idx === 0 ? 0.3 : 1 }}
                   >
-                    <ArrowUp size={14} />
+                    <ArrowUp size={16} />
                   </button>
 
                   <button
@@ -424,8 +441,9 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
                     onClick={() => moveItem(idx, 'down')}
                     disabled={idx === items.length - 1}
                     title="Mover para baixo"
+                    style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', opacity: idx === items.length - 1 ? 0.3 : 1 }}
                   >
-                    <ArrowDown size={14} />
+                    <ArrowDown size={16} />
                   </button>
 
                   <button
@@ -433,8 +451,9 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
                     className="item-icon-btn danger"
                     onClick={() => removeItem(idx)}
                     title="Remover item"
+                    style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', color: 'var(--error-color)' }}
                   >
-                    <Trash2 size={14} />
+                    <Trash2 size={16} />
                   </button>
                 </div>
               </div>
@@ -445,27 +464,28 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
         {/* ── MODAL: Create / Edit Event ── */}
         {showEventModal && (
           <div className="modal-overlay" onClick={() => setShowEventModal(false)}>
-            <div className="modal-content template-event-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-content template-event-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px' }}>
               <div className="modal-header">
-                <div className="modal-title">
+                <div className="modal-title" style={{ fontSize: '1.1rem', fontWeight: 700 }}>
                   {editingEventIndex !== null ? 'Editar Evento' : 'Novo Evento no Roteiro'}
                 </div>
-                <button className="action-icon-btn" onClick={() => setShowEventModal(false)}>
+                <button className="action-icon-btn" onClick={() => setShowEventModal(false)} title="Fechar" style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   ✕
                 </button>
               </div>
 
               <form onSubmit={handleSaveEvent} className="login-form">
-                {/* Event Icon Picker */}
+                {/* Event Icon Picker com Touch Targets de 44x44px */}
                 <div className="form-group">
-                  <label>Ícone do Evento</label>
-                  <div className="icon-picker-grid">
+                  <label style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>Ícone do Evento</label>
+                  <div className="icon-picker-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(44px, 1fr))', gap: '8px' }}>
                     {EVENT_PRESET_ICONS.map((icon) => (
                       <button
                         key={icon}
                         type="button"
                         className={`icon-picker-btn ${eventForm.icon === icon ? 'selected' : ''}`}
                         onClick={() => setEventForm((f) => ({ ...f, icon }))}
+                        style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', fontSize: '1.2rem', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px', cursor: 'pointer' }}
                       >
                         {icon}
                       </button>
@@ -475,13 +495,14 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
 
                 {/* Event Title */}
                 <div className="form-group">
-                  <label>Título do Evento *</label>
+                  <label style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>Título do Evento *</label>
                   <input
                     type="text"
                     className="input-field"
                     placeholder="Ex: Oração Inicial, Avisos, Oferta, Pregação..."
                     value={eventForm.title}
                     onChange={(e) => setEventForm((f) => ({ ...f, title: e.target.value }))}
+                    style={{ minHeight: '44px', fontSize: '0.95rem' }}
                     required
                     autoFocus
                   />
@@ -489,7 +510,7 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
 
                 {/* Event Description */}
                 <div className="form-group">
-                  <label>
+                  <label style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>
                     Descrição <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>(opcional)</span>
                   </label>
                   <input
@@ -498,14 +519,15 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
                     placeholder="Detalhes ou instrução para a equipe..."
                     value={eventForm.description}
                     onChange={(e) => setEventForm((f) => ({ ...f, description: e.target.value }))}
+                    style={{ minHeight: '44px', fontSize: '0.95rem' }}
                   />
                 </div>
 
                 {/* Event Duration Inputs (Hours, Minutes, Seconds) */}
                 <div className="form-group">
-                  <label>Duração Prevista</label>
-                  <div className="duration-inputs-row">
-                    <div className="duration-field">
+                  <label style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>Duração Prevista</label>
+                  <div className="duration-inputs-row" style={{ display: 'flex', gap: '12px' }}>
+                    <div className="duration-field" style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <input
                         type="number"
                         min="0"
@@ -513,10 +535,11 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
                         className="input-field duration-num"
                         value={eventForm.hours}
                         onChange={(e) => setEventForm((f) => ({ ...f, hours: e.target.value }))}
+                        style={{ minHeight: '44px', fontSize: '1rem', textAlign: 'center', flex: 1 }}
                       />
-                      <span>horas</span>
+                      <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>h</span>
                     </div>
-                    <div className="duration-field">
+                    <div className="duration-field" style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <input
                         type="number"
                         min="0"
@@ -524,10 +547,11 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
                         className="input-field duration-num"
                         value={eventForm.minutes}
                         onChange={(e) => setEventForm((f) => ({ ...f, minutes: e.target.value }))}
+                        style={{ minHeight: '44px', fontSize: '1rem', textAlign: 'center', flex: 1 }}
                       />
-                      <span>min</span>
+                      <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>min</span>
                     </div>
-                    <div className="duration-field">
+                    <div className="duration-field" style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <input
                         type="number"
                         min="0"
@@ -535,17 +559,18 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
                         className="input-field duration-num"
                         value={eventForm.seconds}
                         onChange={(e) => setEventForm((f) => ({ ...f, seconds: e.target.value }))}
+                        style={{ minHeight: '44px', fontSize: '1rem', textAlign: 'center', flex: 1 }}
                       />
-                      <span>seg</span>
+                      <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>seg</span>
                     </div>
                   </div>
                 </div>
 
-                <div className="form-actions">
-                  <button type="button" className="btn btn-secondary" onClick={() => setShowEventModal(false)}>
+                <div className="form-actions" style={{ marginTop: 'auto', paddingTop: '20px', display: 'flex', gap: '12px' }}>
+                  <button type="button" className="btn btn-secondary" onClick={() => setShowEventModal(false)} style={{ minHeight: '44px', flex: 1, borderRadius: '10px' }}>
                     Cancelar
                   </button>
-                  <button type="submit" className="btn btn-primary" disabled={!eventForm.title.trim()}>
+                  <button type="submit" className="btn btn-primary" disabled={!eventForm.title.trim()} style={{ minHeight: '44px', flex: 1, borderRadius: '10px' }}>
                     {editingEventIndex !== null ? 'Salvar Evento' : 'Adicionar Evento'}
                   </button>
                 </div>
@@ -559,61 +584,73 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
 
   // ── LIST VIEW ──
   return (
-    <div className="templates-view">
-      {/* Header */}
-      <div className="templates-header">
-        <button className="templates-back-btn" onClick={onBack} title="Voltar" aria-label="Voltar">
-          <ChevronLeft size={20} />
+    <div className="templates-view" style={{ paddingBottom: 'max(24px, var(--safe-area-bottom))' }}>
+      {/* Header com Touch Targets 44x44px */}
+      <div className="templates-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+        <button
+          className="templates-back-btn"
+          onClick={onBack}
+          title="Voltar"
+          aria-label="Voltar"
+          style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px', padding: 0 }}
+        >
+          <ChevronLeft size={22} />
         </button>
-        <h2 className="templates-title">
-          <Layers size={20} />
-          Modelos de Roteiro
+        <h2 className="templates-title" style={{ flex: 1, textAlign: 'center', margin: 0, fontSize: '1.1rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+          <Layers size={20} style={{ color: 'var(--primary-light)' }} />
+          <span>Modelos de Roteiro</span>
         </h2>
         {isAdmin ? (
-          <button className="btn btn-primary templates-create-btn" onClick={openCreateEditor} title="Novo Modelo" aria-label="Novo Modelo">
-            <Plus size={18} />
+          <button
+            className="btn btn-primary templates-create-btn"
+            onClick={openCreateEditor}
+            title="Novo Modelo"
+            aria-label="Novo Modelo"
+            style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px', padding: 0 }}
+          >
+            <Plus size={20} />
           </button>
         ) : (
-          <div style={{ width: '40px', height: '40px', flexShrink: 0 }} />
+          <div style={{ width: '44px', height: '44px', flexShrink: 0 }} />
         )}
       </div>
 
       {/* Templates List */}
       {loading ? (
-        <div className="templates-list">
+        <div className="templates-list" style={{ marginTop: '16px' }}>
           {[1, 2, 3].map((i) => (
-            <div key={i} className="shimmer template-card-shimmer" />
+            <div key={i} className="shimmer template-card-shimmer" style={{ height: '72px', borderRadius: '12px', marginBottom: '12px' }} />
           ))}
         </div>
       ) : templates.length === 0 ? (
-        <div className="empty-state" style={{ minHeight: '300px' }}>
-          <div className="empty-icon">📜</div>
-          <div className="empty-title">Nenhum modelo cadastrado</div>
-          <div className="empty-desc">
+        <div className="empty-state" style={{ minHeight: '300px', marginTop: '16px', background: 'var(--surface-color)', borderRadius: 'var(--border-radius-lg)', padding: '32px', textAlign: 'center' }}>
+          <div className="empty-icon" style={{ fontSize: '3rem', marginBottom: '16px' }}>📜</div>
+          <div className="empty-title" style={{ fontWeight: 700, fontSize: '1.15rem' }}>Nenhum modelo cadastrado</div>
+          <div className="empty-desc" style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '6px', maxWidth: '340px', margin: '6px auto 0' }}>
             {isAdmin
               ? 'Crie modelos de roteiro para padronizar a estrutura das suas escalas.'
               : 'Nenhum modelo foi criado ainda.'}
           </div>
           {isAdmin && (
-            <button className="btn btn-primary" style={{ marginTop: '16px' }} onClick={openCreateEditor}>
-              <Plus size={16} /> Criar primeiro modelo
+            <button className="btn btn-primary" style={{ marginTop: '20px', minHeight: '44px', padding: '12px 24px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '8px' }} onClick={openCreateEditor}>
+              <Plus size={18} /> <span>Criar primeiro modelo</span>
             </button>
           )}
         </div>
       ) : (
-        <div className="templates-list">
+        <div className="templates-list" style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {templates.map((template) => {
             const songsCount = template.items.filter((it) => it.type === 'song').length;
             const eventsCount = template.items.filter((it) => it.type === 'event').length;
 
             return (
-              <div key={template.id} className="template-card">
-                <div className="template-card-icon">
+              <div key={template.id} className="template-card" style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 16px', borderRadius: '12px', background: 'var(--surface-color)', border: '1px solid var(--border-color)', minHeight: '64px' }}>
+                <div className="template-card-icon" style={{ width: '44px', height: '44px', borderRadius: '10px', background: 'var(--primary-surface)', color: 'var(--primary-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   <Layers size={22} />
                 </div>
-                <div className="template-card-info">
-                  <div className="template-card-name">{template.name}</div>
-                  <div className="template-card-meta">
+                <div className="template-card-info" style={{ flex: 1, minWidth: 0 }}>
+                  <div className="template-card-name" style={{ fontWeight: 700, fontSize: '1rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{template.name}</div>
+                  <div className="template-card-meta" style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                     <span>{songsCount} música{songsCount !== 1 ? 's' : ''}</span>
                     <span className="dot">•</span>
                     <span>{eventsCount} evento{eventsCount !== 1 ? 's' : ''}</span>
@@ -628,14 +665,15 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
                       className="member-menu-btn"
                       onClick={() => setOpenMenuId(openMenuId === template.id ? null : template.id)}
                       title="Opções"
+                      style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}
                     >
-                      <MoreVertical size={16} />
+                      <MoreVertical size={18} />
                     </button>
                     {openMenuId === template.id && (
-                      <div className="member-menu-dropdown">
-                        <button className="member-menu-item" onClick={() => openEditEditor(template)}>
-                          <Edit2 size={14} />
-                          Editar
+                      <div className="member-menu-dropdown" style={{ right: 0, top: '100%', minWidth: '140px', zIndex: 20 }}>
+                        <button className="member-menu-item" onClick={() => openEditEditor(template)} style={{ minHeight: '44px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <Edit2 size={16} />
+                          <span>Editar</span>
                         </button>
                         <button
                           className="member-menu-item danger"
@@ -643,9 +681,10 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
                             setDeletingTemplate(template);
                             setOpenMenuId(null);
                           }}
+                          style={{ minHeight: '44px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '8px' }}
                         >
-                          <Trash2 size={14} />
-                          Excluir
+                          <Trash2 size={16} />
+                          <span>Excluir</span>
                         </button>
                       </div>
                     )}
@@ -662,26 +701,26 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
         <div className="modal-overlay" onClick={() => setDeletingTemplate(null)}>
           <div className="modal-content" style={{ maxWidth: '400px' }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <div className="modal-title" style={{ color: 'var(--error-color)' }}>
-                <Trash2 size={18} />
+              <div className="modal-title" style={{ color: 'var(--error-color)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1.1rem', fontWeight: 700 }}>
+                <Trash2 size={20} />
                 Excluir Modelo
               </div>
-              <button className="action-icon-btn" onClick={() => setDeletingTemplate(null)}>
+              <button className="action-icon-btn" onClick={() => setDeletingTemplate(null)} style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 ✕
               </button>
             </div>
-            <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, margin: '12px 0 24px' }}>
+            <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, margin: '16px 0 24px', fontSize: '0.92rem' }}>
               Tem certeza que deseja excluir o modelo{' '}
               <strong style={{ color: 'var(--text-primary)' }}>"{deletingTemplate.name}"</strong>?
               Esta ação não pode ser desfeita.
             </p>
-            <div className="form-actions">
-              <button className="btn btn-secondary" onClick={() => setDeletingTemplate(null)}>
+            <div className="form-actions" style={{ display: 'flex', gap: '12px' }}>
+              <button className="btn btn-secondary" onClick={() => setDeletingTemplate(null)} style={{ minHeight: '44px', flex: 1, borderRadius: '10px' }}>
                 Cancelar
               </button>
               <button
                 className="btn"
-                style={{ backgroundColor: 'var(--error-color)', color: '#fff' }}
+                style={{ backgroundColor: 'var(--error-color)', color: '#fff', minHeight: '44px', flex: 1, borderRadius: '10px' }}
                 onClick={handleDeleteTemplate}
               >
                 Excluir Modelo
@@ -698,3 +737,4 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
     </div>
   );
 }
+

@@ -51,15 +51,19 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
         };
       });
 
+      // Avoid UTC offset shifting dates backwards
+      const isoDate = new Date(`${date}T12:00:00`).toISOString();
+
       await api.createLiturgy(groupId, {
-        title,
-        date: new Date(date).toISOString(),
-        description,
+        title: title.trim(),
+        date: isoDate,
+        description: description.trim(),
         items,
       });
 
       setIsModalOpen(false);
       setTitle('');
+      setDescription('');
       setSelectedSongIds([]);
       loadLiturgies();
     } catch (err: any) {
@@ -77,15 +81,21 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
     }
   };
 
+  const formatLiturgyDate = (dateStr: string) => {
+    if (!dateStr) return '';
+    const dateObj = new Date(dateStr.includes('T') ? dateStr : `${dateStr}T12:00:00`);
+    return dateObj.toLocaleDateString('pt-BR');
+  };
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-6" style={{ paddingBottom: 'max(24px, var(--safe-area-bottom))' }}>
+      <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+          <h2 className="text-xl md:text-2xl font-bold text-white flex items-center gap-2">
             <BookOpen className="w-6 h-6 text-purple-400" />
-            Liturgias & Ordem dos Cultos
+            <span>Liturgias & Ordem dos Cultos</span>
           </h2>
-          <p className="text-sm text-gray-400">
+          <p className="text-xs md:text-sm text-gray-400 mt-0.5">
             Escalas e programação musical dos serviços da igreja
           </p>
         </div>
@@ -93,10 +103,11 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
         {userRole === 'admin' && (
           <button
             onClick={() => setIsModalOpen(true)}
-            className="px-4 py-2.5 bg-purple-600 hover:bg-purple-500 text-white font-medium rounded-xl text-sm transition-colors flex items-center gap-2 shadow-lg shadow-purple-600/30"
+            className="px-4 py-2.5 bg-purple-600 hover:bg-purple-500 text-white font-medium rounded-xl text-sm transition-colors flex items-center gap-2 shadow-lg shadow-purple-600/30 shrink-0"
+            style={{ minHeight: '44px', minWidth: '44px' }}
           >
             <Plus className="w-4 h-4" />
-            Nova Liturgia
+            <span className="hidden sm:inline">Nova Liturgia</span>
           </button>
         )}
       </div>
@@ -104,10 +115,10 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
       {loading ? (
         <div className="py-12 text-center text-gray-400">Carregando liturgias...</div>
       ) : liturgies.length === 0 ? (
-        <div className="bg-[#12141A] border border-gray-800 rounded-2xl p-12 text-center">
+        <div className="bg-[#12141A] border border-gray-800 rounded-2xl p-8 md:p-12 text-center">
           <Calendar className="w-12 h-12 text-gray-600 mx-auto mb-3" />
           <h3 className="text-lg font-semibold text-white">Nenhuma liturgia cadastrada</h3>
-          <p className="text-sm text-gray-400 mt-1">
+          <p className="text-sm text-gray-400 mt-1 max-w-sm mx-auto">
             {userRole === 'admin'
               ? 'Crie a programação dos próximos cultos e selecione o repertório.'
               : 'Nenhuma ordem de culto disponibilizada pelo líder até o momento.'}
@@ -120,11 +131,11 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
               key={liturgy.id}
               className="bg-[#12141A] border border-gray-800 hover:border-gray-700 rounded-2xl p-5 transition-all space-y-4 shadow-xl"
             >
-              <div className="flex items-start justify-between">
+              <div className="flex items-start justify-between gap-3">
                 <div>
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-purple-500/10 border border-purple-500/20 text-purple-400 rounded-lg text-xs font-medium mb-2">
                     <Calendar className="w-3.5 h-3.5" />
-                    {new Date(liturgy.date).toLocaleDateString('pt-BR')}
+                    {formatLiturgyDate(liturgy.date)}
                   </span>
                   <h3 className="text-lg font-bold text-white">{liturgy.title}</h3>
                   {liturgy.description && (
@@ -135,9 +146,11 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
                 {userRole === 'admin' && (
                   <button
                     onClick={() => handleDeleteLiturgy(liturgy.id)}
-                    className="p-2 text-gray-500 hover:text-red-400 transition-colors"
+                    className="p-2 text-gray-500 hover:text-red-400 transition-colors flex items-center justify-center rounded-lg"
+                    style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px' }}
+                    title="Excluir liturgia"
                   >
-                    <Trash2 className="w-4 h-4" />
+                    <Trash2 className="w-5 h-5" />
                   </button>
                 )}
               </div>
@@ -151,9 +164,10 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
                     {liturgy.items.map((item, idx) => (
                       <div
                         key={item.id || idx}
-                        className="flex items-center gap-2.5 p-2 bg-black/30 border border-gray-800/50 rounded-xl text-sm"
+                        className="flex items-center gap-2.5 p-2.5 bg-black/30 border border-gray-800/50 rounded-xl text-sm"
+                        style={{ minHeight: '44px' }}
                       >
-                        <span className="w-5 h-5 flex items-center justify-center bg-gray-800 text-gray-400 text-xs font-bold rounded-lg shrink-0">
+                        <span className="w-6 h-6 flex items-center justify-center bg-gray-800 text-gray-400 text-xs font-bold rounded-lg shrink-0">
                           {idx + 1}
                         </span>
                         <Music className="w-4 h-4 text-purple-400 shrink-0" />
@@ -168,23 +182,26 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
         </div>
       )}
 
-      {/* Modal Criar Liturgia */}
+      {/* Modal Criar Liturgia (Adaptado para Full-Screen View no Mobile) */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-          <div className="bg-[#12141A] border border-gray-800 rounded-2xl p-6 w-full max-w-lg shadow-2xl relative">
-            <button
-              onClick={() => setIsModalOpen(false)}
-              className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
+        <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
+          <div className="modal-content liturgy-modal bg-[#12141A] border border-gray-800 rounded-2xl shadow-2xl relative" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '520px' }}>
+            <div className="modal-header flex items-center justify-between p-4 border-b border-gray-800">
+              <h3 className="text-lg font-bold text-white">Nova Liturgia / Ordem do Culto</h3>
+              <button
+                onClick={() => setIsModalOpen(false)}
+                className="text-gray-400 hover:text-white transition-colors flex items-center justify-center rounded-lg"
+                style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px' }}
+                title="Fechar"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
-            <h3 className="text-xl font-bold text-white mb-4">Nova Liturgia / Ordem do Culto</h3>
-
-            <form onSubmit={handleCreateLiturgy} className="space-y-4">
+            <form onSubmit={handleCreateLiturgy} className="p-5 space-y-4">
               <div>
-                <label className="block text-xs uppercase tracking-wider font-semibold text-gray-400 mb-1">
-                  Título do Culto/Evento
+                <label className="block text-xs uppercase tracking-wider font-semibold text-gray-400 mb-1.5">
+                  Título do Culto/Evento *
                 </label>
                 <input
                   type="text"
@@ -192,25 +209,28 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
                   onChange={(e) => setTitle(e.target.value)}
                   placeholder="Ex: Culto de Celebração - Manhã"
                   className="w-full px-4 py-2.5 bg-black/40 border border-gray-700 rounded-xl text-white text-sm focus:outline-none focus:border-purple-500"
+                  style={{ minHeight: '44px' }}
                   required
+                  autoFocus
                 />
               </div>
 
               <div>
-                <label className="block text-xs uppercase tracking-wider font-semibold text-gray-400 mb-1">
-                  Data
+                <label className="block text-xs uppercase tracking-wider font-semibold text-gray-400 mb-1.5">
+                  Data *
                 </label>
                 <input
                   type="date"
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
                   className="w-full px-4 py-2.5 bg-black/40 border border-gray-700 rounded-xl text-white text-sm focus:outline-none focus:border-purple-500"
+                  style={{ minHeight: '44px' }}
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-xs uppercase tracking-wider font-semibold text-gray-400 mb-1">
+                <label className="block text-xs uppercase tracking-wider font-semibold text-gray-400 mb-1.5">
                   Observações / Descrição
                 </label>
                 <textarea
@@ -218,50 +238,59 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Instruções adicionais para a equipe..."
                   className="w-full px-4 py-2.5 bg-black/40 border border-gray-700 rounded-xl text-white text-sm focus:outline-none focus:border-purple-500 h-20 resize-none"
+                  style={{ minHeight: '64px' }}
                 />
               </div>
 
               <div>
-                <label className="block text-xs uppercase tracking-wider font-semibold text-gray-400 mb-1">
+                <label className="block text-xs uppercase tracking-wider font-semibold text-gray-400 mb-1.5">
                   Selecionar Músicas do Repertório
                 </label>
-                <div className="max-h-40 overflow-y-auto space-y-1 p-2 bg-black/40 border border-gray-800 rounded-xl">
-                  {allSongs.map((song) => {
-                    const isSelected = selectedSongIds.includes(song.id);
-                    return (
-                      <button
-                        key={song.id}
-                        type="button"
-                        onClick={() => {
-                          if (isSelected) {
-                            setSelectedSongIds(selectedSongIds.filter((id) => id !== song.id));
-                          } else {
-                            setSelectedSongIds([...selectedSongIds, song.id]);
-                          }
-                        }}
-                        className={`w-full flex items-center justify-between p-2 rounded-lg text-left text-xs transition-colors ${
-                          isSelected ? 'bg-purple-600/30 text-purple-200 border border-purple-500/40' : 'text-gray-300 hover:bg-gray-800/50'
-                        }`}
-                      >
-                        <span className="font-medium">{song.title}</span>
-                        <span className="text-gray-500">{song.artistName}</span>
-                      </button>
-                    );
-                  })}
+                <div className="max-h-48 overflow-y-auto space-y-1.5 p-2 bg-black/40 border border-gray-800 rounded-xl">
+                  {allSongs.length === 0 ? (
+                    <p className="text-xs text-gray-500 text-center py-4">Nenhuma música cadastrada no repertório</p>
+                  ) : (
+                    allSongs.map((song) => {
+                      const isSelected = selectedSongIds.includes(song.id);
+                      return (
+                        <button
+                          key={song.id}
+                          type="button"
+                          onClick={() => {
+                            if (isSelected) {
+                              setSelectedSongIds(selectedSongIds.filter((id) => id !== song.id));
+                            } else {
+                              setSelectedSongIds([...selectedSongIds, song.id]);
+                            }
+                          }}
+                          className={`w-full flex items-center justify-between p-2.5 rounded-lg text-left text-xs transition-colors ${
+                            isSelected ? 'bg-purple-600/30 text-purple-200 border border-purple-500/40' : 'text-gray-300 hover:bg-gray-800/50'
+                          }`}
+                          style={{ minHeight: '44px' }}
+                        >
+                          <span className="font-medium truncate">{song.title}</span>
+                          <span className="text-gray-500 truncate ml-2">{song.artistName}</span>
+                        </button>
+                      );
+                    })
+                  )}
                 </div>
               </div>
 
-              <div className="flex justify-end gap-3 pt-3">
+              <div className="form-actions flex justify-end gap-3 pt-3">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 text-sm text-gray-400 hover:text-white"
+                  className="px-4 py-2.5 text-sm text-gray-400 hover:text-white rounded-xl"
+                  style={{ minHeight: '44px' }}
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-purple-600 hover:bg-purple-500 text-white font-semibold text-sm rounded-xl transition-colors"
+                  disabled={!title.trim()}
+                  className="px-5 py-2.5 bg-purple-600 hover:bg-purple-500 text-white font-semibold text-sm rounded-xl transition-colors disabled:opacity-50"
+                  style={{ minHeight: '44px' }}
                 >
                   Salvar Liturgia
                 </button>
@@ -273,3 +302,4 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
     </div>
   );
 };
+

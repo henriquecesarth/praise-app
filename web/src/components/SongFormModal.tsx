@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ChevronLeft, X, Check } from 'lucide-react';
 import { Song, Artist, Classification } from '../types';
 
 interface SongFormModalProps {
@@ -147,235 +148,276 @@ export const SongFormModal: React.FC<SongFormModalProps> = ({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content large" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <div className="modal-title">{song ? 'Editar Música' : 'Nova Música'}</div>
-          <button className="action-icon-btn" onClick={onClose} style={{ fontSize: '1.25rem' }}>✕</button>
+      <div className="modal-content large song-form-modal" onClick={(e) => e.stopPropagation()}>
+        {/* Header Responsivo em 3 Seções com Touch Targets 44x44px */}
+        <div className="modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+          <button 
+            type="button"
+            className="action-icon-btn" 
+            onClick={onClose} 
+            title="Fechar"
+            style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}
+          >
+            <ChevronLeft size={22} className="mobile-only" />
+            <X size={20} className="desktop-only" />
+          </button>
+          
+          <div className="modal-title" style={{ flex: 1, textAlign: 'center', margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>
+            {song ? 'Editar Música' : 'Nova Música'}
+          </div>
+
+          <button
+            type="button"
+            className="action-icon-btn"
+            onClick={handleSubmit}
+            disabled={loading}
+            title="Salvar Música"
+            style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px', color: 'var(--primary-light)' }}
+          >
+            <Check size={20} />
+          </button>
         </div>
 
-        {error && (
-          <div style={{ color: 'var(--error-color)', backgroundColor: 'rgba(239, 68, 68, 0.1)', padding: '12px', borderRadius: 'var(--border-radius-sm)', marginBottom: '16px', fontSize: '0.9rem', fontWeight: 500 }}>
-            {error}
-          </div>
-        )}
-
         <form onSubmit={handleSubmit}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-            {/* Left Column: Basic Info */}
-            <div>
-              <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--primary-light)', marginBottom: '12px', borderBottom: '1px solid var(--divider-color)', paddingBottom: '4px' }}>
-                Informações Básicas
+          <div className="song-form-body">
+            {error && (
+              <div style={{ color: 'var(--error-color)', backgroundColor: 'rgba(239, 68, 68, 0.1)', padding: '12px', borderRadius: 'var(--border-radius-sm)', marginBottom: '16px', fontSize: '0.9rem', fontWeight: 500 }}>
+                {error}
               </div>
-              
-              <div className="form-group">
-                <label>Título *</label>
-                <input
-                  type="text"
-                  className="input-field"
-                  placeholder="Ex: Aclame ao SENHOR"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  required
-                />
-              </div>
+            )}
 
-              <div className="form-group row-2">
-                <div>
-                  <label>Artista</label>
-                  <select
-                    className="select-field"
-                    value={artistId}
-                    onChange={(e) => setArtistId(e.target.value)}
-                  >
-                    <option value="">Nenhum</option>
-                    {artists.map((a) => (
-                      <option key={a.id} value={a.id}>{a.name}</option>
-                    ))}
-                  </select>
+            <div className="song-form-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '20px' }}>
+              {/* Left Column: Basic Info */}
+              <div>
+                <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--primary-light)', marginBottom: '12px', borderBottom: '1px solid var(--divider-color)', paddingBottom: '4px' }}>
+                  Informações Básicas
                 </div>
-                <div>
-                  <label>Classificação</label>
-                  <select
-                    className="select-field"
-                    value={classificationId}
-                    onChange={(e) => setClassificationId(e.target.value)}
-                  >
-                    <option value="">Nenhuma</option>
-                    {classifications.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="form-group row-3">
-                <div>
-                  <label>Tom Original</label>
-                  <select
-                    className="select-field"
-                    value={originalKey}
-                    onChange={(e) => setOriginalKey(e.target.value)}
-                  >
-                    <option value="">Nenhum</option>
-                    {MUSICAL_KEYS.map((key) => (
-                      <option key={key} value={key}>{key}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label>BPM</label>
-                  <input
-                    type="number"
-                    className="input-field"
-                    placeholder="Ex: 120"
-                    value={bpm}
-                    onChange={(e) => setBpm(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label>Duração (MM:SS)</label>
+                
+                <div className="form-group">
+                  <label>Título *</label>
                   <input
                     type="text"
                     className="input-field"
-                    placeholder="Ex: 04:30"
-                    value={duration}
-                    onChange={(e) => setDuration(e.target.value)}
+                    placeholder="Ex: Aclame ao SENHOR"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    style={{ minHeight: '44px' }}
+                    required
+                  />
+                </div>
+
+                <div className="form-group row-2">
+                  <div>
+                    <label>Artista</label>
+                    <select
+                      className="select-field"
+                      value={artistId}
+                      onChange={(e) => setArtistId(e.target.value)}
+                      style={{ minHeight: '44px' }}
+                    >
+                      <option value="">Nenhum</option>
+                      {artists.map((a) => (
+                        <option key={a.id} value={a.id}>{a.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label>Classificação</label>
+                    <select
+                      className="select-field"
+                      value={classificationId}
+                      onChange={(e) => setClassificationId(e.target.value)}
+                      style={{ minHeight: '44px' }}
+                    >
+                      <option value="">Nenhuma</option>
+                      {classifications.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="form-group row-3">
+                  <div>
+                    <label>Tom Original</label>
+                    <select
+                      className="select-field"
+                      value={originalKey}
+                      onChange={(e) => setOriginalKey(e.target.value)}
+                      style={{ minHeight: '44px' }}
+                    >
+                      <option value="">Nenhum</option>
+                      {MUSICAL_KEYS.map((key) => (
+                        <option key={key} value={key}>{key}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label>BPM</label>
+                    <input
+                      type="number"
+                      className="input-field"
+                      placeholder="Ex: 120"
+                      value={bpm}
+                      onChange={(e) => setBpm(e.target.value)}
+                      style={{ minHeight: '44px' }}
+                    />
+                  </div>
+                  <div>
+                    <label>Duração (MM:SS)</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      placeholder="Ex: 04:30"
+                      value={duration}
+                      onChange={(e) => setDuration(e.target.value)}
+                      style={{ minHeight: '44px' }}
+                    />
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label>Letra</label>
+                  <textarea
+                    className="textarea-field"
+                    placeholder="Cole a letra da música aqui..."
+                    value={lyrics}
+                    onChange={(e) => setLyrics(e.target.value)}
+                    style={{ minHeight: '140px' }}
                   />
                 </div>
               </div>
 
-              <div className="form-group">
-                <label>Letra</label>
-                <textarea
-                  className="textarea-field"
-                  placeholder="Cole a letra da música aqui..."
-                  value={lyrics}
-                  onChange={(e) => setLyrics(e.target.value)}
-                  style={{ minHeight: '140px' }}
-                />
-              </div>
-            </div>
-
-            {/* Right Column: Links and Streaming */}
-            <div>
-              <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--primary-light)', marginBottom: '12px', borderBottom: '1px solid var(--divider-color)', paddingBottom: '4px' }}>
-                Links & Arquivos
-              </div>
-
-              <div className="form-group">
-                <label>URL da Cifra (Cifra Club ou Google Drive)</label>
-                <input
-                  type="text"
-                  className="input-field"
-                  placeholder="https://..."
-                  value={chordSheetUrl}
-                  onChange={(e) => setChordSheetUrl(e.target.value)}
-                />
-              </div>
-
-              <div className="form-group row-2">
-                <div>
-                  <label>URL do YouTube (Vídeo)</label>
-                  <input
-                    type="text"
-                    className="input-field"
-                    placeholder="https://..."
-                    value={youtubeUrl}
-                    onChange={(e) => setYoutubeUrl(e.target.value)}
-                  />
+              {/* Right Column: Links and Streaming */}
+              <div>
+                <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--primary-light)', marginBottom: '12px', borderBottom: '1px solid var(--divider-color)', paddingBottom: '4px' }}>
+                  Links & Arquivos
                 </div>
-                <div>
-                  <label>URL do Áudio (MP3 / Drive)</label>
+
+                <div className="form-group">
+                  <label>URL da Cifra (Cifra Club ou Google Drive)</label>
                   <input
                     type="text"
                     className="input-field"
                     placeholder="https://..."
-                    value={audioUrl}
-                    onChange={(e) => setAudioUrl(e.target.value)}
+                    value={chordSheetUrl}
+                    onChange={(e) => setChordSheetUrl(e.target.value)}
+                    style={{ minHeight: '44px' }}
                   />
                 </div>
-              </div>
 
-              <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--primary-light)', marginTop: '20px', marginBottom: '12px', borderBottom: '1px solid var(--divider-color)', paddingBottom: '4px' }}>
-                Plataformas de Streaming
-              </div>
+                <div className="form-group row-2">
+                  <div>
+                    <label>URL do YouTube (Vídeo)</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      placeholder="https://..."
+                      value={youtubeUrl}
+                      onChange={(e) => setYoutubeUrl(e.target.value)}
+                      style={{ minHeight: '44px' }}
+                    />
+                  </div>
+                  <div>
+                    <label>URL do Áudio (MP3 / Drive)</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      placeholder="https://..."
+                      value={audioUrl}
+                      onChange={(e) => setAudioUrl(e.target.value)}
+                      style={{ minHeight: '44px' }}
+                    />
+                  </div>
+                </div>
 
-              <div className="form-group row-2">
-                <div>
-                  <label>Spotify</label>
-                  <input
-                    type="text"
-                    className="input-field"
-                    placeholder="https://open.spotify..."
-                    value={spotify}
-                    onChange={(e) => setSpotify(e.target.value)}
-                  />
+                <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--primary-light)', marginTop: '20px', marginBottom: '12px', borderBottom: '1px solid var(--divider-color)', paddingBottom: '4px' }}>
+                  Plataformas de Streaming
                 </div>
-                <div>
-                  <label>Deezer</label>
-                  <input
-                    type="text"
-                    className="input-field"
-                    placeholder="https://deezer..."
-                    value={deezer}
-                    onChange={(e) => setDeezer(e.target.value)}
-                  />
-                </div>
-              </div>
 
-              <div className="form-group row-2">
-                <div>
-                  <label>Apple Music</label>
-                  <input
-                    type="text"
-                    className="input-field"
-                    placeholder="https://music.apple..."
-                    value={appleMusic}
-                    onChange={(e) => setAppleMusic(e.target.value)}
-                  />
+                <div className="form-group row-2">
+                  <div>
+                    <label>Spotify</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      placeholder="https://open.spotify..."
+                      value={spotify}
+                      onChange={(e) => setSpotify(e.target.value)}
+                      style={{ minHeight: '44px' }}
+                    />
+                  </div>
+                  <div>
+                    <label>Deezer</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      placeholder="https://deezer..."
+                      value={deezer}
+                      onChange={(e) => setDeezer(e.target.value)}
+                      style={{ minHeight: '44px' }}
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label>Amazon Music</label>
-                  <input
-                    type="text"
-                    className="input-field"
-                    placeholder="https://music.amazon..."
-                    value={amazonMusic}
-                    onChange={(e) => setAmazonMusic(e.target.value)}
-                  />
-                </div>
-              </div>
 
-              <div className="form-group row-2">
-                <div>
-                  <label>YouTube Music</label>
-                  <input
-                    type="text"
-                    className="input-field"
-                    placeholder="https://music.youtube..."
-                    value={youtubeMusic}
-                    onChange={(e) => setYoutubeMusic(e.target.value)}
-                  />
+                <div className="form-group row-2">
+                  <div>
+                    <label>Apple Music</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      placeholder="https://music.apple..."
+                      value={appleMusic}
+                      onChange={(e) => setAppleMusic(e.target.value)}
+                      style={{ minHeight: '44px' }}
+                    />
+                  </div>
+                  <div>
+                    <label>Amazon Music</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      placeholder="https://music.amazon..."
+                      value={amazonMusic}
+                      onChange={(e) => setAmazonMusic(e.target.value)}
+                      style={{ minHeight: '44px' }}
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label>URL do Letras.mus.br</label>
-                  <input
-                    type="text"
-                    className="input-field"
-                    placeholder="https://www.letras..."
-                    value={letras}
-                    onChange={(e) => setLetras(e.target.value)}
-                  />
+
+                <div className="form-group row-2">
+                  <div>
+                    <label>YouTube Music</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      placeholder="https://music.youtube..."
+                      value={youtubeMusic}
+                      onChange={(e) => setYoutubeMusic(e.target.value)}
+                      style={{ minHeight: '44px' }}
+                    />
+                  </div>
+                  <div>
+                    <label>URL do Letras.mus.br</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      placeholder="https://www.letras..."
+                      value={letras}
+                      onChange={(e) => setLetras(e.target.value)}
+                      style={{ minHeight: '44px' }}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="form-actions">
-            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading}>
+          <div className="form-actions" style={{ padding: '12px 16px', display: 'flex', gap: '12px' }}>
+            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading} style={{ minHeight: '44px', flex: 1 }}>
               Cancelar
             </button>
-            <button type="submit" className="btn btn-primary" disabled={loading}>
+            <button type="submit" className="btn btn-primary" disabled={loading} style={{ minHeight: '44px', flex: 1 }}>
               {loading ? 'Salvando...' : 'Salvar música'}
             </button>
           </div>
@@ -384,3 +426,4 @@ export const SongFormModal: React.FC<SongFormModalProps> = ({
     </div>
   );
 };
+

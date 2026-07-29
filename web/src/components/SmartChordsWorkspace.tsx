@@ -400,7 +400,7 @@ export const SmartChordsWorkspace: React.FC = () => {
   ];
 
   return (
-    <div className="features-container" style={{ display: 'flex', gap: '20px', height: 'calc(100vh - 120px)', color: 'var(--text-primary)' }}>
+    <div className="features-container smart-chords-workspace" style={{ display: 'flex', gap: '20px', minHeight: 'calc(100vh - 120px)', color: 'var(--text-primary)' }}>
       {/* ─── Stylesheet for Print Mode (Guarantees no blank pages) ─── */}
       <style>{`
         @media print {
@@ -461,10 +461,10 @@ export const SmartChordsWorkspace: React.FC = () => {
       `}</style>
 
       {/* ─── Web Sidebar: Saved SmartChords List ─── */}
-      <div className="glass-panel no-print" style={{ width: '320px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px', flexShrink: 0 }}>
+      <div className="glass-panel smart-chords-sidebar no-print" style={{ width: '320px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px', flexShrink: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Minhas Cifras</h2>
-          <button className="btn btn-primary" style={{ padding: '8px 12px', fontSize: '0.85rem' }} onClick={handleCreateNew}>
+          <button className="btn btn-primary" style={{ minHeight: '44px', padding: '8px 16px', fontSize: '0.9rem', borderRadius: '8px', display: 'inline-flex', alignItems: 'center' }} onClick={handleCreateNew}>
             + Nova
           </button>
         </div>
@@ -475,6 +475,7 @@ export const SmartChordsWorkspace: React.FC = () => {
           placeholder="Buscar cifra..."
           value={search}
           onChange={handleSearchChange}
+          style={{ minHeight: '44px', fontSize: '0.95rem' }}
         />
 
         <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -490,19 +491,23 @@ export const SmartChordsWorkspace: React.FC = () => {
                   key={sc.id}
                   onClick={() => handleSelectChord(sc)}
                   style={{
-                    padding: '12px',
+                    padding: '12px 14px',
+                    minHeight: '44px',
                     borderRadius: '10px',
                     cursor: 'pointer',
                     backgroundColor: selectedChord?.id === sc.id ? 'var(--primary-surface)' : 'rgba(255, 255, 255, 0.03)',
                     border: `1px solid ${selectedChord?.id === sc.id ? 'var(--primary)' : 'transparent'}`,
                     transition: 'all 0.2s',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'center'
                   }}
                   className="hover-scale"
                 >
                   <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{sc.title}</div>
-                  <div style={{ fontSize: '0.75rem', opacity: 0.7, marginTop: '2px', display: 'flex', justifyContent: 'space-between' }}>
+                  <div style={{ fontSize: '0.78rem', opacity: 0.7, marginTop: '2px', display: 'flex', justifyContent: 'space-between' }}>
                     <span>{artistName}</span>
-                    <span style={{ color: 'var(--primary-light)' }}>{sc.originalKey}</span>
+                    <span style={{ color: 'var(--primary-light)', fontWeight: 600 }}>{sc.originalKey}</span>
                   </div>
                 </div>
               );
@@ -514,7 +519,7 @@ export const SmartChordsWorkspace: React.FC = () => {
       {/* ─── Web Workspace Panel ─── */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         {!selectedChord ? (
-          <div className="glass-panel no-print" style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', opacity: 0.6 }}>
+          <div className="glass-panel no-print" style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', opacity: 0.6, padding: '24px' }}>
             <div style={{ textAlign: 'center' }}>
               <span style={{ fontSize: '3rem' }}>🎵</span>
               <h3 style={{ marginTop: '16px', fontWeight: 600 }}>Cifrador Autônomo SmartChord</h3>
@@ -524,9 +529,9 @@ export const SmartChordsWorkspace: React.FC = () => {
             </div>
           </div>
         ) : (
-          <div style={{ display: 'flex', gap: '20px', flex: 1, minHeight: 0 }}>
+          <div style={{ display: 'flex', gap: '20px', flex: 1, minHeight: 0, flexWrap: 'wrap' }}>
             {/* Editor form (left workspace column) */}
-            <div className="glass-panel no-print" style={{ flex: 1, padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto' }}>
+            <div className="glass-panel no-print" style={{ flex: 1, minWidth: '300px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto' }}>
               <h3 style={{ fontSize: '1.1rem', fontWeight: 600 }}>Editar Informações</h3>
               
               <div className="form-group">
@@ -534,6 +539,7 @@ export const SmartChordsWorkspace: React.FC = () => {
                 <input
                   type="text"
                   className="form-control"
+                  style={{ minHeight: '44px', fontSize: '0.95rem' }}
                   value={title}
                   onChange={e => handleTitleChange(e.target.value)}
                   placeholder="Ex: Hosana"
@@ -545,6 +551,7 @@ export const SmartChordsWorkspace: React.FC = () => {
                   <label className="form-label">Artista (Lista)</label>
                   <select
                     className="form-control"
+                    style={{ minHeight: '44px', fontSize: '0.95rem' }}
                     value={artistId}
                     onChange={e => setArtistId(e.target.value)}
                   >
@@ -559,6 +566,7 @@ export const SmartChordsWorkspace: React.FC = () => {
                   <label className="form-label">Tom Original *</label>
                   <select
                     className="form-control"
+                    style={{ minHeight: '44px', fontSize: '0.95rem' }}
                     value={originalKey}
                     onChange={e => setOriginalKey(e.target.value)}
                   >
@@ -570,10 +578,11 @@ export const SmartChordsWorkspace: React.FC = () => {
               </div>
 
               {/* Vínculo com Música do Repertório */}
-              <div className="form-group" style={{ borderTop: '1px solid var(--border)', paddingTop: '12px' }}>
+              <div className="form-group" style={{ borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
                 <label className="form-label">Vincular a uma Música do Repertório</label>
                 <select
                   className="form-control"
+                  style={{ minHeight: '44px', fontSize: '0.95rem' }}
                   value={songId}
                   onChange={e => setSongId(e.target.value)}
                 >
@@ -586,12 +595,13 @@ export const SmartChordsWorkspace: React.FC = () => {
 
                 {/* If "new" option is selected, render input text and checkbox */}
                 {songId === 'new' && (
-                  <div style={{ marginTop: '12px', padding: '12px', borderRadius: '8px', border: '1px solid var(--border)', backgroundColor: 'rgba(255, 255, 255, 0.02)' }}>
+                  <div style={{ marginTop: '12px', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-color)', backgroundColor: 'rgba(255, 255, 255, 0.02)' }}>
                     <div className="form-group">
                       <label className="form-label">Nome da Nova Música no Repertório *</label>
                       <input
                         type="text"
                         className="form-control"
+                        style={{ minHeight: '44px', fontSize: '0.95rem' }}
                         value={newSongTitle}
                         onChange={e => {
                           setNewSongTitle(e.target.value);
@@ -607,9 +617,9 @@ export const SmartChordsWorkspace: React.FC = () => {
                         id="auto-create-checkbox"
                         checked={autoCreateSong}
                         onChange={e => setAutoCreateSong(e.target.checked)}
-                        style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                        style={{ width: '20px', height: '20px', cursor: 'pointer' }}
                       />
-                      <label htmlFor="auto-create-checkbox" className="form-label" style={{ margin: 0, cursor: 'pointer', fontSize: '0.85rem' }}>
+                      <label htmlFor="auto-create-checkbox" className="form-label" style={{ margin: 0, cursor: 'pointer', fontSize: '0.88rem' }}>
                         Criar automaticamente no Repertório ao salvar a cifra
                       </label>
                     </div>
@@ -621,7 +631,7 @@ export const SmartChordsWorkspace: React.FC = () => {
                 <label className="form-label">Conteúdo da Cifra (Formato Bracket) *</label>
                 <textarea
                   className="form-control"
-                  style={{ flex: 1, fontFamily: 'monospace', fontSize: '0.85rem', resize: 'none', minHeight: '200px' }}
+                  style={{ flex: 1, fontFamily: 'monospace', fontSize: '0.9rem', resize: 'none', minHeight: '200px', lineHeight: 1.5 }}
                   value={content}
                   onChange={e => setContent(e.target.value)}
                   placeholder="Ex: [C]Amanhã [G]será outro [Am]dia..."
@@ -630,30 +640,30 @@ export const SmartChordsWorkspace: React.FC = () => {
 
               <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '8px' }}>
                 {selectedChord.id && (
-                  <button className="btn btn-danger" style={{ padding: '10px 16px' }} onClick={handleDelete}>
+                  <button className="btn btn-danger" style={{ minHeight: '44px', padding: '10px 18px', borderRadius: '10px' }} onClick={handleDelete}>
                     Excluir
                   </button>
                 )}
-                <button className="btn btn-success" style={{ padding: '10px 16px' }} onClick={handleSave}>
+                <button className="btn btn-success" style={{ minHeight: '44px', padding: '10px 18px', borderRadius: '10px' }} onClick={handleSave}>
                   {selectedChord.id ? 'Salvar Cifra' : 'Criar Cifra'}
                 </button>
               </div>
             </div>
 
             {/* Preview & Transposition (printable right workspace column) */}
-            <div className="glass-panel printable-area-container" style={{ flex: 1.2, padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto' }}>
-              <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)', paddingBottom: '12px' }}>
+            <div className="glass-panel printable-area-container" style={{ flex: 1.2, minWidth: '300px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto' }}>
+              <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
                 <h3 style={{ fontSize: '1.1rem', fontWeight: 600 }}>Visualização Reativa</h3>
 
                 {/* Print button */}
-                <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', fontSize: '0.85rem' }} onClick={handlePrint}>
+                <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '6px', minHeight: '44px', padding: '8px 16px', fontSize: '0.9rem', borderRadius: '10px' }} onClick={handlePrint}>
                   🖨️ Exportar PDF
                 </button>
               </div>
 
-              {/* Pitch shifter & Font Size control panel */}
-              <div className="no-print" style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderRadius: '10px', backgroundColor: 'rgba(255, 255, 255, 0.03)', border: '1px solid var(--border)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              {/* Pitch shifter & Font Size control panel com Touch Targets 44x44px */}
+              <div className="no-print" style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderRadius: '12px', backgroundColor: 'rgba(255, 255, 255, 0.03)', border: '1px solid var(--border-color)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <span style={{ fontSize: '0.85rem', opacity: 0.7 }}>Tom Original:</span>
                     <strong style={{ color: 'var(--primary-light)', fontSize: '0.95rem' }}>{originalKey}</strong>
@@ -661,18 +671,18 @@ export const SmartChordsWorkspace: React.FC = () => {
                     <strong style={{ color: 'var(--secondary-light)', fontSize: '0.95rem' }}>{currentKeyTransposed}</strong>
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '8px' }}>
-                    <button className="btn btn-secondary" style={{ width: '24px', height: '24px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '0.85rem' }} onClick={() => setSemitones(prev => prev - 1)}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <button className="btn btn-secondary smart-chords-touch-btn" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '1.1rem', fontWeight: 700, borderRadius: '8px' }} onClick={() => setSemitones(prev => prev - 1)}>
                       -
                     </button>
-                    <span style={{ fontSize: '0.85rem', width: '28px', textAlign: 'center' }}>
+                    <span style={{ fontSize: '0.95rem', width: '32px', textAlign: 'center', fontWeight: 700 }}>
                       {semitones > 0 ? `+${semitones}` : semitones}
                     </span>
-                    <button className="btn btn-secondary" style={{ width: '24px', height: '24px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '0.85rem' }} onClick={() => setSemitones(prev => prev + 1)}>
+                    <button className="btn btn-secondary smart-chords-touch-btn" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '1.1rem', fontWeight: 700, borderRadius: '8px' }} onClick={() => setSemitones(prev => prev + 1)}>
                       +
                     </button>
                     {semitones !== 0 && (
-                      <button className="btn btn-link" style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', padding: '0 4px' }} onClick={() => setSemitones(0)}>
+                      <button className="btn btn-link" style={{ minHeight: '44px', fontSize: '0.8rem', color: 'var(--text-secondary)', padding: '0 8px' }} onClick={() => setSemitones(0)}>
                         Reset
                       </button>
                     )}
@@ -681,17 +691,18 @@ export const SmartChordsWorkspace: React.FC = () => {
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{ fontSize: '0.85rem', opacity: 0.7 }}>Tamanho da Fonte:</span>
-                  <button className="btn btn-secondary" style={{ width: '24px', height: '24px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '0.85rem' }} onClick={() => setPrintFontSize(prev => Math.max(10, prev - 1))}>
+                  <button className="btn btn-secondary smart-chords-touch-btn" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '1.1rem', fontWeight: 700, borderRadius: '8px' }} onClick={() => setPrintFontSize(prev => Math.max(10, prev - 1))}>
                     -
                   </button>
-                  <span style={{ fontSize: '0.85rem', width: '36px', textAlign: 'center', fontWeight: 'bold' }}>
+                  <span style={{ fontSize: '0.9rem', width: '40px', textAlign: 'center', fontWeight: 'bold' }}>
                     {printFontSize}px
                   </span>
-                  <button className="btn btn-secondary" style={{ width: '24px', height: '24px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '0.85rem' }} onClick={() => setPrintFontSize(prev => Math.min(24, prev + 1))}>
+                  <button className="btn btn-secondary smart-chords-touch-btn" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '1.1rem', fontWeight: 700, borderRadius: '8px' }} onClick={() => setPrintFontSize(prev => Math.min(24, prev + 1))}>
                     +
                   </button>
                 </div>
               </div>
+
 
               {/* Rendered sheet box (will be fully printable and contain header) */}
               <div className="print-sheet-box" style={{ flex: 1, padding: '20px', borderRadius: '12px', backgroundColor: 'var(--surface-variant)', border: '1px solid var(--border)', overflowX: 'auto', fontFamily: 'monospace' }}>
