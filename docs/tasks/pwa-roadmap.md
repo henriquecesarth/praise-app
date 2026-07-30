@@ -97,10 +97,10 @@ Mapeamento completo de conformidade PWA e experiência mobile de todos os compon
     - [x] Safe Area Inset no topo (`safe-area-inset-top`) adicionado para suporte completo a notch no iOS e Android
     - [x] Contêineres laterais das ações esquerda/direita ajustados com altura/largura mínima de toque de 44x44px
 
-- [ ] **InstallPWAPrompt.tsx**
-  - **Problemas identificados**:
-    - [ ] Botão de dispensar banner (`pwa-dismiss-btn`) possui 36x36px (menos que 44x44px)
-    - [ ] Risco de sobreposição com a BottomNav em dispositivos com barra de gestos no iOS
+- [x] **InstallPWAPrompt.tsx**
+  - **Problemas corrigidos**:
+    - [x] Botão de dispensar banner (`pwa-dismiss-btn`) e instalar (`pwa-install-btn`) ajustados para área de toque mínima de 44x44px
+    - [x] Posicionamento responsivo ajustado para evitar sobreposição com a BottomNav e gestos iOS (`bottom: calc(76px + var(--safe-area-bottom))`) e desktop (`bottom: 20px`)
 
 - [x] **InviteCodeModal.tsx**
   - **Problemas corrigidos**:

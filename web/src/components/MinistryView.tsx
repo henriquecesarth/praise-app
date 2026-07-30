@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import { Ministry, MinistryRole } from '../types';
+import { FloatingInput } from './ui/FloatingInput';
 import { TeamsView } from './TeamsView';
 import { RolesView } from './RolesView';
 import { ClassificationsView } from './ClassificationsView';
@@ -726,42 +727,29 @@ export function MinistryView({
               <div className="modal-title">Editar Membro</div>
               <button className="action-icon-btn" onClick={() => setEditingMember(null)}>✕</button>
             </div>
-            <form onSubmit={handleSaveEditMember} className="login-form">
-              {/* Nome */}
-              <div className="form-group">
-                <label>Nome Completo *</label>
-                <input
-                  type="text"
-                  className="input-field"
-                  value={editForm.name}
-                  onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
-                  required
-                  autoFocus
-                />
-              </div>
+            <form onSubmit={handleSaveEditMember} className="login-form" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <FloatingInput
+                label="Nome Completo *"
+                value={editForm.name}
+                onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+                required
+                autoFocus
+              />
 
-              {/* Email */}
-              <div className="form-group">
-                <label>E-mail *</label>
-                <input
-                  type="email"
-                  className="input-field"
-                  value={editForm.email}
-                  onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))}
-                  required
-                />
-              </div>
+              <FloatingInput
+                label="E-mail *"
+                type="email"
+                value={editForm.email}
+                onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))}
+                required
+              />
 
-              {/* Data de Nascimento (Opcional) */}
-              <div className="form-group">
-                <label>Data de Nascimento (Opcional)</label>
-                <input
-                  type="date"
-                  className="input-field"
-                  value={editForm.birthDate}
-                  onChange={(e) => setEditForm((f) => ({ ...f, birthDate: e.target.value }))}
-                />
-              </div>
+              <FloatingInput
+                label="Data de Nascimento (Opcional)"
+                type="date"
+                value={editForm.birthDate}
+                onChange={(e) => setEditForm((f) => ({ ...f, birthDate: e.target.value }))}
+              />
 
               {/* Papel no Ministério */}
               <div className="form-group">
@@ -914,39 +902,29 @@ export function MinistryView({
               <div className="modal-title">Adicionar Membro Manualmente</div>
               <button className="action-icon-btn" onClick={() => setShowAddManualModal(false)}>✕</button>
             </div>
-            <form onSubmit={handleAddManual} className="login-form">
-              <div className="form-group">
-                <label>Nome Completo *</label>
-                <input
-                  type="text"
-                  className="input-field"
-                  placeholder="Ex: Maria Silva"
-                  value={manualForm.name}
-                  onChange={(e) => setManualForm((f) => ({ ...f, name: e.target.value }))}
-                  required
-                  autoFocus
-                />
-              </div>
-              <div className="form-group">
-                <label>E-mail *</label>
-                <input
-                  type="email"
-                  className="input-field"
-                  placeholder="maria@exemplo.com"
-                  value={manualForm.email}
-                  onChange={(e) => setManualForm((f) => ({ ...f, email: e.target.value }))}
-                  required
-                />
-              </div>
-              <div className="form-group">
-                <label>Data de Nascimento (Opcional)</label>
-                <input
-                  type="date"
-                  className="input-field"
-                  value={manualForm.birthDate}
-                  onChange={(e) => setManualForm((f) => ({ ...f, birthDate: e.target.value }))}
-                />
-              </div>
+            <form onSubmit={handleAddManual} className="login-form" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <FloatingInput
+                label="Nome Completo *"
+                value={manualForm.name}
+                onChange={(e) => setManualForm((f) => ({ ...f, name: e.target.value }))}
+                required
+                autoFocus
+              />
+
+              <FloatingInput
+                label="E-mail *"
+                type="email"
+                value={manualForm.email}
+                onChange={(e) => setManualForm((f) => ({ ...f, email: e.target.value }))}
+                required
+              />
+
+              <FloatingInput
+                label="Data de Nascimento (Opcional)"
+                type="date"
+                value={manualForm.birthDate}
+                onChange={(e) => setManualForm((f) => ({ ...f, birthDate: e.target.value }))}
+              />
               <div className="form-group">
                 <label>Papel no Ministério</label>
                 <div style={{ display: 'flex', gap: '10px' }}>

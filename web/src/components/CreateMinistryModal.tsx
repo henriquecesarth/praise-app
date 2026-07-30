@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Plus, Building2, AlertCircle, ChevronLeft, X, Check } from 'lucide-react';
 import { api } from '../api';
+import { FloatingInput } from './ui/FloatingInput';
 
 interface CreateMinistryModalProps {
   onClose: () => void;
@@ -75,28 +76,21 @@ export const CreateMinistryModal: React.FC<CreateMinistryModalProps> = ({ onClos
             </div>
           )}
 
-          <div className="form-group">
-            <label style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>Nome do Ministério ou Igreja *</label>
-            <div className="login-input-wrapper" style={{ minHeight: '44px' }}>
-              <Building2 size={18} className="login-input-icon" />
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Ex: Ministério de Louvor Betel"
-                className="login-input"
-                style={{ minHeight: '44px', fontSize: '0.95rem' }}
-                required
-                autoFocus
-              />
-            </div>
+          <div style={{ marginTop: '8px' }}>
+            <FloatingInput
+              label="Nome do Ministério ou Igreja *"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+              autoFocus
+            />
           </div>
 
-          <div className="form-actions" style={{ marginTop: 'auto', paddingTop: '20px', display: 'flex', gap: '12px' }}>
-            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading} style={{ minHeight: '44px', flex: 1, borderRadius: '10px' }}>
+          <div className="form-actions" style={{ marginTop: '24px', display: 'flex', gap: '12px' }}>
+            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading} style={{ minHeight: '52px', flex: 1, borderRadius: '12px' }}>
               Cancelar
             </button>
-            <button type="submit" className="btn btn-primary" disabled={loading || !name.trim()} style={{ minHeight: '44px', flex: 1, borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+            <button type="submit" className="btn btn-primary" disabled={loading || !name.trim()} style={{ minHeight: '52px', flex: 1, borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
               <Plus size={18} />
               <span>{loading ? 'Criando...' : 'Criar Ministério'}</span>
             </button>
@@ -108,4 +102,3 @@ export const CreateMinistryModal: React.FC<CreateMinistryModalProps> = ({ onClos
 };
 
 export const CreateGroupModal = CreateMinistryModal;
-

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Song } from '../types';
-import { Music, Gauge, Clock } from 'lucide-react';
+import { Music, Gauge, Clock, Layers } from 'lucide-react';
 
 interface SongCardProps {
   song: Song;
@@ -9,6 +9,15 @@ interface SongCardProps {
 
 export const SongCard: React.FC<SongCardProps> = ({ song, onTap }) => {
   const avatarLetter = song.title ? song.title.charAt(0).toUpperCase() : '?';
+
+  const artistText = song.artist || song.artistName || 'Artista não especificado';
+  const primaryVersion = song.versions && song.versions.length > 0 ? song.versions[0] : null;
+
+  const displayKey = primaryVersion?.key || song.originalKey;
+  const displayBpm = primaryVersion?.bpm || song.bpm;
+  const displayDuration = primaryVersion?.duration || song.duration;
+  const classificationName = song.classificationName;
+  const versionCount = song.versions?.length || 1;
 
   return (
     <div
@@ -49,11 +58,38 @@ export const SongCard: React.FC<SongCardProps> = ({ song, onTap }) => {
       </div>
       <div className="song-info" style={{ flex: 1, minWidth: 0 }}>
         <div className="song-title-row">
-          <span className="song-card-title" style={{ fontWeight: 700, fontSize: '0.98rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{song.title}</span>
+          <span
+            className="song-card-title"
+            style={{
+              fontWeight: 700,
+              fontSize: '0.98rem',
+              color: 'var(--text-primary)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              display: 'block',
+            }}
+          >
+            {song.title}
+          </span>
         </div>
-        <div className="song-card-artist" style={{ fontSize: '0.83rem', color: 'var(--text-secondary)', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{song.artistName || 'Artista desconhecido'}</div>
+
+        <div
+          className="song-card-artist"
+          style={{
+            fontSize: '0.83rem',
+            color: 'var(--text-secondary)',
+            marginTop: '2px',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {artistText}
+        </div>
+
         <div className="song-meta-chips" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
-          {song.classificationName && (
+          {classificationName && (
             <span
               className="badge"
               style={{
@@ -66,25 +102,84 @@ export const SongCard: React.FC<SongCardProps> = ({ song, onTap }) => {
                 borderRadius: '6px',
               }}
             >
-              {song.classificationName}
+              {classificationName}
             </span>
           )}
-          {song.originalKey && (
-            <span className="chip" style={{ fontSize: '0.74rem', padding: '2px 8px', borderRadius: '6px', background: 'var(--surface-variant)', color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+
+          {displayKey && (
+            <span
+              className="chip"
+              style={{
+                fontSize: '0.74rem',
+                padding: '2px 8px',
+                borderRadius: '6px',
+                background: 'var(--surface-variant)',
+                color: 'var(--text-secondary)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+              }}
+            >
               <Music size={12} />
-              <span>Tom: {song.originalKey}</span>
+              <span>Tom: {displayKey}</span>
             </span>
           )}
-          {song.bpm && (
-            <span className="chip" style={{ fontSize: '0.74rem', padding: '2px 8px', borderRadius: '6px', background: 'var(--surface-variant)', color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+
+          {displayBpm && (
+            <span
+              className="chip"
+              style={{
+                fontSize: '0.74rem',
+                padding: '2px 8px',
+                borderRadius: '6px',
+                background: 'var(--surface-variant)',
+                color: 'var(--text-secondary)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+              }}
+            >
               <Gauge size={12} />
-              <span>{song.bpm} BPM</span>
+              <span>{displayBpm} BPM</span>
             </span>
           )}
-          {song.duration && (
-            <span className="chip" style={{ fontSize: '0.74rem', padding: '2px 8px', borderRadius: '6px', background: 'var(--surface-variant)', color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+
+          {displayDuration && (
+            <span
+              className="chip"
+              style={{
+                fontSize: '0.74rem',
+                padding: '2px 8px',
+                borderRadius: '6px',
+                background: 'var(--surface-variant)',
+                color: 'var(--text-secondary)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+              }}
+            >
               <Clock size={12} />
-              <span>{song.duration.replace(/^00:/, '')}</span>
+              <span>{String(displayDuration).replace(/^00:/, '')}</span>
+            </span>
+          )}
+
+          {versionCount > 1 && (
+            <span
+              className="chip"
+              style={{
+                fontSize: '0.74rem',
+                padding: '2px 8px',
+                borderRadius: '6px',
+                background: 'var(--primary-surface)',
+                color: 'var(--primary-light)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                fontWeight: 700,
+              }}
+            >
+              <Layers size={12} />
+              <span>{versionCount} versões</span>
             </span>
           )}
         </div>
@@ -92,4 +187,3 @@ export const SongCard: React.FC<SongCardProps> = ({ song, onTap }) => {
     </div>
   );
 };
-

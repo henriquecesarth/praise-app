@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api';
+import { FloatingInput } from './ui/FloatingInput';
+import { FloatingTextarea } from './ui/FloatingTextarea';
 import {
   Plus, MoreVertical, Edit2, Trash2, Users, ChevronLeft,
   Search, Check, UserCheck,
@@ -364,34 +366,20 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast, onModalState
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="login-form">
-              {/* Name */}
-              <div className="form-group">
-                <label style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>Nome da Equipe *</label>
-                <input
-                  type="text"
-                  className="input-field"
-                  placeholder="Ex: Banda de Louvor, Coral, Técnica de Som..."
-                  value={form.name}
-                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                  style={{ minHeight: '44px', fontSize: '0.95rem' }}
-                  required
-                  autoFocus
-                />
-              </div>
+            <form onSubmit={handleSubmit} className="login-form" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <FloatingInput
+                label="Nome da Equipe *"
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                required
+                autoFocus
+              />
 
-              {/* Description */}
-              <div className="form-group">
-                <label style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>Descrição <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>(opcional)</span></label>
-                <textarea
-                  className="textarea-field"
-                  placeholder="Descreva o propósito ou responsabilidade desta equipe..."
-                  value={form.description}
-                  onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                  rows={2}
-                  style={{ minHeight: '64px', fontSize: '0.95rem' }}
-                />
-              </div>
+              <FloatingTextarea
+                label="Descrição (opcional)"
+                value={form.description}
+                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+              />
 
               {/* Members selector */}
               <div className="form-group">

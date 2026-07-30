@@ -1,4 +1,4 @@
-import { Song, Artist, Folder, Classification, RepertoireCounts, Ministry, MinistryInvite, Liturgy } from './types';
+import { Song, SongVersion, SongLink, Artist, Folder, Classification, RepertoireCounts, Ministry, MinistryInvite, Liturgy } from './types';
 
 export type SmartChord = any;
 
@@ -55,46 +55,118 @@ const handleResponse = async <T>(response: Response): Promise<T> => {
   throw new Error(errorMessage);
 };
 
-const mapSongFromApi = (apiSong: any): Song => ({
-  id: apiSong.id,
-  ministryId: apiSong.ministry_id || apiSong.group_id,
-  userId: apiSong.user_id,
-  title: apiSong.title,
-  artistId: apiSong.artist_id || undefined,
-  artistName: apiSong.artist?.name || undefined,
-  classificationId: apiSong.classification_id || undefined,
-  classificationName: apiSong.classification?.name || undefined,
-  classificationColor: apiSong.classification?.color || undefined,
-  originalKey: apiSong.original_key || undefined,
-  bpm: apiSong.bpm || undefined,
-  duration: apiSong.duration || undefined,
-  lyrics: apiSong.lyrics || undefined,
-  chordSheetUrl: apiSong.chord_sheet_url || undefined,
-  youtubeUrl: apiSong.youtube_url || undefined,
-  audioUrl: apiSong.audio_url || undefined,
-  externalLinks: apiSong.external_links || {},
-  createdAt: apiSong.created_at,
-  updatedAt: apiSong.updated_at,
-  smartChord: apiSong.smart_chord ? {
-    id: apiSong.smart_chord.id,
-    originalKey: apiSong.smart_chord.original_key,
-    content: apiSong.smart_chord.content,
-  } : undefined,
-});
+const mapSongFromApi = (apiSong: any): Song => {
+  const defaultLinks: SongLink[] = [
+    { label: 'Letra', url: apiSong.external_links?.letras || '' },
+    { label: 'Cifra', url: apiSong.chord_sheet_url || '' },
+    { label: 'Áudio', url: apiSong.audio_url || '' },
+    { label: 'Vídeo', url: apiSong.youtube_url || '' },
+  ];
+
+  if (apiSong.external_links) {
+    Object.entries(apiSong.external_links).forEach(([key, val]) => {
+      if (typeof val === 'string' && val && !['letras'].includes(key)) {
+        defaultLinks.push({ label: key, url: val, isCustom: true });
+      }
+    });
+  }
+
+  const defaultVersion: SongVersion = {
+    id: apiSong.id ? `${apiSong.id}_v1` : 'v1',
+    name: 'Original',
+    classificationIds: apiSong.classification_id ? [apiSong.classification_id] : (apiSong.classification_ids || []),
+    notes: apiSong.version_notes || undefined,
+    key: apiSong.original_key || 'C',
+    bpm: apiSong.bpm || undefined,
+    duration: apiSong.duration || undefined,
+    links: defaultLinks,
+  };
+
+  const versions: SongVersion[] = Array.isArray(apiSong.versions) && apiSong.versions.length > 0
+    ? apiSong.versions.map((v: any, idx: number) => ({
+        id: v.id || `v_${idx + 1}`,
+        name: v.name || (idx === 0 ? 'Original' : `Versão ${idx + 1}`),
+        classificationIds: Array.isArray(v.classificationIds) ? v.classificationIds : (v.classificationId ? [v.classificationId] : []),
+        notes: v.notes || undefined,
+        key: v.key || v.originalKey || 'C',
+        bpm: v.bpm || undefined,
+        duration: v.duration || undefined,
+        links: Array.isArray(v.links) ? v.links : [],
+      }))
+    : [defaultVersion];
+
+  return {
+    id: apiSong.id,
+    ministryId: apiSong.ministry_id || apiSong.group_id,
+    userId: apiSong.user_id,
+    title: apiSong.title || '',
+    artist: apiSong.artist || apiSong.artist_name || apiSong.artist?.name || '',
+    notes: apiSong.notes || apiSong.lyrics || undefined,
+    versions,
+    createdAt: apiSong.created_at,
+    updatedAt: apiSong.updated_at,
+    
+    // Propriedades retrocompatíveis
+    artistId: apiSong.artist_id || undefined,
+    artistName: apiSong.artist || apiSong.artist_name || apiSong.artist?.name || '',
+    classificationId: versions[0]?.classificationIds?.[0] || apiSong.classification_id || undefined,
+    classificationName: apiSong.classification?.name || undefined,
+    classificationColor: apiSong.classification?.color || undefined,
+    originalKey: versions[0]?.key || apiSong.original_key || undefined,
+    bpm: versions[0]?.bpm ? Number(versions[0].bpm) : (apiSong.bpm || undefined),
+    duration: versions[0]?.duration || apiSong.duration || undefined,
+    lyrics: apiSong.lyrics || undefined,
+    chordSheetUrl: apiSong.chord_sheet_url || undefined,
+    youtubeUrl: apiSong.youtube_url || undefined,
+    audioUrl: apiSong.audio_url || undefined,
+    externalLinks: apiSong.external_links || {},
+    smartChord: apiSong.smart_chord ? {
+      id: apiSong.smart_chord.id,
+      originalKey: apiSong.smart_chord.original_key,
+      content: apiSong.smart_chord.content,
+    } : undefined,
+  };
+};
 
 const mapSongToApi = (song: Partial<Song>): any => {
   const apiSong: any = {};
   if (song.title !== undefined) apiSong.title = song.title;
-  if (song.artistId !== undefined) apiSong.artist_id = song.artistId || null;
-  if (song.classificationId !== undefined) apiSong.classification_id = song.classificationId || null;
-  if (song.originalKey !== undefined) apiSong.original_key = song.originalKey || null;
-  if (song.bpm !== undefined) apiSong.bpm = song.bpm || null;
-  if (song.duration !== undefined) apiSong.duration = song.duration || null;
-  if (song.lyrics !== undefined) apiSong.lyrics = song.lyrics || null;
-  if (song.chordSheetUrl !== undefined) apiSong.chord_sheet_url = song.chordSheetUrl || null;
-  if (song.youtubeUrl !== undefined) apiSong.youtube_url = song.youtubeUrl || null;
-  if (song.audioUrl !== undefined) apiSong.audio_url = song.audioUrl || null;
-  if (song.externalLinks !== undefined) apiSong.external_links = song.externalLinks || {};
+  if (song.artist !== undefined) {
+    apiSong.artist = song.artist;
+    apiSong.artist_name = song.artist;
+  }
+  if (song.notes !== undefined) apiSong.notes = song.notes;
+  if (song.versions !== undefined) apiSong.versions = song.versions;
+
+  const primaryVersion = song.versions?.[0];
+  if (primaryVersion) {
+    apiSong.original_key = primaryVersion.key || null;
+    apiSong.bpm = primaryVersion.bpm ? Number(primaryVersion.bpm) : null;
+    apiSong.duration = primaryVersion.duration || null;
+    if (primaryVersion.classificationIds && primaryVersion.classificationIds.length > 0) {
+      apiSong.classification_id = primaryVersion.classificationIds[0];
+    }
+    
+    // Mapear links da versão principal para campos planos
+    const letraLink = primaryVersion.links?.find((l) => l.label.toLowerCase() === 'letra');
+    const cifraLink = primaryVersion.links?.find((l) => l.label.toLowerCase() === 'cifra');
+    const audioLink = primaryVersion.links?.find((l) => l.label.toLowerCase() === 'áudio' || l.label.toLowerCase() === 'audio');
+    const videoLink = primaryVersion.links?.find((l) => l.label.toLowerCase() === 'vídeo' || l.label.toLowerCase() === 'video');
+
+    if (cifraLink) apiSong.chord_sheet_url = cifraLink.url || null;
+    if (videoLink) apiSong.youtube_url = videoLink.url || null;
+    if (audioLink) apiSong.audio_url = audioLink.url || null;
+    
+    const extLinks: Record<string, string> = {};
+    if (letraLink?.url) extLinks.letras = letraLink.url;
+    primaryVersion.links?.forEach((link) => {
+      if (link.isCustom && link.label && link.url) {
+        extLinks[link.label] = link.url;
+      }
+    });
+    apiSong.external_links = extLinks;
+  }
+
   return apiSong;
 };
 

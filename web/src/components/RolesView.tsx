@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api';
+import { FloatingInput } from './ui/FloatingInput';
 import {
   Plus, MoreVertical, Edit2, Trash2, Shield, ChevronLeft, Check,
 } from 'lucide-react';
@@ -295,16 +296,11 @@ export function RolesView({ ministryId, isAdmin, onBack, showToast, onModalState
                 </div>
               </div>
 
-              {/* Role Name */}
-              <div className="form-group">
-                <label style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>Nome da Função *</label>
-                <input
-                  type="text"
-                  className="input-field"
-                  placeholder="Ex: Vocalista, Violão, Saxofone, Som..."
+              <div style={{ marginTop: '8px' }}>
+                <FloatingInput
+                  label="Nome da Função *"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  style={{ minHeight: '44px', fontSize: '0.95rem' }}
                   required
                   autoFocus
                 />

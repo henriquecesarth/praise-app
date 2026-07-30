@@ -60,11 +60,36 @@ export interface Liturgy {
   updatedAt: string;
 }
 
+export interface SongLink {
+  id?: string;
+  label: string; // Ex: 'Letra', 'Cifra', 'Áudio', 'Vídeo' ou rótulo customizado
+  url: string;
+  isCustom?: boolean;
+}
+
+export interface SongVersion {
+  id: string;
+  name: string; // Padrão da primeira versão: "Original"
+  classificationIds: string[]; // Classificações da versão
+  notes?: string; // Observações específicas desta versão
+  key: string; // Tom (ex: "G", "C#m")
+  bpm?: string | number; // BPM (ex: 120)
+  duration?: string; // Duração formatada em HH:MM:SS
+  links: SongLink[]; // 4 links padrão + links customizados
+}
+
 export interface Song {
   id: string;
-  ministryId: string;
+  ministryId?: string;
   userId?: string;
   title: string;
+  artist: string; // Texto livre (sem dropdown/sem vínculo com entidade Artista)
+  notes?: string; // Observações gerais da música
+  versions: SongVersion[]; // Lista de versões (mínimo 1)
+  createdAt?: string;
+  updatedAt?: string;
+
+  // Propriedades retrocompatíveis opcionais
   artistId?: string;
   artistName?: string;
   classificationId?: string;
@@ -78,8 +103,6 @@ export interface Song {
   youtubeUrl?: string;
   audioUrl?: string;
   externalLinks?: Record<string, string>;
-  createdAt: string;
-  updatedAt: string;
   smartChord?: {
     id: string;
     originalKey: string;

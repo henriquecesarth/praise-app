@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { KeyRound, CheckCircle2, AlertCircle, ChevronLeft, X, Check } from 'lucide-react';
 import { api } from '../api';
 import { Ministry } from '../types';
+import { FloatingInput } from './ui/FloatingInput';
 
 interface JoinMinistryModalProps {
   isOpen: boolean;
@@ -91,30 +92,27 @@ export const JoinMinistryModal: React.FC<JoinMinistryModalProps> = ({ isOpen, on
             </div>
           )}
 
-          <div className="form-group">
-            <label style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>Código de Convite *</label>
-            <input
-              type="text"
+          <div style={{ marginTop: '8px' }}>
+            <FloatingInput
+              label="Código de Convite (ex: PR-8X2K) *"
               value={code}
               onChange={(e) => setCode(e.target.value.toUpperCase())}
-              placeholder="Ex: PR-8X2K"
-              className="join-code-input input-field"
-              style={{ minHeight: '44px', fontSize: '1.2rem', fontWeight: 800, letterSpacing: '2px', textAlign: 'center', textTransform: 'uppercase' }}
               maxLength={12}
               required
               autoFocus
+              className="text-center font-extrabold tracking-widest uppercase"
             />
           </div>
 
-          <div className="form-actions" style={{ marginTop: 'auto', paddingTop: '20px', display: 'flex', gap: '12px' }}>
-            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading} style={{ minHeight: '44px', flex: 1, borderRadius: '10px' }}>
+          <div className="form-actions" style={{ marginTop: '24px', display: 'flex', gap: '12px' }}>
+            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading} style={{ minHeight: '52px', flex: 1, borderRadius: '12px' }}>
               Cancelar
             </button>
             <button
               type="submit"
               disabled={loading || !code.trim()}
               className="btn btn-primary"
-              style={{ minHeight: '44px', flex: 1, borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+              style={{ minHeight: '52px', flex: 1, borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
             >
               {loading ? 'Validando...' : 'Ingressar no Ministério'}
             </button>
@@ -126,4 +124,3 @@ export const JoinMinistryModal: React.FC<JoinMinistryModalProps> = ({ isOpen, on
 };
 
 export const JoinGroupModal = JoinMinistryModal;
-

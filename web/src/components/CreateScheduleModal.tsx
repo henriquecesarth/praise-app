@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { X, ListOrdered, Plus, Users, Eye, EyeOff, CheckSquare, ArrowLeft, Check, LayoutTemplate, Trash2, ChevronRight, Layers, Music, Clock, AlertTriangle, GripVertical } from 'lucide-react';
 import { Song } from '../types';
+import { FloatingInput } from './ui/FloatingInput';
+import { FloatingTextarea } from './ui/FloatingTextarea';
 
 export interface ClothingPiece {
   id: string;
@@ -65,21 +67,6 @@ const EASY_COLORS = [
   { name: 'Rosa Seco', hex: '#BE185D' },
 ];
 
-const INITIAL_CLOTHING_PIECES: ClothingPiece[] = [
-  {
-    id: 'p1',
-    name: 'Parte de Cima (Camisa / Blusa)',
-    description: 'Camisa social de manga longa ou blusa em tons neutros escuros',
-    colors: ['#000000', '#1E3A8A'],
-  },
-  {
-    id: 'p2',
-    name: 'Parte de Baixo (Calça / Saia)',
-    description: 'Calça alfaiataria preta ou jeans escuro sem rasgos',
-    colors: ['#000000', '#334155'],
-  },
-];
-
 function formatTemplateDuration(seconds?: number): string {
   if (!seconds) return '';
   const h = Math.floor(seconds / 3600);
@@ -135,7 +122,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
 
   // Dress code color palette states
   const [clothingPieces, setClothingPieces] = useState<ClothingPiece[]>(
-    initialSchedule?.clothingPieces || INITIAL_CLOTHING_PIECES
+    initialSchedule?.clothingPieces || []
   );
   const [activePieceIdForColor, setActivePieceIdForColor] = useState<string | null>(null);
   const [colorMode, setColorMode] = useState<'facil' | 'avancado'>('facil');
@@ -679,52 +666,36 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
             <form onSubmit={handleSaveSchedule} className="schedule-form-content">
               {/* TAB 1: DETALHES */}
               {activeTab === 'detalhes' && (
-                <div className="schedule-tab-pane">
-                  <div className="form-group">
-                    <label>Título da Escala / Culto *</label>
-                    <input
-                      type="text"
-                      className="input-field"
-                      placeholder="Ex: Culto de Domingo - Noite, Culto de Jovens..."
-                      value={title}
-                      onChange={(e) => setTitle(e.target.value)}
+                <div className="schedule-tab-pane" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <FloatingInput
+                    label="Título da Escala / Culto *"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    required
+                  />
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                    <FloatingInput
+                      label="Data *"
+                      type="date"
+                      value={date}
+                      onChange={(e) => setDate(e.target.value)}
+                      required
+                    />
+                    <FloatingInput
+                      label="Horário *"
+                      type="time"
+                      value={time}
+                      onChange={(e) => setTime(e.target.value)}
                       required
                     />
                   </div>
 
-                  <div className="form-row-2">
-                    <div className="form-group">
-                      <label>Data *</label>
-                      <input
-                        type="date"
-                        className="input-field"
-                        value={date}
-                        onChange={(e) => setDate(e.target.value)}
-                        required
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label>Horário *</label>
-                      <input
-                        type="time"
-                        className="input-field"
-                        value={time}
-                        onChange={(e) => setTime(e.target.value)}
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div className="form-group">
-                    <label>Observações / Orientações para a Equipe</label>
-                    <textarea
-                      className="textarea-field"
-                      placeholder="Ex: Chegar 30 min antes para alinhamento. Trajar roupa preta/neutra..."
-                      value={notes}
-                      onChange={(e) => setNotes(e.target.value)}
-                      rows={3}
-                    />
-                  </div>
+                  <FloatingTextarea
+                    label="Observações / Orientações para a Equipe"
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                  />
 
                   {/* Actions Grid inside Detalhes */}
                   <div className="schedule-detalhes-actions-grid">
@@ -761,35 +732,152 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Toggles */}
-                  <div className="schedule-toggles-card">
-                    <div className="schedule-toggle-row" onClick={() => setIsVisible(!isVisible)}>
-                      <div className="schedule-toggle-info">
-                        {isVisible ? <Eye size={18} className="text-purple-400" /> : <EyeOff size={18} />}
-                        <div>
-                          <div className="schedule-toggle-title">Visibilidade da Escala</div>
-                          <div className="schedule-toggle-desc">
+                  {/* Toggles Alinhados */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      marginTop: '16px',
+                      padding: '16px',
+                      backgroundColor: 'var(--surface-variant)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '16px',
+                      gap: '12px',
+                    }}
+                  >
+                    {/* Toggle 1: Visibilidade */}
+                    <div
+                      onClick={() => setIsVisible(!isVisible)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '12px',
+                        cursor: 'pointer',
+                        padding: '4px 0',
+                        userSelect: 'none',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
+                        <div
+                          style={{
+                            width: '36px',
+                            height: '36px',
+                            borderRadius: '10px',
+                            backgroundColor: 'rgba(168, 85, 247, 0.15)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0,
+                            color: 'var(--primary-light)',
+                          }}
+                        >
+                          {isVisible ? <Eye size={18} /> : <EyeOff size={18} />}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                            Visibilidade da Escala
+                          </div>
+                          <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
                             {isVisible ? 'Visível para todos os membros do ministério' : 'Privado (apenas para admins)'}
                           </div>
                         </div>
                       </div>
-                      <div className={`custom-switch ${isVisible ? 'checked' : ''}`}>
-                        <div className="switch-handle" />
+
+                      {/* Switch */}
+                      <div
+                        style={{
+                          width: '46px',
+                          height: '26px',
+                          borderRadius: '13px',
+                          backgroundColor: isVisible ? 'var(--primary-color)' : 'var(--border-color)',
+                          padding: '3px',
+                          transition: 'background-color 0.2s ease',
+                          display: 'flex',
+                          alignItems: 'center',
+                          flexShrink: 0,
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: '20px',
+                            height: '20px',
+                            borderRadius: '50%',
+                            backgroundColor: '#FFFFFF',
+                            transform: isVisible ? 'translateX(20px)' : 'translateX(0)',
+                            transition: 'transform 0.2s ease',
+                            boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+                          }}
+                        />
                       </div>
                     </div>
 
-                    <div className="schedule-toggle-row" onClick={() => setRequireConfirmation(!requireConfirmation)}>
-                      <div className="schedule-toggle-info">
-                        <CheckSquare size={18} className="text-purple-400" />
-                        <div>
-                          <div className="schedule-toggle-title">Solicitar confirmação dos participantes</div>
-                          <div className="schedule-toggle-desc">
+                    <div style={{ height: '1px', backgroundColor: 'var(--divider-color)' }} />
+
+                    {/* Toggle 2: Solicitar confirmação */}
+                    <div
+                      onClick={() => setRequireConfirmation(!requireConfirmation)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '12px',
+                        cursor: 'pointer',
+                        padding: '4px 0',
+                        userSelect: 'none',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
+                        <div
+                          style={{
+                            width: '36px',
+                            height: '36px',
+                            borderRadius: '10px',
+                            backgroundColor: 'rgba(168, 85, 247, 0.15)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0,
+                            color: 'var(--primary-light)',
+                          }}
+                        >
+                          <CheckSquare size={18} />
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                            Solicitar confirmação dos participantes
+                          </div>
+                          <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
                             Envia notificação solicitando aceite da presença dos voluntários
                           </div>
                         </div>
                       </div>
-                      <div className={`custom-switch ${requireConfirmation ? 'checked' : ''}`}>
-                        <div className="switch-handle" />
+
+                      {/* Switch */}
+                      <div
+                        style={{
+                          width: '46px',
+                          height: '26px',
+                          borderRadius: '13px',
+                          backgroundColor: requireConfirmation ? 'var(--primary-color)' : 'var(--border-color)',
+                          padding: '3px',
+                          transition: 'background-color 0.2s ease',
+                          display: 'flex',
+                          alignItems: 'center',
+                          flexShrink: 0,
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: '20px',
+                            height: '20px',
+                            borderRadius: '50%',
+                            backgroundColor: '#FFFFFF',
+                            transform: requireConfirmation ? 'translateX(20px)' : 'translateX(0)',
+                            transition: 'transform 0.2s ease',
+                            boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+                          }}
+                        />
                       </div>
                     </div>
                   </div>
