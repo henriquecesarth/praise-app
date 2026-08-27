@@ -480,10 +480,11 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
                   <label style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>Ícone do Evento</label>
                   <div className="icon-picker-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(44px, 1fr))', gap: '8px' }}>
                     {EVENT_PRESET_ICONS.map((icon) => (
-                      <button
-                        key={icon}
-                        type="button"
-                        className={`icon-picker-btn ${eventForm.icon === icon ? 'selected' : ''}`}
+                <button
+                  key={icon}
+                  type="button"
+                  aria-label={`Selecionar ícone ${icon}`}
+                  className={`icon-picker-btn ${eventForm.icon === icon ? 'selected' : ''}`}
                         onClick={() => setEventForm((f) => ({ ...f, icon }))}
                         style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', fontSize: '1.2rem', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px', cursor: 'pointer' }}
                       >

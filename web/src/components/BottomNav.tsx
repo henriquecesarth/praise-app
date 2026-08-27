@@ -1,7 +1,8 @@
 import React from 'react';
-import { Home, Calendar, Music, Building2 } from 'lucide-react';
+import { Home, Calendar, Music, Building2, Edit3 } from 'lucide-react';
+import type { MainModuleType } from '../routing';
 
-export type MainModuleType = 'dashboard' | 'repertoire' | 'cifrador' | 'schedules' | 'ministry';
+export type { MainModuleType } from '../routing';
 
 interface BottomNavProps {
   currentModule: MainModuleType;
@@ -37,6 +38,11 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       icon: <Music size={20} />,
     },
     {
+      id: 'cifrador',
+      label: 'Cifras',
+      icon: <Edit3 size={20} />,
+    },
+    {
       id: 'ministry',
       label: 'Ministério',
       icon: <Building2 size={20} />,
@@ -50,9 +56,12 @@ export const BottomNav: React.FC<BottomNavProps> = ({
           const isActive = currentModule === item.id;
           return (
             <button
+              type="button"
               key={item.id}
               className={`bottom-nav-item ${isActive ? 'active' : ''}`}
               onClick={() => onSelectModule(item.id)}
+              aria-label={item.id === 'cifrador' ? 'Cifras Inteligentes' : item.label}
+              aria-current={isActive ? 'page' : undefined}
             >
               <div className="bottom-nav-icon-wrapper">
                 {item.icon}

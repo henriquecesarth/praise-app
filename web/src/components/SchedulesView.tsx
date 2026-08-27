@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Calendar, Plus, Clock, Users, Music, ListOrdered, ChevronRight } from 'lucide-react';
 import { Song, GroupRole } from '../types';
 import { ScheduleItem } from './CreateScheduleModal';
+import { formatScheduleDateTimePtBR } from '../utils/locale';
 
 interface SchedulesViewProps {
   groupId: string;
@@ -13,15 +14,7 @@ interface SchedulesViewProps {
 }
 
 const formatCardDate = (dateStr: string, timeStr: string) => {
-  try {
-    const [year, month, day] = dateStr.split('-').map(Number);
-    const date = new Date(year, month - 1, day);
-    const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-    const monthNames = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
-    return `${dayNames[date.getDay()]}, ${day} ${monthNames[month - 1]} às ${timeStr}`;
-  } catch {
-    return `${dateStr} às ${timeStr}`;
-  }
+  return formatScheduleDateTimePtBR(dateStr, timeStr);
 };
 
 export const SchedulesView: React.FC<SchedulesViewProps> = ({
@@ -46,18 +39,24 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
 
         {/* Centered Tabs com Touch Target 44px */}
         <div className="schedule-tabs-wrapper centered" style={{ flex: 1, display: 'flex', justifyContent: 'center', margin: 0 }}>
-          <div className="schedule-tabs" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'var(--surface-variant)', padding: '4px', borderRadius: '12px', border: '1px solid var(--border-color)', minHeight: '44px' }}>
+          <div className="schedule-tabs" role="tablist" aria-label="Filtrar escalas" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'var(--surface-variant)', padding: '4px', borderRadius: '12px', border: '1px solid var(--border-color)', minHeight: '44px' }}>
             <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'proximas'}
               className={`schedule-tab-btn ${activeTab === 'proximas' ? 'active' : ''}`}
               onClick={() => setActiveTab('proximas')}
-              style={{ minHeight: '44px', padding: '10px 18px', borderRadius: '8px', fontSize: '0.88rem', fontWeight: 600, border: 'none', background: activeTab === 'proximas' ? 'var(--surface-color)' : 'transparent', color: activeTab === 'proximas' ? 'var(--primary-light)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.2s', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+              style={{ minHeight: '44px', padding: '10px 18px', borderRadius: '8px', fontSize: '0.88rem', fontWeight: 600, border: 'none', cursor: 'pointer', transition: 'all 0.2s', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
             >
               Próximas ({upcomingSchedules.length})
             </button>
             <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'anteriores'}
               className={`schedule-tab-btn ${activeTab === 'anteriores' ? 'active' : ''}`}
               onClick={() => setActiveTab('anteriores')}
-              style={{ minHeight: '44px', padding: '10px 18px', borderRadius: '8px', fontSize: '0.88rem', fontWeight: 600, border: 'none', background: activeTab === 'anteriores' ? 'var(--surface-color)' : 'transparent', color: activeTab === 'anteriores' ? 'var(--primary-light)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.2s', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+              style={{ minHeight: '44px', padding: '10px 18px', borderRadius: '8px', fontSize: '0.88rem', fontWeight: 600, border: 'none', cursor: 'pointer', transition: 'all 0.2s', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
             >
               Anteriores ({pastSchedules.length})
             </button>
@@ -84,11 +83,13 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
       {displayedSchedules.length > 0 ? (
         <div className="schedules-grid" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           {displayedSchedules.map((schedule) => (
-            <div
+            <button
+              type="button"
               key={schedule.id}
               className="schedule-card-item clickable"
               onClick={() => onSelectSchedule(schedule)}
-              style={{ minHeight: '72px', cursor: 'pointer' }}
+              style={{ minHeight: '72px', cursor: 'pointer', width: '100%', textAlign: 'left', color: 'inherit' }}
+              aria-label={`Abrir escala ${schedule.title}, ${formatCardDate(schedule.date, schedule.time)}`}
             >
               {/* Color accent bar */}
               <div
@@ -129,11 +130,11 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
                   <span><ListOrdered size={14} /> {schedule.timeline.length} evento(s)</span>
                 </div>
               </div>
-            </div>
+            </button>
           ))}
         </div>
       ) : (
-        <div className="empty-state" style={{ minHeight: '300px', marginTop: '16px', background: 'var(--surface-color)', borderRadius: 'var(--border-radius-lg)', padding: '32px', textAlign: 'center' }}>
+        <div className="empty-state" style={{ minHeight: '200px', marginTop: '16px', background: 'var(--surface-color)', borderRadius: 'var(--border-radius-lg)', padding: '24px', textAlign: 'center' }}>
           <div className="empty-icon" style={{ fontSize: '3rem', marginBottom: '16px' }}>📅</div>
           <div className="empty-title" style={{ fontWeight: 700, fontSize: '1.15rem' }}>
             {activeTab === 'proximas' ? 'Nenhuma próxima escala agendada' : 'Nenhuma escala anterior registrada'}

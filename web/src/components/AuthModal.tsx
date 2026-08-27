@@ -55,7 +55,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
         <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-indigo-600/20 rounded-full blur-3xl pointer-events-none" />
 
         <button
+          type="button"
           onClick={onClose}
+          aria-label="Fechar autenticação"
           className="absolute top-5 right-5 text-gray-400 hover:text-white transition-colors p-2 hover:bg-white/5 rounded-full"
         >
           <X className="w-5 h-5" />
@@ -172,6 +174,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
+                aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
                 className="absolute right-3.5 top-3.5 text-gray-500 hover:text-white transition-colors"
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}

@@ -177,6 +177,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
             className="action-icon-btn"
             onClick={onBack}
             title="Voltar para músicas"
+            aria-label="Voltar para músicas"
             style={{
               width: '44px',
               height: '44px',
@@ -200,6 +201,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
                 className="btn btn-primary"
                 onClick={onEdit}
                 title="Editar Música"
+                aria-label={`Editar música ${song.title}`}
                 style={{
                   minHeight: '44px',
                   padding: '8px 16px',
@@ -233,6 +235,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
                 }}
                 onClick={onDelete}
                 title="Excluir Música"
+                aria-label={`Excluir música ${song.title}`}
               >
                 <Trash2 size={18} />
               </button>
@@ -266,7 +269,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
                 setSemitones(0);
               }}
               style={{
-                height: '38px',
+                minHeight: '44px',
                 padding: '0 14px',
                 borderRadius: '20px',
                 fontSize: '0.85rem',

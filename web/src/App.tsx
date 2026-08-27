@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from './api';
+import { bootstrapAuth } from './auth-bootstrap';
+import { MODULE_PATHS, parseAppRoute, pathForFolder, pathForSchedule, pathForSong, type MainModuleType } from './routing';
 import { Song, Artist, Folder, Classification, RepertoireCounts, SongFilters, Group, GroupRole } from './types';
 import { SongCard } from './components/SongCard';
 import { FolderCard } from './components/FolderCard';
@@ -21,6 +24,7 @@ import { MinistryView } from './components/MinistryView';
 import { BottomNav } from './components/BottomNav';
 import { InstallPWAPrompt } from './components/InstallPWAPrompt';
 import { Header } from './components/Header';
+import { MobileAccountMenu } from './components/MobileAccountMenu';
 import { Search, SlidersHorizontal, Plus, CheckCircle, XCircle, Menu, Music, Edit3, KeyRound, UserPlus, LogOut, Building2, Home, Calendar as CalendarIcon, Sun, Moon } from 'lucide-react';
 
 interface Toast {
@@ -36,6 +40,11 @@ interface UserState {
 }
 
 export default function App() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const routeState = parseAppRoute(location.pathname);
+  const mainModule = routeState.module;
+
   // Theme state (dark vs light)
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     const saved = localStorage.getItem('praise_theme');
@@ -49,10 +58,13 @@ export default function App() {
       document.documentElement.classList.remove('dark');
     }
     localStorage.setItem('praise_theme', darkMode ? 'dark' : 'light');
+    const themeColor = document.querySelector<HTMLMetaElement>('#praise-theme-color');
+    if (themeColor) themeColor.content = darkMode ? '#131614' : '#f5f8f5';
   }, [darkMode]);
 
   // User Auth State
   const [currentUser, setCurrentUser] = useState<UserState | null>(null);
+  const [authReady, setAuthReady] = useState(false);
 
   // Groups & Role States
   const [groups, setGroups] = useState<Group[]>([]);
@@ -62,8 +74,8 @@ export default function App() {
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
 
   // Navigation & Detail States
-  const [mainModule, setMainModule] = useState<'dashboard' | 'repertoire' | 'cifrador' | 'schedules' | 'ministry'>('dashboard');
   const [schedules, setSchedules] = useState<ScheduleItem[]>([]);
+  const [loadingSchedules, setLoadingSchedules] = useState(true);
   const [selectedSchedule, setSelectedSchedule] = useState<ScheduleItem | null>(null);
   const [scheduleToEdit, setScheduleToEdit] = useState<ScheduleItem | null>(null);
   const [showCreateScheduleModal, setShowCreateScheduleModal] = useState(false);
@@ -103,9 +115,26 @@ export default function App() {
   const [loadingFolders, setLoadingFolders] = useState(true);
   const [loadingArtists, setLoadingArtists] = useState(true);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailRetryNonce, setDetailRetryNonce] = useState(0);
 
   // Search debounce timer
   const searchTimeoutRef = useRef<number | null>(null);
+  const activeGroupIdRef = useRef('');
+  const songRequestRef = useRef(0);
+
+  const clearDetailSelection = () => {
+    setSelectedSong(null);
+    setSelectedFolder(null);
+    setSelectedSchedule(null);
+    setDetailError(null);
+  };
+
+  const setMainModule = (module: MainModuleType) => {
+    clearDetailSelection();
+    navigate(MODULE_PATHS[module]);
+  };
 
   // Check initial user authentication session
   useEffect(() => {
@@ -132,11 +161,16 @@ export default function App() {
 
   const loadSchedules = async () => {
     if (!activeGroup) return;
+    const requestedGroupId = activeGroup.id;
+    setLoadingSchedules(true);
     try {
-      const list = await api.getSchedules(activeGroup.id);
+      const list = await api.getSchedules(requestedGroupId);
+      if (activeGroupIdRef.current !== requestedGroupId) return;
       setSchedules(list);
     } catch (err) {
       console.warn('Erro ao carregar escalas:', err);
+    } finally {
+      if (activeGroupIdRef.current === requestedGroupId) setLoadingSchedules(false);
     }
   };
 
@@ -160,15 +194,19 @@ export default function App() {
 
   const checkCurrentUser = async () => {
     const token = localStorage.getItem('praise_auth_token');
-    if (token) {
-      try {
-        const user = await api.getMe();
-        setCurrentUser(user);
-      } catch (err) {
-        console.warn('Sessão expirada:', err);
-      }
+    const result = await bootstrapAuth(token, api);
+
+    if (!result.tokenValid) {
+      if (token) localStorage.removeItem('praise_auth_token');
+      setCurrentUser(null);
+      setGroups([]);
+      setActiveGroup(null);
+    } else {
+      setCurrentUser(result.user);
+      setGroups(result.groups);
+      setActiveGroup(result.groups[0] || null);
     }
-    loadUserGroups();
+    setAuthReady(true);
   };
 
   const handleLogout = () => {
@@ -176,6 +214,8 @@ export default function App() {
     setCurrentUser(null);
     setActiveGroup(null);
     setGroups([]);
+    clearDetailSelection();
+    navigate('/');
     showToast('Você saiu da sua conta.');
   };
 
@@ -204,12 +244,15 @@ export default function App() {
   };
 
   const groupId = activeGroup ? activeGroup.id : '';
+  activeGroupIdRef.current = groupId;
   const userRole: GroupRole = activeGroup?.role || 'member';
 
   const loadCounts = async () => {
     if (!groupId) return;
+    const requestedGroupId = groupId;
     try {
-      const data = await api.getCounts(groupId);
+      const data = await api.getCounts(requestedGroupId);
+      if (activeGroupIdRef.current !== requestedGroupId) return;
       setCounts(data);
     } catch (err: any) {
       console.error(err);
@@ -218,8 +261,10 @@ export default function App() {
 
   const loadClassifications = async () => {
     if (!groupId) return;
+    const requestedGroupId = groupId;
     try {
-      const data = await api.getClassifications(groupId);
+      const data = await api.getClassifications(requestedGroupId);
+      if (activeGroupIdRef.current !== requestedGroupId) return;
       setClassifications(data);
     } catch (err: any) {
       console.error(err);
@@ -232,18 +277,23 @@ export default function App() {
       setLoadingSongs(false);
       return;
     }
+    const requestedGroupId = groupId;
+    const requestId = ++songRequestRef.current;
     try {
-      const result = await api.getSongs(groupId, {
+      const result = await api.getSongs(requestedGroupId, {
         search,
         originalKey: filters.originalKey || undefined,
         hasYoutube: filters.hasYoutube || undefined,
       });
+      if (activeGroupIdRef.current !== requestedGroupId || songRequestRef.current !== requestId) return;
       setSongs(result.songs);
       setCounts((prev) => ({ ...prev, songs: result.totalCount }));
     } catch (err: any) {
       showToast(err.message || 'Erro ao carregar músicas.', 'error');
     } finally {
-      setLoadingSongs(false);
+      if (activeGroupIdRef.current === requestedGroupId && songRequestRef.current === requestId) {
+        setLoadingSongs(false);
+      }
     }
   };
 
@@ -253,15 +303,17 @@ export default function App() {
       setLoadingFolders(false);
       return;
     }
+    const requestedGroupId = groupId;
     setLoadingFolders(true);
     try {
-      const data = await api.getFolders(groupId);
+      const data = await api.getFolders(requestedGroupId);
+      if (activeGroupIdRef.current !== requestedGroupId) return;
       setFolders(data);
       setCounts((prev) => ({ ...prev, folders: data.length }));
     } catch (err: any) {
       showToast(err.message || 'Erro ao carregar pastas.', 'error');
     } finally {
-      setLoadingFolders(false);
+      if (activeGroupIdRef.current === requestedGroupId) setLoadingFolders(false);
     }
   };
 
@@ -271,15 +323,17 @@ export default function App() {
       setLoadingArtists(false);
       return;
     }
+    const requestedGroupId = groupId;
     setLoadingArtists(true);
     try {
-      const data = await api.getArtists(groupId);
+      const data = await api.getArtists(requestedGroupId);
+      if (activeGroupIdRef.current !== requestedGroupId) return;
       setArtists(data);
       setCounts((prev) => ({ ...prev, artists: data.length }));
     } catch (err: any) {
       showToast(err.message || 'Erro ao carregar artistas.', 'error');
     } finally {
-      setLoadingArtists(false);
+      if (activeGroupIdRef.current === requestedGroupId) setLoadingArtists(false);
     }
   };
 
@@ -312,6 +366,7 @@ export default function App() {
         await api.deleteSong(songId, groupId);
         showToast('Música excluída com sucesso.');
         setSelectedSong(null);
+        navigate('/repertorio');
         loadSongs();
         loadCounts();
       } catch (err: any) {
@@ -359,6 +414,7 @@ export default function App() {
         showToast('Pasta excluída com sucesso.');
         if (selectedFolder && selectedFolder.id === folderId) {
           setSelectedFolder(null);
+          navigate('/repertorio');
         }
         loadFolders();
         loadCounts();
@@ -426,12 +482,8 @@ export default function App() {
 
   const handleSelectFolder = async (folder: Folder) => {
     if (!groupId) return;
-    try {
-      const fullFolder = await api.getFolderById(folder.id, groupId);
-      setSelectedFolder(fullFolder);
-    } catch (err: any) {
-      showToast(err.message || 'Erro ao carregar detalhes da pasta.', 'error');
-    }
+    setSelectedFolder(folder);
+    navigate(pathForFolder(folder.id));
   };
 
   const groupedArtists = () => {
@@ -466,9 +518,8 @@ export default function App() {
   };
 
   const handleBackToMain = () => {
-    setSelectedSong(null);
-    setSelectedFolder(null);
-    setSelectedSchedule(null);
+    clearDetailSelection();
+    navigate(MODULE_PATHS[mainModule]);
     loadSongs();
     loadFolders();
   };
@@ -476,15 +527,96 @@ export default function App() {
   const handleSelectSong = async (song: Song) => {
     if (!groupId) return;
     setSelectedSong(song);
-    try {
-      const fullSong = await api.getSongById(song.id, groupId);
-      setSelectedSong(fullSong);
-    } catch (err: any) {
-      showToast(err.message || 'Erro ao carregar detalhes da música.', 'error');
-    }
+    navigate(pathForSong(song.id));
   };
 
+  useEffect(() => {
+    if (!groupId || !routeState.songId) {
+      if (!routeState.songId) setSelectedSong(null);
+      return;
+    }
+
+    let cancelled = false;
+    setDetailLoading(true);
+    setDetailError(null);
+    api.getSongById(routeState.songId, groupId)
+      .then((song) => {
+        if (!cancelled && activeGroupIdRef.current === groupId) setSelectedSong(song);
+      })
+      .catch((err: Error) => {
+        if (!cancelled && activeGroupIdRef.current === groupId) {
+          setSelectedSong(null);
+          setDetailError(err.message || 'Música não encontrada.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled && activeGroupIdRef.current === groupId) setDetailLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [detailRetryNonce, groupId, routeState.songId]);
+
+  useEffect(() => {
+    if (!groupId || !routeState.folderId) {
+      if (!routeState.folderId) setSelectedFolder(null);
+      return;
+    }
+
+    let cancelled = false;
+    setDetailLoading(true);
+    setDetailError(null);
+    api.getFolderById(routeState.folderId, groupId)
+      .then((folder) => {
+        if (!cancelled && activeGroupIdRef.current === groupId) setSelectedFolder(folder);
+      })
+      .catch((err: Error) => {
+        if (!cancelled && activeGroupIdRef.current === groupId) {
+          setSelectedFolder(null);
+          setDetailError(err.message || 'Pasta não encontrada.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled && activeGroupIdRef.current === groupId) setDetailLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [detailRetryNonce, groupId, routeState.folderId]);
+
+  useEffect(() => {
+    if (!routeState.scheduleId) {
+      setSelectedSchedule(null);
+      return;
+    }
+    if (loadingSchedules) {
+      setDetailLoading(true);
+      return;
+    }
+    const schedule = schedules.find((item) => item.id === routeState.scheduleId);
+    if (schedule) {
+      setSelectedSchedule(schedule);
+      setDetailError(null);
+      setDetailLoading(false);
+    } else if (!loadingSchedules && groupId) {
+      setSelectedSchedule(null);
+      setDetailError('Escala não encontrada neste ministério.');
+      setDetailLoading(false);
+    }
+  }, [groupId, loadingSchedules, routeState.scheduleId, schedules]);
+
   const hasActiveFilters = filters.originalKey !== null || filters.hasYoutube !== null;
+
+  if (!authReady) {
+    return (
+      <div className="auth-loading-screen" role="status" aria-live="polite">
+        <div className="shimmer auth-loading-mark" />
+        <span>Verificando sua sessão…</span>
+      </div>
+    );
+  }
 
   if (!currentUser) {
     return (
@@ -499,7 +631,7 @@ export default function App() {
   }
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--bg-color)' }}>
+    <div className="app-shell" style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--bg-color)' }}>
       {/* Sidebar */}
       <aside
         className="no-print"
@@ -535,6 +667,7 @@ export default function App() {
             className="action-icon-btn"
             onClick={() => setSidebarOpen(!sidebarOpen)}
             title={sidebarOpen ? 'Recolher Menu' : 'Expandir Menu'}
+            aria-label={sidebarOpen ? 'Recolher menu lateral' : 'Expandir menu lateral'}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -626,7 +759,6 @@ export default function App() {
           <button
             onClick={() => {
               setMainModule('dashboard');
-              handleBackToMain();
             }}
             title={sidebarOpen ? undefined : 'Início'}
             style={{
@@ -652,7 +784,6 @@ export default function App() {
             onClick={() => {
               setMainModule('repertoire');
               setActiveTab('songs');
-              handleBackToMain();
             }}
             title={sidebarOpen ? undefined : 'Repertório'}
             style={{
@@ -677,7 +808,6 @@ export default function App() {
           <button
             onClick={() => {
               setMainModule('cifrador');
-              handleBackToMain();
             }}
             title={sidebarOpen ? undefined : 'Cifras Inteligentes'}
             style={{
@@ -702,7 +832,6 @@ export default function App() {
           <button
             onClick={() => {
               setMainModule('schedules');
-              handleBackToMain();
             }}
             title={sidebarOpen ? undefined : 'Escalas'}
             style={{
@@ -727,7 +856,6 @@ export default function App() {
           <button
             onClick={() => {
               setMainModule('ministry');
-              handleBackToMain();
             }}
             title={sidebarOpen ? undefined : 'Ministério'}
             style={{
@@ -752,7 +880,7 @@ export default function App() {
       </aside>
 
       {/* Main Container Layout */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+      <div className="app-main-column" style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         {/* Module Header Bar */}
         {!selectedSong && !selectedFolder && !selectedSchedule && !showCreateScheduleModal && !showCreateGroupModal && !showInviteModal && !showJoinModal && !isTeamModalOpen && !showSongModal && (
           <Header
@@ -764,19 +892,67 @@ export default function App() {
             }
             subtitle={activeGroup ? activeGroup.name : 'Nenhum ministério selecionado'}
             rightActions={
-              <button
-                className="action-icon-btn"
-                onClick={() => setDarkMode(!darkMode)}
-                title={darkMode ? 'Alternar para Modo Claro' : 'Alternar para Modo Escuro'}
-              >
-                {darkMode ? <Sun size={18} /> : <Moon size={18} />}
-              </button>
+              <>
+                <button
+                  className="action-icon-btn"
+                  onClick={() => setDarkMode(!darkMode)}
+                  title={darkMode ? 'Alternar para Modo Claro' : 'Alternar para Modo Escuro'}
+                  aria-label={darkMode ? 'Alternar para modo claro' : 'Alternar para modo escuro'}
+                >
+                  {darkMode ? <Sun size={18} aria-hidden="true" /> : <Moon size={18} aria-hidden="true" />}
+                </button>
+                <MobileAccountMenu
+                  user={currentUser}
+                  groups={groups}
+                  activeGroup={activeGroup}
+                  userRole={userRole}
+                  onSelectGroup={(group) => {
+                    clearDetailSelection();
+                    setActiveGroup(group);
+                    navigate(MODULE_PATHS[mainModule]);
+                  }}
+                  onCreateGroup={() => setShowCreateGroupModal(true)}
+                  onJoinGroup={() => setShowJoinModal(true)}
+                  onGenerateInvite={() => setShowInviteModal(true)}
+                  onLogout={handleLogout}
+                />
+              </>
             }
           />
         )}
 
         {/* View contents wrapper */}
         <div className="app-container" style={{ flex: 1, padding: '24px', maxWidth: 'none', margin: 0 }}>
+          {detailLoading && (routeState.songId || routeState.folderId || routeState.scheduleId) && (
+            <div className="detail-state-overlay" role="status" aria-live="polite">
+              <div className="shimmer detail-loading-line" />
+              <span>Carregando detalhes…</span>
+            </div>
+          )}
+
+          {detailError && (routeState.songId || routeState.folderId || routeState.scheduleId) && (
+            <div className="detail-state-overlay" role="alert">
+              <div className="empty-title">Não foi possível abrir este item</div>
+              <div className="empty-desc">{detailError}</div>
+              <div className="detail-state-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    setDetailError(null);
+                    setDetailRetryNonce((value) => value + 1);
+                    if (routeState.scheduleId) loadSchedules();
+                  }}
+                >
+                  Tentar novamente
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={handleBackToMain}>
+                  Voltar
+                </button>
+              </div>
+            </div>
+          )}
+
           {selectedSong && (
             <SongDetail
               song={selectedSong}
@@ -802,7 +978,7 @@ export default function App() {
           )}
 
           {!selectedSong && !selectedFolder && !activeGroup && (
-            <div className="empty-state" style={{ minHeight: '400px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '40px 20px' }}>
+            <div className="empty-state" style={{ minHeight: '240px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '28px 20px' }}>
               <div style={{ fontSize: '3.5rem', marginBottom: '16px' }}>👥</div>
               <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '8px', color: 'var(--text-primary)' }}>Nenhum Ministério Selecionado</h2>
               <p style={{ color: 'var(--text-secondary)', maxWidth: '480px', marginBottom: '24px', lineHeight: 1.5 }}>
@@ -834,7 +1010,6 @@ export default function App() {
                   onNavigateToRepertoire={() => {
                     setMainModule('repertoire');
                     setActiveTab('songs');
-                    handleBackToMain();
                   }}
                   onNavigateToSchedules={() => {
                     setSelectedSchedule(null);
@@ -842,7 +1017,7 @@ export default function App() {
                   }}
                   onSelectSchedule={(schedule) => {
                     setSelectedSchedule(schedule);
-                    setMainModule('schedules');
+                    navigate(pathForSchedule(schedule.id));
                   }}
                 />
               )}
@@ -877,13 +1052,14 @@ export default function App() {
                       <Search size={18} className="search-icon" />
                       <input
                         type="text"
+                        aria-label="Buscar músicas"
                         placeholder="Buscar músicas por título, artista ou letra..."
                         className="search-input"
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
                       />
                       {search && (
-                        <button className="clear-search-btn" onClick={() => setSearch('')}>
+                        <button type="button" aria-label="Limpar busca" className="clear-search-btn" onClick={() => setSearch('')}>
                           ✕
                         </button>
                       )}
@@ -894,6 +1070,7 @@ export default function App() {
                         className={`icon-btn ${hasActiveFilters ? 'active' : ''}`}
                         onClick={() => setShowFilters(!showFilters)}
                         title="Filtros"
+                        aria-label="Abrir filtros do repertório"
                       >
                         <SlidersHorizontal size={20} />
                         {hasActiveFilters && <span className="active-dot" />}
@@ -1021,7 +1198,7 @@ export default function App() {
               )}
 
               {mainModule === 'cifrador' && (
-                <SmartChordsWorkspace />
+                <SmartChordsWorkspace ministryId={groupId} />
               )}
 
               {mainModule === 'ministry' && activeGroup && currentUser && (
@@ -1045,6 +1222,8 @@ export default function App() {
                   onGenerateInvite={() => setShowInviteModal(true)}
                   showToast={showToast}
                   onTeamModalStateChange={setIsTeamModalOpen}
+                  section={routeState.ministrySection}
+                  onNavigateSection={(section) => navigate(section ? `/ministerio/${section}` : '/ministerio')}
                 />
               )}
 
@@ -1068,6 +1247,7 @@ export default function App() {
                           await api.deleteSchedule(selectedSchedule.id, activeGroup.id);
                           showToast('Escala excluída com sucesso.');
                           setSelectedSchedule(null);
+                          navigate('/escalas');
                           setSchedules((prev) => prev.filter((s) => s.id !== selectedSchedule.id));
                         } catch (err: any) {
                           showToast(err.message || 'Erro ao excluir escala.', 'error');
@@ -1090,7 +1270,10 @@ export default function App() {
                       setScheduleToEdit(null);
                       setShowCreateScheduleModal(true);
                     }}
-                    onSelectSchedule={(schedule) => setSelectedSchedule(schedule)}
+                    onSelectSchedule={(schedule) => {
+                      setSelectedSchedule(schedule);
+                      navigate(pathForSchedule(schedule.id));
+                    }}
                   />
                 )
               )}
@@ -1117,7 +1300,7 @@ export default function App() {
               <div className="modal-title">
                 {folderToEdit ? 'Editar Pasta' : 'Nova Pasta'}
               </div>
-              <button className="action-icon-btn" onClick={() => setShowFolderModal(false)}>
+              <button type="button" aria-label="Fechar formulário de pasta" className="action-icon-btn" onClick={() => setShowFolderModal(false)}>
                 ✕
               </button>
             </div>
@@ -1160,7 +1343,7 @@ export default function App() {
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <div className="modal-title">Novo Artista</div>
-              <button className="action-icon-btn" onClick={() => setShowArtistModal(false)}>
+              <button type="button" aria-label="Fechar formulário de artista" className="action-icon-btn" onClick={() => setShowArtistModal(false)}>
                 ✕
               </button>
             </div>
@@ -1270,7 +1453,6 @@ export default function App() {
           currentModule={mainModule}
           onSelectModule={(module) => {
             setMainModule(module);
-            handleBackToMain();
           }}
           upcomingSchedulesCount={schedules.filter((s) => {
             try {

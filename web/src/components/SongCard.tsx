@@ -20,9 +20,11 @@ export const SongCard: React.FC<SongCardProps> = ({ song, onTap }) => {
   const versionCount = song.versions?.length || 1;
 
   return (
-    <div
+    <button
+      type="button"
       className="song-card"
       onClick={onTap}
+      aria-label={`Abrir música ${song.title}, ${artistText}`}
       style={{
         display: 'flex',
         alignItems: 'center',
@@ -34,6 +36,9 @@ export const SongCard: React.FC<SongCardProps> = ({ song, onTap }) => {
         minHeight: '64px',
         cursor: 'pointer',
         transition: 'all 0.2s ease',
+        width: '100%',
+        color: 'inherit',
+        textAlign: 'left',
       }}
     >
       <div
@@ -184,6 +189,6 @@ export const SongCard: React.FC<SongCardProps> = ({ song, onTap }) => {
           )}
         </div>
       </div>
-    </div>
+    </button>
   );
 };

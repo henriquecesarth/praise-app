@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, X, Check, Plus, Edit2, Copy, Trash2, Music, Gauge, Clock } from 'lucide-react';
+import { ChevronLeft, X, Plus, Edit2, Copy, Trash2, Music, Gauge, Clock } from 'lucide-react';
 import { Song, SongVersion, Classification } from '../types';
 import { VersionEditModal } from './VersionEditModal';
 import { FloatingInput } from './ui/FloatingInput';
@@ -183,6 +183,7 @@ export const CreateSongModal: React.FC<CreateSongModalProps> = ({
             className="action-icon-btn"
             onClick={onClose}
             title="Fechar"
+            aria-label="Fechar formulário de música"
             style={{
               width: '44px',
               height: '44px',
@@ -212,26 +213,7 @@ export const CreateSongModal: React.FC<CreateSongModalProps> = ({
             {song ? 'Editar Música' : 'Nova Música'}
           </div>
 
-          <button
-            type="button"
-            className="action-icon-btn"
-            onClick={handleSubmit}
-            disabled={loading}
-            title="Salvar Música"
-            style={{
-              width: '44px',
-              height: '44px',
-              minWidth: '44px',
-              minHeight: '44px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderRadius: '10px',
-              color: 'var(--primary-light)',
-            }}
-          >
-            <Check size={20} />
-          </button>
+          <div className="schedule-modal-header-spacer" aria-hidden="true" />
         </div>
 
         {/* Body */}

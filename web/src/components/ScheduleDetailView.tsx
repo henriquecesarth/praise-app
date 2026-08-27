@@ -21,6 +21,7 @@ import {
 import { ScheduleItem } from './CreateScheduleModal';
 import { GroupRole } from '../types';
 import { Header } from './Header';
+import { formatScheduleDateTimePtBR, formatTimestampPtBR } from '../utils/locale';
 
 interface ScheduleDetailViewProps {
   schedule: ScheduleItem;
@@ -35,15 +36,7 @@ interface ScheduleDetailViewProps {
 }
 
 const formatDate = (dateStr: string, timeStr: string) => {
-  try {
-    const [year, month, day] = dateStr.split('-').map(Number);
-    const date = new Date(year, month - 1, day);
-    const dayNames = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
-    const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-    return `${dayNames[date.getDay()]}, ${day} de ${monthNames[month - 1]} de ${year} às ${timeStr}`;
-  } catch {
-    return `${dateStr} às ${timeStr}`;
-  }
+  return formatScheduleDateTimePtBR(dateStr, timeStr);
 };
 
 const isUpcoming = (dateStr: string) => {
@@ -54,20 +47,7 @@ const isUpcoming = (dateStr: string) => {
 };
 
 const formatChatTime = (isoStr: string) => {
-  try {
-    const date = new Date(isoStr);
-    const timeStr = date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-    const todayStr = new Date().toISOString().split('T')[0];
-    const msgDateStr = date.toISOString().split('T')[0];
-    if (msgDateStr === todayStr) {
-      return `Hoje às ${timeStr}`;
-    }
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    return `${day}/${month} às ${timeStr}`;
-  } catch {
-    return isoStr;
-  }
+  return formatTimestampPtBR(isoStr);
 };
 
 export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
@@ -207,13 +187,13 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
             <span style={{ fontSize: '0.88rem', fontWeight: 600 }}>Voltar</span>
           </button>
         }
-        title={schedule.title}
-        subtitle={formatDate(schedule.date, schedule.time)}
+        title="Detalhes da escala"
         rightActions={
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <button
               className="btn btn-secondary icon-btn-text"
               onClick={() => setShowChatModal(true)}
+              aria-label={`Abrir chat da escala, ${comments.length} comentário(s)`}
               style={{ minHeight: '44px', minWidth: '44px', padding: '8px 14px', borderRadius: '10px' }}
               title="Chat e Comentários da Escala"
             >
@@ -221,7 +201,7 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
               <span className="hidden sm:inline" style={{ fontSize: '0.88rem' }}>Chat ({comments.length})</span>
             </button>
             {userRole === 'admin' && onEdit && (
-              <button className="btn btn-primary" style={{ minHeight: '44px', minWidth: '44px', padding: '8px 14px', borderRadius: '10px' }} onClick={onEdit}>
+              <button aria-label="Editar escala" className="btn btn-primary" style={{ minHeight: '44px', minWidth: '44px', padding: '8px 14px', borderRadius: '10px' }} onClick={onEdit}>
                 <Pencil size={18} />
                 <span className="hidden sm:inline" style={{ fontSize: '0.88rem' }}>Editar</span>
               </button>
@@ -244,6 +224,7 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
                 }}
                 onClick={onDelete}
                 title="Excluir Escala"
+                aria-label="Excluir escala"
               >
                 <Trash2 size={18} />
               </button>
@@ -406,7 +387,7 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
                     <div className="dashboard-item-avatar">{member.name.charAt(0).toUpperCase()}</div>
                     <div className="dashboard-item-info">
                       <div className="dashboard-item-title">{member.name}</div>
-                      <div className="dashboard-item-desc">{displayRole}</div>
+                      <div className="dashboard-item-desc schedule-member-role" title={displayRole}>{displayRole}</div>
                     </div>
                   {schedule.requireConfirmation && (
                     <div className="schedule-detail-confirm-badge">
@@ -548,6 +529,7 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
                 className="action-icon-btn"
                 onClick={() => setShowChatModal(false)}
                 title="Fechar"
+                aria-label="Fechar chat da escala"
                 style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}
               >
                 ✕
@@ -614,6 +596,7 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
                   <button
                     type="submit"
                     className="btn btn-primary"
+                    aria-label="Enviar comentário"
                     disabled={sendingComment || !newCommentText.trim()}
                     style={{ minHeight: '44px', minWidth: '44px', borderRadius: '22px', padding: '0 20px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
                   >

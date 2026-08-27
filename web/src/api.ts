@@ -733,7 +733,8 @@ export const api = {
       hasYoutube?: boolean;
       page?: number;
       limit?: number;
-    }
+    },
+    signal?: AbortSignal,
   ): Promise<{ songs: Song[]; totalCount: number }> => {
     const queryParams = new URLSearchParams();
     if (filters?.search) queryParams.append('search', filters.search);
@@ -749,6 +750,7 @@ export const api = {
     const queryString = queryParams.toString() ? `?${queryParams.toString()}` : '';
     const response = await fetch(`${API_URL}/ministries/${ministryId}/songs${queryString}`, {
       headers: getHeaders(),
+      signal,
     });
     const result = await handleResponse<{ data: any[]; total: number }>(response);
     return {
@@ -794,10 +796,11 @@ export const api = {
   },
 
   // Artistas
-  getArtists: async (ministryId = DEFAULT_MINISTRY_ID, search?: string): Promise<Artist[]> => {
+  getArtists: async (ministryId = DEFAULT_MINISTRY_ID, search?: string, signal?: AbortSignal): Promise<Artist[]> => {
     const queryString = search ? `?search=${encodeURIComponent(search)}` : '';
     const response = await fetch(`${API_URL}/ministries/${ministryId}/artists${queryString}`, {
       headers: getHeaders(),
+      signal,
     });
     const result = await handleResponse<{ data: any[] }>(response);
     return (result.data || []).map(mapArtistFromApi);
@@ -901,7 +904,7 @@ export const api = {
     return result.data;
   },
 
-  getSmartChords: async (_searchQuery?: string): Promise<any[]> => {
+  getSmartChords: async (_ministryId: string, _searchQuery?: string, _signal?: AbortSignal): Promise<any[]> => {
     return [];
   },
 

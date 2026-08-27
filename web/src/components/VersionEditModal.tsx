@@ -237,7 +237,7 @@ export const VersionEditModal: React.FC<VersionEditModalProps> = ({
                     key={c.id}
                     onClick={() => toggleClassification(c.id)}
                     style={{
-                      minHeight: '36px',
+                      minHeight: '44px',
                       padding: '6px 14px',
                       borderRadius: '20px',
                       fontSize: '0.82rem',

@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { Ministry } from '../types';
 import { ScheduleItem } from './CreateScheduleModal';
+import { formatScheduleDateTimePtBR } from '../utils/locale';
 
 interface UserState {
   id: string;
@@ -52,15 +53,7 @@ const MOCK_ANNOUNCEMENTS = [
 ];
 
 const formatScheduleDate = (dateStr: string, timeStr: string) => {
-  try {
-    const [year, month, day] = dateStr.split('-').map(Number);
-    const date = new Date(year, month - 1, day);
-    const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-    const monthNames = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
-    return `${dayNames[date.getDay()]}, ${day} ${monthNames[month - 1]} às ${timeStr}`;
-  } catch {
-    return `${dateStr} às ${timeStr}`;
-  }
+  return formatScheduleDateTimePtBR(dateStr, timeStr);
 };
 
 const isUpcoming = (dateStr: string) => {
@@ -374,10 +367,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   const paletteColor = sch.colorPalette || clothingColors[0];
 
                   return (
-                    <div
+                    <button
+                      type="button"
                       key={sch.id}
                       className="dashboard-schedule-card enhanced p-3.5 rounded-xl border border-[var(--border-color)] bg-[var(--surface-color)] min-h-[72px] cursor-pointer min-w-0 w-full max-w-full box-border"
                       onClick={() => onSelectSchedule(sch)}
+                      aria-label={`Abrir escala ${sch.title}, ${formatScheduleDate(sch.date, sch.time)}`}
                     >
                       {paletteColor && <div className="dashboard-schedule-accent-bar" style={{ backgroundColor: paletteColor }} />}
                       <div className="dashboard-schedule-main flex flex-col gap-2.5 w-full min-w-0">
@@ -420,14 +415,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           {formatWeeksUntil(sch.date) && <div className="dashboard-stat-chip blue"><CalendarDays size={13} style={{ color: '#3B82F6' }} /><span><strong>{formatWeeksUntil(sch.date)}</strong></span></div>}
                         </div>
                       </div>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
             ) : (
               <div className="empty-state py-6 text-center w-full">
                 <div className="text-3xl mb-3">📅</div>
-                <p className="empty-desc text-sm text-[var(--text-secondary)] mb-4">Nenhuma escala criada ainda.</p>
+                <p className="empty-desc text-sm text-[var(--text-secondary)] mb-4">
+                  {schedules.length > 0 ? 'Nenhuma próxima escala agendada.' : 'Nenhuma escala criada ainda.'}
+                </p>
                 {userRole === 'admin' ? (
                   <button className="btn btn-primary min-h-[44px] px-5 py-2.5 text-xs sm:text-sm rounded-xl" onClick={onNavigateToSchedules}>Criar Primeira Escala</button>
                 ) : (

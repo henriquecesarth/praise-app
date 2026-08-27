@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useId } from 'react';
 
 interface FloatingSelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
   label: string;
@@ -12,33 +12,20 @@ export const FloatingSelect: React.FC<FloatingSelectProps> = ({
   className = '',
   style,
   value,
-  onFocus,
-  onBlur,
   children,
   ...props
 }) => {
-  const [isFocused, setIsFocused] = useState(false);
-  const inputId = id || label.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-  const hasValue = value !== undefined && value !== null && String(value).trim() !== '';
-  const isFloating = isFocused || hasValue;
-
-  const handleFocus = (e: React.FocusEvent<HTMLSelectElement>) => {
-    setIsFocused(true);
-    if (onFocus) onFocus(e);
-  };
-
-  const handleBlur = (e: React.FocusEvent<HTMLSelectElement>) => {
-    setIsFocused(false);
-    if (onBlur) onBlur(e);
-  };
+  const generatedId = useId();
+  const inputId = id || `floating-select-${generatedId}`;
+  const errorId = `${inputId}-error`;
 
   return (
     <div className="relative w-full">
       <select
         id={inputId}
         value={value}
-        onFocus={handleFocus}
-        onBlur={handleBlur}
+        aria-invalid={Boolean(error)}
+        aria-describedby={error ? errorId : props['aria-describedby']}
         style={{
           paddingLeft: '20px',
           paddingRight: '40px',
@@ -56,11 +43,7 @@ export const FloatingSelect: React.FC<FloatingSelectProps> = ({
       </select>
       <label
         htmlFor={inputId}
-        className={`absolute pointer-events-none transition-all duration-200 ease-in-out z-10 px-1.5 rounded ${
-          isFloating
-            ? 'top-0 -translate-y-1/2 left-3.5 text-xs font-semibold text-[var(--primary-light)] bg-[var(--surface-color)]'
-            : 'top-1/2 -translate-y-1/2 left-5 text-sm text-[var(--text-secondary)] bg-transparent'
-        }`}
+        className="absolute pointer-events-none transition-all duration-200 ease-in-out z-10 px-1.5 rounded top-0 -translate-y-1/2 left-3.5 text-xs font-semibold text-[var(--primary-light)] bg-[var(--surface-color)]"
       >
         {label}
       </label>
@@ -69,7 +52,7 @@ export const FloatingSelect: React.FC<FloatingSelectProps> = ({
           <path d="M1 1.5L6 6.5L11 1.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
         </svg>
       </div>
-      {error && <span className="text-xs text-red-500 mt-1 block px-1">{error}</span>}
+      {error && <span id={errorId} className="text-xs text-red-500 mt-1 block px-1">{error}</span>}
     </div>
   );
 };

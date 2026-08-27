@@ -60,7 +60,11 @@ const getSuggestions = (query: string, originalKey: string): string[] => {
     .filter(s => s.toLowerCase().startsWith(trimmed.toLowerCase()) && s !== trimmed);
 };
 
-export const SmartChordsWorkspace: React.FC = () => {
+interface SmartChordsWorkspaceProps {
+  ministryId: string;
+}
+
+export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ ministryId }) => {
   const [smartChords, setSmartChords] = useState<SmartChord[]>([]);
   const [selectedChord, setSelectedChord] = useState<SmartChord | null>(null);
   const [search, setSearch] = useState('');
@@ -69,6 +73,9 @@ export const SmartChordsWorkspace: React.FC = () => {
   // Repertoire Relations
   const [artists, setArtists] = useState<Artist[]>([]);
   const [repertoireSongs, setRepertoireSongs] = useState<Song[]>([]);
+  const [relationsLoading, setRelationsLoading] = useState(true);
+  const [relationsError, setRelationsError] = useState<string | null>(null);
+  const [relationsRetry, setRelationsRetry] = useState(0);
 
   // Form State
   const [title, setTitle] = useState('');
@@ -86,35 +93,49 @@ export const SmartChordsWorkspace: React.FC = () => {
   const [userModifiedNewSongTitle, setUserModifiedNewSongTitle] = useState(false);
 
   // Load relation data
-  const loadRelations = async () => {
+  const loadRelations = async (signal?: AbortSignal) => {
+    if (!ministryId) return;
+    setRelationsLoading(true);
+    setRelationsError(null);
     try {
-      const artistData = await api.getArtists();
+      const artistData = await api.getArtists(ministryId, undefined, signal);
       setArtists(artistData);
       
-      const songResult = await api.getSongs();
+      const songResult = await api.getSongs(ministryId, undefined, signal);
       setRepertoireSongs(songResult.songs || []);
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return;
       console.error('Erro ao carregar artistas/músicas:', err);
+      setRelationsError(err?.message || 'Não foi possível carregar o repertório deste ministério.');
+    } finally {
+      if (!signal?.aborted) setRelationsLoading(false);
     }
   };
 
   // Load chords list
-  const loadChordsList = async (searchQuery?: string) => {
+  const loadChordsList = async (searchQuery?: string, signal?: AbortSignal) => {
+    if (!ministryId) return;
     try {
       setIsLoading(true);
-      const data = await api.getSmartChords(searchQuery);
+      const data = await api.getSmartChords(ministryId, searchQuery, signal);
       setSmartChords(data);
-    } catch (err) {
-      alert('Erro ao carregar lista de cifras.');
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') setRelationsError(err?.message || 'Erro ao carregar lista de cifras.');
     } finally {
-      setIsLoading(false);
+      if (!signal?.aborted) setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    loadChordsList();
-    loadRelations();
-  }, []);
+    const controller = new AbortController();
+    setArtists([]);
+    setRepertoireSongs([]);
+    setSmartChords([]);
+    setSelectedChord(null);
+    loadChordsList(undefined, controller.signal);
+    loadRelations(controller.signal);
+    return () => controller.abort();
+  }, [ministryId, relationsRetry]);
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearch(e.target.value);
@@ -194,7 +215,7 @@ export const SmartChordsWorkspace: React.FC = () => {
           title: newSongTitle.trim(),
           artistId: artistId || undefined,
           originalKey: originalKey,
-        });
+        }, ministryId);
         finalSongId = createdSong.id;
       }
 
@@ -220,7 +241,7 @@ export const SmartChordsWorkspace: React.FC = () => {
 
       // Reload list and songs dropdown list to include any newly created song
       loadChordsList(search);
-      const songResult = await api.getSongs();
+      const songResult = await api.getSongs(ministryId);
       setRepertoireSongs(songResult.songs || []);
       
       // Update form state with the newly created or selected song ID
@@ -464,8 +485,8 @@ export const SmartChordsWorkspace: React.FC = () => {
       <div className="glass-panel smart-chords-sidebar no-print" style={{ width: '320px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px', flexShrink: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Minhas Cifras</h2>
-          <button className="btn btn-primary" style={{ minHeight: '44px', padding: '8px 16px', fontSize: '0.9rem', borderRadius: '8px', display: 'inline-flex', alignItems: 'center' }} onClick={handleCreateNew}>
-            + Nova
+          <button type="button" className="btn btn-primary" style={{ minHeight: '44px', padding: '8px 16px', fontSize: '0.9rem', borderRadius: '8px', display: 'inline-flex', alignItems: 'center' }} onClick={handleCreateNew}>
+            Criar Cifra
           </button>
         </div>
 
@@ -478,8 +499,17 @@ export const SmartChordsWorkspace: React.FC = () => {
           style={{ minHeight: '44px', fontSize: '0.95rem' }}
         />
 
-        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {isLoading && smartChords.length === 0 ? (
+        {relationsError && (
+          <div className="inline-error-state" role="alert">
+            <span>{relationsError}</span>
+            <button type="button" className="btn btn-secondary" onClick={() => setRelationsRetry((value) => value + 1)}>
+              Tentar novamente
+            </button>
+          </div>
+        )}
+
+        <div aria-busy={isLoading || relationsLoading} style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {(isLoading || relationsLoading) && smartChords.length === 0 ? (
             <p style={{ textAlign: 'center', opacity: 0.5 }}>Carregando...</p>
           ) : smartChords.length === 0 ? (
             <p style={{ textAlign: 'center', opacity: 0.5 }}>Nenhuma cifra encontrada.</p>
@@ -487,7 +517,8 @@ export const SmartChordsWorkspace: React.FC = () => {
             smartChords.map(sc => {
               const artistName = artists.find(a => a.id === sc.artistId)?.name || 'Artista desconhecido';
               return (
-                <div
+                <button
+                  type="button"
                   key={sc.id}
                   onClick={() => handleSelectChord(sc)}
                   style={{
@@ -500,7 +531,10 @@ export const SmartChordsWorkspace: React.FC = () => {
                     transition: 'all 0.2s',
                     display: 'flex',
                     flexDirection: 'column',
-                    justifyContent: 'center'
+                    justifyContent: 'center',
+                    width: '100%',
+                    color: 'inherit',
+                    textAlign: 'left'
                   }}
                   className="hover-scale"
                 >
@@ -509,7 +543,7 @@ export const SmartChordsWorkspace: React.FC = () => {
                     <span>{artistName}</span>
                     <span style={{ color: 'var(--primary-light)', fontWeight: 600 }}>{sc.originalKey}</span>
                   </div>
-                </div>
+                </button>
               );
             })
           )}
@@ -554,6 +588,7 @@ export const SmartChordsWorkspace: React.FC = () => {
                     style={{ minHeight: '44px', fontSize: '0.95rem' }}
                     value={artistId}
                     onChange={e => setArtistId(e.target.value)}
+                    disabled={relationsLoading}
                   >
                     <option value="">Nenhum artista cadastrado</option>
                     {artists.map(a => (
@@ -585,6 +620,7 @@ export const SmartChordsWorkspace: React.FC = () => {
                   style={{ minHeight: '44px', fontSize: '0.95rem' }}
                   value={songId}
                   onChange={e => setSongId(e.target.value)}
+                  disabled={relationsLoading}
                 >
                   <option value="">Nenhuma música vinculada</option>
                   <option value="new" style={{ color: 'var(--primary-light)', fontWeight: 'bold' }}>+ Nova Música (Auto-Criar)...</option>
@@ -611,7 +647,7 @@ export const SmartChordsWorkspace: React.FC = () => {
                       />
                     </div>
                     
-                    <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
+                    <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', minHeight: '44px' }}>
                       <input
                         type="checkbox"
                         id="auto-create-checkbox"
@@ -672,13 +708,13 @@ export const SmartChordsWorkspace: React.FC = () => {
                   </div>
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <button className="btn btn-secondary smart-chords-touch-btn" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '1.1rem', fontWeight: 700, borderRadius: '8px' }} onClick={() => setSemitones(prev => prev - 1)}>
+                    <button type="button" aria-label="Transpor um semitom abaixo" className="btn btn-secondary smart-chords-touch-btn" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '1.1rem', fontWeight: 700, borderRadius: '8px' }} onClick={() => setSemitones(prev => prev - 1)}>
                       -
                     </button>
                     <span style={{ fontSize: '0.95rem', width: '32px', textAlign: 'center', fontWeight: 700 }}>
                       {semitones > 0 ? `+${semitones}` : semitones}
                     </span>
-                    <button className="btn btn-secondary smart-chords-touch-btn" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '1.1rem', fontWeight: 700, borderRadius: '8px' }} onClick={() => setSemitones(prev => prev + 1)}>
+                    <button type="button" aria-label="Transpor um semitom acima" className="btn btn-secondary smart-chords-touch-btn" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '1.1rem', fontWeight: 700, borderRadius: '8px' }} onClick={() => setSemitones(prev => prev + 1)}>
                       +
                     </button>
                     {semitones !== 0 && (
@@ -691,13 +727,13 @@ export const SmartChordsWorkspace: React.FC = () => {
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{ fontSize: '0.85rem', opacity: 0.7 }}>Tamanho da Fonte:</span>
-                  <button className="btn btn-secondary smart-chords-touch-btn" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '1.1rem', fontWeight: 700, borderRadius: '8px' }} onClick={() => setPrintFontSize(prev => Math.max(10, prev - 1))}>
+                  <button type="button" aria-label="Diminuir tamanho da fonte" className="btn btn-secondary smart-chords-touch-btn" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '1.1rem', fontWeight: 700, borderRadius: '8px' }} onClick={() => setPrintFontSize(prev => Math.max(10, prev - 1))}>
                     -
                   </button>
                   <span style={{ fontSize: '0.9rem', width: '40px', textAlign: 'center', fontWeight: 'bold' }}>
                     {printFontSize}px
                   </span>
-                  <button className="btn btn-secondary smart-chords-touch-btn" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '1.1rem', fontWeight: 700, borderRadius: '8px' }} onClick={() => setPrintFontSize(prev => Math.min(24, prev + 1))}>
+                  <button type="button" aria-label="Aumentar tamanho da fonte" className="btn btn-secondary smart-chords-touch-btn" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '1.1rem', fontWeight: 700, borderRadius: '8px' }} onClick={() => setPrintFontSize(prev => Math.min(24, prev + 1))}>
                     +
                   </button>
                 </div>
@@ -761,6 +797,8 @@ export const SmartChordsWorkspace: React.FC = () => {
                     return (
                       <div 
                         key={lineIdx} 
+                        role="group"
+                        aria-label={lineText || 'Linha vazia'}
                         style={{ 
                           display: 'flex', 
                           flexWrap: 'wrap', 
@@ -801,6 +839,7 @@ export const SmartChordsWorkspace: React.FC = () => {
                                 /* Chord absolute positioned */
                                 hasChord && (
                                   <span 
+                                    aria-hidden="true"
                                     className="print-chord-span"
                                     style={{ 
                                       position: 'absolute', 
@@ -819,6 +858,7 @@ export const SmartChordsWorkspace: React.FC = () => {
                               )}
                               {/* Character */}
                               <span 
+                                aria-hidden="true"
                                 className={hasChord ? 'has-chord' : ''}
                                 style={{ 
                                   textDecoration: hasChord ? 'underline 2px solid var(--primary-light)' : 'none',
@@ -859,6 +899,7 @@ export const SmartChordsWorkspace: React.FC = () => {
                               ) : (
                                 hasExtraChord && (
                                   <span 
+                                    aria-hidden="true"
                                     className="print-chord-span"
                                     style={{ 
                                       position: 'absolute', 
@@ -875,7 +916,7 @@ export const SmartChordsWorkspace: React.FC = () => {
                                   </span>
                                 )
                               )}
-                              <span style={{ fontSize: `${Math.round(printFontSize * 0.8)}px`, color: 'var(--text-tertiary)', opacity: 0.6 }}>
+                              <span aria-hidden="true" style={{ fontSize: `${Math.round(printFontSize * 0.8)}px`, color: 'var(--text-tertiary)', opacity: 0.6 }}>
                                 ➕
                               </span>
                             </div>
@@ -927,13 +968,13 @@ export const SmartChordsWorkspace: React.FC = () => {
                 {/* Font Size controls inside Modal */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{ fontSize: '0.85rem', opacity: 0.7 }}>Tamanho da Letra:</span>
-                  <button className="btn btn-secondary" style={{ width: '28px', height: '28px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center' }} onClick={() => setPrintFontSize(prev => Math.max(10, prev - 1))}>
+                  <button type="button" aria-label="Diminuir tamanho da letra no PDF" className="btn btn-secondary" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center' }} onClick={() => setPrintFontSize(prev => Math.max(10, prev - 1))}>
                     -
                   </button>
                   <span style={{ fontSize: '0.85rem', width: '36px', textAlign: 'center', fontWeight: 'bold' }}>
                     {printFontSize}px
                   </span>
-                  <button className="btn btn-secondary" style={{ width: '28px', height: '28px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center' }} onClick={() => setPrintFontSize(prev => Math.min(24, prev + 1))}>
+                  <button type="button" aria-label="Aumentar tamanho da letra no PDF" className="btn btn-secondary" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center' }} onClick={() => setPrintFontSize(prev => Math.min(24, prev + 1))}>
                     +
                   </button>
                 </div>
@@ -1004,6 +1045,8 @@ export const SmartChordsWorkspace: React.FC = () => {
                     return (
                       <div 
                         key={lineIdx} 
+                        role="group"
+                        aria-label={lineText || 'Linha vazia'}
                         style={{ 
                           display: 'flex', 
                           flexWrap: 'wrap', 
@@ -1031,6 +1074,7 @@ export const SmartChordsWorkspace: React.FC = () => {
                             >
                               {hasChord && (
                                 <span 
+                                  aria-hidden="true"
                                   className="print-chord-span"
                                   style={{ 
                                     position: 'absolute', 
@@ -1046,8 +1090,9 @@ export const SmartChordsWorkspace: React.FC = () => {
                                   {transposedChord}
                                 </span>
                               )}
-                              <span 
-                                className={hasChord ? 'has-chord' : ''}
+                            <span
+                              aria-hidden="true"
+                              className={hasChord ? 'has-chord' : ''}
                                 style={{ 
                                   textDecoration: hasChord ? 'underline 1px solid black' : 'none',
                                   color: 'black'
@@ -1074,6 +1119,7 @@ export const SmartChordsWorkspace: React.FC = () => {
                               }}
                             >
                               <span 
+                                aria-hidden="true"
                                 className="print-chord-span"
                                 style={{ 
                                   position: 'absolute', 
@@ -1088,7 +1134,7 @@ export const SmartChordsWorkspace: React.FC = () => {
                               >
                                 {transposeChord(extraChord, semitones)}
                               </span>
-                              <span style={{ visibility: 'hidden' }}>➕</span>
+                              <span aria-hidden="true" style={{ visibility: 'hidden' }}>➕</span>
                             </div>
                           ) : null;
                         })()}

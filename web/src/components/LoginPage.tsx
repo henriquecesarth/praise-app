@@ -119,9 +119,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
               </div>
 
               {/* Mode Toggle com Touch Targets de 44px */}
-              <div className="login-tabs" style={{ display: 'flex', gap: '6px', background: 'var(--surface-variant)', padding: '4px', borderRadius: '12px', minHeight: '44px' }}>
+              <div className="login-tabs" role="tablist" aria-label="Modo de autenticação" style={{ display: 'flex', gap: '6px', background: 'var(--surface-variant)', padding: '4px', borderRadius: '12px', minHeight: '44px' }}>
                 <button
                   type="button"
+                  role="tab"
+                  aria-selected={mode === 'login'}
                   onClick={() => {
                     setMode('login');
                     setError(null);
@@ -134,6 +136,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 </button>
                 <button
                   type="button"
+                  role="tab"
+                  aria-selected={mode === 'signup'}
                   onClick={() => {
                     setMode('signup');
                     setError(null);
@@ -157,10 +161,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
               <form onSubmit={handleSubmit} className="login-form">
                 {mode === 'signup' && (
                   <div className="form-group">
-                    <label style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>Seu Nome ou Nome do Ministério</label>
+                    <label htmlFor="signup-name" style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>Seu Nome ou Nome do Ministério</label>
                     <div className="login-input-wrapper" style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                       <User size={18} className="login-input-icon" style={{ position: 'absolute', left: '14px', color: 'var(--text-tertiary)' }} />
                       <input
+                        id="signup-name"
                         type="text"
                         value={name}
                         onChange={(e) => setName(e.target.value)}
@@ -174,10 +179,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 )}
 
                 <div className="form-group">
-                  <label style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>Endereço de E-mail</label>
+                  <label htmlFor="login-email" style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>Endereço de E-mail</label>
                   <div className="login-input-wrapper" style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                     <Mail size={18} className="login-input-icon" style={{ position: 'absolute', left: '14px', color: 'var(--text-tertiary)' }} />
                     <input
+                      id="login-email"
                       type="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
@@ -190,10 +196,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 </div>
 
                 <div className="form-group">
-                  <label style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>Senha</label>
+                  <label htmlFor="login-password" style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px', display: 'block' }}>Senha</label>
                   <div className="login-input-wrapper" style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                     <Lock size={18} className="login-input-icon" style={{ position: 'absolute', left: '14px', color: 'var(--text-tertiary)' }} />
                     <input
+                      id="login-password"
                       type={showPassword ? 'text' : 'password'}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
@@ -204,6 +211,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                     />
                     <button
                       type="button"
+                      aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
                       onClick={() => setShowPassword(!showPassword)}
                       className="login-input-toggle"
                       style={{ position: 'absolute', right: '2px', width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}

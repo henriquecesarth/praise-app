@@ -53,6 +53,8 @@ interface Props {
   onGenerateInvite: () => void;
   showToast: (msg: string, type?: 'success' | 'error') => void;
   onTeamModalStateChange?: (isOpen: boolean) => void;
+  section?: string;
+  onNavigateSection?: (section?: string) => void;
 }
 
 type ActiveTab = 'info' | 'members';
@@ -67,6 +69,8 @@ export function MinistryView({
   onGenerateInvite,
   showToast,
   onTeamModalStateChange,
+  section,
+  onNavigateSection,
 }: Props) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('info');
   const [showTeams, setShowTeams] = useState(false);
@@ -121,6 +125,27 @@ export function MinistryView({
   useEffect(() => {
     setNameValue(activeMinistry.name);
   }, [activeMinistry]);
+
+  useEffect(() => {
+    setActiveTab(section === 'membros' ? 'members' : 'info');
+    setShowTeams(section === 'equipes');
+    setShowRoles(section === 'funcoes');
+    setShowClassifications(section === 'classificacoes');
+    setShowAdmins(section === 'administradores');
+    setShowTemplates(section === 'modelos');
+  }, [section, activeMinistry.id]);
+
+  const navigateSection = (nextSection?: string) => {
+    onNavigateSection?.(nextSection);
+    if (!onNavigateSection) {
+      setActiveTab(nextSection === 'membros' ? 'members' : 'info');
+      setShowTeams(nextSection === 'equipes');
+      setShowRoles(nextSection === 'funcoes');
+      setShowClassifications(nextSection === 'classificacoes');
+      setShowAdmins(nextSection === 'administradores');
+      setShowTemplates(nextSection === 'modelos');
+    }
+  };
 
   useEffect(() => {
     if (activeTab === 'members') {
@@ -286,7 +311,7 @@ export function MinistryView({
       <TeamsView
         ministryId={activeMinistry.id}
         isAdmin={userRole === 'admin'}
-        onBack={() => setShowTeams(false)}
+        onBack={() => navigateSection()}
         showToast={showToast}
         onModalStateChange={onTeamModalStateChange}
       />
@@ -299,7 +324,7 @@ export function MinistryView({
       <RolesView
         ministryId={activeMinistry.id}
         isAdmin={userRole === 'admin'}
-        onBack={() => setShowRoles(false)}
+        onBack={() => navigateSection()}
         showToast={showToast}
         onModalStateChange={onTeamModalStateChange}
       />
@@ -312,7 +337,7 @@ export function MinistryView({
       <ClassificationsView
         ministryId={activeMinistry.id}
         isAdmin={userRole === 'admin'}
-        onBack={() => setShowClassifications(false)}
+        onBack={() => navigateSection()}
         showToast={showToast}
         onModalStateChange={onTeamModalStateChange}
       />
@@ -326,7 +351,7 @@ export function MinistryView({
         ministryId={activeMinistry.id}
         currentUserId={currentUserId}
         isAdmin={userRole === 'admin'}
-        onBack={() => setShowAdmins(false)}
+        onBack={() => navigateSection()}
         showToast={showToast}
       />
     );
@@ -338,7 +363,7 @@ export function MinistryView({
       <TemplatesView
         ministryId={activeMinistry.id}
         isAdmin={userRole === 'admin'}
-        onBack={() => setShowTemplates(false)}
+        onBack={() => navigateSection()}
         showToast={showToast}
       />
     );
@@ -347,18 +372,24 @@ export function MinistryView({
   return (
     <div className="ministry-page" style={{ paddingTop: 'max(16px, var(--safe-area-top))', paddingBottom: 'max(24px, var(--safe-area-bottom))' }}>
       {/* Page header with tab bar (Touch Targets 44px) */}
-      <div className="ministry-tab-header" style={{ display: 'flex', gap: '6px', background: 'var(--surface-variant)', padding: '4px', borderRadius: '12px', border: '1px solid var(--border-color)', minHeight: '44px', marginBottom: '20px' }}>
+      <div className="ministry-tab-header" role="tablist" aria-label="Seções do ministério" style={{ display: 'flex', gap: '6px', background: 'var(--surface-variant)', padding: '4px', borderRadius: '12px', border: '1px solid var(--border-color)', minHeight: '44px', marginBottom: '20px' }}>
         <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'info'}
           className={`ministry-tab-btn ${activeTab === 'info' ? 'active' : ''}`}
-          onClick={() => setActiveTab('info')}
+          onClick={() => navigateSection()}
           style={{ flex: 1, minHeight: '44px', padding: '10px 16px', borderRadius: '8px', fontSize: '0.9rem', fontWeight: 600, border: 'none', background: activeTab === 'info' ? 'var(--surface-color)' : 'transparent', color: activeTab === 'info' ? 'var(--primary-light)' : 'var(--text-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
         >
           <Info size={18} />
           <span>Informações</span>
         </button>
         <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'members'}
           className={`ministry-tab-btn ${activeTab === 'members' ? 'active' : ''}`}
-          onClick={() => setActiveTab('members')}
+          onClick={() => navigateSection('membros')}
           style={{ flex: 1, minHeight: '44px', padding: '10px 16px', borderRadius: '8px', fontSize: '0.9rem', fontWeight: 600, border: 'none', background: activeTab === 'members' ? 'var(--surface-color)' : 'transparent', color: activeTab === 'members' ? 'var(--primary-light)' : 'var(--text-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
         >
           <Users size={18} />
@@ -451,7 +482,7 @@ export function MinistryView({
               Configurações
             </div>
             {/* Equipes — ACTIVE */}
-            <button className="ministry-action-row-btn" onClick={() => setShowTeams(true)}>
+            <button className="ministry-action-row-btn" onClick={() => navigateSection('equipes')}>
               <div className="ministry-action-row-left">
                 <div className="ministry-action-icon primary">
                   <Users size={18} />
@@ -464,7 +495,7 @@ export function MinistryView({
               <ChevronRight size={16} className="ministry-chevron" />
             </button>
             {/* Funções — ACTIVE */}
-            <button className="ministry-action-row-btn" onClick={() => setShowRoles(true)}>
+            <button className="ministry-action-row-btn" onClick={() => navigateSection('funcoes')}>
               <div className="ministry-action-row-left">
                 <div className="ministry-action-icon primary">
                   <Shield size={18} />
@@ -477,7 +508,7 @@ export function MinistryView({
               <ChevronRight size={16} className="ministry-chevron" />
             </button>
             {/* Classificações — ACTIVE */}
-            <button className="ministry-action-row-btn" onClick={() => setShowClassifications(true)}>
+            <button className="ministry-action-row-btn" onClick={() => navigateSection('classificacoes')}>
               <div className="ministry-action-row-left">
                 <div className="ministry-action-icon primary">
                   <Tag size={18} />
@@ -491,7 +522,7 @@ export function MinistryView({
             </button>
             {/* Administradores — ACTIVE */}
             {userRole === 'admin' && (
-              <button className="ministry-action-row-btn" onClick={() => setShowAdmins(true)}>
+              <button className="ministry-action-row-btn" onClick={() => navigateSection('administradores')}>
                 <div className="ministry-action-row-left">
                   <div className="ministry-action-icon primary">
                     <User size={18} />
@@ -505,7 +536,7 @@ export function MinistryView({
               </button>
             )}
             {/* Modelos de Roteiro — ACTIVE */}
-            <button className="ministry-action-row-btn" onClick={() => setShowTemplates(true)}>
+            <button className="ministry-action-row-btn" onClick={() => navigateSection('modelos')}>
               <div className="ministry-action-row-left">
                 <div className="ministry-action-icon primary">
                   <Layers size={18} />

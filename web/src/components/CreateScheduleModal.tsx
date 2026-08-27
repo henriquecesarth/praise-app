@@ -566,15 +566,17 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                     <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Cores Selecionadas:</label>
                     <div className="clothing-colors-row">
                       {piece.colors.map((colorHex) => (
-                        <div
+                        <button
+                          type="button"
                           key={colorHex}
                           className="color-swatch-chip"
-                          style={{ backgroundColor: colorHex, borderColor: colorHex === '#FFFFFF' ? '#CBD5E1' : colorHex, minWidth: '36px', minHeight: '36px' }}
+                          style={{ backgroundColor: colorHex, borderColor: colorHex === '#FFFFFF' ? '#CBD5E1' : colorHex, minWidth: '44px', minHeight: '44px' }}
                           title={`Remover ${colorHex}`}
+                          aria-label={`Remover cor ${colorHex}`}
                           onClick={() => handleRemoveColorFromPiece(piece.id, colorHex)}
                         >
-                          <span className="color-swatch-remove">✕</span>
-                        </div>
+                          <span aria-hidden="true" className="color-swatch-remove">✕</span>
+                        </button>
                       ))}
 
                       <button
@@ -614,6 +616,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                 className="action-icon-btn"
                 onClick={onClose}
                 title="Cancelar / Fechar"
+                aria-label="Fechar formulário de escala"
                 style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
               >
                 <X size={20} />
@@ -623,38 +626,47 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                 {initialSchedule?.id ? 'Editar Escala' : 'Nova Escala de Louvor'}
               </div>
 
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => handleSaveSchedule()}
-                style={{ padding: '8px 16px', minHeight: '44px', minWidth: '44px', fontSize: '0.85rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
-              >
-                <Check size={16} /> Salvar
-              </button>
+              <div className="schedule-modal-header-spacer" aria-hidden="true" />
             </div>
 
             {/* Centralized Main 4 Tabs */}
             <div className="schedule-tabs-wrapper">
-              <div className="schedule-tabs">
+              <div className="schedule-tabs" role="tablist" aria-label="Etapas da escala">
                 <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'detalhes'}
+                  aria-controls="schedule-panel-detalhes"
                   className={`schedule-tab-btn ${activeTab === 'detalhes' ? 'active' : ''}`}
                   onClick={() => setActiveTab('detalhes')}
                 >
                   Detalhes
                 </button>
                 <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'participantes'}
+                  aria-controls="schedule-panel-participantes"
                   className={`schedule-tab-btn ${activeTab === 'participantes' ? 'active' : ''}`}
                   onClick={() => setActiveTab('participantes')}
                 >
                   Participantes ({selectedParticipants.length})
                 </button>
                 <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'musicas'}
+                  aria-controls="schedule-panel-musicas"
                   className={`schedule-tab-btn ${activeTab === 'musicas' ? 'active' : ''}`}
                   onClick={() => setActiveTab('musicas')}
                 >
                   Músicas ({selectedSongs.length})
                 </button>
                 <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'roteiro'}
+                  aria-controls="schedule-panel-roteiro"
                   className={`schedule-tab-btn ${activeTab === 'roteiro' ? 'active' : ''}`}
                   onClick={() => setActiveTab('roteiro')}
                 >
@@ -666,7 +678,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
             <form onSubmit={handleSaveSchedule} className="schedule-form-content">
               {/* TAB 1: DETALHES */}
               {activeTab === 'detalhes' && (
-                <div className="schedule-tab-pane" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div id="schedule-panel-detalhes" role="tabpanel" className="schedule-tab-pane" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   <FloatingInput
                     label="Título da Escala / Culto *"
                     value={title}
@@ -700,7 +712,8 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                   {/* Actions Grid inside Detalhes */}
                   <div className="schedule-detalhes-actions-grid">
                     {/* Paleta de Cores Button */}
-                    <div
+                    <button
+                      type="button"
                       className="schedule-action-card"
                       onClick={() => setShowColorPalettePage(true)}
                     >
@@ -712,10 +725,11 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                         </div>
                       </div>
                       <ChevronRight size={18} className="schedule-action-card-arrow" />
-                    </div>
+                    </button>
 
                     {/* Ir para Roteiro Button */}
-                    <div
+                    <button
+                      type="button"
                       className="schedule-action-card"
                       onClick={() => setActiveTab('roteiro')}
                     >
@@ -729,7 +743,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                         </div>
                       </div>
                       <ChevronRight size={18} className="schedule-action-card-arrow" />
-                    </div>
+                    </button>
                   </div>
 
                   {/* Toggles Alinhados */}
@@ -746,7 +760,9 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                     }}
                   >
                     {/* Toggle 1: Visibilidade */}
-                    <div
+                    <button
+                      type="button"
+                      aria-pressed={isVisible}
                       onClick={() => setIsVisible(!isVisible)}
                       style={{
                         display: 'flex',
@@ -756,6 +772,11 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                         cursor: 'pointer',
                         padding: '4px 0',
                         userSelect: 'none',
+                        width: '100%',
+                        border: 'none',
+                        background: 'transparent',
+                        color: 'inherit',
+                        textAlign: 'left',
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
@@ -810,12 +831,14 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                           }}
                         />
                       </div>
-                    </div>
+                    </button>
 
                     <div style={{ height: '1px', backgroundColor: 'var(--divider-color)' }} />
 
                     {/* Toggle 2: Solicitar confirmação */}
-                    <div
+                    <button
+                      type="button"
+                      aria-pressed={requireConfirmation}
                       onClick={() => setRequireConfirmation(!requireConfirmation)}
                       style={{
                         display: 'flex',
@@ -825,6 +848,11 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                         cursor: 'pointer',
                         padding: '4px 0',
                         userSelect: 'none',
+                        width: '100%',
+                        border: 'none',
+                        background: 'transparent',
+                        color: 'inherit',
+                        textAlign: 'left',
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
@@ -879,14 +907,14 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                           }}
                         />
                       </div>
-                    </div>
+                    </button>
                   </div>
                 </div>
               )}
 
               {/* TAB 2: PARTICIPANTES */}
               {activeTab === 'participantes' && (
-                <div className="schedule-tab-pane">
+                <div id="schedule-panel-participantes" role="tabpanel" className="schedule-tab-pane">
                   <div className="schedule-subactions-row">
                     <button
                       type="button"
@@ -918,6 +946,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                           <button
                             type="button"
                             className="action-icon-btn danger"
+                            aria-label={`Remover participante ${member.name}`}
                             style={{ width: '44px', height: '44px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
                             onClick={() => setSelectedParticipants(selectedParticipants.filter((p) => p.id !== member.id))}
                           >
@@ -938,7 +967,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
 
               {/* TAB 3: MÚSICAS */}
               {activeTab === 'musicas' && (
-                <div className="schedule-tab-pane">
+                <div id="schedule-panel-musicas" role="tabpanel" className="schedule-tab-pane">
                   <div className="schedule-subactions-row">
                     <button
                       type="button"
@@ -974,6 +1003,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                           <button
                             type="button"
                             className="action-icon-btn danger"
+                            aria-label={`Remover música ${song.title}`}
                             style={{ width: '44px', height: '44px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
                             onClick={() => setSelectedSongs(selectedSongs.filter((s) => s.id !== song.id))}
                           >
@@ -994,7 +1024,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
 
               {/* TAB 4: ROTEIRO */}
               {activeTab === 'roteiro' && (
-                <div className="schedule-tab-pane">
+                <div id="schedule-panel-roteiro" role="tabpanel" className="schedule-tab-pane">
                   <div className="schedule-subactions-row">
                     <button
                       type="button"
@@ -1047,6 +1077,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                         <button
                           type="button"
                           className="action-icon-btn danger"
+                          aria-label={`Remover evento ${item.title || idx + 1}`}
                           style={{ width: '44px', height: '44px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
                           onClick={() => setTimelineItems(timelineItems.filter((t) => t.id !== item.id))}
                         >
@@ -1077,7 +1108,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
             <div className="modal-content schedule-submodal-content" style={{ maxWidth: '440px', maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
               <div className="modal-header">
                 <div className="modal-title">Adicionar Cor</div>
-                <button className="action-icon-btn" style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setActivePieceIdForColor(null)}>
+            <button aria-label="Fechar seleção de cores" className="action-icon-btn" style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setActivePieceIdForColor(null)}>
                   <X size={18} />
                 </button>
               </div>
@@ -1164,7 +1195,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
             <div className="modal-content schedule-submodal-content" style={{ maxWidth: '480px' }}>
               <div className="modal-header">
                 <div className="modal-title">Selecionar Membros</div>
-                <button className="action-icon-btn" style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowMemberSelectPage(false)}>
+            <button aria-label="Fechar seleção de participantes" className="action-icon-btn" style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowMemberSelectPage(false)}>
                   <X size={18} />
                 </button>
               </div>
@@ -1229,7 +1260,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
             <div className="modal-content schedule-submodal-content" style={{ maxWidth: '520px' }}>
               <div className="modal-header">
                 <div className="modal-title">Selecionar Músicas do Repertório</div>
-                <button className="action-icon-btn" style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowSongSelectPage(false)}>
+            <button aria-label="Fechar seleção de músicas" className="action-icon-btn" style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowSongSelectPage(false)}>
                   <X size={18} />
                 </button>
               </div>
@@ -1273,7 +1304,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                   <Layers size={18} />
                   Modelos de Roteiro
                 </div>
-                <button className="action-icon-btn" style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowTemplateModal(false)}>
+            <button aria-label="Fechar modelos de roteiro" className="action-icon-btn" style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowTemplateModal(false)}>
                   <X size={18} />
                 </button>
               </div>
@@ -1350,7 +1381,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                   <Layers size={18} />
                   Aplicar "{pendingTemplate.name}"
                 </div>
-                <button className="action-icon-btn" style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setPendingTemplate(null)}>
+            <button aria-label="Cancelar aplicação do modelo" className="action-icon-btn" style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setPendingTemplate(null)}>
                   <X size={18} />
                 </button>
               </div>
@@ -1429,7 +1460,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                   <Users size={18} />
                   Importar Equipe
                 </div>
-                <button className="action-icon-btn" style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowTeamSelectModal(false)}>
+            <button aria-label="Fechar seleção de equipe" className="action-icon-btn" style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowTeamSelectModal(false)}>
                   <X size={18} />
                 </button>
               </div>

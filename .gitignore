@@ -5,6 +5,8 @@ node_modules/
 # Build
 dist/
 build/
+web/playwright-report/
+web/test-results/
 
 # Environment
 .env

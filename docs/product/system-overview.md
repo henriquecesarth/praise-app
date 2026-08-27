@@ -1,0 +1,115 @@
+# Product System Overview
+
+## Purpose
+
+Praise App apoia a organização diária de um ministério de louvor em uma aplicação web instalável. O código atual concentra gestão de pessoas, repertório musical, planejamento de escalas e preparação de conteúdo musical.
+
+## Identifiable Actors
+
+### User
+
+Pessoa autenticada por e-mail/senha.
+
+### Ministry admin
+
+Proprietário ou integrante com papel admin. A UI oferece criação/edição/exclusão de recursos e gestão de integrantes.
+
+### Ministry member
+
+Integrante com acesso principalmente de leitura e ações próprias, como confirmação em escala e comentários.
+
+Funções musicais como Ministro, Vocalista, Violão e Bateria são classificações de participação separadas do papel de autorização admin/member.
+
+## Confirmed Capabilities
+
+### Account and ministries
+
+- signup/login;
+- listar e alternar ministérios;
+- criar, renomear, excluir ou sair;
+- entrar por código PR-*;
+- gerar convite;
+- listar, adicionar manualmente, editar e remover integrantes;
+- promover/rebaixar admin/member.
+
+### Ministry configuration
+
+- funções musicais;
+- equipes com integrantes;
+- classificações de música;
+- modelos reutilizáveis de roteiro de escala.
+
+### Repertoire
+
+- músicas com artista, classificação, tom, BPM, duração, letras/notas e links;
+- versões de música no modelo da UI;
+- artistas;
+- pastas e associação de músicas;
+- busca e filtros.
+
+### Schedules
+
+- próximas/anteriores;
+- participantes e funções;
+- músicas e roteiro/timeline;
+- visibilidade, confirmação, paleta e vestuário;
+- detalhe, edição, exclusão;
+- confirmação de presença e comentários.
+
+### Smart Chords
+
+- edição de cifras por marcação entre colchetes;
+- transposição;
+- edição visual;
+- tentativa de associação/criação de música;
+- exportação PDF no browser.
+
+### PWA
+
+- manifest instalável;
+- prompt de instalação;
+- service worker versionado com fallback offline;
+- precache somente do shell/assets estáticos, sem cache runtime de API.
+
+## Main User Flow
+
+    criar conta ou entrar
+    → escolher/criar/ingressar em ministério
+    → dashboard
+    → gerenciar repertório, escalas ou configurações
+    → alternar ministério conforme membership
+
+## Important Concepts
+
+- **Ministry**: tenant principal e agrupador de dados.
+- **Role admin/member**: permissão do tenant.
+- **Musical role**: função executada por um integrante.
+- **Team**: conjunto reutilizável de integrantes.
+- **Schedule**: culto/evento com participantes, músicas e timeline.
+- **Schedule template**: modelo de itens de roteiro.
+- **Song/version**: repertório e variantes de execução.
+- **Folder**: agrupamento de músicas.
+- **Liturgy**: ordem de culto separada do modelo de escala.
+- **Smart Chord**: cifra editável e transponível.
+
+## Current Limits
+
+- Avisos do dashboard são dados mock locais.
+- Liturgias têm componente, mas não estão acessíveis pela navegação principal.
+- Persistência Smart Chords não está alinhada ponta a ponta.
+- Não há pagamento integrado apesar do campo subscription_status.
+- Não há mobile nativo no checkout.
+- Não há notificações, mensageria ou jobs.
+- O backend não possui testes automatizados; o web possui cobertura focal com Vitest/Testing Library e jornadas Playwright mockadas.
+
+Detalhes e riscos: [System status](../system-status.md).
+
+## Product Unknowns
+
+- Público/mercado e modelo comercial formal: **Unknown / Not yet verified**.
+- Requisitos de escala e disponibilidade: **Unknown / Not yet verified**.
+- Regras de assinatura/pagamento: **Unknown / Not yet verified**.
+- Roadmap e prioridades oficiais: **Unknown / Not yet verified**.
+- Requisitos legais, privacidade e retenção: **Unknown / Not yet verified**.
+
+Não converter textos de UI, mocks ou campos não integrados em requisitos oficiais sem evidência adicional.
