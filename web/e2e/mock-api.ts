@@ -122,6 +122,39 @@ export async function installMockApi(page: Page, options: MockApiOptions = {}) {
     if (path.endsWith('/schedules')) return json(route, method === 'GET' ? [mockSchedule] : mockSchedule);
     if (path.endsWith('/liturgies')) return json(route, []);
     if (path.includes('/smart-chords')) return json(route, { data: [] });
+    if (path === '/plans') return json(route, {
+      plans: [
+        { id: 'free', name: 'Free', baseMembers: 10, baseSongs: 50, allowMemberAddons: false, maxMemberAddonBlocks: 0 },
+        { id: 'lite', name: 'Lite', baseMembers: 20, baseSongs: 100, allowMemberAddons: false, maxMemberAddonBlocks: 0 },
+        { id: 'lite_plus', name: 'Lite+', baseMembers: 30, baseSongs: 150, allowMemberAddons: false, maxMemberAddonBlocks: 0 },
+        { id: 'essential', name: 'Essential', baseMembers: 40, baseSongs: 200, allowMemberAddons: true, maxMemberAddonBlocks: 4 },
+        { id: 'pro', name: 'Pro', baseMembers: 100, baseSongs: 500, allowMemberAddons: true, maxMemberAddonBlocks: 10 },
+        { id: 'premium', name: 'Premium', baseMembers: 'unlimited', baseSongs: 'unlimited', allowMemberAddons: false, maxMemberAddonBlocks: 0 },
+      ],
+      addonBlockSize: 10,
+      defaultGracePeriodDays: 7,
+    });
+    if (path.endsWith('/subscription')) return json(route, {
+      plan: { id: 'essential', name: 'Essential', baseMembers: 40, baseSongs: 200, allowMemberAddons: true, maxMemberAddonBlocks: 4 },
+      subscription: {
+        planId: 'essential',
+        memberAddonBlocks: 1,
+        billingStatus: 'active',
+        administrativelySuspended: false,
+        suspendedAt: null,
+        suspensionReason: null,
+        accessMode: 'normal',
+        gracePeriodExpiresAt: null,
+        currentPeriodStart: '2026-08-28T12:00:00.000Z',
+        currentPeriodEnd: null,
+        cancelAtPeriodEnd: false,
+      },
+      quotas: { members: 50, songs: 200 },
+      usage: { membersCount: 15, songsCount: 35 },
+      isOverLimit: false,
+      overLimitDetails: { membersOver: false, songsOver: false },
+      graceDaysRemaining: null,
+    });
     if (path.endsWith('/invites') && method === 'POST') return json(route, {
       id: 'invite-1', ministry_id: 'ministry-1', code: 'PR-RESPONSIVO-2026', created_by: 'user-1', max_uses: 10, uses_count: 0, expires_at: '2026-09-04T00:00:00.000Z', created_at: '2026-08-28T00:00:00.000Z',
     });

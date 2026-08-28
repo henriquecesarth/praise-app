@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from './api';
 import { bootstrapAuth } from './auth-bootstrap';
 import { MODULE_PATHS, parseAppRoute, pathForFolder, pathForSchedule, pathForSong, type MainModuleType } from './routing';
-import { Song, Artist, Folder, Classification, RepertoireCounts, SongFilters, Group, GroupRole } from './types';
+import { Song, Artist, Folder, Classification, RepertoireCounts, SongFilters, Group, GroupRole, MinistrySubscriptionSummary } from './types';
 import { SongCard } from './components/SongCard';
 import { FolderCard } from './components/FolderCard';
 import { ArtistCard } from './components/ArtistCard';
@@ -21,6 +21,7 @@ import { SchedulesView } from './components/SchedulesView';
 import { ScheduleDetailView } from './components/ScheduleDetailView';
 import { CreateScheduleModal, ScheduleItem } from './components/CreateScheduleModal';
 import { MinistryView } from './components/MinistryView';
+import { RestrictedBanner } from './components/RestrictedBanner';
 import { BottomNav } from './components/BottomNav';
 import { InstallPWAPrompt } from './components/InstallPWAPrompt';
 import { Header } from './components/Header';
@@ -70,6 +71,7 @@ export default function App() {
   // Groups & Role States
   const [groups, setGroups] = useState<Group[]>([]);
   const [activeGroup, setActiveGroup] = useState<Group | null>(null);
+  const [subscriptionSummary, setSubscriptionSummary] = useState<MinistrySubscriptionSummary | null>(null);
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
@@ -120,10 +122,9 @@ export default function App() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailRetryNonce, setDetailRetryNonce] = useState(0);
 
-  // Search debounce timer
+  const activeGroupIdRef = useRef<string>('');
+  const songRequestRef = useRef<number>(0);
   const searchTimeoutRef = useRef<number | null>(null);
-  const activeGroupIdRef = useRef('');
-  const songRequestRef = useRef(0);
 
   const clearDetailSelection = () => {
     setSelectedSong(null);
@@ -142,16 +143,47 @@ export default function App() {
     checkCurrentUser();
   }, []);
 
-  // Reload data when activeGroup changes
-  useEffect(() => {
-    if (activeGroup) {
+  const loadSubscription = async (minId: string) => {
+    try {
+      const summary = await api.getMinistrySubscription(minId);
+      if (activeGroupIdRef.current !== minId) return;
+      setSubscriptionSummary(summary);
+
+      const isSuspended = summary.subscription.accessMode === 'suspended' || summary.subscription.administrativelySuspended;
+      if (!isSuspended) {
+        loadCounts();
+        loadClassifications();
+        loadFolders();
+        loadArtists();
+        loadSongs();
+        loadSchedules();
+      } else {
+        setSongs([]);
+        setFolders([]);
+        setArtists([]);
+        setSchedules([]);
+        setLoadingSongs(false);
+        setLoadingFolders(false);
+        setLoadingArtists(false);
+        setLoadingSchedules(false);
+      }
+    } catch (err) {
+      console.warn('Erro ao consultar assinatura do ministério:', err);
       loadCounts();
       loadClassifications();
       loadFolders();
       loadArtists();
       loadSongs();
       loadSchedules();
+    }
+  };
+
+  // Reload data when activeGroup changes
+  useEffect(() => {
+    if (activeGroup) {
+      loadSubscription(activeGroup.id);
     } else {
+      setSubscriptionSummary(null);
       setSongs([]);
       setFolders([]);
       setArtists([]);
@@ -1014,6 +1046,13 @@ export default function App() {
 
           {!selectedSong && !selectedFolder && activeGroup && (
             <main style={{ position: 'relative' }}>
+              <RestrictedBanner
+                summary={subscriptionSummary}
+                onNavigateToPlans={() => {
+                  clearDetailSelection();
+                  navigate('/ministerio/plano');
+                }}
+              />
               {mainModule === 'dashboard' && (
                 <DashboardView
                   currentUser={currentUser}

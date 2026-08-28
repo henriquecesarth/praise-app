@@ -150,3 +150,67 @@ export interface SongFilters {
   hasYoutube?: boolean | null;
   classificationId?: string | null;
 }
+
+// ─── Planos, Quotas, Entitlements e Assinaturas ───────────────────────────
+
+export type PlanId = 'free' | 'lite' | 'lite_plus' | 'essential' | 'pro' | 'premium';
+
+export type QuotaLimit = number | 'unlimited';
+
+export type BillingStatus = 'active' | 'trialing' | 'past_due' | 'canceled';
+
+export type AccessMode = 'normal' | 'grace' | 'restricted_over_limit' | 'suspended';
+
+export interface PlanDefinition {
+  id: PlanId;
+  name: string;
+  baseMembers: QuotaLimit;
+  baseSongs: QuotaLimit;
+  allowMemberAddons: boolean;
+  maxMemberAddonBlocks: number;
+}
+
+export interface PlansResponse {
+  plans: PlanDefinition[];
+  addonBlockSize: number;
+  defaultGracePeriodDays: number;
+}
+
+export interface QuotaSummary {
+  members: QuotaLimit;
+  songs: QuotaLimit;
+}
+
+export interface UsageSummary {
+  membersCount: number;
+  songsCount: number;
+}
+
+export interface OverLimitDetails {
+  membersOver: boolean;
+  songsOver: boolean;
+}
+
+export interface MinistrySubscriptionRecord {
+  planId: PlanId;
+  memberAddonBlocks: number;
+  billingStatus: BillingStatus;
+  administrativelySuspended: boolean;
+  suspendedAt: string | null;
+  suspensionReason: string | null;
+  accessMode: AccessMode;
+  gracePeriodExpiresAt: string | null;
+  currentPeriodStart: string;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+}
+
+export interface MinistrySubscriptionSummary {
+  plan: PlanDefinition;
+  subscription: MinistrySubscriptionRecord;
+  quotas: QuotaSummary;
+  usage: UsageSummary;
+  isOverLimit: boolean;
+  overLimitDetails: OverLimitDetails;
+  graceDaysRemaining: number | null;
+}

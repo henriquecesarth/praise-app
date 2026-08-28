@@ -56,7 +56,7 @@ export class RepertoireService {
   }
 
   async deleteSong(ministryId: string, songId: string, _userId: string): Promise<void> {
-    await this.repertoireRepository.deleteSong(songId);
+    await this.repertoireRepository.deleteSong(songId, ministryId);
   }
 
   async getArtists(ministryId: string, search?: string): Promise<Artist[]> {

@@ -92,12 +92,18 @@ Funções musicais como Ministro, Vocalista, Violão e Bateria são classificaç
 - **Liturgy**: ordem de culto separada do modelo de escala.
 - **Smart Chord**: cifra editável e transponível.
 
+## Commercial Structure and Plans
+
+A estrutura comercial do LouvAIO compreende 6 planos (`free`, `lite`, `lite_plus`, `essential`, `pro`, `premium`) e modelagem de add-ons de membros em blocos de +10. A cobrança real não está ativa nesta etapa.
+
+Consulte a especificação detalhada em [Estrutura Comercial e Planos](plans-and-limits.md).
+
 ## Current Limits
 
 - Avisos do dashboard são dados mock locais.
 - Liturgias têm componente, mas não estão acessíveis pela navegação principal.
 - Persistência Smart Chords não está alinhada ponta a ponta.
-- Não há pagamento integrado apesar do campo subscription_status.
+- Não há gateway de pagamento integrado nesta etapa inicial (apenas modelagem de limites).
 - Não há mobile nativo no checkout.
 - Não há notificações, mensageria ou jobs.
 - O backend não possui testes automatizados; o web possui cobertura focal com Vitest/Testing Library e jornadas Playwright mockadas.
@@ -106,10 +112,7 @@ Detalhes e riscos: [System status](../system-status.md).
 
 ## Product Unknowns
 
-- Público/mercado e modelo comercial formal: **Unknown / Not yet verified**.
+- Integração com gateway de pagamentos real: **A definir em etapa posterior**.
 - Requisitos de escala e disponibilidade: **Unknown / Not yet verified**.
-- Regras de assinatura/pagamento: **Unknown / Not yet verified**.
-- Roadmap e prioridades oficiais: **Unknown / Not yet verified**.
+- Roadmap e prioridades oficiais adicionais: **Unknown / Not yet verified**.
 - Requisitos legais, privacidade e retenção: **Unknown / Not yet verified**.
-
-Não converter textos de UI, mocks ou campos não integrados em requisitos oficiais sem evidência adicional.

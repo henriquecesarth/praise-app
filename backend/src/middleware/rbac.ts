@@ -45,6 +45,10 @@ export function requireMinistryRole(requiredRole: MinistryRole = 'member') {
 
 export const requireGroupRole = requireMinistryRole;
 
+/**
+ * @deprecated Middleware legado substituído por `enforceOperationalAccess` e transações atômicas de quota.
+ * Mantido apenas por compatibilidade temporária sem qualquer uso nas rotas ativas.
+ */
 export async function requireActiveSubscription(
   req: AuthenticatedRequest,
   _res: Response,

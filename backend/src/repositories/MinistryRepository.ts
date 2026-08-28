@@ -89,7 +89,14 @@ export class MinistryRepository {
       .limit(1)
       .get();
 
-    const role = !memberSnap.empty ? (memberSnap.docs[0].data().role as 'admin' | 'member') : 'member';
+    if (memberSnap.empty) {
+      throw new AppError(403, 'Acesso negado. Você não é integrante deste ministério.', {
+        code: 'MINISTRY_ACCESS_DENIED',
+        ministryId,
+      });
+    }
+
+    const role = (memberSnap.docs[0].data().role as 'admin' | 'member') || 'member';
 
     return { ...mData, role };
   }
@@ -112,17 +119,49 @@ export class MinistryRepository {
       role: 'admin',
     };
 
-    await ref.set(data);
-
-    // Adicionar proprietário como admin na coleção ministry_members
     const memberRef = this.membersCol.doc();
-    await memberRef.set({
+    const memberData = {
       id: memberRef.id,
       ministry_id: ref.id,
       user_id: userId,
       role: 'admin',
       joined_at: now,
-    });
+    };
+
+    const subRef = db.collection('ministry_subscriptions').doc(ref.id);
+    const subData = {
+      id: ref.id,
+      ministry_id: ref.id,
+      plan_id: 'free',
+      member_addon_blocks: 0,
+      billing_status: 'active',
+      administratively_suspended: false,
+      suspended_at: null,
+      suspension_reason: null,
+      grace_period_expires_at: null,
+      current_period_start: now,
+      current_period_end: null,
+      cancel_at_period_end: false,
+      created_at: now,
+      updated_at: now,
+    };
+
+    const usageRef = db.collection('ministry_usage').doc(ref.id);
+    const usageData = {
+      id: ref.id,
+      ministry_id: ref.id,
+      members_count: 1, // Proprietário inicial
+      songs_count: 0,
+      created_at: now,
+      updated_at: now,
+    };
+
+    const batch = db.batch();
+    batch.set(ref, data);
+    batch.set(memberRef, memberData);
+    batch.set(subRef, subData);
+    batch.set(usageRef, usageData);
+    await batch.commit();
 
     // Criar funções e classificações padrão automaticamente para o novo ministério
     try {
@@ -186,32 +225,101 @@ export class MinistryRepository {
       throw new AppError(400, 'Este código de convite atingiu o limite máximo de usos.');
     }
 
-    const doc = await this.ministriesCol.doc(invite.ministry_id).get();
+    const ministryId = invite.ministry_id;
+    const doc = await this.ministriesCol.doc(ministryId).get();
     if (!doc.exists) {
       throw new AppError(404, 'Ministério associado a este convite não foi encontrado.');
     }
 
-    // Verificar pertencimento prévio
-    const existingSnap = await this.membersCol
-      .where('ministry_id', '==', invite.ministry_id)
-      .where('user_id', '==', userId)
-      .limit(1)
-      .get();
+    const { getPlanDefinition, getEffectiveMemberQuota, DEFAULT_PLAN_ID } = await import('../config/plans.config');
+    const subRef = db.collection('ministry_subscriptions').doc(ministryId);
+    const usageRef = db.collection('ministry_usage').doc(ministryId);
+    const now = new Date().toISOString();
 
-    if (existingSnap.empty) {
+    await db.runTransaction(async (transaction) => {
+      // 1. Verificar pertencimento prévio para idempotência
+      const existingMembers = await this.membersCol
+        .where('ministry_id', '==', ministryId)
+        .where('user_id', '==', userId)
+        .limit(1)
+        .get();
+
+      if (!existingMembers.empty) {
+        return;
+      }
+
+      const [subDoc, usageDoc, freshInviteDoc] = await Promise.all([
+        transaction.get(subRef),
+        transaction.get(usageRef),
+        transaction.get(inviteDoc.ref),
+      ]);
+
+      if (freshInviteDoc.exists) {
+        const freshInvite = freshInviteDoc.data() as MinistryInviteRecord;
+        if (freshInvite.max_uses !== null && freshInvite.uses_count >= freshInvite.max_uses) {
+          throw new AppError(400, 'Este código de convite atingiu o limite máximo de usos.');
+        }
+      }
+
+      const subData = subDoc.exists ? (subDoc.data() as any) : null;
+      const planId = subData?.plan_id || DEFAULT_PLAN_ID;
+      const plan = getPlanDefinition(planId);
+      const effectiveQuota = getEffectiveMemberQuota(plan, subData?.member_addon_blocks || 0);
+
+      let currentMembersCount = 0;
+      let currentSongsCount = 0;
+
+      if (usageDoc.exists) {
+        const uData = usageDoc.data() as any;
+        currentMembersCount = uData?.members_count || 0;
+        currentSongsCount = uData?.songs_count || 0;
+      } else {
+        const snap = await this.membersCol.where('ministry_id', '==', ministryId).get();
+        currentMembersCount = snap.size;
+      }
+
+      if (effectiveQuota !== 'unlimited' && currentMembersCount + 1 > effectiveQuota) {
+        throw new AppError(
+          403,
+          `Limite de membros do plano ${plan.name} atingido (${currentMembersCount}/${effectiveQuota}). O ministério não pode receber novos integrantes no momento.`,
+          {
+            code: 'PLAN_MEMBER_QUOTA_REACHED',
+            resource: 'members',
+            limit: effectiveQuota,
+            current: currentMembersCount,
+            planId: plan.id,
+          }
+        );
+      }
+
+      // Criar membership
       const memberRef = this.membersCol.doc();
-      await memberRef.set({
+      transaction.set(memberRef, {
         id: memberRef.id,
-        ministry_id: invite.ministry_id,
+        ministry_id: ministryId,
         user_id: userId,
         role: 'member',
-        joined_at: new Date().toISOString(),
+        joined_at: now,
       });
-    }
 
-    // Incrementar contagem de uso
-    await inviteDoc.ref.update({
-      uses_count: (invite.uses_count || 0) + 1,
+      // Incrementar uso materializado
+      transaction.set(
+        usageRef,
+        {
+          id: ministryId,
+          ministry_id: ministryId,
+          members_count: currentMembersCount + 1,
+          songs_count: currentSongsCount,
+          created_at: usageDoc.exists ? (usageDoc.data() as any)?.created_at || now : now,
+          updated_at: now,
+        },
+        { merge: true }
+      );
+
+      // Atualizar contagem de usos do convite
+      transaction.update(inviteDoc.ref, {
+        uses_count: (invite.uses_count || 0) + 1,
+      });
     });
 
     const ministry = { id: doc.id, ...doc.data() } as MinistryRecord;
@@ -290,23 +398,12 @@ export class MinistryRepository {
       throw new AppError(400, 'O proprietário do ministério não pode ser removido.');
     }
 
-    // Try doc directly first
-    const directDoc = await this.membersCol.doc(memberUserId).get();
-    if (directDoc.exists && directDoc.data()?.ministry_id === ministryId) {
-      await directDoc.ref.delete();
-      return;
-    }
-
-    // Query by user_id
-    const memberSnap = await this.membersCol
-      .where('ministry_id', '==', ministryId)
-      .where('user_id', '==', memberUserId)
-      .limit(1)
-      .get();
-
-    if (!memberSnap.empty) {
-      await memberSnap.docs[0].ref.delete();
-    }
+    const { SubscriptionRepository } = await import('./SubscriptionRepository');
+    const subRepo = new SubscriptionRepository();
+    await subRepo.removeMemberTransactional({
+      ministryId,
+      memberUserIdOrDocId: memberUserId,
+    });
   }
 
   async updateMemberRole(ministryId: string, memberUserId: string, role: 'admin' | 'member'): Promise<any> {
@@ -416,21 +513,17 @@ export class MinistryRepository {
     ministryId: string,
     memberData: { name: string; email: string; role?: 'admin' | 'member'; birthDate?: string }
   ): Promise<any> {
-    const now = new Date().toISOString();
-    const memberRef = this.membersCol.doc();
-    const record: any = {
-      id: memberRef.id,
-      ministry_id: ministryId,
-      user_id: memberRef.id, // synthetic user_id for manual members
+    const { SubscriptionRepository } = await import('./SubscriptionRepository');
+    const subRepo = new SubscriptionRepository();
+    const { member } = await subRepo.addMemberTransactional({
+      ministryId,
       name: memberData.name,
       email: memberData.email,
       role: memberData.role || 'member',
-      is_manual: true,
-      birth_date: memberData.birthDate || null,
-      joined_at: now,
-    };
-    await memberRef.set(record);
-    return record;
+      birthDate: memberData.birthDate || null,
+      isManual: true,
+    });
+    return member;
   }
 
   async leaveMinistry(ministryId: string, userId: string): Promise<void> {
@@ -442,14 +535,11 @@ export class MinistryRepository {
       throw new AppError(400, 'O proprietário não pode sair do próprio ministério. Use "Excluir Ministério" para removê-lo.');
     }
 
-    const memberSnap = await this.membersCol
-      .where('ministry_id', '==', ministryId)
-      .where('user_id', '==', userId)
-      .limit(1)
-      .get();
-
-    if (!memberSnap.empty) {
-      await memberSnap.docs[0].ref.delete();
-    }
+    const { SubscriptionRepository } = await import('./SubscriptionRepository');
+    const subRepo = new SubscriptionRepository();
+    await subRepo.removeMemberTransactional({
+      ministryId,
+      memberUserIdOrDocId: userId,
+    });
   }
 }

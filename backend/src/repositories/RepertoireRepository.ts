@@ -112,29 +112,30 @@ export class RepertoireRepository {
       }
     }
 
-    const newSong = {
-      id: songRef.id,
-      ministry_id: ministryId,
-      user_id: userId,
-      title: data.title,
-      artist_id: data.artist_id || null,
-      artist: artistObj,
-      classification_id: data.classification_id || null,
-      classification: classificationObj,
-      original_key: data.original_key || null,
-      bpm: data.bpm || null,
-      duration: data.duration || null,
-      lyrics: data.lyrics || null,
-      chord_sheet_url: data.chord_sheet_url || null,
-      youtube_url: data.youtube_url || null,
-      audio_url: data.audio_url || null,
-      external_links: data.external_links || {},
-      created_at: now,
-      updated_at: now,
-    };
+    const { SubscriptionRepository } = await import('./SubscriptionRepository');
+    const subRepo = new SubscriptionRepository();
 
-    await songRef.set(newSong);
-    return newSong;
+    const { song } = await subRepo.createSongTransactional({
+      ministryId,
+      songData: {
+        user_id: userId,
+        title: data.title,
+        artist_id: data.artist_id || null,
+        artist: artistObj,
+        classification_id: data.classification_id || null,
+        classification: classificationObj,
+        original_key: data.original_key || null,
+        bpm: data.bpm || null,
+        duration: data.duration || null,
+        lyrics: data.lyrics || null,
+        chord_sheet_url: data.chord_sheet_url || null,
+        youtube_url: data.youtube_url || null,
+        audio_url: data.audio_url || null,
+        external_links: data.external_links || {},
+      },
+    });
+
+    return song;
   }
 
   async updateSong(songId: string, data: any) {
@@ -170,8 +171,27 @@ export class RepertoireRepository {
     return { id: updatedDoc.id, ...updatedDoc.data() };
   }
 
-  async deleteSong(songId: string) {
-    await this.songsCol.doc(songId).delete();
+  async deleteSong(songId: string, ministryId?: string) {
+    let targetMinistryId = ministryId;
+    if (!targetMinistryId) {
+      const doc = await this.songsCol.doc(songId).get();
+      if (!doc.exists) {
+        throw new AppError(404, 'Música não encontrada.');
+      }
+      targetMinistryId = doc.data()?.ministry_id;
+    }
+
+    if (!targetMinistryId) {
+      await this.songsCol.doc(songId).delete();
+      return;
+    }
+
+    const { SubscriptionRepository } = await import('./SubscriptionRepository');
+    const subRepo = new SubscriptionRepository();
+    await subRepo.deleteSongTransactional({
+      ministryId: targetMinistryId,
+      songId,
+    });
   }
 
   // Artistas

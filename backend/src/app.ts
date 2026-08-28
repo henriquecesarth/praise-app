@@ -10,6 +10,7 @@ import teamRoutes from './features/teams/team.routes';
 import roleRoutes from './features/roles/role.routes';
 import classificationRoutes from './features/classifications/classification.routes';
 import templateRoutes from './features/templates/template.routes';
+import subscriptionRoutes from './features/subscriptions/subscription.routes';
 import { errorHandler } from './middleware/error-handler';
 import { config } from './config/unifiedConfig';
 
@@ -35,6 +36,7 @@ app.get('/api/diag', (_req, res) => {
 });
 
 // ─── Feature Routes ──────────────────────────────────────────
+app.use('/api/v1', subscriptionRoutes);
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/ministries', ministryRoutes);
 app.use('/api/v1/groups', ministryRoutes); // Alias

@@ -1,6 +1,56 @@
-import { Song, SongVersion, SongLink, Artist, Folder, Classification, RepertoireCounts, Ministry, MinistryInvite, Liturgy } from './types';
+import {
+  Song,
+  SongVersion,
+  SongLink,
+  Artist,
+  Folder,
+  Classification,
+  RepertoireCounts,
+  Ministry,
+  MinistryInvite,
+  Liturgy,
+  PlansResponse,
+  MinistrySubscriptionSummary,
+} from './types';
 
 export type SmartChord = any;
+
+export class ApiError extends Error {
+  statusCode: number;
+  code?: string;
+  details?: any;
+
+  constructor(message: string, statusCode: number, details?: any) {
+    super(message);
+    this.name = 'ApiError';
+    this.statusCode = statusCode;
+    this.details = details;
+    this.code = details?.code || (details as any)?.error?.code;
+  }
+}
+
+export function getFriendlyErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    switch (err.code) {
+      case 'PLAN_MEMBER_QUOTA_REACHED':
+        return 'Você atingiu o limite de membros do seu plano. Acesse "Plano e assinatura" para mais informações.';
+      case 'PLAN_SONG_QUOTA_REACHED':
+        return 'Você atingiu o limite de músicas do seu plano. Acesse "Plano e assinatura" para mais informações.';
+      case 'SUBSCRIPTION_RESTRICTED':
+        return 'Seu ministério está acima dos limites do plano atual. Esta operação ficará disponível novamente quando a utilização for regularizada.';
+      case 'SUBSCRIPTION_SUSPENDED':
+        return 'Este ministério está suspenso e esta operação não está disponível.';
+      case 'MINISTRY_ACCESS_DENIED':
+        return 'Acesso negado. Você não é integrante deste ministério.';
+      default:
+        return err.message || 'Erro ao processar a operação.';
+    }
+  }
+  if (err instanceof Error) {
+    return err.message;
+  }
+  return 'Ocorreu um erro inesperado.';
+}
 
 // Usar variável de ambiente ou fallback para backend local/produção
 const getCleanApiUrl = (): string => {
@@ -44,7 +94,7 @@ const handleResponse = async <T>(response: Response): Promise<T> => {
   try {
     body = text ? JSON.parse(text) : {};
   } catch {
-    throw new Error(`Erro de resposta do servidor (${response.status})`);
+    throw new ApiError(`Erro de resposta do servidor (${response.status})`, response.status);
   }
 
   if (response.ok) {
@@ -52,7 +102,8 @@ const handleResponse = async <T>(response: Response): Promise<T> => {
   }
 
   const errorMessage = body?.error?.message || `Erro desconhecido (${response.status})`;
-  throw new Error(errorMessage);
+  const details = body?.error?.details || body?.error;
+  throw new ApiError(errorMessage, response.status, details);
 };
 
 const mapSongFromApi = (apiSong: any): Song => {
@@ -952,5 +1003,20 @@ export const api = {
       body: JSON.stringify({ content }),
     });
     return handleResponse<any>(response);
+  },
+
+  // Planos e Assinaturas
+  getPlans: async (): Promise<PlansResponse> => {
+    const response = await fetch(`${API_URL}/plans`, {
+      headers: getHeaders(),
+    });
+    return handleResponse<PlansResponse>(response);
+  },
+
+  getMinistrySubscription: async (ministryId: string): Promise<MinistrySubscriptionSummary> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/subscription`, {
+      headers: getHeaders(),
+    });
+    return handleResponse<MinistrySubscriptionSummary>(response);
   },
 };

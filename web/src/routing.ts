@@ -69,3 +69,7 @@ export function pathForFolder(folderId: string) {
 export function pathForSchedule(scheduleId: string) {
   return `/escalas/${encodeURIComponent(scheduleId)}`;
 }
+
+export function pathForMinistrySection(section?: string) {
+  return section ? `/ministerio/${encodeURIComponent(section)}` : '/ministerio';
+}

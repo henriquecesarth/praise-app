@@ -7,10 +7,11 @@ import { RolesView } from './RolesView';
 import { ClassificationsView } from './ClassificationsView';
 import { AdminsView } from './AdminsView';
 import { TemplatesView } from './TemplatesView';
+import { SubscriptionPlanView } from './SubscriptionPlanView';
 import {
   Edit2, Check, X, UserPlus, Users, Info, Link, Shield, Tag,
   Layers, Trash2, LogOut, ChevronRight, MoreVertical, Plus, User,
-  CalendarDays, AtSign, Copy, CheckCircle,
+  CalendarDays, AtSign, Copy, CheckCircle, Sparkles,
 } from 'lucide-react';
 
 interface MinistryMemberItem {
@@ -78,6 +79,7 @@ export function MinistryView({
   const [showClassifications, setShowClassifications] = useState(false);
   const [showAdmins, setShowAdmins] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
+  const [showSubscriptionPlan, setShowSubscriptionPlan] = useState(false);
 
   // Info tab state
   const [editingName, setEditingName] = useState(false);
@@ -133,6 +135,7 @@ export function MinistryView({
     setShowClassifications(section === 'classificacoes');
     setShowAdmins(section === 'administradores');
     setShowTemplates(section === 'modelos');
+    setShowSubscriptionPlan(section === 'plano' || section === 'assinatura');
   }, [section, activeMinistry.id]);
 
   const navigateSection = (nextSection?: string) => {
@@ -144,6 +147,7 @@ export function MinistryView({
       setShowClassifications(nextSection === 'classificacoes');
       setShowAdmins(nextSection === 'administradores');
       setShowTemplates(nextSection === 'modelos');
+      setShowSubscriptionPlan(nextSection === 'plano' || nextSection === 'assinatura');
     }
   };
 
@@ -369,6 +373,17 @@ export function MinistryView({
     );
   }
 
+  // Show Subscription / Plan sub-page
+  if (showSubscriptionPlan) {
+    return (
+      <SubscriptionPlanView
+        ministryId={activeMinistry.id}
+        onBack={() => navigateSection()}
+        showToast={showToast}
+      />
+    );
+  }
+
   return (
     <div className="ministry-page" style={{ paddingTop: 'max(16px, var(--safe-area-top))', paddingBottom: 'max(24px, var(--safe-area-bottom))' }}>
       {/* Page header with tab bar (Touch Targets 44px) */}
@@ -544,6 +559,19 @@ export function MinistryView({
                 <div>
                   <div className="ministry-action-title">Modelos de Roteiro</div>
                   <div className="ministry-action-desc">Modelos de roteiro usados na escala</div>
+                </div>
+              </div>
+              <ChevronRight size={16} className="ministry-chevron" />
+            </button>
+            {/* Plano e assinatura — ACTIVE */}
+            <button className="ministry-action-row-btn" onClick={() => navigateSection('plano')}>
+              <div className="ministry-action-row-left">
+                <div className="ministry-action-icon primary">
+                  <Sparkles size={18} />
+                </div>
+                <div>
+                  <div className="ministry-action-title">Plano e assinatura</div>
+                  <div className="ministry-action-desc">Consulte limites, quotas e detalhes do seu plano</div>
                 </div>
               </div>
               <ChevronRight size={16} className="ministry-chevron" />

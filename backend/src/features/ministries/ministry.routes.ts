@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import * as controller from './ministry.controller';
 import { authenticate } from '../../middleware/auth';
-import { requireMinistryRole, requireActiveSubscription } from '../../middleware/rbac';
+import { requireMinistryRole } from '../../middleware/rbac';
+import { enforceOperationalAccess } from '../../middleware/quota-enforcement';
 import { validate } from '../../middleware/validate';
 import {
   createMinistrySchema,
@@ -21,17 +22,17 @@ router.get('/my-ministries', controller.getUserMinistries);
 router.post('/', validate(createMinistrySchema), controller.createMinistry);
 router.post('/join', validate(joinMinistrySchema), controller.joinMinistryByCode);
 router.get('/:ministryId', requireMinistryRole('member'), controller.getMinistryById);
-router.put('/:ministryId', requireMinistryRole('admin'), validate(updateMinistrySchema), controller.updateMinistry);
-router.delete('/:ministryId', requireMinistryRole('admin'), controller.deleteMinistry);
+router.put('/:ministryId', requireMinistryRole('admin'), enforceOperationalAccess, validate(updateMinistrySchema), controller.updateMinistry);
+router.delete('/:ministryId', requireMinistryRole('admin'), enforceOperationalAccess.remediation, controller.deleteMinistry);
 
 // Leave ministry (any member)
-router.delete('/:ministryId/leave', requireMinistryRole('member'), controller.leaveMinistry);
+router.delete('/:ministryId/leave', requireMinistryRole('member'), enforceOperationalAccess.remediation, controller.leaveMinistry);
 
 // Invites
 router.post(
   '/:ministryId/invites',
   requireMinistryRole('admin'),
-  requireActiveSubscription,
+  enforceOperationalAccess,
   validate(createInviteCodeSchema),
   controller.createInviteCode
 );
@@ -41,15 +42,17 @@ router.get('/:ministryId/members', requireMinistryRole('member'), controller.get
 router.post(
   '/:ministryId/members',
   requireMinistryRole('admin'),
+  enforceOperationalAccess,
   validate(addMemberManuallySchema),
   controller.addMemberManually
 );
 router.patch(
   '/:ministryId/members/:memberId',
   requireMinistryRole('admin'),
+  enforceOperationalAccess,
   validate(updateMemberRoleSchema),
   controller.updateMemberRole
 );
-router.delete('/:ministryId/members/:memberId', requireMinistryRole('admin'), controller.removeMember);
+router.delete('/:ministryId/members/:memberId', requireMinistryRole('admin'), enforceOperationalAccess.remediation, controller.removeMember);
 
 export default router;

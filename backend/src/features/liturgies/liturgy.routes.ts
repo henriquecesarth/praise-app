@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import * as controller from './liturgy.controller';
 import { authenticate } from '../../middleware/auth';
-import { requireMinistryRole, requireActiveSubscription } from '../../middleware/rbac';
+import { requireMinistryRole } from '../../middleware/rbac';
+import { enforceOperationalAccess } from '../../middleware/quota-enforcement';
 import { validate } from '../../middleware/validate';
 import { createLiturgySchema, updateLiturgySchema } from './liturgy.types';
 
@@ -13,11 +14,11 @@ router.use(authenticate);
 router.get('/', requireMinistryRole('member'), controller.listLiturgies);
 router.get('/:liturgyId', requireMinistryRole('member'), controller.getLiturgyById);
 
-// Escrita de liturgias (Restrito a ADMIN do ministério com assinatura ativa)
+// Escrita de liturgias (Restrito a ADMIN do ministério)
 router.post(
   '/',
   requireMinistryRole('admin'),
-  requireActiveSubscription,
+  enforceOperationalAccess,
   validate(createLiturgySchema),
   controller.createLiturgy
 );
@@ -25,7 +26,7 @@ router.post(
 router.put(
   '/:liturgyId',
   requireMinistryRole('admin'),
-  requireActiveSubscription,
+  enforceOperationalAccess,
   validate(updateLiturgySchema),
   controller.updateLiturgy
 );
@@ -33,7 +34,7 @@ router.put(
 router.delete(
   '/:liturgyId',
   requireMinistryRole('admin'),
-  requireActiveSubscription,
+  enforceOperationalAccess,
   controller.deleteLiturgy
 );
 

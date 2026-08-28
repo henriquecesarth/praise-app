@@ -2,6 +2,7 @@ import { Router } from 'express';
 import * as controller from './schedule.controller';
 import { authenticate } from '../../middleware/auth';
 import { requireMinistryRole } from '../../middleware/rbac';
+import { enforceOperationalAccess } from '../../middleware/quota-enforcement';
 import { validate } from '../../middleware/validate';
 import { createScheduleSchema, updateScheduleSchema, createScheduleCommentSchema, confirmPresenceSchema } from './schedule.types';
 
@@ -11,9 +12,9 @@ router.use(authenticate);
 
 router.get('/', requireMinistryRole('member'), controller.listSchedules);
 router.get('/:scheduleId', requireMinistryRole('member'), controller.getScheduleById);
-router.post('/', requireMinistryRole('admin'), validate(createScheduleSchema), controller.createSchedule);
-router.put('/:scheduleId', requireMinistryRole('admin'), validate(updateScheduleSchema), controller.updateSchedule);
-router.delete('/:scheduleId', requireMinistryRole('admin'), controller.deleteSchedule);
+router.post('/', requireMinistryRole('admin'), enforceOperationalAccess, validate(createScheduleSchema), controller.createSchedule);
+router.put('/:scheduleId', requireMinistryRole('admin'), enforceOperationalAccess, validate(updateScheduleSchema), controller.updateSchedule);
+router.delete('/:scheduleId', requireMinistryRole('admin'), enforceOperationalAccess, controller.deleteSchedule);
 
 router.patch(
   '/:scheduleId/confirmation',
@@ -26,6 +27,7 @@ router.get('/:scheduleId/comments', requireMinistryRole('member'), controller.ge
 router.post(
   '/:scheduleId/comments',
   requireMinistryRole('member'),
+  enforceOperationalAccess,
   validate(createScheduleCommentSchema),
   controller.addScheduleComment
 );

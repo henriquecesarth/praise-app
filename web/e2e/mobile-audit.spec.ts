@@ -317,3 +317,17 @@ test('loading, empty, and error repertoire states do not overflow', async ({ pag
   await expect(page.getByText('Falha simulada ao carregar repertório responsivo.')).toBeVisible();
   await expectNoHorizontalOverflow(page);
 });
+
+test('subscription and plans page renders correctly without overflow', async ({ page }, testInfo) => {
+  await installMockApi(page);
+  await seedAuthenticatedSession(page, projectTheme(testInfo));
+  await page.goto('/ministerio/plano');
+
+  await expect(page.getByRole('heading', { level: 1, name: 'Plano e assinatura' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 2, name: 'Essential' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 2, name: 'Planos disponíveis' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 3, name: 'Free' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 3, name: 'Premium' })).toBeVisible();
+
+  await expectNoHorizontalOverflow(page);
+});

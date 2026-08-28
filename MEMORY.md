@@ -27,6 +27,12 @@ Monorepo com dois pacotes npm independentes. A SPA usa web/src/api.ts para consu
 
 Ministry é a fronteira principal de tenant. Usuários podem ser admin ou member; também há funções musicais separadas. Recursos incluem membros, convites PR-*, equipes, funções, classificações, artistas, músicas/versões, pastas, escalas, comentários, modelos de roteiro, liturgias e cifras.
 
+### Commercial Structure & Plans
+
+- 6 planos definidos: `free` (10 membros / 50 músicas), `lite` (20 membros / 100 músicas), `lite_plus` (30 membros / 150 músicas, apresentado como Lite+), `essential` (40 membros / 200 músicas, suporta add-on), `pro` (100 membros / 500 músicas, suporta add-on) e `premium` (ilimitado).
+- Add-ons de membros em blocos de +10; tetos configuráveis por plano (inicialmente: essential até 4 blocos = 80 membros; pro até 10 blocos = 200 membros).
+- Sem cobrança real nesta etapa (apenas modelagem de dados e validação de limites). Detalhes em `docs/product/plans-and-limits.md`.
+
 ## Integrations
 
 - Firebase Admin SDK: Auth e Firestore.
@@ -45,13 +51,14 @@ Backend reconhece PORT, NODE_ENV, JWT_SECRET, FIREBASE_PROJECT_ID, FIREBASE_CLIE
 
 ## Testing
 
-O web usa Vitest/Testing Library e Playwright (com matriz de 6 viewports: 320x568, 360x800, 375x812, 390x844, 412x915, 430x932 em temas light e dark); as jornadas E2E interceptam a API e usam fixtures locais, sem escrita persistente. O backend continua sem testes. Ambos os pacotes são validados por build TypeScript. O lint backend está declarado, mas não operacional.
+O backend usa Vitest para testes unitários do motor de quotas, serviços de assinatura e isolamento de tenant (44 testes). O web usa Vitest/Testing Library (23 testes) e Playwright (61 testes com matriz de 6 viewports: 320x568, 360x800, 375x812, 390x844, 412x915, 430x932 em temas light e dark); as jornadas E2E interceptam a API e usam fixtures locais, sem escrita persistente. Ambos os pacotes são validados por build TypeScript. O lint backend está declarado, mas não operacional.
 
 ## Operational Commands
 
     cd backend && npm ci
     cd backend && npm run dev
     cd backend && npm run build
+    cd backend && npm test
     cd backend && npm start
 
     cd web && npm ci
@@ -66,25 +73,29 @@ O web usa Vitest/Testing Library e Playwright (com matriz de 6 viewports: 320x56
 - Código atual prevalece sobre documentação histórica.
 - Identidade visual oficial LouvAIO adotada com paleta Verde/Terracota/Creme/Preto e tokens centralizados (`docs/decisions/2026-08-28-louvaio-visual-identity.md`).
 - Contenção responsiva sem uso de `overflow-x: hidden` global.
+- Sistema de planos, quotas e entitlements operado com autoridade no backend (`backend/src/config/plans.config.ts`) e consumido dinamicamente pelo frontend.
+- Separação estrita entre `BillingStatus` (financeiro) e `administratively_suspended` (administrativo/fraude).
+- Resolução dinâmica de `accessMode` (`normal`, `grace`, `restricted_over_limit`, `suspended`) sem dependência de jobs ou escrita prévia.
 - Firebase/Firestore é a implementação ativa; referências antigas a Supabase/Flutter não descrevem este checkout.
 - Não existe contrato HTTP uniformizado; mudanças devem preservar respostas locais.
 - Inconsistências confirmadas ficam catalogadas em docs/system-status.md e exigem tarefas próprias.
 
 ## Known Constraints
 
-- Sem testes backend, CI/CD, Docker, migrations, formatter ou esquema Firestore versionado.
+- Testes de concorrência física de transações sob Firestore Emulator: NOT YET VERIFIED (validado com mocks unitários). Sem CI/CD, Docker, migrations, formatter ou esquema Firestore versionado.
 - Componentes web e o cliente api.ts concentram muito comportamento.
 - Alias groups/ministry e campos snake_case/camelCase coexistem por compatibilidade.
 - Versão mínima suportada de Node/npm: Unknown / Not yet verified.
 
 ## Known Issues
 
-Itens duráveis e priorizados estão em docs/system-status.md: autorização permissiva em determinados fluxos, fallback de login sem verificação de senha, contratos Smart Chords divergentes, atualização de liturgia incorreta e documentação histórica desatualizada.
+Itens duráveis e priorizados estão em docs/system-status.md: fallback de login sem verificação de senha, contratos Smart Chords divergentes, atualização de liturgia incorreta e documentação histórica desatualizada. (INC-002 e INC-003 foram corrigidos).
 
 ## Current State
 
+- Sistema completo de Planos, Quotas, Entitlements e Assinatura por Ministério implementado no backend e web (concluído em 2026-08-28).
 - Adoção integral da identidade visual e PWA LouvAIO concluída em 2026-08-28.
-- O web possui rotas estáveis, navegação mobile e desktop coerente, bootstrap autenticado, testes E2E com cobertura de overflow horizontal em 6 viewports (light/dark) e PWA com manifest LouvAIO atualizado.
+- O web possui rotas estáveis, navegação mobile e desktop coerente, bootstrap autenticado, tela `/ministerio/plano`, testes E2E com cobertura de overflow horizontal em 6 viewports (light/dark) e PWA com manifest LouvAIO atualizado.
 - O repositório contém backend e web; não contém mobile ou supabase.
 
 ## Completed Milestones
@@ -94,6 +105,7 @@ Itens duráveis e priorizados estão em docs/system-status.md: autorização per
 - Gestão de ministérios, repertório, escalas e PWA presentes no código.
 - Auditoria e correção de overflow horizontal em 6 viewports mobile.
 - Reestilização integral da identidade visual e PWA LouvAIO.
+- Implementação do Sistema de Planos, Quotas e Entitlements por Ministério.
 
 ## Current Work
 
