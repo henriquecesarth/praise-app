@@ -124,9 +124,11 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
+          minWidth: 0,
+          maxWidth: '100%',
         }}
       >
-        <div className="link-tile-info" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div className="link-tile-info" style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, flex: 1 }}>
           <div
             className="link-tile-icon-wrapper"
             style={{
@@ -143,11 +145,11 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
           >
             {icon}
           </div>
-          <div>
-            <div className="link-tile-title" style={{ fontWeight: 600, fontSize: '0.9rem' }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div className="link-tile-title" style={{ fontWeight: 600, fontSize: '0.9rem', minWidth: 0, overflowWrap: 'anywhere' }}>
               {title}
             </div>
-            <div className="link-tile-subtitle" style={{ fontSize: '0.75rem', opacity: 0.8 }}>
+            <div className="link-tile-subtitle" style={{ fontSize: '0.75rem', opacity: 0.8, minWidth: 0, overflowWrap: 'anywhere' }}>
               {subtitle}
             </div>
           </div>
@@ -166,6 +168,10 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
     <div
       className="detail-view song-detail-container"
       style={{
+        width: '100%',
+        maxWidth: '100%',
+        minWidth: 0,
+        boxSizing: 'border-box',
         paddingTop: 'max(12px, var(--safe-area-top))',
         paddingBottom: 'max(24px, var(--safe-area-bottom))',
       }}
@@ -247,6 +253,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
       {/* Tabs de Versões (se houver mais de 1 versão) */}
       {versions.length > 1 && (
         <div
+          className="tab-bar"
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -254,6 +261,9 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
             marginBottom: '16px',
             overflowX: 'auto',
             paddingBottom: '4px',
+            width: '100%',
+            maxWidth: '100%',
+            minWidth: 0,
           }}
         >
           <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', gap: '4px', marginRight: '4px' }}>
@@ -322,7 +332,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
           )}
 
           {activeView === 'cifra' && song.smartChord ? (
-            <div className="lyrics-box" style={{ fontFamily: 'monospace', overflowX: 'auto' }}>
+            <div className="lyrics-box" style={{ fontFamily: 'monospace', overflowX: 'auto', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' }}>
               <div
                 style={{
                   display: 'flex',
@@ -333,6 +343,8 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
                   marginBottom: '16px',
                   paddingBottom: '12px',
                   borderBottom: '1px solid var(--border-color)',
+                  minWidth: 0,
+                  maxWidth: '100%',
                 }}
               >
                 <div>
@@ -409,7 +421,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
               })}
             </div>
           ) : (
-            <div className="lyrics-box" style={{ overflowX: 'auto', whiteSpace: 'pre-wrap' }}>
+            <div className="lyrics-box" style={{ overflowX: 'auto', whiteSpace: 'pre-wrap', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' }}>
               {song.notes || song.lyrics || 'Nenhuma observação ou letra cadastrada para esta música.'}
             </div>
           )}
@@ -449,6 +461,9 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
                 display: 'flex',
                 flexDirection: 'column',
                 gap: '12px',
+                minWidth: 0,
+                maxWidth: '100%',
+                boxSizing: 'border-box',
               }}
             >
               {activeVersion.key && (

@@ -922,7 +922,7 @@ export default function App() {
         )}
 
         {/* View contents wrapper */}
-        <div className="app-container" style={{ flex: 1, padding: '24px', maxWidth: 'none', margin: 0 }}>
+        <div className="app-container" style={{ flex: 1, maxWidth: 'none', margin: 0 }}>
           {detailLoading && (routeState.songId || routeState.folderId || routeState.scheduleId) && (
             <div className="detail-state-overlay" role="status" aria-live="polite">
               <div className="shimmer detail-loading-line" />

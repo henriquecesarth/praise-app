@@ -44,8 +44,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   return (
     <div className="login-page-container" style={{ paddingTop: 'max(16px, var(--safe-area-top))', paddingBottom: 'max(24px, var(--safe-area-bottom))' }}>
       {/* Background Ambient Glows */}
-      <div className="login-bg-glow-1" />
-      <div className="login-bg-glow-2" />
+      <div className="login-bg-glow-1" aria-hidden="true" />
+      <div className="login-bg-glow-2" aria-hidden="true" />
 
       {/* Top Navbar */}
       <header className="login-header">

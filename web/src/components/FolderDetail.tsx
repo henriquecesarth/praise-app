@@ -52,7 +52,17 @@ export const FolderDetail: React.FC<FolderDetailProps> = ({
   };
 
   return (
-    <div className="detail-view folder-detail-container" style={{ paddingTop: 'max(12px, var(--safe-area-top))', paddingBottom: 'max(24px, var(--safe-area-bottom))' }}>
+    <div
+      className="detail-view folder-detail-container"
+      style={{
+        width: '100%',
+        maxWidth: '100%',
+        minWidth: 0,
+        boxSizing: 'border-box',
+        paddingTop: 'max(12px, var(--safe-area-top))',
+        paddingBottom: 'max(24px, var(--safe-area-bottom))',
+      }}
+    >
       <Header
         leftAction={
           <button 

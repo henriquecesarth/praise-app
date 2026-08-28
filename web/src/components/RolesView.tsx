@@ -205,8 +205,8 @@ export function RolesView({ ministryId, isAdmin, onBack, showToast, onModalState
             <div key={role.id} className="role-card" style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 16px', borderRadius: '12px', background: 'var(--surface-color)', border: '1px solid var(--border-color)', minHeight: '64px' }}>
               <div className="role-card-icon" style={{ width: '44px', height: '44px', borderRadius: '10px', background: 'var(--primary-surface)', fontSize: '1.3rem', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{role.icon}</div>
               <div className="role-card-info" style={{ flex: 1, minWidth: 0 }}>
-                <div className="role-card-name" style={{ fontWeight: 700, fontSize: '1rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span>{role.name}</span>
+                <div className="role-card-name" style={{ fontWeight: 700, fontSize: '1rem', display: 'flex', alignItems: 'flex-start', gap: '8px', flexWrap: 'wrap', minWidth: 0 }}>
+                  <span style={{ minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere' }}>{role.name}</span>
                   {role.isDefault && <span className="role-default-badge" style={{ fontSize: '0.72rem', padding: '2px 6px', borderRadius: '4px', background: 'var(--primary-surface)', color: 'var(--primary-light)', fontWeight: 700 }}>Padrão</span>}
                 </div>
               </div>

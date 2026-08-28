@@ -23,10 +23,10 @@ export const Header: React.FC<HeaderProps> = ({
     <header
       className={`app-header no-print ${sticky ? 'sticky' : ''} ${className}`}
       style={{
-        paddingTop: 'max(12px, var(--safe-area-top))',
-        paddingBottom: '8px',
-        paddingLeft: '16px',
-        paddingRight: '16px',
+        width: '100%',
+        maxWidth: '100%',
+        minWidth: 0,
+        boxSizing: 'border-box',
         minHeight: '64px',
         display: 'flex',
         alignItems: 'center',
@@ -40,6 +40,8 @@ export const Header: React.FC<HeaderProps> = ({
         className="app-header-container"
         style={{
           width: '100%',
+          maxWidth: '100%',
+          minWidth: 0,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',

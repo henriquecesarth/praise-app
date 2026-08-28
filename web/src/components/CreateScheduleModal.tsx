@@ -686,7 +686,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                     required
                   />
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                  <div className="schedule-date-time-grid">
                     <FloatingInput
                       label="Data *"
                       type="date"

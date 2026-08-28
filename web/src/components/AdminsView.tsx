@@ -165,13 +165,13 @@ export function AdminsView({ ministryId, currentUserId, isAdmin, onBack, showToa
                   {getInitials(member.name)}
                 </div>
                 <div className="admin-card-info" style={{ flex: 1, minWidth: 0 }}>
-                  <div className="admin-card-name" style={{ fontWeight: 700, fontSize: '0.95rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span>{member.name}</span>
+                  <div className="admin-card-name" style={{ fontWeight: 700, fontSize: '0.95rem', display: 'flex', alignItems: 'flex-start', gap: '6px', flexWrap: 'wrap', minWidth: 0 }}>
+                    <span style={{ minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere' }}>{member.name}</span>
                     {isSelf && <span className="admin-self-badge" style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', background: 'var(--primary-surface)', color: 'var(--primary-light)', fontWeight: 700 }}>Você</span>}
                     {member.isManual && <span className="member-manual-badge" style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', background: 'var(--surface-variant)', color: 'var(--text-secondary)' }}>Manual</span>}
                   </div>
-                  <div className="admin-card-email" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    <AtSign size={12} />
+                  <div className="admin-card-email" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '2px', display: 'flex', alignItems: 'flex-start', gap: '4px', minWidth: 0 }}>
+                    <AtSign size={12} style={{ flexShrink: 0, marginTop: '2px' }} />
                     <span>{member.email || '—'}</span>
                   </div>
                 </div>

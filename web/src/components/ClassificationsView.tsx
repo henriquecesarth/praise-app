@@ -204,12 +204,12 @@ export function ClassificationsView({ ministryId, isAdmin, onBack, showToast, on
                 <Tag size={20} />
               </div>
               <div className="classification-card-info" style={{ flex: 1, minWidth: 0 }}>
-                <div className="classification-card-name" style={{ fontWeight: 700, fontSize: '1rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span>{item.name}</span>
+                <div className="classification-card-name" style={{ fontWeight: 700, fontSize: '1rem', display: 'flex', alignItems: 'flex-start', gap: '8px', flexWrap: 'wrap', minWidth: 0 }}>
+                  <span style={{ minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere' }}>{item.name}</span>
                   {item.isDefault && <span className="classification-default-badge" style={{ fontSize: '0.72rem', padding: '2px 6px', borderRadius: '4px', background: 'var(--primary-surface)', color: 'var(--primary-light)', fontWeight: 700 }}>Padrão</span>}
                 </div>
                 {item.description && (
-                  <div className="classification-card-desc" style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.description}</div>
+                  <div className="classification-card-desc" style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '2px', overflowWrap: 'anywhere' }}>{item.description}</div>
                 )}
               </div>
 
