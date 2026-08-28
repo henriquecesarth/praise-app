@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Praise App apoia a organização diária de um ministério de louvor em uma aplicação web instalável. O código atual concentra gestão de pessoas, repertório musical, planejamento de escalas e preparação de conteúdo musical.
+LouvAIO (anteriormente Praise App) apoia a organização diária de ministérios de louvor em uma aplicação web instalável (PWA). O código atual concentra gestão de pessoas, repertório musical, planejamento de escalas, edição de cifras inteligentes e preparação de conteúdo musical.
 
 ## Identifiable Actors
 

@@ -2,9 +2,10 @@
 
 ## Project Identity
 
-- Nome: Praise App.
-- Propósito: gestão web de ministérios de louvor, seus integrantes, repertório, escalas e rotinas associadas.
-- Stack: React 18 + TypeScript + Vite/PWA; Node.js + TypeScript + Express 5; Firebase Authentication + Cloud Firestore.
+- Nome: LouvAIO (anteriormente Praise App).
+- Propósito: gestão web e PWA de ministérios de louvor, seus integrantes, repertório, escalas, cifras inteligentes e rotinas associadas.
+- Identidade Visual Oficial: Verde escuro `#0F2A1F`, Terracota `#B85A3C`, Creme `#F5EFE6`, Preto `#121212`. Tokens centralizados em `web/src/styles/louvaio-brand.css`, `web/src/theme/louvaioTheme.ts` e `web/src/index.css`.
+- Stack: React 19 + TypeScript + Vite/PWA + TailwindCSS v4; Node.js + TypeScript + Express 5; Firebase Authentication + Cloud Firestore.
 - Entry points: web/src/main.tsx, web/src/App.tsx, backend/src/server.ts e backend/src/app.ts.
 
 ## Architecture
@@ -13,13 +14,14 @@ Monorepo com dois pacotes npm independentes. A SPA usa web/src/api.ts para consu
 
 ## Important Components
 
-- App.tsx: sessão, ministério ativo, navegação e estado principal da SPA.
+- App.tsx: sessão, ministério ativo, navegação, sidebar institucional LouvAIO e estado principal da SPA.
 - api.ts: URL base, JWT em localStorage, fetch e mapeamento de contratos.
 - app.ts: middleware e montagem das rotas Express.
 - unifiedConfig.ts: leitura/validação de ambiente.
 - firebase.ts: Firebase Admin, Firestore e Auth.
 - middleware/auth.ts e rbac.ts: JWT e papéis admin/member.
 - repositories/: fonte dos nomes de coleções e comportamento de persistência.
+- theme/louvaioTheme.ts: mapeamento de cores e caminhos de assets oficiais de branding.
 
 ## Important Domain Concepts
 
@@ -43,7 +45,7 @@ Backend reconhece PORT, NODE_ENV, JWT_SECRET, FIREBASE_PROJECT_ID, FIREBASE_CLIE
 
 ## Testing
 
-O web usa Vitest/Testing Library e Playwright; as jornadas E2E interceptam a API e usam fixtures locais, sem escrita persistente. O backend continua sem testes. Ambos os pacotes são validados por build TypeScript. O lint backend está declarado, mas não operacional.
+O web usa Vitest/Testing Library e Playwright (com matriz de 6 viewports: 320x568, 360x800, 375x812, 390x844, 412x915, 430x932 em temas light e dark); as jornadas E2E interceptam a API e usam fixtures locais, sem escrita persistente. O backend continua sem testes. Ambos os pacotes são validados por build TypeScript. O lint backend está declarado, mas não operacional.
 
 ## Operational Commands
 
@@ -62,6 +64,8 @@ O web usa Vitest/Testing Library e Playwright; as jornadas E2E interceptam a API
 ## Important Decisions
 
 - Código atual prevalece sobre documentação histórica.
+- Identidade visual oficial LouvAIO adotada com paleta Verde/Terracota/Creme/Preto e tokens centralizados (`docs/decisions/2026-08-28-louvaio-visual-identity.md`).
+- Contenção responsiva sem uso de `overflow-x: hidden` global.
 - Firebase/Firestore é a implementação ativa; referências antigas a Supabase/Flutter não descrevem este checkout.
 - Não existe contrato HTTP uniformizado; mudanças devem preservar respostas locais.
 - Inconsistências confirmadas ficam catalogadas em docs/system-status.md e exigem tarefas próprias.
@@ -79,14 +83,17 @@ Itens duráveis e priorizados estão em docs/system-status.md: autorização per
 
 ## Current State
 
-Harness documental criado em 2026-08-27. O web possui rotas estáveis, navegação mobile de cinco áreas, bootstrap autenticado, testes isolados e PWA com cache apenas do shell estático. O repositório contém backend e web; não contém mobile ou supabase.
+- Adoção integral da identidade visual e PWA LouvAIO concluída em 2026-08-28.
+- O web possui rotas estáveis, navegação mobile e desktop coerente, bootstrap autenticado, testes E2E com cobertura de overflow horizontal em 6 viewports (light/dark) e PWA com manifest LouvAIO atualizado.
+- O repositório contém backend e web; não contém mobile ou supabase.
 
 ## Completed Milestones
 
 - Estrutura inicial backend/web.
 - Migração observável do backend para Firebase.
 - Gestão de ministérios, repertório, escalas e PWA presentes no código.
-- Harness de documentação e contexto operacional.
+- Auditoria e correção de overflow horizontal em 6 viewports mobile.
+- Reestilização integral da identidade visual e PWA LouvAIO.
 
 ## Current Work
 

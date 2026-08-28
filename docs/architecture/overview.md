@@ -2,7 +2,7 @@
 
 ## System Context
 
-Praise App é uma aplicação web instalável para gestão de ministérios de louvor. O browser executa uma SPA React, que chama uma API REST Express. A API autentica sessões com JWT próprio e usa Firebase Admin SDK para Firebase Authentication e Cloud Firestore.
+LouvAIO (anteriormente Praise App) é uma aplicação web instalável (PWA) para gestão de ministérios de louvor. O browser executa uma SPA React estilizada com a identidade visual oficial LouvAIO (tokens centralizados em `web/src/styles/louvaio-brand.css`), que chama uma API REST Express. A API autentica sessões com JWT próprio e usa Firebase Admin SDK para Firebase Authentication e Cloud Firestore.
 
 Não há aplicativo Flutter, banco Supabase ativo, worker, fila ou serviço de background neste checkout.
 
