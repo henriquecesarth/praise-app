@@ -12,31 +12,31 @@ export default defineConfig({
       registerType: 'prompt',
       injectRegister: null,
       manifest: {
-        name: 'Praise App - Gestão de Louvor',
-        short_name: 'Praise App',
-        description: 'Plataforma de gestão de ministérios de louvor, escalas, cifras e repertório.',
+        name: 'LouvAIO - Gestão de Louvor',
+        short_name: 'LouvAIO',
+        description: 'Aplicativo de música e conteúdo cristão.',
         lang: 'pt-BR',
-        theme_color: '#131614',
-        background_color: '#131614',
+        theme_color: '#0F2A1F',
+        background_color: '#F5EFE6',
         display: 'standalone',
         orientation: 'portrait',
         start_url: '/',
         scope: '/',
         icons: [
           {
-            src: '/icon-192.png',
+            src: '/branding/pwa/icon-192.png',
             sizes: '192x192',
             type: 'image/png',
             purpose: 'any',
           },
           {
-            src: '/icon-512.png',
+            src: '/branding/pwa/icon-512.png',
             sizes: '512x512',
             type: 'image/png',
             purpose: 'any',
           },
           {
-            src: '/icon-maskable-512.png',
+            src: '/branding/pwa/icon-maskable-512.png',
             sizes: '512x512',
             type: 'image/png',
             purpose: 'maskable',
@@ -44,9 +44,9 @@ export default defineConfig({
         ],
       },
       workbox: {
-        cacheId: 'praise-app-shell-v2',
+        cacheId: 'louvaio-app-shell-v1',
         cleanupOutdatedCaches: true,
-        globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg}'],
         navigateFallback: null,
         runtimeCaching: [
           {

@@ -192,7 +192,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
             ) : mode === 'login' ? (
               <>
                 <LogIn className="w-4 h-4" />
-                <span>Entrar no Praise App</span>
+                <span>Entrar no LouvAIO</span>
               </>
             ) : (
               <>

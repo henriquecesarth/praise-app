@@ -1,0 +1,71 @@
+/* LouvAIO — Brand tokens
+   Source: approved LouvAIO visual identity. */
+:root {
+  /* Cores Oficiais LouvAIO */
+  --louvaio-green: #0F2A1F;
+  --louvaio-green-dark: #0A1E16;
+  --louvaio-green-light: #163B2C;
+  --louvaio-green-surface: #E8EFEA;
+
+  --louvaio-terracotta: #B85A3C;
+  --louvaio-terracotta-hover: #A04C31;
+  --louvaio-terracotta-light: #C96F52;
+  --louvaio-terracotta-surface: #F9ECE7;
+
+  --louvaio-cream: #F5EFE6;
+  --louvaio-cream-light: #FCF9F5;
+  --louvaio-cream-surface: #FFFFFF;
+  --louvaio-cream-muted: #EAE2D5;
+
+  --louvaio-black: #121212;
+  --louvaio-text-muted: #576059;
+  --louvaio-text-subtle: #7D8881;
+
+  --brand-primary: var(--louvaio-green);
+  --brand-accent: var(--louvaio-terracotta);
+  --brand-surface: var(--louvaio-cream);
+  --brand-ink: var(--louvaio-black);
+
+  --brand-on-primary: #F5EFE6;
+  --brand-on-accent: #FFFFFF;
+  --brand-border: #E2D7C7;
+  --brand-shadow: 0 12px 32px rgba(18, 18, 18, 0.08);
+
+  --brand-radius-sm: 8px;
+  --brand-radius-md: 12px;
+  --brand-radius-lg: 16px;
+  --brand-radius-pill: 999px;
+
+  --brand-content-max: 1200px;
+  --brand-page-gutter: clamp(16px, 4vw, 40px);
+
+  color-scheme: light;
+}
+
+.dark {
+  --brand-primary: #0F2A1F;
+  --brand-accent: #C96F52;
+  --brand-surface: #0B1913;
+  --brand-ink: #F5EFE6;
+  --brand-border: #1B4534;
+  --brand-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+
+  color-scheme: dark;
+}
+
+html, body, #root {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 100%;
+}
+
+img, svg, video, canvas {
+  max-width: 100%;
+  height: auto;
+}
+
+.brand-container {
+  width: min(100% - 2 * var(--brand-page-gutter), var(--brand-content-max));
+  margin-inline: auto;
+}

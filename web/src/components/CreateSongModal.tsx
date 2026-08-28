@@ -402,9 +402,9 @@ export const CreateSongModal: React.FC<CreateSongModalProps> = ({
                           key={c.id}
                           className="badge"
                           style={{
-                            backgroundColor: `${c.color || '#2b3b30'}20`,
-                            color: c.color || 'var(--accent)',
-                            border: `1px solid ${c.color || '#2b3b30'}40`,
+                            backgroundColor: c.color ? `${c.color}20` : 'var(--primary-surface)',
+                            color: c.color || 'var(--primary-color)',
+                            border: `1px solid ${c.color ? `${c.color}40` : 'var(--border-color)'}`,
                             fontSize: '0.75rem',
                             fontWeight: 700,
                             padding: '3px 9px',

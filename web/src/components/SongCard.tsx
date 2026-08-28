@@ -98,9 +98,9 @@ export const SongCard: React.FC<SongCardProps> = ({ song, onTap }) => {
             <span
               className="badge"
               style={{
-                backgroundColor: `${song.classificationColor || '#2b3b30'}20`,
-                color: song.classificationColor || 'var(--accent)',
-                border: `1px solid ${song.classificationColor || '#2b3b30'}40`,
+                backgroundColor: song.classificationColor ? `${song.classificationColor}20` : 'var(--primary-surface)',
+                color: song.classificationColor || 'var(--primary-color)',
+                border: `1px solid ${song.classificationColor ? `${song.classificationColor}40` : 'var(--border-color)'}`,
                 fontSize: '0.74rem',
                 fontWeight: 700,
                 padding: '2px 8px',

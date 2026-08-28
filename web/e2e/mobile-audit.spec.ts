@@ -72,7 +72,7 @@ test('login, navigation, details, forms, history, and ministry remain usable', a
   await capture(page, testInfo, 'login');
   await page.getByLabel('Endereço de E-mail').fill('leitura@example.test');
   await page.getByLabel('Senha', { exact: true }).fill('somente-mock-local');
-  await page.getByRole('button', { name: 'Entrar no Praise App' }).click();
+  await page.getByRole('button', { name: /Entrar no/i }).click();
 
   await expect(page.getByRole('heading', { name: /Olá, Conta de Leitura/i })).toBeVisible();
   await expect(page).toHaveURL('/');

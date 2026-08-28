@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { LogIn, UserPlus, Mail, Lock, User, Eye, EyeOff, AlertCircle, Sparkles, Music, BookOpen, Layers } from 'lucide-react';
 import { api } from '../api';
+import { louvaioTheme } from '../theme/louvaioTheme';
 
 interface LoginPageProps {
   onLoginSuccess: (user: { id: string; email: string; name: string }) => void;
@@ -49,9 +50,19 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
 
       {/* Top Navbar */}
       <header className="login-header">
-        <div className="login-brand">
-          <div className="login-brand-icon">🎵</div>
-          <span className="login-brand-title">Praise App</span>
+        <div className="login-brand" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <img
+            src={louvaioTheme.assets.logoPrimary}
+            alt="LouvAIO"
+            className="login-brand-logo light-only"
+            style={{ height: '36px', width: 'auto', objectFit: 'contain' }}
+          />
+          <img
+            src={louvaioTheme.assets.logoInverse}
+            alt="LouvAIO"
+            className="login-brand-logo dark-only"
+            style={{ height: '36px', width: 'auto', objectFit: 'contain' }}
+          />
         </div>
         <div className="login-header-badge">
           Plataforma de Louvor & Liturgias
@@ -65,7 +76,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
           <div className="login-hero">
             <div className="login-tag">
               <Sparkles size={14} />
-              Gestão inteligente para igrejas
+              Gestão inteligente para ministérios
             </div>
 
             <h1 className="login-title">
@@ -74,13 +85,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
             </h1>
 
             <p className="login-desc">
-              Tudo o que sua equipe precisa em um só lugar: repertórios completos, transposição de cifras em tempo real, agendamento de liturgias do domingo e acesso simplificado para os músicos via código de convite.
+              Tudo o que sua equipe precisa em um só lugar: repertórios completos, transposição de cifras em tempo real, agendamento de liturgias e escalas com facilidade para todos os músicos.
             </p>
 
             {/* Feature Cards Grid */}
             <div className="login-features-grid">
               <div className="login-feature-card">
-                <div className="login-feature-icon" style={{ backgroundColor: 'rgba(134, 163, 143, 0.15)', color: 'var(--primary-light)', width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div className="login-feature-icon" style={{ backgroundColor: 'rgba(184, 90, 60, 0.14)', color: 'var(--louvaio-terracotta)', width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}>
                   <Music size={20} />
                 </div>
                 <div className="login-feature-title">Repertórios & Pastas</div>
@@ -88,7 +99,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
               </div>
 
               <div className="login-feature-card">
-                <div className="login-feature-icon" style={{ backgroundColor: 'rgba(6, 182, 212, 0.15)', color: 'var(--secondary-light)', width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div className="login-feature-icon" style={{ backgroundColor: 'rgba(15, 42, 31, 0.14)', color: 'var(--louvaio-green)', width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}>
                   <BookOpen size={20} />
                 </div>
                 <div className="login-feature-title">Ordens do Culto</div>
@@ -96,7 +107,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
               </div>
 
               <div className="login-feature-card">
-                <div className="login-feature-icon" style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', color: 'var(--success-color)', width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div className="login-feature-icon" style={{ backgroundColor: 'rgba(30, 126, 85, 0.14)', color: 'var(--success-color)', width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}>
                   <Layers size={20} />
                 </div>
                 <div className="login-feature-title">Cifras Inteligentes</div>
@@ -105,7 +116,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
             </div>
           </div>
 
-          {/* Right Column: Glassmorphic Auth Box */}
+          {/* Right Column: Auth Box */}
           <div className="login-card-container">
             <div className="login-card">
               {/* Card Title */}
@@ -224,7 +235,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="login-submit-btn"
+                  className="btn btn-primary login-submit-btn"
                   style={{ width: '100%', minHeight: '44px', padding: '12px 24px', fontSize: '0.95rem', fontWeight: 700, borderRadius: '10px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer', marginTop: '8px' }}
                 >
                   {loading ? (
@@ -232,7 +243,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                   ) : mode === 'login' ? (
                     <>
                       <LogIn size={18} />
-                      <span>Entrar no Praise App</span>
+                      <span>Entrar no LouvAIO</span>
                     </>
                   ) : (
                     <>
@@ -249,9 +260,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
 
       {/* Footer */}
       <footer className="login-footer">
-        &copy; {new Date().getFullYear()} Praise App. Gestão de Ministérios de Louvor.
+        &copy; {new Date().getFullYear()} LouvAIO. Música e gestão para ministérios de louvor.
       </footer>
     </div>
   );
 };
-

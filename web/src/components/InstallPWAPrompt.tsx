@@ -86,12 +86,12 @@ export const InstallPWAPrompt: React.FC = () => {
     ? 'Nova versão disponível'
     : notice === 'offline'
       ? 'Fallback offline preparado'
-      : 'Instalar o Praise App';
+      : 'Instalar o LouvAIO';
   const description = notice === 'update'
     ? 'Atualize quando estiver pronto. O app não recarrega formulários automaticamente.'
     : notice === 'offline'
       ? 'Sem conexão, uma tela segura será exibida sem dados privados do ministério.'
-      : 'Instale o app para acesso rápido ao shell do Praise App.';
+      : 'Instale o app para acesso rápido e prático ao LouvAIO.';
 
   return (
     <div className="pwa-install-banner">

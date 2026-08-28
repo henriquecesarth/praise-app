@@ -131,9 +131,9 @@ export const FolderDetail: React.FC<FolderDetailProps> = ({
                       <span
                         className="badge"
                         style={{
-                          backgroundColor: `${song.classificationColor || '#2b3b30'}20`,
-                          color: song.classificationColor || 'var(--accent)',
-                          border: `1px solid ${song.classificationColor || '#2b3b30'}40`,
+                          backgroundColor: song.classificationColor ? `${song.classificationColor}20` : 'var(--primary-surface)',
+                          color: song.classificationColor || 'var(--primary-color)',
+                          border: `1px solid ${song.classificationColor ? `${song.classificationColor}40` : 'var(--border-color)'}`,
                         }}
                       >
                         {song.classificationName}

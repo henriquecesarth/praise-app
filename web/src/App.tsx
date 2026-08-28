@@ -25,6 +25,7 @@ import { BottomNav } from './components/BottomNav';
 import { InstallPWAPrompt } from './components/InstallPWAPrompt';
 import { Header } from './components/Header';
 import { MobileAccountMenu } from './components/MobileAccountMenu';
+import { louvaioTheme } from './theme/louvaioTheme';
 import { Search, SlidersHorizontal, Plus, CheckCircle, XCircle, Menu, Music, Edit3, KeyRound, UserPlus, LogOut, Building2, Home, Calendar as CalendarIcon, Sun, Moon } from 'lucide-react';
 
 interface Toast {
@@ -59,7 +60,7 @@ export default function App() {
     }
     localStorage.setItem('praise_theme', darkMode ? 'dark' : 'light');
     const themeColor = document.querySelector<HTMLMetaElement>('#praise-theme-color');
-    if (themeColor) themeColor.content = darkMode ? '#131614' : '#f5f8f5';
+    if (themeColor) themeColor.content = darkMode ? '#0F2A1F' : '#F5EFE6';
   }, [darkMode]);
 
   // User Auth State
@@ -637,12 +638,13 @@ export default function App() {
         className="no-print"
         style={{
           width: sidebarOpen ? '260px' : '72px',
-          backgroundColor: 'var(--surface-color)',
+          backgroundColor: 'var(--surface-sidebar)',
+          color: 'var(--surface-sidebar-text)',
           borderRight: '1px solid var(--border-color)',
-          padding: '24px 12px',
+          padding: '20px 12px',
           display: 'flex',
           flexDirection: 'column',
-          gap: '24px',
+          gap: '20px',
           transition: 'width 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
           zIndex: 10,
         }}
@@ -657,11 +659,20 @@ export default function App() {
             minHeight: '44px',
           }}
         >
-          {sidebarOpen && (
-            <div className="brand-title" style={{ fontSize: '1.4rem' }}>
-              <div style={{ fontSize: '1.6rem' }}>🎵</div>
-              Praise App
+          {sidebarOpen ? (
+            <div className="brand-title" style={{ fontSize: '1.2rem', display: 'flex', alignItems: 'center' }}>
+              <img
+                src={louvaioTheme.assets.logoInverse}
+                alt="LouvAIO"
+                style={{ height: '30px', width: 'auto', objectFit: 'contain' }}
+              />
             </div>
+          ) : (
+            <img
+              src={louvaioTheme.assets.logoCompact}
+              alt="LouvAIO"
+              style={{ height: '26px', width: 'auto', objectFit: 'contain' }}
+            />
           )}
           <button
             className="action-icon-btn"
@@ -675,6 +686,7 @@ export default function App() {
               width: '44px',
               height: '44px',
               margin: sidebarOpen ? 0 : '0 auto',
+              color: 'var(--surface-sidebar-text)',
             }}
           >
             <Menu size={20} />
@@ -755,7 +767,7 @@ export default function App() {
           </div>
         )}
 
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
+        <nav style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 }}>
           <button
             onClick={() => {
               setMainModule('dashboard');
@@ -766,14 +778,15 @@ export default function App() {
               alignItems: 'center',
               justifyContent: sidebarOpen ? 'flex-start' : 'center',
               gap: '12px',
-              padding: sidebarOpen ? '12px 16px' : '12px 0',
+              padding: sidebarOpen ? '10px 14px' : '10px 0',
               borderRadius: '8px',
               border: 'none',
               backgroundColor: mainModule === 'dashboard' ? 'var(--primary-color)' : 'transparent',
-              color: mainModule === 'dashboard' ? '#FFFFFF' : 'var(--text-primary)',
+              color: mainModule === 'dashboard' ? '#FFFFFF' : 'var(--surface-sidebar-text)',
               cursor: 'pointer',
               fontWeight: 600,
               textAlign: 'left',
+              transition: 'all var(--transition-fast)',
             }}
           >
             <Home size={20} />
@@ -791,14 +804,15 @@ export default function App() {
               alignItems: 'center',
               justifyContent: sidebarOpen ? 'flex-start' : 'center',
               gap: '12px',
-              padding: sidebarOpen ? '12px 16px' : '12px 0',
+              padding: sidebarOpen ? '10px 14px' : '10px 0',
               borderRadius: '8px',
               border: 'none',
               backgroundColor: mainModule === 'repertoire' ? 'var(--primary-color)' : 'transparent',
-              color: mainModule === 'repertoire' ? '#FFFFFF' : 'var(--text-primary)',
+              color: mainModule === 'repertoire' ? '#FFFFFF' : 'var(--surface-sidebar-text)',
               cursor: 'pointer',
               fontWeight: 600,
               textAlign: 'left',
+              transition: 'all var(--transition-fast)',
             }}
           >
             <Music size={20} />
@@ -815,14 +829,15 @@ export default function App() {
               alignItems: 'center',
               justifyContent: sidebarOpen ? 'flex-start' : 'center',
               gap: '12px',
-              padding: sidebarOpen ? '12px 16px' : '12px 0',
+              padding: sidebarOpen ? '10px 14px' : '10px 0',
               borderRadius: '8px',
               border: 'none',
               backgroundColor: mainModule === 'cifrador' ? 'var(--primary-color)' : 'transparent',
-              color: mainModule === 'cifrador' ? '#FFFFFF' : 'var(--text-primary)',
+              color: mainModule === 'cifrador' ? '#FFFFFF' : 'var(--surface-sidebar-text)',
               cursor: 'pointer',
               fontWeight: 600,
               textAlign: 'left',
+              transition: 'all var(--transition-fast)',
             }}
           >
             <Edit3 size={20} />
@@ -839,14 +854,15 @@ export default function App() {
               alignItems: 'center',
               justifyContent: sidebarOpen ? 'flex-start' : 'center',
               gap: '12px',
-              padding: sidebarOpen ? '12px 16px' : '12px 0',
+              padding: sidebarOpen ? '10px 14px' : '10px 0',
               borderRadius: '8px',
               border: 'none',
               backgroundColor: mainModule === 'schedules' ? 'var(--primary-color)' : 'transparent',
-              color: mainModule === 'schedules' ? '#FFFFFF' : 'var(--text-primary)',
+              color: mainModule === 'schedules' ? '#FFFFFF' : 'var(--surface-sidebar-text)',
               cursor: 'pointer',
               fontWeight: 600,
               textAlign: 'left',
+              transition: 'all var(--transition-fast)',
             }}
           >
             <CalendarIcon size={20} />
@@ -863,14 +879,15 @@ export default function App() {
               alignItems: 'center',
               justifyContent: sidebarOpen ? 'flex-start' : 'center',
               gap: '12px',
-              padding: sidebarOpen ? '12px 16px' : '12px 0',
+              padding: sidebarOpen ? '10px 14px' : '10px 0',
               borderRadius: '8px',
               border: 'none',
               backgroundColor: mainModule === 'ministry' ? 'var(--primary-color)' : 'transparent',
-              color: mainModule === 'ministry' ? '#FFFFFF' : 'var(--text-primary)',
+              color: mainModule === 'ministry' ? '#FFFFFF' : 'var(--surface-sidebar-text)',
               cursor: 'pointer',
               fontWeight: 600,
               textAlign: 'left',
+              transition: 'all var(--transition-fast)',
             }}
           >
             <Building2 size={20} />
