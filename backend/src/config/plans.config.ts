@@ -2,6 +2,7 @@ export type PlanId = 'free' | 'lite' | 'lite_plus' | 'essential' | 'pro' | 'prem
 export type QuotaLimit = number | 'unlimited';
 export type BillingStatus = 'active' | 'trialing' | 'past_due' | 'canceled';
 export type AccessMode = 'normal' | 'grace' | 'restricted_over_limit' | 'suspended';
+export type BillingInterval = 'monthly' | 'annual';
 
 export interface PlanDefinition {
   id: PlanId;
@@ -10,6 +11,10 @@ export interface PlanDefinition {
   baseSongs: QuotaLimit;
   allowMemberAddons: boolean;
   maxMemberAddonBlocks: number;
+  monthlyPriceCents: number;
+  annualPriceCents: number;
+  addonBlockMonthlyPriceCents: number;
+  addonBlockAnnualPriceCents: number;
 }
 
 export interface EffectiveQuotas {
@@ -22,17 +27,35 @@ export interface MinistryUsageData {
   songs_count: number;
 }
 
+export type SubscriptionMode = 'free' | 'paid' | 'complimentary';
+
 export interface SubscriptionStateData {
   plan_id: PlanId;
   member_addon_blocks: number;
   billing_status: BillingStatus;
+  subscription_mode?: SubscriptionMode;
+  granted_by?: string | null;
+  granted_at?: string | null;
+  grant_reason?: string | null;
+  expires_at?: string | null;
   administratively_suspended?: boolean;
   grace_period_expires_at?: string | null;
 }
 
+
 export const MEMBER_ADDON_BLOCK_SIZE = 10;
 export const DEFAULT_GRACE_PERIOD_DAYS = 7;
 export const DEFAULT_PLAN_ID: PlanId = 'free';
+export const ANNUAL_DISCOUNT_PERCENTAGE = 10;
+
+/**
+ * Calcula deterministamente o valor anual com 10% de desconto a partir do valor mensal (em centavos)
+ * Ex: R$ 14,90 (1490 cents) * 12 * 0.90 = R$ 160,92 (16092 cents)
+ */
+export function calculateAnnualDiscountPriceCents(monthlyPriceCents: number): number {
+  if (monthlyPriceCents <= 0) return 0;
+  return Math.round(monthlyPriceCents * 12 * (1 - ANNUAL_DISCOUNT_PERCENTAGE / 100));
+}
 
 export const PLANS_CATALOG: Record<PlanId, PlanDefinition> = {
   free: {
@@ -42,6 +65,10 @@ export const PLANS_CATALOG: Record<PlanId, PlanDefinition> = {
     baseSongs: 50,
     allowMemberAddons: false,
     maxMemberAddonBlocks: 0,
+    monthlyPriceCents: 0,
+    annualPriceCents: 0,
+    addonBlockMonthlyPriceCents: 0,
+    addonBlockAnnualPriceCents: 0,
   },
   lite: {
     id: 'lite',
@@ -50,6 +77,10 @@ export const PLANS_CATALOG: Record<PlanId, PlanDefinition> = {
     baseSongs: 100,
     allowMemberAddons: false,
     maxMemberAddonBlocks: 0,
+    monthlyPriceCents: 1490, // R$ 14,90
+    annualPriceCents: calculateAnnualDiscountPriceCents(1490), // R$ 160,92
+    addonBlockMonthlyPriceCents: 0,
+    addonBlockAnnualPriceCents: 0,
   },
   lite_plus: {
     id: 'lite_plus',
@@ -58,6 +89,10 @@ export const PLANS_CATALOG: Record<PlanId, PlanDefinition> = {
     baseSongs: 150,
     allowMemberAddons: false,
     maxMemberAddonBlocks: 0,
+    monthlyPriceCents: 2490, // R$ 24,90
+    annualPriceCents: calculateAnnualDiscountPriceCents(2490), // R$ 268,92
+    addonBlockMonthlyPriceCents: 0,
+    addonBlockAnnualPriceCents: 0,
   },
   essential: {
     id: 'essential',
@@ -66,6 +101,10 @@ export const PLANS_CATALOG: Record<PlanId, PlanDefinition> = {
     baseSongs: 200,
     allowMemberAddons: true,
     maxMemberAddonBlocks: 4, // Max 80 members (40 + 4*10)
+    monthlyPriceCents: 3490, // R$ 34,90
+    annualPriceCents: calculateAnnualDiscountPriceCents(3490), // R$ 376,92
+    addonBlockMonthlyPriceCents: 990, // +10 membros = R$ 9,90/mês
+    addonBlockAnnualPriceCents: calculateAnnualDiscountPriceCents(990), // R$ 106,92/ano
   },
   pro: {
     id: 'pro',
@@ -74,14 +113,22 @@ export const PLANS_CATALOG: Record<PlanId, PlanDefinition> = {
     baseSongs: 500,
     allowMemberAddons: true,
     maxMemberAddonBlocks: 10, // Max 200 members (100 + 10*10)
+    monthlyPriceCents: 8990, // R$ 89,90
+    annualPriceCents: calculateAnnualDiscountPriceCents(8990), // R$ 970,92
+    addonBlockMonthlyPriceCents: 690, // +10 membros = R$ 6,90/mês
+    addonBlockAnnualPriceCents: calculateAnnualDiscountPriceCents(690), // R$ 74,52/ano
   },
   premium: {
     id: 'premium',
     name: 'Premium',
-    baseMembers: 'unlimited',
-    baseSongs: 'unlimited',
+    baseMembers: 300,
+    baseSongs: 1500,
     allowMemberAddons: false,
     maxMemberAddonBlocks: 0,
+    monthlyPriceCents: 21490, // R$ 214,90
+    annualPriceCents: calculateAnnualDiscountPriceCents(21490), // R$ 2.320,92
+    addonBlockMonthlyPriceCents: 0,
+    addonBlockAnnualPriceCents: 0,
   },
 };
 
@@ -91,6 +138,56 @@ export function getPlanDefinition(planId: string): PlanDefinition {
   }
   return PLANS_CATALOG[DEFAULT_PLAN_ID];
 }
+
+export interface PlanPriceCalculation {
+  planId: PlanId;
+  interval: BillingInterval;
+  addonBlocks: number;
+  basePriceCents: number;
+  addonsPriceCents: number;
+  totalPriceCents: number;
+  fullMonthlyEquivalentCents: number;
+  annualSavingsCents: number;
+  currency: 'BRL';
+}
+
+/**
+ * Calcula o valor total e decomposição financeira de um plano com base no ciclo e blocos de add-ons
+ */
+export function calculatePlanPriceCents(
+  planId: PlanId,
+  interval: BillingInterval,
+  requestedAddonBlocks: number = 0
+): PlanPriceCalculation {
+  const plan = getPlanDefinition(planId);
+  const addonBlocks = plan.allowMemberAddons
+    ? Math.min(Math.max(0, requestedAddonBlocks), plan.maxMemberAddonBlocks)
+    : 0;
+
+  const isAnnual = interval === 'annual';
+  const basePriceCents = isAnnual ? plan.annualPriceCents : plan.monthlyPriceCents;
+  const unitAddonPriceCents = isAnnual ? plan.addonBlockAnnualPriceCents : plan.addonBlockMonthlyPriceCents;
+  const addonsPriceCents = addonBlocks * unitAddonPriceCents;
+  const totalPriceCents = basePriceCents + addonsPriceCents;
+
+  const monthlyBaseTotal = plan.monthlyPriceCents + addonBlocks * plan.addonBlockMonthlyPriceCents;
+  const fullYearWithoutDiscountCents = monthlyBaseTotal * 12;
+  const annualSavingsCents = isAnnual ? Math.max(0, fullYearWithoutDiscountCents - totalPriceCents) : 0;
+  const fullMonthlyEquivalentCents = isAnnual ? Math.round(totalPriceCents / 12) : totalPriceCents;
+
+  return {
+    planId: plan.id,
+    interval,
+    addonBlocks,
+    basePriceCents,
+    addonsPriceCents,
+    totalPriceCents,
+    fullMonthlyEquivalentCents,
+    annualSavingsCents,
+    currency: 'BRL',
+  };
+}
+
 
 export function getEffectiveMemberQuota(plan: PlanDefinition, addonBlocks: number = 0): QuotaLimit {
   if (plan.baseMembers === 'unlimited') {
@@ -132,12 +229,24 @@ export function resolveAccessMode(
   graceDaysRemaining: number | null;
   effectiveQuotas: EffectiveQuotas;
 } {
+  // 0. Se for cortesia com prazo e estiver expirada, o direito de uso volta ao plano Free
+  let activePlan = plan;
+  let activeAddonBlocks = subscription.member_addon_blocks || 0;
+  if (subscription.subscription_mode === 'complimentary' && subscription.expires_at) {
+    const grantExpires = new Date(subscription.expires_at);
+    if (!isNaN(grantExpires.getTime()) && now > grantExpires) {
+      activePlan = PLANS_CATALOG.free;
+      activeAddonBlocks = 0;
+    }
+  }
+
   const effectiveQuotas: EffectiveQuotas = {
-    members: getEffectiveMemberQuota(plan, subscription.member_addon_blocks),
-    songs: getEffectiveSongQuota(plan),
+    members: getEffectiveMemberQuota(activePlan, activeAddonBlocks),
+    songs: getEffectiveSongQuota(activePlan),
   };
 
   const overLimitInfo = isUsageOverLimit(usage, effectiveQuotas);
+
 
   // 1. Suspensão administrativa tem prioridade máxima
   if (subscription.administratively_suspended) {

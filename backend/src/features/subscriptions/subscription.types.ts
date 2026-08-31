@@ -7,12 +7,19 @@ import {
   EffectiveQuotas,
 } from '../../config/plans.config';
 
+export type SubscriptionMode = 'free' | 'paid' | 'complimentary';
+
 export interface MinistrySubscriptionRecord {
   id: string; // ministry_id
   ministry_id: string;
   plan_id: PlanId;
   member_addon_blocks: number;
   billing_status: BillingStatus;
+  subscription_mode?: SubscriptionMode;
+  granted_by?: string | null;
+  granted_at?: string | null;
+  grant_reason?: string | null;
+  expires_at?: string | null;
   administratively_suspended: boolean;
   suspended_at: string | null;
   suspension_reason: string | null;
@@ -39,6 +46,11 @@ export interface MinistrySubscriptionStatusSummary {
     planId: PlanId;
     memberAddonBlocks: number;
     billingStatus: BillingStatus;
+    subscriptionMode: SubscriptionMode;
+    grantedBy: string | null;
+    grantedAt: string | null;
+    grantReason: string | null;
+    expiresAt: string | null;
     administrativelySuspended: boolean;
     suspendedAt: string | null;
     suspensionReason: string | null;

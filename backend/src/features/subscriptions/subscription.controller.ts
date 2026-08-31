@@ -21,7 +21,12 @@ export class SubscriptionController {
         baseSongs: p.baseSongs,
         allowMemberAddons: p.allowMemberAddons,
         maxMemberAddonBlocks: p.maxMemberAddonBlocks,
+        monthlyPriceCents: p.monthlyPriceCents,
+        annualPriceCents: p.annualPriceCents,
+        addonBlockMonthlyPriceCents: p.addonBlockMonthlyPriceCents,
+        addonBlockAnnualPriceCents: p.addonBlockAnnualPriceCents,
       }));
+
 
       res.json({
         plans,

@@ -30,12 +30,15 @@ export class LiturgyRepository {
     return liturgies;
   }
 
-  async getLiturgyById(liturgyId: string) {
+  async getLiturgyById(liturgyId: string, groupId: string) {
     const doc = await this.liturgiesCol.doc(liturgyId).get();
     if (!doc.exists) {
       throw new AppError(404, 'Liturgia não encontrada.');
     }
     const liturgy = { id: doc.id, ...doc.data() } as any;
+    if (liturgy.group_id !== groupId) {
+      throw new AppError(404, 'Liturgia não encontrada.');
+    }
 
     const itemsSnap = await this.itemsCol.where('liturgy_id', '==', liturgyId).get();
     const items = itemsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
@@ -43,7 +46,7 @@ export class LiturgyRepository {
     for (const item of items) {
       if (item.song_id) {
         const songDoc = await this.songsCol.doc(item.song_id).get();
-        if (songDoc.exists) {
+        if (songDoc.exists && songDoc.data()?.ministry_id === groupId) {
           item.song = { id: songDoc.id, ...songDoc.data() };
         }
       }
@@ -94,7 +97,56 @@ export class LiturgyRepository {
     return { ...liturgy, liturgy_items: createdItems };
   }
 
-  async deleteLiturgy(liturgyId: string) {
+  async updateLiturgy(
+    liturgyId: string,
+    groupId: string,
+    data: { title?: string; date?: string; description?: string | null; items?: any[] }
+  ) {
+    const existing = await this.getLiturgyById(liturgyId, groupId);
+    const now = new Date().toISOString();
+
+    const updatePayload: any = { updated_at: now };
+    if (data.title !== undefined) updatePayload.title = data.title;
+    if (data.date !== undefined) updatePayload.date = data.date;
+    if (data.description !== undefined) updatePayload.description = data.description;
+
+    await this.liturgiesCol.doc(liturgyId).update(updatePayload);
+
+    if (data.items !== undefined && Array.isArray(data.items)) {
+      // Remover itens anteriores
+      const oldItemsSnap = await this.itemsCol.where('liturgy_id', '==', liturgyId).get();
+      const deletes = oldItemsSnap.docs.map((d) => d.ref.delete());
+      await Promise.all(deletes);
+
+      // Inserir novos itens
+      for (let i = 0; i < data.items.length; i++) {
+        const itemInput = data.items[i];
+        const itemRef = this.itemsCol.doc();
+        const itemData = {
+          id: itemRef.id,
+          liturgy_id: liturgyId,
+          song_id: itemInput.song_id || itemInput.songId || null,
+          type: itemInput.type || 'song',
+          title: itemInput.title,
+          notes: itemInput.notes || null,
+          position: i,
+          created_at: now,
+        };
+        await itemRef.set(itemData);
+      }
+    }
+
+    return this.getLiturgyById(liturgyId, groupId);
+  }
+
+  async deleteLiturgy(liturgyId: string, groupId: string) {
+    await this.getLiturgyById(liturgyId, groupId);
+
+    const itemsSnap = await this.itemsCol.where('liturgy_id', '==', liturgyId).get();
+    const deletes = itemsSnap.docs.map((d) => d.ref.delete());
+    await Promise.all(deletes);
+
     await this.liturgiesCol.doc(liturgyId).delete();
   }
 }
+

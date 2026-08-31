@@ -7,10 +7,16 @@ import {
   smartChordsQuerySchema,
 } from './smart_chord.types';
 
+import { AppError } from '../../middleware/error-handler';
+
 function getUserId(req: Request): string {
   const anyReq = req as any;
-  return anyReq.user?.id || 'anonymous';
+  if (!anyReq.user?.id) {
+    throw new AppError(401, 'Usuário não autenticado.');
+  }
+  return anyReq.user.id;
 }
+
 
 export class SmartChordController extends BaseController {
   listSmartChords = async (req: Request, res: Response, next: NextFunction): Promise<void> => {

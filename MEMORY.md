@@ -51,7 +51,7 @@ Backend reconhece PORT, NODE_ENV, JWT_SECRET, FIREBASE_PROJECT_ID, FIREBASE_CLIE
 
 ## Testing
 
-O backend usa Vitest para testes unitários do motor de quotas, serviços de assinatura e isolamento de tenant (44 testes). O web usa Vitest/Testing Library (23 testes) e Playwright (61 testes com matriz de 6 viewports: 320x568, 360x800, 375x812, 390x844, 412x915, 430x932 em temas light e dark); as jornadas E2E interceptam a API e usam fixtures locais, sem escrita persistente. Ambos os pacotes são validados por build TypeScript. O lint backend está declarado, mas não operacional.
+O backend usa Vitest para testes unitários do motor de quotas, serviços de assinatura, concessões cortesia (complimentary), isolamento de tenant, segurança contra IDOR, RBAC, autenticação/tokens, otimização de consultas/repositórios com cursor/agregação, e serviços/controladores de billing/checkout com concorrência, idempotência atômica e Asaas (103 testes). O web usa Vitest/Testing Library (26 testes) e Playwright (72 cenários E2E com matriz de viewports e temas light/dark via canal Chrome nativo); as jornadas E2E interceptam a API e usam fixtures locais, sem escrita persistente. Ambos os pacotes são validados por build TypeScript. O lint backend está declarado, mas não operacional.
 
 ## Operational Commands
 
@@ -76,9 +76,13 @@ O backend usa Vitest para testes unitários do motor de quotas, serviços de ass
 - Sistema de planos, quotas e entitlements operado com autoridade no backend (`backend/src/config/plans.config.ts`) e consumido dinamicamente pelo frontend.
 - Separação estrita entre `BillingStatus` (financeiro) e `administratively_suspended` (administrativo/fraude).
 - Resolução dinâmica de `accessMode` (`normal`, `grace`, `restricted_over_limit`, `suspended`) sem dependência de jobs ou escrita prévia.
+- Pre-Launch Cost & Scalability Optimization: Consultas de repertório operam com paginação estável por cursor (`startAfter(updated_at, doc_id)`), ordenação composta (`updated_at DESC, __name__ DESC`), DTO enxuto `SongSummary` (-90% egress de listagem), agregação de contagem (`count().get()`), eliminação de $N+1$ em integrantes e pastas através de batch lookup único via `db.getAll()`, suporte a `olderCursor` em comentários e índices declarados em `backend/firestore.indexes.json`.
+- Authentication & Authorization Security Hardening: Eliminação de auth bypass no login com validação obrigatória no Identity Toolkit; suporte dual assíncrono de tokens (JWT assinado + Firebase ID Token); rotas e repositórios protegidos com isolamento multitenant estrito e checagem anti-IDOR em repertório, escalas, pastas, classificações, artistas e liturgias; proteção das rotas de cifras inteligentes (`smart_chords`) com filtro por `user_id`; mitigação de account takeover em integrantes e aplicação da regra do último administrador ("Last Admin Rule").
+- Billing, Checkout & Subscription Automation (Asaas SaaS Integration): Gateway Asaas integrado através de interface desacoplada `BillingProvider`; separação estrita de autoridade (gateway controla estado financeiro, LouvAIO controla direito de uso e quotas); precificação determinística em centavos inteiros com 10% de desconto no ciclo anual; add-ons de membros para Essential e Pro; webhooks transacionais com idempotência atômica garantida por Firestore Transaction na coleção `billing_webhook_events` (suporta 10 webhooks simultâneos com 1 único processamento real); proteção contra double checkout com deduplicação de sessões recentes (< 15 min); validação de valor pago (Amount Validation); proteção contra eventos fora de ordem (Out-of-order sequence guards); suporte integral a planos cortesia (`subscription_mode = 'complimentary'`) concedidos por autoridade da plataforma (`PLATFORM_ADMIN_SECRET`) com zero chamadas ao Asaas, sem faturas fake, com suporte a expiração e revogação sem perda de dados; suporte a cancelamento agendado (`cancel_at_period_end`), reativação, reconciliação sob demanda e histórico de faturas; preservação absoluta de dados em downgrades/cancelamentos aplicando período de adaptação (`grace`).
 - Firebase/Firestore é a implementação ativa; referências antigas a Supabase/Flutter não descrevem este checkout.
 - Não existe contrato HTTP uniformizado; mudanças devem preservar respostas locais.
 - Inconsistências confirmadas ficam catalogadas em docs/system-status.md e exigem tarefas próprias.
+
 
 ## Known Constraints
 
@@ -89,13 +93,17 @@ O backend usa Vitest para testes unitários do motor de quotas, serviços de ass
 
 ## Known Issues
 
-Itens duráveis e priorizados estão em docs/system-status.md: fallback de login sem verificação de senha, contratos Smart Chords divergentes, atualização de liturgia incorreta e documentação histórica desatualizada. (INC-002 e INC-003 foram corrigidos).
+Itens duráveis e priorizados estão em docs/system-status.md: aliases de rota legados (`features/groups`) e rota de cifra por música (`/smart-chords/song/:songId`). (INC-002, INC-003, INC-004, INC-006, INC-007, INC-008, INC-009, INC-010, INC-011 e INC-012 foram corrigidos).
 
 ## Current State
 
 - Sistema completo de Planos, Quotas, Entitlements e Assinatura por Ministério implementado no backend e web (concluído em 2026-08-28).
-- Adoção integral da identidade visual e PWA LouvAIO concluída em 2026-08-28.
-- O web possui rotas estáveis, navegação mobile e desktop coerente, bootstrap autenticado, tela `/ministerio/plano`, testes E2E com cobertura de overflow horizontal em 6 viewports (light/dark) e PWA com manifest LouvAIO atualizado.
+- Precificação Comercial v1 e estratégia contra LouveApp formalizadas (`docs/business/commercial-pricing-strategy.md`).
+- Otimização Pré-Lançamento de Custos e Escalabilidade concluída no backend e web (concluído em 2026-08-29).
+- Hardening de Segurança em Autenticação e Autorização concluído de ponta a ponta (concluído em 2026-08-29).
+- Billing, Checkout & Subscription Automation com Asaas integrado e operacional no backend e frontend (concluído em 2026-08-29).
+- O web possui rotas estáveis, navegação mobile e desktop coerente, bootstrap autenticado, tela `/ministerio/plano` com checkout e controle de ciclo anual/mensal, testes E2E com cobertura de overflow horizontal em viewports (light/dark) e PWA com manifest LouvAIO atualizado.
+
 - O repositório contém backend e web; não contém mobile ou supabase.
 
 ## Completed Milestones
@@ -106,6 +114,10 @@ Itens duráveis e priorizados estão em docs/system-status.md: fallback de login
 - Auditoria e correção de overflow horizontal em 6 viewports mobile.
 - Reestilização integral da identidade visual e PWA LouvAIO.
 - Implementação do Sistema de Planos, Quotas e Entitlements por Ministério.
+- Formalização da Estratégia de Precificação Comercial v1 e Benchmark LouveApp.
+- Otimização Pré-Lançamento de Custos, Consultas e Escalabilidade.
+- Hardening de Segurança em Autenticação, Autorização, RBAC e Anti-IDOR.
+- Integração de SaaS Billing, Checkout Hospedado, Webhooks Idempotentes e Assinaturas Recorrentes com Asaas.
 
 ## Current Work
 
@@ -113,4 +125,5 @@ Consulte docs/exec-plans/active/; planos concluídos ficam em docs/exec-plans/co
 
 ## Next Likely Areas
 
-Priorizar uma revisão isolada de autenticação/autorização e, em seguida, alinhar contratos Smart Chords e liturgias. Cada correção deve ter ExecPlan e testes introduzidos de forma deliberada.
+Próximos passos operacionais: configuração de credenciais de produção do Asaas nas variáveis de ambiente da Vercel/servidor, alinhamento dos contratos legados de liturgias/Smart Chords e preparação do lançamento comercial.
+

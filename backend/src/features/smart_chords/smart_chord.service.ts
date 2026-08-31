@@ -35,20 +35,20 @@ export class SmartChordService {
     };
   }
 
-  async getSmartChordById(id: string, _userId: string): Promise<SmartChord> {
-    return this.smartChordRepository.getSmartChordById(id) as unknown as SmartChord;
+  async getSmartChordById(id: string, userId: string): Promise<SmartChord> {
+    return this.smartChordRepository.getSmartChordById(id, userId) as unknown as SmartChord;
   }
 
   async createSmartChord(userId: string, data: Partial<SmartChord>): Promise<SmartChord> {
     return this.smartChordRepository.createSmartChord(userId, data) as unknown as SmartChord;
   }
 
-  async updateSmartChord(id: string, _userId: string, data: Partial<SmartChord>): Promise<SmartChord> {
-    return this.smartChordRepository.updateSmartChord(id, data) as unknown as SmartChord;
+  async updateSmartChord(id: string, userId: string, data: Partial<SmartChord>): Promise<SmartChord> {
+    return this.smartChordRepository.updateSmartChord(id, userId, data) as unknown as SmartChord;
   }
 
-  async deleteSmartChord(id: string, _userId: string): Promise<void> {
-    await this.smartChordRepository.deleteSmartChord(id);
+  async deleteSmartChord(id: string, userId: string): Promise<void> {
+    await this.smartChordRepository.deleteSmartChord(id, userId);
   }
 }
 

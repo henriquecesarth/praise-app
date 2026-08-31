@@ -143,40 +143,17 @@ export default function App() {
     checkCurrentUser();
   }, []);
 
-  const loadSubscription = async (minId: string) => {
-    try {
-      const summary = await api.getMinistrySubscription(minId);
-      if (activeGroupIdRef.current !== minId) return;
-      setSubscriptionSummary(summary);
-
-      const isSuspended = summary.subscription.accessMode === 'suspended' || summary.subscription.administrativelySuspended;
-      if (!isSuspended) {
-        loadCounts();
-        loadClassifications();
-        loadFolders();
-        loadArtists();
-        loadSongs();
-        loadSchedules();
-      } else {
-        setSongs([]);
-        setFolders([]);
-        setArtists([]);
-        setSchedules([]);
-        setLoadingSongs(false);
-        setLoadingFolders(false);
-        setLoadingArtists(false);
-        setLoadingSchedules(false);
-      }
-    } catch (err) {
-      console.warn('Erro ao consultar assinatura do ministério:', err);
-      loadCounts();
-      loadClassifications();
-      loadFolders();
-      loadArtists();
-      loadSongs();
+  // Carregar dados específicos de módulo/aba sob demanda ao navegar
+  useEffect(() => {
+    if (!activeGroup) return;
+    if (mainModule === 'dashboard' || mainModule === 'schedules') {
       loadSchedules();
+    } else if (mainModule === 'repertoire') {
+      if (activeTab === 'songs') loadSongs();
+      else if (activeTab === 'folders') loadFolders();
+      else if (activeTab === 'artists') loadArtists();
     }
-  };
+  }, [mainModule, activeTab, activeGroup]);
 
   // Reload data when activeGroup changes
   useEffect(() => {
@@ -191,6 +168,33 @@ export default function App() {
       setCounts({ songs: 0, folders: 0, artists: 0 });
     }
   }, [activeGroup]);
+
+  const loadSubscription = async (minId: string) => {
+    try {
+      const summary = await api.getMinistrySubscription(minId);
+      if (activeGroupIdRef.current !== minId) return;
+      setSubscriptionSummary(summary);
+
+      const isSuspended = summary.subscription.accessMode === 'suspended' || summary.subscription.administrativelySuspended;
+      if (!isSuspended) {
+        loadCounts();
+        loadClassifications();
+      } else {
+        setSongs([]);
+        setFolders([]);
+        setArtists([]);
+        setSchedules([]);
+        setLoadingSongs(false);
+        setLoadingFolders(false);
+        setLoadingArtists(false);
+        setLoadingSchedules(false);
+      }
+    } catch (err) {
+      console.warn('Erro ao consultar assinatura do ministério:', err);
+      loadCounts();
+      loadClassifications();
+    }
+  };
 
   const loadSchedules = async () => {
     if (!activeGroup) return;
@@ -247,6 +251,12 @@ export default function App() {
     setCurrentUser(null);
     setActiveGroup(null);
     setGroups([]);
+    setSubscriptionSummary(null);
+    setSongs([]);
+    setFolders([]);
+    setArtists([]);
+    setSchedules([]);
+    setCounts({ songs: 0, folders: 0, artists: 0 });
     clearDetailSelection();
     navigate('/');
     showToast('Você saiu da sua conta.');
@@ -269,11 +279,14 @@ export default function App() {
   };
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
-    const id = Date.now().toString();
-    setToasts((prev) => [...prev, { id, message, type }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4000);
+    setToasts((prev) => {
+      if (prev.some((t) => t.message === message)) return prev;
+      const id = Date.now().toString() + Math.random().toString(36).substring(2, 6);
+      setTimeout(() => {
+        setToasts((current) => current.filter((t) => t.id !== id));
+      }, 4000);
+      return [...prev, { id, message, type }];
+    });
   };
 
   const groupId = activeGroup ? activeGroup.id : '';
@@ -312,6 +325,7 @@ export default function App() {
     }
     const requestedGroupId = groupId;
     const requestId = ++songRequestRef.current;
+    setLoadingSongs(true);
     try {
       const result = await api.getSongs(requestedGroupId, {
         search,

@@ -20,8 +20,9 @@ export class ScheduleController extends BaseController {
 
   getScheduleById = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
+      const ministryId = (req.params.groupId || req.params.ministryId) as string;
       const scheduleId = req.params.scheduleId as string;
-      const schedule = await this.scheduleService.getScheduleById(scheduleId);
+      const schedule = await this.scheduleService.getScheduleById(scheduleId, ministryId);
       this.handleSuccess(res, schedule);
     } catch (err) {
       this.handleError(err, res, next);
@@ -41,8 +42,9 @@ export class ScheduleController extends BaseController {
 
   updateSchedule = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
+      const ministryId = (req.params.groupId || req.params.ministryId) as string;
       const scheduleId = req.params.scheduleId as string;
-      const schedule = await this.scheduleService.updateSchedule(scheduleId, req.body);
+      const schedule = await this.scheduleService.updateSchedule(scheduleId, ministryId, req.body);
       this.handleSuccess(res, schedule);
     } catch (err) {
       this.handleError(err, res, next);
@@ -51,8 +53,9 @@ export class ScheduleController extends BaseController {
 
   deleteSchedule = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
+      const ministryId = (req.params.groupId || req.params.ministryId) as string;
       const scheduleId = req.params.scheduleId as string;
-      await this.scheduleService.deleteSchedule(scheduleId);
+      await this.scheduleService.deleteSchedule(scheduleId, ministryId);
       this.handleNoContent(res);
     } catch (err) {
       this.handleError(err, res, next);
@@ -61,6 +64,7 @@ export class ScheduleController extends BaseController {
 
   updateConfirmation = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
+      const ministryId = (req.params.groupId || req.params.ministryId) as string;
       const scheduleId = req.params.scheduleId as string;
       const userId = req.user!.id;
 
@@ -73,6 +77,7 @@ export class ScheduleController extends BaseController {
 
       const schedule = await this.scheduleService.updateConfirmation(
         scheduleId,
+        ministryId,
         userId,
         userName,
         req.body.confirmed
@@ -85,12 +90,12 @@ export class ScheduleController extends BaseController {
 
   getScheduleComments = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
+      const ministryId = (req.params.groupId || req.params.ministryId) as string;
       const scheduleId = req.params.scheduleId as string;
-      const userId = req.user!.id;
-      const userName = (req.user as any)?.name || req.user!.email || 'Usuário';
-      const userRole = (req as any).ministryRole || 'member';
+      const query = req.query as { limit?: string; cursor?: string };
+      const limitCount = query.limit ? parseInt(query.limit, 10) : 50;
 
-      const comments = await this.scheduleService.getScheduleComments(scheduleId, userId, userName, userRole);
+      const comments = await this.scheduleService.getScheduleComments(scheduleId, ministryId, limitCount, query.cursor);
       this.handleSuccess(res, comments);
     } catch (err) {
       this.handleError(err, res, next);
@@ -103,15 +108,13 @@ export class ScheduleController extends BaseController {
       const scheduleId = req.params.scheduleId as string;
       const userId = req.user!.id;
       const userName = (req.user as any)?.name || req.user!.email || 'Usuário';
-      const userRole = (req as any).ministryRole || 'member';
 
       const comment = await this.scheduleService.addScheduleComment(
         ministryId,
         scheduleId,
         userId,
         userName,
-        req.body.content,
-        userRole
+        req.body.content
       );
       this.handleCreated(res, comment);
     } catch (err) {

@@ -1,5 +1,57 @@
+import { FieldPath } from 'firebase-admin/firestore';
 import { db } from '../lib/firebase';
 import { AppError } from '../middleware/error-handler';
+import { SongSummary } from '../features/repertoire/repertoire.types';
+
+export interface SongCursorData {
+  id: string;
+  u: string; // updated_at
+  m: string; // ministry_id
+}
+
+export function encodeSongCursor(data: SongCursorData): string {
+  return Buffer.from(JSON.stringify(data), 'utf8').toString('base64url');
+}
+
+export function decodeSongCursor(token: string, expectedMinistryId: string): SongCursorData {
+  try {
+    const raw = Buffer.from(token, 'base64url').toString('utf8');
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || !parsed.id || !parsed.u || !parsed.m) {
+      throw new Error('Formato de cursor inválido');
+    }
+    if (parsed.m !== expectedMinistryId) {
+      throw new AppError(403, 'Acesso negado: cursor pertence a outro ministério.', {
+        code: 'CROSS_TENANT_CURSOR_REJECTED',
+      });
+    }
+    return parsed as SongCursorData;
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    throw new AppError(400, 'Token de cursor inválido.');
+  }
+}
+
+export function mapToSongSummary(raw: any): SongSummary {
+  return {
+    id: raw.id,
+    ministry_id: raw.ministry_id,
+    user_id: raw.user_id || null,
+    title: raw.title,
+    artist_id: raw.artist_id || null,
+    classification_id: raw.classification_id || null,
+    original_key: raw.original_key || null,
+    bpm: raw.bpm ? Number(raw.bpm) : null,
+    duration: raw.duration || null,
+    youtube_url: raw.youtube_url || null,
+    audio_url: raw.audio_url || null,
+    has_youtube: Boolean(raw.youtube_url),
+    created_at: raw.created_at,
+    updated_at: raw.updated_at || raw.created_at,
+    artist: raw.artist || null,
+    classification: raw.classification || null,
+  };
+}
 
 export class RepertoireRepository {
   private readonly songsCol = db.collection('songs');
@@ -17,19 +69,35 @@ export class RepertoireRepository {
 
   async getCounts(ministryId: string) {
     ministryId = this.validateMinistryId(ministryId);
-    const [songsSnap, foldersSnap, artistsSnap, classifSnap] = await Promise.all([
-      this.songsCol.where('ministry_id', '==', ministryId).get(),
-      this.foldersCol.where('ministry_id', '==', ministryId).get(),
-      this.artistsCol.where('ministry_id', '==', ministryId).get(),
-      this.classificationsCol.where('ministry_id', '==', ministryId).get(),
-    ]);
+    try {
+      const [songsCountSnap, foldersCountSnap, artistsCountSnap, classifCountSnap] = await Promise.all([
+        this.songsCol.where('ministry_id', '==', ministryId).count().get(),
+        this.foldersCol.where('ministry_id', '==', ministryId).count().get(),
+        this.artistsCol.where('ministry_id', '==', ministryId).count().get(),
+        this.classificationsCol.where('ministry_id', '==', ministryId).count().get(),
+      ]);
 
-    return {
-      songs: songsSnap.size,
-      folders: foldersSnap.size,
-      artists: artistsSnap.size,
-      classifications: classifSnap.size,
-    };
+      return {
+        songs: songsCountSnap.data().count,
+        folders: foldersCountSnap.data().count,
+        artists: artistsCountSnap.data().count,
+        classifications: classifCountSnap.data().count,
+      };
+    } catch {
+      const [songsSnap, foldersSnap, artistsSnap, classifSnap] = await Promise.all([
+        this.songsCol.where('ministry_id', '==', ministryId).get(),
+        this.foldersCol.where('ministry_id', '==', ministryId).get(),
+        this.artistsCol.where('ministry_id', '==', ministryId).get(),
+        this.classificationsCol.where('ministry_id', '==', ministryId).get(),
+      ]);
+
+      return {
+        songs: songsSnap.size,
+        folders: foldersSnap.size,
+        artists: artistsSnap.size,
+        classifications: classifSnap.size,
+      };
+    }
   }
 
   async getSongs(
@@ -40,74 +108,218 @@ export class RepertoireRepository {
       original_key?: string;
       artist_id?: string;
       has_youtube?: boolean;
+      cursor?: string;
       page?: number;
       limit?: number;
     }
   ) {
     ministryId = this.validateMinistryId(ministryId);
-    const snap = await this.songsCol.where('ministry_id', '==', ministryId).get();
-    let songs = snap.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
+    const limit = Math.min(100, Math.max(1, filters.limit || 20));
 
-    if (filters.classification_id) {
-      songs = songs.filter((s) => s.classification_id === filters.classification_id);
-    }
-    if (filters.original_key) {
-      songs = songs.filter((s) => s.original_key === filters.original_key);
-    }
-    if (filters.artist_id) {
-      songs = songs.filter((s) => s.artist_id === filters.artist_id);
-    }
+    // 1. Caminho de Busca Textual: Isola o scan completo em memória estritamente quando há termo de busca
+    if (filters.search && filters.search.trim() !== '') {
+      const snap = await this.songsCol.where('ministry_id', '==', ministryId).get();
+      let songs = snap.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
 
-    if (filters.has_youtube) {
-      songs = songs.filter((s: any) => Boolean(s.youtube_url));
-    }
+      if (filters.classification_id) {
+        songs = songs.filter((s) => s.classification_id === filters.classification_id);
+      }
+      if (filters.original_key) {
+        songs = songs.filter((s) => s.original_key === filters.original_key);
+      }
+      if (filters.artist_id) {
+        songs = songs.filter((s) => s.artist_id === filters.artist_id);
+      }
+      if (filters.has_youtube) {
+        songs = songs.filter((s: any) => Boolean(s.youtube_url));
+      }
 
-    if (filters.search) {
-      const q = filters.search.toLowerCase();
+      const q = filters.search.toLowerCase().trim();
       songs = songs.filter(
         (s: any) =>
           (s.title && s.title.toLowerCase().includes(q)) ||
           (s.lyrics && s.lyrics.toLowerCase().includes(q)) ||
-          (s.artist?.name && s.artist.name.toLowerCase().includes(q))
+          (s.artist?.name && s.artist.name.toLowerCase().includes(q)) ||
+          (typeof s.artist === 'string' && s.artist.toLowerCase().includes(q))
       );
+
+      songs.sort((a: any, b: any) => {
+        const timeA = a.updated_at || a.created_at || '';
+        const timeB = b.updated_at || b.created_at || '';
+        if (timeB !== timeA) return timeB > timeA ? 1 : -1;
+        return (b.id || '') > (a.id || '') ? 1 : -1;
+      });
+
+      const total = songs.length;
+      const page = Math.max(1, filters.page || 1);
+      const paginated = songs.slice((page - 1) * limit, page * limit);
+      const hasMore = (page * limit) < total;
+      const nextCursor = hasMore && paginated.length > 0
+        ? encodeSongCursor({
+            id: paginated[paginated.length - 1].id,
+            u: paginated[paginated.length - 1].updated_at || paginated[paginated.length - 1].created_at || '',
+            m: ministryId,
+          })
+        : null;
+
+      return {
+        data: paginated.map(mapToSongSummary),
+        total,
+        nextCursor,
+        hasMore,
+        limit,
+        page,
+        totalPages: Math.ceil(total / limit) || 1,
+      };
     }
 
-    songs.sort((a: any, b: any) => ((b.updated_at || '') > (a.updated_at || '') ? 1 : -1));
+    // 2. Caminho de Listagem e Filtros Indexados (Server-side Cursor Pagination)
+    let baseQuery: any = this.songsCol.where('ministry_id', '==', ministryId);
 
-    const page = filters.page || 1;
-    const limit = filters.limit || 100;
-    const total = songs.length;
-    const paginatedSongs = songs.slice((page - 1) * limit, page * limit);
+    if (filters.classification_id) {
+      baseQuery = baseQuery.where('classification_id', '==', filters.classification_id);
+    }
+    if (filters.original_key) {
+      baseQuery = baseQuery.where('original_key', '==', filters.original_key);
+    }
+    if (filters.artist_id) {
+      baseQuery = baseQuery.where('artist_id', '==', filters.artist_id);
+    }
+    if (filters.has_youtube) {
+      baseQuery = baseQuery.where('youtube_url', '!=', null);
+    }
 
-    return { data: paginatedSongs, total };
+    let total = 0;
+    try {
+      const countSnap = await baseQuery.count().get();
+      total = countSnap.data().count;
+    } catch {
+      const countSnap = await baseQuery.get();
+      total = countSnap.size;
+    }
+
+    let query = baseQuery
+      .select(
+        'ministry_id',
+        'user_id',
+        'title',
+        'artist_id',
+        'artist',
+        'classification_id',
+        'classification',
+        'original_key',
+        'bpm',
+        'duration',
+        'youtube_url',
+        'audio_url',
+        'created_at',
+        'updated_at'
+      )
+      .orderBy('updated_at', 'desc')
+      .orderBy(FieldPath.documentId(), 'desc');
+
+    if (filters.cursor) {
+      const cursorData = decodeSongCursor(filters.cursor, ministryId);
+      query = query.startAfter(cursorData.u, cursorData.id);
+    }
+
+    try {
+      const snap = await query.limit(limit + 1).get();
+      const hasMore = snap.docs.length > limit;
+      const docs = hasMore ? snap.docs.slice(0, limit) : snap.docs;
+      const data = docs.map((doc: any) => mapToSongSummary({ id: doc.id, ...doc.data() }));
+
+      const nextCursor = hasMore && docs.length > 0
+        ? encodeSongCursor({
+            id: docs[docs.length - 1].id,
+            u: docs[docs.length - 1].data().updated_at || docs[docs.length - 1].data().created_at || '',
+            m: ministryId,
+          })
+        : null;
+
+      const page = Math.max(1, filters.page || 1);
+
+      return {
+        data,
+        total,
+        nextCursor,
+        hasMore,
+        limit,
+        page,
+        totalPages: Math.ceil(total / limit) || 1,
+      };
+    } catch (err: any) {
+      // Em produção, NÃO fazer fallback silencioso para full scan!
+      if (process.env.NODE_ENV === 'production') {
+        console.error('Erro ao executar query indexada de músicas no Firestore:', err);
+        throw new AppError(500, 'Erro ao consultar repertório. Verifique os índices do banco de dados.', {
+          code: 'INDEX_REQUIRED_OR_QUERY_ERROR',
+          details: err?.message,
+        });
+      }
+
+      console.warn('Fallback de desenvolvimento para getSongs:', err?.message);
+      const snap = await baseQuery.get();
+      let songs = snap.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
+      songs.sort((a: any, b: any) => {
+        const timeA = a.updated_at || a.created_at || '';
+        const timeB = b.updated_at || b.created_at || '';
+        if (timeB !== timeA) return timeB > timeA ? 1 : -1;
+        return (b.id || '') > (a.id || '') ? 1 : -1;
+      });
+
+      const page = Math.max(1, filters.page || 1);
+      const paginated = songs.slice((page - 1) * limit, page * limit);
+      const hasMore = (page * limit) < songs.length;
+      const nextCursor = hasMore && paginated.length > 0
+        ? encodeSongCursor({
+            id: paginated[paginated.length - 1].id,
+            u: paginated[paginated.length - 1].updated_at || paginated[paginated.length - 1].created_at || '',
+            m: ministryId,
+          })
+        : null;
+
+      return {
+        data: paginated.map(mapToSongSummary),
+        total: songs.length,
+        nextCursor,
+        hasMore,
+        limit,
+        page,
+        totalPages: Math.ceil(songs.length / limit) || 1,
+      };
+    }
   }
 
-  async getSongById(songId: string) {
+  async getSongById(songId: string, ministryId: string) {
     const doc = await this.songsCol.doc(songId).get();
     if (!doc.exists) {
       throw new AppError(404, 'Música não encontrada.');
     }
-    return { id: doc.id, ...doc.data() };
+    const data = { id: doc.id, ...doc.data() } as any;
+    if (data.ministry_id !== ministryId) {
+      throw new AppError(404, 'Música não encontrada.');
+    }
+    return data;
   }
 
   async createSong(ministryId: string, userId: string, data: any) {
     ministryId = this.validateMinistryId(ministryId);
     const now = new Date().toISOString();
-    const songRef = this.songsCol.doc();
 
     let artistObj: any = null;
     let classificationObj: any = null;
 
     if (data.artist_id) {
       const artDoc = await this.artistsCol.doc(data.artist_id).get();
-      if (artDoc.exists) {
+      if (artDoc.exists && artDoc.data()?.ministry_id === ministryId) {
         artistObj = { id: artDoc.id, ...artDoc.data() };
       }
     }
 
     if (data.classification_id) {
       const classDoc = await this.classificationsCol.doc(data.classification_id).get();
-      if (classDoc.exists) {
+      if (classDoc.exists && classDoc.data()?.ministry_id === ministryId) {
         classificationObj = { id: classDoc.id, ...classDoc.data() };
       }
     }
@@ -138,20 +350,24 @@ export class RepertoireRepository {
     return song;
   }
 
-  async updateSong(songId: string, data: any) {
-    const docRef = this.songsCol.doc(songId);
-    const doc = await docRef.get();
-    if (!doc.exists) {
-      throw new AppError(404, 'Música não encontrada.');
-    }
+  async updateSong(songId: string, ministryId: string, data: any) {
+    await this.getSongById(songId, ministryId); // Garante existência e pertencimento ao tenant
 
+    const docRef = this.songsCol.doc(songId);
     const now = new Date().toISOString();
     const updateData: any = { ...data, updated_at: now };
+
+    // Mass assignment guard
+    delete updateData.id;
+    delete updateData.ministry_id;
+    delete updateData.user_id;
 
     if (data.artist_id !== undefined) {
       if (data.artist_id) {
         const artDoc = await this.artistsCol.doc(data.artist_id).get();
-        updateData.artist = artDoc.exists ? { id: artDoc.id, ...artDoc.data() } : null;
+        updateData.artist = artDoc.exists && artDoc.data()?.ministry_id === ministryId
+          ? { id: artDoc.id, ...artDoc.data() }
+          : null;
       } else {
         updateData.artist = null;
       }
@@ -160,7 +376,9 @@ export class RepertoireRepository {
     if (data.classification_id !== undefined) {
       if (data.classification_id) {
         const classDoc = await this.classificationsCol.doc(data.classification_id).get();
-        updateData.classification = classDoc.exists ? { id: classDoc.id, ...classDoc.data() } : null;
+        updateData.classification = classDoc.exists && classDoc.data()?.ministry_id === ministryId
+          ? { id: classDoc.id, ...classDoc.data() }
+          : null;
       } else {
         updateData.classification = null;
       }
@@ -171,25 +389,13 @@ export class RepertoireRepository {
     return { id: updatedDoc.id, ...updatedDoc.data() };
   }
 
-  async deleteSong(songId: string, ministryId?: string) {
-    let targetMinistryId = ministryId;
-    if (!targetMinistryId) {
-      const doc = await this.songsCol.doc(songId).get();
-      if (!doc.exists) {
-        throw new AppError(404, 'Música não encontrada.');
-      }
-      targetMinistryId = doc.data()?.ministry_id;
-    }
-
-    if (!targetMinistryId) {
-      await this.songsCol.doc(songId).delete();
-      return;
-    }
+  async deleteSong(songId: string, ministryId: string) {
+    await this.getSongById(songId, ministryId); // Garante existência e pertencimento ao tenant
 
     const { SubscriptionRepository } = await import('./SubscriptionRepository');
     const subRepo = new SubscriptionRepository();
     await subRepo.deleteSongTransactional({
-      ministryId: targetMinistryId,
+      ministryId,
       songId,
     });
   }
@@ -222,16 +428,25 @@ export class RepertoireRepository {
     return artist;
   }
 
-  async updateArtist(artistId: string, name: string) {
+  async updateArtist(artistId: string, ministryId: string, name: string) {
     const ref = this.artistsCol.doc(artistId);
+    const doc = await ref.get();
+    if (!doc.exists || doc.data()?.ministry_id !== ministryId) {
+      throw new AppError(404, 'Artista não encontrado.');
+    }
     const now = new Date().toISOString();
     await ref.update({ name, updated_at: now });
-    const doc = await ref.get();
-    return { id: doc.id, ...doc.data() };
+    const updatedDoc = await ref.get();
+    return { id: updatedDoc.id, ...updatedDoc.data() };
   }
 
-  async deleteArtist(artistId: string) {
-    await this.artistsCol.doc(artistId).delete();
+  async deleteArtist(artistId: string, ministryId: string) {
+    const ref = this.artistsCol.doc(artistId);
+    const doc = await ref.get();
+    if (!doc.exists || doc.data()?.ministry_id !== ministryId) {
+      throw new AppError(404, 'Artista não encontrado.');
+    }
+    await ref.delete();
   }
 
   // Classificações
@@ -277,16 +492,28 @@ export class RepertoireRepository {
     return item;
   }
 
-  async updateClassification(id: string, data: { name: string; description?: string; color?: string }) {
+  async updateClassification(id: string, ministryId: string, data: { name: string; description?: string; color?: string }) {
     const ref = this.classificationsCol.doc(id);
-    const now = new Date().toISOString();
-    await ref.update({ ...data, updated_at: now });
     const doc = await ref.get();
-    return { id: doc.id, ...doc.data() };
+    if (!doc.exists || doc.data()?.ministry_id !== ministryId) {
+      throw new AppError(404, 'Classificação não encontrada.');
+    }
+    const now = new Date().toISOString();
+    const updatePayload: any = { ...data, updated_at: now };
+    delete updatePayload.id;
+    delete updatePayload.ministry_id;
+    await ref.update(updatePayload);
+    const updated = await ref.get();
+    return { id: updated.id, ...updated.data() };
   }
 
-  async deleteClassification(id: string) {
-    await this.classificationsCol.doc(id).delete();
+  async deleteClassification(id: string, ministryId: string) {
+    const ref = this.classificationsCol.doc(id);
+    const doc = await ref.get();
+    if (!doc.exists || doc.data()?.ministry_id !== ministryId) {
+      throw new AppError(404, 'Classificação não encontrada.');
+    }
+    await ref.delete();
   }
 
   // Pastas
@@ -295,17 +522,46 @@ export class RepertoireRepository {
     const snap = await this.foldersCol.where('ministry_id', '==', ministryId).get();
     const folders = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
 
+    if (folders.length === 0) return [];
+
+    const folderIds = folders.map((f: any) => f.id);
+    const countsMap = new Map<string, number>();
+
+    // Buscar relações de folder_songs em chunks seguros usando 'in' ou contagem agregada
+    try {
+      // Chunk de até 30 IDs para o operador 'in' do Firestore
+      for (let i = 0; i < folderIds.length; i += 30) {
+        const chunk = folderIds.slice(i, i + 30);
+        const fsSnap = await this.folderSongsCol.where('folder_id', 'in', chunk).get();
+        fsSnap.docs.forEach((doc: any) => {
+          const fId = doc.data().folder_id;
+          countsMap.set(fId, (countsMap.get(fId) || 0) + 1);
+        });
+      }
+    } catch {
+      await Promise.all(
+        folders.map(async (folder: any) => {
+          try {
+            const countSnap = await this.folderSongsCol.where('folder_id', '==', folder.id).count().get();
+            countsMap.set(folder.id, countSnap.data().count);
+          } catch {
+            const fsSnap = await this.folderSongsCol.where('folder_id', '==', folder.id).get();
+            countsMap.set(folder.id, fsSnap.size);
+          }
+        })
+      );
+    }
+
     for (const folder of folders) {
-      const fsSnap = await this.folderSongsCol.where('folder_id', '==', folder.id).get();
-      folder.song_count = fsSnap.size;
+      folder.song_count = countsMap.get(folder.id) || 0;
     }
 
     return folders;
   }
 
-  async getFolderById(folderId: string) {
+  async getFolderById(folderId: string, ministryId: string) {
     const doc = await this.foldersCol.doc(folderId).get();
-    if (!doc.exists) {
+    if (!doc.exists || doc.data()?.ministry_id !== ministryId) {
       throw new AppError(404, 'Pasta não encontrada.');
     }
     const folder = { id: doc.id, ...doc.data() } as any;
@@ -313,29 +569,34 @@ export class RepertoireRepository {
     const fsSnap = await this.folderSongsCol.where('folder_id', '==', folderId).get();
     const songIds = fsSnap.docs.map((d: any) => d.data().song_id);
 
-    const songs = [];
-    for (const sId of songIds) {
-      const sDoc = await this.songsCol.doc(sId).get();
-      if (sDoc.exists) {
-        const songData = { id: sDoc.id, ...sDoc.data() } as any;
-        if (songData.artist_id && !songData.artist) {
-          const artDoc = await this.artistsCol.doc(songData.artist_id).get();
-          if (artDoc.exists) {
-            songData.artist = { id: artDoc.id, ...artDoc.data() };
-          }
-        }
-        if (songData.classification_id && !songData.classification) {
-          const classDoc = await this.classificationsCol.doc(songData.classification_id).get();
-          if (classDoc.exists) {
-            songData.classification = { id: classDoc.id, ...classDoc.data() };
-          }
-        }
-        songs.push(songData);
-      }
+    if (songIds.length === 0) {
+      folder.songs = [];
+      folder.song_count = 0;
+      return folder;
     }
 
-    folder.songs = songs;
-    folder.song_count = songs.length;
+    // Batch lookup de todas as músicas da pasta em uma única chamada
+    try {
+      const songRefs = songIds.map((sId: string) => this.songsCol.doc(sId));
+      const songDocs = await db.getAll(...songRefs);
+      const songs = songDocs
+        .filter((sDoc: any) => sDoc.exists && sDoc.data()?.ministry_id === ministryId)
+        .map((sDoc: any) => ({ id: sDoc.id, ...sDoc.data() }));
+
+      folder.songs = songs;
+      folder.song_count = songs.length;
+    } catch {
+      const songs = [];
+      for (const sId of songIds) {
+        const sDoc = await this.songsCol.doc(sId).get();
+        if (sDoc.exists && sDoc.data()?.ministry_id === ministryId) {
+          songs.push({ id: sDoc.id, ...sDoc.data() });
+        }
+      }
+      folder.songs = songs;
+      folder.song_count = songs.length;
+    }
+
     return folder;
   }
 
@@ -355,7 +616,8 @@ export class RepertoireRepository {
     return folder;
   }
 
-  async updateFolder(folderId: string, name: string, description?: string | null) {
+  async updateFolder(folderId: string, ministryId: string, name: string, description?: string | null) {
+    await this.getFolderById(folderId, ministryId); // Garante existência e tenant
     const ref = this.foldersCol.doc(folderId);
     const now = new Date().toISOString();
     await ref.update({ name, description: description || null, updated_at: now });
@@ -363,21 +625,38 @@ export class RepertoireRepository {
     return { id: doc.id, ...doc.data() };
   }
 
-  async deleteFolder(folderId: string) {
+  async deleteFolder(folderId: string, ministryId: string) {
+    await this.getFolderById(folderId, ministryId); // Garante existência e tenant
+    const fsSnap = await this.folderSongsCol.where('folder_id', '==', folderId).get();
+    const deletes = fsSnap.docs.map((d: any) => d.ref.delete());
+    await Promise.all(deletes);
     await this.foldersCol.doc(folderId).delete();
   }
 
-  async addSongToFolder(folderId: string, songId: string) {
+  async addSongToFolder(folderId: string, songId: string, ministryId: string) {
+    await this.getFolderById(folderId, ministryId); // Garante que a pasta pertence ao tenant
+    await this.getSongById(songId, ministryId); // Garante que a música pertence ao mesmo tenant
+
+    const existing = await this.folderSongsCol
+      .where('folder_id', '==', folderId)
+      .where('song_id', '==', songId)
+      .limit(1)
+      .get();
+
+    if (!existing.empty) return;
+
     const ref = this.folderSongsCol.doc(`${folderId}_${songId}`);
     await ref.set({
       id: ref.id,
       folder_id: folderId,
       song_id: songId,
-      added_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
     });
   }
 
-  async removeSongFromFolder(folderId: string, songId: string) {
+  async removeSongFromFolder(folderId: string, songId: string, ministryId: string) {
+    await this.getFolderById(folderId, ministryId); // Garante que a pasta pertence ao tenant
     await this.folderSongsCol.doc(`${folderId}_${songId}`).delete();
   }
 }
+

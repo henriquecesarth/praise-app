@@ -1,0 +1,81 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "songs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ministry_id", "order": "ASCENDING" },
+        { "fieldPath": "updated_at", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "songs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ministry_id", "order": "ASCENDING" },
+        { "fieldPath": "classification_id", "order": "ASCENDING" },
+        { "fieldPath": "updated_at", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "songs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ministry_id", "order": "ASCENDING" },
+        { "fieldPath": "original_key", "order": "ASCENDING" },
+        { "fieldPath": "updated_at", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "songs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ministry_id", "order": "ASCENDING" },
+        { "fieldPath": "artist_id", "order": "ASCENDING" },
+        { "fieldPath": "updated_at", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "songs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ministry_id", "order": "ASCENDING" },
+        { "fieldPath": "youtube_url", "order": "ASCENDING" },
+        { "fieldPath": "updated_at", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "schedule_comments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "schedule_id", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "schedules",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ministry_id", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "billing_transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ministry_id", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

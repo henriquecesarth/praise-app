@@ -48,13 +48,19 @@ describe('SubscriptionController & Tenant Isolation', () => {
       expect(planIds).toEqual(['free', 'lite', 'lite_plus', 'essential', 'pro', 'premium']);
 
       const premium = response.plans.find((p: any) => p.id === 'premium');
-      expect(premium.baseMembers).toBe('unlimited');
-      expect(premium.baseSongs).toBe('unlimited');
+      expect(premium.baseMembers).toBe(300);
+      expect(premium.baseSongs).toBe(1500);
+      expect(premium.monthlyPriceCents).toBe(21490);
+      expect(premium.annualPriceCents).toBe(232092);
 
       const essential = response.plans.find((p: any) => p.id === 'essential');
       expect(essential.allowMemberAddons).toBe(true);
       expect(essential.maxMemberAddonBlocks).toBe(4);
+      expect(essential.monthlyPriceCents).toBe(3490);
+      expect(essential.annualPriceCents).toBe(37692);
+      expect(essential.addonBlockMonthlyPriceCents).toBe(990);
     });
+
   });
 
   describe('GET /api/v1/ministries/:ministryId/subscription', () => {

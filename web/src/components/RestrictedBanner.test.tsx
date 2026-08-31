@@ -8,7 +8,18 @@ describe('RestrictedBanner Component', () => {
   const mockOnNavigate = vi.fn();
 
   const baseSummary: MinistrySubscriptionSummary = {
-    plan: { id: 'free', name: 'Free', baseMembers: 10, baseSongs: 50, allowMemberAddons: false, maxMemberAddonBlocks: 0 },
+    plan: {
+      id: 'free',
+      name: 'Free',
+      baseMembers: 10,
+      baseSongs: 50,
+      allowMemberAddons: false,
+      maxMemberAddonBlocks: 0,
+      monthlyPriceCents: 0,
+      annualPriceCents: 0,
+      addonBlockMonthlyPriceCents: 0,
+      addonBlockAnnualPriceCents: 0,
+    },
     subscription: {
       planId: 'free',
       memberAddonBlocks: 0,

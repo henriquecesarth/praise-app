@@ -1,5 +1,5 @@
 import { RepertoireRepository } from '../../repositories/RepertoireRepository';
-import { PaginatedResponse, Song, Artist, Folder, Classification, RepertoireCounts } from './repertoire.types';
+import { PaginatedResponse, Song, SongSummary, Artist, Folder, Classification, RepertoireCounts } from './repertoire.types';
 
 export class RepertoireService {
   constructor(private readonly repertoireRepository: RepertoireRepository = new RepertoireRepository()) {}
@@ -17,34 +17,30 @@ export class RepertoireService {
       original_key?: string;
       artist_id?: string;
       has_youtube?: string;
+      cursor?: string;
       page?: string;
-      limit?: string;
+      limit?: number | string;
     }
-  ): Promise<PaginatedResponse<Song>> {
-    const page = parseInt(filters.page || '1', 10);
-    const limit = parseInt(filters.limit || '50', 10);
+  ): Promise<PaginatedResponse<SongSummary>> {
+    const page = typeof filters.page === 'string' ? parseInt(filters.page || '1', 10) : 1;
+    const limit = typeof filters.limit === 'number' ? filters.limit : parseInt(String(filters.limit || '20'), 10);
 
-    const { data, total } = await this.repertoireRepository.getSongs(ministryId, {
+    const result = await this.repertoireRepository.getSongs(ministryId, {
       search: filters.search,
       classification_id: filters.classification_id,
       original_key: filters.original_key,
       artist_id: filters.artist_id,
       has_youtube: filters.has_youtube === 'true',
+      cursor: filters.cursor,
       page,
       limit,
     });
 
-    return {
-      data: data as Song[],
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit) || 1,
-    };
+    return result as PaginatedResponse<SongSummary>;
   }
 
   async getSongById(ministryId: string, songId: string, _userId: string): Promise<any> {
-    return this.repertoireRepository.getSongById(songId);
+    return this.repertoireRepository.getSongById(songId, ministryId);
   }
 
   async createSong(ministryId: string, userId: string, songData: any): Promise<Song> {
@@ -52,7 +48,7 @@ export class RepertoireService {
   }
 
   async updateSong(ministryId: string, songId: string, _userId: string, songData: any): Promise<Song> {
-    return this.repertoireRepository.updateSong(songId, songData) as unknown as Song;
+    return this.repertoireRepository.updateSong(songId, ministryId, songData) as unknown as Song;
   }
 
   async deleteSong(ministryId: string, songId: string, _userId: string): Promise<void> {
@@ -68,11 +64,11 @@ export class RepertoireService {
   }
 
   async updateArtist(ministryId: string, artistId: string, name: string): Promise<Artist> {
-    return this.repertoireRepository.updateArtist(artistId, name) as unknown as Artist;
+    return this.repertoireRepository.updateArtist(artistId, ministryId, name) as unknown as Artist;
   }
 
   async deleteArtist(ministryId: string, artistId: string): Promise<void> {
-    await this.repertoireRepository.deleteArtist(artistId);
+    await this.repertoireRepository.deleteArtist(artistId, ministryId);
   }
 
   async getClassifications(ministryId: string): Promise<Classification[]> {
@@ -83,12 +79,12 @@ export class RepertoireService {
     return this.repertoireRepository.createClassification(ministryId, data) as unknown as Classification;
   }
 
-  async updateClassification(id: string, data: { name: string; description?: string; color?: string }): Promise<Classification> {
-    return this.repertoireRepository.updateClassification(id, data) as unknown as Classification;
+  async updateClassification(ministryId: string, id: string, data: { name: string; description?: string; color?: string }): Promise<Classification> {
+    return this.repertoireRepository.updateClassification(id, ministryId, data) as unknown as Classification;
   }
 
-  async deleteClassification(id: string): Promise<void> {
-    await this.repertoireRepository.deleteClassification(id);
+  async deleteClassification(ministryId: string, id: string): Promise<void> {
+    await this.repertoireRepository.deleteClassification(id, ministryId);
   }
 
   async getFolders(ministryId: string): Promise<Folder[]> {
@@ -96,7 +92,7 @@ export class RepertoireService {
   }
 
   async getFolderById(ministryId: string, folderId: string): Promise<Folder> {
-    return this.repertoireRepository.getFolderById(folderId) as unknown as Folder;
+    return this.repertoireRepository.getFolderById(folderId, ministryId) as unknown as Folder;
   }
 
   async createFolder(ministryId: string, name: string, description?: string): Promise<Folder> {
@@ -104,19 +100,19 @@ export class RepertoireService {
   }
 
   async updateFolder(ministryId: string, folderId: string, data: { name: string; description?: string | null }): Promise<Folder> {
-    return this.repertoireRepository.updateFolder(folderId, data.name, data.description) as unknown as Folder;
+    return this.repertoireRepository.updateFolder(folderId, ministryId, data.name, data.description) as unknown as Folder;
   }
 
   async deleteFolder(ministryId: string, folderId: string): Promise<void> {
-    await this.repertoireRepository.deleteFolder(folderId);
+    await this.repertoireRepository.deleteFolder(folderId, ministryId);
   }
 
   async addSongToFolder(ministryId: string, folderId: string, songId: string): Promise<void> {
-    await this.repertoireRepository.addSongToFolder(folderId, songId);
+    await this.repertoireRepository.addSongToFolder(folderId, songId, ministryId);
   }
 
   async removeSongFromFolder(ministryId: string, folderId: string, songId: string): Promise<void> {
-    await this.repertoireRepository.removeSongFromFolder(folderId, songId);
+    await this.repertoireRepository.removeSongFromFolder(folderId, songId, ministryId);
   }
 }
 
@@ -134,8 +130,8 @@ export const updateArtist = (m: string, a: string, n: string) => serviceInstance
 export const deleteArtist = (m: string, a: string) => serviceInstance.deleteArtist(m, a);
 export const getClassifications = (m: string) => serviceInstance.getClassifications(m);
 export const createClassification = (m: string, d: any) => serviceInstance.createClassification(m, d);
-export const updateClassification = (id: string, d: any) => serviceInstance.updateClassification(id, d);
-export const deleteClassification = (id: string) => serviceInstance.deleteClassification(id);
+export const updateClassification = (m: string, id: string, d: any) => serviceInstance.updateClassification(m, id, d);
+export const deleteClassification = (m: string, id: string) => serviceInstance.deleteClassification(m, id);
 export const getFolders = (m: string) => serviceInstance.getFolders(m);
 export const getFolderById = (m: string, f: string) => serviceInstance.getFolderById(m, f);
 export const createFolder = (m: string, n: string, d?: string) => serviceInstance.createFolder(m, n, d);
@@ -143,3 +139,4 @@ export const updateFolder = (m: string, f: string, d: any) => serviceInstance.up
 export const deleteFolder = (m: string, f: string) => serviceInstance.deleteFolder(m, f);
 export const addSongToFolder = (m: string, f: string, s: string) => serviceInstance.addSongToFolder(m, f, s);
 export const removeSongFromFolder = (m: string, f: string, s: string) => serviceInstance.removeSongFromFolder(m, f, s);
+

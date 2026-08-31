@@ -9,7 +9,7 @@ export class LiturgyService {
   }
 
   async getLiturgyById(groupId: string, liturgyId: string) {
-    return this.liturgyRepository.getLiturgyById(liturgyId);
+    return this.liturgyRepository.getLiturgyById(liturgyId, groupId);
   }
 
   async createLiturgy(groupId: string, userId: string, input: CreateLiturgyInput) {
@@ -17,17 +17,17 @@ export class LiturgyService {
   }
 
   async updateLiturgy(groupId: string, liturgyId: string, input: UpdateLiturgyInput) {
-    // Para atualizar, reutiliza o create com os novos dados
-    return this.liturgyRepository.createLiturgy(groupId, '', {
-      title: input.title || '',
-      date: input.date || '',
+    return this.liturgyRepository.updateLiturgy(liturgyId, groupId, {
+      title: input.title,
+      date: input.date,
       description: input.description,
       items: input.items,
     });
   }
 
   async deleteLiturgy(groupId: string, liturgyId: string) {
-    await this.liturgyRepository.deleteLiturgy(liturgyId);
+    await this.liturgyRepository.deleteLiturgy(liturgyId, groupId);
     return { message: 'Liturgia removida com sucesso.' };
   }
 }
+

@@ -17,7 +17,7 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
   // 1. Catálogo e Definições de Planos
   // --------------------------------------------------------------------------
   describe('1. Catálogo Oficial de Planos', () => {
-    it('deve conter exatamente os 6 planos comerciais confirmados com suas quotas', () => {
+    it('deve conter exatamente os 6 planos comerciais confirmados com suas quotas e preços', () => {
       const planKeys = Object.keys(PLANS_CATALOG);
       expect(planKeys).toEqual(['free', 'lite', 'lite_plus', 'essential', 'pro', 'premium']);
 
@@ -29,6 +29,10 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
         baseSongs: 50,
         allowMemberAddons: false,
         maxMemberAddonBlocks: 0,
+        monthlyPriceCents: 0,
+        annualPriceCents: 0,
+        addonBlockMonthlyPriceCents: 0,
+        addonBlockAnnualPriceCents: 0,
       });
 
       // Lite
@@ -39,6 +43,10 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
         baseSongs: 100,
         allowMemberAddons: false,
         maxMemberAddonBlocks: 0,
+        monthlyPriceCents: 1490,
+        annualPriceCents: 16092,
+        addonBlockMonthlyPriceCents: 0,
+        addonBlockAnnualPriceCents: 0,
       });
 
       // Lite+
@@ -49,6 +57,10 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
         baseSongs: 150,
         allowMemberAddons: false,
         maxMemberAddonBlocks: 0,
+        monthlyPriceCents: 2490,
+        annualPriceCents: 26892,
+        addonBlockMonthlyPriceCents: 0,
+        addonBlockAnnualPriceCents: 0,
       });
 
       // Essential
@@ -59,6 +71,10 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
         baseSongs: 200,
         allowMemberAddons: true,
         maxMemberAddonBlocks: 4,
+        monthlyPriceCents: 3490,
+        annualPriceCents: 37692,
+        addonBlockMonthlyPriceCents: 990,
+        addonBlockAnnualPriceCents: 10692,
       });
 
       // Pro
@@ -69,16 +85,24 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
         baseSongs: 500,
         allowMemberAddons: true,
         maxMemberAddonBlocks: 10,
+        monthlyPriceCents: 8990,
+        annualPriceCents: 97092,
+        addonBlockMonthlyPriceCents: 690,
+        addonBlockAnnualPriceCents: 7452,
       });
 
       // Premium
       expect(PLANS_CATALOG.premium).toEqual({
         id: 'premium',
         name: 'Premium',
-        baseMembers: 'unlimited',
-        baseSongs: 'unlimited',
+        baseMembers: 300,
+        baseSongs: 1500,
         allowMemberAddons: false,
         maxMemberAddonBlocks: 0,
+        monthlyPriceCents: 21490,
+        annualPriceCents: 232092,
+        addonBlockMonthlyPriceCents: 0,
+        addonBlockAnnualPriceCents: 0,
       });
     });
 
@@ -114,9 +138,9 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
       expect(getEffectiveMemberQuota(PLANS_CATALOG.pro, 25)).toBe(200); // Limitado pelo maxMemberAddonBlocks
     });
 
-    it('deve retornar explicitamente "unlimited" para o plano Premium', () => {
-      expect(getEffectiveMemberQuota(PLANS_CATALOG.premium, 0)).toBe('unlimited');
-      expect(getEffectiveSongQuota(PLANS_CATALOG.premium)).toBe('unlimited');
+    it('deve retornar quotas de 300 membros e 1.500 músicas para o plano Premium', () => {
+      expect(getEffectiveMemberQuota(PLANS_CATALOG.premium, 0)).toBe(300);
+      expect(getEffectiveSongQuota(PLANS_CATALOG.premium)).toBe(1500);
     });
 
     it('deve validar limites de músicas conforme o catálogo', () => {
@@ -125,9 +149,10 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
       expect(getEffectiveSongQuota(PLANS_CATALOG.lite_plus)).toBe(150);
       expect(getEffectiveSongQuota(PLANS_CATALOG.essential)).toBe(200);
       expect(getEffectiveSongQuota(PLANS_CATALOG.pro)).toBe(500);
-      expect(getEffectiveSongQuota(PLANS_CATALOG.premium)).toBe('unlimited');
+      expect(getEffectiveSongQuota(PLANS_CATALOG.premium)).toBe(1500);
     });
   });
+
 
   // --------------------------------------------------------------------------
   // 3. Resolução Funcional de AccessMode e State Machine
@@ -541,7 +566,7 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
       expect(result.overLimitDetails.songsOver).toBe(false);
     });
 
-    it('deve validar plano Premium com grandes volumes (1000 membros e 5000 músicas) sem overflow ou quota finita', () => {
+    it('deve validar plano Premium com volumes até 300 membros e 1.500 músicas em normal e acusar over-limit acima', () => {
       const premiumSub: MinistrySubscriptionRecord = {
         id: 'min-prem',
         ministry_id: 'min-prem',
@@ -559,20 +584,29 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
         updated_at: '2026-08-28T00:00:00.000Z',
       };
 
-      const largeUsage: MinistryUsageRecord = {
+      const withinLimitUsage: MinistryUsageRecord = {
         id: 'min-prem',
         ministry_id: 'min-prem',
-        members_count: 1000,
-        songs_count: 5000,
+        members_count: 280,
+        songs_count: 1400,
         created_at: '2026-08-28T00:00:00.000Z',
         updated_at: '2026-08-28T00:00:00.000Z',
       };
 
-      const result = resolveAccessMode(premiumSub, PLANS_CATALOG.premium, largeUsage);
+      const result = resolveAccessMode(premiumSub, PLANS_CATALOG.premium, withinLimitUsage);
       expect(result.accessMode).toBe('normal');
       expect(result.isOverLimit).toBe(false);
-      expect(getEffectiveMemberQuota(PLANS_CATALOG.premium, 0)).toBe('unlimited');
-      expect(getEffectiveSongQuota(PLANS_CATALOG.premium)).toBe('unlimited');
+      expect(getEffectiveMemberQuota(PLANS_CATALOG.premium, 0)).toBe(300);
+      expect(getEffectiveSongQuota(PLANS_CATALOG.premium)).toBe(1500);
+
+      const overLimitUsage: MinistryUsageRecord = {
+        ...withinLimitUsage,
+        members_count: 320,
+      };
+      const overResult = resolveAccessMode(premiumSub, PLANS_CATALOG.premium, overLimitUsage);
+      expect(overResult.isOverLimit).toBe(true);
+      expect(overResult.accessMode).toBe('restricted_over_limit');
     });
   });
 });
+

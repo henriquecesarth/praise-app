@@ -23,13 +23,17 @@ export async function authenticate(
       throw new AppError(401, 'Token de autenticação não fornecido.');
     }
 
-    const token = authHeader.substring(7);
+    const token = authHeader.substring(7).trim();
 
     if (!token) {
       throw new AppError(401, 'Token de autenticação inválido.');
     }
 
-    const decoded = userRepository.verifyAuthToken(token);
+    const decoded = await userRepository.verifyToken(token);
+
+    if (!decoded || !decoded.uid) {
+      throw new AppError(401, 'Sessão inválida ou expirada. Faça login novamente.');
+    }
 
     req.user = {
       id: decoded.uid,
@@ -41,3 +45,4 @@ export async function authenticate(
     next(err);
   }
 }
+

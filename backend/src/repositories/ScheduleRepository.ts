@@ -1,5 +1,35 @@
+import { FieldPath } from 'firebase-admin/firestore';
 import { db } from '../lib/firebase';
 import { AppError } from '../middleware/error-handler';
+
+export interface CommentCursorData {
+  id: string;
+  c: string; // created_at
+  s: string; // schedule_id
+}
+
+export function encodeCommentCursor(data: CommentCursorData): string {
+  return Buffer.from(JSON.stringify(data), 'utf8').toString('base64url');
+}
+
+export function decodeCommentCursor(token: string, expectedScheduleId: string): CommentCursorData {
+  try {
+    const raw = Buffer.from(token, 'base64url').toString('utf8');
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || !parsed.id || !parsed.c || !parsed.s) {
+      throw new Error('Formato de cursor inválido');
+    }
+    if (parsed.s !== expectedScheduleId) {
+      throw new AppError(403, 'Acesso negado: cursor pertence a outra escala.', {
+        code: 'CROSS_SCHEDULE_CURSOR_REJECTED',
+      });
+    }
+    return parsed as CommentCursorData;
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    throw new AppError(400, 'Token de cursor inválido.');
+  }
+}
 
 export interface ScheduleRecord {
   id: string;
@@ -41,12 +71,16 @@ export class ScheduleRepository {
     return list;
   }
 
-  async getScheduleById(scheduleId: string): Promise<ScheduleRecord> {
+  async getScheduleById(scheduleId: string, ministryId: string): Promise<ScheduleRecord> {
     const doc = await this.schedulesCol.doc(scheduleId).get();
     if (!doc.exists) {
       throw new AppError(404, 'Escala não encontrada.');
     }
-    return { id: doc.id, ...doc.data() } as ScheduleRecord;
+    const data = { id: doc.id, ...doc.data() } as ScheduleRecord;
+    if (data.ministry_id !== ministryId) {
+      throw new AppError(404, 'Escala não encontrada.');
+    }
+    return data;
   }
 
   async createSchedule(ministryId: string, userId: string, data: Partial<ScheduleRecord>): Promise<ScheduleRecord> {
@@ -76,56 +110,64 @@ export class ScheduleRepository {
     return scheduleData;
   }
 
-  async updateSchedule(scheduleId: string, data: Partial<ScheduleRecord>): Promise<ScheduleRecord> {
-    const ref = this.schedulesCol.doc(scheduleId);
-    const doc = await ref.get();
-    if (!doc.exists) {
-      throw new AppError(404, 'Escala não encontrada.');
-    }
+  async updateSchedule(scheduleId: string, ministryId: string, data: Partial<ScheduleRecord>): Promise<ScheduleRecord> {
+    const existing = await this.getScheduleById(scheduleId, ministryId);
 
+    const ref = this.schedulesCol.doc(scheduleId);
     const now = new Date().toISOString();
-    const updatePayload = {
+    const updatePayload: any = {
       ...data,
       updated_at: now,
     };
+
+    // Mass assignment guard
+    delete updatePayload.id;
+    delete updatePayload.ministry_id;
+    delete updatePayload.created_by;
 
     await ref.update(updatePayload);
     const updatedDoc = await ref.get();
     return { id: updatedDoc.id, ...updatedDoc.data() } as ScheduleRecord;
   }
 
-  async deleteSchedule(scheduleId: string): Promise<void> {
+  async deleteSchedule(scheduleId: string, ministryId: string): Promise<void> {
+    await this.getScheduleById(scheduleId, ministryId);
+
+    // Excluir comentários associados à escala
+    const commentsSnap = await this.commentsCol.where('schedule_id', '==', scheduleId).get();
+    const commentDeletes = commentsSnap.docs.map((d) => d.ref.delete());
+    await Promise.all(commentDeletes);
+
     await this.schedulesCol.doc(scheduleId).delete();
   }
 
   async updateParticipantConfirmation(
     scheduleId: string,
+    ministryId: string,
     userId: string,
     userName: string,
     confirmed: boolean
   ): Promise<ScheduleRecord> {
+    const schedule = await this.getScheduleById(scheduleId, ministryId);
     const ref = this.schedulesCol.doc(scheduleId);
-    const doc = await ref.get();
-    if (!doc.exists) {
-      throw new AppError(404, 'Escala não encontrada.');
-    }
-    const schedule = doc.data() as ScheduleRecord;
 
     const todayStr = new Date().toISOString().split('T')[0];
     if (schedule.date < todayStr) {
       throw new AppError(400, 'Não é possível alterar a confirmação de presença de uma escala que já passou.');
     }
+
     let memberId: string | null = null;
     let userRealName: string = userName || '';
-    if (schedule.ministry_id) {
-      const memberSnap = await db.collection('group_members')
-        .where('group_id', '==', schedule.ministry_id)
-        .where('user_id', '==', userId)
-        .limit(1)
-        .get();
-      if (!memberSnap.empty) {
-        memberId = memberSnap.docs[0].id;
-      }
+
+    // Consultar pertencimento oficial na coleção ministry_members
+    const memberSnap = await db.collection('ministry_members')
+      .where('ministry_id', '==', ministryId)
+      .where('user_id', '==', userId)
+      .limit(1)
+      .get();
+
+    if (!memberSnap.empty) {
+      memberId = memberSnap.docs[0].id;
     }
 
     const userDoc = await db.collection('users').doc(userId).get();
@@ -166,28 +208,13 @@ export class ScheduleRepository {
     });
 
     if (updatedCount === 0) {
-      if (schedule.participants && schedule.participants.length > 0) {
-        const targetIndex = schedule.participants.findIndex((p) => p.confirmed === undefined) !== -1
-          ? schedule.participants.findIndex((p) => p.confirmed === undefined)
-          : 0;
-
-        schedule.participants[targetIndex] = {
-          ...schedule.participants[targetIndex],
-          confirmed,
-        };
-        updatedCount = 1;
-      } else {
-        throw new AppError(403, 'Você não está listado como participante desta escala.');
-      }
+      throw new AppError(403, 'Você não está listado como participante desta escala.');
     }
 
     const now = new Date().toISOString();
-    const finalParticipants = updatedCount === 1 && schedule.participants.length > 0 && updatedParticipants.every(p => p.confirmed === undefined)
-      ? schedule.participants
-      : updatedParticipants;
 
     await ref.update({
-      participants: finalParticipants,
+      participants: updatedParticipants,
       updated_at: now,
     });
 
@@ -197,19 +224,41 @@ export class ScheduleRepository {
 
   async getScheduleComments(
     scheduleId: string,
-    userId: string,
-    userName: string,
-    userRole?: string
+    ministryId: string,
+    limitCount = 50,
+    olderCursor?: string
   ): Promise<ScheduleCommentRecord[]> {
-    const scheduleDoc = await this.schedulesCol.doc(scheduleId).get();
-    if (!scheduleDoc.exists) {
-      throw new AppError(404, 'Escala não encontrada.');
+    await this.getScheduleById(scheduleId, ministryId);
+
+    let query: any = this.commentsCol
+      .where('schedule_id', '==', scheduleId)
+      .orderBy('created_at', 'desc')
+      .orderBy(FieldPath.documentId(), 'desc');
+
+    if (olderCursor) {
+      const cursorData = decodeCommentCursor(olderCursor, scheduleId);
+      query = query.startAfter(cursorData.c, cursorData.id);
     }
 
-    const snap = await this.commentsCol.where('schedule_id', '==', scheduleId).get();
-    const list = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as ScheduleCommentRecord));
-    list.sort((a, b) => (a.created_at > b.created_at ? 1 : -1));
-    return list;
+    try {
+      const snap = await query.limit(limitCount).get();
+      const list = snap.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as ScheduleCommentRecord));
+      list.reverse();
+      return list;
+    } catch (err: any) {
+      if (process.env.NODE_ENV === 'production') {
+        console.error('Erro na query de comentários do Firestore:', err);
+        throw new AppError(500, 'Erro ao consultar comentários da escala. Verifique os índices do banco de dados.', {
+          code: 'INDEX_REQUIRED_OR_QUERY_ERROR',
+        });
+      }
+
+      console.warn('Fallback de desenvolvimento para comentários:', err?.message);
+      const snap = await this.commentsCol.where('schedule_id', '==', scheduleId).get();
+      const list = snap.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as ScheduleCommentRecord));
+      list.sort((a, b) => (a.created_at > b.created_at ? 1 : -1));
+      return list.slice(-limitCount);
+    }
   }
 
   async addScheduleComment(
@@ -217,13 +266,9 @@ export class ScheduleRepository {
     scheduleId: string,
     userId: string,
     userName: string,
-    content: string,
-    userRole?: string
+    content: string
   ): Promise<ScheduleCommentRecord> {
-    const scheduleDoc = await this.schedulesCol.doc(scheduleId).get();
-    if (!scheduleDoc.exists) {
-      throw new AppError(404, 'Escala não encontrada.');
-    }
+    await this.getScheduleById(scheduleId, ministryId);
 
     const now = new Date().toISOString();
     const ref = this.commentsCol.doc();
@@ -241,3 +286,4 @@ export class ScheduleRepository {
     return commentData;
   }
 }
+

@@ -161,6 +161,8 @@ export type BillingStatus = 'active' | 'trialing' | 'past_due' | 'canceled';
 
 export type AccessMode = 'normal' | 'grace' | 'restricted_over_limit' | 'suspended';
 
+export type BillingInterval = 'monthly' | 'annual';
+
 export interface PlanDefinition {
   id: PlanId;
   name: string;
@@ -168,6 +170,10 @@ export interface PlanDefinition {
   baseSongs: QuotaLimit;
   allowMemberAddons: boolean;
   maxMemberAddonBlocks: number;
+  monthlyPriceCents: number;
+  annualPriceCents: number;
+  addonBlockMonthlyPriceCents: number;
+  addonBlockAnnualPriceCents: number;
 }
 
 export interface PlansResponse {
@@ -195,6 +201,11 @@ export interface MinistrySubscriptionRecord {
   planId: PlanId;
   memberAddonBlocks: number;
   billingStatus: BillingStatus;
+  subscriptionMode?: 'free' | 'paid' | 'complimentary';
+  grantedBy?: string | null;
+  grantedAt?: string | null;
+  grantReason?: string | null;
+  expiresAt?: string | null;
   administrativelySuspended: boolean;
   suspendedAt: string | null;
   suspensionReason: string | null;
@@ -205,6 +216,7 @@ export interface MinistrySubscriptionRecord {
   cancelAtPeriodEnd: boolean;
 }
 
+
 export interface MinistrySubscriptionSummary {
   plan: PlanDefinition;
   subscription: MinistrySubscriptionRecord;
@@ -214,3 +226,52 @@ export interface MinistrySubscriptionSummary {
   overLimitDetails: OverLimitDetails;
   graceDaysRemaining: number | null;
 }
+
+export interface CheckoutPreviewResult {
+  planId: PlanId;
+  planName: string;
+  interval: BillingInterval;
+  addonBlocks: number;
+  effectiveMembersQuota: QuotaLimit;
+  effectiveSongsQuota: QuotaLimit;
+  basePriceCents: number;
+  addonsPriceCents: number;
+  totalPriceCents: number;
+  fullMonthlyEquivalentCents: number;
+  annualSavingsCents: number;
+  currency: 'BRL';
+  currentPlanId: PlanId;
+  isDowngrade: boolean;
+  downgradeImpact?: {
+    isOverLimit: boolean;
+    membersOver: boolean;
+    songsOver: boolean;
+    gracePeriodDays: number;
+  };
+}
+
+export interface CheckoutCreationResult {
+  checkoutUrl: string;
+  checkoutId: string;
+  expiresAt: string | null;
+  totalPriceCents: number;
+  currency: 'BRL';
+}
+
+export interface BillingTransactionRecord {
+  id: string;
+  ministry_id: string;
+  provider: string;
+  provider_payment_id: string;
+  provider_subscription_id?: string | null;
+  amount_cents: number;
+  currency: 'BRL';
+  status: 'pending' | 'paid' | 'overdue' | 'refunded' | 'canceled' | 'failed';
+  due_date: string;
+  paid_at: string | null;
+  payment_method?: string | null;
+  invoice_url?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+

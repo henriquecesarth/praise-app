@@ -336,31 +336,57 @@ export class MinistryRepository {
     const members = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as any));
     const usersCol = db.collection('users');
 
-    const enrichedMembers = await Promise.all(
-      members.map(async (member) => {
-        let name = member.name || 'Integrante';
-        let email = member.email || '';
-        let birthDate = member.birth_date || null;
-
-        if (member.user_id && !member.is_manual) {
-          const userDoc = await usersCol.doc(member.user_id).get();
-          if (userDoc.exists) {
-            const uData = userDoc.data();
-            name = uData?.name || uData?.displayName || name;
-            email = uData?.email || email;
-            birthDate = uData?.birth_date || birthDate;
-          }
-        }
-
-        return {
-          ...member,
-          name,
-          email,
-          birth_date: birthDate,
-          role_ids: member.role_ids || [],
-        };
-      })
+    const userIdsToFetch = Array.from(
+      new Set(
+        members
+          .filter((m: any) => m.user_id && !m.is_manual)
+          .map((m: any) => m.user_id as string)
+      )
     );
+
+    const userMap = new Map<string, any>();
+
+    if (userIdsToFetch.length > 0) {
+      try {
+        const userRefs = userIdsToFetch.map((uId) => usersCol.doc(uId));
+        const userDocs = await db.getAll(...userRefs);
+        userDocs.forEach((uDoc: any) => {
+          if (uDoc.exists) {
+            userMap.set(uDoc.id, uDoc.data());
+          }
+        });
+      } catch (err) {
+        await Promise.all(
+          userIdsToFetch.map(async (uId) => {
+            const uDoc = await usersCol.doc(uId).get();
+            if (uDoc.exists) {
+              userMap.set(uId, uDoc.data());
+            }
+          })
+        );
+      }
+    }
+
+    const enrichedMembers = members.map((member: any) => {
+      let name = member.name || 'Integrante';
+      let email = member.email || '';
+      let birthDate = member.birth_date || null;
+
+      if (member.user_id && userMap.has(member.user_id)) {
+        const uData = userMap.get(member.user_id);
+        name = uData?.name || uData?.displayName || name;
+        email = uData?.email || email;
+        birthDate = uData?.birth_date || birthDate;
+      }
+
+      return {
+        ...member,
+        name,
+        email,
+        birth_date: birthDate,
+        role_ids: member.role_ids || [],
+      };
+    });
 
     return enrichedMembers;
   }
@@ -396,6 +422,24 @@ export class MinistryRepository {
     const mData = doc.data() as MinistryRecord;
     if (mData.owner_user_id === memberUserId) {
       throw new AppError(400, 'O proprietário do ministério não pode ser removido.');
+    }
+
+    // Verificar se o membro é o único administrador restante
+    const memberSnap = await this.membersCol
+      .where('ministry_id', '==', ministryId)
+      .where('user_id', '==', memberUserId)
+      .limit(1)
+      .get();
+
+    const isMemberAdmin = !memberSnap.empty && memberSnap.docs[0].data()?.role === 'admin';
+    if (isMemberAdmin) {
+      const adminSnap = await this.membersCol
+        .where('ministry_id', '==', ministryId)
+        .where('role', '==', 'admin')
+        .get();
+      if (adminSnap.size <= 1) {
+        throw new AppError(400, 'Não é possível remover o único administrador do ministério. Promova outro integrante antes.');
+      }
     }
 
     const { SubscriptionRepository } = await import('./SubscriptionRepository');
@@ -446,6 +490,17 @@ export class MinistryRepository {
 
     if (!memberRef) throw new AppError(404, 'Membro não encontrado.');
 
+    // Proteger contra rebaixamento do último administrador
+    if (data.role === 'member' && memberData.role === 'admin') {
+      const adminSnap = await this.membersCol
+        .where('ministry_id', '==', ministryId)
+        .where('role', '==', 'admin')
+        .get();
+      if (adminSnap.size <= 1) {
+        throw new AppError(400, 'Não é possível rebaixar o único administrador do ministério.');
+      }
+    }
+
     const updates: any = {};
     if (data.name !== undefined) updates.name = data.name;
     if (data.email !== undefined) updates.email = data.email;
@@ -455,31 +510,21 @@ export class MinistryRepository {
 
     await memberRef.update(updates);
 
-    // If member has real user_id, update users collection and Firebase Auth if password/email/name changed
+    // Se o membro é uma conta manual local (is_manual), sincronizar metadados locais
+    // NUNCA permitir que admin de ministério altere senha de contas reais de outros usuários no Firebase Auth
     const userId = memberData.user_id;
     if (userId && !memberData.is_manual) {
       try {
         const usersCol = db.collection('users');
         const userUpdates: any = {};
         if (data.name) userUpdates.name = data.name;
-        if (data.email) userUpdates.email = data.email;
         if (data.birthDate !== undefined) userUpdates.birth_date = data.birthDate;
 
         if (Object.keys(userUpdates).length > 0) {
           await usersCol.doc(userId).set(userUpdates, { merge: true });
         }
-
-        const { authAdmin } = await import('../lib/firebase');
-        const authUpdates: any = {};
-        if (data.name) authUpdates.displayName = data.name;
-        if (data.email) authUpdates.email = data.email;
-        if (data.password) authUpdates.password = data.password;
-
-        if (Object.keys(authUpdates).length > 0 && authAdmin && authAdmin.updateUser) {
-          await authAdmin.updateUser(userId, authUpdates);
-        }
       } catch (err) {
-        console.warn('Nota: Erro ao sincronizar com Firebase Auth:', err);
+        console.warn('Nota: Erro ao sincronizar dados de usuário no Firestore:', err);
       }
     }
 
@@ -535,6 +580,22 @@ export class MinistryRepository {
       throw new AppError(400, 'O proprietário não pode sair do próprio ministério. Use "Excluir Ministério" para removê-lo.');
     }
 
+    const memberSnap = await this.membersCol
+      .where('ministry_id', '==', ministryId)
+      .where('user_id', '==', userId)
+      .limit(1)
+      .get();
+
+    if (!memberSnap.empty && memberSnap.docs[0].data()?.role === 'admin') {
+      const adminSnap = await this.membersCol
+        .where('ministry_id', '==', ministryId)
+        .where('role', '==', 'admin')
+        .get();
+      if (adminSnap.size <= 1) {
+        throw new AppError(400, 'Você é o único administrador do ministério. Promova outro membro antes de sair.');
+      }
+    }
+
     const { SubscriptionRepository } = await import('./SubscriptionRepository');
     const subRepo = new SubscriptionRepository();
     await subRepo.removeMemberTransactional({
@@ -543,3 +604,4 @@ export class MinistryRepository {
     });
   }
 }
+

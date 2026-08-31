@@ -25,28 +25,20 @@ Snapshot baseado no checkout de 2026-08-27. Este documento separa fatos de lacun
 | API | Express aplica CORS e JSON globalmente, expõe health/diag e monta rotas em /api/v1. | backend/src/app.ts |
 | Authentication | Signup cria usuário em Firebase Auth e perfil users; login emite JWT próprio com duração de sete dias. | AuthService, UserRepository |
 | Session | O frontend guarda o JWT na chave localStorage praise_auth_token e o envia como Bearer. | web/src/api.ts |
-| Tenancy | Ministry é a fronteira principal usada pela UI e pelas rotas, com isolamento estrito de membership verificado contra acesso indevido. | ministries feature, rbac.ts, quota-enforcement.ts |
-| Persistence | Repositories leem/escrevem diretamente no Cloud Firestore. | backend/src/repositories/, lib/firebase.ts |
-| Validation | Várias entradas HTTP passam por schemas Zod. | feature.types.ts, middleware/validate.ts |
-| Errors | AppError representa erros esperados; o middleware global devolve error.message/details. | middleware/error-handler.ts |
-| Observability | Logs são console.log/warn/error. Não há ferramenta estruturada de observabilidade. | backend/src/ |
-| Deployment config | web e backend possuem manifests Vercel separados. | web/vercel.json, backend/vercel.json |
+| Tenancy & IDOR Protection | Repositórios e rotas aplicam isolamento multitenant estrito por ministry_id/group_id, com validação de ownership em todas as operações por ID (repertório, escalas, pastas, artistas, classificações, liturgias). | RepertoireRepository, ScheduleRepository, LiturgyRepository, rbac.ts |
+| Smart Chords Security | Rotas de cifras inteligentes exigem autenticação obrigatória e filtram/validam estritamente por user_id. | smart_chord.routes.ts, smart_chord.controller.ts, SmartChordRepository.ts |
+| Authentication & Tokens | Login exige verificação criptográfica estrita via Identity Toolkit (sem bypass). Tokens suportam validação dual assíncrona (JWT + Firebase ID Token). | UserRepository.ts, auth.ts |
+| Diagnostic Sanitization | /api/diag é sanitizado em produção para não expor Project ID ou identificadores internos. Headers de segurança HTTP e CORS configurável ativos. | backend/src/app.ts |
 
 ## Confirmed Inconsistencies
 
 | ID | Area | Inconsistency and impact | Evidence |
 | --- | --- | --- | --- |
 | INC-001 | Route aliases | O diretório features/groups implementa GroupRepository e group routes, mas app.ts não monta groupRoutes. /api/v1/groups monta ministryRoutes, portanto o módulo groups dedicado fica inalcançável e o alias usa coleções ministry_*. | backend/src/app.ts, features/groups/, MinistryRepository.ts |
-| INC-004 | Password login | Quando FIREBASE_WEB_API_KEY não existe, verifyPassword busca o usuário via Admin SDK, mas não verifica a senha recebida. | UserRepository.verifyPassword |
 | INC-005 | Smart Chords endpoints | O frontend usa /smart-chords/song/:songId; o backend expõe somente /smart-chords e /smart-chords/:id. | web/src/api.ts, smart_chord.routes.ts |
-| INC-006 | Smart Chords access | As rotas backend de cifras não aplicam authenticate; controllers usam anonymous e o repository lista todos os documentos sem filtrar userId. | smart_chord.routes.ts, smart_chord.controller.ts, SmartChordRepository.ts |
-| INC-007 | Liturgy update | LiturgyService.updateLiturgy ignora liturgyId e chama createLiturgy, criando um novo documento em vez de atualizar. | liturgy.service.ts |
-| INC-008 | Liturgy item payload | O frontend envia song_id, o schema Zod aceita songId e o valor desconhecido é removido antes do repository; a referência à música pode chegar nula. | web/src/api.ts, liturgy.types.ts, LiturgyRepository.ts |
-| INC-009 | Tenant scoping | Várias operações de repertório recebem ministryId na camada service, mas buscam/alteram/excluem apenas pelo ID do recurso sem confirmar ministry_id. | RepertoireService, RepertoireRepository |
-| INC-010 | Schedule membership | A confirmação de escala procura membership em group_members, enquanto os fluxos ativos de ministry usam ministry_members. Se não encontrar o participante, o código pode confirmar o primeiro participante elegível como fallback. | ScheduleRepository.updateParticipantConfirmation |
-| INC-012 | Diagnostic exposure | /api/diag é público e retorna identificadores/configuração operacional como Firebase project ID e default ministry ID. | backend/src/app.ts |
 
-INC-002 e INC-003 foram corrigidos na implementação do sistema de planos (isolamento de tenant rigoroso em `MinistryRepository.getMinistryById` e substituição de `requireActiveSubscription` por `enforceOperationalAccess`). INC-011 foi resolvido em etapa anterior.
+INC-002 e INC-003 foram corrigidos na implementação do sistema de planos. INC-004, INC-006, INC-007, INC-008, INC-009, INC-010, INC-011 e INC-012 foram integralmente resolvidos na fase de Authentication & Authorization Security Hardening (2026-08-29).
+
 
 ## Incomplete Implementation
 
@@ -83,8 +75,7 @@ README.md e GEMINI.md foram atualizados para não perpetuar essas afirmações.
 - Responsável operacional, processo de release e estratégia de rollback.
 - Versão mínima oficialmente suportada de Node.js e npm.
 - Concorrência de transações sob Firestore Emulator: NOT YET VERIFIED (atomicidade e isolamento validados em testes unitários com mocks via Vitest; emulador físico do Firestore indisponível no host).
-- Funcionamento E2E com credenciais reais; não foi realizado para evitar uso de serviços externos/dados.
-- Gateway de pagamento e cobrança real (Stripe/Asaas): não implementado nesta fase (gestão de planos e cotas opera funcionalmente no backend/frontend sem cobrança financeira ativa).
+- Gateway de pagamento e cobrança Asaas: Implementação de código concluída no backend e frontend (`IMPLEMENTATION READY`), com testes automatizados de concorrência, idempotência e amount validation aprovados. A homologação real contra a API Asaas Sandbox está pendente do fornecimento das credenciais reais de sandbox no `.env` (`BLOCKED — ASAAS SANDBOX CREDENTIALS REQUIRED`).
 
 ## Use in Future Work
 

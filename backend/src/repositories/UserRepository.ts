@@ -45,47 +45,39 @@ export class UserRepository {
   }
 
   /**
-   * Autentica usuário por e-mail e senha no Firebase Auth e recupera seu perfil
+   * Autentica usuário por e-mail e senha no Firebase Auth e recupera seu perfil.
+   * Exige obrigatoriamente validação criptográfica de credenciais no Firebase.
    */
   async verifyPassword(email: string, password: string): Promise<{ uid: string; email: string; name: string } | null> {
     try {
-      // 1. Tenta autenticar o e-mail/senha via API REST de Auth do Firebase
-      const apiKey = process.env.FIREBASE_WEB_API_KEY;
-      if (apiKey) {
-        const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password, returnSecureToken: true }),
-        });
-
-        if (!response.ok) {
-          const errorData = (await response.json().catch(() => ({}))) as any;
-          const message = errorData?.error?.message;
-          if (message === 'EMAIL_NOT_FOUND' || message === 'INVALID_PASSWORD' || message === 'INVALID_LOGIN_CREDENTIALS') {
-            throw new AppError(401, 'E-mail ou senha incorretos.');
-          }
-          throw new AppError(400, 'Falha ao autenticar no Firebase.');
-        }
-
-        const data = (await response.json()) as any;
-        const doc = await this.usersCollection.doc(data.localId).get();
-        const userData = doc.exists ? (doc.data() as UserRecordData) : null;
-
-        return {
-          uid: data.localId,
-          email: data.email,
-          name: userData?.name || data.displayName || data.email.split('@')[0],
-        };
+      const apiKey = config.firebaseWebApiKey || process.env.FIREBASE_WEB_API_KEY;
+      if (!apiKey) {
+        throw new AppError(500, 'Configuração de autenticação incompleta no servidor (FIREBASE_WEB_API_KEY necessária para login por senha).');
       }
 
-      // 2. Fallback via Admin SDK (caso Web API Key não esteja definida no .env)
-      const userRecord = await authAdmin.getUserByEmail(email);
-      const doc = await this.usersCollection.doc(userRecord.uid).get();
+      const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, returnSecureToken: true }),
+      });
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as any;
+        const message = errorData?.error?.message;
+        if (message === 'EMAIL_NOT_FOUND' || message === 'INVALID_PASSWORD' || message === 'INVALID_LOGIN_CREDENTIALS') {
+          throw new AppError(401, 'E-mail ou senha incorretos.');
+        }
+        throw new AppError(400, 'Falha ao autenticar no Firebase.');
+      }
+
+      const data = (await response.json()) as any;
+      const doc = await this.usersCollection.doc(data.localId).get();
+      const userData = doc.exists ? (doc.data() as UserRecordData) : null;
 
       return {
-        uid: userRecord.uid,
-        email: userRecord.email || email,
-        name: doc.exists ? (doc.data() as UserRecordData).name : (userRecord.displayName || email.split('@')[0]),
+        uid: data.localId,
+        email: data.email,
+        name: userData?.name || data.displayName || data.email.split('@')[0],
       };
     } catch (error: any) {
       if (error instanceof AppError) throw error;
@@ -147,7 +139,7 @@ export class UserRepository {
   }
 
   /**
-   * Valida e decodifica o token JWT da API
+   * Valida e decodifica o token JWT da API de forma síncrona
    */
   verifyAuthToken(token: string): { uid: string; email?: string } {
     try {
@@ -157,4 +149,37 @@ export class UserRepository {
       throw new AppError(401, 'Sessão inválida ou expirada. Faça login novamente.');
     }
   }
+
+  /**
+   * Valida token JWT assinado pela aplicação OU Firebase ID Token
+   */
+  async verifyToken(token: string): Promise<{ uid: string; email?: string }> {
+    // 1. Tentar verificar como JWT próprio da aplicação
+    try {
+      const decoded = jwt.verify(token, config.jwtSecret) as { uid: string; email?: string };
+      if (decoded && decoded.uid) {
+        return decoded;
+      }
+    } catch {
+      // Falha no JWT próprio, tentar verificar como Firebase ID Token
+    }
+
+    // 2. Tentar verificar como Firebase ID Token se o Admin SDK estiver inicializado
+    try {
+      if (authAdmin && typeof authAdmin.verifyIdToken === 'function') {
+        const decodedFb = await authAdmin.verifyIdToken(token);
+        if (decodedFb && decodedFb.uid) {
+          return {
+            uid: decodedFb.uid,
+            email: decodedFb.email,
+          };
+        }
+      }
+    } catch {
+      // Falha na verificação do Firebase ID Token
+    }
+
+    throw new AppError(401, 'Sessão inválida ou expirada. Faça login novamente.');
+  }
 }
+

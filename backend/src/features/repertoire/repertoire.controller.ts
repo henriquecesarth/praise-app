@@ -5,7 +5,10 @@ import * as service from './repertoire.service';
 
 function getUserId(req: Request): string {
   const anyReq = req as any;
-  return anyReq.user?.id || 'anonymous';
+  if (!anyReq.user?.id) {
+    throw new AppError(401, 'Usuário não autenticado.');
+  }
+  return anyReq.user.id;
 }
 
 function getTargetGroupId(req: Request): string {
@@ -153,8 +156,9 @@ export class RepertoireController extends BaseController {
 
   updateClassification = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
+      const groupId = getTargetGroupId(req);
       const { classificationId } = req.params as Record<string, string>;
-      const classification = await service.updateClassification(classificationId, req.body);
+      const classification = await service.updateClassification(groupId, classificationId, req.body);
       this.handleSuccess(res, { data: classification });
     } catch (error) {
       this.handleError(error, res, next);
@@ -163,8 +167,9 @@ export class RepertoireController extends BaseController {
 
   deleteClassification = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
+      const groupId = getTargetGroupId(req);
       const { classificationId } = req.params as Record<string, string>;
-      await service.deleteClassification(classificationId);
+      await service.deleteClassification(groupId, classificationId);
       this.handleNoContent(res);
     } catch (error) {
       this.handleError(error, res, next);

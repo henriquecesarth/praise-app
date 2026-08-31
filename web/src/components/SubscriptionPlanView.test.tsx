@@ -10,19 +10,19 @@ describe('SubscriptionPlanView Component', () => {
 
   const mockPlansResponse = {
     plans: [
-      { id: 'free', name: 'Free', baseMembers: 10, baseSongs: 50, allowMemberAddons: false, maxMemberAddonBlocks: 0 },
-      { id: 'lite', name: 'Lite', baseMembers: 20, baseSongs: 100, allowMemberAddons: false, maxMemberAddonBlocks: 0 },
-      { id: 'lite_plus', name: 'Lite+', baseMembers: 30, baseSongs: 150, allowMemberAddons: false, maxMemberAddonBlocks: 0 },
-      { id: 'essential', name: 'Essential', baseMembers: 40, baseSongs: 200, allowMemberAddons: true, maxMemberAddonBlocks: 4 },
-      { id: 'pro', name: 'Pro', baseMembers: 100, baseSongs: 500, allowMemberAddons: true, maxMemberAddonBlocks: 10 },
-      { id: 'premium', name: 'Premium', baseMembers: 'unlimited', baseSongs: 'unlimited', allowMemberAddons: false, maxMemberAddonBlocks: 0 },
+      { id: 'free', name: 'Free', baseMembers: 10, baseSongs: 50, allowMemberAddons: false, maxMemberAddonBlocks: 0, monthlyPriceCents: 0, annualPriceCents: 0, addonBlockMonthlyPriceCents: 0, addonBlockAnnualPriceCents: 0 },
+      { id: 'lite', name: 'Lite', baseMembers: 20, baseSongs: 100, allowMemberAddons: false, maxMemberAddonBlocks: 0, monthlyPriceCents: 1490, annualPriceCents: 16092, addonBlockMonthlyPriceCents: 0, addonBlockAnnualPriceCents: 0 },
+      { id: 'lite_plus', name: 'Lite+', baseMembers: 30, baseSongs: 150, allowMemberAddons: false, maxMemberAddonBlocks: 0, monthlyPriceCents: 2490, annualPriceCents: 26892, addonBlockMonthlyPriceCents: 0, addonBlockAnnualPriceCents: 0 },
+      { id: 'essential', name: 'Essential', baseMembers: 40, baseSongs: 200, allowMemberAddons: true, maxMemberAddonBlocks: 4, monthlyPriceCents: 3490, annualPriceCents: 37692, addonBlockMonthlyPriceCents: 990, addonBlockAnnualPriceCents: 10692 },
+      { id: 'pro', name: 'Pro', baseMembers: 100, baseSongs: 500, allowMemberAddons: true, maxMemberAddonBlocks: 10, monthlyPriceCents: 8990, annualPriceCents: 97092, addonBlockMonthlyPriceCents: 690, addonBlockAnnualPriceCents: 7452 },
+      { id: 'premium', name: 'Premium', baseMembers: 'unlimited', baseSongs: 'unlimited', allowMemberAddons: false, maxMemberAddonBlocks: 0, monthlyPriceCents: 21490, annualPriceCents: 232092, addonBlockMonthlyPriceCents: 0, addonBlockAnnualPriceCents: 0 },
     ],
     addonBlockSize: 10,
     defaultGracePeriodDays: 7,
   };
 
   const mockSummaryEssential = {
-    plan: { id: 'essential', name: 'Essential', baseMembers: 40, baseSongs: 200, allowMemberAddons: true, maxMemberAddonBlocks: 4 },
+    plan: { id: 'essential', name: 'Essential', baseMembers: 40, baseSongs: 200, allowMemberAddons: true, maxMemberAddonBlocks: 4, monthlyPriceCents: 3490, annualPriceCents: 37692, addonBlockMonthlyPriceCents: 990, addonBlockAnnualPriceCents: 10692 },
     subscription: {
       planId: 'essential',
       memberAddonBlocks: 2,
@@ -84,7 +84,7 @@ describe('SubscriptionPlanView Component', () => {
 
   it('deve formatar Premium como Ilimitado sem barra numérica finita', async () => {
     const mockSummaryPremium = {
-      plan: { id: 'premium', name: 'Premium', baseMembers: 'unlimited', baseSongs: 'unlimited', allowMemberAddons: false, maxMemberAddonBlocks: 0 },
+      plan: { id: 'premium', name: 'Premium', baseMembers: 'unlimited', baseSongs: 'unlimited', allowMemberAddons: false, maxMemberAddonBlocks: 0, monthlyPriceCents: 21490, annualPriceCents: 232092, addonBlockMonthlyPriceCents: 0, addonBlockAnnualPriceCents: 0 },
       subscription: {
         planId: 'premium',
         memberAddonBlocks: 0,
@@ -145,4 +145,109 @@ describe('SubscriptionPlanView Component', () => {
 
     expect(await screen.findByRole('heading', { level: 2, name: 'Essential' })).toBeInTheDocument();
   });
+
+  it('deve alternar entre ciclo mensal e anual ao clicar no toggle', async () => {
+    vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryEssential as any);
+    vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+    render(
+      <SubscriptionPlanView
+        ministryId="min-123"
+        onBack={mockOnBack}
+        showToast={mockShowToast}
+      />
+    );
+
+    const annualBtn = await screen.findByRole('button', { name: /Anual/i });
+    expect(annualBtn).toBeInTheDocument();
+    await userEvent.click(annualBtn);
+
+    const monthlyBtn = screen.getByRole('button', { name: /Mensal/i });
+    expect(monthlyBtn).toBeInTheDocument();
+    await userEvent.click(monthlyBtn);
+  });
+
+  it('deve abrir o modal de preview ao clicar em Assinar Plano', async () => {
+    vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryEssential as any);
+    vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+    vi.spyOn(api, 'getBillingPreview').mockResolvedValue({
+      planId: 'pro',
+      planName: 'Pro',
+      interval: 'monthly',
+      addonBlocks: 0,
+      effectiveMembersQuota: 100,
+      effectiveSongsQuota: 500,
+      basePriceCents: 8990,
+      addonsPriceCents: 0,
+      totalPriceCents: 8990,
+      fullMonthlyEquivalentCents: 8990,
+      annualSavingsCents: 0,
+      currency: 'BRL',
+      currentPlanId: 'essential',
+      isDowngrade: false,
+    });
+
+    render(
+      <SubscriptionPlanView
+        ministryId="min-123"
+        onBack={mockOnBack}
+        showToast={mockShowToast}
+      />
+    );
+
+    const assinarBtns = await screen.findAllByRole('button', { name: /Assinar Plano/i });
+    expect(assinarBtns.length).toBeGreaterThan(0);
+
+    await userEvent.click(assinarBtns[0]);
+
+    expect(await screen.findByText('Confirmar Assinatura')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Ir para Pagamento/i })).toBeInTheDocument();
+  });
+
+  it('deve exibir badge de Cortesia da Plataforma quando subscriptionMode for complimentary', async () => {
+    const mockComplimentarySummary = {
+      plan: { id: 'premium', name: 'Premium', baseMembers: 300, baseSongs: 1500, allowMemberAddons: false, maxMemberAddonBlocks: 0, monthlyPriceCents: 21490, annualPriceCents: 232092, addonBlockMonthlyPriceCents: 0, addonBlockAnnualPriceCents: 0 },
+      subscription: {
+        planId: 'premium',
+        memberAddonBlocks: 0,
+        billingStatus: 'active',
+        subscriptionMode: 'complimentary',
+        grantedBy: 'superadmin@louvaio.com',
+        grantedAt: '2026-08-29T10:00:00.000Z',
+        grantReason: 'Parceria',
+        expiresAt: null,
+        administrativelySuspended: false,
+        suspendedAt: null,
+        suspensionReason: null,
+        accessMode: 'normal',
+        gracePeriodExpiresAt: null,
+        currentPeriodStart: '2026-08-28T12:00:00.000Z',
+        currentPeriodEnd: null,
+        cancelAtPeriodEnd: false,
+      },
+      quotas: { members: 300, songs: 1500 },
+      usage: { membersCount: 45, songsCount: 120 },
+      isOverLimit: false,
+      overLimitDetails: { membersOver: false, songsOver: false },
+      graceDaysRemaining: null,
+    };
+
+    vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockComplimentarySummary as any);
+    vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+    render(
+      <SubscriptionPlanView
+        ministryId="min-123"
+        onBack={mockOnBack}
+        showToast={mockShowToast}
+      />
+    );
+
+    expect(await screen.findByRole('heading', { level: 2, name: 'Premium' })).toBeInTheDocument();
+    expect(screen.getByText('Cortesia da plataforma')).toBeInTheDocument();
+    expect(screen.getByText('Cortesia da Plataforma')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Cancelar assinatura/i })).not.toBeInTheDocument();
+  });
 });
+
+

@@ -15,6 +15,7 @@ import {
   MinistrySubscriptionRecord,
   MinistryUsageRecord,
   MinistrySubscriptionStatusSummary,
+  SubscriptionMode,
 } from './subscription.types';
 import { AppError } from '../../middleware/error-handler';
 
@@ -39,6 +40,11 @@ export class SubscriptionService {
         plan_id: DEFAULT_PLAN_ID,
         member_addon_blocks: 0,
         billing_status: 'active',
+        subscription_mode: 'free',
+        granted_by: null,
+        granted_at: null,
+        grant_reason: null,
+        expires_at: null,
         administratively_suspended: false,
         suspended_at: null,
         suspension_reason: null,
@@ -69,12 +75,21 @@ export class SubscriptionService {
     const plan = getPlanDefinition(subscription.plan_id);
     const resolvedState = resolveAccessMode(subscription, plan, usage, now);
 
+    const subscriptionMode: SubscriptionMode =
+      subscription.subscription_mode ||
+      (subscription.plan_id === 'free' ? 'free' : 'paid');
+
     return {
       plan,
       subscription: {
         planId: subscription.plan_id,
         memberAddonBlocks: subscription.member_addon_blocks || 0,
         billingStatus: subscription.billing_status,
+        subscriptionMode,
+        grantedBy: subscription.granted_by || null,
+        grantedAt: subscription.granted_at || null,
+        grantReason: subscription.grant_reason || null,
+        expiresAt: subscription.expires_at || null,
         administrativelySuspended: Boolean(subscription.administratively_suspended),
         suspendedAt: subscription.suspended_at || null,
         suspensionReason: subscription.suspension_reason || null,
@@ -96,7 +111,98 @@ export class SubscriptionService {
   }
 
   /**
-   * Primitiva interna de transição de plano (para uso por testes, fixtures e futuros webhooks de pagamento).
+   * Concede manualmente um plano de cortesia (complimentary) a um ministério por autoridade da plataforma.
+   * Não interage com o Asaas, não gera faturas fake e concede entitlements oficiais.
+   */
+  async grantComplimentaryPlan(
+    ministryId: string,
+    targetPlanId: PlanId,
+    grantedBy: string,
+    grantReason?: string,
+    expiresAt?: string | null
+  ): Promise<MinistrySubscriptionRecord> {
+    if (!(targetPlanId in PLANS_CATALOG)) {
+      throw new AppError(400, `Plano inválido para concessão: ${targetPlanId}`);
+    }
+
+    const { subscription, usage } = await this.subscriptionRepo.ensureSubscriptionAndUsage(ministryId);
+    const newPlan = getPlanDefinition(targetPlanId);
+    const now = new Date();
+
+    const newEffectiveQuotas: EffectiveQuotas = {
+      members: getEffectiveMemberQuota(newPlan, 0),
+      songs: getEffectiveSongQuota(newPlan),
+    };
+
+    const overLimitInfo = isUsageOverLimit(usage, newEffectiveQuotas);
+    let graceExpiresAt: string | null = null;
+    if (overLimitInfo.isOverLimit) {
+      graceExpiresAt = new Date(now.getTime() + DEFAULT_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    }
+
+    const updatedSub: MinistrySubscriptionRecord = {
+      ...subscription,
+      plan_id: targetPlanId,
+      member_addon_blocks: 0,
+      subscription_mode: 'complimentary',
+      billing_status: 'active',
+      granted_by: grantedBy,
+      granted_at: now.toISOString(),
+      grant_reason: grantReason || 'Concessão administrativa LouvAIO',
+      expires_at: expiresAt || null,
+      grace_period_expires_at: graceExpiresAt,
+      cancel_at_period_end: false,
+      updated_at: now.toISOString(),
+    };
+
+    await this.subscriptionRepo.setSubscription(updatedSub);
+    return updatedSub;
+  }
+
+  /**
+   * Revoga uma concessão de cortesia e retorna o ministério para o plano Free sem deletar dados.
+   * Se o uso atual ultrapassar o Free, inicia período de carência (grace) de 7 dias.
+   */
+  async revokeComplimentaryPlan(
+    ministryId: string,
+    revokedBy: string
+  ): Promise<MinistrySubscriptionRecord> {
+    const { subscription, usage } = await this.subscriptionRepo.ensureSubscriptionAndUsage(ministryId);
+    const now = new Date();
+
+    const freePlan = PLANS_CATALOG.free;
+    const freeQuotas: EffectiveQuotas = {
+      members: getEffectiveMemberQuota(freePlan, 0),
+      songs: getEffectiveSongQuota(freePlan),
+    };
+
+    const overLimitInfo = isUsageOverLimit(usage, freeQuotas);
+    let graceExpiresAt: string | null = null;
+    if (overLimitInfo.isOverLimit) {
+      graceExpiresAt = new Date(now.getTime() + DEFAULT_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    }
+
+    const updatedSub: MinistrySubscriptionRecord = {
+      ...subscription,
+      plan_id: 'free',
+      member_addon_blocks: 0,
+      subscription_mode: 'free',
+      billing_status: 'active',
+      granted_by: null,
+      granted_at: null,
+      grant_reason: `Cortesia revogada por ${revokedBy}`,
+      expires_at: null,
+      grace_period_expires_at: graceExpiresAt,
+      cancel_at_period_end: false,
+      updated_at: now.toISOString(),
+    };
+
+    await this.subscriptionRepo.setSubscription(updatedSub);
+    return updatedSub;
+  }
+
+  /**
+   * Primitiva interna de transição de plano (para uso por testes, fixtures e webhooks de pagamento).
    * Não apaga dados em caso de downgrade.
    */
   async changePlan(ministryId: string, targetPlanId: PlanId): Promise<MinistrySubscriptionRecord> {
@@ -125,10 +231,8 @@ export class SubscriptionService {
     let graceExpiresAt: string | null = subscription.grace_period_expires_at;
 
     if (overLimitInfo.isOverLimit) {
-      // Se a nova capacidade reduziu e causou over-limit, registra a carência de 7 dias
       graceExpiresAt = new Date(now.getTime() + DEFAULT_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000).toISOString();
     } else {
-      // Se está dentro da quota, limpa qualquer carência anterior
       graceExpiresAt = null;
     }
 
@@ -136,6 +240,7 @@ export class SubscriptionService {
       ...subscription,
       plan_id: targetPlanId,
       member_addon_blocks: newAddonBlocks,
+      subscription_mode: targetPlanId === 'free' ? 'free' : 'paid',
       grace_period_expires_at: graceExpiresAt,
       updated_at: now.toISOString(),
     };

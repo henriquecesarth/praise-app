@@ -7,38 +7,39 @@ export class ScheduleService {
     return this.scheduleRepository.getSchedulesByMinistry(ministryId);
   }
 
-  async getScheduleById(scheduleId: string): Promise<ScheduleRecord> {
-    return this.scheduleRepository.getScheduleById(scheduleId);
+  async getScheduleById(scheduleId: string, ministryId: string): Promise<ScheduleRecord> {
+    return this.scheduleRepository.getScheduleById(scheduleId, ministryId);
   }
 
   async createSchedule(ministryId: string, userId: string, data: Partial<ScheduleRecord>): Promise<ScheduleRecord> {
     return this.scheduleRepository.createSchedule(ministryId, userId, data);
   }
 
-  async updateSchedule(scheduleId: string, data: Partial<ScheduleRecord>): Promise<ScheduleRecord> {
-    return this.scheduleRepository.updateSchedule(scheduleId, data);
+  async updateSchedule(scheduleId: string, ministryId: string, data: Partial<ScheduleRecord>): Promise<ScheduleRecord> {
+    return this.scheduleRepository.updateSchedule(scheduleId, ministryId, data);
   }
 
-  async deleteSchedule(scheduleId: string): Promise<void> {
-    await this.scheduleRepository.deleteSchedule(scheduleId);
+  async deleteSchedule(scheduleId: string, ministryId: string): Promise<void> {
+    await this.scheduleRepository.deleteSchedule(scheduleId, ministryId);
   }
 
   async updateConfirmation(
     scheduleId: string,
+    ministryId: string,
     userId: string,
     userName: string,
     confirmed: boolean
   ): Promise<ScheduleRecord> {
-    return this.scheduleRepository.updateParticipantConfirmation(scheduleId, userId, userName, confirmed);
+    return this.scheduleRepository.updateParticipantConfirmation(scheduleId, ministryId, userId, userName, confirmed);
   }
 
   async getScheduleComments(
     scheduleId: string,
-    userId: string,
-    userName: string,
-    userRole?: string
+    ministryId: string,
+    limitCount = 50,
+    olderCursor?: string
   ): Promise<ScheduleCommentRecord[]> {
-    return this.scheduleRepository.getScheduleComments(scheduleId, userId, userName, userRole);
+    return this.scheduleRepository.getScheduleComments(scheduleId, ministryId, limitCount, olderCursor);
   }
 
   async addScheduleComment(
@@ -46,9 +47,9 @@ export class ScheduleService {
     scheduleId: string,
     userId: string,
     userName: string,
-    content: string,
-    userRole?: string
+    content: string
   ): Promise<ScheduleCommentRecord> {
-    return this.scheduleRepository.addScheduleComment(ministryId, scheduleId, userId, userName, content, userRole);
+    return this.scheduleRepository.addScheduleComment(ministryId, scheduleId, userId, userName, content);
   }
 }
+

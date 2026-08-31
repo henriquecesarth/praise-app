@@ -11,7 +11,12 @@ import {
   Liturgy,
   PlansResponse,
   MinistrySubscriptionSummary,
+  BillingInterval,
+  CheckoutPreviewResult,
+  CheckoutCreationResult,
+  BillingTransactionRecord,
 } from './types';
+
 
 export type SmartChord = any;
 
@@ -1019,4 +1024,70 @@ export const api = {
     });
     return handleResponse<MinistrySubscriptionSummary>(response);
   },
+
+  // Billing & Checkout
+  getBillingPreview: async (
+    ministryId: string,
+    planId: string,
+    interval: BillingInterval,
+    addonBlocks: number = 0
+  ): Promise<CheckoutPreviewResult> => {
+    const query = new URLSearchParams({
+      planId,
+      interval,
+      addonBlocks: String(addonBlocks),
+    });
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/billing/preview?${query.toString()}`, {
+      headers: getHeaders(),
+    });
+    return handleResponse<CheckoutPreviewResult>(response);
+  },
+
+  createBillingCheckout: async (
+    ministryId: string,
+    params: {
+      planId: string;
+      interval: BillingInterval;
+      addonBlocks?: number;
+      successUrl?: string;
+      cancelUrl?: string;
+    }
+  ): Promise<CheckoutCreationResult> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/billing/checkout`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(params),
+    });
+    return handleResponse<CheckoutCreationResult>(response);
+  },
+
+  cancelBillingSubscription: async (
+    ministryId: string
+  ): Promise<{ message: string; subscription: any }> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/billing/cancel`, {
+      method: 'POST',
+      headers: getHeaders(),
+    });
+    return handleResponse<{ message: string; subscription: any }>(response);
+  },
+
+  reactivateBillingSubscription: async (
+    ministryId: string
+  ): Promise<{ message: string; subscription: any }> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/billing/reactivate`, {
+      method: 'POST',
+      headers: getHeaders(),
+    });
+    return handleResponse<{ message: string; subscription: any }>(response);
+  },
+
+  getBillingHistory: async (
+    ministryId: string
+  ): Promise<{ transactions: BillingTransactionRecord[] }> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/billing/history`, {
+      headers: getHeaders(),
+    });
+    return handleResponse<{ transactions: BillingTransactionRecord[] }>(response);
+  },
 };
+
