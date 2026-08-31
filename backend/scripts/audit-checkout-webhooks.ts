@@ -1,3 +1,23 @@
+/**
+ * Script Operacional: Auditoria de Checkout e Webhooks Asaas
+ *
+ * Purpose:
+ *   Audita um checkout específico correlacionando o estado no Firestore
+ *   (billing_subscriptions, billing_transactions, billing_webhook_events)
+ *   com as entidades correspondentes na API do Asaas (payments, subscriptions).
+ *
+ * Required env / args:
+ *   MINISTRY_ID=<ministry_id> CHECKOUT_ID=<checkout_uuid> npx ts-node scripts/audit-checkout-webhooks.ts
+ *   ou:
+ *   npx ts-node scripts/audit-checkout-webhooks.ts <ministryId> <checkoutId>
+ *
+ * Operation type:
+ *   Read-only (não modifica documentos no Firestore nem dados no Asaas).
+ *
+ * Environment restrictions:
+ *   Pode ser executado em dev, sandbox, staging ou production com credenciais válidas.
+ */
+
 import { db } from '../src/lib/firebase';
 import { config } from '../src/config/unifiedConfig';
 
@@ -26,11 +46,11 @@ async function auditCheckoutEvents() {
 
   if (!ministryId || !checkoutId) {
     console.error('Uso: MINISTRY_ID=<id> CHECKOUT_ID=<uuid> npx ts-node scripts/audit-checkout-webhooks.ts');
-    console.error('Ou: npx ts-node scripts/audit-checkout-webhooks.ts <ministryId> <checkoutId>');
+    console.error('Ou:  npx ts-node scripts/audit-checkout-webhooks.ts <ministryId> <checkoutId>');
     process.exit(1);
   }
 
-  console.log(`=== AUDITORIA DE EVENTOS REAIS PARA O CHECKOUT ===`);
+  console.log('=== AUDITORIA DE EVENTOS DO CHECKOUT ASAAS ===');
   console.log(`Ministry ID: ${ministryId}`);
   console.log(`Checkout ID: ${checkoutId}\n`);
 
@@ -59,28 +79,30 @@ async function auditCheckoutEvents() {
   } else {
     txSnap.forEach((doc: any) => {
       const txData = doc.data();
-      providerPaymentId = txData.provider_payment_id || null;
+      if (!providerPaymentId && txData.provider_payment_id) {
+        providerPaymentId = txData.provider_payment_id;
+      }
       console.log(JSON.stringify(txData, null, 2));
     });
   }
 
-  // 3. billing_webhook_events (filtrados e correlacionados exclusivamente com este fluxo)
+  // 3. billing_webhook_events
   console.log('\n--- 3. EVENTOS DO WEBHOOK CORRELACIONADOS COM ESTE CHECKOUT ---');
-  const allEventsSnap = await db.collection('billing_webhook_events').orderBy('received_at', 'desc').limit(30).get();
+  const allEventsSnap = await db.collection('billing_webhook_events').orderBy('received_at', 'desc').limit(50).get();
 
   const correlatedEvents: any[] = [];
   const otherHistoricalEvents: any[] = [];
 
   allEventsSnap.forEach((doc: any) => {
     const d = doc.data();
-    // Identificar correlação com este checkout ou IDs gerados nesta jornada
+    const payloadStr = JSON.stringify(d);
+
     const isCorrelated =
       doc.id.includes(checkoutId) ||
       (d.error_message && d.error_message.includes(checkoutId)) ||
-      (d.event_type === 'CHECKOUT_CREATED' && new Date(d.received_at).getTime() >= new Date('2026-08-31T02:50:00Z').getTime()) ||
-      (d.event_type === 'CHECKOUT_PAID' && new Date(d.received_at).getTime() >= new Date('2026-08-31T02:50:00Z').getTime()) ||
-      (d.event_type === 'SUBSCRIPTION_CREATED' && new Date(d.received_at).getTime() >= new Date('2026-08-31T02:50:00Z').getTime()) ||
-      (d.event_type === 'PAYMENT_CONFIRMED' && new Date(d.received_at).getTime() >= new Date('2026-08-31T02:50:00Z').getTime() && !doc.id.includes('sim'));
+      payloadStr.includes(checkoutId) ||
+      (providerSubscriptionId && payloadStr.includes(providerSubscriptionId)) ||
+      (providerPaymentId && payloadStr.includes(providerPaymentId));
 
     if (isCorrelated) {
       correlatedEvents.push({ id: doc.id, ...d });
@@ -89,14 +111,16 @@ async function auditCheckoutEvents() {
     }
   });
 
-  console.log(`Eventos reais da jornada atual (${correlatedEvents.length}):`);
+  console.log(`Eventos correlacionados encontrados (${correlatedEvents.length}):`);
   correlatedEvents.reverse().forEach((ev) => {
     console.log(`- [${ev.received_at}] ${ev.event_type} (${ev.id}) -> Status: ${ev.processing_status} | Erro: ${ev.error_message || 'none'}`);
   });
 
-  console.log(`\n(Outros ${otherHistoricalEvents.length} eventos históricos/anteriores ignorados nesta auditoria)`);
+  if (otherHistoricalEvents.length > 0) {
+    console.log(`\n(Outros ${otherHistoricalEvents.length} eventos recentes não relacionados ao checkout consultado)`);
+  }
 
-  // 4. Consulta direta à API Asaas Sandbox
+  // 4. Consulta direta à API Asaas
   const apiUrl = config.asaas.apiUrl.replace(/\/+$/, '');
   const headers = { 'Content-Type': 'application/json', access_token: config.asaas.apiKey || '' };
 
