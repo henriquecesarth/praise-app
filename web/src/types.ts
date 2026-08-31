@@ -197,11 +197,14 @@ export interface OverLimitDetails {
   songsOver: boolean;
 }
 
+export type SubscriptionMode = 'free' | 'paid' | 'complimentary';
+
 export interface MinistrySubscriptionRecord {
   planId: PlanId;
   memberAddonBlocks: number;
   billingStatus: BillingStatus;
-  subscriptionMode?: 'free' | 'paid' | 'complimentary';
+  billingInterval?: BillingInterval;
+  subscriptionMode?: SubscriptionMode;
   grantedBy?: string | null;
   grantedAt?: string | null;
   grantReason?: string | null;

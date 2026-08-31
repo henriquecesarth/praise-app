@@ -1,14 +1,19 @@
 import { config } from '../config/unifiedConfig';
 
 /**
- * Retorna a data corrente de faturamento formatada em YYYY-MM-DD
+ * Retorna uma data de faturamento formatada em YYYY-MM-DD
  * respeitando estritamente o timezone configurado (padrão: America/Sao_Paulo),
  * evitando discrepâncias entre o horário UTC do servidor e o dia comercial local.
  */
-export function getCurrentBillingDate(
-  now: Date = new Date(),
+export function getBillingDate(
+  date: Date | string = new Date(),
   timeZone: string = config.billingTimezone || 'America/Sao_Paulo'
 ): string {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  if (isNaN(d.getTime())) {
+    return getCurrentBillingDate(new Date(), timeZone);
+  }
+
   const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone,
     year: 'numeric',
@@ -16,10 +21,20 @@ export function getCurrentBillingDate(
     day: '2-digit',
   });
 
-  const parts = formatter.formatToParts(now);
+  const parts = formatter.formatToParts(d);
   const year = parts.find((p) => p.type === 'year')?.value;
   const month = parts.find((p) => p.type === 'month')?.value;
   const day = parts.find((p) => p.type === 'day')?.value;
 
   return `${year}-${month}-${day}`;
+}
+
+/**
+ * Retorna a data corrente de faturamento formatada em YYYY-MM-DD
+ */
+export function getCurrentBillingDate(
+  now: Date = new Date(),
+  timeZone: string = config.billingTimezone || 'America/Sao_Paulo'
+): string {
+  return getBillingDate(now, timeZone);
 }

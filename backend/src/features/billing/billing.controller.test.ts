@@ -35,6 +35,7 @@ describe('BillingController Tests', () => {
     mockRes = {
       status: vi.fn().mockReturnThis(),
       json: vi.fn().mockReturnThis(),
+      redirect: vi.fn().mockReturnThis(),
     };
 
     mockNext = vi.fn();
@@ -179,6 +180,69 @@ describe('BillingController Tests', () => {
         { event: 'PAYMENT_CONFIRMED' }
       );
       expect(mockRes.json).toHaveBeenCalledWith({ status: 'ok', processed: true });
+    });
+  });
+
+  describe('GET /api/v1/billing/checkout-return/:status (Ponte de Retorno)', () => {
+    it('deve responder com 302 redirecionando para /ministerio/plano?status=success no status success', async () => {
+      mockReq.params = { status: 'success' };
+
+      await controller.handleCheckoutReturn(mockReq as Request, mockRes as Response, mockNext);
+
+      expect(mockRes.redirect).toHaveBeenCalledWith(302, 'http://localhost:5173/ministerio/plano?status=success');
+      expect(mockNext).not.toHaveBeenCalled();
+    });
+
+    it('deve responder com 302 redirecionando para /ministerio/plano?status=cancel no status cancel', async () => {
+      mockReq.params = { status: 'cancel' };
+
+      await controller.handleCheckoutReturn(mockReq as Request, mockRes as Response, mockNext);
+
+      expect(mockRes.redirect).toHaveBeenCalledWith(302, 'http://localhost:5173/ministerio/plano?status=cancel');
+      expect(mockNext).not.toHaveBeenCalled();
+    });
+
+    it('deve responder com 302 redirecionando para /ministerio/plano?status=expired no status expired', async () => {
+      mockReq.params = { status: 'expired' };
+
+      await controller.handleCheckoutReturn(mockReq as Request, mockRes as Response, mockNext);
+
+      expect(mockRes.redirect).toHaveBeenCalledWith(302, 'http://localhost:5173/ministerio/plano?status=expired');
+      expect(mockNext).not.toHaveBeenCalled();
+    });
+
+    it('deve lançar AppError 400 se o status for inválido', async () => {
+      mockReq.params = { status: 'unknown_status' };
+
+      await controller.handleCheckoutReturn(mockReq as Request, mockRes as Response, mockNext);
+
+      expect(mockNext).toHaveBeenCalledWith(expect.any(AppError));
+      const error = mockNext.mock.calls[0][0];
+      expect(error.statusCode).toBe(400);
+      expect(error.message).toContain('Status de retorno inválido');
+      expect(mockRes.redirect).not.toHaveBeenCalled();
+    });
+
+    it('SEGURANÇA: deve ignorar parâmetros de query arbitrários e previnir open redirect', async () => {
+      mockReq.params = { status: 'success' };
+      mockReq.query = { redirect: 'https://evil-hacker.com', returnUrl: 'https://phishing.com', next: '/admin' };
+
+      await controller.handleCheckoutReturn(mockReq as Request, mockRes as Response, mockNext);
+
+      expect(mockRes.redirect).toHaveBeenCalledWith(302, 'http://localhost:5173/ministerio/plano?status=success');
+      expect(mockRes.redirect).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('evil-hacker'));
+      expect(mockRes.redirect).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('phishing'));
+    });
+
+    it('SEGURANÇA: não deve interagir com serviços de billing, ativar entitlements ou processar pagamentos', async () => {
+      mockReq.params = { status: 'success' };
+
+      await controller.handleCheckoutReturn(mockReq as Request, mockRes as Response, mockNext);
+
+      expect(mockBillingService.createCheckout).not.toHaveBeenCalled();
+      expect(mockBillingService.cancelSubscription).not.toHaveBeenCalled();
+      expect(mockBillingService.reactivateSubscription).not.toHaveBeenCalled();
+      expect(mockBillingService.handleWebhook).not.toHaveBeenCalled();
     });
   });
 });

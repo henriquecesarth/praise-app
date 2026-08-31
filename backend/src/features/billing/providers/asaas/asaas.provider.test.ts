@@ -306,20 +306,46 @@ describe('AsaasBillingProvider — Webhook Authentication & Parser Validation', 
       });
     });
 
-    it('deve retornar mock checkout quando apiKey não for configurada', async () => {
+    it('deve lançar AppError 500 (fail-closed) ao tentar createCheckout quando apiKey não for configurada', async () => {
       const provider = new AsaasBillingProvider({ apiKey: undefined });
 
-      const result = await provider.createCheckout({
-        ministryId: 'min_test',
-        planId: 'lite',
-        planName: 'Lite',
-        interval: 'monthly',
-        addonBlocks: 0,
-        amountCents: 1490,
-      });
+      await expect(
+        provider.createCheckout({
+          ministryId: 'min_test',
+          planId: 'lite',
+          planName: 'Lite',
+          interval: 'monthly',
+          addonBlocks: 0,
+          amountCents: 1490,
+        })
+      ).rejects.toThrow('Gateway Asaas não configurado.');
+    });
 
-      expect(result.checkoutUrl).toContain('https://sandbox.asaas.com/checkoutSession/show/chk_mock_');
-      expect(result.checkoutId).toContain('chk_mock_');
+    it('deve lançar AppError 500 (fail-closed) ao tentar createCustomer quando apiKey não for configurada', async () => {
+      const provider = new AsaasBillingProvider({ apiKey: undefined });
+
+      await expect(
+        provider.createCustomer({
+          ministryId: 'min_test',
+          ministryName: 'Ministério Teste',
+        })
+      ).rejects.toThrow('Gateway Asaas não configurado.');
+    });
+
+    it('deve lançar AppError 500 (fail-closed) ao tentar cancelSubscription quando apiKey não for configurada', async () => {
+      const provider = new AsaasBillingProvider({ apiKey: undefined });
+
+      await expect(
+        provider.cancelSubscription('sub_123', false)
+      ).rejects.toThrow('Gateway Asaas não configurado.');
+    });
+
+    it('deve lançar AppError 500 (fail-closed) ao tentar getSubscription quando apiKey não for configurada', async () => {
+      const provider = new AsaasBillingProvider({ apiKey: undefined });
+
+      await expect(
+        provider.getSubscription('sub_123')
+      ).rejects.toThrow('Gateway Asaas não configurado.');
     });
   });
 
@@ -470,6 +496,318 @@ describe('AsaasBillingProvider — Webhook Authentication & Parser Validation', 
           status: 'CONFIRMED',
         })
       );
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // 8. Operações de Inativação, Reativação e Remoção no Asaas
+  // --------------------------------------------------------------------------
+  describe('8. Operações no Gateway Asaas: Inativação (PUT INACTIVE), Reativação (PUT ACTIVE) e Remoção (DELETE)', () => {
+    let provider: AsaasBillingProvider;
+    let originalFetch: typeof global.fetch;
+
+    beforeEach(() => {
+      provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key_123',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+      originalFetch = global.fetch;
+    });
+
+    it('A) inactivateSubscription / cancelSubscription: envia PUT /subscriptions/:id com body { status: "INACTIVE" }', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'sub_old_123', status: 'INACTIVE' }),
+      });
+      global.fetch = mockFetch as any;
+
+      const result = await provider.cancelSubscription('sub_old_123', true);
+
+      expect(result.success).toBe(true);
+      expect(result.canceledAtPeriodEnd).toBe(true);
+      expect(mockFetch).toHaveBeenCalledWith('https://sandbox.asaas.com/api/v3/subscriptions/sub_old_123', {
+        method: 'PUT',
+        headers: {
+          access_token: 'test_api_key_123',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status: 'INACTIVE' }),
+      });
+
+      global.fetch = originalFetch;
+    });
+
+    it('B) reactivateSubscription: envia PUT /subscriptions/:id com body { status: "ACTIVE", nextDueDate: "YYYY-MM-DD" }', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'sub_old_123', status: 'ACTIVE', nextDueDate: '2026-09-30' }),
+      });
+      global.fetch = mockFetch as any;
+
+      const result = await provider.reactivateSubscription('sub_old_123', '2026-09-30');
+
+      expect(result.success).toBe(true);
+      expect(mockFetch).toHaveBeenCalledWith('https://sandbox.asaas.com/api/v3/subscriptions/sub_old_123', {
+        method: 'PUT',
+        headers: {
+          access_token: 'test_api_key_123',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status: 'ACTIVE', nextDueDate: '2026-09-30' }),
+      });
+
+      global.fetch = originalFetch;
+    });
+
+    it('C) HTTP Asaas fail: lança AppError e fecha com falha sem sucesso falso', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({ errors: [{ description: 'Assinatura já inativa ou inválida' }] }),
+      });
+      global.fetch = mockFetch as any;
+
+      await expect(provider.inactivateSubscription('sub_invalid')).rejects.toThrow(AppError);
+
+      global.fetch = originalFetch;
+    });
+
+    it('D) removeSubscription: envia DELETE /subscriptions/:id quando remoção definitiva for solicitada', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ deleted: true, id: 'sub_del_123' }),
+      });
+      global.fetch = mockFetch as any;
+
+      const result = await provider.removeSubscription('sub_del_123');
+
+      expect(result.success).toBe(true);
+      expect(mockFetch).toHaveBeenCalledWith('https://sandbox.asaas.com/api/v3/subscriptions/sub_del_123', {
+        method: 'DELETE',
+        headers: {
+          access_token: 'test_api_key_123',
+        },
+      });
+
+      global.fetch = originalFetch;
+    });
+  });
+
+  describe('10. Operações de Cobrança Individual e Limpeza de Renovação Futura (listSubscriptionPayments, removePayment, getPayment)', () => {
+    const provider = new AsaasBillingProvider({
+      apiUrl: 'https://sandbox.asaas.com/api/v3',
+      apiKey: 'test_api_key_123',
+      webhookToken: 'test_token',
+    });
+
+    it('A) listSubscriptionPayments: consulta pagamentos da assinatura com paginação automática', async () => {
+      const page1 = {
+        hasMore: true,
+        totalCount: 2,
+        limit: 50,
+        offset: 0,
+        data: [
+          {
+            id: 'pay_1',
+            subscription: 'sub_old_123',
+            customer: 'cus_123',
+            status: 'PENDING',
+            dueDate: '2026-09-30',
+            value: 14.9,
+            billingType: 'CREDIT_CARD',
+          },
+        ],
+      };
+
+      const page2 = {
+        hasMore: false,
+        totalCount: 2,
+        limit: 50,
+        offset: 50,
+        data: [
+          {
+            id: 'pay_2',
+            subscription: 'sub_old_123',
+            customer: 'cus_123',
+            status: 'PENDING',
+            dueDate: '2026-10-30',
+            value: 14.9,
+            billingType: 'CREDIT_CARD',
+          },
+        ],
+      };
+
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => page1,
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => page2,
+        });
+      global.fetch = mockFetch as any;
+
+      const payments = await provider.listSubscriptionPayments('sub_old_123', { status: 'PENDING' });
+
+      expect(payments).toHaveLength(2);
+      expect(payments[0]).toEqual({
+        id: 'pay_1',
+        subscriptionId: 'sub_old_123',
+        customerId: 'cus_123',
+        status: 'PENDING',
+        dueDate: '2026-09-30',
+        amountCents: 1490,
+        billingType: 'CREDIT_CARD',
+        externalReference: undefined,
+      });
+      expect(payments[1].id).toBe('pay_2');
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+
+      global.fetch = originalFetch;
+    });
+
+    it('B) listSubscriptionPayments: retorna array vazio em 404', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+      });
+      global.fetch = mockFetch as any;
+
+      const payments = await provider.listSubscriptionPayments('sub_not_found');
+      expect(payments).toEqual([]);
+
+      global.fetch = originalFetch;
+    });
+
+    it('C) removePayment: envia DELETE /v3/payments/:id sem body e com access_token', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ deleted: true, id: 'pay_future_1' }),
+      });
+      global.fetch = mockFetch as any;
+
+      const result = await provider.removePayment('pay_future_1');
+
+      expect(result.success).toBe(true);
+      expect(mockFetch).toHaveBeenCalledWith('https://sandbox.asaas.com/api/v3/payments/pay_future_1', {
+        method: 'DELETE',
+        headers: {
+          access_token: 'test_api_key_123',
+        },
+      });
+
+      global.fetch = originalFetch;
+    });
+
+    it('D) removePayment: falha HTTP lança AppError fail-closed', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({ errors: [{ description: 'Cobrança confirmada não pode ser removida' }] }),
+      });
+      global.fetch = mockFetch as any;
+
+      await expect(provider.removePayment('pay_confirmed')).rejects.toThrow(AppError);
+
+      global.fetch = originalFetch;
+    });
+
+    it('E) getPayment: consulta cobrança individual e mapeia status e amountCents', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 'pay_123',
+          subscription: 'sub_123',
+          customer: 'cus_123',
+          status: 'CONFIRMED',
+          dueDate: '2026-09-30',
+          value: 29.9,
+          billingType: 'CREDIT_CARD',
+        }),
+      });
+      global.fetch = mockFetch as any;
+
+      const payment = await provider.getPayment('pay_123');
+
+      expect(payment).toEqual({
+        id: 'pay_123',
+        subscriptionId: 'sub_123',
+        customerId: 'cus_123',
+        status: 'CONFIRMED',
+        dueDate: '2026-09-30',
+        amountCents: 2990,
+        billingType: 'CREDIT_CARD',
+        externalReference: undefined,
+      });
+
+      global.fetch = originalFetch;
+    });
+  });
+
+  describe('8. Asaas Checkout Callback Payload & Localhost Rejection', () => {
+    it('deve enviar callback público HTTPS para Asaas POST /v3/checkouts', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'chk_123', link: 'https://sandbox.asaas.com/c/chk_123' }),
+      });
+      global.fetch = mockFetch as any;
+
+      const result = await provider.createCheckout({
+        ministryId: 'min-100',
+        planId: 'essential',
+        planName: 'Essential',
+        interval: 'monthly',
+        addonBlocks: 0,
+        amountCents: 3490,
+        successUrl: 'https://tunnel.trycloudflare.com/api/v1/billing/checkout-return/success',
+        cancelUrl: 'https://tunnel.trycloudflare.com/api/v1/billing/checkout-return/cancel',
+        expiredUrl: 'https://tunnel.trycloudflare.com/api/v1/billing/checkout-return/expired',
+      });
+
+      expect(result.checkoutUrl).toBe('https://sandbox.asaas.com/c/chk_123');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://sandbox.asaas.com/api/v3/checkouts',
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.stringContaining('"callback":{"successUrl":"https://tunnel.trycloudflare.com/api/v1/billing/checkout-return/success","cancelUrl":"https://tunnel.trycloudflare.com/api/v1/billing/checkout-return/cancel","expiredUrl":"https://tunnel.trycloudflare.com/api/v1/billing/checkout-return/expired"}'),
+        })
+      );
+
+      global.fetch = originalFetch;
+    });
+
+    it('deve rejeitar se successUrl contiver localhost ou 127.0.0.1', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+
+      await expect(
+        provider.createCheckout({
+          ministryId: 'min-100',
+          planId: 'essential',
+          planName: 'Essential',
+          interval: 'monthly',
+          addonBlocks: 0,
+          amountCents: 3490,
+          successUrl: 'http://localhost:5173/ministerio/plano?status=success',
+        })
+      ).rejects.toThrow('URL de callback do Asaas inválida ou aponta para localhost');
     });
   });
 });

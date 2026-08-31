@@ -71,20 +71,32 @@ export class SubscriptionService {
       };
     }
 
-    // 3. Resolver definições e estado de acesso
-    const plan = getPlanDefinition(subscription.plan_id);
+    // 3. Resolver término de período cancelado ou cortesia expirada
+    const isPeriodEnded = Boolean(
+      subscription.cancel_at_period_end &&
+      subscription.current_period_end &&
+      now > new Date(subscription.current_period_end)
+    );
+
+    const effectivePlanId = isPeriodEnded ? 'free' : subscription.plan_id;
+    const plan = getPlanDefinition(effectivePlanId);
     const resolvedState = resolveAccessMode(subscription, plan, usage, now);
 
-    const subscriptionMode: SubscriptionMode =
-      subscription.subscription_mode ||
-      (subscription.plan_id === 'free' ? 'free' : 'paid');
+    const subscriptionMode: SubscriptionMode = isPeriodEnded
+      ? 'free'
+      : (subscription.subscription_mode || (subscription.plan_id === 'free' ? 'free' : 'paid'));
 
     return {
       plan,
       subscription: {
-        planId: subscription.plan_id,
-        memberAddonBlocks: subscription.member_addon_blocks || 0,
-        billingStatus: subscription.billing_status,
+        planId: effectivePlanId,
+        memberAddonBlocks: isPeriodEnded ? 0 : (subscription.member_addon_blocks || 0),
+        billingStatus: isPeriodEnded ? 'canceled' : subscription.billing_status,
+        billingInterval: subscription.billing_interval || (
+          subscription.current_period_end && subscription.current_period_start
+            ? ((new Date(subscription.current_period_end).getTime() - new Date(subscription.current_period_start).getTime()) > 60 * 24 * 60 * 60 * 1000 ? 'annual' : 'monthly')
+            : 'monthly'
+        ),
         subscriptionMode,
         grantedBy: subscription.granted_by || null,
         grantedAt: subscription.granted_at || null,

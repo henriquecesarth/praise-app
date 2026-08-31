@@ -1,6 +1,7 @@
 import {
   PlanId,
   BillingStatus,
+  BillingInterval,
   AccessMode,
   QuotaLimit,
   PlanDefinition,
@@ -15,6 +16,7 @@ export interface MinistrySubscriptionRecord {
   plan_id: PlanId;
   member_addon_blocks: number;
   billing_status: BillingStatus;
+  billing_interval?: BillingInterval;
   subscription_mode?: SubscriptionMode;
   granted_by?: string | null;
   granted_at?: string | null;
@@ -46,6 +48,7 @@ export interface MinistrySubscriptionStatusSummary {
     planId: PlanId;
     memberAddonBlocks: number;
     billingStatus: BillingStatus;
+    billingInterval?: BillingInterval;
     subscriptionMode: SubscriptionMode;
     grantedBy: string | null;
     grantedAt: string | null;

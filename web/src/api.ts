@@ -1089,5 +1089,15 @@ export const api = {
     });
     return handleResponse<{ transactions: BillingTransactionRecord[] }>(response);
   },
+
+  reconcileBillingSubscription: async (
+    ministryId: string
+  ): Promise<{ message: string; reconciled: boolean; subscription: any }> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/billing/reconcile`, {
+      method: 'POST',
+      headers: getHeaders(),
+    });
+    return handleResponse<{ message: string; reconciled: boolean; subscription: any }>(response);
+  },
 };
 

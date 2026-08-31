@@ -607,6 +607,57 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
       expect(overResult.isOverLimit).toBe(true);
       expect(overResult.accessMode).toBe('restricted_over_limit');
     });
+
+    it('Cenário L: cancel_at_period_end no futuro mantém plano pago; após vencer transiciona para Free', async () => {
+      const mockRepo = {
+        getSubscription: vi.fn(),
+        getUsage: vi.fn().mockResolvedValue({
+          id: 'min-cancel',
+          ministry_id: 'min-cancel',
+          members_count: 8,
+          songs_count: 30,
+        }),
+      };
+      const service = new SubscriptionService(mockRepo as any);
+
+      // 1. Período ainda válido no futuro: continua Pro
+      mockRepo.getSubscription.mockResolvedValue({
+        id: 'min-cancel',
+        ministry_id: 'min-cancel',
+        plan_id: 'pro',
+        member_addon_blocks: 0,
+        billing_status: 'active',
+        subscription_mode: 'paid',
+        cancel_at_period_end: true,
+        current_period_start: '2026-08-01T00:00:00.000Z',
+        current_period_end: new Date(Date.now() + 86400000).toISOString(), // amanhã
+      });
+
+      const summaryFuture = await service.getSubscriptionSummary('min-cancel');
+      expect(summaryFuture.plan.id).toBe('pro');
+      expect(summaryFuture.subscription.subscriptionMode).toBe('paid');
+      expect(summaryFuture.subscription.cancelAtPeriodEnd).toBe(true);
+      expect(summaryFuture.quotas.members).toBe(100);
+
+      // 2. Período vencido no passado: transiciona para Free
+      mockRepo.getSubscription.mockResolvedValue({
+        id: 'min-cancel',
+        ministry_id: 'min-cancel',
+        plan_id: 'pro',
+        member_addon_blocks: 0,
+        billing_status: 'active',
+        subscription_mode: 'paid',
+        cancel_at_period_end: true,
+        current_period_start: '2026-07-01T00:00:00.000Z',
+        current_period_end: '2026-08-01T00:00:00.000Z', // passado
+      });
+
+      const summaryPast = await service.getSubscriptionSummary('min-cancel');
+      expect(summaryPast.plan.id).toBe('free');
+      expect(summaryPast.subscription.subscriptionMode).toBe('free');
+      expect(summaryPast.quotas.members).toBe(10);
+      expect(summaryPast.quotas.songs).toBe(50);
+    });
   });
 });
 

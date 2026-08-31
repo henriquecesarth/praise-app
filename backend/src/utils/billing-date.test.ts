@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { getCurrentBillingDate } from './billing-date';
+import { getCurrentBillingDate, getBillingDate } from './billing-date';
 
-describe('getCurrentBillingDate — Deterministic Timezone Billing Date Helper', () => {
+describe('getBillingDate & getCurrentBillingDate — Deterministic Timezone Billing Date Helper', () => {
   const timeZone = 'America/Sao_Paulo';
 
   it('deve retornar a data local correta quando o instante UTC já avançou para o dia seguinte (bug de fronteira UTC)', () => {
@@ -46,5 +46,26 @@ describe('getCurrentBillingDate — Deterministic Timezone Billing Date Helper',
     const result = getCurrentBillingDate(yearTransition, timeZone);
 
     expect(result).toBe('2026-12-31');
+  });
+
+  it('getBillingDate: deve formatar corretamente string ISO-8601 de current_period_end em timezone comercial', () => {
+    const periodEndIso = '2026-09-30T23:59:59.000Z'; // 20:59:59 no Brasil em 30/09
+    const formatted = getBillingDate(periodEndIso, timeZone);
+
+    expect(formatted).toBe('2026-09-30');
+  });
+
+  it('getBillingDate: deve tratar string de data já no dia seguinte UTC preservando o dia comercial', () => {
+    const earlyMorningUtc = '2026-10-01T02:00:00.000Z'; // 23:00 no Brasil em 30/09
+    const formatted = getBillingDate(earlyMorningUtc, timeZone);
+
+    expect(formatted).toBe('2026-09-30');
+  });
+
+  it('getBillingDate: cutoff de current_period_end 2026-09-30T02:59:38.609Z em America/Sao_Paulo resulta em 2026-09-29', () => {
+    const cutoffDateIso = '2026-09-30T02:59:38.609Z'; // 23:59:38 no Brasil em 29/09
+    const formatted = getBillingDate(cutoffDateIso, timeZone);
+
+    expect(formatted).toBe('2026-09-29');
   });
 });

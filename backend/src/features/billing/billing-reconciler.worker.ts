@@ -1,0 +1,89 @@
+import os from 'os';
+import { config } from '../../config/unifiedConfig';
+import { BillingService } from './billing.service';
+import { BillingRepository } from '../../repositories/BillingRepository';
+
+export class BillingReconcilerWorker {
+  private timer: NodeJS.Timeout | null = null;
+  private isRunning: boolean = false;
+  private readonly workerId: string;
+
+  constructor(
+    private readonly billingService: BillingService = new BillingService(),
+    private readonly billingRepo: BillingRepository = new BillingRepository()
+  ) {
+    const hostname = os.hostname() || 'host';
+    const pid = process.pid || 1;
+    const rand = Math.random().toString(36).substring(2, 8);
+    this.workerId = `reconciler_${hostname}_${pid}_${rand}`;
+  }
+
+  start(): void {
+    if (this.timer || !config.billingReconciliationEnabled) {
+      return;
+    }
+
+    const intervalMinutes = Math.max(1, config.billingReconciliationIntervalMinutes || 15);
+    const intervalMs = intervalMinutes * 60 * 1000;
+
+    // Executa uma vez no startup (com pequeno delay para o app estabilizar)
+    setTimeout(() => {
+      this.runCycle().catch((err) => {
+        console.error('[BillingReconcilerWorker] Erro no ciclo inicial de startup:', err);
+      });
+    }, 5000);
+
+    this.timer = setInterval(() => {
+      this.runCycle().catch((err) => {
+        console.error('[BillingReconcilerWorker] Erro no ciclo periódico de reconciliação:', err);
+      });
+    }, intervalMs);
+
+    if (this.timer.unref) {
+      this.timer.unref();
+    }
+  }
+
+  stop(): void {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+  }
+
+  async runCycle(): Promise<{ processed: number; succeeded: number; failed: number }> {
+    if (this.isRunning) {
+      return { processed: 0, succeeded: 0, failed: 0 };
+    }
+
+    this.isRunning = true;
+    let processed = 0;
+    let succeeded = 0;
+    let failed = 0;
+
+    try {
+      const pendingChanges = await this.billingRepo.getPendingOrFailedPlanChanges('asaas', 20);
+
+      for (const change of pendingChanges) {
+        processed++;
+        const result = await this.billingService.processPlanChangeSupersede(change.id, this.workerId);
+        if (result.success) {
+          succeeded++;
+          console.log(
+            `[BillingReconcilerWorker] Supersede recuperado com sucesso para transição ${change.id} (ministério: ${change.ministry_id})`
+          );
+        } else {
+          failed++;
+        }
+      }
+    } catch (err: any) {
+      console.error('[BillingReconcilerWorker] Falha ao executar ciclo de reconciliação:', err);
+    } finally {
+      this.isRunning = false;
+    }
+
+    return { processed, succeeded, failed };
+  }
+}
+
+export const billingReconcilerWorker = new BillingReconcilerWorker();

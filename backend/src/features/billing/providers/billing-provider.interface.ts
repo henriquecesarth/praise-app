@@ -33,6 +33,17 @@ export interface ParsedWebhookEvent {
   status?: string;
 }
 
+export interface ProviderPaymentRecord {
+  id: string;
+  subscriptionId?: string;
+  customerId?: string;
+  status: string;
+  dueDate: string;
+  amountCents: number;
+  billingType?: string;
+  externalReference?: string;
+}
+
 export interface BillingProvider {
   readonly name: BillingProviderName;
 
@@ -55,6 +66,7 @@ export interface BillingProvider {
     amountCents: number;
     successUrl?: string;
     cancelUrl?: string;
+    expiredUrl?: string;
     customerData?: {
       name?: string;
       email?: string;
@@ -67,12 +79,25 @@ export interface BillingProvider {
     expiresAt: string | null;
   }>;
 
+  inactivateSubscription(providerSubscriptionId: string): Promise<{ success: boolean }>;
+
+  removeSubscription(providerSubscriptionId: string): Promise<{ success: boolean }>;
+
   cancelSubscription(
     providerSubscriptionId: string,
     cancelAtPeriodEnd: boolean
   ): Promise<{ success: boolean; canceledAtPeriodEnd: boolean }>;
 
-  reactivateSubscription(providerSubscriptionId: string): Promise<{ success: boolean }>;
+  reactivateSubscription(providerSubscriptionId: string, nextDueDate?: string): Promise<{ success: boolean }>;
+
+  listSubscriptionPayments(
+    providerSubscriptionId: string,
+    options?: { status?: string }
+  ): Promise<Array<ProviderPaymentRecord>>;
+
+  removePayment(providerPaymentId: string): Promise<{ success: boolean }>;
+
+  getPayment?(providerPaymentId: string): Promise<ProviderPaymentRecord | null>;
 
   validateWebhookRequest(headers: Record<string, any>, rawBody: any): boolean;
 

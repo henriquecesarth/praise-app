@@ -7,6 +7,12 @@ import { BillingController } from './billing.controller';
 const controller = new BillingController();
 
 // ----------------------------------------------------------------------------
+// Rotas Públicas de Retorno do Checkout (Redirecionamento 302 para o Frontend)
+// ----------------------------------------------------------------------------
+export const billingPublicRouter = Router();
+billingPublicRouter.get('/checkout-return/:status', controller.handleCheckoutReturn);
+
+// ----------------------------------------------------------------------------
 // Rotas de Webhook (Acesso pelo Gateway de Pagamento, autenticado pelo token Asaas)
 // ----------------------------------------------------------------------------
 export const webhookRouter = Router();

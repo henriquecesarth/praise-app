@@ -226,7 +226,43 @@ export class BillingController {
   ): Promise<void> => {
     try {
       const result = await this.billingService.handleWebhook(req.headers, req.body);
+      if (
+        result.status === 'error' ||
+        (!result.processed && result.reason === 'supersede_inactivation_failed')
+      ) {
+        res.status(500).json(result);
+        return;
+      }
       res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /**
+   * GET /api/v1/billing/checkout-return/:status
+   * Ponte de redirecionamento HTTP 302 do gateway para a aplicação web.
+   * Não altera entitlements nem confirma pagamentos.
+   */
+  handleCheckoutReturn = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const rawStatus = req.params.status;
+      const status = Array.isArray(rawStatus) ? rawStatus[0] : (rawStatus ? String(rawStatus) : '');
+      const validStatuses = ['success', 'cancel', 'expired'];
+
+      if (!status || !validStatuses.includes(status)) {
+        throw new AppError(400, 'Status de retorno inválido. Valores aceitos: success, cancel, expired.');
+      }
+
+      const { config } = await import('../../config/unifiedConfig');
+      const webAppUrl = (config.webAppUrl || 'http://localhost:5173').trim().replace(/\/+$/, '');
+      const redirectUrl = `${webAppUrl}/ministerio/plano?status=${status}`;
+
+      res.redirect(302, redirectUrl);
     } catch (err) {
       next(err);
     }

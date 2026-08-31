@@ -11,6 +11,7 @@ import {
   BillingWebhookEventRecord,
 } from './billing.types';
 import { MinistrySubscriptionRecord, MinistryUsageRecord } from '../subscriptions/subscription.types';
+import { config } from '../../config/unifiedConfig';
 
 describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening', () => {
   let billingService: BillingService;
@@ -22,12 +23,15 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
 
   const mockEventsStore = new Map<string, BillingWebhookEventRecord>();
   const mockSubscriptionsStore = new Map<string, BillingSubscriptionRecord>();
+  const mockPlanChangesStore = new Map<string, any>();
   const mockAppSubscriptionsStore = new Map<string, MinistrySubscriptionRecord>();
   const mockTransactionsStore = new Map<string, any>();
 
   beforeEach(() => {
+    (config as any).billingPublicApiUrl = 'https://tunnel.trycloudflare.com';
     mockEventsStore.clear();
     mockSubscriptionsStore.clear();
+    mockPlanChangesStore.clear();
     mockAppSubscriptionsStore.clear();
     mockTransactionsStore.clear();
 
@@ -86,22 +90,56 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
       setSubscription: vi.fn().mockImplementation(async (sub: BillingSubscriptionRecord) => {
         mockSubscriptionsStore.set(sub.ministry_id, sub);
       }),
-      getRecentPendingSubscription: vi.fn().mockImplementation(
+      getPlanChange: vi.fn().mockImplementation(async (id: string) => {
+        return mockPlanChangesStore.get(id) || null;
+      }),
+      setPlanChange: vi.fn().mockImplementation(async (change: any) => {
+        mockPlanChangesStore.set(change.id, change);
+      }),
+      getRecentPendingPlanChange: vi.fn().mockImplementation(
         async (ministryId: string, provider: string, planId: string, interval: string, addonBlocks: number) => {
-          const sub = mockSubscriptionsStore.get(ministryId);
-          if (
-            sub &&
-            sub.status === 'pending' &&
-            sub.plan_id === planId &&
-            sub.interval === interval &&
-            sub.member_addon_blocks === addonBlocks &&
-            sub.checkout_url
-          ) {
-            return sub;
+          for (const change of mockPlanChangesStore.values()) {
+            if (
+              change.ministry_id === ministryId &&
+              change.status === 'pending' &&
+              change.requested_plan_id === planId &&
+              change.requested_interval === interval &&
+              (change.requested_addon_blocks || 0) === addonBlocks &&
+              change.checkout_url
+            ) {
+              return change;
+            }
           }
           return null;
         }
       ),
+      getPlanChangeByCheckoutIntentId: vi.fn().mockImplementation(async (intentId: string) => {
+        for (const change of mockPlanChangesStore.values()) {
+          if (change.checkout_intent_id === intentId) return change;
+        }
+        return null;
+      }),
+      getPlanChangeByCheckoutId: vi.fn().mockImplementation(async (checkoutId: string) => {
+        for (const change of mockPlanChangesStore.values()) {
+          if (change.provider_checkout_id === checkoutId) return change;
+        }
+        return null;
+      }),
+      getPlanChangeByNewSubscriptionId: vi.fn().mockImplementation(async (subId: string) => {
+        for (const change of mockPlanChangesStore.values()) {
+          if (change.new_provider_subscription_id === subId) return change;
+        }
+        return null;
+      }),
+      getFailedSupersedes: vi.fn().mockImplementation(async (ministryId: string) => {
+        const results = [];
+        for (const change of mockPlanChangesStore.values()) {
+          if (change.ministry_id === ministryId && change.supersede_status === 'failed') {
+            results.push(change);
+          }
+        }
+        return results;
+      }),
       registerWebhookEvent: vi.fn().mockImplementation(async (event: BillingWebhookEventRecord) => {
         if (mockEventsStore.has(event.id)) {
           return { isDuplicate: true, event: mockEventsStore.get(event.id)! };
@@ -157,10 +195,15 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
         expiresAt: new Date(Date.now() + 86400000).toISOString(),
       }),
       cancelSubscription: vi.fn().mockResolvedValue({ success: true, canceledAtPeriodEnd: true }),
+      inactivateSubscription: vi.fn().mockResolvedValue({ success: true }),
+      removeSubscription: vi.fn().mockResolvedValue({ success: true }),
       reactivateSubscription: vi.fn().mockResolvedValue({ success: true }),
       validateWebhookRequest: vi.fn().mockReturnValue(true),
       parseWebhookEvent: vi.fn(),
       getSubscription: vi.fn().mockResolvedValue({ status: 'ACTIVE', value: 34.9, cycle: 'MONTHLY' }),
+      listSubscriptionPayments: vi.fn().mockResolvedValue([]),
+      removePayment: vi.fn().mockResolvedValue({ success: true }),
+      getPayment: vi.fn().mockResolvedValue(null),
     };
 
     billingService = new BillingService(
@@ -483,6 +526,46 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
       expect(reconciliation.reconciled).toBe(true);
       expect(reconciliation.message).toContain('cortesia');
       expect(mockProvider.getSubscription).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Multi-Instance Lock & Automatic Background Reconciliation Worker', () => {
+    it('only 1 concurrent worker successfully leases a failed plan change (atomic lock)', async () => {
+      const planChangeRecord = {
+        id: 'change_concurrent_lease',
+        ministry_id: 'min_test',
+        provider: 'asaas',
+        status: 'superseding',
+        supersede_status: 'failed',
+        previous_provider_subscription_id: 'sub_old_1',
+        new_provider_subscription_id: 'sub_new_2',
+        retry_locked_until: null,
+        retry_locked_by: null,
+        retry_count: 1,
+      };
+
+      mockPlanChangesStore.set(planChangeRecord.id, planChangeRecord);
+
+      mockBillingRepo.claimPlanChangeForRetry = vi.fn().mockImplementation(async (id: string, lockWorkerId: string) => {
+        const item = mockPlanChangesStore.get(id);
+        if (!item || item.status === 'completed') return null;
+        if (item.retry_locked_until && new Date(item.retry_locked_until) > new Date()) {
+          return null; // Locked by another worker!
+        }
+        item.retry_locked_by = lockWorkerId;
+        item.retry_locked_until = new Date(Date.now() + 60000).toISOString();
+        return { ...item };
+      });
+
+      // Worker 1 and Worker 2 try to lease at the same time
+      const worker1Claim = await mockBillingRepo.claimPlanChangeForRetry('change_concurrent_lease', 'worker_alpha');
+      const worker2Claim = await mockBillingRepo.claimPlanChangeForRetry('change_concurrent_lease', 'worker_beta');
+
+      expect(worker1Claim).not.toBeNull();
+      expect(worker1Claim?.retry_locked_by).toBe('worker_alpha');
+
+      // Worker 2 is locked out
+      expect(worker2Claim).toBeNull();
     });
   });
 });

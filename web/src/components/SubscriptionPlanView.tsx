@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../api';
 import {
   MinistrySubscriptionSummary,
@@ -23,6 +23,10 @@ import {
   ChevronRight,
   Receipt,
   X,
+  Plus,
+  Minus,
+  ExternalLink,
+  ShieldCheck,
 } from 'lucide-react';
 
 interface Props {
@@ -30,6 +34,17 @@ interface Props {
   onBack: () => void;
   showToast?: (msg: string, type?: 'success' | 'error') => void;
 }
+
+interface CheckoutIntent {
+  ministryId: string;
+  expectedPlanId: string;
+  expectedInterval: BillingInterval;
+  expectedAddonBlocks: number;
+  timestamp: number;
+  expiresAt?: string | null;
+}
+
+const CHECKOUT_INTENT_KEY = 'louvaio_checkout_intent';
 
 export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, showToast }) => {
   const [summary, setSummary] = useState<MinistrySubscriptionSummary | null>(null);
@@ -44,14 +59,26 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
   const [previewData, setPreviewData] = useState<CheckoutPreviewResult | null>(null);
   const [previewLoading, setPreviewLoading] = useState<boolean>(false);
   const [checkoutLoading, setCheckoutLoading] = useState<boolean>(false);
+
+  // Cancel Modal State
+  const [showCancelModal, setShowCancelModal] = useState<boolean>(false);
+  const [cancelLoading, setCancelLoading] = useState<boolean>(false);
+
+  // History Modal State
   const [showHistoryModal, setShowHistoryModal] = useState<boolean>(false);
   const [historyTransactions, setHistoryTransactions] = useState<BillingTransactionRecord[]>([]);
   const [historyLoading, setHistoryLoading] = useState<boolean>(false);
   const [actionLoading, setActionLoading] = useState<boolean>(false);
 
-  const loadData = async () => {
-    setLoading(true);
-    setError(null);
+  // Post-Checkout Polling State
+  const [postCheckoutProcessing, setPostCheckoutProcessing] = useState<boolean>(false);
+  const pollingRef = useRef<any>(null);
+
+  const loadData = useCallback(async (silent = false): Promise<MinistrySubscriptionSummary | null> => {
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const [subSummary, plans] = await Promise.all([
         api.getMinistrySubscription(ministryId),
@@ -59,20 +86,183 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
       ]);
       setSummary(subSummary);
       setPlansData(plans);
+      return subSummary;
     } catch (err: any) {
       console.error('Erro ao carregar dados de plano e assinatura:', err);
-      setError(err.message || 'Não foi possível carregar as informações do plano.');
+      if (!silent) {
+        setError(err.message || 'Não foi possível carregar as informações do plano.');
+      }
+      return null;
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
+    }
+  }, [ministryId]);
+
+  // Carregamento inicial, isolamento de tenant e detecção de retorno pós-checkout
+  useEffect(() => {
+    // 1. Limpar rigorosamente todos os estados prévios ao trocar de ministério
+    setSummary(null);
+    setPreviewPlan(null);
+    setPreviewData(null);
+    setHistoryTransactions([]);
+    setShowCancelModal(false);
+    setShowHistoryModal(false);
+    setError(null);
+    setPostCheckoutProcessing(false);
+
+    if (pollingRef.current) {
+      window.clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+
+    // Carregar dados limpos
+    loadData();
+
+    // 2. Recuperar intenção de checkout segura salva no sessionStorage
+    let savedIntent: CheckoutIntent | null = null;
+    try {
+      const item = sessionStorage.getItem(CHECKOUT_INTENT_KEY);
+      if (item) {
+        const parsed = JSON.parse(item) as CheckoutIntent;
+        const now = Date.now();
+        // Válida somente para o mesmo ministério e dentro do tempo de expiração do checkout
+        // Usa expiresAt oficial do backend se disponível ou fallback de 60 minutos (tempo padrão Asaas)
+        const expiryTime = parsed.expiresAt
+          ? new Date(parsed.expiresAt).getTime()
+          : parsed.timestamp + 60 * 60 * 1000;
+
+        if (parsed.ministryId === ministryId && now <= expiryTime) {
+          savedIntent = parsed;
+        } else {
+          sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
+        }
+      }
+    } catch {
+      savedIntent = null;
+    }
+
+    // 3. Detectar retorno pós-checkout via query params ou intent pendente
+    const urlParams = new URLSearchParams(window.location.search);
+    const isCheckoutSuccessUrl =
+      urlParams.get('checkout') === 'success' ||
+      urlParams.get('status') === 'success' ||
+      urlParams.get('billing') === 'success';
+
+    if (isCheckoutSuccessUrl || savedIntent) {
+      setPostCheckoutProcessing(true);
+
+      // Limpar parâmetros da URL de forma limpa sem recarregar a página
+      if (isCheckoutSuccessUrl) {
+        const cleanUrl = window.location.pathname;
+        window.history.replaceState({}, '', cleanUrl);
+      }
+
+      let attempts = 0;
+      const maxAttempts = 18; // ~45s (18 * 2.5s)
+
+      pollingRef.current = window.setInterval(async () => {
+        attempts += 1;
+        const updated = await loadData(true);
+
+        if (updated) {
+          // Validação semântica estrita: exige plano, intervalo, addons e status ativo
+          const matchesPlan = savedIntent
+            ? updated.plan.id === savedIntent.expectedPlanId
+            : updated.plan.id !== 'free';
+
+          const matchesInterval =
+            savedIntent && savedIntent.expectedInterval
+              ? (updated.subscription.billingInterval ?? 'monthly') === savedIntent.expectedInterval
+              : true;
+
+          const matchesAddons =
+            savedIntent && savedIntent.expectedAddonBlocks !== undefined
+              ? updated.subscription.memberAddonBlocks === savedIntent.expectedAddonBlocks
+              : true;
+
+          const isSemanticallyConfirmed =
+            updated.subscription.billingStatus === 'active' &&
+            matchesPlan &&
+            matchesInterval &&
+            matchesAddons &&
+            (updated.subscription.subscriptionMode === 'paid' || (savedIntent && savedIntent.expectedPlanId === 'free'));
+
+          if (isSemanticallyConfirmed) {
+            if (pollingRef.current) window.clearInterval(pollingRef.current);
+            sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
+            setPostCheckoutProcessing(false);
+            showToast?.('Assinatura confirmada com sucesso!', 'success');
+            return;
+          }
+        }
+
+        if (attempts >= maxAttempts) {
+          if (pollingRef.current) window.clearInterval(pollingRef.current);
+          sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
+          setPostCheckoutProcessing(false);
+          showToast?.(
+            'Seu pagamento ainda pode estar sendo processado pelo gateway. Você pode consultar esta página novamente em alguns instantes.',
+            'success'
+          );
+        }
+      }, 2500);
+    }
+
+    return () => {
+      if (pollingRef.current) {
+        window.clearInterval(pollingRef.current);
+      }
+    };
+  }, [ministryId, loadData, showToast]);
+
+  // Suporte a fechamento com tecla Escape
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (previewPlan) {
+          setPreviewPlan(null);
+          setPreviewData(null);
+        }
+        if (showCancelModal) {
+          setShowCancelModal(false);
+        }
+        if (showHistoryModal) {
+          setShowHistoryModal(false);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [previewPlan, showCancelModal, showHistoryModal]);
+
+  // Formatação monetária BRL oficial
+  const formatCents = (cents?: number) => {
+    if (cents === undefined || cents === null) return 'R$ 0,00';
+    return (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  };
+
+  // Formatação de datas em pt-BR
+  const formatDateLocal = (dateStr?: string | null) => {
+    if (!dateStr) return 'N/A';
+    try {
+      const parsed = new Date(dateStr);
+      if (isNaN(parsed.getTime())) return dateStr;
+      return parsed.toLocaleDateString('pt-BR');
+    } catch {
+      return dateStr;
     }
   };
 
-  useEffect(() => {
-    loadData();
-  }, [ministryId]);
-
   // Status helper
-  const getStatusBadge = (accessMode?: string, suspended?: boolean, cancelAtPeriodEnd?: boolean, subscriptionMode?: string) => {
+  const getStatusBadge = (
+    accessMode?: string,
+    suspended?: boolean,
+    cancelAtPeriodEnd?: boolean,
+    subscriptionMode?: string
+  ) => {
     if (suspended || accessMode === 'suspended') {
       return {
         label: 'Ministério suspenso',
@@ -85,7 +275,7 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
     if (subscriptionMode === 'complimentary') {
       return {
         label: 'Cortesia da plataforma',
-        icon: CheckCircle2,
+        icon: ShieldCheck,
         bg: 'rgba(52, 211, 153, 0.18)',
         color: '#34D399',
         border: '1px solid #10B981',
@@ -127,8 +317,7 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
     };
   };
 
-
-  // Abre modal de preview de checkout
+  // Abre modal de preview de checkout consumindo cálculo do backend
   const handleOpenCheckoutPreview = async (targetPlan: PlanDefinition) => {
     const addons = selectedAddonBlocks[targetPlan.id] || 0;
     setPreviewPlan(targetPlan);
@@ -144,54 +333,83 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
     }
   };
 
-  // Inicia o checkout no gateway Asaas
+  // Inicia o checkout com persistência segura de intenção e redirect
   const handleStartCheckout = async () => {
     if (!previewPlan) return;
     setCheckoutLoading(true);
     try {
       const addons = selectedAddonBlocks[previewPlan.id] || 0;
+
+      // 1. Tratamento direto para plano Free: não gera checkout Asaas nem persiste intent de redirect
+      if (previewPlan.id === 'free') {
+        sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
+        await api.createBillingCheckout(ministryId, {
+          planId: 'free',
+          interval,
+          addonBlocks: 0,
+        });
+        const isPaid = summary?.subscription?.subscriptionMode === 'paid' || (summary?.plan?.id && summary.plan.id !== 'free');
+        if (isPaid) {
+          showToast?.('Cancelamento agendado. Seu plano atual continuará ativo até o fim do período vigente.', 'success');
+        } else {
+          showToast?.('Plano alterado para Free com sucesso!', 'success');
+        }
+        setPreviewPlan(null);
+        setPreviewData(null);
+        await loadData();
+        return;
+      }
+
+      // 2. Criação de Checkout no gateway Asaas para planos pagos (o backend é a autoridade das URLs de retorno)
       const result = await api.createBillingCheckout(ministryId, {
         planId: previewPlan.id,
         interval,
         addonBlocks: addons,
-        successUrl: window.location.href,
-        cancelUrl: window.location.href,
       });
 
-      if (previewPlan.id === 'free') {
-        showToast?.('Plano alterado para Free com sucesso!', 'success');
-        setPreviewPlan(null);
-        setPreviewData(null);
-        await loadData();
-      } else if (result.checkoutUrl) {
+      // 3. Persistir intenção no sessionStorage com expiresAt oficial do backend (autoridade Asaas 60 min)
+      const intent: CheckoutIntent = {
+        ministryId,
+        expectedPlanId: previewPlan.id,
+        expectedInterval: interval,
+        expectedAddonBlocks: addons,
+        timestamp: Date.now(),
+        expiresAt: result.expiresAt || null,
+      };
+      try {
+        sessionStorage.setItem(CHECKOUT_INTENT_KEY, JSON.stringify(intent));
+      } catch (e) {
+        console.warn('Não foi possível gravar intenção de checkout no sessionStorage:', e);
+      }
+
+      if (result.checkoutUrl) {
         showToast?.('Redirecionando para o checkout seguro...', 'success');
         window.location.href = result.checkoutUrl;
       }
     } catch (err: any) {
+      sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
       showToast?.(err.message || 'Erro ao gerar checkout', 'error');
     } finally {
       setCheckoutLoading(false);
     }
   };
 
-  // Cancelar assinatura no fim do período
-  const handleCancelSubscription = async () => {
-    if (!window.confirm('Tem certeza que deseja cancelar a renovação da assinatura? Você continuará com acesso até o fim do período já pago.')) {
-      return;
-    }
-    setActionLoading(true);
+  // Cancelar renovação da assinatura no fim do período vigente
+  const handleConfirmCancel = async () => {
+    setCancelLoading(true);
     try {
       await api.cancelBillingSubscription(ministryId);
       showToast?.('Cancelamento agendado para o fim do período vigente.', 'success');
+      setShowCancelModal(false);
       await loadData();
     } catch (err: any) {
       showToast?.(err.message || 'Erro ao cancelar assinatura', 'error');
     } finally {
-      setActionLoading(false);
+      setCancelLoading(false);
     }
   };
 
-  // Reativar assinatura
+  // Reativar assinatura com chamada ao endpoint backend
   const handleReactivateSubscription = async () => {
     setActionLoading(true);
     try {
@@ -219,9 +437,38 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
     }
   };
 
-  const formatCents = (cents?: number) => {
-    if (cents === undefined || cents === null) return 'R$ 0,00';
-    return (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  // Mapeamento de status de transação
+  const getTransactionStatusInfo = (status: string) => {
+    switch (status) {
+      case 'paid':
+        return { label: 'Pago', bg: 'rgba(16, 185, 129, 0.15)', color: '#10B981' };
+      case 'pending':
+        return { label: 'Pendente', bg: 'rgba(217, 119, 6, 0.15)', color: '#F59E0B' };
+      case 'overdue':
+        return { label: 'Em atraso', bg: 'rgba(184, 90, 60, 0.2)', color: 'var(--louvaio-terracotta, #B85A3C)' };
+      case 'refunded':
+        return { label: 'Estornado', bg: 'rgba(59, 130, 246, 0.15)', color: '#60A5FA' };
+      case 'canceled':
+        return { label: 'Cancelado', bg: 'rgba(255, 255, 255, 0.08)', color: 'var(--text-secondary, #A0AAB0)' };
+      case 'failed':
+        return { label: 'Falhou', bg: 'rgba(184, 90, 60, 0.2)', color: 'var(--louvaio-terracotta, #B85A3C)' };
+      default:
+        return { label: status, bg: 'rgba(255, 255, 255, 0.05)', color: 'var(--text-secondary, #A0AAB0)' };
+    }
+  };
+
+  const getPaymentMethodLabel = (method?: string | null) => {
+    if (!method) return 'N/A';
+    switch (method.toUpperCase()) {
+      case 'CREDIT_CARD':
+        return 'Cartão de Crédito';
+      case 'PIX':
+        return 'Pix';
+      case 'BOLETO':
+        return 'Boleto Bancário';
+      default:
+        return method;
+    }
   };
 
   if (loading) {
@@ -302,7 +549,7 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
           <button
             type="button"
             className="btn btn-primary"
-            onClick={loadData}
+            onClick={() => loadData()}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -327,7 +574,6 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
   );
   const StatusIcon = statusBadge.icon;
 
-
   const membersLimitNum = typeof quotas.members === 'number' ? quotas.members : null;
   const songsLimitNum = typeof quotas.songs === 'number' ? quotas.songs : null;
 
@@ -340,7 +586,7 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
 
   return (
     <div className="subscription-view-container animate-fade-in" style={{ padding: '16px 0 40px 0', maxWidth: '960px', margin: '0 auto' }}>
-      {/* Header com link de retorno e botão de histórico */}
+      {/* Header com link de retorno e botão de faturas/histórico */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
         <button
           type="button"
@@ -362,26 +608,28 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
           <span>Voltar para Ministério</span>
         </button>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <button
-            type="button"
-            onClick={handleOpenHistory}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              background: 'rgba(255, 255, 255, 0.05)',
-              border: '1px solid var(--border-color, #2D3A34)',
-              color: 'var(--text-primary, #F5EFE6)',
-              padding: '6px 12px',
-              borderRadius: '8px',
-              fontSize: '0.85rem',
-              cursor: 'pointer',
-            }}
-          >
-            <Receipt size={15} />
-            <span>Faturas</span>
-          </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {subscription.subscriptionMode === 'paid' && (
+            <button
+              type="button"
+              onClick={handleOpenHistory}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                background: 'rgba(255, 255, 255, 0.05)',
+                border: '1px solid var(--border-color, #2D3A34)',
+                color: 'var(--text-primary, #F5EFE6)',
+                padding: '6px 12px',
+                borderRadius: '8px',
+                fontSize: '0.85rem',
+                cursor: 'pointer',
+              }}
+            >
+              <Receipt size={15} />
+              <span>Faturas</span>
+            </button>
+          )}
 
           <span
             style={{
@@ -402,6 +650,55 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
           </span>
         </div>
       </div>
+
+      {/* Banner de Processamento Pós-Checkout com ação de atualização */}
+      {postCheckoutProcessing && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            background: 'rgba(52, 211, 153, 0.15)',
+            border: '1px solid #10B981',
+            borderRadius: '12px',
+            padding: '16px',
+            marginBottom: '24px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '12px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: '240px' }}>
+            <RefreshCw size={20} className="animate-spin" color="#10B981" />
+            <div>
+              <div style={{ fontWeight: 700, color: 'var(--text-primary, #F5EFE6)', fontSize: '0.95rem' }}>
+                Pagamento em processamento
+              </div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #A0AAB0)', marginTop: '2px' }}>
+                Estamos aguardando a confirmação do gateway de pagamento. A tela será atualizada automaticamente assim que o processamento for concluído.
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => loadData()}
+            style={{
+              padding: '6px 12px',
+              borderRadius: '8px',
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.12)',
+              color: 'var(--text-primary, #F5EFE6)',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            Atualizar agora
+          </button>
+        </div>
+      )}
 
       {/* Título Principal */}
       <div style={{ marginBottom: '24px' }}>
@@ -436,7 +733,7 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
                 Cancelamento agendado
               </div>
               <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #A0AAB0)' }}>
-                Seu plano continuará ativo até o fim do período vigente. Você pode reativar a qualquer momento.
+                Seu plano permanece ativo até {formatDateLocal(subscription.currentPeriodEnd)}. Nenhum dado será apagado e você pode reativar a qualquer momento.
               </div>
             </div>
           </div>
@@ -450,6 +747,61 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
           >
             {actionLoading ? 'Processando...' : 'Reativar Assinatura'}
           </button>
+        </div>
+      )}
+
+      {/* Banner de Período de Adaptação (Grace Period) */}
+      {subscription.accessMode === 'grace' && summary.graceDaysRemaining !== null && (
+        <div
+          role="alert"
+          style={{
+            background: 'rgba(217, 119, 6, 0.15)',
+            border: '1px solid #D97706',
+            borderRadius: '12px',
+            padding: '16px',
+            marginBottom: '24px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '12px',
+          }}
+        >
+          <Clock size={22} color="#F59E0B" style={{ flexShrink: 0, marginTop: '2px' }} />
+          <div>
+            <div style={{ fontWeight: 700, color: 'var(--text-primary, #F5EFE6)', fontSize: '0.95rem' }}>
+              Período de adaptação ativo ({summary.graceDaysRemaining} {summary.graceDaysRemaining === 1 ? 'dia restante' : 'dias restantes'})
+            </div>
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #A0AAB0)', marginTop: '4px', lineHeight: 1.4 }}>
+              Seu ministério está acima dos limites do plano atual. Seus dados continuam <strong>100% preservados e não serão apagados</strong>. Você tem até{' '}
+              <strong>{formatDateLocal(subscription.gracePeriodExpiresAt)}</strong> para ajustar o uso ou fazer upgrade antes que novas inclusões sejam restritas.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Banner de Uso Restrito por Excesso */}
+      {subscription.accessMode === 'restricted_over_limit' && (
+        <div
+          role="alert"
+          style={{
+            background: 'rgba(184, 90, 60, 0.15)',
+            border: '1px solid var(--louvaio-terracotta, #B85A3C)',
+            borderRadius: '12px',
+            padding: '16px',
+            marginBottom: '24px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '12px',
+          }}
+        >
+          <AlertTriangle size={22} color="var(--louvaio-terracotta, #B85A3C)" style={{ flexShrink: 0, marginTop: '2px' }} />
+          <div>
+            <div style={{ fontWeight: 700, color: 'var(--text-primary, #F5EFE6)', fontSize: '0.95rem' }}>
+              Uso acima do limite do plano
+            </div>
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #A0AAB0)', marginTop: '4px', lineHeight: 1.4 }}>
+              Seus dados continuam preservados para consulta. Novas inclusões de integrantes ou músicas estão temporariamente bloqueadas. Faça um upgrade ou reduza o uso para retomar as operações.
+            </div>
+          </div>
         </div>
       )}
 
@@ -481,6 +833,12 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
             <h2 id="current-plan-heading" style={{ margin: '4px 0 0 0', fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary, #F5EFE6)' }}>
               {plan.name}
             </h2>
+            {subscription.currentPeriodStart && (
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted, #7D8881)', marginTop: '4px' }}>
+                Período atual: {formatDateLocal(subscription.currentPeriodStart)}
+                {subscription.currentPeriodEnd ? ` → ${formatDateLocal(subscription.currentPeriodEnd)}` : ''}
+              </div>
+            )}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
@@ -497,7 +855,7 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
                 }}
               >
                 Cortesia da Plataforma
-                {subscription.expiresAt ? ` · Válido até ${new Date(subscription.expiresAt).toLocaleDateString('pt-BR')}` : ''}
+                {subscription.expiresAt ? ` · Válido até ${formatDateLocal(subscription.expiresAt)}` : ''}
               </div>
             )}
 
@@ -520,7 +878,7 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
             {plan.id !== 'free' && subscription.subscriptionMode !== 'complimentary' && !subscription.cancelAtPeriodEnd && (
               <button
                 type="button"
-                onClick={handleCancelSubscription}
+                onClick={() => setShowCancelModal(true)}
                 disabled={actionLoading}
                 style={{
                   background: 'none',
@@ -536,10 +894,9 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
               </button>
             )}
           </div>
-
         </div>
 
-        {/* Seção de Uso */}
+        {/* Seção de Uso e Quotas */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '16px' }}>
           {/* Membros Card */}
           <div
@@ -820,7 +1177,7 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
 
                     {interval === 'annual' && p.monthlyPriceCents > 0 && (
                       <div style={{ fontSize: '0.78rem', color: '#10B981', fontWeight: 600, marginTop: '2px' }}>
-                        Equivalente a {formatCents(Math.round(totalPriceCents / 12))}/mês (10% de economia)
+                        Equivalente a {formatCents(Math.round(totalPriceCents / 12))}/mês
                       </div>
                     )}
                   </div>
@@ -889,11 +1246,39 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
                       </div>
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <button
+                          type="button"
+                          aria-label="Diminuir bloco de integrantes"
+                          disabled={addonBlocks <= 0}
+                          onClick={() =>
+                            setSelectedAddonBlocks((prev) => ({
+                              ...prev,
+                              [p.id]: Math.max(0, (prev[p.id] || 0) - 1),
+                            }))
+                          }
+                          style={{
+                            width: '28px',
+                            height: '28px',
+                            borderRadius: '6px',
+                            background: 'rgba(255,255,255,0.06)',
+                            border: '1px solid var(--border-color, #2D3A34)',
+                            color: 'var(--text-primary, #F5EFE6)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: addonBlocks <= 0 ? 'not-allowed' : 'pointer',
+                            opacity: addonBlocks <= 0 ? 0.4 : 1,
+                          }}
+                        >
+                          <Minus size={14} />
+                        </button>
+
                         <input
                           type="range"
                           min={0}
                           max={p.maxMemberAddonBlocks}
                           value={addonBlocks}
+                          aria-label={`Blocos adicionais para ${p.name}`}
                           onChange={(e) =>
                             setSelectedAddonBlocks((prev) => ({
                               ...prev,
@@ -902,6 +1287,34 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
                           }
                           style={{ flex: 1, accentColor: 'var(--louvaio-terracotta, #B85A3C)' }}
                         />
+
+                        <button
+                          type="button"
+                          aria-label="Aumentar bloco de integrantes"
+                          disabled={addonBlocks >= p.maxMemberAddonBlocks}
+                          onClick={() =>
+                            setSelectedAddonBlocks((prev) => ({
+                              ...prev,
+                              [p.id]: Math.min(p.maxMemberAddonBlocks, (prev[p.id] || 0) + 1),
+                            }))
+                          }
+                          style={{
+                            width: '28px',
+                            height: '28px',
+                            borderRadius: '6px',
+                            background: 'rgba(255,255,255,0.06)',
+                            border: '1px solid var(--border-color, #2D3A34)',
+                            color: 'var(--text-primary, #F5EFE6)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: addonBlocks >= p.maxMemberAddonBlocks ? 'not-allowed' : 'pointer',
+                            opacity: addonBlocks >= p.maxMemberAddonBlocks ? 0.4 : 1,
+                          }}
+                        >
+                          <Plus size={14} />
+                        </button>
+
                         <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary, #F5EFE6)', width: '20px', textAlign: 'right' }}>
                           {addonBlocks}
                         </span>
@@ -1000,6 +1413,7 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
               </div>
               <button
                 type="button"
+                aria-label="Fechar prévia"
                 onClick={() => {
                   setPreviewPlan(null);
                   setPreviewData(null);
@@ -1098,7 +1512,7 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
                       color: 'var(--text-primary, #F5EFE6)',
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, color: '#F59E0B', marginBottom: '4px' }}>
+                    <div style={{ display: 'center', alignItems: 'center', gap: '6px', fontWeight: 700, color: '#F59E0B', marginBottom: '4px' }}>
                       <AlertTriangle size={16} />
                       <span>Aviso de capacidade</span>
                     </div>
@@ -1163,6 +1577,115 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
         </div>
       )}
 
+      {/* Modal de Cancelamento de Assinatura */}
+      {showCancelModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="cancel-modal-title"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.75)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px',
+            zIndex: 1000,
+            backdropFilter: 'blur(4px)',
+          }}
+        >
+          <div
+            style={{
+              background: 'var(--surface-color, #1A2421)',
+              borderRadius: '20px',
+              maxWidth: '480px',
+              width: '100%',
+              padding: '24px',
+              border: '1px solid var(--border-color, #2D3A34)',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+              <AlertTriangle size={24} color="#F59E0B" />
+              <h3 id="cancel-modal-title" style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-primary, #F5EFE6)' }}>
+                Cancelar renovação da assinatura
+              </h3>
+            </div>
+
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #A0AAB0)', lineHeight: 1.5, marginBottom: '16px' }}>
+              Tem certeza que deseja cancelar a renovação da sua assinatura?
+            </p>
+
+            <div
+              style={{
+                background: 'rgba(255, 255, 255, 0.03)',
+                borderRadius: '10px',
+                padding: '14px',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                fontSize: '0.85rem',
+                color: 'var(--text-primary, #F5EFE6)',
+                lineHeight: 1.5,
+                marginBottom: '20px',
+              }}
+            >
+              • Seu plano permanecerá <strong>ativo até {formatDateLocal(subscription.currentPeriodEnd)}</strong>.<br />
+              • Após essa data, seu ministério passará para o plano <strong>Free</strong>.<br />
+              • <strong>Nenhum dado, música ou escala será apagada</strong>.
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button
+                type="button"
+                onClick={() => setShowCancelModal(false)}
+                disabled={cancelLoading}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  borderRadius: '10px',
+                  background: 'transparent',
+                  border: '1px solid var(--border-color, #2D3A34)',
+                  color: 'var(--text-secondary, #A0AAB0)',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Manter assinatura
+              </button>
+
+              <button
+                type="button"
+                onClick={handleConfirmCancel}
+                disabled={cancelLoading}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  borderRadius: '10px',
+                  background: 'var(--louvaio-terracotta, #B85A3C)',
+                  border: 'none',
+                  color: '#FFFFFF',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                }}
+              >
+                {cancelLoading ? (
+                  <>
+                    <RefreshCw size={16} className="animate-spin" />
+                    <span>Processando...</span>
+                  </>
+                ) : (
+                  <span>Confirmar cancelamento</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal de Histórico de Faturas */}
       {showHistoryModal && (
         <div
@@ -1185,7 +1708,7 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
             style={{
               background: 'var(--surface-color, #1A2421)',
               borderRadius: '20px',
-              maxWidth: '600px',
+              maxWidth: '640px',
               width: '100%',
               padding: '24px',
               border: '1px solid var(--border-color, #2D3A34)',
@@ -1204,6 +1727,7 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
               </div>
               <button
                 type="button"
+                aria-label="Fechar histórico"
                 onClick={() => setShowHistoryModal(false)}
                 style={{ background: 'none', border: 'none', color: 'var(--text-secondary, #A0AAB0)', cursor: 'pointer', padding: '4px' }}
               >
@@ -1224,60 +1748,78 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {historyTransactions.map((tx) => (
-                    <div
-                      key={tx.id}
-                      style={{
-                        background: 'rgba(255, 255, 255, 0.03)',
-                        borderRadius: '12px',
-                        padding: '14px',
-                        border: '1px solid rgba(255, 255, 255, 0.08)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontWeight: 700, color: 'var(--text-primary, #F5EFE6)', fontSize: '0.95rem' }}>
-                          {formatCents(tx.amount_cents)}
+                  {historyTransactions.map((tx) => {
+                    const statusInfo = getTransactionStatusInfo(tx.status);
+                    return (
+                      <div
+                        key={tx.id}
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.03)',
+                          borderRadius: '12px',
+                          padding: '16px',
+                          border: '1px solid rgba(255, 255, 255, 0.08)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          flexWrap: 'wrap',
+                          gap: '12px',
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontWeight: 800, color: 'var(--text-primary, #F5EFE6)', fontSize: '1.05rem' }}>
+                            {formatCents(tx.amount_cents)}
+                          </div>
+                          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #A0AAB0)', marginTop: '3px' }}>
+                            Vencimento: {formatDateLocal(tx.due_date)}
+                            {tx.paid_at ? ` · Pago em ${formatDateLocal(tx.paid_at)}` : ''}
+                          </div>
+                          {tx.payment_method && (
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted, #7D8881)', marginTop: '2px' }}>
+                              Forma: {getPaymentMethodLabel(tx.payment_method)}
+                            </div>
+                          )}
                         </div>
-                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #A0AAB0)', marginTop: '2px' }}>
-                          Vencimento: {tx.due_date || 'N/A'} {tx.paid_at ? `· Pago em ${new Date(tx.paid_at).toLocaleDateString('pt-BR')}` : ''}
-                        </div>
-                      </div>
 
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <span
-                          style={{
-                            padding: '4px 10px',
-                            borderRadius: '999px',
-                            fontSize: '0.75rem',
-                            fontWeight: 700,
-                            background: tx.status === 'paid' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(217, 119, 6, 0.15)',
-                            color: tx.status === 'paid' ? '#10B981' : '#F59E0B',
-                          }}
-                        >
-                          {tx.status === 'paid' ? 'Pago' : tx.status === 'overdue' ? 'Vencido' : tx.status}
-                        </span>
-
-                        {tx.invoice_url && (
-                          <a
-                            href={tx.invoice_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <span
                             style={{
-                              fontSize: '0.8rem',
-                              color: 'var(--louvaio-terracotta, #B85A3C)',
-                              textDecoration: 'none',
-                              fontWeight: 600,
+                              padding: '4px 10px',
+                              borderRadius: '999px',
+                              fontSize: '0.75rem',
+                              fontWeight: 700,
+                              background: statusInfo.bg,
+                              color: statusInfo.color,
                             }}
                           >
-                            Ver fatura
-                          </a>
-                        )}
+                            {statusInfo.label}
+                          </span>
+
+                          {tx.invoice_url && (
+                            <a
+                              href={tx.invoice_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{
+                                fontSize: '0.8rem',
+                                color: 'var(--louvaio-terracotta, #B85A3C)',
+                                textDecoration: 'none',
+                                fontWeight: 700,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                padding: '6px 10px',
+                                borderRadius: '6px',
+                                background: 'rgba(184, 90, 60, 0.1)',
+                              }}
+                            >
+                              <span>Ver fatura</span>
+                              <ExternalLink size={13} />
+                            </a>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

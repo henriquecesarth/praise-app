@@ -6,6 +6,7 @@ import {
   BillingProvider,
   ParsedWebhookEvent,
   NormalizedWebhookEventType,
+  ProviderPaymentRecord,
 } from '../billing-provider.interface';
 import { AppError } from '../../../../middleware/error-handler';
 import { getCurrentBillingDate } from '../../../../utils/billing-date';
@@ -35,10 +36,7 @@ export class AsaasBillingProvider implements BillingProvider {
     phone?: string;
   }): Promise<{ providerCustomerId: string }> {
     if (!this.apiKey) {
-      // Modo mock/sandbox quando API key não estiver injetada
-      return {
-        providerCustomerId: `cus_mock_${params.ministryId.slice(0, 8)}`,
-      };
+      throw new AppError(500, 'Gateway Asaas não configurado.');
     }
 
     try {
@@ -86,6 +84,7 @@ export class AsaasBillingProvider implements BillingProvider {
     amountCents: number;
     successUrl?: string;
     cancelUrl?: string;
+    expiredUrl?: string;
     customerData?: {
       name?: string;
       email?: string;
@@ -101,14 +100,11 @@ export class AsaasBillingProvider implements BillingProvider {
     const externalReference = params.checkoutIntentId || `intent_${params.ministryId}_${Date.now()}`;
 
     if (!this.apiKey) {
-      // Mock Sandbox Checkout URL
-      const mockCheckoutId = `chk_mock_${Date.now()}_${params.planId}`;
-      const mockUrl = `https://sandbox.asaas.com/checkoutSession/show/${mockCheckoutId}`;
-      return {
-        checkoutUrl: mockUrl,
-        checkoutId: mockCheckoutId,
-        expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-      };
+      throw new AppError(500, 'Gateway Asaas não configurado.');
+    }
+
+    if (!params.successUrl || params.successUrl.includes('localhost') || params.successUrl.includes('127.0.0.1')) {
+      throw new AppError(500, 'URL de callback do Asaas inválida ou aponta para localhost.');
     }
 
     try {
@@ -118,9 +114,9 @@ export class AsaasBillingProvider implements BillingProvider {
         minutesToExpire: 60,
         externalReference,
         callback: {
-          successUrl: params.successUrl || 'https://louvaio.com/ministerio/plano?status=success',
-          cancelUrl: params.cancelUrl || 'https://louvaio.com/ministerio/plano?status=cancel',
-          expiredUrl: params.cancelUrl || 'https://louvaio.com/ministerio/plano?status=expired',
+          successUrl: params.successUrl,
+          cancelUrl: params.cancelUrl || params.successUrl,
+          expiredUrl: params.expiredUrl || params.cancelUrl || params.successUrl,
         },
         items: [
           {
@@ -175,47 +171,266 @@ export class AsaasBillingProvider implements BillingProvider {
   }
 
   /**
-   * Cancela assinatura no Asaas
+   * Inativa assinatura no Asaas (PUT /v3/subscriptions/{id} com status: INACTIVE).
+   * Impede a geração de novas cobranças recorrentes futuras, preservando cobranças
+   * existentes pendentes/vencidas e o histórico financeiro da conta.
+   */
+  async inactivateSubscription(providerSubscriptionId: string): Promise<{ success: boolean }> {
+    if (!this.apiKey) {
+      throw new AppError(500, 'Gateway Asaas não configurado.');
+    }
+
+    try {
+      const response = await fetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
+        method: 'PUT',
+        headers: {
+          access_token: this.apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status: 'INACTIVE' }),
+      });
+
+      if (!response.ok && response.status !== 404) {
+        const errBody = (await response.json().catch(() => ({}))) as any;
+        const message = errBody?.errors?.[0]?.description || 'Erro ao inativar assinatura no Asaas';
+        throw new AppError(400, message);
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      if (err instanceof AppError) throw err;
+      throw new AppError(500, `Falha de comunicação ao inativar assinatura Asaas: ${err.message}`);
+    }
+  }
+
+  /**
+   * Remove definitivamente uma assinatura no Asaas (DELETE /v3/subscriptions/{id}).
+   * ATENÇÃO: Segundo a documentação do Asaas, DELETE remove a assinatura e também
+   * exclui cobranças pendentes/overdue não pagas. Usar apenas quando remoção explícita for requerida.
+   */
+  async removeSubscription(providerSubscriptionId: string): Promise<{ success: boolean }> {
+    if (!this.apiKey) {
+      throw new AppError(500, 'Gateway Asaas não configurado.');
+    }
+
+    try {
+      const response = await fetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
+        method: 'DELETE',
+        headers: {
+          access_token: this.apiKey,
+        },
+      });
+
+      if (!response.ok && response.status !== 404) {
+        const errBody = (await response.json().catch(() => ({}))) as any;
+        const message = errBody?.errors?.[0]?.description || 'Erro ao remover assinatura no Asaas';
+        throw new AppError(400, message);
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      if (err instanceof AppError) throw err;
+      throw new AppError(500, `Falha de comunicação ao remover assinatura Asaas: ${err.message}`);
+    }
+  }
+
+  /**
+   * Cancela/Interrompe a renovação da assinatura no Asaas.
+   * Utiliza inativação via PUT status INACTIVE para cessar cobranças futuras sem destruir
+   * cobranças existentes ou perdoar faturas pendentes.
    */
   async cancelSubscription(
     providerSubscriptionId: string,
-    cancelAtPeriodEnd: boolean
+    cancelAtPeriodEnd: boolean = true
   ): Promise<{ success: boolean; canceledAtPeriodEnd: boolean }> {
-    if (!this.apiKey) {
-      return { success: true, canceledAtPeriodEnd: cancelAtPeriodEnd };
-    }
-
-    // Se o cancelamento for imediato no Asaas:
-    if (!cancelAtPeriodEnd) {
-      try {
-        const response = await fetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
-          method: 'DELETE',
-          headers: {
-            access_token: this.apiKey,
-          },
-        });
-
-        if (!response.ok && response.status !== 404) {
-          const errBody = (await response.json().catch(() => ({}))) as any;
-          const message = errBody?.errors?.[0]?.description || 'Erro ao cancelar assinatura no Asaas';
-          throw new AppError(400, message);
-        }
-      } catch (err: any) {
-
-        if (err instanceof AppError) throw err;
-        throw new AppError(500, `Falha de comunicação ao cancelar assinatura Asaas: ${err.message}`);
-      }
-    }
-
+    await this.inactivateSubscription(providerSubscriptionId);
     return { success: true, canceledAtPeriodEnd: cancelAtPeriodEnd };
   }
 
   /**
-   * Reativa assinatura cancelada
+   * Reativa uma assinatura inativada no Asaas (PUT /v3/subscriptions/{id} com status: ACTIVE e nextDueDate).
    */
-  async reactivateSubscription(_providerSubscriptionId: string): Promise<{ success: boolean }> {
-    // No Asaas, uma assinatura marcada para não renovar pode ter a exclusão revertida ou mantida ativa
-    return { success: true };
+  async reactivateSubscription(providerSubscriptionId: string, nextDueDate?: string): Promise<{ success: boolean }> {
+    if (!this.apiKey) {
+      throw new AppError(500, 'Gateway Asaas não configurado.');
+    }
+
+    try {
+      const bodyPayload: Record<string, any> = { status: 'ACTIVE' };
+      if (nextDueDate) {
+        bodyPayload.nextDueDate = nextDueDate;
+      }
+
+      const response = await fetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
+        method: 'PUT',
+        headers: {
+          access_token: this.apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(bodyPayload),
+      });
+
+      if (!response.ok) {
+        const errBody = (await response.json().catch(() => ({}))) as any;
+        const message = errBody?.errors?.[0]?.description || 'Erro ao reativar assinatura no Asaas';
+        throw new AppError(400, message);
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      if (err instanceof AppError) throw err;
+      throw new AppError(500, `Falha de comunicação ao reativar assinatura Asaas: ${err.message}`);
+    }
+  }
+
+  /**
+   * Lista todas as cobranças vinculadas a uma assinatura no Asaas tratando paginação.
+   * Por padrão busca cobranças PENDING, mas aceita filtro opcional de status.
+   */
+  async listSubscriptionPayments(
+    providerSubscriptionId: string,
+    options?: { status?: string }
+  ): Promise<Array<ProviderPaymentRecord>> {
+    if (!this.apiKey) {
+      throw new AppError(500, 'Gateway Asaas não configurado.');
+    }
+
+    const statusFilter = options?.status ? options.status : 'PENDING';
+    const limit = 50;
+    let offset = 0;
+    let hasMore = true;
+    const allPayments: ProviderPaymentRecord[] = [];
+
+    try {
+      while (hasMore) {
+        const queryParams = new URLSearchParams({
+          offset: String(offset),
+          limit: String(limit),
+        });
+        if (statusFilter) {
+          queryParams.set('status', statusFilter);
+        }
+
+        const response = await fetch(
+          `${this.apiUrl}/subscriptions/${providerSubscriptionId}/payments?${queryParams.toString()}`,
+          {
+            headers: {
+              access_token: this.apiKey,
+            },
+          }
+        );
+
+        if (!response.ok) {
+          if (response.status === 404) return [];
+          const errBody = (await response.json().catch(() => ({}))) as any;
+          const message = errBody?.errors?.[0]?.description || `Falha ao listar cobranças da assinatura Asaas (HTTP ${response.status})`;
+          throw new AppError(400, message);
+        }
+
+        const data = (await response.json()) as {
+          hasMore?: boolean;
+          data?: any[];
+          totalCount?: number;
+        };
+
+        const items = Array.isArray(data.data) ? data.data : [];
+        for (const item of items) {
+          const rawValue = item.value !== undefined ? item.value : 0;
+          const valueNumber = Number(rawValue);
+          const amountCents = !isNaN(valueNumber) ? Math.round(valueNumber * 100) : 0;
+
+          allPayments.push({
+            id: item.id,
+            subscriptionId: item.subscription || providerSubscriptionId,
+            customerId: item.customer,
+            status: item.status,
+            dueDate: item.dueDate,
+            amountCents,
+            billingType: item.billingType,
+            externalReference: item.externalReference,
+          });
+        }
+
+        hasMore = Boolean(data.hasMore && items.length > 0);
+        offset += limit;
+      }
+
+      return allPayments;
+    } catch (err: any) {
+      if (err instanceof AppError) throw err;
+      throw new AppError(500, `Falha de comunicação ao listar cobranças Asaas: ${err.message}`);
+    }
+  }
+
+  /**
+   * Remove individualmente uma cobrança PENDING no Asaas (DELETE /v3/payments/{id}).
+   * Não utilizar para cobranças CONFIRMED/RECEIVED/OVERDUE.
+   */
+  async removePayment(providerPaymentId: string): Promise<{ success: boolean }> {
+    if (!this.apiKey) {
+      throw new AppError(500, 'Gateway Asaas não configurado.');
+    }
+
+    try {
+      const response = await fetch(`${this.apiUrl}/payments/${providerPaymentId}`, {
+        method: 'DELETE',
+        headers: {
+          access_token: this.apiKey,
+        },
+      });
+
+      if (!response.ok && response.status !== 404) {
+        const errBody = (await response.json().catch(() => ({}))) as any;
+        const message = errBody?.errors?.[0]?.description || `Erro ao remover cobrança no Asaas (HTTP ${response.status})`;
+        throw new AppError(response.status >= 500 ? 500 : 400, message);
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      if (err instanceof AppError) throw err;
+      throw new AppError(500, `Falha de comunicação ao remover cobrança Asaas: ${err.message}`);
+    }
+  }
+
+  /**
+   * Consulta uma cobrança individual no Asaas para verificação de status e race condition.
+   */
+  async getPayment(providerPaymentId: string): Promise<ProviderPaymentRecord | null> {
+    if (!this.apiKey) {
+      throw new AppError(500, 'Gateway Asaas não configurado.');
+    }
+
+    try {
+      const response = await fetch(`${this.apiUrl}/payments/${providerPaymentId}`, {
+        headers: {
+          access_token: this.apiKey,
+        },
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) return null;
+        throw new AppError(500, `Falha ao consultar cobrança Asaas (HTTP ${response.status})`);
+      }
+
+      const item = (await response.json()) as any;
+      const rawValue = item.value !== undefined ? item.value : 0;
+      const valueNumber = Number(rawValue);
+      const amountCents = !isNaN(valueNumber) ? Math.round(valueNumber * 100) : 0;
+
+      return {
+        id: item.id,
+        subscriptionId: item.subscription,
+        customerId: item.customer,
+        status: item.status,
+        dueDate: item.dueDate,
+        amountCents,
+        billingType: item.billingType,
+        externalReference: item.externalReference,
+      };
+    } catch (err: any) {
+      if (err instanceof AppError) throw err;
+      throw new AppError(500, `Falha de comunicação ao consultar cobrança Asaas: ${err.message}`);
+    }
   }
 
   /**
@@ -228,12 +443,7 @@ export class AsaasBillingProvider implements BillingProvider {
     nextDueDate?: string;
   } | null> {
     if (!this.apiKey) {
-      return {
-        status: 'ACTIVE',
-        value: 34.9,
-        cycle: 'MONTHLY',
-        nextDueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      };
+      throw new AppError(500, 'Gateway Asaas não configurado.');
     }
 
     try {

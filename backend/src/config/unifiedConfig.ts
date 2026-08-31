@@ -26,6 +26,10 @@ const configSchema = z.object({
   defaultMinistryId: z.string().default('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'),
   platformAdminSecret: z.string().optional(),
   billingTimezone: z.string().default('America/Sao_Paulo'),
+  billingReconciliationEnabled: z.boolean().default(true),
+  billingReconciliationIntervalMinutes: z.coerce.number().default(15),
+  webAppUrl: z.string().default('http://localhost:5173'),
+  billingPublicApiUrl: z.string().optional(),
   asaas: z.object({
     apiUrl: z.string().default('https://sandbox.asaas.com/api/v3'),
     apiKey: z.string().optional(),
@@ -57,6 +61,10 @@ const rawConfig = {
   defaultMinistryId: process.env.DEFAULT_MINISTRY_ID,
   platformAdminSecret: process.env.PLATFORM_ADMIN_SECRET,
   billingTimezone: process.env.BILLING_TIMEZONE || 'America/Sao_Paulo',
+  billingReconciliationEnabled: process.env.BILLING_RECONCILIATION_ENABLED !== 'false' && process.env.NODE_ENV !== 'test',
+  billingReconciliationIntervalMinutes: process.env.BILLING_RECONCILIATION_INTERVAL_MINUTES || 15,
+  webAppUrl: process.env.WEB_APP_URL || 'http://localhost:5173',
+  billingPublicApiUrl: process.env.BILLING_PUBLIC_API_URL,
   asaas: {
     apiUrl: process.env.ASAAS_API_URL || (process.env.ASAAS_ENVIRONMENT === 'production' ? 'https://api.asaas.com/v3' : 'https://sandbox.asaas.com/api/v3'),
     apiKey: process.env.ASAAS_API_KEY,

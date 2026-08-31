@@ -40,6 +40,9 @@ export interface SubscriptionStateData {
   expires_at?: string | null;
   administratively_suspended?: boolean;
   grace_period_expires_at?: string | null;
+  cancel_at_period_end?: boolean;
+  current_period_start?: string | null;
+  current_period_end?: string | null;
 }
 
 
@@ -229,10 +232,16 @@ export function resolveAccessMode(
   graceDaysRemaining: number | null;
   effectiveQuotas: EffectiveQuotas;
 } {
-  // 0. Se for cortesia com prazo e estiver expirada, o direito de uso volta ao plano Free
+  // 0. Se for cancelamento agendado cujo período já expirou, ou cortesia com prazo expirada, o direito de uso volta ao plano Free
   let activePlan = plan;
   let activeAddonBlocks = subscription.member_addon_blocks || 0;
-  if (subscription.subscription_mode === 'complimentary' && subscription.expires_at) {
+  if (subscription.cancel_at_period_end && subscription.current_period_end) {
+    const periodEnd = new Date(subscription.current_period_end);
+    if (!isNaN(periodEnd.getTime()) && now > periodEnd) {
+      activePlan = PLANS_CATALOG.free;
+      activeAddonBlocks = 0;
+    }
+  } else if (subscription.subscription_mode === 'complimentary' && subscription.expires_at) {
     const grantExpires = new Date(subscription.expires_at);
     if (!isNaN(grantExpires.getTime()) && now > grantExpires) {
       activePlan = PLANS_CATALOG.free;
