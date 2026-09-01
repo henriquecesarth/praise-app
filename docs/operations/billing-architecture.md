@@ -3,7 +3,7 @@
 Este documento descreve a arquitetura operacional e técnica da integração de pagamentos e assinaturas do **LouvAIO**, utilizando o gateway **Asaas** no padrão SaaS recorrente.
 
 > [!NOTE]
-> **Status de Homologação**: A integração está implementada com os fluxos principais homologados em ambiente **Sandbox do Asaas**. Gaps conhecidos (GAP-011 e GAP-012) permanecem em aberto; deploy, credenciais e configurações de produção não devem ser presumidos.
+> **Status de Homologação**: A integração está implementada com os fluxos principais homologados em ambiente **Sandbox do Asaas** (incluindo GAP-011 revalidado). O gap conhecido GAP-012 permanece em aberto; deploy, credenciais e configurações de produção não devem ser presumidos.
 
 ---
 
@@ -227,9 +227,15 @@ Para garantir resiliência contra falhas transitórias de rede durante o superse
 
 ## 10. Known Implementation Gaps (Billing)
 
-1. **Asaas Customer Reuse**:
-   - *Regra desejada*: 1 Ministry + provider = 1 registro canônico em `billing_customers`, reutilizando `provider_customer_id` em checkouts subsequentes.
-   - *Status atual*: **BUG STILL PRESENT** (`BillingService.createCheckout` não repassa `provider_customer_id` existente para o `POST /v3/checkouts` do Asaas).
-2. **Same-Plan Interval Change na UI**:
+1. **Same-Plan Interval Change na UI (GAP-012)**:
    - *Regra desejada*: Permitir mudança de ciclo (ex: Lite+ mensal -> Lite+ anual) para o mesmo plano.
    - *Status atual*: **IMPLEMENTAÇÃO PENDENTE NO FRONTEND** (`SubscriptionPlanView.tsx` compara apenas `p.id === plan.id`, mantendo o botão do plano desabilitado ao alternar o toggle).
+
+---
+
+### Status de Gaps Resolvidos (Billing)
+
+- **Asaas Customer Reuse (GAP-011) — CLOSED / SANDBOX REVALIDATED**:
+  - *Invariante consolidado*: 1 Ministry + provider vincula-se a 1 registro canônico em `billing_customers` (`provider_customer_id`), com claim/lease atômico transacional contra concorrência e fallback de recuperação por `externalReference`.
+  - *Comportamento homologado*: Checkouts subsequentes da mesma Ministry (incluindo transições Paid -> Paid) reutilizam estritamente o `provider_customer_id` existente sem criar novos clientes no Asaas.
+  - *Preservação de histórico*: Customers legados de transações e assinaturas passadas são preservados integralmente sem deleções. Em caso de mismatch inequívoco, a assinatura financeira ativa vigente pode reconciliar o mapping canônico.

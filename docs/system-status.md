@@ -38,7 +38,7 @@ Snapshot do estado operacional e técnico do LouvAIO. Este documento separa fato
 | INC-001 | Route aliases | O diretório features/groups implementa GroupRepository e group routes, mas app.ts não monta groupRoutes. /api/v1/groups monta ministryRoutes, portanto o módulo groups dedicado fica inalcançável e o alias usa coleções ministry_*. | backend/src/app.ts, features/groups/, MinistryRepository.ts |
 | INC-005 | Smart Chords endpoints | O frontend usa /smart-chords/song/:songId; o backend expõe somente /smart-chords e /smart-chords/:id. | web/src/api.ts, smart_chord.routes.ts |
 
-INC-002 e INC-003 foram corrigidos na implementação do sistema de planos. INC-004, INC-006, INC-007, INC-008, INC-009, INC-010, INC-011 e INC-012 foram integralmente resolvidos na fase de Authentication & Authorization Security Hardening (2026-08-29).
+INC-002 e INC-003 foram corrigidos na implementação do sistema de planos. INC-004, INC-006, INC-007, INC-008, INC-009, INC-010, INC-011 e INC-012 foram integralmente resolvidos na fase de Authentication & Authorization Security Hardening (2026-08-29). GAP-011 (Asaas Customer Reuse) foi integralmente implementado, protegido contra concorrência e revalidado com sucesso em Sandbox (2026-09-01).
 
 ## Incomplete Implementation / Known Gaps
 
@@ -52,7 +52,6 @@ INC-002 e INC-003 foram corrigidos na implementação do sistema de planos. INC-
 | GAP-008 | Infrastructure | Não há CI/CD, Docker, migrations ou schema Firestore versionado. | inventário |
 | GAP-009 | Formatting | Não há formatter ou script format configurado. | package.json, inventário |
 | GAP-010 | Dependency advisories | A instalação das dependências web reportou vulnerabilidades em dependências indiretas. | saída de npm install; Unknown / Not yet verified |
-| GAP-011 | Asaas Customer Reuse | `BillingService.createCheckout` não repassa `provider_customer_id` existente para `POST /v3/checkouts`, podendo gerar customers duplicados no gateway em checkouts sucessivos do mesmo ministério. | `BillingService.ts`, `asaas.provider.ts` |
 | GAP-012 | Same-Plan Interval Change UI | `SubscriptionPlanView.tsx` compara apenas `p.id === plan.id`, mantendo desabilitado o botão de checkout ao alternar o ciclo mensal/anual no mesmo plano. | `SubscriptionPlanView.tsx` |
 
 ## Outdated Documentation
@@ -77,7 +76,7 @@ README.md, AGENTS.md e GEMINI.md foram alinhados para não perpetuar essas afirm
 - Responsável operacional, processo de release e estratégia de rollback.
 - Versão mínima oficialmente suportada de Node.js e npm.
 - Concorrência de transações sob Firestore Emulator: NOT YET VERIFIED (atomicidade e isolamento validados em testes unitários com mocks via Vitest; emulador físico do Firestore indisponível no host).
-- Integração Asaas: A integração foi implementada com os fluxos principais homologados em ambiente Sandbox do Asaas. Gaps conhecidos (GAP-011 e GAP-012) permanecem em aberto. Configurações, credenciais e deploy de produção não devem ser presumidos.
+- Integração Asaas: A integração foi implementada com os fluxos principais homologados em ambiente Sandbox do Asaas (GAP-011 revalidado). O gap conhecido GAP-012 permanece em aberto. Configurações, credenciais e deploy de produção não devem ser presumidos.
 
 ## Use in Future Work
 

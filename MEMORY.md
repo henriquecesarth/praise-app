@@ -106,8 +106,8 @@ O backend usa Vitest para testes unitários e de integração cobrindo motor de 
 ## Known Issues and Implementation Gaps
 
 Itens duráveis e priorizados catalogados em docs/system-status.md:
-- Asaas Customer Reuse: Known bug / implementation pending (a criação de checkout ainda não repassa `provider_customer_id` existente para o gateway, podendo gerar customers duplicados no Sandbox).
-- Same-Plan Interval Change: Frontend implementation pending (a UI de `/ministerio/plano` ainda compara apenas `p.id === plan.id`, impedindo a alteração de ciclo mensal -> anual no mesmo plano).
+- Asaas Customer Reuse (GAP-011): CLOSED — SANDBOX REVALIDATED (1 Ministry + provider vincula-se a 1 customer canônico em `billing_customers` com reutilização estrita em checkouts subsequentes, lock atômico de criação, fallback por externalReference e preservação de customers históricos).
+- Same-Plan Interval Change (GAP-012): Frontend implementation pending (a UI de `/ministerio/plano` ainda compara apenas `p.id === plan.id`, impedindo a alteração de ciclo mensal -> anual no mesmo plano).
 - Aliases de rota legados (`features/groups`) e rota de cifra por música (`/smart-chords/song/:songId`).
 
 ## Current State

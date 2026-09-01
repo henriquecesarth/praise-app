@@ -52,9 +52,9 @@ Configuração adicional:
 
 **Authentication:** `access_token` no header das requisições de saída; header `asaas-access-token` validado com `crypto.timingSafeEqual` no webhook de entrada.
 
-**Status:** Integração implementada com fluxos principais homologados em ambiente Sandbox; gaps conhecidos (GAP-011 e GAP-012) permanecem em aberto; deploy/configuração de produção não devem ser presumidos.
+**Status:** Integração implementada com fluxos principais homologados em ambiente Sandbox (incluindo GAP-011 revalidado); gap conhecido (GAP-012) permanece em aberto; deploy/configuração de produção não devem ser presumidos.
 
-**Known Implementation Gap:** Customer reuse no gateway Asaas ainda não está garantido pelo código (`BillingService.createCheckout` não repassa `provider_customer_id` existente para a API de checkout).
+**Known Implementation Gap:** GAP-012 (Same-Plan Interval Change na UI) permanece aberto. GAP-011 (Asaas Customer Reuse) foi integralmente implementado, protegido contra concorrência e revalidado com sucesso em Sandbox.
 
 ## Billing Reconciler Worker
 
