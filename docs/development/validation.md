@@ -4,11 +4,11 @@
 
 Use somente etapas aplicáveis à mudança:
 
-1. Confirmar escopo com git status.
-2. Instalar dependências com lockfile, se necessário.
-3. Compilar backend quando backend ou contratos compartilhados forem afetados.
-4. Compilar/bundlear web quando frontend ou contratos forem afetados.
-5. Executar testes/lint somente se estiverem realmente configurados.
+1. Confirmar escopo com `git status`.
+2. Instalar dependências com lockfile (`npm ci`), se necessário.
+3. Compilar e testar backend quando backend ou contratos compartilhados forem afetados.
+4. Compilar e testar web quando frontend ou contratos forem afetados.
+5. Executar suíte E2E quando fluxos de ponta a ponta forem modificados.
 6. Fazer smoke test apenas em ambiente explicitamente seguro.
 7. Revisar git diff, arquivos novos, paths citados e ausência de secrets.
 8. Atualizar ExecPlan/documentação.
@@ -25,19 +25,22 @@ Use somente etapas aplicáveis à mudança:
 
 Não é necessário reinstalar em toda tarefa quando node_modules corresponde ao lockfile.
 
-### Backend build
+### Backend build & tests
 
     cd backend
     npm run build
+    npm test
 
-Equivalente declarado: tsc. Produz backend/dist/, que é ignorado.
+Equivalente de build: `tsc`. Executa `vitest run` para suíte unitária/integrada.
 
-### Web build
+### Web build & tests
 
     cd web
     npm run build
+    npm test
+    npm run test:e2e
 
-Executa tsc e vite build. Produz web/dist/, que é ignorado.
+Executa `tsc && vite build` para build, `vitest run` para unitários e `playwright test` para jornadas E2E locais.
 
 ### Backend lint status check
 
@@ -46,25 +49,12 @@ Executa tsc e vite build. Produz web/dist/, que é ignorado.
 
 Este comando existe no package.json, mas espera-se falha no estado atual porque ESLint/configuração não estão instalados. Não use a presença do script para declarar lint operacional.
 
-### Tests
-
-Frontend:
-
-    cd web
-    npm test
-    npm run build
-    npm run test:e2e
-
-Os E2E usam fixtures HTTP locais. O backend não possui comando de testes.
-
 ## Git Review
 
     git status --short
     git diff --check
     git diff --stat
     git diff -- README.md GEMINI.md AGENTS.md MEMORY.md docs/
-
-Para arquivos ainda untracked, git diff não exibe conteúdo por padrão; inclua uma listagem com rg --files docs e leia os documentos diretamente.
 
 ## Documentation-specific Checks
 
@@ -81,10 +71,10 @@ Para arquivos ainda untracked, git diff não exibe conteúdo por padrão; inclua
 Use status real:
 
     Backend build: PASS/FAIL
+    Backend tests: PASS/FAIL
     Web build: PASS/FAIL
-    Backend lint: PASS/FAIL/NOT OPERATIONAL
-    Backend tests: NOT AVAILABLE
     Web tests: PASS/FAIL
+    Backend lint: PASS/FAIL/NOT OPERATIONAL
     E2E: PASS/FAIL/NOT RUN — reason
     Diff review: PASS/FAIL
 

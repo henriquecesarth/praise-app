@@ -1,6 +1,6 @@
 # System Status and Evidence Matrix
 
-Snapshot baseado no checkout de 2026-08-27. Este documento separa fatos de lacunas e não autoriza correções incidentais.
+Snapshot do estado operacional e técnico do LouvAIO. Este documento separa fatos de lacunas e não autoriza correções incidentais.
 
 ## Classification Rules
 
@@ -17,7 +17,8 @@ Snapshot baseado no checkout de 2026-08-27. Este documento separa fatos de lacun
 | Runtime | Há dois pacotes npm independentes: backend e web. | backend/package.json, web/package.json |
 | Frontend | React Router sincroniza módulos, detalhes de músicas/pastas/escalas e subseções do ministério com URLs estáveis. | web/src/main.tsx, web/src/App.tsx, web/src/routing.ts |
 | Plans & Quotas | Sistema de planos e quotas por ministério (Free, Lite, Lite+, Essential, Pro, Premium), com resolução funcional de accessMode (normal, grace, restricted_over_limit, suspended), coleções transacionais `ministry_subscriptions` e `ministry_usage`, middlewares `enforceOperationalAccess` e interface em `/ministerio/plano`. | backend/src/config/plans.config.ts, backend/src/features/subscriptions/, backend/src/middleware/quota-enforcement.ts, web/src/components/SubscriptionPlanView.tsx |
-| Backend testing | O backend possui suíte de testes com Vitest cobrindo o motor de quotas, services, controllers e isolamento transacional (44 testes). | backend/vitest.config.ts, backend/src/**/*.test.ts |
+| Billing & Payments | Integração com Asaas implementada no backend (`AsaasBillingProvider`, `BillingService`, `BillingReconcilerWorker`) e frontend (`SubscriptionPlanView`), com suporte a checkouts hospedados v3, webhooks idempotentes, amount validation, transições isoladas em `billing_plan_changes` e future payment cleanup. | backend/src/features/billing/, backend/src/repositories/BillingRepository.ts, web/src/components/SubscriptionPlanView.tsx |
+| Backend testing | O backend possui suíte de testes com Vitest cobrindo o motor de quotas, services, controllers, concorrência, idempotência e repositórios. | backend/vitest.config.ts, backend/src/**/*.test.ts |
 | Mobile navigation | A barra inferior oferece Início, Escalas, Repertório, Cifras e Ministério; o header expõe troca/criação/entrada no ministério e logout. | BottomNav.tsx, MobileAccountMenu.tsx |
 | Authentication bootstrap | Chamadas autenticadas iniciais aguardam authReady e token local válido. | web/src/auth-bootstrap.ts, web/src/App.tsx |
 | PWA | Vite gera service worker versionado com precache apenas de shell/assets estáticos; navegações usam NetworkOnly com fallback offline genérico e não são armazenadas. Atualizações dependem de confirmação; não há runtime cache de API. | web/vite.config.ts, web/src/pwa.ts, web/public/offline.html |
@@ -39,8 +40,7 @@ Snapshot baseado no checkout de 2026-08-27. Este documento separa fatos de lacun
 
 INC-002 e INC-003 foram corrigidos na implementação do sistema de planos. INC-004, INC-006, INC-007, INC-008, INC-009, INC-010, INC-011 e INC-012 foram integralmente resolvidos na fase de Authentication & Authorization Security Hardening (2026-08-29).
 
-
-## Incomplete Implementation
+## Incomplete Implementation / Known Gaps
 
 | ID | Area | Current state | Evidence |
 | --- | --- | --- | --- |
@@ -49,10 +49,11 @@ INC-002 e INC-003 foram corrigidos na implementação do sistema de planos. INC-
 | GAP-004 | Liturgies navigation | LiturgiesView existe e chama a API, mas App.tsx apenas o importa; não há renderização/rota ativa desse componente. | App.tsx, LiturgiesView.tsx |
 | GAP-005 | Dashboard announcements | Avisos exibidos no dashboard vêm de MOCK_ANNOUNCEMENTS local, sem persistência/API. | DashboardView.tsx |
 | GAP-006 | Supabase migration residue | @supabase/supabase-js permanece como dependência; env.ts expõe campos vazios e lib/supabase.ts retorna null. | backend/package.json, config/env.ts, lib/supabase.ts |
-| GAP-007 | Environment onboarding | Arquivos .env locais existem e são ignorados, mas não há .env.example versionado. | .gitignore, inventário |
 | GAP-008 | Infrastructure | Não há CI/CD, Docker, migrations ou schema Firestore versionado. | inventário |
 | GAP-009 | Formatting | Não há formatter ou script format configurado. | package.json, inventário |
-| GAP-010 | Dependency advisories | A instalação das dependências web reportou 3 vulnerabilidades moderadas e 6 altas. A aplicabilidade dos advisories e uma estratégia de atualização compatível não foram auditadas nesta tarefa. | saída de npm install; Unknown / Not yet verified |
+| GAP-010 | Dependency advisories | A instalação das dependências web reportou vulnerabilidades em dependências indiretas. | saída de npm install; Unknown / Not yet verified |
+| GAP-011 | Asaas Customer Reuse | `BillingService.createCheckout` não repassa `provider_customer_id` existente para `POST /v3/checkouts`, podendo gerar customers duplicados no gateway em checkouts sucessivos do mesmo ministério. | `BillingService.ts`, `asaas.provider.ts` |
+| GAP-012 | Same-Plan Interval Change UI | `SubscriptionPlanView.tsx` compara apenas `p.id === plan.id`, mantendo desabilitado o botão de checkout ao alternar o ciclo mensal/anual no mesmo plano. | `SubscriptionPlanView.tsx` |
 
 ## Outdated Documentation
 
@@ -62,20 +63,21 @@ INC-002 e INC-003 foram corrigidos na implementação do sistema de planos. INC-
 | A persistência ativa é Supabase/PostgreSQL. | Repositories importam Firestore; lib/supabase.ts está marcado deprecated e retorna null. |
 | Existem migrations SQL sob supabase/migrations/. | Não existe diretório supabase/. |
 | O repositório contém somente backend/mobile. | O cliente ativo está em web/ com React/Vite/PWA. |
-| Alguns módulos estavam apenas planejados. | Escalas, dashboard e outras telas existem, embora tenham lacunas específicas acima. |
+| O backend não tem testes. | Backend possui suíte de testes Vitest em `backend/src/`. |
+| Não há provedor de pagamento ou worker de background. | Integração Asaas e `BillingReconcilerWorker` implementados. |
 
-README.md e GEMINI.md foram atualizados para não perpetuar essas afirmações.
+README.md, AGENTS.md e GEMINI.md foram alinhados para não perpetuar essas afirmações.
 
 ## Unknown / Not yet verified
 
 - Produção ativa, URLs publicadas e saúde dos deployments.
 - Regras de segurança, índices, TTLs, backups e políticas de retenção do Firestore.
-- Existência/estado das coleções em qualquer projeto Firebase real.
+- Existência/estado das coleções em qualquer projeto Firebase real de produção.
 - Metas de disponibilidade, tráfego, volume de dados ou desempenho.
 - Responsável operacional, processo de release e estratégia de rollback.
 - Versão mínima oficialmente suportada de Node.js e npm.
 - Concorrência de transações sob Firestore Emulator: NOT YET VERIFIED (atomicidade e isolamento validados em testes unitários com mocks via Vitest; emulador físico do Firestore indisponível no host).
-- Gateway de pagamento e cobrança Asaas: Implementação de código concluída no backend e frontend (`IMPLEMENTATION READY`), com testes automatizados de concorrência, idempotência e amount validation aprovados. A homologação real contra a API Asaas Sandbox está pendente do fornecimento das credenciais reais de sandbox no `.env` (`BLOCKED — ASAAS SANDBOX CREDENTIALS REQUIRED`).
+- Integração Asaas: A integração foi implementada com os fluxos principais homologados em ambiente Sandbox do Asaas. Gaps conhecidos (GAP-011 e GAP-012) permanecem em aberto. Configurações, credenciais e deploy de produção não devem ser presumidos.
 
 ## Use in Future Work
 

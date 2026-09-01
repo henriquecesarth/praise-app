@@ -2,15 +2,18 @@
 
 Este documento descreve a arquitetura operacional e técnica da integração de pagamentos e assinaturas do **LouvAIO**, utilizando o gateway **Asaas** no padrão SaaS recorrente.
 
+> [!NOTE]
+> **Status de Homologação**: A integração está implementada com os fluxos principais homologados em ambiente **Sandbox do Asaas**. Gaps conhecidos (GAP-011 e GAP-012) permanecem em aberto; deploy, credenciais e configurações de produção não devem ser presumidos.
+
 ---
 
 ## 1. Princípios Arquiteturais e Separação de Autoridade
 
 A integração segue a regra fundamental de separação de autoridade:
 
-- **Gateway de Pagamento (Asaas)**: Autoridade soberana sobre o **estado financeiro** (`payment state`). Gerencia processamento de cartão de crédito, geração de QR Code Pix, emissão de boletos, faturas, retentativas de cobrança e conformidade PCI-DSS. Nenhuma informação confidencial de cartão de crédito (PAN, CVV, data de expiração) transita ou é armazenada nos servidores do LouvAIO.
+- **Gateway de Pagamento (Asaas)**: Autoridade soberana sobre o **estado financeiro** (`payment state`). Gerencia processamento de cartão de crédito, emissão de faturas, retentativas de cobrança e conformidade PCI-DSS. Nenhuma informação confidencial de cartão de crédito (PAN, CVV, data de expiração) transita ou é armazenada nos servidores do LouvAIO.
 - **LouvAIO Backend (`SubscriptionService`)**: Autoridade soberana sobre o **direito de uso do produto** (`product entitlement`) e aplicação de quotas operacionais (membros, músicas, limites de ministério).
-- **Abstração Desacoplada (`BillingProvider`)**: O domínio da aplicação e as rotas de subscription interagem exclusivamente com a interface `BillingProvider`. Detalhes específicos de payload, endpoints e cabeçalhos do Asaas ficam isolados em `AsaasBillingProvider`, permitindo futura adição ou substituição de provedores (ex: Stripe, Mercado Pago) sem refatoração do domínio.
+- **Abstração Desacoplada (`BillingProvider`)**: O domínio da aplicação e as rotas de subscription interagem exclusivamente com a interface `BillingProvider`. Detalhes específicos de payload, endpoints e cabeçalhos do Asaas ficam isolados em `AsaasBillingProvider`.
 
 ```mermaid
 flowchart TD
@@ -18,23 +21,24 @@ flowchart TD
     FE -->|2. GET /billing/preview| BE[BillingController / BillingService]
     FE -->|3. POST /billing/checkout| BE
     BE -->|4. createCheckout| AP[AsaasBillingProvider]
-    AP -->|5. Cria cliente e checkout v3| AsaasAPI[Asaas Gateway API]
+    AP -->|5. POST /v3/checkouts| AsaasAPI[Asaas Gateway API]
     AsaasAPI -->|6. Retorna checkoutUrl| AP
-    AP -->|7. Registra billing_subscriptions pending| Firestore[(Firestore DB)]
+    AP -->|7. Registra billing_plan_changes pending| Firestore[(Firestore DB)]
     BE -->|8. Retorna checkoutUrl| FE
     FE -->|9. Redireciona para Checkout Hospedado| AsaasCheckout[Asaas Checkout Hospedado]
     AsaasCheckout -->|10. Pagamento Aprovado| AsaasAPI
     AsaasAPI -->|11. Webhook PAYMENT_CONFIRMED| WebhookRoute[POST /api/v1/billing/webhooks/asaas]
     WebhookRoute -->|12. Valida token e idempotência| BillingService[BillingService.handleWebhook]
-    BillingService -->|13. Concede quotas| SubService[SubscriptionService.changePlan]
-    BillingService -->|14. Salva transação| Firestore
+    BillingService -->|13. Inativa sub antiga + Future Payment Cleanup| AsaasAPI
+    BillingService -->|14. Promove nova assinatura e quotas| SubService[SubscriptionService.changePlan]
+    BillingService -->|15. Salva transação e atualiza plano| Firestore
 ```
 
 ---
 
 ## 2. Catálogo Oficial e Precificação Determinística
 
-Todos os valores monetários são representados e calculados em **centavos inteiros (`cents`)** para evitar erros de precisão de ponto flutuante:
+A fonte normativa dos planos e limites é `backend/src/config/plans.config.ts`. Todos os valores monetários são representados e calculados em **centavos inteiros (`cents`)** para evitar erros de precisão:
 
 | Plano | Preço Mensal | Preço Anual (10% OFF) | Equiv. Mensal no Anual | Capacidade Base | Add-on de Membros |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -46,46 +50,66 @@ Todos os valores monetários são representados e calculados em **centavos intei
 | **Premium** | R$ 214,90 (`21490`) | R$ 2.320,92 (`232092`) | R$ 193,41 | 300 membros / 1.500 músicas | Não necessita |
 
 ### Cálculo Determinístico do Desconto Anual
-O desconto de 10% no ciclo anual é calculado de forma exata por fórmula:
 $$\text{Preço Anual} = \text{round}(\text{Preço Mensal} \times 12 \times 0.90)$$
-Exemplo Pro: $\text{round}(8990 \times 12 \times 0.90) = \text{round}(97092.0) = 97092\text{ cents}$ (R$ 970,92).
-Add-on Pro: $\text{round}(690 \times 12 \times 0.90) = \text{round}(7452.0) = 7452\text{ cents}$ (R$ 74,52/ano por bloco).
 
 ---
 
-## 3. Modelo de Dados no Firestore
-
-Para isolamento e persistência das operações de faturamento, foram criadas quatro coleções dedicadas:
+## 3. Modelo de Dados no Firestore (5 Coleções de Billing)
 
 ### 1. `billing_customers`
-Armazena o vínculo entre o `ministry_id` do LouvAIO e o identificador do cliente no Asaas (`cus_...`):
+Armazena o vínculo entre o `ministry_id` e o identificador do cliente no Asaas (`cus_...`):
 - `id`: `${ministry_id}_${provider}`
 - `ministry_id`: string
 - `provider`: `'asaas'`
 - `provider_customer_id`: string
-- `name`, `email`: dados cadastrais
 - `created_at`, `updated_at`: timestamps ISO
 
 ### 2. `billing_subscriptions`
-Armazena o estado do contrato recorrente com o gateway:
+Armazena o estado da assinatura financeira recorrente ativa vigente com o gateway:
 - `id`: `${ministry_id}_${provider}`
 - `ministry_id`: string
 - `provider`: `'asaas'`
 - `provider_subscription_id`: string
 - `plan_id`: `PlanId`
 - `interval`: `'monthly' | 'annual'`
-- `addon_blocks`: number
+- `member_addon_blocks`: number
+- `amount_cents`: number
 - `status`: `'pending' | 'active' | 'past_due' | 'canceled'`
 - `current_period_start`, `current_period_end`: timestamps ISO
 - `cancel_at_period_end`: boolean
 - `created_at`, `updated_at`: timestamps ISO
 
-### 3. `billing_transactions`
-Histórico de cobranças, faturas e pagamentos realizados:
+### 3. `billing_plan_changes` (Isolamento de Transições & Supersede)
+Armazena intenções de checkout, upgrades, downgrades e trocas de plano pendentes sem sobrescrever a assinatura ativa vigente:
+- `id`: `checkout_intent_id`
+- `ministry_id`: string
+- `provider`: `'asaas'`
+- `checkout_intent_id`: string (enviado como `externalReference`)
+- `provider_checkout_id`: string | null
+- `requested_plan_id`: `PlanId`
+- `requested_interval`: `'monthly' | 'annual'`
+- `requested_addon_blocks`: number
+- `expected_amount_cents`: number
+- `checkout_url`: string
+- `previous_provider_subscription_id`: string | null
+- `new_provider_subscription_id`: string | null
+- `status`: `'pending' | 'superseding' | 'completed' | 'expired' | 'canceled' | 'financial_attention_required'`
+- `supersede_status`: `'not_applicable' | 'pending' | 'completed' | 'failed' | 'financial_attention_required'`
+- `payment_cleanup_status`: `'not_applicable' | 'pending' | 'completed' | 'failed' | 'financial_attention_required'`
+- `payment_cleanup_ids`: string[]
+- `renewal_cutoff_date`: string | null (YYYY-MM-DD comercial)
+- `financial_attention_required`: boolean
+- `financial_attention_reason`: string | null
+- `retry_locked_until`, `retry_locked_by`: string | null (lease multi-instância)
+- `created_at`, `expires_at`, `updated_at`: timestamps ISO
+
+### 4. `billing_transactions`
+Histórico de cobranças e faturas processadas:
 - `id`: `${provider}_${provider_payment_id}`
 - `ministry_id`: string
 - `provider`: `'asaas'`
 - `provider_payment_id`: string
+- `provider_subscription_id`: string | null
 - `amount_cents`: number
 - `currency`: `'BRL'`
 - `status`: `'pending' | 'paid' | 'overdue' | 'refunded' | 'canceled' | 'failed'`
@@ -94,108 +118,118 @@ Histórico de cobranças, faturas e pagamentos realizados:
 - `payment_method`: `'CREDIT_CARD' | 'PIX' | 'BOLETO'`
 - `invoice_url`: link da fatura / comprovante Asaas
 
-### 4. `billing_webhook_events` (Idempotência)
-Garante que eventos duplicados enviados pelo gateway não causem reprocessamento:
+### 5. `billing_webhook_events` (Idempotência Atômica)
+Garante controle de concorrência e idempotência com lock transacional no Firestore:
 - `id`: `${provider}_${provider_event_id}`
 - `provider`: `'asaas'`
 - `provider_event_id`: string
-- `event_type`: string (ex: `PAYMENT_CONFIRMED`)
-- `status`: `'pending' | 'processed' | 'failed' | 'ignored'`
-- `payload`: JSON do evento recebido
-- `processed_at`: timestamp ISO
+- `event_type`: string
+- `processing_status`: `'processing' | 'processed' | 'failed' | 'ignored'`
+- `received_at`, `processed_at`: timestamps ISO
+- `payload_hash`: hash SHA-256 do payload
 
 ---
 
 ## 4. Ciclo de Vida do Webhook e Processamento Assíncrono
 
-### Validação de Autenticidade
-Ao receber requisições em `POST /api/v1/billing/webhooks/asaas`, o `AsaasBillingProvider.validateWebhookRequest` verifica se o cabeçalho `asaas-access-token` coincide exatamente com a chave `ASAAS_WEBHOOK_TOKEN` configurada em variáveis de ambiente.
+### Validação de Autenticidade Fail-Closed
+`AsaasBillingProvider.validateWebhookRequest` verifica o header `asaas-access-token` contra `ASAAS_WEBHOOK_TOKEN` usando `crypto.timingSafeEqual`. Em caso de ausência ou divergência, a requisição é rejeitada imediatamente com HTTP 401.
 
-### Idempotência
-1. Ao receber um evento com ID `evt_123`, o sistema consulta a coleção `billing_webhook_events`.
-2. Se o documento já existir com status `processed`, o backend responde imediatamente com status `200 OK` (`{ status: 'ok', processed: false, reason: 'Webhook already processed' }`) sem executar qualquer mutação no estado do ministério.
-3. Se for novo, registra como `pending`, processa a mutação e atualiza para `processed`.
+### Idempotência Atômica Transacional
+1. Ao receber um evento, `BillingRepository.registerWebhookEvent` executa uma transação Firestore sobre `${provider}_${provider_event_id}`.
+2. Se o status for `processed` ou `ignored`, responde com HTTP 200 `{ status: 'ok', processed: false, reason: 'duplicate_event' }`.
+3. Se 10 requisições idênticas chegarem simultaneamente, exatamente 1 adquire o status `processing`; as demais retornam resposta idempotente imediata.
 
-### Mapeamento de Eventos para Ações de Domínio
+### Mapeamento de Eventos e Ações de Domínio
 
 | Evento Asaas | Ação do LouvAIO | Efeito na Assinatura |
 | :--- | :--- | :--- |
-| `PAYMENT_CONFIRMED` / `PAYMENT_RECEIVED` | Ativação ou renovação do plano pago | Atualiza `SubscriptionRecord` para `active`, define novas quotas via `SubscriptionService.changePlan` e `changeMemberAddonBlocks`, estende `current_period_end` em 30 ou 365 dias, registra transação como `paid`. |
-| `PAYMENT_OVERDUE` | Inadimplência / Pagamento atrasado | Atualiza `SubscriptionRecord` para `past_due`, ativa carência (`grace`) de 7 dias com `gracePeriodExpiresAt`. O ministério mantém acesso durante a carência; se não regularizado, entra em modo restrito (`restricted_over_limit`). |
-| `SUBSCRIPTION_CANCELLED` / `SUBSCRIPTION_DELETED` | Cancelamento definitivo da assinatura | Atualiza `SubscriptionRecord` para `canceled`, altera plano para `free` sem exclusão de dados. |
+| `CHECKOUT_PAID` | Atualiza vínculo de checkout | Registra `provider_checkout_id` e `provider_customer_id` na intenção em `billing_plan_changes`. |
+| `SUBSCRIPTION_CREATED` / `UPDATED` | Vincula ID da recorrência | Salva `new_provider_subscription_id` na intenção em `billing_plan_changes`. |
+| `PAYMENT_CONFIRMED` / `RECEIVED` | Confirmação do pagamento | Valida valor (`Amount Validation`), executa supersede da assinatura anterior (PUT INACTIVE), executa Future Payment Cleanup, promove a nova assinatura para `active` em `billing_subscriptions`, atualiza quotas no `SubscriptionService` e grava a transação paga. |
+| `PAYMENT_OVERDUE` | Inadimplência | Atualiza status para `past_due` e inicia carência (`grace`) de 7 dias. Aplica out-of-order sequence guard para não degradar ciclos posteriores já pagos. |
+| `SUBSCRIPTION_INACTIVATED` / `DELETED` | Encerramento de assinatura | Atualiza `billing_subscriptions` para `canceled` (ignorado se for evento de assinatura antiga já supersedida). |
 
 ---
 
-## 5. Cancelamento e Downgrade com Preservação de Dados
+## 5. Transições de Plano (Paid -> Paid) e Future Payment Cleanup
+
+### Fluxo de Transição Isolada
+1. **Intenção**: O checkout gera `billing_plan_changes` com status `pending`. A assinatura ativa vigente (`billing_subscriptions`) **continua intacta e ativa**.
+2. **Confirmação**: Quando `PAYMENT_CONFIRMED` chega no webhook, o backend valida o valor pago (`Amount Validation`).
+3. **Inativação da Assinatura Anterior**: O provider executa `PUT /v3/subscriptions/{oldSubId}` com `{ status: 'INACTIVE' }` no Asaas.
+4. **Future Payment Cleanup (`cleanupFuturePaymentsFromPreviousSubscription`)**:
+   - Calcula a data de corte comercial: `renewalCutoffDate = getBillingDate(currentPeriodEnd, config.billingTimezone)` (formato `YYYY-MM-DD`).
+   - Consulta cobranças vinculadas à assinatura antiga via `listSubscriptionPayments(oldSubId, { status: 'PENDING' })`.
+   - Remove **somente** cobranças que atendam cumulativamente:
+     1. pertencem à assinatura antiga esperada (`payment.subscriptionId === oldSubId`);
+     2. possuem status estritamente `PENDING`;
+     3. possuem `dueDate >= renewalCutoffDate`.
+   - Preserva estritamente cobranças `CONFIRMED`, `RECEIVED`, `OVERDUE` e `PENDING` com `dueDate < renewalCutoffDate` (ciclo anterior legítimo).
+5. **Mitigação de Race Condition Financeira**:
+   - Se o cancelamento no Asaas falhar e a cobrança futura tiver sido capturada/paga (`CONFIRMED`/`RECEIVED`) no intervalo, o backend **NÃO realiza estorno automático** nem deleção cega.
+   - Marca `planChange.status = 'financial_attention_required'` e `planChange.financial_attention_reason`, notificando a equipe operacional para validação humana.
+6. **Promoção**: Com supersede e cleanup concluídos, a nova assinatura é promovida em `billing_subscriptions` como `active` e os novos entitlements são aplicados no `SubscriptionService`.
+
+---
+
+## 6. Worker de Reconciliação em Background (`BillingReconcilerWorker`)
+
+Para garantir resiliência contra falhas transitórias de rede durante o supersede ou cleanup:
+
+- **Execução**: Instanciado no `server.ts`, roda no startup e em ciclos periódicos (`BILLING_RECONCILIATION_INTERVAL_MINUTES`, padrão 15 min).
+- **Lease Multi-Instância**: Utiliza transação Firestore com `claimPlanChangeForRetry` (`retry_locked_until` de 60s e `retry_locked_by: workerId`), evitando que múltiplas réplicas da API processem a mesma transição concorrentemente.
+- **Proteção de Testes**: Automaticamente desativado quando `NODE_ENV === 'test'` (`BILLING_RECONCILIATION_ENABLED` false).
+
+---
+
+## 7. Callback Bridge e Tratamento de Timezone
+
+### Ponte Segura de Redirecionamento (Callback Bridge)
+- O Asaas não aceita `localhost` como URL de retorno.
+- O frontend `WEB_APP_URL` nunca é enviado diretamente ao gateway.
+- O backend registra endpoints públicos próprios sob `BILLING_PUBLIC_API_URL`:
+  - `successUrl`: `${BILLING_PUBLIC_API_URL}/api/v1/billing/checkout-return/success`
+  - `cancelUrl`: `${BILLING_PUBLIC_API_URL}/api/v1/billing/checkout-return/cancel`
+  - `expiredUrl`: `${BILLING_PUBLIC_API_URL}/api/v1/billing/checkout-return/expired`
+- O controller valida o parâmetro `:status` em lista permitida (`['success', 'cancel', 'expired']`) e executa redirecionamento HTTP 302 seguro para `${WEB_APP_URL}/ministerio/plano?status=:status`.
+- **Sem mutação**: A rota de retorno é um GET público somente de redirecionamento. Não altera quotas nem confirma pagamentos.
+
+### Timezone Comercial (`BILLING_TIMEZONE`)
+- Padrão: `'America/Sao_Paulo'`.
+- Todas as datas de vencimento comercial (`dueDate`, `nextDueDate`, `renewalCutoffDate`) são calculadas via `backend/src/utils/billing-date.ts` usando `Intl.DateTimeFormat` no timezone configurado, evitando erros de virada de dia entre o UTC do servidor e o dia comercial local.
+
+---
+
+## 8. Cancelamento e Preservação Absoluta de Dados
 
 1. **Cancelamento no Fim do Ciclo (`cancel_at_period_end`)**:
-   - Quando o administrador solicita o cancelamento pelo painel, a assinatura é marcada com `cancel_at_period_end = true`.
-   - O ministério continua usufruindo de todas as capacidades do plano pago contratado até a data de expiração de `current_period_end`.
-   - O administrador pode clicar em **"Reativar Assinatura"** a qualquer momento antes do término do ciclo, revertendo `cancel_at_period_end = false`.
-2. **Preservação Absoluta de Dados**:
-   - Nenhum membro, música, escala, repertório ou cifra é deletado quando um plano sofre downgrade ou cancelamento.
-   - Caso a quantidade de membros ou músicas do ministério exceda a capacidade do plano de destino (ex: ministério com 40 membros migrando para Free de 10 membros), o sistema ativa o `AccessMode = 'grace'` (7 dias) e em seguida `restricted_over_limit`, bloqueando novas inclusões até que o ministério reduza a utilização ou contrate um novo plano.
+   - `BillingService.cancelSubscription` executa PUT `status: 'INACTIVE'` no Asaas, roda o cleanup de cobranças futuras PENDING e marca `cancel_at_period_end = true`.
+   - O ministério mantém acesso total ao plano contratado até `current_period_end`.
+   - O administrador pode reativar a qualquer momento antes do término (`reactivateSubscription`).
+2. **Preservação de Dados**:
+   - Nenhum membro, música, escala ou cifra é deletado em downgrades ou cancelamentos.
+   - Caso o uso exceda a capacidade do novo plano (ex: 40 membros migrando para Free de 10 membros), o sistema ativa `accessMode = 'grace'` (7 dias) e em seguida `restricted_over_limit`, bloqueando apenas novas inclusões até regularização.
 
 ---
 
-## 6. Concessões Manuais de Planos Cortesia (`Complimentary Plans`)
+## 9. Concessões de Planos Cortesia (`Complimentary Plans`)
 
-Para atender parcerias institucionais, convenções e beta testers sem criar dados falsos no gateway financeiro, o LouvAIO implementa o modo `subscription_mode = 'complimentary'`:
-
-1. **Separação do Gateway**:
-   - Concessões manuais **não criam cliente, assinatura, cobrança ou faturas no Asaas**.
-   - Não há risco de inadimplência no gateway nem impacto nas métricas financeiras reais.
-2. **Entitlements Oficiais**:
-   - Concede exatamente a mesma capacidade do plano contratado (ex: Pro de 100 membros e 500 músicas, ou Premium de 300 membros e 1.500 músicas) via `PLANS_CATALOG`.
-3. **Autoridade Restrita da Plataforma**:
-   - Administradores ou membros de ministérios não podem auto-conceder cortesias.
-   - Rotas `/api/v1/admin/ministries/:ministryId/complimentary/grant` e `/revoke` exigem autenticação via cabeçalho `x-platform-admin-secret` (`PLATFORM_ADMIN_SECRET`).
-4. **Ciclo de Vida & Expiração**:
-   - Suporte a expiração com prazo (`expires_at`) ou vitalícia (`expires_at = null`).
-   - Se expirada, `resolveAccessMode` retorna automaticamente para `free` sem exclusão de dados (ativando carência caso a utilização exceda).
-   - Se o ministério optar por contratar um plano pago, o checkout converte com segurança `subscription_mode = 'paid'`.
+1. **Isolamento Total do Gateway**:
+   - `subscription_mode = 'complimentary'` concede entitlements diretamente via `SubscriptionService.grantComplimentaryPlan`.
+   - **Zero chamadas ao Asaas**: não cria cliente, não gera assinatura, não emite faturas/cobranças fake.
+2. **Segurança de Produção**:
+   - Em produção (`NODE_ENV === 'production'`), as rotas HTTP `/api/v1/admin/*` são bloqueadas com HTTP 403 Forbidden.
+   - Concessões em produção operam exclusivamente via CLI seguro:
+     `npx ts-node scripts/grant-complimentary.ts <ministryId> <planId> [grantedBy] [grantReason] [expiresInDays]`
 
 ---
 
-## 7. Hardening de Concorrência, Invariantes e Idempotência
+## 10. Known Implementation Gaps (Billing)
 
-1. **Idempotência Atômica Transacional**:
-   - `BillingRepository.registerWebhookEvent` utiliza `db.runTransaction` com chave determinística `${provider}_${provider_event_id}`.
-   - Se múltiplas requisições do mesmo evento chegarem em paralelo, apenas uma obtém o lock de escrita. As demais encerram com resposta de sucesso idempotente imediatamente.
-2. **Proteção contra Double Checkout**:
-   - `BillingService.createCheckout` verifica se existe uma sessão pendente recente (< 15 min) para o mesmo plano, intervalo e add-ons antes de chamar a API do Asaas.
-   - Evita duplicidade de cobranças caso o usuário clique duas vezes no botão de assinar ou o frontend execute retentativas.
-3. **Invariante de 1 Assinatura Ativa por Ministério**:
-   - O documento em `billing_subscriptions` é indexado deterministicamente por `${ministryId}_${provider}`.
-   - Ao confirmar um upgrade/downgrade, a assinatura anterior no gateway é cancelada para impedir recorrências concorrentes.
-4. **Validação de Valor e Moeda (Amount Validation)**:
-   - `handleWebhook` compara o valor em centavos recebido no webhook com o valor calculado via `calculatePlanPriceCents(planId, interval, addonBlocks)`.
-   - Se houver divergência (ex: pagamento de R$ 14,90 para ativar plano Premium de R$ 214,90), o webhook é rejeitado e registrado como falha de segurança.
-5. **Proteção contra Eventos Fora de Ordem**:
-   - Eventos atrasados de `PAYMENT_OVERDUE` com data de vencimento anterior ao início do período ativo vigente são descartados com segurança.
-
----
-
-## 8. Configuração e Variáveis de Ambiente
-
-As configurações são gerenciadas através do `unifiedConfig.ts`:
-
-```env
-# Autoridade da Plataforma (Superadmin)
-PLATFORM_ADMIN_SECRET="chave-secreta-louvaio-platform-superadmin-2026"
-
-# Gateway de Pagamentos Asaas
-ASAAS_API_URL="https://sandbox.asaas.com/api/v3"
-ASAAS_API_KEY="$aact_YTU5YTE0M2M6N2Zl... (chave de API do Asaas)"
-ASAAS_WEBHOOK_TOKEN="louvaio_asaas_secret_webhook_token_2026"
-ASAAS_ENVIRONMENT="sandbox" # ou "production"
-```
-
----
-
-## 9. Segurança e Controle de Acesso (RBAC)
-
-- Todas as rotas de checkout, preview, faturas e cancelamento sob `/api/v1/ministries/:ministryId/billing/*` exigem autenticação válida via token JWT e verificação de papel de administração (`requireMinistryRole('admin')`). Membros comuns do ministério têm acesso apenas a consultas.
-- O endpoint de webhook `/api/v1/billing/webhooks/asaas` é protegido por verificação de token em tempo constante (`crypto.timingSafeEqual`).
-- As rotas administrativas de concessão de cortesia `/api/v1/admin/ministries/:ministryId/complimentary/*` são protegidas por `requirePlatformAdmin`.
-
+1. **Asaas Customer Reuse**:
+   - *Regra desejada*: 1 Ministry + provider = 1 registro canônico em `billing_customers`, reutilizando `provider_customer_id` em checkouts subsequentes.
+   - *Status atual*: **BUG STILL PRESENT** (`BillingService.createCheckout` não repassa `provider_customer_id` existente para o `POST /v3/checkouts` do Asaas).
+2. **Same-Plan Interval Change na UI**:
+   - *Regra desejada*: Permitir mudança de ciclo (ex: Lite+ mensal -> Lite+ anual) para o mesmo plano.
+   - *Status atual*: **IMPLEMENTAÇÃO PENDENTE NO FRONTEND** (`SubscriptionPlanView.tsx` compara apenas `p.id === plan.id`, mantendo o botão do plano desabilitado ao alternar o toggle).

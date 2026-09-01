@@ -2,7 +2,7 @@
 
 ## 1. Project Mission
 
-Praise App é uma aplicação web para organizar ministérios de louvor. O sistema atual cobre autenticação, ministérios e integrantes, funções, equipes, escalas, repertório, liturgias, modelos de roteiro e edição de cifras. O produto é uma SPA instalável que consome uma API REST com dados no Firebase.
+LouvAIO (anteriormente Praise App) é uma aplicação web e PWA para organizar ministérios de louvor. O sistema cobre autenticação, ministérios e integrantes, funções, equipes, escalas, repertório, liturgias, modelos de roteiro, edição de cifras inteligentes, planos, quotas, concessões cortesia e faturamento SaaS recorrente via gateway Asaas. O produto é uma SPA instalável que consome uma API REST Express com dados no Firebase Firestore.
 
 ## 2. Sources of Truth
 
@@ -18,20 +18,23 @@ Se o código contradizer um documento, confirme o comportamento no código, atua
 
 ## 3. Repository Map
 
-- backend/: API Express. Contém configuração, middleware, features e repositories. Regras HTTP e persistência pertencem aqui; UI não pertence.
-- backend/src/features/: módulos por capacidade. Cada módulo normalmente contém routes, controller, service e types. Validação de entrada e orquestração pertencem aqui.
-- backend/src/repositories/: acesso direto ao Firestore e mapeamento de documentos. Consultas e comandos de persistência pertencem aqui; detalhes de apresentação não pertencem.
-- backend/src/middleware/: autenticação, autorização, validação Zod e tratamento global de erro.
+- backend/: API Express. Contém configuração, middleware, features e repositories. Regras HTTP, persistência e faturamento pertencem aqui; UI não pertence.
+- backend/src/features/: módulos por capacidade:
+  - auth/, ministries/, repertoire/, schedules/, liturgies/, smart_chords/, teams/, roles/, classifications/, templates/
+  - subscriptions/: gestão de quotas, ciclos de vida de assinaturas, planos de cortesia e accessMode.
+  - billing/: integração de pagamentos com provedores (Asaas), checkouts hospedados, webhooks idempotentes, histórico e BillingReconcilerWorker.
+- backend/src/repositories/: acesso direto ao Firestore e mapeamento de documentos. Consultas e comandos de persistência pertencem aqui.
+- backend/src/middleware/: autenticação, RBAC, validação Zod, enforcement de quotas e tratamento global de erro.
 - backend/src/lib/: inicialização de integrações. firebase.ts é a integração ativa; supabase.ts é um stub obsoleto.
 - web/: SPA React/Vite e PWA. UI, estado de tela e adaptação do contrato HTTP pertencem aqui.
 - web/src/api.ts: única camada centralizada de chamadas HTTP e conversão snake_case/camelCase.
-- web/src/components/: telas, modais e componentes visuais. Alguns componentes são grandes e mantêm estado local.
-- web/src/utils/: transformação pura de cifras.
+- web/src/components/: telas, modais e componentes visuais (incluindo tela de planos e faturamento).
+- web/src/utils/: transformação de cifras e datas comerciais.
 - docs/: documentação operacional e arquitetural.
 - docs/exec-plans/active/: planos vivos de mudanças relevantes.
 - docs/exec-plans/completed/: planos encerrados, preservados como histórico de execução.
 
-Não existem atualmente mobile/, supabase/, Docker, CI/CD ou migrations. O web possui testes co-localizados em src/ e jornadas em web/e2e/.
+Não existem atualmente mobile/, supabase/, Docker, CI/CD ou migrations. O backend possui suíte de testes Vitest em `backend/src/`. O web possui testes co-localizados em `web/src/` e jornadas E2E em `web/e2e/`.
 
 ## 4. Architecture Rules
 
@@ -40,15 +43,18 @@ Regras observadas, não aspiracionais:
 - O frontend chama a API por web/src/api.ts; componentes não usam Firebase diretamente.
 - A API é organizada principalmente como route → middleware → controller → service → repository → Firestore.
 - Controllers traduzem Request/Response e propagam erros ao middleware global.
-- Services orquestram repositories; parte da lógica ainda reside nos repositories.
+- Services orquestram repositories e entidades de domínio; repositories acessam o Firestore diretamente.
 - Repositories importam o cliente Firebase diretamente e conhecem nomes de coleções.
 - Entradas de várias rotas usam schemas Zod antes do controller.
 - Recursos de ministério são identificados por ministryId; aliases groupId permanecem em vários pontos por compatibilidade.
-- Autorização de tela no frontend é apenas apresentação. A API deve continuar sendo a fronteira efetiva de autorização.
+- Autorização de tela no frontend é apenas apresentação. A API continua sendo a fronteira efetiva de autorização e aplicação de quotas.
+- Separação de autoridade no faturamento: o gateway de pagamento (Asaas) é a autoridade sobre o estado financeiro; o LouvAIO (SubscriptionService) é a autoridade sobre o direito de uso e quotas de produto.
+- Transições de plano usam a coleção `billing_plan_changes` para isolamento de intenção sem sobrescrever a assinatura ativa vigente até a confirmação financeira.
+- Preservação estrita de dados: downgrades, inadimplência e cancelamentos nunca apagam dados de ministérios, membros, músicas ou escalas. O sistema aplica carência (`grace`) e modo restrito (`restricted_over_limit`).
 - A resposta HTTP não possui envelope único: repertório frequentemente usa { data: ... }, enquanto outros módulos retornam o objeto/array diretamente. Preserve o contrato observado em mudanças localizadas.
 - Não trate Clean Architecture, DDD ou outra arquitetura idealizada como padrão adotado.
 
-Consulte docs/system-status.md antes de trabalhar em autenticação, RBAC, liturgias, Smart Chords ou aliases groups: há inconsistências confirmadas que não foram corrigidas durante a criação deste harness.
+Consulte docs/system-status.md antes de trabalhar em autenticação, RBAC, liturgias, Smart Chords, faturamento ou aliases groups: há inconsistências catalogadas.
 
 ## 5. Coding Conventions
 
@@ -61,7 +67,7 @@ Consulte docs/system-status.md antes de trabalhar em autenticação, RBAC, litur
 - Dependências de service/repository usam parâmetros de construtor com instância padrão.
 - Schemas Zod ficam junto da feature.
 - O frontend usa componentes funcionais e hooks; não há biblioteca de estado global. React Router sincroniza módulos e detalhes com URLs estáveis.
-- Estilos são centralizados principalmente em web/src/index.css, com estilos inline em componentes.
+- Estilos são centralizados principalmente em web/src/index.css, com tokens em web/src/styles/louvaio-brand.css e estilos inline.
 - Não há formatter configurado. Preserve o estilo do arquivo tocado.
 - Há uso de any em contratos flexíveis. Não amplie isso sem necessidade, mas não refatore incidentalmente.
 
@@ -111,21 +117,28 @@ Validação disponível:
 
     cd backend
     npm run build
+    npm test
 
     cd ../web
     npm run build
     npm test
     npm run test:e2e
 
+Validação de integridade do repositório:
+
+    git diff --check
+    git status
+    git diff --stat
+
 Estado atual:
 
-- backend não tem testes.
+- backend usa Vitest para testes unitários e de integração de quotas, billing, concorrência, idempotência, segurança anti-IDOR, RBAC e repositórios.
 - web usa Vitest/Testing Library para unidades/componentes e Playwright para E2E com mocks locais.
-- web não tem script de lint.
-- backend declara npm run lint, mas não inclui dependência/configuração ESLint; o comando não é uma validação operacional até isso ser corrigido explicitamente.
+- web não tem script de lint configurado.
+- backend declara npm run lint, mas não inclui dependência/configuração ESLint; o comando não é uma validação operacional até isso ser configurado explicitamente.
 - não existem comandos de format, migrations, Docker ou CI.
 
-Não crie testes ou configuração de lint apenas para satisfazer o protocolo de outra tarefa. Para novo comportamento web, estenda a cobertura existente no nível apropriado e mantenha qualquer escrita E2E isolada por mocks/fixtures.
+Não crie testes ou configuração de lint apenas para satisfazer o protocolo de outra tarefa. Para novo comportamento web ou backend, estenda a cobertura existente no nível apropriado e mantenha qualquer escrita E2E isolada por mocks/fixtures.
 
 ## 9. Definition of Done
 
