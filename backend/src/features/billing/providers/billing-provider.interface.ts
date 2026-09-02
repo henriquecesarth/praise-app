@@ -80,12 +80,11 @@ export interface BillingProvider {
     nextDueDate?: string;
   } | null>;
 
-  findCheckoutByExternalReference?(externalReference: string): Promise<{
-    checkoutId: string;
-    checkoutUrl: string;
-    expiresAt: string | null;
-    status?: string;
-  } | null>;
+  /**
+   * Lista cobranças geradas por uma sessão de checkout específica no provedor.
+   * Endpoint oficial Asaas documentado: GET /v3/payments?checkoutSession={checkoutSessionId}
+   */
+  listPaymentsByCheckoutSession?(checkoutSessionId: string): Promise<Array<ProviderPaymentRecord>>;
 
   createCheckout(params: {
     ministryId: string;
@@ -105,6 +104,7 @@ export interface BillingProvider {
       cpfCnpj?: string;
       phone?: string;
     };
+    nextDueDate?: string;
   }): Promise<{
     checkoutUrl: string;
     checkoutId: string;
@@ -138,8 +138,10 @@ export interface BillingProvider {
   getSubscription?(providerSubscriptionId: string): Promise<{
     status: string;
     value?: number;
+    valueCents?: number;
     cycle?: string;
     nextDueDate?: string;
+    customer?: string;
   } | null>;
 }
 

@@ -147,3 +147,41 @@ export interface InitialPurchaseProviderReadyResult {
     | 'PAYMENT_NOT_SETTLED'
     | 'RENEWAL_DATE_INVALID';
 }
+
+export interface PaidToPaidTargetReadyParams {
+  transition: import('./billing.types').BillingTransitionV1Record;
+  targetCustomerId?: string | null;
+  providerSubscriptionId?: string | null;
+  subscriptionCycle?: BillingInterval | null;
+  subscriptionValueCents?: number | null;
+  subscriptionStatus?: string | null;
+  subscriptionNextDueDate?: string | null;
+  firstPayment?: {
+    id: string;
+    subscriptionId?: string | null;
+    customerId?: string | null;
+    amountCents: number;
+    dueDate: string;
+    status: string;
+  } | null;
+  checkoutSessionId?: string | null;
+  externalReference?: string | null;
+}
+
+export interface PaidToPaidTargetReadyResult {
+  ready: boolean;
+  reason?: string;
+  failureCode?:
+    | 'INVALID_TRANSITION'
+    | 'STRATEGY_MISMATCH'
+    | 'CUSTOMER_MISMATCH'
+    | 'CHECKOUT_CORRELATION_FAILED'
+    | 'SUBSCRIPTION_CORRELATION_FAILED'
+    | 'CYCLE_MISMATCH'
+    | 'AMOUNT_MISMATCH'
+    | 'PAYMENT_NOT_YET_VISIBLE'
+    | 'PAYMENT_SUBSCRIPTION_MISMATCH'
+    | 'PAYMENT_AMOUNT_MISMATCH'
+    | 'DUE_DATE_MISMATCH'
+    | 'PAYMENT_STATUS_INVALID';
+}

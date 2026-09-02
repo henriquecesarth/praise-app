@@ -332,12 +332,15 @@ export interface BillingTransitionV1Record {
   payment_cleanup_error?: string | null;
   financial_attention_required?: boolean;
   financial_attention_reason?: string | null;
+  target_ready_verified_at?: string | null;
   renewal_cutoff_date?: string | null;
   retry_count?: number;
   last_retry_at?: string | null;
   next_retry_at?: string | null;
   retry_locked_until?: string | null;
   retry_locked_by?: string | null;
+  reconcile_locked_until?: string | null;
+  reconcile_locked_by?: string | null;
 }
 
 export type BillingPlanChangeRecord = LegacyBillingPlanChangeRecord | BillingTransitionV1Record;
@@ -620,6 +623,7 @@ export interface CheckoutCreationRequest {
   addonBlocks?: number;
   successUrl?: string;
   cancelUrl?: string;
+  policyVersion?: BillingTransitionPolicyVersion;
 }
 
 export interface CheckoutCreationResult {

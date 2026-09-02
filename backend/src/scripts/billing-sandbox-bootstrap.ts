@@ -13,6 +13,7 @@ import {
   buildWebhookSyncPayload,
   updateEnvContentBillingUrl,
   sanitizeOutput,
+  getBackendSpawnOptions,
 } from './billing-sandbox-bootstrap.helpers';
 
 interface AsaasWebhookResponse {
@@ -241,12 +242,12 @@ export async function runBillingSandboxBootstrap(options?: {
   // 6. Iniciar Backend como processo filho com BILLING_PUBLIC_API_URL injetada no environment
   console.log('[6/8] Iniciando processo do backend com a URL pública do túnel injetada...');
   const backendEnv = buildBackendChildEnv(process.env, publicUrl);
-  const isWindows = process.platform === 'win32';
-  const npxCmd = isWindows ? 'npx.cmd' : 'npx';
+  const spawnOpts = getBackendSpawnOptions();
 
-  backendProc = spawn(npxCmd, ['tsx', 'src/server.ts'], {
+  backendProc = spawn(spawnOpts.command, ['tsx', 'src/server.ts'], {
     cwd: backendRoot,
     env: backendEnv,
+    shell: spawnOpts.shell,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 

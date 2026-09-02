@@ -13,6 +13,7 @@ import {
   updateEnvContentBillingUrl,
   sanitizeOutput,
   REQUIRED_WEBHOOK_EVENTS,
+  getBackendSpawnOptions,
 } from './billing-sandbox-bootstrap.helpers';
 
 describe('billing-sandbox-bootstrap.helpers (Bootstrap 1.1 Hardening)', () => {
@@ -209,6 +210,26 @@ describe('billing-sandbox-bootstrap.helpers (Bootstrap 1.1 Hardening)', () => {
       const secret = 'sk_test_api_key_123456';
       const text = `API Key: ${secret}`;
       expect(sanitizeOutput(text, [secret])).toBe('API Key: [REDACTED]');
+    });
+  });
+
+  describe('getBackendSpawnOptions', () => {
+    it('deve retornar npx.cmd e shell: true para Windows (win32)', () => {
+      const opts = getBackendSpawnOptions('win32');
+      expect(opts.command).toBe('npx.cmd');
+      expect(opts.shell).toBe(true);
+    });
+
+    it('deve retornar npx e shell: false para Linux (linux)', () => {
+      const opts = getBackendSpawnOptions('linux');
+      expect(opts.command).toBe('npx');
+      expect(opts.shell).toBe(false);
+    });
+
+    it('deve retornar npx e shell: false para macOS (darwin)', () => {
+      const opts = getBackendSpawnOptions('darwin');
+      expect(opts.command).toBe('npx');
+      expect(opts.shell).toBe(false);
     });
   });
 });

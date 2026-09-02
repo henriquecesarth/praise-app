@@ -11,6 +11,7 @@ import {
 } from '../billing-provider.interface';
 import { AppError } from '../../../../middleware/error-handler';
 import { getCurrentBillingDate } from '../../../../utils/billing-date';
+import { providerBrlDecimalToCents, centsToProviderBrlDecimal } from '../../billing-money.utils';
 
 
 export class AsaasBillingProvider implements BillingProvider {
@@ -219,8 +220,7 @@ export class AsaasBillingProvider implements BillingProvider {
       const validSub = items.find((s: any) => s.externalReference === externalReference && s.status !== 'DELETED');
 
       if (validSub && validSub.id) {
-        const rawValue = validSub.value !== undefined ? Number(validSub.value) : 0;
-        const valueCents = !isNaN(rawValue) ? Math.round(rawValue * 100) : 0;
+        const valueCents = providerBrlDecimalToCents(validSub.value);
         return {
           providerSubscriptionId: validSub.id,
           providerCustomerId: validSub.customer,
@@ -235,6 +235,76 @@ export class AsaasBillingProvider implements BillingProvider {
     } catch (err: any) {
       if (err instanceof AppError) throw err;
       throw new AppError(500, `Falha de comunicação ao buscar assinatura por externalReference no Asaas: ${err.message}`);
+    }
+  }
+
+  /**
+   * Lista todas as cobranças geradas por uma sessão de checkout específica no Asaas.
+   * Endpoint oficial Asaas: GET /v3/payments?checkoutSession={checkoutSessionId}
+   */
+  async listPaymentsByCheckoutSession(checkoutSessionId: string): Promise<Array<ProviderPaymentRecord>> {
+    if (!this.apiKey) {
+      throw new AppError(500, 'Gateway Asaas não configurado.');
+    }
+
+    const limit = 50;
+    let offset = 0;
+    let hasMore = true;
+    const allPayments: ProviderPaymentRecord[] = [];
+
+    try {
+      while (hasMore) {
+        const queryParams = new URLSearchParams({
+          checkoutSession: checkoutSessionId,
+          offset: String(offset),
+          limit: String(limit),
+        });
+
+        const response = await fetch(`${this.apiUrl}/payments?${queryParams.toString()}`, {
+          headers: {
+            access_token: this.apiKey,
+          },
+        });
+
+        if (!response.ok) {
+          if (response.status === 404) return [];
+          const errBody = (await response.json().catch(() => ({}))) as any;
+          const message =
+            errBody?.errors?.[0]?.description ||
+            `Falha ao listar cobranças por checkoutSession no Asaas (HTTP ${response.status})`;
+          throw new AppError(400, message);
+        }
+
+        const data = (await response.json()) as {
+          hasMore?: boolean;
+          data?: any[];
+          totalCount?: number;
+        };
+
+        const items = Array.isArray(data.data) ? data.data : [];
+        for (const item of items) {
+          const amountCents = providerBrlDecimalToCents(item.value);
+
+          allPayments.push({
+            id: item.id,
+            subscriptionId: item.subscription,
+            customerId: item.customer,
+            status: item.status,
+            dueDate: item.dueDate,
+            amountCents,
+            billingType: item.billingType,
+            externalReference: item.externalReference,
+          });
+        }
+
+        hasMore = Boolean(data.hasMore && items.length > 0);
+        offset += limit;
+      }
+
+      return allPayments;
+    } catch (err: any) {
+      if (err instanceof AppError) throw err;
+      throw new AppError(500, `Falha de comunicação ao listar cobranças por checkoutSession no Asaas: ${err.message}`);
     }
   }
 
@@ -259,11 +329,12 @@ export class AsaasBillingProvider implements BillingProvider {
       cpfCnpj?: string;
       phone?: string;
     };
+    nextDueDate?: string;
   }): Promise<{ checkoutUrl: string; checkoutId: string; expiresAt: string | null }> {
-    const value = Number((params.amountCents / 100).toFixed(2));
+    const value = centsToProviderBrlDecimal(params.amountCents);
     const cycle = params.interval === 'annual' ? 'YEARLY' : 'MONTHLY';
     const checkoutDescription = `LouvAIO - Plano ${params.planName} (${params.interval === 'annual' ? 'Anual com 10% OFF' : 'Mensal'})`;
-    const nextDueDate = getCurrentBillingDate();
+    const nextDueDate = params.nextDueDate || getCurrentBillingDate();
 
     const externalReference = params.checkoutIntentId || `intent_${params.ministryId}_${Date.now()}`;
 
@@ -465,7 +536,7 @@ export class AsaasBillingProvider implements BillingProvider {
       throw new AppError(500, 'Gateway Asaas não configurado.');
     }
 
-    const statusFilter = options?.status ? options.status : 'PENDING';
+    const statusFilter = options?.status !== undefined ? options.status : 'PENDING';
     const limit = 50;
     let offset = 0;
     let hasMore = true;
@@ -477,7 +548,7 @@ export class AsaasBillingProvider implements BillingProvider {
           offset: String(offset),
           limit: String(limit),
         });
-        if (statusFilter) {
+        if (statusFilter && statusFilter !== 'ALL') {
           queryParams.set('status', statusFilter);
         }
 
@@ -505,9 +576,7 @@ export class AsaasBillingProvider implements BillingProvider {
 
         const items = Array.isArray(data.data) ? data.data : [];
         for (const item of items) {
-          const rawValue = item.value !== undefined ? item.value : 0;
-          const valueNumber = Number(rawValue);
-          const amountCents = !isNaN(valueNumber) ? Math.round(valueNumber * 100) : 0;
+          const amountCents = providerBrlDecimalToCents(item.value);
 
           allPayments.push({
             id: item.id,
@@ -583,9 +652,7 @@ export class AsaasBillingProvider implements BillingProvider {
       }
 
       const item = (await response.json()) as any;
-      const rawValue = item.value !== undefined ? item.value : 0;
-      const valueNumber = Number(rawValue);
-      const amountCents = !isNaN(valueNumber) ? Math.round(valueNumber * 100) : 0;
+      const amountCents = providerBrlDecimalToCents(item.value);
 
       return {
         id: item.id,
@@ -770,8 +837,7 @@ export class AsaasBillingProvider implements BillingProvider {
     }
 
     const rawValue = payment.value !== undefined ? payment.value : subscription.value !== undefined ? subscription.value : undefined;
-    const valueNumber = rawValue !== undefined ? Number(rawValue) : undefined;
-    const amountCents = valueNumber !== undefined && !isNaN(valueNumber) ? Math.round(valueNumber * 100) : undefined;
+    const amountCents = rawValue !== undefined ? providerBrlDecimalToCents(rawValue) : undefined;
 
     let subscriptionCycle: BillingInterval | undefined;
     if (subscription.cycle === 'YEARLY') {
@@ -780,8 +846,8 @@ export class AsaasBillingProvider implements BillingProvider {
       subscriptionCycle = 'monthly';
     }
 
-    const subRawValue = subscription.value !== undefined ? Number(subscription.value) : undefined;
-    const subscriptionValueCents = subRawValue !== undefined && !isNaN(subRawValue) ? Math.round(subRawValue * 100) : undefined;
+    const subRawValue = subscription.value !== undefined ? subscription.value : undefined;
+    const subscriptionValueCents = subRawValue !== undefined ? providerBrlDecimalToCents(subRawValue) : undefined;
     const subscriptionNextDueDate = typeof subscription.nextDueDate === 'string' && subscription.nextDueDate.trim() ? subscription.nextDueDate.trim() : undefined;
 
     const confirmedDate =

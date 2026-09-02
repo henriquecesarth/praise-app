@@ -31,6 +31,8 @@ import {
   CreateQuoteOptions,
   BillingTransitionExecutionStrategy,
   BuildBillingTransitionRecordParams,
+  PaidToPaidTargetReadyParams,
+  PaidToPaidTargetReadyResult,
 } from './billing-transition-domain.types';
 
 export const BILLING_TIMEZONE_DEFAULT = 'America/Sao_Paulo';
@@ -607,8 +609,8 @@ export function buildBillingTransitionV1Record(
 
     effective_at: commercialSnapshot.execution_strategy === 'immediate_initial_purchase' ? null : commercialSnapshot.effective_at,
     effective_billing_date: commercialSnapshot.execution_strategy === 'immediate_initial_purchase' ? null : commercialSnapshot.effective_billing_date,
-    current_period_start_billing_date: null,
-    current_period_end_billing_date: null,
+    current_period_start_billing_date: commercialSnapshot.current_period_start_date,
+    current_period_end_billing_date: commercialSnapshot.current_period_end_date,
     requested_commercial_date: getBillingDate(commercialSnapshot.price_locked_at, BILLING_TIMEZONE_DEFAULT),
     price_locked_at: commercialSnapshot.price_locked_at,
     requested_at: commercialSnapshot.price_locked_at,
@@ -812,6 +814,194 @@ export function checkInitialPurchaseProviderReadiness(
         failureCode: 'RENEWAL_DATE_INVALID',
       };
     }
+  }
+
+  return { ready: true };
+}
+
+/**
+ * Valida o portão Target Ready para transições Paid -> Paid (Phase 3B.1).
+ * Verifica se a nova assinatura e a sua primeira cobrança foram materializadas e
+ * correspondem estritamente ao contrato comercial travado para a data futura.
+ *
+ * REGRA CRÍTICA DE DESACOPLAMENTO (Seção 9):
+ * Após a primeira cobrança ser materializada no Asaas, subscription.nextDueDate pode avançar
+ * para o ciclo seguinte. Portanto, Target Ready NÃO exige subscription.nextDueDate === effective_billing_date.
+ * A autoridade da data comercial da primeira renovação é firstPayment.dueDate === effective_billing_date.
+ */
+export function verifyPaidToPaidTargetReadyGate(
+  params: PaidToPaidTargetReadyParams
+): PaidToPaidTargetReadyResult {
+  const {
+    transition,
+    targetCustomerId,
+    providerSubscriptionId,
+    subscriptionCycle,
+    subscriptionValueCents,
+    subscriptionStatus,
+    firstPayment,
+    checkoutSessionId,
+    externalReference,
+  } = params;
+
+  // 0. Validação de formato e estratégia da transição
+  if (!transition || typeof transition !== 'object' || transition.policy_version !== 'billing_transition_v1') {
+    return {
+      ready: false,
+      reason: 'Transição inválida ou não é versão billing_transition_v1',
+      failureCode: 'INVALID_TRANSITION',
+    };
+  }
+
+  if (transition.execution_strategy !== 'scheduled_paid_transition') {
+    return {
+      ready: false,
+      reason: `Estratégia '${transition.execution_strategy}' incompatível com PAID_TO_PAID_TARGET_READY (esperado 'scheduled_paid_transition')`,
+      failureCode: 'STRATEGY_MISMATCH',
+    };
+  }
+
+  // A. Customer Correlation
+  if (
+    transition.provider_customer_id &&
+    targetCustomerId &&
+    transition.provider_customer_id !== targetCustomerId
+  ) {
+    return {
+      ready: false,
+      reason: `targetCustomerId recebido ('${targetCustomerId}') diverge do cliente canônico esperado ('${transition.provider_customer_id}')`,
+      failureCode: 'CUSTOMER_MISMATCH',
+    };
+  }
+
+  // B. Checkout Correlation (Attempt-Scoped)
+  const knownIntents = new Set<string>();
+  if (transition.future_checkout_intent_id) knownIntents.add(transition.future_checkout_intent_id);
+  if (transition.checkout_intent_id) knownIntents.add(transition.checkout_intent_id);
+  if (transition.checkout_attempts) {
+    for (const att of transition.checkout_attempts) {
+      if (att.attempt_type === 'future_authorization' && att.internal_checkout_intent_id) {
+        knownIntents.add(att.internal_checkout_intent_id);
+      }
+    }
+  }
+
+  if (externalReference && knownIntents.size > 0 && !knownIntents.has(externalReference)) {
+    return {
+      ready: false,
+      reason: `externalReference recebido ('${externalReference}') não pertence a nenhuma tentativa future_authorization desta transição`,
+      failureCode: 'CHECKOUT_CORRELATION_FAILED',
+    };
+  }
+
+  const knownCheckoutIds = new Set<string>();
+  if (transition.future_provider_checkout_id) knownCheckoutIds.add(transition.future_provider_checkout_id);
+  if (transition.checkout_attempts) {
+    for (const att of transition.checkout_attempts) {
+      if (att.attempt_type === 'future_authorization' && att.provider_checkout_id) {
+        knownCheckoutIds.add(att.provider_checkout_id);
+      }
+    }
+  }
+
+  if (checkoutSessionId && knownCheckoutIds.size > 0 && !knownCheckoutIds.has(checkoutSessionId)) {
+    return {
+      ready: false,
+      reason: `checkoutSessionId recebido ('${checkoutSessionId}') não pertence a nenhuma tentativa future_authorization desta transição`,
+      failureCode: 'CHECKOUT_CORRELATION_FAILED',
+    };
+  }
+
+  // C. Subscription Identity
+  if (!providerSubscriptionId || !providerSubscriptionId.trim()) {
+    return {
+      ready: false,
+      reason: 'Identificador de assinatura target do provedor ausente ou inválido',
+      failureCode: 'SUBSCRIPTION_CORRELATION_FAILED',
+    };
+  }
+
+  // Não pode ser a mesma assinatura de origem
+  if (
+    transition.old_provider_subscription_id &&
+    providerSubscriptionId === transition.old_provider_subscription_id
+  ) {
+    return {
+      ready: false,
+      reason: `providerSubscriptionId target ('${providerSubscriptionId}') não pode ser idêntico à assinatura antiga ('${transition.old_provider_subscription_id}')`,
+      failureCode: 'SUBSCRIPTION_CORRELATION_FAILED',
+    };
+  }
+
+  // D. Cycle / Interval Gate
+  if (subscriptionCycle && subscriptionCycle !== transition.target_interval) {
+    return {
+      ready: false,
+      reason: `Ciclo da assinatura no provedor ('${subscriptionCycle}') diverge do contratado ('${transition.target_interval}')`,
+      failureCode: 'CYCLE_MISMATCH',
+    };
+  }
+
+  // E. Recurring Value Gate
+  if (
+    subscriptionValueCents !== undefined &&
+    subscriptionValueCents !== null &&
+    subscriptionValueCents !== transition.target_future_recurring_price_cents
+  ) {
+    return {
+      ready: false,
+      reason: `Valor recorrente da assinatura no provedor (${subscriptionValueCents}¢) diverge do contratado (${transition.target_future_recurring_price_cents}¢)`,
+      failureCode: 'AMOUNT_MISMATCH',
+    };
+  }
+
+  // F. First Target Payment Materialization
+  if (!firstPayment) {
+    return {
+      ready: false,
+      reason: 'Primeira cobrança futura da assinatura target ainda não visível no provedor',
+      failureCode: 'PAYMENT_NOT_YET_VISIBLE',
+    };
+  }
+
+  // First Payment Subscription Correlation
+  if (firstPayment.subscriptionId && firstPayment.subscriptionId !== providerSubscriptionId) {
+    return {
+      ready: false,
+      reason: `subscriptionId da cobrança ('${firstPayment.subscriptionId}') diverge da assinatura target ('${providerSubscriptionId}')`,
+      failureCode: 'PAYMENT_SUBSCRIPTION_MISMATCH',
+    };
+  }
+
+  // G. First Payment Amount
+  if (firstPayment.amountCents !== transition.target_future_recurring_price_cents) {
+    return {
+      ready: false,
+      reason: `Valor da primeira cobrança (${firstPayment.amountCents}¢) diverge do valor contratado (${transition.target_future_recurring_price_cents}¢)`,
+      failureCode: 'PAYMENT_AMOUNT_MISMATCH',
+    };
+  }
+
+  // H. Commercial Due Date Gate
+  const expectedDueDate = transition.effective_billing_date;
+  const paymentDueDate = firstPayment.dueDate ? firstPayment.dueDate.trim().substring(0, 10) : null;
+  if (!expectedDueDate || paymentDueDate !== expectedDueDate) {
+    return {
+      ready: false,
+      reason: `Data de vencimento da primeira cobrança ('${paymentDueDate}') diverge da data comercial efetiva esperada ('${expectedDueDate}')`,
+      failureCode: 'DUE_DATE_MISMATCH',
+    };
+  }
+
+  // I. Target Payment State
+  const paymentStatusUpper = (firstPayment.status || '').toUpperCase();
+  const validFutureStatuses = ['PENDING', 'AWAITING_PAYMENT'];
+  if (!validFutureStatuses.includes(paymentStatusUpper)) {
+    return {
+      ready: false,
+      reason: `Status da cobrança futura ('${firstPayment.status}') inválido (esperado PENDING)`,
+      failureCode: 'PAYMENT_STATUS_INVALID',
+    };
   }
 
   return { ready: true };

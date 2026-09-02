@@ -981,4 +981,266 @@ describe('AsaasBillingProvider — Webhook Authentication & Parser Validation', 
       global.fetch = originalFetch;
     });
   });
+
+  describe('AsaasBillingProvider — Hosted Checkout & Future Authorization Payload', () => {
+    const originalFetch = global.fetch;
+
+    it('deve enviar payload com chargeTypes=RECURRENT, billingTypes=CREDIT_CARD, cycle e nextDueDate para POST /v3/checkouts', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+
+      let capturedUrl = '';
+      let capturedInit: any = null;
+
+      const mockFetch = vi.fn().mockImplementation(async (url: string, init: any) => {
+        capturedUrl = url;
+        capturedInit = init;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 'chk_future_auth_123',
+            link: 'https://sandbox.asaas.com/checkoutSession/show/chk_future_auth_123',
+          }),
+        };
+      });
+      global.fetch = mockFetch as any;
+
+      const result = await provider.createCheckout({
+        ministryId: 'min_test_payload',
+        checkoutIntentId: 'intent_fut_456',
+        providerCustomerId: 'cus_can_789',
+        planId: 'pro',
+        planName: 'Pro',
+        interval: 'monthly',
+        addonBlocks: 2,
+        amountCents: 10970, // R$ 89,90 + 2 * R$ 9,90 = 109,70
+        successUrl: 'https://app.louvaio.com.br/billing/success',
+        nextDueDate: '2026-10-02',
+      });
+
+      expect(result.checkoutId).toBe('chk_future_auth_123');
+      expect(capturedUrl).toBe('https://sandbox.asaas.com/api/v3/checkouts');
+      expect(capturedInit.method).toBe('POST');
+      expect(capturedInit.headers.access_token).toBe('test_api_key');
+
+      const body = JSON.parse(capturedInit.body);
+      expect(body.chargeTypes).toEqual(['RECURRENT']);
+      expect(body.billingTypes).toEqual(['CREDIT_CARD']);
+      expect(body.customer).toBe('cus_can_789');
+      expect(body.externalReference).toBe('intent_fut_456');
+      expect(body.items[0].value).toBe(109.7);
+      expect(body.subscription).toEqual({
+        cycle: 'MONTHLY',
+        nextDueDate: '2026-10-02',
+      });
+
+      global.fetch = originalFetch;
+    });
+
+    it('deve consultar cobranças vinculadas ao checkout via GET /v3/payments?checkoutSession=<checkoutId>', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+
+      let capturedUrl = '';
+      let capturedInit: any = null;
+
+      const mockFetch = vi.fn().mockImplementation(async (url: string, init: any) => {
+        capturedUrl = url;
+        capturedInit = init;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: [
+              {
+                id: 'pay_chk_123',
+                customer: 'cus_can_789',
+                subscription: 'sub_tgt_from_checkout_payment',
+                value: 109.7,
+                dueDate: '2026-10-02',
+                status: 'PENDING',
+                billingType: 'CREDIT_CARD',
+                externalReference: 'intent_fut_456',
+              },
+            ],
+            hasMore: false,
+            totalCount: 1,
+          }),
+        };
+      });
+      global.fetch = mockFetch as any;
+
+      const payments = await provider.listPaymentsByCheckoutSession('chk_future_auth_123');
+      expect(capturedUrl).toContain('/payments?checkoutSession=chk_future_auth_123');
+      expect(capturedInit.headers.access_token).toBe('test_api_key');
+      expect(payments).toHaveLength(1);
+      expect(payments[0].id).toBe('pay_chk_123');
+      expect(payments[0].subscriptionId).toBe('sub_tgt_from_checkout_payment');
+      expect(payments[0].amountCents).toBe(10970);
+      expect(payments[0].dueDate).toBe('2026-10-02');
+      expect(payments[0].status).toBe('PENDING');
+
+      global.fetch = originalFetch;
+    });
+  });
+
+  describe('16. Phase 3B.2 Provider Adapter Contract — Cutover & Pending Cleanup', () => {
+    const originalFetch = global.fetch;
+
+    it('A) inactivateSubscription: envia PUT /v3/subscriptions/{id} com status INACTIVE e SEM updatePendingPayments', async () => {
+      const provider = new AsaasBillingProvider({
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+        apiKey: 'test_api_key',
+        webhookToken: 'test_token',
+      });
+
+      let capturedUrl = '';
+      let capturedInit: any = null;
+
+      global.fetch = vi.fn().mockImplementation(async (url: string, init: any) => {
+        capturedUrl = url;
+        capturedInit = init;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'sub_src_123', status: 'INACTIVE' }),
+        };
+      }) as any;
+
+      const result = await provider.inactivateSubscription('sub_src_123');
+      expect(result.success).toBe(true);
+      expect(capturedUrl).toBe('https://sandbox.asaas.com/api/v3/subscriptions/sub_src_123');
+      expect(capturedInit.method).toBe('PUT');
+      expect(capturedInit.headers.access_token).toBe('test_api_key');
+      expect(capturedInit.headers['Content-Type']).toBe('application/json');
+      const body = JSON.parse(capturedInit.body);
+      expect(body).toEqual({ status: 'INACTIVE' });
+      expect(body.updatePendingPayments).toBeUndefined();
+
+      global.fetch = originalFetch;
+    });
+
+    it('B) listSubscriptionPayments: envia GET /v3/subscriptions/{id}/payments?offset=0&limit=50&status=PENDING', async () => {
+      const provider = new AsaasBillingProvider({
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+        apiKey: 'test_api_key',
+        webhookToken: 'test_token',
+      });
+
+      let capturedUrl = '';
+      let capturedInit: any = null;
+
+      global.fetch = vi.fn().mockImplementation(async (url: string, init: any) => {
+        capturedUrl = url;
+        capturedInit = init;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: [
+              {
+                id: 'pay_src_pend_1',
+                customer: 'cus_123',
+                subscription: 'sub_src_123',
+                value: 34.9,
+                dueDate: '2026-10-01',
+                status: 'PENDING',
+                billingType: 'CREDIT_CARD',
+              },
+            ],
+            hasMore: false,
+            totalCount: 1,
+          }),
+        };
+      }) as any;
+
+      const payments = await provider.listSubscriptionPayments('sub_src_123', { status: 'PENDING' });
+      expect(capturedUrl).toBe('https://sandbox.asaas.com/api/v3/subscriptions/sub_src_123/payments?offset=0&limit=50&status=PENDING');
+      expect(capturedInit.headers.access_token).toBe('test_api_key');
+      expect(payments).toHaveLength(1);
+      expect(payments[0].id).toBe('pay_src_pend_1');
+      expect(payments[0].status).toBe('PENDING');
+
+      global.fetch = originalFetch;
+    });
+
+    it('C) removePayment: envia DELETE /v3/payments/{id} sem body e com access_token', async () => {
+      const provider = new AsaasBillingProvider({
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+        apiKey: 'test_api_key',
+        webhookToken: 'test_token',
+      });
+
+      let capturedUrl = '';
+      let capturedInit: any = null;
+
+      global.fetch = vi.fn().mockImplementation(async (url: string, init: any) => {
+        capturedUrl = url;
+        capturedInit = init;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ deleted: true, id: 'pay_src_pend_1' }),
+        };
+      }) as any;
+
+      const result = await provider.removePayment('pay_src_pend_1');
+      expect(result.success).toBe(true);
+      expect(capturedUrl).toBe('https://sandbox.asaas.com/api/v3/payments/pay_src_pend_1');
+      expect(capturedInit.method).toBe('DELETE');
+      expect(capturedInit.headers.access_token).toBe('test_api_key');
+
+      global.fetch = originalFetch;
+    });
+
+    it('D) listSubscriptionPayments com status: "ALL": omite o parâmetro status da URL para recuperar todas as cobranças da assinatura', async () => {
+      const provider = new AsaasBillingProvider({
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+        apiKey: 'test_api_key',
+        webhookToken: 'test_token',
+      });
+
+      let capturedUrl = '';
+      let capturedInit: any = null;
+
+      global.fetch = vi.fn().mockImplementation(async (url: string, init: any) => {
+        capturedUrl = url;
+        capturedInit = init;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: [
+              {
+                id: 'pay_all_1',
+                customer: 'cus_123',
+                subscription: 'sub_src_123',
+                value: 34.9,
+                dueDate: '2026-10-01',
+                status: 'CONFIRMED',
+                billingType: 'CREDIT_CARD',
+              },
+            ],
+            hasMore: false,
+            totalCount: 1,
+          }),
+        };
+      }) as any;
+
+      const payments = await provider.listSubscriptionPayments('sub_src_123', { status: 'ALL' });
+      expect(capturedUrl).toBe('https://sandbox.asaas.com/api/v3/subscriptions/sub_src_123/payments?offset=0&limit=50');
+      expect(capturedUrl).not.toContain('status=');
+      expect(capturedInit.headers.access_token).toBe('test_api_key');
+      expect(payments).toHaveLength(1);
+      expect(payments[0].id).toBe('pay_all_1');
+      expect(payments[0].status).toBe('CONFIRMED');
+
+      global.fetch = originalFetch;
+    });
+  });
 });

@@ -66,16 +66,47 @@ export class BillingReconcilerWorker {
       // 1. Reconciliação V1 Initial Purchase
       const v1Needing = await this.billingRepo.getV1TransitionsNeedingReconciliation('asaas', 20);
       for (const item of v1Needing) {
-        if (isBillingTransitionV1(item) && item.execution_strategy === 'immediate_initial_purchase') {
-          processed++;
-          const recResult = await this.billingService.reconcileInitialPurchaseTransition(item.id, this.workerId);
-          if (recResult.success) {
-            succeeded++;
-            console.log(
-              `[BillingReconcilerWorker] Transição V1 recuperada com sucesso: ${item.id} (ministério: ${item.ministry_id})`
-            );
-          } else {
-            failed++;
+        if (isBillingTransitionV1(item)) {
+          if (item.execution_strategy === 'immediate_initial_purchase') {
+            processed++;
+            const recResult = await this.billingService.reconcileInitialPurchaseTransition(item.id, this.workerId);
+            if (recResult.success) {
+              succeeded++;
+              console.log(
+                `[BillingReconcilerWorker] Transição V1 Initial Purchase recuperada com sucesso: ${item.id} (ministério: ${item.ministry_id})`
+              );
+            } else {
+              failed++;
+            }
+          } else if (
+            item.execution_strategy === 'scheduled_paid_transition' &&
+            item.transition_status === 'pending_future_authorization'
+          ) {
+            processed++;
+            const recResult = await this.billingService.reconcilePaidToPaidFutureAuthorization(item.id, this.workerId);
+            if (recResult.success) {
+              succeeded++;
+              console.log(
+                `[BillingReconcilerWorker] Transição V1 Scheduled Paid recuperada com sucesso: ${item.id} (ministério: ${item.ministry_id})`
+              );
+            } else {
+              failed++;
+            }
+          } else if (
+            item.execution_strategy === 'scheduled_paid_transition' &&
+            (item.transition_status === 'future_target_prepared' ||
+              item.transition_status === 'awaiting_old_inactivation')
+          ) {
+            processed++;
+            const cutResult = await this.billingService.reconcilePaidToPaidSourceCutover(item.id, this.workerId);
+            if (cutResult.success) {
+              succeeded++;
+              console.log(
+                `[BillingReconcilerWorker] Transição V1 Cutover para Scheduled concluído com sucesso: ${item.id} (ministério: ${item.ministry_id})`
+              );
+            } else {
+              failed++;
+            }
           }
         }
       }

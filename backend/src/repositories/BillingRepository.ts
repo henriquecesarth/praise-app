@@ -400,6 +400,15 @@ export class BillingRepository {
     const byInitSub = await this.getPlanChangeByInitialSubscriptionId(providerId, provider);
     if (byInitSub) return byInitSub;
 
+    const snapshotFutureSub = await this.planChangesCollection
+      .where('provider', '==', provider)
+      .where('future_provider_subscription_id', '==', providerId)
+      .limit(1)
+      .get();
+    if (!snapshotFutureSub.empty) {
+      return snapshotFutureSub.docs[0].data() as BillingPlanChangeRecord;
+    }
+
     const snapshotInitChk = await this.planChangesCollection
       .where('provider', '==', provider)
       .where('initial_provider_checkout_id', '==', providerId)
@@ -407,6 +416,15 @@ export class BillingRepository {
       .get();
     if (!snapshotInitChk.empty) {
       return snapshotInitChk.docs[0].data() as BillingPlanChangeRecord;
+    }
+
+    const snapshotFutureChk = await this.planChangesCollection
+      .where('provider', '==', provider)
+      .where('future_provider_checkout_id', '==', providerId)
+      .limit(1)
+      .get();
+    if (!snapshotFutureChk.empty) {
+      return snapshotFutureChk.docs[0].data() as BillingPlanChangeRecord;
     }
 
     return null;
@@ -1114,13 +1132,46 @@ export class BillingRepository {
     provider: BillingProviderName,
     limitCount: number = 20
   ): Promise<BillingPlanChangeRecord[]> {
-    const snapshot = await this.planChangesCollection
+    const attentionSnapshot = await this.planChangesCollection
       .where('provider', '==', provider)
       .where('financial_attention_required', '==', true)
       .limit(limitCount)
       .get();
 
-    return snapshot.docs.map((doc: any) => doc.data() as BillingPlanChangeRecord);
+    const pendingFutureSnapshot = await this.planChangesCollection
+      .where('provider', '==', provider)
+      .where('transition_status', '==', 'pending_future_authorization')
+      .limit(limitCount)
+      .get();
+
+    const targetPreparedSnapshot = await this.planChangesCollection
+      .where('provider', '==', provider)
+      .where('transition_status', '==', 'future_target_prepared')
+      .limit(limitCount)
+      .get();
+
+    const awaitingInactivationSnapshot = await this.planChangesCollection
+      .where('provider', '==', provider)
+      .where('transition_status', '==', 'awaiting_old_inactivation')
+      .limit(limitCount)
+      .get();
+
+    const seenIds = new Set<string>();
+    const results: BillingPlanChangeRecord[] = [];
+
+    for (const doc of [
+      ...attentionSnapshot.docs,
+      ...pendingFutureSnapshot.docs,
+      ...targetPreparedSnapshot.docs,
+      ...awaitingInactivationSnapshot.docs,
+    ]) {
+      if (!seenIds.has(doc.id)) {
+        seenIds.add(doc.id);
+        results.push(doc.data() as BillingPlanChangeRecord);
+      }
+    }
+
+    return results.slice(0, limitCount);
   }
 
   /**

@@ -99,6 +99,20 @@ export function buildBackendChildEnv(
 }
 
 /**
+ * Retorna as opções determinísticas de comando e shell para o processo filho do backend
+ * de acordo com o sistema operacional (evita erro EINVAL em Windows ao disparar npx.cmd).
+ */
+export function getBackendSpawnOptions(
+  platform: NodeJS.Platform = process.platform
+): { command: string; shell: boolean } {
+  const isWin = platform === 'win32';
+  return {
+    command: isWin ? 'npx.cmd' : 'npx',
+    shell: isWin,
+  };
+}
+
+/**
  * Extrai a URL HTTPS do Cloudflare Quick Tunnel a partir da saída de log do cloudflared.
  */
 export function extractTrycloudflareUrl(text: string): string | null {

@@ -201,15 +201,28 @@ stateDiagram-v2
 
 ---
 
-## G. Lições da Phase 0A & Correção do Correlator
+## G. Lições da Phase 0A/3B.1 & Autoridades de Descoberta do Provedor (Provider Contract Alignment)
 
-1. **Comportamento Observado no Sandbox**:
-   Ao criar a assinatura com `nextDueDate = 2026-09-08` (D+7), o Asaas gerou uma cobrança com `dueDate = 2026-09-08` e avançou o campo `subscription.nextDueDate` para o ciclo seguinte (`2027-09-08`).
-2. **Correção do Correlator**:
-   O script de auditoria `inspect` não deve buscar `subscription.nextDueDate == effective_billing_date`.
-   A correlação inequívoca deve priorizar:
-   - `subscription.checkoutSession == provider_checkout_id` (ou `externalReference`);
-   - Validação da primeira cobrança em `payment.dueDate == effective_billing_date`.
+1. **Comportamento Observado e Contrato Público Oficial do Asaas**:
+   - `POST /v3/checkouts` cria a sessão de checkout hospedado e retorna `{ id, link }`.
+   - O Asaas **NÃO** propaga `checkout.externalReference` para `subscription.externalReference`.
+   - O Asaas **NÃO** documenta endpoints de consulta direta de checkouts (`GET /v3/checkouts/{id}` ou `GET /v3/checkouts?externalReference=...`).
+   - O endpoint oficial documentado para consultar obrigações vinculadas ao checkout é:
+     `GET /v3/payments?checkoutSession=<providerCheckoutId>`.
+2. **Autoridades de Recuperação (*Recovery Authorities*)**:
+   - **1ª Autoridade**: `provider_checkout_id` persistido *write-once* a partir do retorno de sucesso do `POST /v3/checkouts`.
+   - **2ª Autoridade**: Evidência em webhook real (`CHECKOUT_CREATED`, `CHECKOUT_PAID`) contendo `checkout.id` e `checkout.externalReference` comprovando a intenção interna.
+   - **3ª Autoridade**: Cobranças obtidas via filtro documentado `GET /v3/payments?checkoutSession=<checkoutId>`.
+   - **4ª Autoridade**: Assinatura target descoberta a partir de `payment.subscription`.
+3. **Tratamento de Criação Incerta Sem Checkout ID**:
+   - Se a criação sofrer timeout/falha de rede e não retornar checkout ID:
+     - O sistema registra a tentativa como incerta e ativa `financial_attention_required = true` com slot HELD;
+     - Nenhum endpoint inventado/não-documentado é consultado;
+     - Proibido *blind retry* automático (evitando múltiplas assinaturas concorrentes);
+     - Proibida inferência de ausência de recurso apenas por decurso de tempo.
+4. **Desacoplamento de `nextDueDate`**:
+   - A autoridade do primeiro vencimento civil é `payment.dueDate == effective_billing_date`.
+   - O avanço do campo `subscription.nextDueDate` pelo gateway para o ciclo subsequente (mensal ou anual) é legítimo e expressamente aceito no Target Ready Gate.
 
 ---
 
@@ -274,13 +287,19 @@ Ao reavaliar os fluxos sob a ótica de intenção do usuário e segurança finan
    - Pro entra em vigor automaticamente na renovação em current_period_end.
 ```
 
-#### 3. Cutover Seguro da Assinatura Antiga (*Old Renewal Cutover*)
-Para garantir a invariante **No Two Live Renewals** e **No Unsafe Zero Renewals**:
-1. O cutover da assinatura antiga só inicia após a assinatura futura atender plenamente ao **Target Ready Gate**.
-2. A assinatura antiga é marcada como `INACTIVE` na API do Asaas.
-3. Como comprovado na Phase 0A, assinaturas `INACTIVE` não cancelam faturas `PENDING` já materializadas. Portanto, o LouvAIO lista os pagamentos vinculados estritamente à assinatura antiga e executa `DELETE /v3/payments/{id}` **exclusivamente nas cobranças com `status == 'PENDING'` e `dueDate >= effective_billing_date`**.
-4. Cobranças com status `CONFIRMED`, `RECEIVED` ou `OVERDUE` são estritamente preservadas.
-5. Caso ocorra corrida onde uma cobrança antiga mude para `CONFIRMED` durante o cutover, o sistema marca `financial_attention_required`.
+#### 3. Cutover Seguro da Assinatura Antiga (*Old Renewal Cutover & Scheduling — Phase 3B.2 Hardened*)
+Para garantir as invariantes **No Two Live Renewals**, **No Unsafe Zero Renewals** e **No Dual Financial Obligations**:
+1. **Fronteira Comercial Estrita**: Exige-se estrita correspondência `effective_billing_date === current_period_end_billing_date`. Qualquer divergência ou ausência falha fechado (*fail closed*) com `COMMERCIAL_BOUNDARY_MISMATCH` antes de qualquer mutação de provedor.
+2. **Revalidação Prévia**: O cutover da assinatura antiga só inicia após a assinatura futura atender plenamente ao **Target Ready Gate** com leituras frescas no provedor.
+3. **Preservação != Segurança Financeira (Preserve != Safe)**: Faturas pré-existentes na source com `dueDate >= renewalCutoffDate` com status `CONFIRMED`, `RECEIVED` ou `OVERDUE` são estritamente preservadas para auditoria, mas **bloqueiam o avanço automático para `scheduled`** (`SOURCE_PAYMENT_ALREADY_SETTLED` ou `SOURCE_PAYMENT_OVERDUE`), mantendo o slot retido (*held*).
+4. **Persistência da Intenção de Cutover**: O estado avança para `awaiting_old_inactivation` antes de qualquer mutação destrutiva no gateway.
+5. **Inativação sem Deleção**: A assinatura antiga é marcada exclusivamente como `INACTIVE` na API do Asaas (`PUT /v3/subscriptions/{id}` com `status: "INACTIVE"` e sem `updatePendingPayments`). `DELETE /v3/subscriptions/{id}` é terminantemente proibido.
+6. **Limpeza Cirúrgica de Pagamentos Futuros PENDING**: O LouvAIO lista os pagamentos vinculados estritamente à assinatura antiga e executa `DELETE /v3/payments/{id}` **exclusivamente nas cobranças com `status == 'PENDING'` e `dueDate >= renewalCutoffDate`**.
+7. **Fresh Read Antes de Cada Exclusão**: Antes de excluir qualquer cobrança, o sistema faz leitura individual pelo ID. Cobranças com status `CONFIRMED` ou `RECEIVED` abortam a exclusão e acionam `SOURCE_PAYMENT_SETTLED_DURING_CUTOVER`.
+8. **Tratamento de Deleção Incerta (Uncertain Delete)**: Em caso de falha de rede/timeout no DELETE, o sistema realiza recheck via `getPayment(paymentId)`. **Somente 404 / ausência explícita comprova exclusão**. Status `PENDING` falha fechado com `SOURCE_PAYMENT_DELETE_UNCERTAIN`; status liquidado aciona `SOURCE_PAYMENT_SETTLED_DURING_CUTOVER`; `non-PENDING` nunca é presumido genericamente como sucesso de remoção.
+9. **Final Source Safety Gate (All-Status)**: Antes de persistir `scheduled`, o sistema realiza consulta completa de todas as cobranças da assinatura de origem via `GET /v3/subscriptions/{id}/payments` (sem filtro de status, com paginação) provando que zero obrigações conflitantes ativas persistem para `dueDate >= renewalCutoffDate`.
+10. **Transição para `scheduled`**: A transição avança para `scheduled` com o **Active Transition Slot estritamente HELD**.
+11. **Retenção de Entitlement**: Em `scheduled`, o runtime entitlement LouvAIO permanece inalterado no plano e quotas de origem até `current_period_end_billing_date`. Nenhuma ativação antecipada de entitlement ocorre nesta fase.
 
 #### 4. Tratamento de Cancelamento e Reversão
 
@@ -537,12 +556,26 @@ Para garantir a invariante **No Two Live Renewals** e **No Unsafe Zero Renewals*
      - `paid_at`: Instante operacional em que o LouvAIO observou/processou o evento de pagamento (`ISO 8601`).
    - Não há fabricação de horários artificiais (ex: `T00:00:00Z` ou `T12:00:00Z`) sobre a data comercial date-only fornecida pelo gateway.
 
-8. **Auditoria de Contrato de Entrada para Transições Paid -> Paid (Phase 3B Preview)**:
-   - A regra canônica para Paid -> Paid é:
+8. **Orquestração de Transição Paid -> Paid V1 (Phase 3B: Scheduled Paid Transition & Old Recurrence Cutover)**:
+   - **Status**: **PHASE 3B.1 COMPLETE, PHASE 3B.2 COMPLETE, PAID -> PAID CLEAN END-TO-END SANDBOX HOMOLOGATED**.
+   - **Regra Canônica de Transição**:
      `target recurrence -> Target Ready -> old recurrence cutover -> scheduled target`.
-   - Early activation é uma compra proporcional opcional e separada, não sendo pré-requisito para o agendamento da nova recorrência e cancelamento/cutover da antiga.
-   - Transições `Paid -> Paid` exigem:
-     - `source_plan_id !== 'free'` e `source_entitlement_snapshot` validado.
-     - Isolamento estrito contra cancelamento prematuro da assinatura de origem antes da confirmação da nova recorrência no provedor.
-     - Prorrogação / prorrogação proporcional (`prorated_adjustment_cents`) calculada exclusivamente via calendar dates.
-     - Escopo reservado para a Fase 3B.
+   - **Invariantes Consolidadas da Phase 3B**:
+     1. **Commercial Dates Persistidas na Criação**: `current_period_start_billing_date`, `current_period_end_billing_date` e `effective_billing_date` são derivados da autoridade interna da assinatura de origem e persistidos diretamente no `INSERT` da transição (`effective_billing_date === current_period_end_billing_date`), sem reparos manuais subsequentes.
+     2. **Recurrence-First**: A recorrência do plano alvo é criada e autorizada primeiro no provedor (`pending_future_authorization -> future_target_prepared`) via Hosted Checkout com `nextDueDate` alinhado à fronteira de corte.
+     3. **Alinhamento com Contrato Público Asaas**: Descoberta de recursos target realizada estritamente via:
+        `provider_checkout_id` persistido write-once -> `GET /v3/payments?checkoutSession={checkoutId}` -> `firstPayment` -> `targetSubscription`. Sem criação incerta e sem suposição de endpoints REST inventados (`GET /v3/checkouts/{id}` não suportado).
+     4. **Cutover da Assinatura Antiga**:
+        `future_target_prepared -> awaiting_old_inactivation -> scheduled`.
+        Disparado de forma assíncrona/idempotente pelo `BillingReconcilerWorker.runCycle()`.
+     5. **Inativação Segura da Origem**: Desarme da assinatura de origem exclusivamente via `PUT /v3/subscriptions/{id}` com payload `{ status: "INACTIVE" }` (sem flags destrutivas e nunca `DELETE`).
+     6. **Limpeza Cirúrgica de Cobranças de Origem**: Leitura atualizada (*fresh read*) pós-inativação para identificar faturas `PENDING >= cutoff` remanescentes e remoção atômica via `DELETE /v3/payments/{id}`. Faturas target permanecem intocadas.
+     7. **All-Status Safety Gate Final**: Reconciliação exaustiva de todas as faturas da assinatura de origem (`GET /v3/subscriptions/{id}/payments?status=ALL`) comprovando zero cobranças ativas ou pendentes `>= cutoff`.
+     8. **Preservação de Entitlement da Aplicação**: O plano ativo no runtime do LouvAIO permanece estritamente no plano de origem (**Lite**) com as quotas originais até a data da fronteira de renovação. O plano alvo (**Essential**) não é ativado antecipadamente.
+     9. **Slot Retido (Held)**: O slot de transição ativo (`billing_active_transition_slots`) permanece retido em posse da transição no estado `scheduled`, impedindo novas solicitações concorrentes sobre o mesmo ministério.
+     10. **Target PENDING não gera receita**: Faturas target pendentes futuras não são contabilizadas como `BillingTransaction` e não geram receita contábil no momento do agendamento.
+     11. **Semântica Canônica de Cancelamento de Checkout**: Cancelamento explícito e seguro de checkout antes da materialização de obrigação target avança a transição para `transition_status: canceled`, `financial_safety_status: safe_terminal`, `financial_attention_required: false` e libera o slot. Eventos atrasados ou duplicados são tratados com idempotência e proteção attempt-scoped.
+   - **Status das Próximas Fases**:
+     - **RENEWAL-BOUNDARY IMPLEMENTATION**: **NOT STARTED**.
+     - **PHASE 3C EARLY ACTIVATION**: **NOT STARTED**.
+     - *(O escopo concluído compreende a transição agendada Paid -> Paid até o estado `scheduled`)*.
