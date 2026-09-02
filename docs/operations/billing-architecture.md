@@ -3,7 +3,7 @@
 Este documento descreve a arquitetura operacional e técnica da integração de pagamentos e assinaturas do **LouvAIO**, utilizando o gateway **Asaas** no padrão SaaS recorrente.
 
 > [!NOTE]
-> **Status de Homologação**: A integração está implementada com os fluxos principais homologados em ambiente **Sandbox do Asaas** (incluindo GAP-011 revalidado). O gap conhecido GAP-012 permanece em aberto; deploy, credenciais e configurações de produção não devem ser presumidos.
+> **Status de Homologação**: A integração está implementada com os fluxos principais homologados em ambiente **Sandbox do Asaas** (GAP-011 revalidado; Política V1 de transições agendadas aprovada via ADR 2026-09-01 com implementação pendente); deploy, credenciais e configurações de produção não devem ser presumidos.
 
 ---
 
@@ -227,9 +227,9 @@ Para garantir resiliência contra falhas transitórias de rede durante o superse
 
 ## 10. Known Implementation Gaps (Billing)
 
-1. **Same-Plan Interval Change na UI (GAP-012)**:
-   - *Regra desejada*: Permitir mudança de ciclo (ex: Lite+ mensal -> Lite+ anual) para o mesmo plano.
-   - *Status atual*: **IMPLEMENTAÇÃO PENDENTE NO FRONTEND** (`SubscriptionPlanView.tsx` compara apenas `p.id === plan.id`, mantendo o botão do plano desabilitado ao alternar o toggle).
+1. **Same-Plan Interval Change & Transições de Assinatura (GAP-012)**:
+   - *Regra desejada*: Transições de ciclo e trocas de plano Paid → Paid devem ser agendadas para `current_period_end` sem cobrança integral sobreposta antecipada (Política V1 — ADR 2026-09-01).
+   - *Status atual*: **APPROVED DOMAIN POLICY — IMPLEMENTATION PENDING** (o reconhecimento de ciclo e interface foram validados em Sandbox, mas o fluxo de execução financeira requer reengenharia para agendamento em `current_period_end` e eliminação de cobranças integrais sobrepostas).
 
 ---
 

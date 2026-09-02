@@ -52,7 +52,7 @@ INC-002 e INC-003 foram corrigidos na implementação do sistema de planos. INC-
 | GAP-008 | Infrastructure | Não há CI/CD, Docker, migrations ou schema Firestore versionado. | inventário |
 | GAP-009 | Formatting | Não há formatter ou script format configurado. | package.json, inventário |
 | GAP-010 | Dependency advisories | A instalação das dependências web reportou vulnerabilidades em dependências indiretas. | saída de npm install; Unknown / Not yet verified |
-| GAP-012 | Same-Plan Interval Change UI | `SubscriptionPlanView.tsx` compara apenas `p.id === plan.id`, mantendo desabilitado o botão de checkout ao alternar o ciclo mensal/anual no mesmo plano. | `SubscriptionPlanView.tsx` |
+| GAP-012 | Same-Plan Interval Change & Transition Policy | Reconhecimento de ciclo e UI validados em Sandbox; execução financeira requer reengenharia para agendamento em `current_period_end` sem sobreposição de cobranças integrais conforme Política V1 (ADR 2026-09-01; APPROVED DOMAIN POLICY — IMPLEMENTATION PENDING). | `SubscriptionPlanView.tsx`, `BillingService.ts` |
 
 ## Outdated Documentation
 
@@ -76,7 +76,7 @@ README.md, AGENTS.md e GEMINI.md foram alinhados para não perpetuar essas afirm
 - Responsável operacional, processo de release e estratégia de rollback.
 - Versão mínima oficialmente suportada de Node.js e npm.
 - Concorrência de transações sob Firestore Emulator: NOT YET VERIFIED (atomicidade e isolamento validados em testes unitários com mocks via Vitest; emulador físico do Firestore indisponível no host).
-- Integração Asaas: A integração foi implementada com os fluxos principais homologados em ambiente Sandbox do Asaas (GAP-011 revalidado). O gap conhecido GAP-012 permanece em aberto. Configurações, credenciais e deploy de produção não devem ser presumidos.
+- Integração Asaas: A integração foi implementada com os fluxos principais homologados em ambiente Sandbox do Asaas (GAP-011 revalidado; Política V1 de transições agendadas aprovada com implementação pendente). Configurações, credenciais e deploy de produção não devem ser presumidos.
 
 ## Use in Future Work
 

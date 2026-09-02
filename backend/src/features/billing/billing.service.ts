@@ -26,9 +26,17 @@ import {
   BillingPlanChangeRecord,
   BillingTransactionRecord,
   BillingWebhookEventRecord,
+  BillingTransitionV1Record,
+  BillingCheckoutAttempt,
+  isBillingTransitionV1,
 } from './billing.types';
+import {
+  validateTargetContract,
+  buildTransitionCommercialSnapshot,
+  buildBillingTransitionV1Record,
+} from './billing-transition-domain.service';
 import { AppError } from '../../middleware/error-handler';
-import { getCurrentBillingDate, getBillingDate } from '../../utils/billing-date';
+import { getCurrentBillingDate, getBillingDate, addCommercialInterval } from '../../utils/billing-date';
 
 export class BillingService {
   constructor(
@@ -249,6 +257,204 @@ export class BillingService {
   }
 
   /**
+   * Resolve ou cria o cliente canônico no gateway de billing com proteção atômica contra concorrência.
+   *
+   * Invariante de Domínio:
+   * 1 Ministry + 1 Billing Provider -> 1 Registro Canônico em `billing_customers`.
+   *
+   * Garantias de Concorrência e Resiliência:
+   * 1. Consulta `billing_customers` e a assinatura ativa vigente.
+   * 2. Reconciliação segura de mismatch: se a assinatura ativa pertence a outro customer, assume essa autoridade.
+   * 3. Se não existir customer canônico pronto, adquire claim/lease transacional atômico no Firestore.
+   * 4. Se outra requisição estiver criando o customer, aguarda a resolução com polling em vez de duplicar no gateway.
+   * 5. Antes de criar no Asaas, consulta `findCustomerByExternalReference` para recuperar eventuais cadastros prévios criados antes de um crash.
+   * 6. Criação explícita (`POST /v3/customers`) executada fora de transações Firestore.
+   */
+  async resolveOrCreateBillingCustomer(
+    ministryId: string,
+    options?: { email?: string; taxId?: string; phone?: string; pollTimeoutMs?: number }
+  ): Promise<{ providerCustomerId: string; isNew: boolean }> {
+    const canonicalCustomer = await this.billingRepo.getCustomer(ministryId, this.provider.name);
+    const currentBillingSub = await this.billingRepo.getSubscription(ministryId, this.provider.name);
+
+    // 1. Reconciliação segura de Mismatch: Se a subscription ativa vigente possui provider_customer_id
+    if (
+      currentBillingSub &&
+      currentBillingSub.status === 'active' &&
+      currentBillingSub.provider_customer_id &&
+      currentBillingSub.provider_customer_id.trim()
+    ) {
+      const activeSubCustomerId = currentBillingSub.provider_customer_id.trim();
+
+      if (canonicalCustomer && canonicalCustomer.provider_customer_id !== activeSubCustomerId) {
+        console.log(
+          `[BILLING CUSTOMER RECONCILE] Mismatch detectado para ministério ${ministryId}. Atualizando customer canônico de ${canonicalCustomer.provider_customer_id} para ${activeSubCustomerId} (autoridade da assinatura ativa).`
+        );
+        const now = new Date().toISOString();
+        await this.billingRepo.setCustomer({
+          id: `${ministryId}_${this.provider.name}`,
+          ministry_id: ministryId,
+          provider: this.provider.name,
+          provider_customer_id: activeSubCustomerId,
+          status: 'ready',
+          created_at: canonicalCustomer.created_at || now,
+          updated_at: now,
+        });
+        return { providerCustomerId: activeSubCustomerId, isNew: false };
+      }
+
+      if (!canonicalCustomer) {
+        const now = new Date().toISOString();
+        await this.billingRepo.setCustomer({
+          id: `${ministryId}_${this.provider.name}`,
+          ministry_id: ministryId,
+          provider: this.provider.name,
+          provider_customer_id: activeSubCustomerId,
+          status: 'ready',
+          created_at: now,
+          updated_at: now,
+        });
+        return { providerCustomerId: activeSubCustomerId, isNew: false };
+      }
+    }
+
+    // 2. Se já possui customer canônico persistido e pronto, reutiliza imediatamente
+    if (
+      canonicalCustomer &&
+      canonicalCustomer.provider_customer_id &&
+      canonicalCustomer.provider_customer_id.trim() &&
+      canonicalCustomer.status !== 'creating'
+    ) {
+      return { providerCustomerId: canonicalCustomer.provider_customer_id.trim(), isNew: false };
+    }
+
+    // 3. Concorrência no Primeiro Customer: Adquire claim/lease atômico no Firestore
+    const lockWorkerId = `claim_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const claim = await this.billingRepo.claimCustomerCreation(ministryId, this.provider.name, lockWorkerId, 30000);
+
+    if (!claim.acquired) {
+      // Se já está pronto no Firestore
+      if (claim.customer?.provider_customer_id && claim.customer.status !== 'creating') {
+        return { providerCustomerId: claim.customer.provider_customer_id.trim(), isNew: false };
+      }
+
+      // Se está em criação por outra request concorrente, aguarda resolução com polling
+      const timeoutMs = options?.pollTimeoutMs || 8000;
+      const startTime = Date.now();
+      while (Date.now() - startTime < timeoutMs) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        const polled = await this.billingRepo.getCustomer(ministryId, this.provider.name);
+        if (polled && polled.provider_customer_id && polled.status !== 'creating') {
+          return { providerCustomerId: polled.provider_customer_id.trim(), isNew: false };
+        }
+      }
+      // Se expirou o polling, tenta reavaliar o claim
+      const retryClaim = await this.billingRepo.claimCustomerCreation(ministryId, this.provider.name, lockWorkerId, 30000);
+      if (!retryClaim.acquired && retryClaim.customer?.provider_customer_id) {
+        return { providerCustomerId: retryClaim.customer.provider_customer_id.trim(), isNew: false };
+      }
+    }
+
+    // 4. Detentor do lease: Verifica se o customer já existe no gateway Asaas por externalReference antes de criar
+    let providerCustomerId: string | null = null;
+    if (typeof this.provider.findCustomerByExternalReference === 'function') {
+      try {
+        const existingOnGateway = await this.provider.findCustomerByExternalReference(ministryId);
+        if (existingOnGateway && existingOnGateway.providerCustomerId) {
+          providerCustomerId = existingOnGateway.providerCustomerId;
+        }
+      } catch (err: any) {
+        console.warn(`[BILLING CUSTOMER] Aviso ao buscar por externalReference: ${err.message}`);
+      }
+    }
+
+    // 5. Se não existir no gateway, cria explicitamente no Asaas
+    if (!providerCustomerId) {
+      const ministry = await this.ministryRepo.findById(ministryId);
+      const ministryName = ministry?.name || `Ministério ${ministryId}`;
+
+      const created = await this.provider.createCustomer({
+        ministryId,
+        ministryName,
+        email: options?.email,
+        taxId: options?.taxId,
+        phone: options?.phone,
+      });
+      providerCustomerId = created.providerCustomerId;
+    }
+
+    // 6. Persiste o customer canônico como 'ready' e libera o lease
+    const now = new Date().toISOString();
+    await this.billingRepo.setCustomer({
+      id: `${ministryId}_${this.provider.name}`,
+      ministry_id: ministryId,
+      provider: this.provider.name,
+      provider_customer_id: providerCustomerId,
+      status: 'ready',
+      lease_locked_until: null,
+      lease_locked_by: null,
+      created_at: canonicalCustomer?.created_at || now,
+      updated_at: now,
+    });
+
+    return { providerCustomerId, isNew: true };
+  }
+
+  /**
+   * Reconcilia ou atualiza o customer canônico no Firestore de forma segura contra webhooks históricos atrasados.
+   */
+  private async safeUpdateWebhookCustomer(
+    ministryId: string,
+    newCustomerId: string | undefined,
+    options: {
+      isCurrentTransitionOrActiveSub: boolean;
+      nowIso: string;
+    }
+  ): Promise<void> {
+    if (!newCustomerId || !newCustomerId.trim()) return;
+
+    const trimmedId = newCustomerId.trim();
+    const existingCust = await this.billingRepo.getCustomer(ministryId, this.provider.name);
+
+    if (!existingCust || !existingCust.provider_customer_id) {
+      await this.billingRepo.setCustomer({
+        id: `${ministryId}_${this.provider.name}`,
+        ministry_id: ministryId,
+        provider: this.provider.name,
+        provider_customer_id: trimmedId,
+        status: 'ready',
+        created_at: options.nowIso,
+        updated_at: options.nowIso,
+      });
+      return;
+    }
+
+    if (existingCust.provider_customer_id === trimmedId) {
+      return;
+    }
+
+    // Mismatch: o webhook traz um customer diferente do canônico atual
+    if (options.isCurrentTransitionOrActiveSub) {
+      console.log(
+        `[BILLING WEBHOOK RECONCILE] Atualizando customer canônico para ministério ${ministryId} de ${existingCust.provider_customer_id} para ${trimmedId} (evento de assinatura/transição vigente).`
+      );
+      await this.billingRepo.setCustomer({
+        id: `${ministryId}_${this.provider.name}`,
+        ministry_id: ministryId,
+        provider: this.provider.name,
+        provider_customer_id: trimmedId,
+        status: 'ready',
+        created_at: existingCust.created_at || options.nowIso,
+        updated_at: options.nowIso,
+      });
+    } else {
+      console.log(
+        `[BILLING WEBHOOK IGNORED] Ignorando atualização de customer canônico para ministério ${ministryId} de evento histórico com customer ${trimmedId}. Mantido customer canônico vigente ${existingCust.provider_customer_id}.`
+      );
+    }
+  }
+
+  /**
    * Inicia o fluxo de checkout gerando link hospedado no gateway.
    * Possui proteção ativa contra double checkout reutilizando sessões pendentes idênticas recentes (< 15 min).
    */
@@ -285,10 +491,163 @@ export class BillingService {
       };
     }
 
+    // 1. Obter assinatura atual vigente para verificar se a origem é Free
+    const currentBillingSub = await this.billingRepo.getSubscription(ministryId, this.provider.name);
+    const currentAppSub = await this.subscriptionRepo.getSubscription(ministryId);
+
+    const isSourceFree =
+      (!currentBillingSub || currentBillingSub.status !== 'active' || currentBillingSub.plan_id === 'free') &&
+      (!currentAppSub || currentAppSub.subscription_mode !== 'paid' || currentAppSub.plan_id === 'free');
+
+    // =========================================================================
+    // V1 INITIAL PURCHASE (FREE -> PAID) ORCHESTRATION SAGA
+    // =========================================================================
+    if (isSourceFree) {
+      // 1. Validar contrato de destino no domínio de transição
+      validateTargetContract({
+        plan_id: planId,
+        interval,
+        addon_blocks: addonBlocks,
+      });
+
+      // 2. Construir snapshot comercial determinístico
+      const commercialSnapshot = buildTransitionCommercialSnapshot(
+        {
+          plan_id: 'free',
+          interval,
+          addon_blocks: 0,
+        },
+        {
+          plan_id: planId,
+          interval,
+          addon_blocks: addonBlocks,
+        }
+      );
+
+      // 3. Proteção contra Double Request / Idempotência:
+      // Se já existir um slot ativo, verifica se possui checkout pendente reutilizável ou rejeita 409
+      const activeSlot = await this.billingRepo.getActiveTransitionSlot(ministryId, this.provider.name);
+      if (activeSlot) {
+        const existingTr = await this.billingRepo.getPlanChange(activeSlot.plan_change_id);
+        if (
+          existingTr &&
+          existingTr.requested_plan_id === planId &&
+          existingTr.requested_interval === interval &&
+          (existingTr.requested_addon_blocks || 0) === commercialSnapshot.target_addon_blocks &&
+          existingTr.checkout_url &&
+          existingTr.status === 'pending'
+        ) {
+          return {
+            checkoutUrl: existingTr.checkout_url,
+            checkoutId: existingTr.provider_checkout_id || existingTr.checkout_intent_id || activeSlot.plan_change_id,
+            expiresAt: existingTr.expires_at,
+            totalPriceCents: commercialSnapshot.target_future_recurring_price_cents,
+            currency: 'BRL',
+          };
+        }
+        throw new AppError(409, 'Já existe uma transição de plano ativa em processamento para este ministério.', {
+          code: 'ACTIVE_TRANSITION_EXISTS',
+        });
+      }
+
+      // 4. Resolver ou criar cliente canônico no gateway
+      const resolvedCustomer = await this.resolveOrCreateBillingCustomer(ministryId);
+
+      // 5. Construir entidade de persistência V1 e travar slot determinístico ANTES de qualquer mutação externa
+      const transitionId = `transition_${ministryId}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const checkoutIntentId = `intent_init_${ministryId}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
+      const transitionRecord = buildBillingTransitionV1Record({
+        transitionId,
+        ministryId,
+        provider: this.provider.name,
+        commercialSnapshot,
+        requestedByUserId: userId,
+        providerCustomerId: resolvedCustomer.providerCustomerId,
+      });
+      transitionRecord.checkout_intent_id = checkoutIntentId;
+      transitionRecord.initial_checkout_intent_id = checkoutIntentId;
+
+      await this.billingRepo.createTransitionAndClaimSlot(transitionRecord);
+
+      // 6. Determinar URLs públicas de retorno
+      const publicApiUrl = (config.billingPublicApiUrl || '').trim().replace(/\/+$/, '');
+      if (!publicApiUrl) {
+        throw new AppError(500, 'URL pública de callback do Billing não configurada.');
+      }
+      if (publicApiUrl.includes('localhost') || publicApiUrl.includes('127.0.0.1')) {
+        throw new AppError(500, 'URL pública de callback do Billing não pode ser localhost.');
+      }
+
+      const callbackSuccessUrl = `${publicApiUrl}/api/v1/billing/checkout-return/success`;
+      const callbackCancelUrl = `${publicApiUrl}/api/v1/billing/checkout-return/cancel`;
+      const callbackExpiredUrl = `${publicApiUrl}/api/v1/billing/checkout-return/expired`;
+
+      // 7. Criar Sessão de Checkout Hospedado no Provedor (Asaas)
+      let checkoutResult: { checkoutUrl: string; checkoutId: string; expiresAt: string | null };
+      try {
+        checkoutResult = await this.provider.createCheckout({
+          ministryId,
+          checkoutIntentId,
+          providerCustomerId: resolvedCustomer.providerCustomerId,
+          planId,
+          planName: getPlanDefinition(planId).name,
+          interval,
+          addonBlocks: commercialSnapshot.target_addon_blocks,
+          amountCents: commercialSnapshot.target_future_recurring_price_cents,
+          successUrl: callbackSuccessUrl,
+          cancelUrl: callbackCancelUrl,
+          expiredUrl: callbackExpiredUrl,
+        });
+      } catch (providerErr: any) {
+        await this.billingRepo.updateTransition(transitionId, ministryId, {
+          transition_status: 'failed',
+          failure_reason: providerErr.message || 'Falha na comunicação com gateway de pagamento',
+        });
+        throw providerErr;
+      }
+
+      // 8. Registrar tentativa auditável e vincular referências do provedor
+      const attemptId = `att_init_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const attempt: BillingCheckoutAttempt = {
+        attempt_id: attemptId,
+        transition_id: transitionId,
+        attempt_type: 'initial_purchase',
+        internal_checkout_intent_id: checkoutIntentId,
+        provider_checkout_id: checkoutResult.checkoutId,
+        checkout_url: checkoutResult.checkoutUrl,
+        amount_cents: commercialSnapshot.target_future_recurring_price_cents,
+        currency: 'BRL',
+        status: 'pending',
+        created_at: new Date().toISOString(),
+        expires_at: checkoutResult.expiresAt,
+      };
+
+      await this.billingRepo.recordNewCheckoutAttempt(transitionId, ministryId, attempt);
+      await this.billingRepo.updateTransition(transitionId, ministryId, {
+        checkout_url: checkoutResult.checkoutUrl,
+        initial_provider_checkout_id: checkoutResult.checkoutId,
+        provider_checkout_id: checkoutResult.checkoutId,
+        current_initial_purchase_checkout_attempt_id: attemptId,
+        expires_at: checkoutResult.expiresAt,
+      });
+
+      return {
+        checkoutUrl: checkoutResult.checkoutUrl,
+        checkoutId: checkoutResult.checkoutId,
+        expiresAt: checkoutResult.expiresAt,
+        totalPriceCents: commercialSnapshot.target_future_recurring_price_cents,
+        currency: 'BRL',
+      };
+    }
+
+    // =========================================================================
+    // LEGACY FLOW (PAID -> PAID, PAID -> FREE, etc.) PRESERVED
+    // =========================================================================
     const priceCalc = calculatePlanPriceCents(planId, interval, addonBlocks);
     const plan = getPlanDefinition(planId);
-    
-    // 1. Proteção contra Double Checkout: Reutilizar sessão pendente recente (< 15 min) para evitar múltiplas cobranças no gateway
+
+    // Proteção contra Double Checkout Legado: Reutilizar sessão pendente recente (< 15 min)
     const existingPending = await this.billingRepo.getRecentPendingPlanChange(
       ministryId,
       this.provider.name,
@@ -307,13 +666,13 @@ export class BillingService {
       };
     }
 
-    // 2. Obter assinatura atual vigente para preservar IDs de supersede sem sobrescrever a assinatura ativa
-    const currentBillingSub = await this.billingRepo.getSubscription(ministryId, this.provider.name);
+    // 3. Resolver ou criar cliente canônico no gateway antes da geração da sessão de checkout
+    const resolvedCustomer = await this.resolveOrCreateBillingCustomer(ministryId);
 
-    // 3. Gerar identificador determinístico seguro para a intenção de checkout (externalReference)
+    // 4. Gerar identificador determinístico seguro para a intenção de checkout (externalReference)
     const checkoutIntentId = `intent_${ministryId}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
-    // 4. Determinar URLs públicas de callback para o gateway (Backend é autoridade das URLs de retorno)
+    // 5. Determinar URLs públicas de callback para o gateway (Backend é autoridade das URLs de retorno)
     const publicApiUrl = (config.billingPublicApiUrl || '').trim().replace(/\/+$/, '');
     if (!publicApiUrl) {
       throw new AppError(500, 'URL pública de callback do Billing não configurada.');
@@ -326,10 +685,11 @@ export class BillingService {
     const callbackCancelUrl = `${publicApiUrl}/api/v1/billing/checkout-return/cancel`;
     const callbackExpiredUrl = `${publicApiUrl}/api/v1/billing/checkout-return/expired`;
 
-    // 5. Criar Sessão de Checkout Hospedado no Provedor (Asaas Checkout)
+    // 6. Criar Sessão de Checkout Hospedado no Provedor (Asaas Checkout) com o customer canônico
     const checkoutResult = await this.provider.createCheckout({
       ministryId,
       checkoutIntentId,
+      providerCustomerId: resolvedCustomer.providerCustomerId,
       planId,
       planName: plan.name,
       interval,
@@ -340,7 +700,7 @@ export class BillingService {
       expiredUrl: callbackExpiredUrl,
     });
 
-    // 5. Persistir registro isolado da transição em billing_plan_changes (NÃO altera a assinatura vigente)
+    // 7. Persistir registro isolado da transição em billing_plan_changes (NÃO altera a assinatura vigente)
     const now = new Date();
     const planChangeRecord: BillingPlanChangeRecord = {
       id: checkoutIntentId,
@@ -348,6 +708,7 @@ export class BillingService {
       provider: this.provider.name,
       checkout_intent_id: checkoutIntentId,
       provider_checkout_id: checkoutResult.checkoutId,
+      provider_customer_id: resolvedCustomer.providerCustomerId,
       requested_plan_id: planId,
       requested_interval: interval,
       requested_addon_blocks: priceCalc.addonBlocks,
@@ -534,6 +895,16 @@ export class BillingService {
         return { status: 'ok', processed: false, reason: 'complimentary_plan_preserved' };
       }
 
+      // 5.1 Roteamento V1: Se a transição identificada for V1 com execution_strategy 'immediate_initial_purchase',
+      // processa exclusivamente pelo orquestrador V1, garantindo atomicidade, invariantes temporais e liberação segura do slot.
+      if (
+        planChange &&
+        isBillingTransitionV1(planChange) &&
+        planChange.execution_strategy === 'immediate_initial_purchase'
+      ) {
+        return await this.handleV1InitialPurchaseWebhook(parsedEvent, planChange, now);
+      }
+
       // 6. Executar ação de acordo com o tipo normalizado de evento financeiro
       if (parsedEvent.eventType === 'checkout_created') {
         // Confirmação de registro do checkout no Asaas (continua em pending)
@@ -547,13 +918,12 @@ export class BillingService {
           await this.billingRepo.setPlanChange(planChange);
         }
         if (parsedEvent.providerCustomerId) {
-          await this.billingRepo.setCustomer({
-            id: `${ministryId}_${this.provider.name}`,
-            ministry_id: ministryId,
-            provider: this.provider.name,
-            provider_customer_id: parsedEvent.providerCustomerId,
-            created_at: now.toISOString(),
-            updated_at: now.toISOString(),
+          const isCurrentTransition = Boolean(
+            planChange && (planChange.status === 'pending' || planChange.status === 'superseding')
+          );
+          await this.safeUpdateWebhookCustomer(ministryId, parsedEvent.providerCustomerId, {
+            isCurrentTransitionOrActiveSub: isCurrentTransition,
+            nowIso: now.toISOString(),
           });
         }
       } else if (parsedEvent.eventType === 'checkout_canceled' || parsedEvent.eventType === 'checkout_expired') {
@@ -574,13 +944,15 @@ export class BillingService {
           await this.billingRepo.setPlanChange(planChange);
         }
         if (parsedEvent.providerCustomerId) {
-          await this.billingRepo.setCustomer({
-            id: `${ministryId}_${this.provider.name}`,
-            ministry_id: ministryId,
-            provider: this.provider.name,
-            provider_customer_id: parsedEvent.providerCustomerId,
-            created_at: now.toISOString(),
-            updated_at: now.toISOString(),
+          const isCurrentSub = Boolean(
+            (planChange && planChange.status === 'pending') ||
+              (billingSub &&
+                billingSub.status === 'active' &&
+                billingSub.provider_subscription_id === parsedEvent.providerSubscriptionId)
+          );
+          await this.safeUpdateWebhookCustomer(ministryId, parsedEvent.providerCustomerId, {
+            isCurrentTransitionOrActiveSub: isCurrentSub,
+            nowIso: now.toISOString(),
           });
         }
       } else if (parsedEvent.eventType === 'payment_confirmed' || parsedEvent.eventType === 'payment_received') {
@@ -798,13 +1170,9 @@ export class BillingService {
         }
 
         if (parsedEvent.providerCustomerId) {
-          await this.billingRepo.setCustomer({
-            id: `${ministryId}_${this.provider.name}`,
-            ministry_id: ministryId,
-            provider: this.provider.name,
-            provider_customer_id: parsedEvent.providerCustomerId,
-            created_at: now.toISOString(),
-            updated_at: now.toISOString(),
+          await this.safeUpdateWebhookCustomer(ministryId, parsedEvent.providerCustomerId, {
+            isCurrentTransitionOrActiveSub: true,
+            nowIso: now.toISOString(),
           });
         }
 
@@ -1333,6 +1701,265 @@ export class BillingService {
       reconciled,
       message,
     };
+  }
+
+  /**
+   * Processador de Webhook exclusivo para a saga de Compra Inicial V1 (Free -> Paid).
+   * Garante:
+   * - Invariantes temporais estritas (sem +30/+365 dias fixos).
+   * - Ativação de entitlement pelo SubscriptionService apenas após confirmação financeira.
+   * - Liberação do active transition slot apenas após safe_terminal.
+   * - Fail-closed em divergência de contrato/valor sem retenção indevida ou perda de rastro financeiro.
+   */
+  private async handleV1InitialPurchaseWebhook(
+    parsedEvent: any,
+    planChange: BillingTransitionV1Record,
+    now: Date
+  ): Promise<{ status: string; processed: boolean; reason?: string; error?: string }> {
+    const ministryId = planChange.ministry_id;
+    const nowIso = now.toISOString();
+
+    if (parsedEvent.eventType === 'checkout_created') {
+      if (parsedEvent.providerCheckoutId && !planChange.initial_provider_checkout_id) {
+        await this.billingRepo.updateTransition(planChange.id, ministryId, {
+          initial_provider_checkout_id: parsedEvent.providerCheckoutId,
+          provider_checkout_id: parsedEvent.providerCheckoutId,
+        });
+      }
+      await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      return { status: 'ok', processed: true };
+    }
+
+    if (parsedEvent.eventType === 'checkout_paid') {
+      if (parsedEvent.providerSubscriptionId || parsedEvent.providerCustomerId) {
+        await this.billingRepo.updateTransition(planChange.id, ministryId, {
+          initial_provider_subscription_id: parsedEvent.providerSubscriptionId || planChange.initial_provider_subscription_id || null,
+          new_provider_subscription_id: parsedEvent.providerSubscriptionId || planChange.new_provider_subscription_id || null,
+          provider_customer_id: parsedEvent.providerCustomerId || planChange.provider_customer_id || null,
+        });
+      }
+      if (parsedEvent.providerCustomerId) {
+        await this.safeUpdateWebhookCustomer(ministryId, parsedEvent.providerCustomerId, {
+          isCurrentTransitionOrActiveSub: true,
+          nowIso,
+        });
+      }
+      await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      return { status: 'ok', processed: true };
+    }
+
+    if (parsedEvent.eventType === 'checkout_canceled' || parsedEvent.eventType === 'checkout_expired') {
+      if (planChange.transition_status === 'pending_initial_purchase') {
+        const terminalStatus = parsedEvent.eventType === 'checkout_expired' ? 'failed' : 'canceled';
+        await this.billingRepo.markFinanciallySafe(planChange.id, ministryId, terminalStatus, {
+          failure_reason: `Checkout ${parsedEvent.eventType === 'checkout_expired' ? 'expirado' : 'cancelado'} no provedor`,
+        });
+        await this.billingRepo.releaseSlotIfOwnedAndSafe(ministryId, this.provider.name, planChange.id);
+      }
+      await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      return { status: 'ok', processed: true };
+    }
+
+    if (parsedEvent.eventType === 'subscription_created' || parsedEvent.eventType === 'subscription_updated') {
+      if (parsedEvent.providerSubscriptionId) {
+        await this.billingRepo.updateTransition(planChange.id, ministryId, {
+          initial_provider_subscription_id: parsedEvent.providerSubscriptionId,
+          new_provider_subscription_id: parsedEvent.providerSubscriptionId,
+          provider_customer_id: parsedEvent.providerCustomerId || planChange.provider_customer_id || null,
+        });
+      }
+      if (parsedEvent.providerCustomerId) {
+        await this.safeUpdateWebhookCustomer(ministryId, parsedEvent.providerCustomerId, {
+          isCurrentTransitionOrActiveSub: true,
+          nowIso,
+        });
+      }
+      await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      return { status: 'ok', processed: true };
+    }
+
+    if (parsedEvent.eventType === 'payment_confirmed' || parsedEvent.eventType === 'payment_received') {
+      const expectedAmountCents = planChange.target_future_recurring_price_cents;
+      const paidAmountCents = parsedEvent.amountCents ?? expectedAmountCents;
+
+      // Amount Validation (Fail-Closed)
+      if (paidAmountCents !== expectedAmountCents) {
+        console.error(
+          `[ANOMALIA DE CONTRATO V1] Valor recebido (${paidAmountCents}¢) diverge do valor travado (${expectedAmountCents}¢) na transição V1 ${planChange.id} (ministério ${ministryId}).`
+        );
+        await this.billingRepo.updateTransition(planChange.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: `Valor pago (${paidAmountCents}¢) diverge do preço travado (${expectedAmountCents}¢)`,
+          transition_status: 'financial_attention_required',
+        });
+        await this.billingRepo.markWebhookEventProcessed(
+          this.provider.name,
+          parsedEvent.providerEventId,
+          'failed',
+          `Valor pago (${paidAmountCents}¢) diverge do preço travado (${expectedAmountCents}¢)`
+        );
+        return { status: 'ok', processed: false, reason: 'amount_validation_failed' };
+      }
+
+      // Customer Validation (Fail-Closed)
+      if (
+        planChange.provider_customer_id &&
+        parsedEvent.providerCustomerId &&
+        planChange.provider_customer_id !== parsedEvent.providerCustomerId
+      ) {
+        console.error(
+          `[ANOMALIA CUSTOMER V1] Customer recebido (${parsedEvent.providerCustomerId}) diverge do esperado (${planChange.provider_customer_id}) na transição V1 ${planChange.id}.`
+        );
+        await this.billingRepo.updateTransition(planChange.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: `Customer recebido (${parsedEvent.providerCustomerId}) diverge do esperado (${planChange.provider_customer_id})`,
+          transition_status: 'financial_attention_required',
+        });
+        await this.billingRepo.markWebhookEventProcessed(
+          this.provider.name,
+          parsedEvent.providerEventId,
+          'failed',
+          `Customer diverge do esperado`
+        );
+        return { status: 'ok', processed: false, reason: 'customer_mismatch' };
+      }
+
+      const providerSubId =
+        parsedEvent.providerSubscriptionId ||
+        planChange.initial_provider_subscription_id ||
+        planChange.new_provider_subscription_id ||
+        `sub_init_${Date.now()}`;
+
+      // Idempotency: se já completada anteriormente
+      if (planChange.transition_status === 'completed') {
+        if (parsedEvent.providerPaymentId) {
+          await this.billingRepo.saveTransaction({
+            id: `${this.provider.name}_${parsedEvent.providerPaymentId}`,
+            ministry_id: ministryId,
+            provider: this.provider.name,
+            provider_payment_id: parsedEvent.providerPaymentId,
+            provider_subscription_id: providerSubId,
+            amount_cents: paidAmountCents,
+            currency: 'BRL',
+            status: 'paid',
+            due_date: parsedEvent.dueDate || getBillingDate(now, config.billingTimezone),
+            paid_at: parsedEvent.paymentDate || nowIso,
+            payment_method: parsedEvent.paymentMethod,
+            invoice_url: parsedEvent.invoiceUrl,
+            created_at: nowIso,
+            updated_at: nowIso,
+          });
+        }
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+        return { status: 'ok', processed: true, reason: 'already_completed' };
+      }
+
+      // Temporal Derivation:
+      // current_period_start = instante de confirmação
+      // effective_billing_date = data comercial correspondente
+      const paymentConfirmationInstant = parsedEvent.paymentDate ? new Date(parsedEvent.paymentDate).toISOString() : nowIso;
+      const effectiveBillingDate = getBillingDate(paymentConfirmationInstant, config.billingTimezone);
+
+      // current_period_end = próximo ciclo derivado por calendário exato (addCommercialInterval) ou dueDate futuro
+      let nextBillingDateStr: string;
+      if (parsedEvent.dueDate && parsedEvent.dueDate > effectiveBillingDate) {
+        nextBillingDateStr = parsedEvent.dueDate;
+      } else {
+        nextBillingDateStr = addCommercialInterval(effectiveBillingDate, planChange.target_interval, config.billingTimezone);
+      }
+      const currentPeriodEndIso = new Date(`${nextBillingDateStr}T00:00:00.000Z`).toISOString();
+
+      // Ativação do Entitlement via SubscriptionService (única autoridade de cotas)
+      try {
+        await this.subscriptionService.changePlan(ministryId, planChange.target_plan_id);
+        if (planChange.target_addon_blocks > 0) {
+          await this.subscriptionService.changeMemberAddonBlocks(ministryId, planChange.target_addon_blocks);
+        }
+        const appSub = await this.subscriptionRepo.getSubscription(ministryId);
+        if (appSub) {
+          await this.subscriptionRepo.setSubscription({
+            ...appSub,
+            billing_status: 'active',
+            subscription_mode: 'paid',
+            current_period_start: paymentConfirmationInstant,
+            current_period_end: currentPeriodEndIso,
+            updated_at: nowIso,
+          });
+        }
+      } catch (activationErr: any) {
+        console.error(`[CRITICAL V1 ACTIVATION ERROR] Falha ao ativar SubscriptionService após pagamento: ${activationErr.message}`);
+        await this.billingRepo.updateTransition(planChange.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: `Falha na ativação do SubscriptionService após confirmação de pagamento: ${activationErr.message}`,
+          transition_status: 'financial_attention_required',
+        });
+        throw activationErr;
+      }
+
+      // Atualizar / Criar BillingSubscriptionRecord
+      const billingSubRecord: BillingSubscriptionRecord = {
+        id: `${this.provider.name}_${ministryId}`,
+        ministry_id: ministryId,
+        provider: this.provider.name,
+        plan_id: planChange.target_plan_id,
+        interval: planChange.target_interval,
+        member_addon_blocks: planChange.target_addon_blocks,
+        amount_cents: expectedAmountCents,
+        status: 'active',
+        provider_subscription_id: providerSubId,
+        provider_customer_id: parsedEvent.providerCustomerId || planChange.provider_customer_id || null,
+        provider_checkout_id: planChange.initial_provider_checkout_id || planChange.provider_checkout_id || null,
+        checkout_intent_id: planChange.initial_checkout_intent_id || planChange.checkout_intent_id || undefined,
+        started_at: paymentConfirmationInstant,
+        current_period_start: paymentConfirmationInstant,
+        current_period_end: currentPeriodEndIso,
+        cancel_at_period_end: false,
+        created_at: nowIso,
+        updated_at: nowIso,
+      };
+      await this.billingRepo.setSubscription(billingSubRecord);
+
+      // Confirmar transição atomicamente como completed e safe_terminal
+      await this.billingRepo.confirmInitialPurchaseActivation({
+        transitionId: planChange.id,
+        ministryId: ministryId,
+        effectiveAt: paymentConfirmationInstant,
+        effectiveBillingDate: effectiveBillingDate,
+        providerSubscriptionId: providerSubId,
+        providerPaymentId: parsedEvent.providerPaymentId,
+        providerCustomerId: parsedEvent.providerCustomerId || planChange.provider_customer_id,
+        completedAt: nowIso,
+      });
+
+      // Salvar Transação
+      if (parsedEvent.providerPaymentId) {
+        await this.billingRepo.saveTransaction({
+          id: `${this.provider.name}_${parsedEvent.providerPaymentId}`,
+          ministry_id: ministryId,
+          provider: this.provider.name,
+          provider_payment_id: parsedEvent.providerPaymentId,
+          provider_subscription_id: providerSubId,
+          amount_cents: paidAmountCents,
+          currency: 'BRL',
+          status: 'paid',
+          due_date: parsedEvent.dueDate || effectiveBillingDate,
+          paid_at: parsedEvent.paymentDate || nowIso,
+          payment_method: parsedEvent.paymentMethod,
+          invoice_url: parsedEvent.invoiceUrl,
+          created_at: nowIso,
+          updated_at: nowIso,
+        });
+      }
+
+      // Liberar active transition slot
+      await this.billingRepo.releaseSlotIfOwnedAndSafe(ministryId, this.provider.name, planChange.id);
+
+      await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      return { status: 'ok', processed: true };
+    }
+
+    await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'ignored');
+    return { status: 'ok', processed: false, reason: 'unhandled_v1_event' };
   }
 
   /**

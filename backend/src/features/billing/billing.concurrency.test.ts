@@ -22,6 +22,7 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
   let mockProvider: BillingProvider;
 
   const mockEventsStore = new Map<string, BillingWebhookEventRecord>();
+  const mockCustomersStore = new Map<string, BillingCustomerRecord>();
   const mockSubscriptionsStore = new Map<string, BillingSubscriptionRecord>();
   const mockPlanChangesStore = new Map<string, any>();
   const mockAppSubscriptionsStore = new Map<string, MinistrySubscriptionRecord>();
@@ -30,32 +31,52 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
   beforeEach(() => {
     (config as any).billingPublicApiUrl = 'https://tunnel.trycloudflare.com';
     mockEventsStore.clear();
+    mockCustomersStore.clear();
     mockSubscriptionsStore.clear();
     mockPlanChangesStore.clear();
     mockAppSubscriptionsStore.clear();
     mockTransactionsStore.clear();
 
     mockBillingRepo = {
-      getCustomer: vi.fn().mockResolvedValue({
-        id: 'min_test_asaas',
-        ministry_id: 'min_test',
-        provider: 'asaas',
-        provider_customer_id: 'cus_123',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+      getCustomer: vi.fn().mockImplementation(async (ministryId: string, provider: string) => {
+        return mockCustomersStore.get(`${ministryId}_${provider}`) || null;
       }),
       getCustomerByProviderId: vi.fn().mockImplementation(async (providerId: string) => {
-        if (providerId === 'cus_123') {
-          return {
-            id: 'min_test_asaas',
-            ministry_id: 'min_test',
-            provider: 'asaas',
-            provider_customer_id: 'cus_123',
-          };
+        for (const cust of mockCustomersStore.values()) {
+          if (cust.provider_customer_id === providerId) return cust;
         }
         return null;
       }),
-      setCustomer: vi.fn().mockResolvedValue(undefined),
+      setCustomer: vi.fn().mockImplementation(async (cust: BillingCustomerRecord) => {
+        mockCustomersStore.set(cust.id, cust);
+      }),
+      claimCustomerCreation: vi.fn().mockImplementation(async (ministryId: string, provider: string, lockWorkerId: string) => {
+        const existing = mockCustomersStore.get(`${ministryId}_${provider}`);
+        const now = Date.now();
+        if (existing) {
+          if (existing.provider_customer_id && existing.status !== 'creating') {
+            return { acquired: false, customer: existing };
+          }
+          if (existing.status === 'creating' && existing.lease_locked_until) {
+            if (new Date(existing.lease_locked_until).getTime() > now && existing.lease_locked_by !== lockWorkerId) {
+              return { acquired: false, customer: existing };
+            }
+          }
+        }
+        const record: BillingCustomerRecord = {
+          id: `${ministryId}_${provider}`,
+          ministry_id: ministryId,
+          provider: provider as any,
+          provider_customer_id: '',
+          status: 'creating',
+          lease_locked_until: new Date(now + 30000).toISOString(),
+          lease_locked_by: lockWorkerId,
+          created_at: existing?.created_at || new Date(now).toISOString(),
+          updated_at: new Date(now).toISOString(),
+        };
+        mockCustomersStore.set(record.id, record);
+        return { acquired: true, customer: record };
+      }),
       getSubscription: vi.fn().mockImplementation(async (ministryId: string) => {
         return mockSubscriptionsStore.get(ministryId) || null;
       }),
@@ -115,7 +136,7 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
       ),
       getPlanChangeByCheckoutIntentId: vi.fn().mockImplementation(async (intentId: string) => {
         for (const change of mockPlanChangesStore.values()) {
-          if (change.checkout_intent_id === intentId) return change;
+          if (change.id === intentId || change.checkout_intent_id === intentId) return change;
         }
         return null;
       }),
@@ -158,6 +179,90 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
       saveTransaction: vi.fn().mockImplementation(async (tx: any) => {
         mockTransactionsStore.set(tx.id, tx);
       }),
+      getActiveTransitionSlot: vi.fn().mockImplementation(async (ministryId: string) => {
+        for (const change of mockPlanChangesStore.values()) {
+          if (change.ministry_id === ministryId && change.status === 'pending') {
+            return {
+              id: `slot_${ministryId}_asaas`,
+              ministry_id: ministryId,
+              provider: 'asaas',
+              plan_change_id: change.id,
+              acquired_at: change.created_at,
+              updated_at: change.updated_at,
+              version: 1,
+            };
+          }
+        }
+        return null;
+      }),
+      getActiveTransitionForMinistry: vi.fn().mockImplementation(async (ministryId: string) => {
+        for (const change of mockPlanChangesStore.values()) {
+          if (change.ministry_id === ministryId && change.status === 'pending') {
+            return {
+              slot: {
+                id: `slot_${ministryId}_asaas`,
+                ministry_id: ministryId,
+                provider: 'asaas',
+                plan_change_id: change.id,
+                acquired_at: change.created_at,
+                updated_at: change.updated_at,
+                version: 1,
+              },
+              transition: change,
+            };
+          }
+        }
+        return null;
+      }),
+      createTransitionAndClaimSlot: vi.fn().mockImplementation(async (record: any) => {
+        mockPlanChangesStore.set(record.id, record);
+        return {
+          planChange: record,
+          slot: {
+            id: `slot_${record.ministry_id}_${record.provider}`,
+            ministry_id: record.ministry_id,
+            provider: record.provider,
+            plan_change_id: record.id,
+            acquired_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            version: 1,
+          },
+        };
+      }),
+      updateTransition: vi.fn().mockImplementation(async (id: string, ministryId: string, updates: any) => {
+        const existing = mockPlanChangesStore.get(id) || { id, ministry_id: ministryId };
+        const updated = { ...existing, ...updates, updated_at: new Date().toISOString() };
+        mockPlanChangesStore.set(id, updated);
+        return updated;
+      }),
+      recordNewCheckoutAttempt: vi.fn().mockImplementation(async (transitionId: string, ministryId: string, attempt: any) => {
+        const existing = mockPlanChangesStore.get(transitionId) || { id: transitionId, ministry_id: ministryId };
+        const attempts = existing.checkout_attempts || [];
+        attempts.push(attempt);
+        const updated = { ...existing, checkout_attempts: attempts, updated_at: new Date().toISOString() };
+        mockPlanChangesStore.set(transitionId, updated);
+        return updated;
+      }),
+      confirmInitialPurchaseActivation: vi.fn().mockImplementation(async (params: any) => {
+        const existing = mockPlanChangesStore.get(params.transitionId) || { id: params.transitionId, ministry_id: params.ministryId };
+        const updated = {
+          ...existing,
+          ...params,
+          transition_status: 'completed',
+          financial_safety_status: 'safe_terminal',
+          status: 'completed',
+          updated_at: new Date().toISOString(),
+        };
+        mockPlanChangesStore.set(params.transitionId, updated);
+        return updated;
+      }),
+      releaseSlotIfOwnedAndSafe: vi.fn().mockResolvedValue(true),
+      markFinanciallySafe: vi.fn().mockImplementation(async (id: string, ministryId: string, terminalStatus: string) => {
+        const existing = mockPlanChangesStore.get(id) || { id, ministry_id: ministryId };
+        const updated = { ...existing, transition_status: terminalStatus, financial_safety_status: 'safe_terminal', updated_at: new Date().toISOString() };
+        mockPlanChangesStore.set(id, updated);
+        return updated;
+      }),
       getTransactions: vi.fn().mockResolvedValue([]),
     };
 
@@ -184,6 +289,7 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
 
     mockMinistryRepo = {
       getMinistryById: vi.fn().mockResolvedValue({ id: 'min_test', name: 'Igreja Central' }),
+      findById: vi.fn().mockResolvedValue({ id: 'min_test', name: 'Igreja Central' }),
     };
 
     mockProvider = {
@@ -566,6 +672,163 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
 
       // Worker 2 is locked out
       expect(worker2Claim).toBeNull();
+    });
+  });
+
+  describe('Customer Resolution & Concurrency Safety (GAP-011)', () => {
+    it('A) FIRST CUSTOMER CONCURRENCY: duas chamadas concorrentes chamam createCustomer EXATAMENTE UMA VEZ e reutilizam o mesmo ID', async () => {
+      // Criação concorrente quando billing_customers está vazio
+      mockCustomersStore.clear();
+      mockProvider.createCustomer = vi.fn().mockImplementation(async () => {
+        // Simula delay de rede no gateway
+        await new Promise((r) => setTimeout(r, 100));
+        return { providerCustomerId: 'cus_atomic_first_123' };
+      });
+
+      const [res1, res2] = await Promise.all([
+        billingService.resolveOrCreateBillingCustomer('min_test'),
+        billingService.resolveOrCreateBillingCustomer('min_test'),
+      ]);
+
+      // Prova essencial: createCustomer foi chamado EXATAMENTE UMA VEZ no provider
+      expect(mockProvider.createCustomer).toHaveBeenCalledTimes(1);
+
+      // Ambas as requests retornaram o mesmo ID
+      expect(res1.providerCustomerId).toBe('cus_atomic_first_123');
+      expect(res2.providerCustomerId).toBe('cus_atomic_first_123');
+
+      // Registro final no Firestore está consolidado como 'ready'
+      const canonical = mockCustomersStore.get('min_test_asaas');
+      expect(canonical?.provider_customer_id).toBe('cus_atomic_first_123');
+      expect(canonical?.status).toBe('ready');
+    });
+
+    it('B) MULTI-INSTANCE CLAIM SAFETY: apenas uma instância adquire o lease atômico', async () => {
+      mockCustomersStore.clear();
+
+      const claim1 = await mockBillingRepo.claimCustomerCreation('min_test', 'asaas', 'worker_alpha', 30000);
+      const claim2 = await mockBillingRepo.claimCustomerCreation('min_test', 'asaas', 'worker_beta', 30000);
+
+      expect(claim1.acquired).toBe(true);
+      expect(claim1.customer?.lease_locked_by).toBe('worker_alpha');
+
+      expect(claim2.acquired).toBe(false);
+      expect(claim2.customer?.lease_locked_by).toBe('worker_alpha');
+    });
+
+    it('C) CRASH/RECOVERY: após falha antes de persistir, busca por externalReference no gateway e evita duplicata', async () => {
+      mockCustomersStore.clear();
+
+      // Simula que o gateway já tinha o customer criado por externalReference (de uma tentativa anterior antes do crash)
+      mockProvider.findCustomerByExternalReference = vi.fn().mockResolvedValue({
+        providerCustomerId: 'cus_recovered_from_crash_999',
+      });
+      mockProvider.createCustomer = vi.fn();
+
+      const res = await billingService.resolveOrCreateBillingCustomer('min_test');
+
+      expect(mockProvider.findCustomerByExternalReference).toHaveBeenCalledWith('min_test');
+      expect(mockProvider.createCustomer).not.toHaveBeenCalled();
+      expect(res.providerCustomerId).toBe('cus_recovered_from_crash_999');
+
+      const canonical = mockCustomersStore.get('min_test_asaas');
+      expect(canonical?.provider_customer_id).toBe('cus_recovered_from_crash_999');
+    });
+
+    it('D) LATE HISTORICAL WEBHOOK: evento atrasado com customer antigo NÃO reverte o customer canônico vigente', async () => {
+      // Estado atual: canonical = cus_active_B
+      const initialCreatedAt = '2026-07-01T00:00:00.000Z';
+      mockCustomersStore.set('min_test_asaas', {
+        id: 'min_test_asaas',
+        ministry_id: 'min_test',
+        provider: 'asaas',
+        provider_customer_id: 'cus_active_B',
+        status: 'ready',
+        created_at: initialCreatedAt,
+        updated_at: '2026-08-01T00:00:00.000Z',
+      });
+
+      // Assinatura ativa vigente aponta para sub_active_2 e cus_active_B
+      mockSubscriptionsStore.set('min_test', {
+        id: 'min_test_asaas',
+        ministry_id: 'min_test',
+        provider: 'asaas',
+        plan_id: 'pro',
+        interval: 'monthly',
+        member_addon_blocks: 0,
+        amount_cents: 8990,
+        status: 'active',
+        provider_subscription_id: 'sub_active_2',
+        provider_customer_id: 'cus_active_B',
+        current_period_start: '2026-08-01T00:00:00.000Z',
+        current_period_end: '2026-09-01T00:00:00.000Z',
+        cancel_at_period_end: false,
+        started_at: initialCreatedAt,
+        created_at: initialCreatedAt,
+        updated_at: '2026-08-01T00:00:00.000Z',
+      });
+
+      // Chega webhook atrasado de pagamento de assinatura antiga (sub_old_1) com cus_old_A
+      (mockProvider.parseWebhookEvent as any).mockReturnValue({
+        providerEventId: 'evt_delayed_old_payment',
+        eventType: 'payment_confirmed',
+        rawEventType: 'PAYMENT_CONFIRMED',
+        providerSubscriptionId: 'sub_old_1',
+        providerCustomerId: 'cus_old_A',
+        providerPaymentId: 'pay_old_1',
+        amountCents: 3490,
+      });
+
+      // Simula que o webhook não é da transição nem da active sub
+      const result = await billingService.handleWebhook({ 'asaas-access-token': 'token' }, {});
+
+      // O customer canônico DEVE continuar sendo cus_active_B
+      const canonical = mockCustomersStore.get('min_test_asaas');
+      expect(canonical?.provider_customer_id).toBe('cus_active_B');
+      expect(canonical?.created_at).toBe(initialCreatedAt);
+    });
+
+    it('E) CURRENT ACTIVE WEBHOOK: evento legítimo da nova transição reconcilia customer e preserva created_at original', async () => {
+      const initialCreatedAt = '2026-07-01T00:00:00.000Z';
+      mockCustomersStore.set('min_test_asaas', {
+        id: 'min_test_asaas',
+        ministry_id: 'min_test',
+        provider: 'asaas',
+        provider_customer_id: 'cus_old_A',
+        status: 'ready',
+        created_at: initialCreatedAt,
+        updated_at: '2026-08-01T00:00:00.000Z',
+      });
+
+      // Plan change ativo
+      mockPlanChangesStore.set('intent_min_test_new', {
+        id: 'intent_min_test_new',
+        ministry_id: 'min_test',
+        provider: 'asaas',
+        status: 'pending',
+        requested_plan_id: 'essential',
+        requested_interval: 'monthly',
+        requested_addon_blocks: 0,
+        expected_amount_cents: 3490,
+      });
+
+      // Webhook da transição atual com cus_new_B
+      (mockProvider.parseWebhookEvent as any).mockReturnValue({
+        providerEventId: 'evt_checkout_paid_current',
+        eventType: 'checkout_paid',
+        rawEventType: 'CHECKOUT_PAID',
+        externalReference: 'intent_min_test_new',
+        providerCustomerId: 'cus_new_B',
+        providerSubscriptionId: 'sub_new_2',
+        amountCents: 3490,
+      });
+
+      const res = await billingService.handleWebhook({ 'asaas-access-token': 'token' }, {});
+      expect(res.processed).toBe(true);
+
+      const canonical = mockCustomersStore.get('min_test_asaas');
+      expect(canonical?.provider_customer_id).toBe('cus_new_B');
+      expect(canonical?.created_at).toBe(initialCreatedAt); // created_at original preservado!
     });
   });
 });

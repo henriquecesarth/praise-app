@@ -32,6 +32,9 @@ describe('BillingService & Gateway Automation Tests', () => {
       getCustomer: vi.fn(),
       getCustomerByProviderId: vi.fn(),
       setCustomer: vi.fn(),
+      claimCustomerCreation: vi.fn().mockImplementation(async (ministryId: string, provider: string, lockWorkerId: string) => {
+        return { acquired: true, customer: null };
+      }),
       getSubscription: vi.fn(),
       getSubscriptionByProviderSubscriptionId: vi.fn(),
       getSubscriptionByCheckoutId: vi.fn(),
@@ -60,6 +63,35 @@ describe('BillingService & Gateway Automation Tests', () => {
         event: evt,
       })),
       markWebhookEventProcessed: vi.fn(),
+      getActiveTransitionSlot: vi.fn().mockResolvedValue(null),
+      getActiveTransitionForMinistry: vi.fn().mockResolvedValue(null),
+      createTransitionAndClaimSlot: vi.fn().mockImplementation(async (record: any) => {
+        return {
+          planChange: record,
+          slot: {
+            id: `slot_${record.ministry_id}_${record.provider}`,
+            ministry_id: record.ministry_id,
+            provider: record.provider,
+            plan_change_id: record.id,
+            acquired_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            version: 1,
+          },
+        };
+      }),
+      updateTransition: vi.fn().mockImplementation(async (id: string, ministryId: string, updates: any) => {
+        return { id, ministry_id: ministryId, ...updates };
+      }),
+      recordNewCheckoutAttempt: vi.fn().mockImplementation(async (transitionId: string, ministryId: string, attempt: any) => {
+        return { id: transitionId, ministry_id: ministryId, checkout_attempts: [attempt] };
+      }),
+      confirmInitialPurchaseActivation: vi.fn().mockImplementation(async (params: any) => {
+        return { id: params.transitionId, ministry_id: params.ministryId, transition_status: 'completed', financial_safety_status: 'safe_terminal', ...params };
+      }),
+      releaseSlotIfOwnedAndSafe: vi.fn().mockResolvedValue(true),
+      markFinanciallySafe: vi.fn().mockImplementation(async (id: string, ministryId: string, terminalStatus: string) => {
+        return { id, ministry_id: ministryId, transition_status: terminalStatus, financial_safety_status: 'safe_terminal' };
+      }),
     };
 
     mockSubscriptionService = {
@@ -94,6 +126,11 @@ describe('BillingService & Gateway Automation Tests', () => {
         id: 'min-100',
         name: 'Ministério Central',
         owner_id: 'user-admin',
+      }),
+      findById: vi.fn().mockResolvedValue({
+        id: 'min-100',
+        name: 'Ministério Central',
+        owner_user_id: 'user-admin',
       }),
     };
 
@@ -265,6 +302,7 @@ describe('BillingService & Gateway Automation Tests', () => {
       expect(mockProvider.createCheckout).toHaveBeenCalledWith({
         ministryId: 'min-100',
         checkoutIntentId: expect.stringMatching(/^intent_min-100_/),
+        providerCustomerId: 'cus_123',
         planId: 'essential',
         planName: 'Essential',
         interval: 'monthly',
@@ -1562,6 +1600,289 @@ describe('BillingService & Gateway Automation Tests', () => {
       expect(result.checkoutUrl).toBe('/ministerio/plano');
       expect(result.totalPriceCents).toBe(0);
       expect(mockProvider.createCheckout).not.toHaveBeenCalled();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // 6. Asaas Canonical Customer Reuse & Legacy Mismatch Resolution (GAP-011)
+  // --------------------------------------------------------------------------
+  describe('6. Asaas Canonical Customer Reuse & Legacy Mismatch Resolution (GAP-011)', () => {
+    it('A) Primeiro checkout (sem customer prévio): cria customer explicitamente com externalReference e reutiliza no checkout', async () => {
+      mockBillingRepo.getCustomer.mockResolvedValue(null);
+      mockBillingRepo.getSubscription.mockResolvedValue(null);
+
+      const result = await billingService.createCheckout('min-100', 'usr-1', {
+        planId: 'essential',
+        interval: 'monthly',
+        addonBlocks: 0,
+      });
+
+      expect(mockProvider.createCustomer).toHaveBeenCalledTimes(1);
+      expect(mockProvider.createCustomer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ministryId: 'min-100',
+          ministryName: 'Ministério Central',
+        })
+      );
+
+      expect(mockBillingRepo.setCustomer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'min-100_asaas',
+          ministry_id: 'min-100',
+          provider: 'asaas',
+          provider_customer_id: 'cus_asaas_123',
+        })
+      );
+
+      expect(mockProvider.createCheckout).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ministryId: 'min-100',
+          providerCustomerId: 'cus_asaas_123',
+          planId: 'essential',
+        })
+      );
+
+      expect(mockBillingRepo.createTransitionAndClaimSlot).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ministry_id: 'min-100',
+          provider_customer_id: 'cus_asaas_123',
+          target_plan_id: 'essential',
+        })
+      );
+    });
+
+    it('B) Checkout com customer existente: NÃO chama createCustomer e reutiliza providerCustomerId canônico', async () => {
+      mockBillingRepo.getCustomer.mockResolvedValue({
+        id: 'min-100_asaas',
+        ministry_id: 'min-100',
+        provider: 'asaas',
+        provider_customer_id: 'cus_existing_888',
+        created_at: '2026-08-01T00:00:00.000Z',
+        updated_at: '2026-08-01T00:00:00.000Z',
+      });
+      mockBillingRepo.getSubscription.mockResolvedValue(null);
+
+      const result = await billingService.createCheckout('min-100', 'usr-1', {
+        planId: 'pro',
+        interval: 'monthly',
+        addonBlocks: 0,
+      });
+
+      expect(mockProvider.createCustomer).not.toHaveBeenCalled();
+      expect(mockProvider.createCheckout).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ministryId: 'min-100',
+          providerCustomerId: 'cus_existing_888',
+          planId: 'pro',
+        })
+      );
+      expect(mockBillingRepo.createTransitionAndClaimSlot).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider_customer_id: 'cus_existing_888',
+          target_plan_id: 'pro',
+        })
+      );
+    });
+
+    it('C) Dois checkouts sequenciais da mesma Ministry: primeiro cria e segundo reutiliza o mesmo customer', async () => {
+      let savedCustomer: BillingCustomerRecord | null = null;
+      mockBillingRepo.getCustomer.mockImplementation(async () => savedCustomer);
+      mockBillingRepo.setCustomer.mockImplementation(async (c: BillingCustomerRecord) => {
+        savedCustomer = c;
+      });
+      mockBillingRepo.getSubscription.mockResolvedValue(null);
+
+      // Checkout 1
+      await billingService.createCheckout('min-100', 'usr-1', {
+        planId: 'lite',
+        interval: 'monthly',
+      });
+      expect(mockProvider.createCustomer).toHaveBeenCalledTimes(1);
+      expect(savedCustomer).toEqual(
+        expect.objectContaining({
+          provider_customer_id: 'cus_asaas_123',
+        })
+      );
+
+      // Checkout 2
+      mockBillingRepo.getRecentPendingPlanChange.mockResolvedValue(null); // Simula nova intenção
+      await billingService.createCheckout('min-100', 'usr-1', {
+        planId: 'essential',
+        interval: 'monthly',
+      });
+
+      // Não deve ter chamado createCustomer uma segunda vez
+      expect(mockProvider.createCustomer).toHaveBeenCalledTimes(1);
+      expect(mockProvider.createCheckout).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          providerCustomerId: 'cus_asaas_123',
+          planId: 'essential',
+        })
+      );
+    });
+
+    it('D) Paid -> Paid (Upgrade): preserva customer canônico na nova assinatura', async () => {
+      mockBillingRepo.getCustomer.mockResolvedValue({
+        id: 'min-100_asaas',
+        ministry_id: 'min-100',
+        provider: 'asaas',
+        provider_customer_id: 'cus_active_555',
+        created_at: '2026-08-01T00:00:00.000Z',
+        updated_at: '2026-08-01T00:00:00.000Z',
+      });
+      mockBillingRepo.getSubscription.mockResolvedValue({
+        id: 'min-100_asaas',
+        ministry_id: 'min-100',
+        provider: 'asaas',
+        plan_id: 'lite',
+        interval: 'monthly',
+        amount_cents: 1490,
+        status: 'active',
+        provider_subscription_id: 'sub_active_111',
+        provider_customer_id: 'cus_active_555',
+      });
+
+      await billingService.createCheckout('min-100', 'usr-1', {
+        planId: 'essential',
+        interval: 'monthly',
+      });
+
+      expect(mockProvider.createCustomer).not.toHaveBeenCalled();
+      expect(mockProvider.createCheckout).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerCustomerId: 'cus_active_555',
+          planId: 'essential',
+        })
+      );
+      expect(mockBillingRepo.setPlanChange).toHaveBeenCalledWith(
+        expect.objectContaining({
+          previous_provider_subscription_id: 'sub_active_111',
+          provider_customer_id: 'cus_active_555',
+        })
+      );
+    });
+
+    it('E) Monthly -> Annual: reutiliza customer canônico', async () => {
+      mockBillingRepo.getCustomer.mockResolvedValue({
+        id: 'min-100_asaas',
+        ministry_id: 'min-100',
+        provider: 'asaas',
+        provider_customer_id: 'cus_active_555',
+        created_at: '2026-08-01T00:00:00.000Z',
+        updated_at: '2026-08-01T00:00:00.000Z',
+      });
+      mockBillingRepo.getSubscription.mockResolvedValue({
+        id: 'min-100_asaas',
+        ministry_id: 'min-100',
+        provider: 'asaas',
+        plan_id: 'lite_plus',
+        interval: 'monthly',
+        amount_cents: 2490,
+        status: 'active',
+        provider_subscription_id: 'sub_active_222',
+        provider_customer_id: 'cus_active_555',
+      });
+
+      await billingService.createCheckout('min-100', 'usr-1', {
+        planId: 'lite_plus',
+        interval: 'annual',
+      });
+
+      expect(mockProvider.createCustomer).not.toHaveBeenCalled();
+      expect(mockProvider.createCheckout).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerCustomerId: 'cus_active_555',
+          planId: 'lite_plus',
+          interval: 'annual',
+        })
+      );
+    });
+
+    it('F) Legacy Customer Mismatch: reconcilia autoridade para o customer da active subscription preservando integridade', async () => {
+      // Cenário: billing_customers aponta para cus_old_A, mas subscription ATIVA vigente aponta para cus_new_B
+      mockBillingRepo.getCustomer.mockResolvedValue({
+        id: 'min-100_asaas',
+        ministry_id: 'min-100',
+        provider: 'asaas',
+        provider_customer_id: 'cus_old_A',
+        created_at: '2026-08-01T00:00:00.000Z',
+        updated_at: '2026-08-01T00:00:00.000Z',
+      });
+      mockBillingRepo.getSubscription.mockResolvedValue({
+        id: 'min-100_asaas',
+        ministry_id: 'min-100',
+        provider: 'asaas',
+        plan_id: 'essential',
+        interval: 'monthly',
+        status: 'active',
+        provider_subscription_id: 'sub_active_333',
+        provider_customer_id: 'cus_new_B',
+      });
+
+      await billingService.createCheckout('min-100', 'usr-1', {
+        planId: 'pro',
+        interval: 'monthly',
+      });
+
+      // Deve atualizar billing_customers para cus_new_B preservando created_at original
+      expect(mockBillingRepo.setCustomer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'min-100_asaas',
+          ministry_id: 'min-100',
+          provider: 'asaas',
+          provider_customer_id: 'cus_new_B',
+          created_at: '2026-08-01T00:00:00.000Z',
+        })
+      );
+
+      // Deve usar cus_new_B no checkout
+      expect(mockProvider.createCheckout).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerCustomerId: 'cus_new_B',
+        })
+      );
+    });
+
+    it('G) Webhook Reconcile: preserva created_at original ao receber evento legítimo com novo providerCustomerId', async () => {
+      mockBillingRepo.getCustomer.mockResolvedValue({
+        id: 'min-100_asaas',
+        ministry_id: 'min-100',
+        provider: 'asaas',
+        provider_customer_id: 'cus_old_123',
+        created_at: '2026-07-15T00:00:00.000Z',
+        updated_at: '2026-07-15T00:00:00.000Z',
+      });
+      mockBillingRepo.getPlanChangeByCheckoutIntentId.mockResolvedValue({
+        id: 'intent_123',
+        ministry_id: 'min-100',
+        provider: 'asaas',
+        status: 'pending',
+        requested_plan_id: 'lite',
+        requested_interval: 'monthly',
+        requested_addon_blocks: 0,
+        expected_amount_cents: 1490,
+      });
+
+      (mockProvider.parseWebhookEvent as any).mockReturnValue({
+        providerEventId: 'evt_paid_123',
+        eventType: 'checkout_paid',
+        rawEventType: 'CHECKOUT_PAID',
+        externalReference: 'intent_123',
+        providerCustomerId: 'cus_new_456',
+        providerSubscriptionId: 'sub_new_456',
+        amountCents: 1490,
+      });
+
+      const res = await billingService.handleWebhook({ 'asaas-access-token': 'token' }, {});
+      expect(res.processed).toBe(true);
+
+      expect(mockBillingRepo.setCustomer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'min-100_asaas',
+          provider_customer_id: 'cus_new_456',
+          created_at: '2026-07-15T00:00:00.000Z',
+        })
+      );
     });
   });
 });

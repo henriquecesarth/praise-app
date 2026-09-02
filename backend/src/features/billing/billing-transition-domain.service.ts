@@ -1,0 +1,623 @@
+import {
+  PlanId,
+  BillingInterval,
+  PLANS_CATALOG,
+  getPlanDefinition,
+  calculatePlanPriceCents,
+  getEffectiveMemberQuota,
+  getEffectiveSongQuota,
+  QuotaLimit,
+} from '../../config/plans.config';
+import { getBillingDate } from '../../utils/billing-date';
+import { AppError } from '../../middleware/error-handler';
+import {
+  BillingEarlyActivationQuote,
+  EntitlementSnapshot,
+  BillingTransitionType,
+  BillingTransitionStatus,
+  BillingTransitionV1Record,
+  BillingProviderName,
+  mapTransitionStatusToLegacyStatus,
+  validateBillingTransitionV1,
+} from './billing.types';
+import {
+  SourceContractInput,
+  TargetContractRequest,
+  EffectiveCapabilities,
+  EntitlementComparisonResult,
+  TransitionClassificationResult,
+  TransitionCommercialSnapshot,
+  ProrationCalculationResult,
+  CreateQuoteOptions,
+  BillingTransitionExecutionStrategy,
+  BuildBillingTransitionRecordParams,
+} from './billing-transition-domain.types';
+
+export const BILLING_TIMEZONE_DEFAULT = 'America/Sao_Paulo';
+
+/**
+ * Valida o contrato de destino contra o catálogo oficial de planos.
+ */
+export function validateTargetContract(target: TargetContractRequest): void {
+  if (!target || typeof target !== 'object') {
+    throw new AppError(400, 'Objeto de destino de transição inválido.', { code: 'INVALID_TARGET_REQUEST' });
+  }
+
+  if (!target.plan_id || !(target.plan_id in PLANS_CATALOG)) {
+    throw new AppError(400, `Plano de destino '${target.plan_id}' inválido ou não encontrado no catálogo.`, {
+      code: 'INVALID_TARGET_PLAN',
+    });
+  }
+
+  if (target.interval !== 'monthly' && target.interval !== 'annual') {
+    throw new AppError(400, `Intervalo de faturamento '${target.interval}' inválido. Permitidos: monthly, annual.`, {
+      code: 'INVALID_TARGET_INTERVAL',
+    });
+  }
+
+  const plan = getPlanDefinition(target.plan_id);
+
+  if (typeof target.addon_blocks !== 'number' || target.addon_blocks < 0) {
+    throw new AppError(400, 'Quantidade de blocos de add-ons deve ser um número maior ou igual a zero.', {
+      code: 'ADDON_LIMIT_EXCEEDED',
+    });
+  }
+
+  if (target.addon_blocks > 0 && !plan.allowMemberAddons) {
+    throw new AppError(400, `O plano '${plan.name}' não suporta blocos adicionais de membros.`, {
+      code: 'ADDON_NOT_SUPPORTED',
+    });
+  }
+
+  if (target.addon_blocks > plan.maxMemberAddonBlocks) {
+    throw new AppError(
+      400,
+      `O plano '${plan.name}' suporta no máximo ${plan.maxMemberAddonBlocks} blocos adicionais de membros. Solicitado: ${target.addon_blocks}.`,
+      { code: 'ADDON_LIMIT_EXCEEDED' }
+    );
+  }
+
+  // Auditoria de Preço Anual de Addons
+  if (target.interval === 'annual' && target.addon_blocks > 0) {
+    if (typeof plan.addonBlockAnnualPriceCents !== 'number' || plan.addonBlockAnnualPriceCents <= 0) {
+      throw new AppError(500, 'ANNUAL ADDON PRICING POLICY REQUIRED: preço anual de add-ons não definido no catálogo.', {
+        code: 'ANNUAL_ADDON_PRICING_POLICY_REQUIRED',
+      });
+    }
+  }
+}
+
+/**
+ * Resolve as capacidades e quotas de entitlement efetivas associadas a um plano e quantidade de add-ons.
+ * NOTA: Configurações comerciais (ex: allowMemberAddons, maxMemberAddonBlocks) NÃO são entitlements de uso.
+ */
+export function resolveEffectiveCapabilities(planId: PlanId, addonBlocks: number = 0): EffectiveCapabilities {
+  const plan = getPlanDefinition(planId);
+  return {
+    members: getEffectiveMemberQuota(plan, addonBlocks),
+    songs: getEffectiveSongQuota(plan),
+  };
+}
+
+/**
+ * Compara capacidades escalares (números ou 'unlimited').
+ */
+function compareScalarQuota(source: QuotaLimit, target: QuotaLimit): number {
+  if (source === target) return 0;
+  if (target === 'unlimited') return 1;
+  if (source === 'unlimited') return -1;
+  return target > source ? 1 : -1;
+}
+
+/**
+ * Compara estritamente as capacidades efetivas de entitlement entre origem e destino.
+ * Retorna: EQUAL, TARGET_STRICTLY_GREATER, TARGET_STRICTLY_LOWER ou MIXED.
+ */
+export function compareCapabilities(
+  source: EffectiveCapabilities,
+  target: EffectiveCapabilities
+): EntitlementComparisonResult {
+  const membersDelta = compareScalarQuota(source.members, target.members);
+  const songsDelta = compareScalarQuota(source.songs, target.songs);
+
+  const deltas = [membersDelta, songsDelta];
+  const hasIncrease = deltas.some((d) => d > 0);
+  const hasDecrease = deltas.some((d) => d < 0);
+
+  if (hasIncrease && hasDecrease) {
+    return 'MIXED';
+  }
+  if (hasIncrease && !hasDecrease) {
+    return 'TARGET_STRICTLY_GREATER';
+  }
+  if (!hasIncrease && hasDecrease) {
+    return 'TARGET_STRICTLY_LOWER';
+  }
+  return 'EQUAL';
+}
+
+/**
+ * Classifica a transição de plano e determina a estratégia de execução financeira.
+ * Rejeita NO-OP transitions com AppError(400).
+ */
+export function classifyTransition(
+  source: SourceContractInput,
+  target: TargetContractRequest
+): TransitionClassificationResult {
+  validateTargetContract(target);
+
+  const isPlanChange = source.plan_id !== target.plan_id;
+  const isIntervalChange = source.interval !== target.interval;
+  const isAddonChange = source.addon_blocks !== target.addon_blocks;
+
+  if (!isPlanChange && !isIntervalChange && !isAddonChange) {
+    throw new AppError(400, 'Configuração de destino é idêntica à configuração de origem (NO-OP).', {
+      code: 'NO_OP_TRANSITION',
+    });
+  }
+
+  const isInitialPurchase = source.plan_id === 'free' && target.plan_id !== 'free';
+  const isCancelToFree = source.plan_id !== 'free' && target.plan_id === 'free';
+
+  let executionStrategy: BillingTransitionExecutionStrategy;
+  if (isInitialPurchase) {
+    executionStrategy = 'immediate_initial_purchase';
+  } else if (isCancelToFree) {
+    executionStrategy = 'scheduled_cancel_to_free';
+  } else {
+    executionStrategy = 'scheduled_paid_transition';
+  }
+
+  const sourceCapabilities = resolveEffectiveCapabilities(source.plan_id, source.addon_blocks);
+  const targetCapabilities = resolveEffectiveCapabilities(target.plan_id, target.addon_blocks);
+  const comparison = compareCapabilities(sourceCapabilities, targetCapabilities);
+
+  let direction: TransitionClassificationResult['entitlement_direction'] = 'same';
+  if (comparison === 'TARGET_STRICTLY_GREATER') direction = 'increase';
+  else if (comparison === 'TARGET_STRICTLY_LOWER') direction = 'decrease';
+  else if (comparison === 'MIXED') direction = 'mixed';
+
+  // Early activation é elegível exclusivamente em transições pagas agendadas com aumento estrito de entitlement
+  const earlyActivationEligible =
+    executionStrategy === 'scheduled_paid_transition' && comparison === 'TARGET_STRICTLY_GREATER';
+
+  let transitionType: BillingTransitionType;
+
+  if (isInitialPurchase) {
+    transitionType = 'upgrade';
+  } else if (isCancelToFree) {
+    transitionType = 'downgrade';
+  } else if (isIntervalChange && (isPlanChange || isAddonChange)) {
+    transitionType = 'hybrid';
+  } else if (isIntervalChange && !isPlanChange && !isAddonChange) {
+    transitionType = 'interval_change';
+  } else if (!isIntervalChange && !isPlanChange && isAddonChange) {
+    transitionType = 'addon_change';
+  } else if (!isIntervalChange && isPlanChange) {
+    if (comparison === 'TARGET_STRICTLY_GREATER') {
+      transitionType = 'upgrade';
+    } else if (comparison === 'TARGET_STRICTLY_LOWER') {
+      transitionType = 'downgrade';
+    } else {
+      transitionType = 'hybrid';
+    }
+  } else {
+    transitionType = 'hybrid';
+  }
+
+  return {
+    transition_type: transitionType,
+    execution_strategy: executionStrategy,
+    entitlement_comparison: comparison,
+    entitlement_direction: direction,
+    early_activation_eligible: earlyActivationEligible,
+    is_interval_change: isIntervalChange,
+    is_addon_change: isAddonChange,
+    is_plan_change: isPlanChange,
+    is_initial_purchase: isInitialPurchase,
+    is_cancel_to_free: isCancelToFree,
+  };
+}
+
+/**
+ * Converte data em YYYY-MM-DD civil no timezone especificado e calcula os dias exatos [start, end).
+ * Imune a variações de DST e horários locais.
+ */
+export function commercialDaysBetween(
+  startDate: string | Date,
+  endDate: string | Date,
+  timeZone: string = BILLING_TIMEZONE_DEFAULT
+): number {
+  const startBillingDate = getBillingDate(startDate, timeZone);
+  const endBillingDate = getBillingDate(endDate, timeZone);
+
+  const [y1, m1, d1] = startBillingDate.split('-').map(Number);
+  const [y2, m2, d2] = endBillingDate.split('-').map(Number);
+
+  const startUtc = Date.UTC(y1, m1 - 1, d1, 12, 0, 0);
+  const endUtc = Date.UTC(y2, m2 - 1, d2, 12, 0, 0);
+
+  if (endUtc <= startUtc) {
+    throw new AppError(
+      400,
+      `Data final do período (${endBillingDate}) deve ser estritamente posterior à data inicial (${startBillingDate}).`,
+      { code: 'INVALID_SOURCE_PERIOD' }
+    );
+  }
+
+  const msPerDay = 86_400_000;
+  return Math.round((endUtc - startUtc) / msPerDay);
+}
+
+/**
+ * Divisão inteira com arredondamento ROUND_HALF_UP seguro e verificação de integer safety.
+ */
+export function roundHalfUpDivide(numerator: number | bigint, denominator: number | bigint): number {
+  const num = BigInt(numerator);
+  const den = BigInt(denominator);
+
+  if (den <= 0n) {
+    throw new AppError(500, 'Denominador inválido na divisão financeira.', { code: 'INVALID_DENOMINATOR' });
+  }
+  if (num <= 0n) {
+    return 0;
+  }
+
+  const quotient = num / den;
+  const remainder = num % den;
+
+  let resultBigInt = quotient;
+  // Se o resto dobrado for maior ou igual ao denominador, arredonda para cima (+1)
+  if (remainder * 2n >= den) {
+    resultBigInt = quotient + 1n;
+  }
+
+  if (resultBigInt > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new AppError(500, 'Resultado financeiro excede limite seguro de precisão inteira.', {
+      code: 'INTEGER_OVERFLOW',
+    });
+  }
+
+  return Number(resultBigInt);
+}
+
+/**
+ * Constrói o snapshot comercial imutável de transição (Price Lock em requested_at).
+ */
+export function buildTransitionCommercialSnapshot(
+  source: SourceContractInput,
+  target: TargetContractRequest,
+  options?: { requestedAt?: string | Date; timeZone?: string }
+): TransitionCommercialSnapshot {
+  const timeZone = options?.timeZone || BILLING_TIMEZONE_DEFAULT;
+  const requestedAtIso = options?.requestedAt
+    ? (typeof options.requestedAt === 'string' ? new Date(options.requestedAt) : options.requestedAt).toISOString()
+    : new Date().toISOString();
+
+  // 1. Validações e Classificação
+  const classification = classifyTransition(source, target);
+
+  let periodStartIso: string | null = null;
+  let periodEndIso: string | null = null;
+  let startDateStr: string | null = null;
+  let endDateStr: string | null = null;
+  let effectiveAtIso: string;
+  let effectiveBillingDateStr: string;
+
+  if (classification.execution_strategy === 'immediate_initial_purchase') {
+    // Compra inicial imediata a partir de Free: não há período pago a preservar
+    effectiveAtIso = requestedAtIso;
+    effectiveBillingDateStr = getBillingDate(requestedAtIso, timeZone);
+  } else {
+    // Transições com origem paga (Paid -> Paid e Paid -> Free) exigem período corrente válido
+    if (!source.current_period_start || !source.current_period_end) {
+      throw new AppError(400, 'Período corrente de faturamento obrigatório para contratos de origem pagos.', {
+        code: 'INVALID_SOURCE_PERIOD',
+      });
+    }
+
+    startDateStr = getBillingDate(source.current_period_start, timeZone);
+    endDateStr = getBillingDate(source.current_period_end, timeZone);
+
+    periodStartIso = typeof source.current_period_start === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(source.current_period_start.trim())
+      ? `${source.current_period_start.trim()}T00:00:00.000Z`
+      : (typeof source.current_period_start === 'string' ? new Date(source.current_period_start).toISOString() : source.current_period_start.toISOString());
+
+    periodEndIso = typeof source.current_period_end === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(source.current_period_end.trim())
+      ? `${source.current_period_end.trim()}T00:00:00.000Z`
+      : (typeof source.current_period_end === 'string' ? new Date(source.current_period_end).toISOString() : source.current_period_end.toISOString());
+
+    // Valida que o período é válido
+    commercialDaysBetween(startDateStr, endDateStr, timeZone);
+
+    effectiveAtIso = periodEndIso;
+    effectiveBillingDateStr = endDateStr;
+  }
+
+  // 2. Resolução de Preços
+  const sourcePrice = calculatePlanPriceCents(source.plan_id, source.interval, source.addon_blocks);
+  const targetRecurringPrice = calculatePlanPriceCents(target.plan_id, target.interval, target.addon_blocks);
+  // Base de comparação para pró-rata: capacidades de destino no ciclo da origem
+  const targetCurrentCyclePrice = calculatePlanPriceCents(target.plan_id, source.interval, target.addon_blocks);
+
+  const sourceEntitlementSnapshot: EntitlementSnapshot = {
+    plan_id: source.plan_id,
+    addon_blocks: source.addon_blocks,
+  };
+
+  const earlyActivationTargetSnapshot: EntitlementSnapshot | null = classification.early_activation_eligible
+    ? { plan_id: target.plan_id, addon_blocks: target.addon_blocks }
+    : null;
+
+  return {
+    classification,
+    transition_type: classification.transition_type,
+    execution_strategy: classification.execution_strategy,
+    early_activation_eligible: classification.early_activation_eligible,
+
+    source_plan_id: source.plan_id,
+    source_interval: source.interval,
+    source_addon_blocks: source.addon_blocks,
+    source_entitlement_snapshot: sourceEntitlementSnapshot,
+    source_current_cycle_total_cents: sourcePrice.totalPriceCents,
+    current_period_start: periodStartIso,
+    current_period_end: periodEndIso,
+    current_period_start_date: startDateStr,
+    current_period_end_date: endDateStr,
+
+    target_plan_id: target.plan_id,
+    target_interval: target.interval,
+    target_addon_blocks: target.addon_blocks,
+    target_future_recurring_price_cents: targetRecurringPrice.totalPriceCents,
+    target_current_cycle_total_cents: targetCurrentCyclePrice.totalPriceCents,
+    early_activation_target_entitlement_snapshot: earlyActivationTargetSnapshot,
+
+    currency: 'BRL',
+    price_locked_at: requestedAtIso,
+    effective_at: effectiveAtIso,
+    effective_billing_date: effectiveBillingDateStr,
+  };
+}
+
+/**
+ * Calcula o ajuste financeiro de pró-rata para uma cotação de early activation.
+ */
+export function calculateProration(
+  snapshot: TransitionCommercialSnapshot,
+  options?: { now?: Date | string; timeZone?: string }
+): ProrationCalculationResult {
+  if (snapshot.execution_strategy === 'immediate_initial_purchase') {
+    throw new AppError(400, 'Cotação de pró-rata não é aplicável para compra inicial imediata (Free -> Paid).', {
+      code: 'EARLY_ACTIVATION_NOT_APPLICABLE',
+    });
+  }
+
+  if (snapshot.execution_strategy === 'scheduled_cancel_to_free') {
+    throw new AppError(400, 'Cotação de pró-rata não é aplicável para cancelamento agendado (Paid -> Free).', {
+      code: 'EARLY_ACTIVATION_NOT_APPLICABLE',
+    });
+  }
+
+  if (!snapshot.current_period_start_date || !snapshot.current_period_end_date) {
+    throw new AppError(400, 'Período corrente ausente para cálculo de pró-rata.', {
+      code: 'INVALID_SOURCE_PERIOD',
+    });
+  }
+
+  const timeZone = options?.timeZone || BILLING_TIMEZONE_DEFAULT;
+  const nowIso = options?.now
+    ? (typeof options.now === 'string' ? new Date(options.now) : options.now).toISOString()
+    : new Date().toISOString();
+
+  const quoteBillingDate = getBillingDate(nowIso, timeZone);
+
+  // Validar se a data da cotação está no intervalo [current_period_start_date, current_period_end_date)
+  if (quoteBillingDate < snapshot.current_period_start_date) {
+    throw new AppError(
+      400,
+      `Data da cotação (${quoteBillingDate}) é anterior ao início do ciclo corrente (${snapshot.current_period_start_date}).`,
+      { code: 'EARLY_ACTIVATION_OUTSIDE_CURRENT_PERIOD' }
+    );
+  }
+
+  if (quoteBillingDate >= snapshot.current_period_end_date) {
+    throw new AppError(
+      400,
+      `Data da cotação (${quoteBillingDate}) atingiu ou ultrapassou o fim do ciclo corrente (${snapshot.current_period_end_date}).`,
+      { code: 'EARLY_ACTIVATION_OUTSIDE_CURRENT_PERIOD' }
+    );
+  }
+
+  const totalDays = commercialDaysBetween(
+    snapshot.current_period_start_date,
+    snapshot.current_period_end_date,
+    timeZone
+  );
+
+  const remainingDays = commercialDaysBetween(
+    quoteBillingDate,
+    snapshot.current_period_end_date,
+    timeZone
+  );
+
+  const deltaCents = snapshot.target_current_cycle_total_cents - snapshot.source_current_cycle_total_cents;
+
+  if (!snapshot.early_activation_eligible || deltaCents <= 0) {
+    return {
+      total_days: totalDays,
+      remaining_days: remainingDays,
+      source_current_cycle_total_cents: snapshot.source_current_cycle_total_cents,
+      target_current_cycle_total_cents: snapshot.target_current_cycle_total_cents,
+      price_delta_cents: Math.max(0, deltaCents),
+      prorated_adjustment_cents: 0,
+      payment_required: false,
+      quote_effective_billing_date: quoteBillingDate,
+    };
+  }
+
+  const numerator = BigInt(deltaCents) * BigInt(remainingDays);
+  const adjustmentCents = roundHalfUpDivide(numerator, BigInt(totalDays));
+
+  return {
+    total_days: totalDays,
+    remaining_days: remainingDays,
+    source_current_cycle_total_cents: snapshot.source_current_cycle_total_cents,
+    target_current_cycle_total_cents: snapshot.target_current_cycle_total_cents,
+    price_delta_cents: deltaCents,
+    prorated_adjustment_cents: adjustmentCents,
+    payment_required: adjustmentCents > 0,
+    quote_effective_billing_date: quoteBillingDate,
+  };
+}
+
+/**
+ * Calcula o timestamp ISO de término do dia comercial em BILLING_TIMEZONE.
+ */
+export function getEndOfCommercialDayIso(
+  commercialDateYmd: string,
+  timeZone: string = BILLING_TIMEZONE_DEFAULT
+): string {
+  const [year, month, day] = commercialDateYmd.split('-').map(Number);
+  let probe = new Date(Date.UTC(year, month - 1, day, 23, 0, 0));
+  while (getBillingDate(probe, timeZone) === commercialDateYmd) {
+    probe = new Date(probe.getTime() + 60_000);
+  }
+  return new Date(probe.getTime() - 1).toISOString();
+}
+
+/**
+ * Cria uma cotação de early activation auditável e determinística.
+ */
+export function createEarlyActivationQuote(
+  snapshot: TransitionCommercialSnapshot,
+  options?: CreateQuoteOptions & { transitionId?: string; ministryId?: string }
+): BillingEarlyActivationQuote {
+  if (snapshot.execution_strategy !== 'scheduled_paid_transition' || !snapshot.early_activation_eligible) {
+    throw new AppError(400, 'Transição não é elegível para early activation.', {
+      code: 'EARLY_ACTIVATION_NOT_ELIGIBLE',
+    });
+  }
+
+  const timeZone = options?.timeZone || BILLING_TIMEZONE_DEFAULT;
+  const pricedAtIso = options?.now
+    ? (typeof options.now === 'string' ? new Date(options.now) : options.now).toISOString()
+    : new Date().toISOString();
+
+  const proration = calculateProration(snapshot, { now: pricedAtIso, timeZone });
+
+  // Expiry calculation: menor entre TTL configurado e o fim do dia comercial
+  const endOfDayIso = getEndOfCommercialDayIso(proration.quote_effective_billing_date, timeZone);
+  let expiresAtIso = endOfDayIso;
+
+  if (options?.ttlMinutes && options.ttlMinutes > 0) {
+    const ttlExpiresAt = new Date(new Date(pricedAtIso).getTime() + options.ttlMinutes * 60_000).toISOString();
+    if (new Date(ttlExpiresAt).getTime() < new Date(endOfDayIso).getTime()) {
+      expiresAtIso = ttlExpiresAt;
+    }
+  }
+
+  const quoteId = options?.quoteId || `quote_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+  return {
+    quote_id: quoteId,
+    transition_id: options?.transitionId || 'transition_unassigned',
+    ministry_id: options?.ministryId || 'ministry_unassigned',
+    source_current_cycle_total_cents: proration.source_current_cycle_total_cents,
+    target_current_cycle_total_cents: proration.target_current_cycle_total_cents,
+    prorated_adjustment_cents: proration.prorated_adjustment_cents,
+    currency: 'BRL',
+    priced_at: pricedAtIso,
+    quote_effective_billing_date: proration.quote_effective_billing_date,
+    expires_at: expiresAtIso,
+    status: 'active',
+  };
+}
+
+/**
+ * Mapeador de domínio puro para construir um registro BillingTransitionV1Record válido
+ * a partir de um snapshot comercial determinístico.
+ * NÃO persiste e NÃO chama provedores externos.
+ */
+export function buildBillingTransitionV1Record(
+  params: BuildBillingTransitionRecordParams
+): BillingTransitionV1Record {
+  const {
+    transitionId,
+    ministryId,
+    provider,
+    commercialSnapshot,
+    requestedByUserId = null,
+    providerCustomerId = null,
+    oldProviderSubscriptionId = null,
+    previousProviderSubscriptionId = null,
+    now = new Date(),
+    expiresAt = null,
+  } = params;
+
+  const nowIso = typeof now === 'string' ? new Date(now).toISOString() : now.toISOString();
+
+  let initialTransitionStatus: BillingTransitionStatus;
+  if (commercialSnapshot.execution_strategy === 'immediate_initial_purchase') {
+    initialTransitionStatus = 'pending_initial_purchase';
+  } else if (commercialSnapshot.execution_strategy === 'scheduled_paid_transition') {
+    initialTransitionStatus = 'pending_future_authorization';
+  } else {
+    initialTransitionStatus = 'awaiting_old_inactivation';
+  }
+
+  const legacyStatus = mapTransitionStatusToLegacyStatus(initialTransitionStatus);
+
+  const record: BillingTransitionV1Record = {
+    id: transitionId,
+    transition_id: transitionId,
+    policy_version: 'billing_transition_v1',
+    ministry_id: ministryId,
+    provider,
+    currency: 'BRL',
+
+    execution_strategy: commercialSnapshot.execution_strategy,
+    transition_status: initialTransitionStatus,
+    early_activation_status: commercialSnapshot.early_activation_eligible ? 'available' : 'not_applicable',
+    financial_safety_status: 'live',
+    transition_type: commercialSnapshot.transition_type,
+
+    status: legacyStatus,
+    checkout_intent_id: transitionId,
+    provider_checkout_id: null,
+    new_provider_subscription_id: null,
+    provider_customer_id: providerCustomerId,
+    requested_plan_id: commercialSnapshot.target_plan_id,
+    requested_interval: commercialSnapshot.target_interval,
+    requested_addon_blocks: commercialSnapshot.target_addon_blocks,
+    expected_amount_cents: commercialSnapshot.target_future_recurring_price_cents,
+
+    source_plan_id: commercialSnapshot.source_plan_id,
+    source_interval: commercialSnapshot.source_interval,
+    source_addon_blocks: commercialSnapshot.source_addon_blocks,
+    source_current_cycle_total_cents: commercialSnapshot.source_current_cycle_total_cents,
+    source_entitlement_snapshot: commercialSnapshot.source_entitlement_snapshot,
+    current_period_start: commercialSnapshot.current_period_start,
+    current_period_end: commercialSnapshot.current_period_end,
+
+    target_plan_id: commercialSnapshot.target_plan_id,
+    target_interval: commercialSnapshot.target_interval,
+    target_addon_blocks: commercialSnapshot.target_addon_blocks,
+    target_future_recurring_price_cents: commercialSnapshot.target_future_recurring_price_cents,
+    early_activation_target_entitlement_snapshot: commercialSnapshot.early_activation_target_entitlement_snapshot,
+
+    effective_at: commercialSnapshot.execution_strategy === 'immediate_initial_purchase' ? null : commercialSnapshot.effective_at,
+    effective_billing_date: commercialSnapshot.execution_strategy === 'immediate_initial_purchase' ? null : commercialSnapshot.effective_billing_date,
+    requested_commercial_date: getBillingDate(commercialSnapshot.price_locked_at, BILLING_TIMEZONE_DEFAULT),
+    price_locked_at: commercialSnapshot.price_locked_at,
+    requested_at: commercialSnapshot.price_locked_at,
+    created_at: nowIso,
+    updated_at: nowIso,
+    expires_at: expiresAt,
+
+    old_provider_subscription_id: oldProviderSubscriptionId,
+    previous_provider_subscription_id: previousProviderSubscriptionId,
+    requested_by_user_id: requestedByUserId,
+  };
+
+  return validateBillingTransitionV1(record);
+}

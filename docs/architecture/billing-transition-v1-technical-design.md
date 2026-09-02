@@ -1,0 +1,502 @@
+# LouvAIO — Design Técnico: Billing Transition Policy V1 (Revised)
+
+- **Data de Criação**: 2026-09-01
+- **Data de Revisão**: 2026-09-01 (Revisão: *Immediate Upgrade com Pró-rata e Especificação Progressiva da Phase 0B*)
+- **Status**: Documento de Design Técnico Hardened (Phase 0A Validada / Phase 0B Progressive Provider Spike em Design)
+- **Referência**: [`docs/decisions/2026-09-01-billing-transition-policy-v1.md`](../decisions/2026-09-01-billing-transition-policy-v1.md)
+
+---
+
+## A. Inventário do Modelo Atual
+
+| Entidade | Arquivo / Coleção | Campos Relevantes Atuais | Avaliação para a Política V1 Revisada |
+| :--- | :--- | :--- | :--- |
+| **`BillingPlanChangeRecord`** | [`billing.types.ts`](../../backend/src/features/billing/billing.types.ts) / `billing_plan_changes` | `id`, `ministry_id`, `provider`, `checkout_intent_id`, `provider_checkout_id`, `requested_plan_id`, `requested_interval`, `requested_addon_blocks`, `expected_amount_cents`, `currency`, `checkout_url`, `previous_provider_subscription_id`, `previous_plan_id`, `previous_interval`, `new_provider_subscription_id`, `provider_customer_id`, `status`, `supersede_status`, `payment_cleanup_status`, `renewal_cutoff_date`, `created_at`, `expires_at`, `confirmed_at`, `completed_at`, `updated_at`. | **Reutilizar e Estender**: Adicionar `transition_mode` (`immediate_upgrade` vs `scheduled`), `effective_at`, `effective_billing_date`, `from_plan_id`, `from_interval`, `from_addon_blocks`, `current_cycle_source_price_cents`, `current_cycle_target_price_cents`, `prorated_adjustment_cents`, `target_recurring_price_cents`, `adjustment_provider_payment_id`, `superseded_by`, `price_locked_at`. |
+| **`BillingSubscriptionRecord`** | [`billing.types.ts`](../../backend/src/features/billing/billing.types.ts) / `billing_subscriptions` | `id`, `ministry_id`, `provider`, `provider_subscription_id`, `provider_customer_id`, `plan_id`, `interval`, `member_addon_blocks`, `amount_cents`, `status`, `current_period_start`, `current_period_end`, `cancel_at_period_end`. | **Reutilizar Integralmente**: Representa a assinatura do ciclo financeiro atual no Asaas. Não requer novos campos estruturais. |
+| **`BillingCustomerRecord`** | [`billing.types.ts`](../../backend/src/features/billing/billing.types.ts) / `billing_customers` | `id`, `ministry_id`, `provider`, `provider_customer_id`, `status` (`ready`, `creating`), `lease_locked_until`, `lease_locked_by`. | **Reutilizar Integralmente**: GAP-011 consolidou lock atômico e reuso canônico. Permanece intacto. |
+| **`BillingTransactionRecord`** | [`billing.types.ts`](../../backend/src/features/billing/billing.types.ts) / `billing_transactions` | `id`, `ministry_id`, `provider`, `provider_payment_id`, `provider_subscription_id`, `amount_cents`, `currency`, `status`, `due_date`, `paid_at`, `payment_method`, `invoice_url`. | **Reutilizar Integralmente**: Armazena o histórico auditável de faturas e pagamentos de ajuste quitados. |
+| **`MinistrySubscriptionRecord`** | [`subscription.types.ts`](../../backend/src/features/subscriptions/subscription.types.ts) / `subscriptions` | `id`, `ministry_id`, `plan_id`, `member_addon_blocks`, `billing_status`, `billing_interval`, `subscription_mode`, `grace_period_expires_at`, `current_period_start`, `current_period_end`, `cancel_at_period_end`. | **Reutilizar Integralmente**: Autoridade dos *entitlements* de produto. Controla limites de quotas ativos e modo de acesso (`accessMode`). |
+
+---
+
+## B. Modelo Persistido Proposto para `BillingPlanChangeRecord`
+
+```typescript
+export type BillingTransitionMode = 'immediate_upgrade' | 'scheduled';
+
+export type BillingPlanChangeStatus =
+  // Ciclo Comum de Checkout
+  | 'pending_checkout'                  // Sessão de checkout aberta aguardando liquidação
+  // Caminho 1: Scheduled Change (Downgrades, Trocas de Ciclo, Redução de Addons)
+  | 'awaiting_old_inactivation'         // Assinatura futura criada no gateway; aguardando inativação da antiga
+  | 'scheduled'                         // Assinatura futura criada e antiga comprovadamente INACTIVE
+  | 'waiting_effective_payment'         // Data effective_at atingida; fatura futura emitida aguardando liquidação
+  // Caminho 2: Immediate Entitlement Upgrade (Upgrades de Plano, Aumento de Addons)
+  | 'upgrade_adjustment_pending'        // Ajuste proporcional gerado, aguardando liquidação imediata
+  | 'upgrade_adjustment_confirmed'      // Ajuste pago; entitlement promovido imediatamente; aguardando virada em effective_at
+  | 'waiting_effective_renewal'         // effective_at atingido; fatura de renovação integral emitida no Asaas
+  // Estados Finais e Exceções
+  | 'completed'                         // Transição finalizada integralmente e com sucesso
+  | 'canceled'                          // Transição cancelada antes da efetivação
+  | 'superseded'                        // Transição substituída por outra mais recente
+  | 'failed'                            // Falha técnica irrecuperável
+  | 'financial_attention_required';     // Inconsistência, pagamento antecipado inesperado ou conflito
+
+export interface BillingPlanChangeRecord {
+  id: string; // checkout_intent_id determinístico
+  ministry_id: string;
+  provider: BillingProviderName;
+  checkout_intent_id: string;
+  provider_checkout_id?: string | null;
+  provider_customer_id?: string | null;
+
+  // Modo e Classificação da Transição
+  transition_mode: BillingTransitionMode;
+  transition_category: 'free_to_paid' | 'plan_upgrade' | 'plan_downgrade' | 'interval_change' | 'addon_increase' | 'addon_decrease' | 'hybrid';
+
+  // Snapshot de Origem
+  from_plan_id: PlanId | null;
+  from_interval: BillingInterval | null;
+  from_addon_blocks: number;
+  previous_provider_subscription_id?: string | null;
+
+  // Alvo Solicitado
+  requested_plan_id: PlanId;
+  requested_interval: BillingInterval;
+  requested_addon_blocks: number;
+  new_provider_subscription_id?: string | null;
+  adjustment_provider_payment_id?: string | null;
+
+  // Price Lock & Decomposição Financeira na Solicitação
+  current_cycle_source_price_cents: number;  // Preço total contratado na origem (base + addons atuais)
+  current_cycle_target_price_cents: number;  // Preço total contratado no destino (base + novos addons) no ciclo vigente
+  prorated_adjustment_cents: number;         // Valor cobrado imediatamente no upgrade (0 se scheduled)
+  target_recurring_price_cents: number;      // Preço integral da renovação futura
+  currency: 'BRL';
+  price_locked_at: string;
+
+  // Temporalidade & Timezone
+  requested_at: string;
+  effective_at: string | null;            // ISO 8601 instant para gating temporal no backend
+  effective_billing_date: string | null;  // YYYY-MM-DD em BILLING_TIMEZONE para nextDueDate no Asaas
+
+  // URLs & Checkout
+  checkout_url?: string | null;
+  expires_at: string | null;
+
+  // Estado & Auditoria
+  status: BillingPlanChangeStatus;
+  superseded_by?: string | null;
+  canceled_at?: string | null;
+  completed_at?: string | null;
+  failure_reason?: string | null;
+
+  // Flags Operacionais & Concorrência
+  financial_attention_required?: boolean;
+  financial_attention_reason?: string | null;
+  retry_count?: number;
+  last_retry_at?: string | null;
+  next_retry_at?: string | null;
+  retry_locked_until?: string | null;
+  retry_locked_by?: string | null;
+
+  created_at: string;
+  updated_at: string;
+}
+```
+
+---
+
+## C. Máquina de Estados e Deterministic Active Transition Slot
+
+### C.1 Conjunto Explícito de `ACTIVE_TRANSITION_STATES` e Deterministic Slot
+Uma Ministry **nunca** pode possuir mais de uma transição simultânea financeiramente viva.
+
+```typescript
+export const ACTIVE_TRANSITION_STATES: BillingPlanChangeStatus[] = [
+  'pending_checkout',
+  'awaiting_old_inactivation',
+  'scheduled',
+  'waiting_effective_payment',
+  'upgrade_adjustment_pending',
+  'upgrade_adjustment_confirmed',
+  'waiting_effective_renewal',
+];
+```
+
+> [!IMPORTANT]
+> **Deterministic Active Transition Slot (`billing_active_transition_slots/${ministry_id}_${provider}`)**:
+> Toda criação, alteração ou cancelamento adquire lock transacional no documento determinístico de slot no Firestore. O slot só é liberado quando a transição atinge um estado terminal seguro (`completed`, `canceled`, `superseded`).
+
+### C.2 Diagrama da Máquina de Estados (Dual Path)
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending_checkout : createCheckout()
+    
+    %% Free -> Paid
+    pending_checkout --> completed : payment_confirmed (Free -> Paid)
+    
+    %% Caminho 1: Scheduled Change (Downgrade / Interval Change / Addon Decrease)
+    pending_checkout --> awaiting_old_inactivation : subscription_created (nextDueDate futuro)
+    awaiting_old_inactivation --> scheduled : inactivateSubscription(old) confirmada
+    scheduled --> waiting_effective_payment : now >= effective_at (fatura emitida)
+    waiting_effective_payment --> completed : payment_confirmed (now >= effective_at)
+    
+    %% Caminho 2: Immediate Entitlement Upgrade (Upgrades / Addon Increases / Híbridos)
+    pending_checkout --> upgrade_adjustment_pending : checkout de ajuste criado
+    upgrade_adjustment_pending --> upgrade_adjustment_confirmed : payment_confirmed do ajuste (Entitlement Promovido Imediatamente)
+    upgrade_adjustment_confirmed --> waiting_effective_renewal : now >= effective_at (fatura integral de renovação)
+    waiting_effective_renewal --> completed : payment_confirmed (renovação integral confirmada)
+    
+    %% Cancelamento e Substituição
+    scheduled --> canceled : cancelScheduledChange()
+    scheduled --> superseded : replaceScheduledChange()
+    upgrade_adjustment_confirmed --> canceled : cancel_at_period_end após upgrade (mantém Pro até period_end)
+    
+    %% Exceções Financeiras
+    waiting_effective_payment --> financial_attention_required : payment recebido com now < effective_at
+    waiting_effective_payment --> failed : payment_overdue + grace expirado
+    upgrade_adjustment_pending --> failed : checkout expirado / pagamento recusado
+```
+
+---
+
+## D. Análise de Estratégias de Operação Segura para Upgrade Imediato
+
+| Dimensão | Estratégia A (Prepara Futura $\to$ Cobra Ajuste) | Estratégia B (Cobra Ajuste $\to$ Prepara Futura) | Estratégia C (Sessão Única Híbrida) |
+| :--- | :--- | :--- | :--- |
+| **Sequência de Ações** | 1. Cria assinatura futura (`nextDueDate = period_end`).<br>2. Inativa assinatura antiga.<br>3. Cobra ajuste avulso imediato.<br>4. Após pago, promove entitlement. | 1. Cobra ajuste avulso imediato.<br>2. Após pago, **promove entitlement imediatamente**.<br>3. Cria assinatura futura (`nextDueDate = period_end`).<br>4. Inativa assinatura antiga. | 1. Hosted Checkout único com 1ª parcela = ajuste e demais = valor integral. |
+| **Risco de Cobrança Antecipada Indevida** | Baixo. | **Mínimo**: Apenas o ajuste é cobrado inicialmente. | Mínimo (se suportado nativamente). |
+| **Risco de Configuração da Renovação Futura** | Mínimo (já foi criada no início). | **Presente e Recuperável**: Se o passo 3 falhar após o cliente pagar o ajuste, o cliente tem direito garantido ao plano até `period_end`. O sistema marca `financial_attention_required` e o worker realiza retries em background, **sem jamais fazer rollback do entitlement pago**. | Nulo. |
+| **Risco de Checkout Abandonado** | Alto: Exige cleanup de assinatura futura caso o cliente feche a aba sem pagar o ajuste. | **Nulo**: Se o cliente não pagar o ajuste, nada de futuro foi criado. | Nulo. |
+| **Interações do Usuário** | 2 checkouts/sessões (se não houver tokenização). | 2 checkouts/sessões (ou 1 se houver tokenização). | 1 checkout único. |
+| **Avaliação Arquitetural** | Viável, mas com alto custo de cleanup para checkouts não convertidos. | **RECOMENDADA COMO PADRÃO DE DOMÍNIO**. | **NOT DOCUMENTED / SANDBOX EXPERIMENTAL ONLY**. |
+
+---
+
+## E. Modelo de Classificação e Entitlements Efetivos
+
+### E.1 Classificação por Capabilities Efetivas
+- A classificação compara **quotas efetivas** (`effectiveMembers`, `effectiveSongs`) e não valores contratuais brutos ou contagem isolada de `addonBlocks`.
+- No catálogo atual ([`plans.config.ts`](../../backend/src/config/plans.config.ts)), os planos são **monotônicos** em quotas e limites.
+- *Exemplo*: `essential + 3 addons` (70 membros, 200 músicas) $\to$ `pro + 0 addons` (100 membros, 500 músicas) é um **UPGRADE integral de entitlement**.
+
+### E.2 Entitlement Efetivo vs. Contrato Futuro
+- `effective_entitlement_after_upgrade`: A capacidade efetiva imediatamente liberada para o usuário após a liquidação do ajuste.
+- `contract_target_at_next_renewal`: A configuração contratual (`planId`, `addonBlocks`, `billingInterval`) que será faturada na renovação em `current_period_end`.
+
+---
+
+## F. Matriz de Capacidades do Provedor Asaas
+
+| Capacidade no Gateway Asaas | Status de Classificação | Detalhes & Restrições Técnicas |
+| :--- | :--- | :--- |
+| **Hosted Checkout Recorrente com `subscription.nextDueDate` Futuro** | **ALREADY SANDBOX VALIDATED (Phase 0A)** | Suportado via `chargeTypes: ['RECURRENT']` e `subscription: { cycle, nextDueDate }`. Gera fatura `PENDING` futura sem captura antecipada. |
+| **Hosted Checkout Avulso Imediato** | **DOCUMENTED** | Suportado via `POST /v3/checkouts` com `chargeTypes: ['DETACHED']` para cobrança de valor avulso pontual (ajuste pró-rata). |
+| **Hosted Checkout $\to$ Token de Cartão Reutilizável** | **SANDBOX VALIDATION REQUIRED / NOT DOCUMENTED (Phase 0B)** | Não está documentado se a liquidação de um checkout `DETACHED` expõe ou disponibiliza um `creditCardToken` reutilizável para o backend criar a assinatura futura server-to-server. |
+| **Cobrança/Assinatura via API com `creditCardToken`** | **DOCUMENTED** | A API `/v3/subscriptions` aceita `creditCardToken` quando este já estiver associado ao customer. |
+| **Hosted Checkout Híbrido (`['DETACHED', 'RECURRENT']` combinados)** | **NOT DOCUMENTED / SANDBOX EXPERIMENTAL ONLY** | A documentação trata `DETACHED` e `RECURRENT` como fluxos separados. Não assumir combinação sem validação experimental prévia. |
+| **Fronteira PCI-Safe** | **DOCUMENTED** | O LouvAIO nunca manipula dados sensíveis (número, CVV). Apenas tokens provider-safe gerados pelo gateway podem ser usados server-to-server. |
+
+---
+
+## G. Lições da Phase 0A & Correção do Correlator
+
+1. **Comportamento Observado no Sandbox**:
+   Ao criar a assinatura com `nextDueDate = 2026-09-08` (D+7), o Asaas gerou uma cobrança com `dueDate = 2026-09-08` e avançou o campo `subscription.nextDueDate` para o ciclo seguinte (`2027-09-08`).
+2. **Correção do Correlator**:
+   O script de auditoria `inspect` não deve buscar `subscription.nextDueDate == effective_billing_date`.
+   A correlação inequívoca deve priorizar:
+   - `subscription.checkoutSession == provider_checkout_id` (ou `externalReference`);
+   - Validação da primeira cobrança em `payment.dueDate == effective_billing_date`.
+
+---
+
+## H. Especificação Progressiva da Phase 0B (Immediate Upgrade Proration Spike)
+
+A Phase 0B é estruturada em estágios progressivos para descobrir empiricamente o fluxo ideal:
+
+### H.1 STAGE 0B.1 — Hosted Checkout DETACHED Adjustment Test
+1. **Objetivo**: Criar e liquidar uma cobrança avulsa de ajuste via Hosted Checkout (`chargeTypes: ['DETACHED']`) com valor de teste (ex: R$ 27,50).
+2. **Auditoria Pós-Liquidação**:
+   - Confirmar liquidação exata do ajuste (`status: 'CONFIRMED'`);
+   - Observar webhooks recebidos (`PAYMENT_CONFIRMED`);
+   - Inspecionar na API do Asaas se algum `creditCardToken` ou método de pagamento seguro ficou vinculado ao customer para reuso.
+
+### H.2 STAGE 0B.2A — Token Reuse Path (Se Token Disponível)
+- Se o Stage 0B.1 fornecer um `creditCardToken` reutilizável:
+  - Invocar `POST /v3/subscriptions` via API com `creditCardToken` e `nextDueDate = effective_billing_date` (D+7) no valor de R$ 89,90.
+  - Após validar prontidão da futura $\to$ inativar assinatura antiga no gateway.
+  - **Resultado de UX**: **1 Interação de Checkout**.
+
+### H.3 PHASE 0B.2B — TWO-CHECKOUT FALLBACK REASSESSMENT (RECURRENCE-FIRST ARCHITECTURE)
+
+Diante da constatação empírica da Phase 0B.1 de que o fluxo Hosted Checkout avulso (`DETACHED`) não disponibiliza token de cartão reutilizável para chamadas server-to-server sem manipular dados PCI sensíveis, a jornada de upgrade imediato exige duas interações caso mantida com ativação antecipada.
+
+#### 1. Reavaliação Semântica das Estratégias (A vs B)
+
+Ao reavaliar os fluxos sob a ótica de intenção do usuário e segurança financeira:
+
+| Dimensão de Comparação | STRATEGY A — ADJUSTMENT FIRST | STRATEGY B — RECURRENCE FIRST (Recomendada) |
+| :--- | :--- | :--- |
+| **Passo 1 (Checkout 1)** | Hosted `DETACHED` (Ajuste proporcional imediato). | Hosted `RECURRENT` (Recorrência futura Pro com `nextDueDate = current_period_end`). |
+| **Significado do Passo 1** | Compra acesso temporário antecipado. | **Autoriza legitimamente o Scheduled Upgrade para a próxima renovação**. |
+| **Passo 2 (Checkout 2)** | Hosted `RECURRENT` (Autorização da renovação futura Pro). | Hosted `DETACHED` (**Opcional: Compra de Acesso Antecipado** ao Pro pelo restante do ciclo). |
+| **Comportamento em Abandono do Checkout 2** | **Risco de Reversão Inesperada (UX Reversion Risk)**:<br>O usuário pagou pelo Pro temporário, mas não autorizou a renovação. Em `current_period_end`, o sistema reverte para o plano antigo (Essential), gerando surpresa comercial. | **Scheduled Upgrade Legítimo (Zero Risco Financeiro)**:<br>O usuário mantém o plano atual (Essential) até `current_period_end`. Na virada de ciclo, o Pro inicia normalmente conforme a renovação já autorizada no Passo 1. |
+| **Assinatura Órfã no Gateway** | Nenhuma. | **Nenhuma**: A assinatura Pro futura **não é órfã**, mas sim o contrato oficial de renovação programada validado no Target Ready Gate. |
+| **Risco de Cobrança Indevida** | Nulo. | **Nulo**: O Pro só renova em `current_period_end` conforme autorizado conscientemente no Checkout 1. |
+
+#### 2. Fluxo Detalhado da Estratégia Recurrence-First (Strategy B)
+
+```
+[ STEP 1: AUTORIZAÇÃO DA RENOVAÇÃO FUTURA ]
+1. Usuário seleciona Upgrade para Pro no frontend.
+2. Hosted Checkout 1 (RECURRENT): Pro com nextDueDate = current_period_end.
+3. Usuário conclui Checkout 1 no Asaas Sandbox.
+4. Target Ready Gate: Valida nova assinatura Pro, customer, valor travado e dueDate do 1º vencimento.
+5. Old Subscription Cutover:
+   - Assinatura antiga colocada em INACTIVE no Asaas;
+   - Consulta cobranças da assinatura antiga e remove SOMENTE cobranças PENDING com dueDate >= current_period_end;
+   - Cobranças CONFIRMED/RECEIVED/OVERDUE nunca são removidas.
+6. Estado no LouvAIO: scheduled_upgrade_ready (Essential ativo até period_end; Pro agendado para a virada).
+
+[ STEP 2: ANTECIPAÇÃO OPCIONAL DE ENTITLEMENT (EARLY ACTIVATION) ]
+7. UI exibe confirmação e oferta:
+   "Seu plano Pro está programado para DD/MM. Deseja começar a usar o Pro hoje mesmo?
+    Ajuste proporcional até DD/MM: R$ XX,XX"
+8. Se Usuário aceitar:
+   - Hosted Checkout 2 (DETACHED): Valor do ajuste proporcional travado.
+   - PAYMENT_CONFIRMED recebido: Transição passa para upgrade_adjustment_confirmed.
+   - Entitlement do Pro ativado imediatamente no SubscriptionService mantendo current_period_end.
+9. Se Usuário ignorar/fechar a janela:
+   - Essential permanece ativo até current_period_end.
+   - Pro entra em vigor automaticamente na renovação em current_period_end.
+```
+
+#### 3. Cutover Seguro da Assinatura Antiga (*Old Renewal Cutover*)
+Para garantir a invariante **No Two Live Renewals** e **No Unsafe Zero Renewals**:
+1. O cutover da assinatura antiga só inicia após a assinatura futura atender plenamente ao **Target Ready Gate**.
+2. A assinatura antiga é marcada como `INACTIVE` na API do Asaas.
+3. Como comprovado na Phase 0A, assinaturas `INACTIVE` não cancelam faturas `PENDING` já materializadas. Portanto, o LouvAIO lista os pagamentos vinculados estritamente à assinatura antiga e executa `DELETE /v3/payments/{id}` **exclusivamente nas cobranças com `status == 'PENDING'` e `dueDate >= effective_billing_date`**.
+4. Cobranças com status `CONFIRMED`, `RECEIVED` ou `OVERDUE` são estritamente preservadas.
+5. Caso ocorra corrida onde uma cobrança antiga mude para `CONFIRMED` durante o cutover, o sistema marca `financial_attention_required`.
+
+#### 4. Tratamento de Cancelamento e Reversão
+
+- **Cancelamento antes do Checkout 2 (Ajuste não pago)**:
+  - Usuário decide reverter o scheduled upgrade antes da virada de ciclo.
+  - A assinatura Pro futura é inativada no Asaas (`INACTIVE`) e sua cobrança `PENDING` removida.
+  - A assinatura antiga é reativada com `nextDueDate = current_period_end`.
+  - Transição marcada como `canceled`.
+- **Cancelamento após Checkout 2 (Ajuste pago)**:
+  - O entitlement Pro vigora soberanamente até `current_period_end` (sem estorno do ajuste quitado).
+  - A assinatura futura Pro é inativada no Asaas (`INACTIVE`).
+  - Após `current_period_end`, a conta transita para Free / modo restrito conforme regras de cancelamento.
+
+#### 5. Regras de Carência (*Grace Period*) Diferenciadas
+
+- **Com Ajuste Pago**: O entitlement Pro já estava ativo antes de `current_period_end`. Se a cobrança de renovação em `current_period_end` atrasar/falhar, o Grace Period (7 dias) mantém temporariamente o plano **Pro**.
+- **Sem Ajuste Pago (Apenas Scheduled Upgrade)**: O entitlement Essential estava ativo antes de `current_period_end`. Na virada, o Pro só é liberado mediante confirmação financeira da renovação. Se a renovação falhar, o Grace Period mantém o plano **Essential**.
+
+#### 6. Proteção contra Corridas na Virada (*Period-End Race Guard*)
+- A arquitetura não presume prazos arbitrários de geração de fatura. A validação consulta diretamente o estado real dos pagamentos no gateway.
+- Se a solicitação de upgrade ocorrer quando `effective_billing_date <= commercial_today`, a transição de ciclo proporcional fecha-se como fail-closed e é tratada diretamente como fluxo de renovação regular.
+
+#### 7. Máquina de Estados Refinada
+
+```
+[ pending_future_authorization ] (Checkout 1 aberto)
+              │
+              ▼ (Checkout 1 concluído no gateway)
+[ future_target_prepared ]
+              │ (Target Ready Gate validado)
+              ▼
+[ awaiting_old_inactivation ]
+              │ (Assinatura antiga INACTIVE + PENDING antigo limpo)
+              ▼
+[ scheduled_upgrade_ready ] ◄────────────────────────────────────────┐
+              │                                                      │ (Checkout 2 ignorado)
+              ├──► [ pending_optional_adjustment ] (Checkout 2 aberto)│
+              │                 │ (Checkout 2 pago)                  │
+              │                 ▼                                    │
+              │    [ upgrade_adjustment_confirmed ]                  │
+              │    (Pro ativo agora até period_end)                  │
+              │                 │                                    │
+              ▼                 ▼                                    │
+       [ scheduled_ready ] (Aguardando virada em current_period_end) ┘
+              │ (now >= current_period_end + renovação liquidada)
+              ▼
+         [ completed ]
+```
+
+#### 8. Conclusão da Descoberta de Provedor (Spikes Finalizados)
+- **Phase 0A**: Validou criação de assinatura futura via Hosted Checkout com `nextDueDate` posterior sem cobrança imediata (`PASS`).
+- **Phase 0B.1**: Validou cobrança imediata de ajuste avulso via Hosted Checkout `DETACHED` com correlação inequívoca (`PASS`).
+- **Sandbox Cleanup & Cutover**: Validou inativação de assinatura e remoção cirúrgica de pagamentos `PENDING` futuros (`PASS`).
+- **Resultado**: Todas as capacidades do gateway Asaas necessárias para o LouvAIO estão empiricamente comprovadas. **Não há necessidade de novos spikes exploratórios de provedor**. O projeto está pronto para o design persistido e implementação da Phase 1.
+
+---
+
+## I. Critérios de Avaliação da Phase 0B (PASS / FAIL Multidimensional)
+
+| Dimensão Avaliada | Resultado Esperado (PASS) | Condição de Reprovação (FAIL) |
+| :--- | :--- | :--- |
+| **Capacidade Financeira do Provedor** | Ajuste cobrado agora + Recorrência futura agendada para D+7 sem captura antecipada integral. | Cobrança integral antecipada de R$ 89,90 no momento do upgrade. |
+| **Experiência de Checkout (1 vs 2)** | Classificada como `ONE_CHECKOUT_SUPPORTED` ou `TWO_CHECKOUT_FALLBACK_REQUIRED`. | Fluxo bloqueado ou sem suporte a agendamento futuro. |
+| **Reuso de Token de Cartão** | Classificado como `TOKEN_REUSE_AVAILABLE` ou `TOKEN_NOT_EXPOSED_BY_HOSTED_CHECKOUT`. | N/A (resultado empírico do spike). |
+| **Isolamento de Entitlements** | Nenhum plano de ministério real alterado no LouvAIO. | Quotas reais mutadas. |
+| **Cleanup Financeiro** | Assinatura futura inativada (`INACTIVE`) e cobranças futuras pendentes removidas. | Assinatura permanece ativa gerando faturas no Sandbox. |
+
+---
+
+## J. Política para Ajustes Abaixo do Limite do Provedor
+
+- **Restrição do Provedor**: O Asaas impõe valor mínimo transacionável por cobrança (`PROVIDER CONSTRAINT TO VALIDATE IN SANDBOX`).
+- **Diretriz de Domínio**:
+  - Se $\text{Ajuste} == 0$: Upgrade gratuito imediato para os dias restantes; renovação integral agendada para `current_period_end`.
+  - Se $0 < \text{Ajuste} < \text{Mínimo Gateway}$: A Phase 0B validará empiricamente o limite mínimo de transação do Sandbox e orientará a política de piso ou agendamento direto.
+
+---
+
+## K. Roadmap Revisado de Execução
+
+```
+[ Phase 0A: Future Hosted Checkout Spike (PASS — Sandbox Validated) ]
+                               │
+                               ▼
+[ Phase 0B.1: Hosted Detached Adjustment Spike (TOOLING READY — CHECK PASSED) ]
+                               │
+               ┌───────────────┴───────────────┐
+               ▼                               ▼
+ [ TOKEN_REUSE_AVAILABLE ]           [ TOKEN_NOT_EXPOSED ]
+               │                               │
+               ▼                               ▼
+ [ Phase 0B.2A: Token Reuse ]        [ Phase 0B.2B: Two-Checkout Fallback ]
+                               │
+                               ▼
+[ Phase 1: Tipos, Repositório e Deterministic Active Transition Slot ]
+                               │
+                               ▼
+[ Phase 2: Serviço de Pró-rata e Agendamento ]
+                               │
+                               ▼
+[ Phase 3: Webhooks Dual-Path (Ajuste Imediato vs Gate Temporal) ]
+                               │
+                               ▼
+[ Phase 4: Cancelamento, Substituição e Carência ]
+                               │
+                               ▼
+```
+
+---
+
+## L. Consolidação de Fronteiras do Modelo de Domínio V1 (Phase 1.2)
+
+1. **`TRANSITION != LIVE ENTITLEMENT AUTHORITY`**:
+   - `SubscriptionService` / `subscriptions` permanece como a única autoridade do direito de uso operacional (`plan_id`, `member_addon_blocks`, quotas, `accessMode`).
+   - A transição persiste `source_entitlement_snapshot` e `early_activation_target_entitlement_snapshot` como snapshots imutáveis de intenção e auditoria, sem tentar espelhar o runtime.
+
+2. **`SCHEDULED CONTRACT PRICE LOCK != EARLY ACTIVATION QUOTE LOCK`**:
+   - O preço recorrente da renovação (`target_future_recurring_price_cents`) é travado imutavelmente em `price_locked_at` (`requested_at`).
+   - Cotações de antecipação (`BillingEarlyActivationQuote`) possuem precificação dinâmica no momento da emissão (`priced_at`, `quote_effective_billing_date`, `expires_at`), permitindo orçamentos tardios com histórico de auditoria preservado em `early_activation_quotes_history`.
+
+3. **`CHECKOUT IDENTITY != CHECKOUT ATTEMPT`**:
+   - Referências de provedor permanentes (`provider_customer_id`, `old_provider_subscription_id`, `previous_provider_subscription_id`, confirmed payments/subscriptions) são estritamente `write-once` / idempotentes.
+   - Sessões de checkout podem expirar e ser rotacionadas atômica e auditavelmente através de `recordNewCheckoutAttempt`, preservando `checkout_attempts`.
+
+4. **`LIMITAÇÃO OPERACIONAL ATUAL`**:
+   - `Firestore Emulator concurrency validation: pending` (testes atuais utilizam mocks transacionais em memória).
+
+---
+
+## M. Domínio de Classificação, Estratégia de Execução e Pró-rata (Phase 2 & 2.1)
+
+1. **Separação Canônica: Entitlement Capabilities vs Configurações Comerciais**:
+   - `Entitlement Capabilities`: Quotas operacionais de produto (`members`, `songs`, flags funcionais de uso). Participam estritamente da comparação de capacidade (`TARGET_STRICTLY_GREATER`, `TARGET_STRICTLY_LOWER`, `EQUAL`, `MIXED`).
+   - `Commercial Configuration`: Metadados de compra e extensibilidade (`allowMemberAddons`, `maxMemberAddonBlocks`, precificação). **Excluídos** da comparação de entitlement (ex: `Pro -> Premium` é estritamente `upgrade`, sem ser distorcido por flags de add-on).
+
+2. **Separação Canônica: Entitlement Classification vs Financial Execution Strategy**:
+   - `immediate_initial_purchase` (Free -> Paid): Compra inicial imediata de ciclo integral. Pró-rata e early activation **não aplicáveis**. Não requer períodos correntes pagos prévios.
+   - `scheduled_paid_transition` (Paid -> Paid): Transição agendada de renovação futura com preservação do ciclo pago vigente (`RECURRENCE_FIRST`). Early activation elegível exclusivamente sob aumento estrito de capacidades (`TARGET_STRICTLY_GREATER`).
+   - `scheduled_cancel_to_free` (Paid -> Free): Não renovação agendada ao término do ciclo (`current_period_end`). Não gera assinatura target no gateway nem pró-rata.
+
+3. **Elegibilidade de Early Activation & Fail-Closed para Entitlement Misto**:
+   - Permitido apenas em `scheduled_paid_transition` com aumento estrito de capacidades.
+   - Bloqueado para `immediate_initial_purchase`, `scheduled_cancel_to_free`, `downgrade`, `interval_change` e casos com capacidades mistas (`MIXED`).
+
+4. **Semântica de Price Lock**:
+   - `source_current_cycle_total_cents`: Preço integral contratado na origem (base + add-ons no ciclo vigente).
+   - `target_future_recurring_price_cents`: Preço da renovação futura no ciclo de destino.
+   - `target_current_cycle_total_cents`: Preço das capacidades de destino calculadas no ciclo da origem (base justa de pró-rata).
+   - Todos travados imutavelmente em `requested_at`.
+
+5. **Convenção de Dias Comerciais e Aritmética Inteira Segura (BigInt)**:
+   - Fuso horário canônico: `BILLING_TIMEZONE` (`America/Sao_Paulo`).
+   - Intervalo semi-aberto $[start, end)$ imune a DST e diferenças de fuso horário civil.
+   - Fórmula: $\text{adjustment} = \text{roundHalfUp}(\text{deltaCents} \times \text{remainingDays} / \text{totalDays})$.
+   - Implementação via `BigInt` com validação de `Number.isSafeInteger` e proteção contra overflow / divisão por zero.
+
+6. **Ciclo de Vida da Cotação (Quote Expiry & Replacement)**:
+   - A validade da cotação não ultrapassa a meia-noite do dia comercial de cálculo em `BILLING_TIMEZONE`.
+   - Cotações expiradas não são modificadas; novas cotações recalculam apenas a fração temporal restante, preservando a base de preço contratada e o histórico auditável em `early_activation_quotes_history`.
+
+---
+
+## N. Alinhamento de Contrato Domínio / Persistência (Phase 2.2)
+
+1. **Persistência Imutável da Estratégia de Execução**:
+   - `execution_strategy` (`immediate_initial_purchase` | `scheduled_paid_transition` | `scheduled_cancel_to_free`) é gravada no momento da criação do registro V1 e incluída em `IMMUTABLE_TRANSITION_FIELDS`.
+
+2. **Invariantes de Formato Específicas por Estratégia**:
+   - `immediate_initial_purchase`: `source_plan_id === 'free'`, `current_period_start` e `current_period_end` são `null` (sem fabricação de ciclos pagos artificiais para Free). `early_activation_status === 'not_applicable'`.
+   - `scheduled_paid_transition`: Exige `current_period_start`, `current_period_end` e `effective_billing_date` preenchidos.
+   - `scheduled_cancel_to_free`: `target_plan_id === 'free'`, `target_future_recurring_price_cents === 0`, sem exigência de assinatura target de provedor.
+
+3. **Matriz Status × Estratégia**:
+   - `immediate_initial_purchase` transita exclusivamente em: `pending_initial_purchase`, `completed`, `canceled`, `superseded`, `failed`, `financial_attention_required`.
+   - `scheduled_paid_transition` transita nos estados de autorização futura e agendamento.
+   - `scheduled_cancel_to_free` inicia em `awaiting_old_inactivation` e avança para `scheduled` / `completed`.
+   - Combinações impossíveis são rejeitadas em runtime via `validateBillingTransitionV1`.
+
+4. **Separação Temporal: Data do Request vs Data Efetiva de Ativação**:
+   - `requested_commercial_date`: Data comercial travada no instante da solicitação para auditoria de preço.
+   - `effective_billing_date`: Para compras imediatas, a vigência real é atribuída no momento da confirmação financeira pelo webhook (Phase 3), sem retroagir entitlement para o dia da criação do checkout.
+
+5. **Mapeador Puro Domínio -> Persistência**:
+   - A função `buildBillingTransitionV1Record` centraliza a transformação determinística do snapshot comercial em um `BillingTransitionV1Record` válido, blindando a camada de aplicação de divergências de contrato.
+
+---
+
+## O. Orquestração de Compra Inicial V1 (Phase 3A: Free -> Paid)
+
+1. **Saga de Criação e Aquisição de Slot Determinístico**:
+   - Quando `source` é `Free` e `target` é `Paid`, o fluxo é classificado como `execution_strategy = immediate_initial_purchase`.
+   - O contrato de destino é validado no catálogo e o snapshot comercial de price lock é construído via `buildTransitionCommercialSnapshot`.
+   - **Antes de qualquer chamada externa ao gateway (Asaas)**, a transição V1 é construída e gravada com a reivindicação do slot ativo exclusivo via `createTransitionAndClaimSlot`.
+   - Se o slot estiver ocupado (`409 ACTIVE_TRANSITION_EXISTS`), a requisição é rejeitada sem gerar clientes, cobranças ou assinaturas no gateway.
+   - Em seguida, o checkout hospedado é gerado com `externalReference = initial_checkout_intent_id`, e a tentativa é registrada em `checkout_attempts` via `recordNewCheckoutAttempt` com `attempt_type: 'initial_purchase'`.
+   - Se a chamada ao gateway falhar, a transição é marcada como `transition_status = 'failed'` (preservando rastro) e o erro é propagado.
+
+2. **Roteamento e Máquina de Estados de Webhooks V1**:
+   - Eventos de webhook com correlação identificada via `externalReference`, `providerCheckoutId` ou `providerSubscriptionId` verificam se a transição é V1 com estratégia `immediate_initial_purchase` e despacham exclusivamente para `handleV1InitialPurchaseWebhook`.
+   - `checkout_canceled` / `checkout_expired`: Marcam a transição como terminalmente segura (`safe_terminal` com status `canceled` ou `failed`) e liberam o active slot via `releaseSlotIfOwnedAndSafe`.
+   - `payment_confirmed` / `payment_received`: Atuam como o portão canônico de ativação financeira.
+
+3. **Portão Canônico de Confirmação Financeira & Fail-Closed**:
+   - **Validação de Valor**: `paidAmountCents === target_future_recurring_price_cents`. Se divergente, aciona fail-closed marcando `financial_attention_required = true`, retém o slot e recusa a ativação de cotas.
+   - **Validação de Cliente**: O `providerCustomerId` recebido deve corresponder ao `provider_customer_id` registrado na transição.
+   - **Idempotência**: Se a transição já estiver `completed`, registra a transação financeira (se fornecida) e confirma o processamento sem reativar cotas.
+
+4. **Derivação Temporal de Período por Calendário Exato**:
+   - `current_period_start`: Instante real da confirmação do pagamento (`paymentConfirmationInstant`).
+   - `effective_billing_date`: Data comercial correspondente em `America/Sao_Paulo`.
+   - `current_period_end`: Derivado a partir de `dueDate` do gateway (se posterior à confirmação) ou calculado por adição de meses/anos civis exatos via `addCommercialInterval` (com clamping para fim de mês e anos bissextos: ex. 31/01 -> 28/02, 29/02/2024 -> 28/02/2025).
+   - Eliminação estrita de adições fixas de +30/+365 dias.
+
+5. **Finalização Segura e Liberação do Slot**:
+   - `SubscriptionService` atualiza o plano e blocos de membros (única autoridade de cotas de produto).
+   - `BillingSubscriptionRecord` é materializado com status `active`.
+   - `confirmInitialPurchaseActivation` efetua a escrita atômica `write-once` fixando `effective_at`, `effective_billing_date`, `initial_provider_subscription_id`, `initial_provider_payment_id` e marcando `transition_status = 'completed'` e `financial_safety_status = 'safe_terminal'`.
+   - Apenas após `safe_terminal`, o slot determinístico é liberado via `releaseSlotIfOwnedAndSafe`.
+   - Em caso de exceção na ativação pós-pagamento, o sistema marca `financial_attention_required = true`, retém o slot para o reconciliador e NÃO libera acesso indevido nem estorna automaticamente.

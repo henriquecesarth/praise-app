@@ -103,11 +103,13 @@ O backend usa Vitest para testes unitários e de integração cobrindo motor de 
 - Alias groups/ministry e campos snake_case/camelCase coexistem por compatibilidade.
 - Versão mínima suportada de Node/npm: Unknown / Not yet verified.
 
+- Política de Transições de Assinatura V1 (ADR 2026-09-01 Revisado): Period-Paid Principle & Separação de Estados (`Asaas subscription != LouvAIO entitlement`). Todo período pago pertence ao cliente até `current_period_end`. Upgrades de plano utilizam a arquitetura `RECURRENCE_FIRST` (autorização da renovação futura do plano alvo em `current_period_end` + oferta opcional de compra de acesso antecipado via ajuste proporcional). Downgrades, reduções de add-ons e trocas de periodicidade (mensal/anual) permanecem agendados para `current_period_end` sem perda antecipada de entitlement nem cobrança sobreposta. Price lock na solicitação. Descoberta de Provedor concluída e homologada em Sandbox (Phase 0A, 0B.1 e 0B.2B concluídas). Phase 1 (Modelo de Persistência, Slot Ativo Determinístico e Invariantes Transacionais) implementada.
+
 ## Known Issues and Implementation Gaps
 
 Itens duráveis e priorizados catalogados em docs/system-status.md:
 - Asaas Customer Reuse (GAP-011): CLOSED — SANDBOX REVALIDATED (1 Ministry + provider vincula-se a 1 customer canônico em `billing_customers` com reutilização estrita em checkouts subsequentes, lock atômico de criação, fallback por externalReference e preservação de customers históricos).
-- Same-Plan Interval Change (GAP-012): Frontend implementation pending (a UI de `/ministerio/plano` ainda compara apenas `p.id === plan.id`, impedindo a alteração de ciclo mensal -> anual no mesmo plano).
+- Same-Plan Interval Change (GAP-012): UI / interval recognition validado em Sandbox; execução financeira segue a Política V1 de agendamento em `current_period_end` (APPROVED DOMAIN POLICY REVISED — IMPLEMENTATION PENDING).
 - Aliases de rota legados (`features/groups`) e rota de cifra por música (`/smart-chords/song/:songId`).
 
 ## Current State

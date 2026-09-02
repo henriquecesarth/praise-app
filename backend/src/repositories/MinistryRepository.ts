@@ -101,6 +101,14 @@ export class MinistryRepository {
     return { ...mData, role };
   }
 
+  async findById(ministryId: string): Promise<MinistryRecord | null> {
+    const doc = await this.ministriesCol.doc(ministryId).get();
+    if (!doc.exists) {
+      return null;
+    }
+    return { id: doc.id, ...doc.data() } as MinistryRecord;
+  }
+
   async createMinistry(userId: string, name: string, slugInput?: string): Promise<MinistryRecord> {
     const baseSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'ministerio';
     const randomSuffix = Math.random().toString(36).substring(2, 7);

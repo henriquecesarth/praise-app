@@ -810,4 +810,174 @@ describe('AsaasBillingProvider — Webhook Authentication & Parser Validation', 
       ).rejects.toThrow('URL de callback do Asaas inválida ou aponta para localhost');
     });
   });
+
+  describe('9. Asaas Customer & Checkout Payload Mutex (GAP-011)', () => {
+    it('createCustomer: deve enviar externalReference = ministryId para POST /v3/customers', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'cus_new_12345' }),
+      });
+      global.fetch = mockFetch as any;
+
+      const result = await provider.createCustomer({
+        ministryId: 'min_abc_123',
+        ministryName: 'Igreja Vida Nova',
+        email: 'contato@vidanova.org',
+        taxId: '12345678000199',
+        phone: '11999998888',
+      });
+
+      expect(result).toEqual({ providerCustomerId: 'cus_new_12345' });
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://sandbox.asaas.com/api/v3/customers',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            'Content-Type': 'application/json',
+            access_token: 'test_api_key',
+          }),
+          body: JSON.stringify({
+            name: 'Igreja Vida Nova',
+            email: 'contato@vidanova.org',
+            cpfCnpj: '12345678000199',
+            phone: '11999998888',
+            externalReference: 'min_abc_123',
+            notificationDisabled: false,
+          }),
+        })
+      );
+
+      global.fetch = originalFetch;
+    });
+
+    it('createCheckout com providerCustomerId: deve enviar payload com "customer" e omitir "customerData"', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'chk_sess_999', link: 'https://sandbox.asaas.com/c/chk_sess_999' }),
+      });
+      global.fetch = mockFetch as any;
+
+      const result = await provider.createCheckout({
+        ministryId: 'min-100',
+        providerCustomerId: 'cus_existing_777',
+        planId: 'pro',
+        planName: 'Pro',
+        interval: 'monthly',
+        addonBlocks: 0,
+        amountCents: 8990,
+        successUrl: 'https://tunnel.trycloudflare.com/api/v1/billing/checkout-return/success',
+        cancelUrl: 'https://tunnel.trycloudflare.com/api/v1/billing/checkout-return/cancel',
+      });
+
+      expect(result.checkoutId).toBe('chk_sess_999');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+
+      const calledBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(calledBody.customer).toBe('cus_existing_777');
+      expect(calledBody.customerData).toBeUndefined();
+
+      global.fetch = originalFetch;
+    });
+
+    it('createCheckout: garante exclusão mútua absoluta entre customer e customerData', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'chk_sess_888', link: 'https://sandbox.asaas.com/c/chk_sess_888' }),
+      });
+      global.fetch = mockFetch as any;
+
+      // Passando providerCustomerId e customerData simultaneamente: providerCustomerId deve prevalecer e customerData deve ser omitido
+      await provider.createCheckout({
+        ministryId: 'min-100',
+        providerCustomerId: 'cus_canonical_555',
+        customerData: {
+          name: 'Nome Sobrescrito',
+          email: 'email@teste.com',
+        },
+        planId: 'lite',
+        planName: 'Lite',
+        interval: 'monthly',
+        addonBlocks: 0,
+        amountCents: 1490,
+        successUrl: 'https://tunnel.trycloudflare.com/api/v1/billing/checkout-return/success',
+      });
+
+      const calledBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(calledBody.customer).toBe('cus_canonical_555');
+      expect(calledBody.customerData).toBeUndefined();
+
+      global.fetch = originalFetch;
+    });
+
+    it('findCustomerByExternalReference: retorna customer id quando cliente já existe no gateway', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: [
+            {
+              id: 'cus_existing_gateway_111',
+              name: 'Ministério Alpha',
+              externalReference: 'min_alpha',
+              deleted: false,
+            },
+          ],
+        }),
+      });
+      global.fetch = mockFetch as any;
+
+      const result = await provider.findCustomerByExternalReference('min_alpha');
+      expect(result).toEqual({ providerCustomerId: 'cus_existing_gateway_111' });
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/customers?externalReference=min_alpha'),
+        expect.objectContaining({
+          headers: expect.objectContaining({ access_token: 'test_api_key' }),
+        })
+      );
+
+      global.fetch = originalFetch;
+    });
+
+    it('findCustomerByExternalReference: retorna null quando nenhum cliente com o externalReference for encontrado', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [] }),
+      });
+      global.fetch = mockFetch as any;
+
+      const result = await provider.findCustomerByExternalReference('min_nonexistent');
+      expect(result).toBeNull();
+
+      global.fetch = originalFetch;
+    });
+  });
 });

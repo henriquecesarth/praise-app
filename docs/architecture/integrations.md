@@ -52,9 +52,9 @@ Configuração adicional:
 
 **Authentication:** `access_token` no header das requisições de saída; header `asaas-access-token` validado com `crypto.timingSafeEqual` no webhook de entrada.
 
-**Status:** Integração implementada com fluxos principais homologados em ambiente Sandbox (incluindo GAP-011 revalidado); gap conhecido (GAP-012) permanece em aberto; deploy/configuração de produção não devem ser presumidos.
+**Status:** Integração implementada com fluxos principais homologados em ambiente Sandbox (GAP-011 revalidado; Política V1 de transições agendadas aprovada via ADR 2026-09-01 com implementação pendente); deploy/configuração de produção não devem ser presumidos.
 
-**Known Implementation Gap:** GAP-012 (Same-Plan Interval Change na UI) permanece aberto. GAP-011 (Asaas Customer Reuse) foi integralmente implementado, protegido contra concorrência e revalidado com sucesso em Sandbox.
+**Known Implementation Gap:** GAP-012 (Same-Plan Interval Change: reconhecimento de ciclo na UI validado em Sandbox; execução financeira requer reengenharia para agendamento em `current_period_end` sem sobreposição de cobranças integrais). GAP-011 (Asaas Customer Reuse) foi integralmente implementado, protegido contra concorrência e revalidado com sucesso em Sandbox.
 
 ## Billing Reconciler Worker
 

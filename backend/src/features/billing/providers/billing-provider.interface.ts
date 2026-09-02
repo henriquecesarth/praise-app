@@ -55,6 +55,8 @@ export interface BillingProvider {
     phone?: string;
   }): Promise<{ providerCustomerId: string }>;
 
+  findCustomerByExternalReference?(externalReference: string): Promise<{ providerCustomerId: string } | null>;
+
   createCheckout(params: {
     ministryId: string;
     checkoutIntentId?: string;

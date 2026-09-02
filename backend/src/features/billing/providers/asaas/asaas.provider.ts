@@ -71,6 +71,46 @@ export class AsaasBillingProvider implements BillingProvider {
   }
 
   /**
+   * Localiza um cliente existente no Asaas pelo externalReference (ministryId)
+   */
+  async findCustomerByExternalReference(externalReference: string): Promise<{ providerCustomerId: string } | null> {
+    if (!this.apiKey) {
+      throw new AppError(500, 'Gateway Asaas não configurado.');
+    }
+
+    try {
+      const queryParams = new URLSearchParams({
+        externalReference,
+        limit: '5',
+      });
+
+      const response = await fetch(`${this.apiUrl}/customers?${queryParams.toString()}`, {
+        headers: {
+          access_token: this.apiKey,
+        },
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) return null;
+        throw new AppError(500, `Falha ao buscar cliente por externalReference no Asaas (HTTP ${response.status})`);
+      }
+
+      const data = (await response.json()) as any;
+      const items = Array.isArray(data.data) ? data.data : [];
+      const validCustomer = items.find((c: any) => c.externalReference === externalReference && !c.deleted);
+
+      if (validCustomer && validCustomer.id) {
+        return { providerCustomerId: validCustomer.id };
+      }
+
+      return null;
+    } catch (err: any) {
+      if (err instanceof AppError) throw err;
+      throw new AppError(500, `Falha de comunicação ao buscar cliente por externalReference no Asaas: ${err.message}`);
+    }
+  }
+
+  /**
    * Cria uma sessão hospedada no Asaas Checkout (POST /v3/checkouts) para assinatura recorrente
    */
   async createCheckout(params: {
@@ -132,7 +172,9 @@ export class AsaasBillingProvider implements BillingProvider {
         },
       };
 
-      if (params.customerData?.name) {
+      if (params.providerCustomerId && params.providerCustomerId.trim()) {
+        payload.customer = params.providerCustomerId.trim();
+      } else if (params.customerData?.name) {
         payload.customerData = {
           name: params.customerData.name,
           email: params.customerData.email,

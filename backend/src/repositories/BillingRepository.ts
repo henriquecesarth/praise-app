@@ -1,18 +1,78 @@
 import { db } from '../lib/firebase';
+import { AppError } from '../middleware/error-handler';
 import {
   BillingCustomerRecord,
   BillingSubscriptionRecord,
   BillingPlanChangeRecord,
+  LegacyBillingPlanChangeRecord,
   BillingTransactionRecord,
   BillingWebhookEventRecord,
+  BillingActiveTransitionSlotRecord,
   BillingProviderName,
+  BillingTransitionStatus,
+  BillingTransitionV1Record,
+  isBillingTransitionV1,
+  validateBillingTransitionV1,
+  mapTransitionStatusToLegacyStatus,
+  buildActiveTransitionSlotId,
 } from '../features/billing/billing.types';
 
+export const SAFE_TERMINAL_TRANSITION_STATUSES = [
+  'completed',
+  'canceled',
+  'superseded',
+  'failed',
+] as const;
+
+export type SafeTerminalTransitionStatus = (typeof SAFE_TERMINAL_TRANSITION_STATUSES)[number];
+
+export const IMMUTABLE_TRANSITION_FIELDS: (keyof BillingTransitionV1Record)[] = [
+  'id',
+  'transition_id',
+  'ministry_id',
+  'provider',
+  'currency',
+  'policy_version',
+  'execution_strategy',
+  'transition_type',
+  'requested_at',
+  'requested_commercial_date',
+  'price_locked_at',
+  'requested_by_user_id',
+  'source_plan_id',
+  'source_interval',
+  'source_addon_blocks',
+  'source_current_cycle_total_cents',
+  'source_entitlement_snapshot',
+  'early_activation_target_entitlement_snapshot',
+  'current_period_start',
+  'current_period_end',
+  'target_plan_id',
+  'target_interval',
+  'target_addon_blocks',
+  'target_future_recurring_price_cents',
+  'requested_plan_id',
+  'requested_interval',
+  'requested_addon_blocks',
+  'expected_amount_cents',
+];
+
+export const PERMANENT_WRITE_ONCE_FIELDS: (keyof BillingTransitionV1Record)[] = [
+  'provider_customer_id',
+  'old_provider_subscription_id',
+  'previous_provider_subscription_id',
+  'initial_provider_subscription_id',
+  'initial_provider_payment_id',
+  'future_provider_subscription_id',
+  'future_provider_payment_id',
+  'early_activation_provider_payment_id',
+];
 
 export class BillingRepository {
   private readonly customersCollection = db.collection('billing_customers');
   private readonly subscriptionsCollection = db.collection('billing_subscriptions');
   private readonly planChangesCollection = db.collection('billing_plan_changes');
+  private readonly activeTransitionSlotsCollection = db.collection('billing_active_transition_slots');
   private readonly transactionsCollection = db.collection('billing_transactions');
   private readonly webhookEventsCollection = db.collection('billing_webhook_events');
 
@@ -44,6 +104,59 @@ export class BillingRepository {
 
   async setCustomer(customer: BillingCustomerRecord): Promise<void> {
     await this.customersCollection.doc(customer.id).set(customer, { merge: true });
+  }
+
+  /**
+   * Bloqueia/Aluga atomicamente a criação de cliente para evitar múltiplas chamadas concorrentes ao gateway
+   */
+  async claimCustomerCreation(
+    ministryId: string,
+    provider: BillingProviderName,
+    lockWorkerId: string,
+    lockDurationMs: number = 30000
+  ): Promise<{ acquired: boolean; customer: BillingCustomerRecord | null }> {
+    const docId = `${ministryId}_${provider}`;
+    const docRef = this.customersCollection.doc(docId);
+
+    return await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      const now = Date.now();
+
+      if (doc.exists) {
+        const data = doc.data() as BillingCustomerRecord;
+
+        // Se o customer já possui provider_customer_id consolidado e pronto
+        if (data.provider_customer_id && data.provider_customer_id.trim() && data.status !== 'creating') {
+          return { acquired: false, customer: data };
+        }
+
+        // Se está em criação por outra instância ativa
+        if (data.status === 'creating' && data.lease_locked_until) {
+          const lockUntil = new Date(data.lease_locked_until).getTime();
+          if (lockUntil > now && data.lease_locked_by !== lockWorkerId) {
+            // Travado por outra instância
+            return { acquired: false, customer: data };
+          }
+        }
+      }
+
+      // Adquire o lease para criação
+      const nowIso = new Date(now).toISOString();
+      const leaseRecord: BillingCustomerRecord = {
+        id: docId,
+        ministry_id: ministryId,
+        provider,
+        provider_customer_id: '',
+        status: 'creating',
+        lease_locked_until: new Date(now + lockDurationMs).toISOString(),
+        lease_locked_by: lockWorkerId,
+        created_at: doc.exists ? (doc.data()?.created_at || nowIso) : nowIso,
+        updated_at: nowIso,
+      };
+
+      t.set(docRef, leaseRecord, { merge: true });
+      return { acquired: true, customer: leaseRecord };
+    });
   }
 
   // --------------------------------------------------------------------------
@@ -253,6 +366,712 @@ export class BillingRepository {
       return snapshot.docs[0].data() as BillingPlanChangeRecord;
     }
     return null;
+  }
+
+  async getPlanChangeByInitialSubscriptionId(
+    providerSubscriptionId: string,
+    provider: BillingProviderName
+  ): Promise<BillingPlanChangeRecord | null> {
+    const snapshot = await this.planChangesCollection
+      .where('provider', '==', provider)
+      .where('initial_provider_subscription_id', '==', providerSubscriptionId)
+      .limit(1)
+      .get();
+
+    if (!snapshot.empty) {
+      return snapshot.docs[0].data() as BillingPlanChangeRecord;
+    }
+    return null;
+  }
+
+  async getPlanChangeByProviderId(
+    providerId: string,
+    provider: BillingProviderName
+  ): Promise<BillingPlanChangeRecord | null> {
+    const byIntent = await this.getPlanChangeByCheckoutIntentId(providerId, provider);
+    if (byIntent) return byIntent;
+
+    const byChk = await this.getPlanChangeByCheckoutId(providerId, provider);
+    if (byChk) return byChk;
+
+    const bySub = await this.getPlanChangeByNewSubscriptionId(providerId, provider);
+    if (bySub) return bySub;
+
+    const byInitSub = await this.getPlanChangeByInitialSubscriptionId(providerId, provider);
+    if (byInitSub) return byInitSub;
+
+    const snapshotInitChk = await this.planChangesCollection
+      .where('provider', '==', provider)
+      .where('initial_provider_checkout_id', '==', providerId)
+      .limit(1)
+      .get();
+    if (!snapshotInitChk.empty) {
+      return snapshotInitChk.docs[0].data() as BillingPlanChangeRecord;
+    }
+
+    return null;
+  }
+
+  // --------------------------------------------------------------------------
+  // Billing Transition Policy V1 (Deterministic Active Slot & Snapshots)
+  // --------------------------------------------------------------------------
+
+  /**
+   * Cria atomicamente uma nova transição de plano e adquire o slot determinístico exclusivo.
+   * Se já existir uma transição ativa no provedor para o ministério, rejeita a operação.
+   */
+  async createTransitionAndClaimSlot(
+    record: BillingPlanChangeRecord
+  ): Promise<{ planChange: BillingPlanChangeRecord; slot: BillingActiveTransitionSlotRecord }> {
+    if (!record.id || !record.ministry_id || !record.provider) {
+      throw new AppError(400, 'Dados de transição incompletos para criação atômica.');
+    }
+
+    const slotId = buildActiveTransitionSlotId(record.ministry_id, record.provider);
+    const slotDocRef = this.activeTransitionSlotsCollection.doc(slotId);
+    const planChangeDocRef = this.planChangesCollection.doc(record.id);
+
+    return await db.runTransaction(async (t: any) => {
+      const slotDoc = await t.get(slotDocRef);
+      if (slotDoc.exists) {
+        const existingSlot = slotDoc.data() as BillingActiveTransitionSlotRecord;
+        throw new AppError(
+          409,
+          'Já existe uma transição de plano ativa para este ministério no provedor.',
+          { code: 'ACTIVE_TRANSITION_EXISTS', slotId, activePlanChangeId: existingSlot.plan_change_id }
+        );
+      }
+
+      const planChangeDoc = await t.get(planChangeDocRef);
+      if (planChangeDoc.exists) {
+        throw new AppError(
+          409,
+          'Já existe um registro de transição com este identificador.',
+          { code: 'PLAN_CHANGE_ID_EXISTS', id: record.id }
+        );
+      }
+
+      const nowIso = new Date().toISOString();
+      const slotRecord: BillingActiveTransitionSlotRecord = {
+        id: slotId,
+        ministry_id: record.ministry_id,
+        provider: record.provider,
+        plan_change_id: record.id,
+        acquired_at: record.created_at || nowIso,
+        updated_at: nowIso,
+        version: 1,
+      };
+
+      let normalizedRecord: BillingPlanChangeRecord;
+
+      if (isBillingTransitionV1(record)) {
+        const transitionStatus = record.transition_status || 'pending_future_authorization';
+        const v1Data: BillingTransitionV1Record = {
+          ...record,
+          id: record.id,
+          transition_id: record.transition_id || record.id,
+          policy_version: 'billing_transition_v1',
+          transition_status: transitionStatus,
+          status: mapTransitionStatusToLegacyStatus(transitionStatus),
+          financial_safety_status: record.financial_safety_status || 'live',
+          early_activation_status: record.early_activation_status || 'not_applicable',
+          requested_plan_id: record.target_plan_id,
+          requested_interval: record.target_interval,
+          requested_addon_blocks: record.target_addon_blocks,
+          expected_amount_cents: record.target_future_recurring_price_cents,
+          source_entitlement_snapshot: record.source_entitlement_snapshot,
+          early_activation_target_entitlement_snapshot: record.early_activation_target_entitlement_snapshot || null,
+          created_at: record.created_at || nowIso,
+          updated_at: nowIso,
+        };
+        try {
+          normalizedRecord = validateBillingTransitionV1(v1Data);
+        } catch (err: any) {
+          throw new AppError(500, `Falha de validação da transição V1: ${err.message}`);
+        }
+      } else {
+        normalizedRecord = {
+          ...record,
+          created_at: record.created_at || nowIso,
+          updated_at: nowIso,
+        };
+      }
+
+      t.set(planChangeDocRef, normalizedRecord);
+      t.set(slotDocRef, slotRecord);
+
+      return { planChange: normalizedRecord, slot: slotRecord };
+    });
+  }
+
+  /**
+   * Consulta uma transição por ID com verificação opcional de isolamento multi-tenant
+   */
+  async getTransitionById(id: string, ministryId?: string): Promise<BillingPlanChangeRecord | null> {
+    const doc = await this.planChangesCollection.doc(id).get();
+    if (!doc.exists) {
+      return null;
+    }
+    const data = doc.data() as BillingPlanChangeRecord;
+    if (ministryId && data.ministry_id !== ministryId) {
+      return null;
+    }
+    if (isBillingTransitionV1(data)) {
+      try {
+        return validateBillingTransitionV1(data);
+      } catch (err: any) {
+        throw new AppError(500, `Registro V1 corrompido: ${err.message}`);
+      }
+    }
+    return data;
+  }
+
+  /**
+   * Obtém o registro de slot determinístico ativo de um ministério no provedor.
+   */
+  async getActiveTransitionSlot(
+    ministryId: string,
+    provider: BillingProviderName
+  ): Promise<BillingActiveTransitionSlotRecord | null> {
+    const slotId = buildActiveTransitionSlotId(ministryId, provider);
+    const doc = await this.activeTransitionSlotsCollection.doc(slotId).get();
+    if (doc.exists) {
+      return doc.data() as BillingActiveTransitionSlotRecord;
+    }
+    return null;
+  }
+
+  /**
+   * Obtém a transição ativa de um ministério no provedor através do slot determinístico
+   */
+  async getActiveTransitionForMinistry(
+    ministryId: string,
+    provider: BillingProviderName
+  ): Promise<{ slot: BillingActiveTransitionSlotRecord; transition: BillingPlanChangeRecord } | null> {
+    const slotId = buildActiveTransitionSlotId(ministryId, provider);
+    const slotDoc = await this.activeTransitionSlotsCollection.doc(slotId).get();
+    if (!slotDoc.exists) {
+      return null;
+    }
+
+    const slot = slotDoc.data() as BillingActiveTransitionSlotRecord;
+    const transitionDoc = await this.planChangesCollection.doc(slot.plan_change_id).get();
+    if (!transitionDoc.exists) {
+      return null;
+    }
+
+    const transition = transitionDoc.data() as BillingPlanChangeRecord;
+    if (transition.ministry_id !== ministryId) {
+      return null;
+    }
+
+    if (isBillingTransitionV1(transition)) {
+      try {
+        const validated = validateBillingTransitionV1(transition);
+        return { slot, transition: validated };
+      } catch (err: any) {
+        throw new AppError(500, `Transição V1 ativa corrompida no slot: ${err.message}`);
+      }
+    }
+
+    return { slot, transition };
+  }
+
+  /**
+   * Atualiza uma transição garantindo estritamente a imutabilidade dos snapshots e price locks,
+   * além da semântica write-once de referências de provedor.
+   * Substituições de checkout/quote requerem recordNewCheckoutAttempt.
+   */
+  async updateTransition(
+    id: string,
+    ministryId: string,
+    updates: Partial<BillingPlanChangeRecord>
+  ): Promise<BillingPlanChangeRecord> {
+    const docRef = this.planChangesCollection.doc(id);
+
+    return await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      if (!doc.exists) {
+        throw new AppError(404, 'Transição de plano não encontrada.');
+      }
+      const existing = doc.data() as BillingPlanChangeRecord;
+      if (existing.ministry_id !== ministryId) {
+        throw new AppError(403, 'Acesso não autorizado a esta transição de plano.');
+      }
+
+      // 1. Validação de imutabilidade dos snapshots e price locks
+      for (const field of IMMUTABLE_TRANSITION_FIELDS) {
+        const updateVal = (updates as any)[field];
+        const existingVal = (existing as any)[field];
+        if (updateVal !== undefined && JSON.stringify(updateVal) !== JSON.stringify(existingVal)) {
+          throw new AppError(
+            400,
+            `Campo imutável '${String(field)}' não pode ser modificado após a criação da transição.`
+          );
+        }
+      }
+
+      // 2. Validação write-once permanente de referências do provedor
+      for (const field of PERMANENT_WRITE_ONCE_FIELDS) {
+        const updateVal = (updates as any)[field];
+        const existingVal = (existing as any)[field];
+        if (updateVal !== undefined && updateVal !== null) {
+          if (existingVal !== undefined && existingVal !== null && existingVal !== '' && existingVal !== updateVal) {
+            throw new AppError(
+              400,
+              `Campo write-once permanente '${String(field)}' não pode ser substituído de '${existingVal}' para '${updateVal}'.`
+            );
+          }
+        }
+      }
+
+      // 3. Validação write-once genérica de checkouts (checkout rotation exige recordNewCheckoutAttempt)
+      const genericCheckoutFields: (keyof BillingTransitionV1Record)[] = [
+        'initial_provider_checkout_id',
+        'initial_checkout_intent_id',
+        'future_provider_checkout_id',
+        'early_activation_provider_checkout_id',
+        'future_checkout_intent_id',
+        'early_activation_checkout_intent_id',
+      ];
+      for (const field of genericCheckoutFields) {
+        const updateVal = (updates as any)[field];
+        const existingVal = (existing as any)[field];
+        if (updateVal !== undefined && updateVal !== null) {
+          if (existingVal !== undefined && existingVal !== null && existingVal !== '' && existingVal !== updateVal) {
+            throw new AppError(
+              400,
+              `Substituição de '${String(field)}' de '${existingVal}' para '${updateVal}' não permitida via update genérico. Use recordNewCheckoutAttempt.`
+            );
+          }
+        }
+      }
+
+      let updatedRecord: BillingPlanChangeRecord;
+
+      if (isBillingTransitionV1(existing)) {
+        const nextTransitionStatus = (updates as Partial<BillingTransitionV1Record>).transition_status || existing.transition_status;
+        const denormalizedStatus = mapTransitionStatusToLegacyStatus(nextTransitionStatus);
+
+        const v1Updates: Partial<BillingTransitionV1Record> = {
+          ...(updates as Partial<BillingTransitionV1Record>),
+          transition_status: nextTransitionStatus,
+          status: denormalizedStatus,
+          requested_plan_id: existing.target_plan_id,
+          requested_interval: existing.target_interval,
+          requested_addon_blocks: existing.target_addon_blocks,
+          expected_amount_cents: existing.target_future_recurring_price_cents,
+          source_entitlement_snapshot: existing.source_entitlement_snapshot,
+          early_activation_target_entitlement_snapshot: existing.early_activation_target_entitlement_snapshot,
+          updated_at: new Date().toISOString(),
+        };
+
+        const merged = {
+          ...existing,
+          ...v1Updates,
+        };
+
+        try {
+          updatedRecord = validateBillingTransitionV1(merged);
+        } catch (err: any) {
+          throw new AppError(500, `Falha de validação após update V1: ${err.message}`);
+        }
+      } else {
+        updatedRecord = {
+          ...existing,
+          ...updates,
+          updated_at: new Date().toISOString(),
+        } as LegacyBillingPlanChangeRecord;
+      }
+
+      t.set(docRef, updatedRecord, { merge: true });
+      return updatedRecord;
+    });
+  }
+
+  /**
+   * Registra uma nova tentativa de checkout de forma auditável e atômica.
+   * Permite rotacionar checkouts expirados/falhos de future authorization ou registrar nova quote de early activation,
+   * preservando todo o histórico de tentativas anteriores.
+   */
+  async recordNewCheckoutAttempt(
+    transitionId: string,
+    ministryId: string,
+    attempt: any,
+    newQuote?: any
+  ): Promise<BillingTransitionV1Record> {
+    const docRef = this.planChangesCollection.doc(transitionId);
+
+    return await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      if (!doc.exists) {
+        throw new AppError(404, 'Transição de plano não encontrada.');
+      }
+      const existing = doc.data() as BillingPlanChangeRecord;
+      if (existing.ministry_id !== ministryId) {
+        throw new AppError(403, 'Acesso não autorizado a esta transição de plano.');
+      }
+      if (!isBillingTransitionV1(existing)) {
+        throw new AppError(400, 'Tentativas de checkout auditáveis são suportadas apenas em transições V1.');
+      }
+
+      const nowIso = new Date().toISOString();
+      const attempts = existing.checkout_attempts ? [...existing.checkout_attempts] : [];
+
+      // Expira qualquer tentativa anterior pendente do mesmo tipo
+      for (let i = 0; i < attempts.length; i++) {
+        if (attempts[i].attempt_type === attempt.attempt_type && attempts[i].status === 'pending') {
+          attempts[i] = {
+            ...attempts[i],
+            status: 'expired',
+          };
+        }
+      }
+      attempts.push(attempt);
+
+      const quotesHistory = existing.early_activation_quotes_history
+        ? [...existing.early_activation_quotes_history]
+        : [];
+      let activeQuote = existing.current_early_activation_quote;
+
+      if (newQuote) {
+        for (let i = 0; i < quotesHistory.length; i++) {
+          if (quotesHistory[i].status === 'active') {
+            quotesHistory[i] = { ...quotesHistory[i], status: 'superseded' };
+          }
+        }
+        quotesHistory.push(newQuote);
+        activeQuote = newQuote;
+      }
+
+      const updates: Partial<BillingTransitionV1Record> = {
+        checkout_attempts: attempts,
+        early_activation_quotes_history: quotesHistory.length > 0 ? quotesHistory : undefined,
+        current_early_activation_quote: activeQuote,
+        updated_at: nowIso,
+      };
+
+      if (attempt.attempt_type === 'initial_purchase') {
+        updates.current_initial_purchase_checkout_attempt_id = attempt.attempt_id;
+        updates.initial_checkout_intent_id = attempt.internal_checkout_intent_id;
+        updates.initial_provider_checkout_id = attempt.provider_checkout_id;
+        updates.checkout_intent_id = attempt.internal_checkout_intent_id;
+        updates.provider_checkout_id = attempt.provider_checkout_id;
+        updates.checkout_url = attempt.checkout_url;
+      } else if (attempt.attempt_type === 'future_authorization') {
+        updates.current_future_checkout_attempt_id = attempt.attempt_id;
+        updates.future_checkout_intent_id = attempt.internal_checkout_intent_id;
+        updates.future_provider_checkout_id = attempt.provider_checkout_id;
+        updates.checkout_intent_id = attempt.internal_checkout_intent_id;
+        updates.provider_checkout_id = attempt.provider_checkout_id;
+        updates.checkout_url = attempt.checkout_url;
+      } else if (attempt.attempt_type === 'early_activation') {
+        updates.current_early_activation_checkout_attempt_id = attempt.attempt_id;
+        updates.early_activation_checkout_intent_id = attempt.internal_checkout_intent_id;
+        updates.early_activation_provider_checkout_id = attempt.provider_checkout_id;
+        if (activeQuote) {
+          updates.prorated_adjustment_cents = activeQuote.prorated_adjustment_cents;
+          updates.target_current_cycle_total_cents = activeQuote.target_current_cycle_total_cents;
+        }
+      }
+
+      const merged: BillingTransitionV1Record = {
+        ...existing,
+        ...updates,
+      };
+
+      const validated = validateBillingTransitionV1(merged);
+      t.set(docRef, validated, { merge: true });
+      return validated;
+    });
+  }
+
+  /**
+   * Confirma atômica e idempotentemente a ativação de uma transição de compra inicial (Free -> Paid).
+   * Atualiza effective_at, effective_billing_date, referências de provedor, marca completed e safe_terminal.
+   */
+  async confirmInitialPurchaseActivation(params: {
+    transitionId: string;
+    ministryId: string;
+    effectiveAt: string;
+    effectiveBillingDate: string;
+    providerSubscriptionId: string;
+    providerPaymentId?: string | null;
+    providerCustomerId?: string | null;
+    completedAt?: string;
+  }): Promise<BillingTransitionV1Record> {
+    const {
+      transitionId,
+      ministryId,
+      effectiveAt,
+      effectiveBillingDate,
+      providerSubscriptionId,
+      providerPaymentId = null,
+      providerCustomerId = null,
+      completedAt = new Date().toISOString(),
+    } = params;
+
+    const docRef = this.planChangesCollection.doc(transitionId);
+
+    return await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      if (!doc.exists) {
+        throw new AppError(404, `Transição '${transitionId}' não encontrada para confirmação de ativação.`);
+      }
+
+      const current = doc.data() as BillingPlanChangeRecord;
+      if (!isBillingTransitionV1(current)) {
+        throw new AppError(400, `Transição '${transitionId}' não é um registro V1.`);
+      }
+
+      if (current.ministry_id !== ministryId) {
+        throw new AppError(403, 'Acesso não autorizado para esta transição.');
+      }
+
+      if (current.execution_strategy !== 'immediate_initial_purchase') {
+        throw new AppError(
+          400,
+          `Estratégia inválida para confirmInitialPurchaseActivation: '${current.execution_strategy}'.`
+        );
+      }
+
+      // Idempotência: se já completada com as mesmas referências, retorna sem erro
+      if (
+        current.transition_status === 'completed' &&
+        current.financial_safety_status === 'safe_terminal' &&
+        current.effective_billing_date === effectiveBillingDate &&
+        (current.initial_provider_subscription_id === providerSubscriptionId ||
+          current.new_provider_subscription_id === providerSubscriptionId)
+      ) {
+        return current;
+      }
+
+      // Validação Write-Once de Effective Date (null -> valor permitido; valor A -> valor B proibido)
+      if (current.effective_billing_date && current.effective_billing_date !== effectiveBillingDate) {
+        throw new AppError(
+          409,
+          `Conflito em effective_billing_date: já gravado como '${current.effective_billing_date}', tentativa de alterar para '${effectiveBillingDate}'.`
+        );
+      }
+
+      // Validação Write-Once de Provider Subscription
+      if (
+        current.initial_provider_subscription_id &&
+        current.initial_provider_subscription_id !== providerSubscriptionId
+      ) {
+        throw new AppError(
+          409,
+          `Conflito em initial_provider_subscription_id: já gravado como '${current.initial_provider_subscription_id}', tentativa de alterar para '${providerSubscriptionId}'.`
+        );
+      }
+
+      const updated: BillingTransitionV1Record = {
+        ...current,
+        transition_status: 'completed',
+        financial_safety_status: 'safe_terminal',
+        status: 'completed',
+        effective_at: effectiveAt,
+        effective_billing_date: effectiveBillingDate,
+        initial_provider_subscription_id: providerSubscriptionId,
+        new_provider_subscription_id: providerSubscriptionId,
+        initial_provider_payment_id: providerPaymentId || current.initial_provider_payment_id || null,
+        provider_customer_id: providerCustomerId || current.provider_customer_id || null,
+        confirmed_at: current.confirmed_at || completedAt,
+        completed_at: completedAt,
+        updated_at: completedAt,
+      };
+
+      const validated = validateBillingTransitionV1(updated);
+      t.set(docRef, validated, { merge: true });
+      return validated;
+    });
+  }
+
+  /**
+   * Marca uma transição como segura terminalmente (safe_terminal) após todas as compensações financeiras
+   */
+  async markFinanciallySafe(
+    id: string,
+    ministryId: string,
+    terminalStatus: SafeTerminalTransitionStatus,
+    details?: { failure_reason?: string }
+  ): Promise<BillingPlanChangeRecord> {
+    if (!SAFE_TERMINAL_TRANSITION_STATUSES.includes(terminalStatus)) {
+      throw new AppError(
+        400,
+        `Status '${terminalStatus}' não é um estado terminal financeiramente seguro. Permitidos: ${SAFE_TERMINAL_TRANSITION_STATUSES.join(', ')}`
+      );
+    }
+
+    return await this.updateTransition(id, ministryId, {
+      transition_status: terminalStatus,
+      financial_safety_status: 'safe_terminal',
+      failure_reason: details?.failure_reason || null,
+      completed_at: terminalStatus === 'completed' ? new Date().toISOString() : undefined,
+    });
+  }
+
+  /**
+   * Libera o slot determinístico ativo via Compare-And-Set seguro.
+   * Só permite liberação se o slot ainda pertencer à mesma transição E ela for 'safe_terminal' e terminal status.
+   */
+  async releaseSlotIfOwnedAndSafe(
+    ministryId: string,
+    provider: BillingProviderName,
+    planChangeId: string
+  ): Promise<{ released: boolean; reason?: string }> {
+    const slotId = buildActiveTransitionSlotId(ministryId, provider);
+    const slotDocRef = this.activeTransitionSlotsCollection.doc(slotId);
+    const planChangeDocRef = this.planChangesCollection.doc(planChangeId);
+
+    return await db.runTransaction(async (t: any) => {
+      const slotDoc = await t.get(slotDocRef);
+      if (!slotDoc.exists) {
+        return { released: false, reason: 'slot_not_found' };
+      }
+
+      const slot = slotDoc.data() as BillingActiveTransitionSlotRecord;
+      if (slot.plan_change_id !== planChangeId) {
+        return { released: false, reason: 'slot_owned_by_another_transition' };
+      }
+
+      const planChangeDoc = await t.get(planChangeDocRef);
+      if (!planChangeDoc.exists) {
+        return { released: false, reason: 'transition_not_found' };
+      }
+
+      const transition = planChangeDoc.data() as BillingPlanChangeRecord;
+      if (transition.ministry_id !== ministryId) {
+        return { released: false, reason: 'tenant_mismatch' };
+      }
+
+      if (!isBillingTransitionV1(transition)) {
+        return { released: false, reason: 'legacy_transition_does_not_own_slot' };
+      }
+
+      if (transition.financial_safety_status !== 'safe_terminal') {
+        return { released: false, reason: 'transition_not_financially_safe' };
+      }
+
+      if (!(SAFE_TERMINAL_TRANSITION_STATUSES as readonly string[]).includes(transition.transition_status)) {
+        return { released: false, reason: 'transition_status_not_terminal' };
+      }
+      if (transition.transition_status === 'financial_attention_required') {
+        return { released: false, reason: 'financial_attention_required' };
+      }
+
+      t.delete(slotDocRef);
+      return { released: true };
+    });
+  }
+
+  // --------------------------------------------------------------------------
+  // V1 Explicit Correlation Lookups
+  // --------------------------------------------------------------------------
+
+  async getTransitionByFutureCheckoutIntentId(
+    checkoutIntentId: string,
+    provider?: BillingProviderName
+  ): Promise<BillingTransitionV1Record | null> {
+    let query: any = this.planChangesCollection.where('future_checkout_intent_id', '==', checkoutIntentId);
+    if (provider) {
+      query = query.where('provider', '==', provider);
+    }
+    const snapshot = await query.limit(1).get();
+    if (snapshot.empty) return null;
+    const doc = snapshot.docs[0].data() as BillingPlanChangeRecord;
+    if (!isBillingTransitionV1(doc)) return null;
+    return validateBillingTransitionV1(doc);
+  }
+
+  async getTransitionByFutureProviderCheckoutId(
+    providerCheckoutId: string,
+    provider?: BillingProviderName
+  ): Promise<BillingTransitionV1Record | null> {
+    let query: any = this.planChangesCollection.where('future_provider_checkout_id', '==', providerCheckoutId);
+    if (provider) {
+      query = query.where('provider', '==', provider);
+    }
+    const snapshot = await query.limit(1).get();
+    if (snapshot.empty) return null;
+    const doc = snapshot.docs[0].data() as BillingPlanChangeRecord;
+    if (!isBillingTransitionV1(doc)) return null;
+    return validateBillingTransitionV1(doc);
+  }
+
+  async getTransitionByFutureSubscriptionId(
+    subscriptionId: string,
+    provider?: BillingProviderName
+  ): Promise<BillingTransitionV1Record | null> {
+    let query: any = this.planChangesCollection.where('future_provider_subscription_id', '==', subscriptionId);
+    if (provider) {
+      query = query.where('provider', '==', provider);
+    }
+    const snapshot = await query.limit(1).get();
+    if (snapshot.empty) return null;
+    const doc = snapshot.docs[0].data() as BillingPlanChangeRecord;
+    if (!isBillingTransitionV1(doc)) return null;
+    return validateBillingTransitionV1(doc);
+  }
+
+  async getTransitionByFuturePaymentId(
+    paymentId: string,
+    provider?: BillingProviderName
+  ): Promise<BillingTransitionV1Record | null> {
+    let query: any = this.planChangesCollection.where('future_provider_payment_id', '==', paymentId);
+    if (provider) {
+      query = query.where('provider', '==', provider);
+    }
+    const snapshot = await query.limit(1).get();
+    if (snapshot.empty) return null;
+    const doc = snapshot.docs[0].data() as BillingPlanChangeRecord;
+    if (!isBillingTransitionV1(doc)) return null;
+    return validateBillingTransitionV1(doc);
+  }
+
+  async getTransitionByEarlyActivationCheckoutIntentId(
+    checkoutIntentId: string,
+    provider?: BillingProviderName
+  ): Promise<BillingTransitionV1Record | null> {
+    let query: any = this.planChangesCollection.where('early_activation_checkout_intent_id', '==', checkoutIntentId);
+    if (provider) {
+      query = query.where('provider', '==', provider);
+    }
+    const snapshot = await query.limit(1).get();
+    if (snapshot.empty) return null;
+    const doc = snapshot.docs[0].data() as BillingPlanChangeRecord;
+    if (!isBillingTransitionV1(doc)) return null;
+    return validateBillingTransitionV1(doc);
+  }
+
+  async getTransitionByEarlyActivationProviderCheckoutId(
+    providerCheckoutId: string,
+    provider?: BillingProviderName
+  ): Promise<BillingTransitionV1Record | null> {
+    let query: any = this.planChangesCollection.where('early_activation_provider_checkout_id', '==', providerCheckoutId);
+    if (provider) {
+      query = query.where('provider', '==', provider);
+    }
+    const snapshot = await query.limit(1).get();
+    if (snapshot.empty) return null;
+    const doc = snapshot.docs[0].data() as BillingPlanChangeRecord;
+    if (!isBillingTransitionV1(doc)) return null;
+    return validateBillingTransitionV1(doc);
+  }
+
+  async getTransitionByEarlyActivationPaymentId(
+    paymentId: string,
+    provider?: BillingProviderName
+  ): Promise<BillingTransitionV1Record | null> {
+    let query: any = this.planChangesCollection.where('early_activation_provider_payment_id', '==', paymentId);
+    if (provider) {
+      query = query.where('provider', '==', provider);
+    }
+    const snapshot = await query.limit(1).get();
+    if (snapshot.empty) return null;
+    const doc = snapshot.docs[0].data() as BillingPlanChangeRecord;
+    if (!isBillingTransitionV1(doc)) return null;
+    return validateBillingTransitionV1(doc);
   }
 
   async getFailedSupersedes(

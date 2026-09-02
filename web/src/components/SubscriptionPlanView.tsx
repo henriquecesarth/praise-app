@@ -319,6 +319,13 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
 
   // Abre modal de preview de checkout consumindo cálculo do backend
   const handleOpenCheckoutPreview = async (targetPlan: PlanDefinition) => {
+    const currentPlanId = summary?.plan?.id;
+    const currentInterval = summary?.subscription?.billingInterval ?? 'monthly';
+    if (targetPlan.id === currentPlanId && currentInterval === 'annual' && interval === 'monthly') {
+      showToast?.('Alteração de plano anual para mensal para o mesmo plano indisponível.', 'error');
+      return;
+    }
+
     const addons = selectedAddonBlocks[targetPlan.id] || 0;
     setPreviewPlan(targetPlan);
     setPreviewLoading(true);
@@ -336,7 +343,15 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
   // Inicia o checkout com persistência segura de intenção e redirect
   const handleStartCheckout = async () => {
     if (!previewPlan) return;
-    setCheckoutLoading(true);
+
+    const currentPlanId = summary?.plan?.id;
+    const currentInterval = summary?.subscription?.billingInterval ?? 'monthly';
+    if (previewPlan.id === currentPlanId && currentInterval === 'annual' && interval === 'monthly') {
+      showToast?.('Alteração de plano anual para mensal para o mesmo plano indisponível.', 'error');
+      setPreviewPlan(null);
+      setPreviewData(null);
+      return;
+    }
     try {
       const addons = selectedAddonBlocks[previewPlan.id] || 0;
 
@@ -1115,7 +1130,16 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
           }}
         >
           {plansData?.plans.map((p) => {
-            const isCurrent = p.id === plan.id;
+            const currentPlanId = plan.id;
+            const currentInterval: BillingInterval = summary?.subscription?.billingInterval ?? 'monthly';
+            const isCurrent = p.id === currentPlanId && (p.id === 'free' || interval === currentInterval);
+            const isSamePlan = p.id === currentPlanId;
+            const isSamePlanMonthlyToAnnual = isSamePlan && currentInterval === 'monthly' && interval === 'annual';
+            const isSamePlanAnnualToMonthly = isSamePlan && currentInterval === 'annual' && interval === 'monthly';
+
+            // Bloqueio de transição: same-plan annual -> monthly requer política de domínio/agendamento
+            const isTransitionBlocked = isSamePlanAnnualToMonthly;
+
             const addonBlocks = selectedAddonBlocks[p.id] || 0;
             const priceMonthly = p.monthlyPriceCents;
             const priceAnnual = p.annualPriceCents;
@@ -1347,6 +1371,24 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
                     >
                       Plano atual
                     </button>
+                  ) : isTransitionBlocked ? (
+                    <button
+                      type="button"
+                      disabled
+                      style={{
+                        width: '100%',
+                        padding: '12px',
+                        borderRadius: '10px',
+                        background: 'rgba(255, 255, 255, 0.03)',
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        color: 'var(--text-muted, #7D8881)',
+                        fontWeight: 600,
+                        fontSize: '0.85rem',
+                        cursor: 'not-allowed',
+                      }}
+                    >
+                      Alteração para mensal indisponível
+                    </button>
                   ) : (
                     <button
                       type="button"
@@ -1364,7 +1406,13 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
                         gap: '8px',
                       }}
                     >
-                      <span>{p.id === 'free' ? 'Mudar para Free' : 'Assinar Plano'}</span>
+                      <span>
+                        {p.id === 'free'
+                          ? 'Mudar para Free'
+                          : isSamePlanMonthlyToAnnual
+                          ? 'Mudar para Anual'
+                          : 'Assinar Plano'}
+                      </span>
                       <ChevronRight size={16} />
                     </button>
                   )}

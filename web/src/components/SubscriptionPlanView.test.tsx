@@ -854,4 +854,293 @@ describe('SubscriptionPlanView Component', () => {
     // Plano atual Lite permanece ativo
     expect(screen.getByRole('heading', { level: 2, name: 'Lite' })).toBeInTheDocument();
   });
+
+  // --------------------------------------------------------------------------
+  // GAP-012: Same-Plan Interval Change
+  // --------------------------------------------------------------------------
+  describe('GAP-012: Same-Plan Interval Change', () => {
+    it('A) current = Essential monthly & interval = monthly: Essential mostra Plano atual e CTA indisponível', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryEssential,
+        subscription: {
+          ...mockSummaryEssential.subscription,
+          billingInterval: 'monthly',
+        },
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-essential-monthly"
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByRole('heading', { level: 2, name: 'Essential' })).toBeInTheDocument();
+      const currentBtn = screen.getByRole('button', { name: /Plano atual/i });
+      expect(currentBtn).toBeInTheDocument();
+      expect(currentBtn).toBeDisabled();
+      expect(screen.getByText('Seu plano')).toBeInTheDocument();
+    });
+
+    it('B) current = Essential monthly & interval = annual: Essential NÃO mostra Plano atual e exibe CTA Mudar para Anual', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryEssential,
+        subscription: {
+          ...mockSummaryEssential.subscription,
+          billingInterval: 'monthly',
+        },
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-essential-monthly"
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      // Clicar no toggle Anual
+      const annualToggle = await screen.findByRole('button', { name: /Anual/i });
+      await userEvent.click(annualToggle);
+
+      // Essential agora NÃO deve ser "Plano atual", deve exibir "Mudar para Anual"
+      const changeToAnnualBtn = await screen.findByRole('button', { name: /Mudar para Anual/i });
+      expect(changeToAnnualBtn).toBeInTheDocument();
+      expect(changeToAnnualBtn).not.toBeDisabled();
+
+      // "Seu plano" não deve ser exibido no card
+      expect(screen.queryByText('Seu plano')).not.toBeInTheDocument();
+    });
+
+    it('C) current = Essential annual & interval = annual: Essential mostra Plano atual', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryEssential,
+        subscription: {
+          ...mockSummaryEssential.subscription,
+          billingInterval: 'annual',
+        },
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-essential-annual"
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      // Clicar no toggle Anual
+      const annualToggle = await screen.findByRole('button', { name: /Anual/i });
+      await userEvent.click(annualToggle);
+
+      // No modo anual, Essential é o plano atual
+      const currentBtn = screen.getByRole('button', { name: /Plano atual/i });
+      expect(currentBtn).toBeInTheDocument();
+      expect(currentBtn).toBeDisabled();
+      expect(screen.getByText('Seu plano')).toBeInTheDocument();
+    });
+
+    it('D) current = Essential annual & interval = monthly: NÃO mostra Plano atual e bloqueia transição para mensal no mesmo plano', async () => {
+      const checkoutSpy = vi.spyOn(api, 'createBillingCheckout');
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryEssential,
+        subscription: {
+          ...mockSummaryEssential.subscription,
+          billingInterval: 'annual',
+        },
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-essential-annual"
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      // Toggle padrão é 'monthly'
+      expect(await screen.findByRole('heading', { level: 2, name: 'Essential' })).toBeInTheDocument();
+
+      // "Seu plano" NÃO deve ser exibido no card
+      expect(screen.queryByText('Seu plano')).not.toBeInTheDocument();
+
+      // O card do Essential deve exibir o botão bloqueado "Alteração para mensal indisponível"
+      const blockedBtn = screen.getByRole('button', { name: /Alteração para mensal indisponível/i });
+      expect(blockedBtn).toBeInTheDocument();
+      expect(blockedBtn).toBeDisabled();
+
+      // createBillingCheckout não deve ser chamado
+      expect(checkoutSpy).not.toHaveBeenCalled();
+    });
+
+    it('E) same-plan annual -> monthly: nenhuma billing intent criada pelo frontend', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryEssential,
+        subscription: {
+          ...mockSummaryEssential.subscription,
+          billingInterval: 'annual',
+        },
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-essential-annual"
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByRole('heading', { level: 2, name: 'Essential' })).toBeInTheDocument();
+      expect(sessionStorage.getItem('louvaio_checkout_intent')).toBeNull();
+    });
+
+    it('F) same-plan monthly -> annual: createBillingCheckout recebe planId essential e interval annual', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryEssential,
+        subscription: {
+          ...mockSummaryEssential.subscription,
+          billingInterval: 'monthly',
+        },
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      vi.spyOn(api, 'getBillingPreview').mockResolvedValue({
+        planId: 'essential',
+        planName: 'Essential',
+        interval: 'annual',
+        addonBlocks: 0,
+        effectiveMembersQuota: 40,
+        effectiveSongsQuota: 200,
+        basePriceCents: 37692,
+        addonsPriceCents: 0,
+        totalPriceCents: 37692,
+        fullMonthlyEquivalentCents: 3490,
+        annualSavingsCents: 4188,
+        currency: 'BRL',
+        currentPlanId: 'essential',
+        isDowngrade: false,
+      });
+
+      const createCheckoutSpy = vi.spyOn(api, 'createBillingCheckout').mockResolvedValue({
+        checkoutUrl: 'https://sandbox.asaas.com/c/chk_annual_123',
+        checkoutId: 'chk_annual_123',
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+      } as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-essential-monthly"
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      // 1. Mudar toggle para Anual
+      const annualToggle = await screen.findByRole('button', { name: /Anual/i });
+      await userEvent.click(annualToggle);
+
+      // 2. Clicar em Mudar para Anual no card Essential
+      const changeBtn = await screen.findByRole('button', { name: /Mudar para Anual/i });
+      await userEvent.click(changeBtn);
+
+      // 3. Confirmar no modal de preview
+      const confirmBtn = await screen.findByRole('button', { name: /Ir para Pagamento/i });
+      await userEvent.click(confirmBtn);
+
+      // 4. Deve ter chamado createBillingCheckout com essential e annual
+      expect(createCheckoutSpy).toHaveBeenCalledWith('min-essential-monthly', {
+        planId: 'essential',
+        interval: 'annual',
+        addonBlocks: 0,
+      });
+    });
+
+    it('G) Polling pós-checkout: não conclui enquanto backend retornar Essential monthly e conclui quando retornar Essential annual', async () => {
+      vi.useFakeTimers();
+
+      // Salva intenção no sessionStorage simulando retorno do checkout
+      sessionStorage.setItem(
+        'louvaio_checkout_intent',
+        JSON.stringify({
+          ministryId: 'min-polling-interval',
+          expectedPlanId: 'essential',
+          expectedInterval: 'annual',
+          expectedAddonBlocks: 0,
+          timestamp: Date.now(),
+        })
+      );
+
+      const mockEssentialMonthly = {
+        ...mockSummaryEssential,
+        subscription: {
+          ...mockSummaryEssential.subscription,
+          planId: 'essential',
+          billingInterval: 'monthly',
+          billingStatus: 'active',
+          subscriptionMode: 'paid',
+          memberAddonBlocks: 0,
+        },
+      };
+
+      const mockEssentialAnnual = {
+        ...mockSummaryEssential,
+        subscription: {
+          ...mockSummaryEssential.subscription,
+          planId: 'essential',
+          billingInterval: 'annual',
+          billingStatus: 'active',
+          subscriptionMode: 'paid',
+          memberAddonBlocks: 0,
+        },
+      };
+
+      const getSubSpy = vi.spyOn(api, 'getMinistrySubscription');
+      // Mount + Tick 1: backend ainda está em monthly
+      getSubSpy.mockResolvedValueOnce(mockEssentialMonthly as any);
+      getSubSpy.mockResolvedValueOnce(mockEssentialMonthly as any);
+      // Tick 2: webhook processado -> backend atualiza para annual
+      getSubSpy.mockResolvedValueOnce(mockEssentialAnnual as any);
+
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-polling-interval"
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      // Initial render
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+
+      // Banner de processamento deve estar visível
+      expect(screen.getByText('Pagamento em processamento')).toBeInTheDocument();
+
+      // 1º tick (2500ms): retorna Essential Monthly -> polling NÃO para!
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2500);
+      });
+      expect(screen.getByText('Pagamento em processamento')).toBeInTheDocument();
+      expect(mockShowToast).not.toHaveBeenCalledWith('Assinatura confirmada com sucesso!', 'success');
+
+      // 2º tick (2500ms): retorna Essential Annual -> polling ENCERRA com sucesso!
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2500);
+      });
+
+      // Polling deve ter finalizado com sucesso
+      expect(mockShowToast).toHaveBeenCalledWith('Assinatura confirmada com sucesso!', 'success');
+      expect(sessionStorage.getItem('louvaio_checkout_intent')).toBeNull();
+
+      vi.useRealTimers();
+    });
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getCurrentBillingDate, getBillingDate } from './billing-date';
+import { getCurrentBillingDate, getBillingDate, addCommercialInterval } from './billing-date';
 
 describe('getBillingDate & getCurrentBillingDate — Deterministic Timezone Billing Date Helper', () => {
   const timeZone = 'America/Sao_Paulo';
@@ -67,5 +67,27 @@ describe('getBillingDate & getCurrentBillingDate — Deterministic Timezone Bill
     const formatted = getBillingDate(cutoffDateIso, timeZone);
 
     expect(formatted).toBe('2026-09-29');
+  });
+
+  describe('addCommercialInterval — Calendar-Exact Addition', () => {
+    it('deve adicionar 1 mês civil respeitando fim de mês em meses de tamanhos diferentes', () => {
+      // 31 de janeiro em ano não bissexto -> 28 de fevereiro
+      expect(addCommercialInterval('2026-01-31', 'monthly', timeZone)).toBe('2026-02-28');
+      // 31 de janeiro em ano bissexto -> 29 de fevereiro
+      expect(addCommercialInterval('2024-01-31', 'monthly', timeZone)).toBe('2024-02-29');
+      // 31 de março -> 30 de abril
+      expect(addCommercialInterval('2026-03-31', 'monthly', timeZone)).toBe('2026-04-30');
+      // 15 de setembro -> 15 de outubro
+      expect(addCommercialInterval('2026-09-15', 'monthly', timeZone)).toBe('2026-10-15');
+      // 31 de dezembro -> 31 de janeiro do próximo ano
+      expect(addCommercialInterval('2026-12-31', 'monthly', timeZone)).toBe('2027-01-31');
+    });
+
+    it('deve adicionar 1 ano civil respeitando ano bissexto', () => {
+      // 29 de fevereiro de ano bissexto -> 28 de fevereiro do ano seguinte
+      expect(addCommercialInterval('2024-02-29', 'annual', timeZone)).toBe('2025-02-28');
+      // 15 de setembro de 2026 -> 15 de setembro de 2027
+      expect(addCommercialInterval('2026-09-15', 'annual', timeZone)).toBe('2027-09-15');
+    });
   });
 });
