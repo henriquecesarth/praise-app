@@ -32,6 +32,9 @@ export interface BillingSubscriptionRecord {
   started_at: string;
   current_period_start: string;
   current_period_end: string | null;
+  current_period_start_billing_date?: string;
+  current_period_end_billing_date?: string | null;
+  effective_billing_date?: string | null;
   cancel_at_period_end: boolean;
   checkout_url?: string | null;
   created_at: string;
@@ -198,20 +201,30 @@ export interface BillingEarlyActivationQuote {
 }
 
 export type BillingCheckoutAttemptType = 'initial_purchase' | 'future_authorization' | 'early_activation';
-export type BillingCheckoutAttemptStatus = 'pending' | 'completed' | 'expired' | 'canceled' | 'failed';
+export type BillingCheckoutAttemptStatus =
+  | 'pending'
+  | 'completed'
+  | 'expired'
+  | 'canceled'
+  | 'failed'
+  | 'uncertain'
+  | 'uncertain_expired';
 
 export interface BillingCheckoutAttempt {
   attempt_id: string;
   transition_id: string;
   attempt_type: BillingCheckoutAttemptType;
   internal_checkout_intent_id: string;
-  provider_checkout_id: string;
+  provider_checkout_id?: string | null;
   checkout_url?: string | null;
   quote_id?: string | null;
   amount_cents: number;
   currency: 'BRL';
   status: BillingCheckoutAttemptStatus;
   created_at: string;
+  checkout_requested_at?: string | null;
+  checkout_minutes_to_expire?: number | null;
+  uncertain_until?: string | null;
   expires_at?: string | null;
   completed_at?: string | null;
 }
@@ -279,12 +292,17 @@ export interface BillingTransitionV1Record {
   // Dates & Price Lock
   effective_at?: string | null;
   effective_billing_date?: string | null; // YYYY-MM-DD em America/Sao_Paulo (preenchido após confirmação para initial purchase)
+  current_period_start_billing_date?: string | null; // YYYY-MM-DD em America/Sao_Paulo
+  current_period_end_billing_date?: string | null; // YYYY-MM-DD em America/Sao_Paulo
   requested_commercial_date: string; // YYYY-MM-DD em America/Sao_Paulo travado em requested_at
   price_locked_at: string;
   requested_at: string;
   created_at: string;
   updated_at: string;
   expires_at: string | null;
+  checkout_requested_at?: string | null;
+  checkout_minutes_to_expire?: number | null;
+  uncertain_until?: string | null;
 
   // Active / Confirmed Provider Correlation References
   initial_checkout_intent_id?: string | null;
@@ -551,6 +569,7 @@ export interface BillingTransactionRecord {
   status: BillingTransactionStatus;
   due_date: string;
   paid_at: string | null;
+  paid_billing_date?: string | null;
   payment_method?: string | null;
   invoice_url?: string | null;
   created_at: string;

@@ -607,6 +607,8 @@ export function buildBillingTransitionV1Record(
 
     effective_at: commercialSnapshot.execution_strategy === 'immediate_initial_purchase' ? null : commercialSnapshot.effective_at,
     effective_billing_date: commercialSnapshot.execution_strategy === 'immediate_initial_purchase' ? null : commercialSnapshot.effective_billing_date,
+    current_period_start_billing_date: null,
+    current_period_end_billing_date: null,
     requested_commercial_date: getBillingDate(commercialSnapshot.price_locked_at, BILLING_TIMEZONE_DEFAULT),
     price_locked_at: commercialSnapshot.price_locked_at,
     requested_at: commercialSnapshot.price_locked_at,
@@ -620,4 +622,197 @@ export function buildBillingTransitionV1Record(
   };
 
   return validateBillingTransitionV1(record);
+}
+
+/**
+ * Gate conceitual explícito de validação pré-ativação de entitlement para Compra Inicial V1 (Free -> Paid).
+ * INITIAL_PURCHASE_PROVIDER_READY
+ *
+ * Exige:
+ * 1. Transição V1 íntegra com estratégia immediate_initial_purchase
+ * 2. Correlação inequívoca de checkout (externalReference / provider_checkout_id)
+ * 3. Correlação de cliente canônico (provider_customer_id)
+ * 4. Correlação de assinatura do provedor (provider_subscription_id)
+ * 5. Correlação de pagamento do provedor (provider_payment_id)
+ * 6. Status de pagamento liquidado aceito (CONFIRMED / RECEIVED)
+ * 7. Valor pago correspondente ao preço travado (amountCents === target_future_recurring_price_cents)
+ * 8. Moeda BRL
+ * 9. Ciclo correspondente ao intervalo contratado (monthly / annual)
+ * 10. Validade de data de renovação / vencimento
+ *
+ * Fail-Closed: se qualquer dimensão falhar, rejeita a ativação e retorna motivo estruturado.
+ */
+export function checkInitialPurchaseProviderReadiness(
+  params: import('./billing-transition-domain.types').InitialPurchaseProviderReadyParams
+): import('./billing-transition-domain.types').InitialPurchaseProviderReadyResult {
+  const { transition, parsedEvent, expectedAmountCents, expectedCurrency = 'BRL' } = params;
+
+  if (!transition || typeof transition !== 'object' || transition.policy_version !== 'billing_transition_v1') {
+    return {
+      ready: false,
+      reason: 'Transição inválida ou não é versão billing_transition_v1',
+      failureCode: 'INVALID_TRANSITION',
+    };
+  }
+
+  if (transition.execution_strategy !== 'immediate_initial_purchase') {
+    return {
+      ready: false,
+      reason: `Estratégia '${transition.execution_strategy}' incompatível com INITIAL_PURCHASE_PROVIDER_READY`,
+      failureCode: 'STRATEGY_MISMATCH',
+    };
+  }
+
+  // 1. Checkout Correlation Gate (Attempt-Scoped)
+  const knownIntents = new Set<string>();
+  if (transition.initial_checkout_intent_id) knownIntents.add(transition.initial_checkout_intent_id);
+  if (transition.checkout_intent_id) knownIntents.add(transition.checkout_intent_id);
+  if (transition.future_checkout_intent_id) knownIntents.add(transition.future_checkout_intent_id);
+  if (transition.checkout_attempts) {
+    for (const att of transition.checkout_attempts) {
+      if (att.internal_checkout_intent_id) knownIntents.add(att.internal_checkout_intent_id);
+    }
+  }
+
+  if (parsedEvent.externalReference && knownIntents.size > 0 && !knownIntents.has(parsedEvent.externalReference)) {
+    return {
+      ready: false,
+      reason: `externalReference recebido ('${parsedEvent.externalReference}') não pertence a nenhuma tentativa desta transição`,
+      failureCode: 'CHECKOUT_CORRELATION_FAILED',
+    };
+  }
+
+  const knownCheckoutIds = new Set<string>();
+  if (transition.initial_provider_checkout_id) knownCheckoutIds.add(transition.initial_provider_checkout_id);
+  if (transition.provider_checkout_id) knownCheckoutIds.add(transition.provider_checkout_id);
+  if (transition.future_provider_checkout_id) knownCheckoutIds.add(transition.future_provider_checkout_id);
+  if (transition.checkout_attempts) {
+    for (const att of transition.checkout_attempts) {
+      if (att.provider_checkout_id) knownCheckoutIds.add(att.provider_checkout_id);
+    }
+  }
+
+  if (parsedEvent.providerCheckoutId && knownCheckoutIds.size > 0 && !knownCheckoutIds.has(parsedEvent.providerCheckoutId)) {
+    return {
+      ready: false,
+      reason: `providerCheckoutId recebido ('${parsedEvent.providerCheckoutId}') não pertence a nenhuma tentativa desta transição`,
+      failureCode: 'CHECKOUT_CORRELATION_FAILED',
+    };
+  }
+
+  // 2. Customer Correlation Gate
+  if (
+    transition.provider_customer_id &&
+    parsedEvent.providerCustomerId &&
+    transition.provider_customer_id !== parsedEvent.providerCustomerId
+  ) {
+    return {
+      ready: false,
+      reason: `providerCustomerId recebido ('${parsedEvent.providerCustomerId}') diverge do cliente canônico esperado ('${transition.provider_customer_id}')`,
+      failureCode: 'CUSTOMER_MISMATCH',
+    };
+  }
+
+  // 3. Subscription Correlation Gate
+  if (!parsedEvent.providerSubscriptionId && !transition.initial_provider_subscription_id && !transition.new_provider_subscription_id) {
+    return {
+      ready: false,
+      reason: 'Identificador de assinatura do provedor ausente no evento e na transição',
+      failureCode: 'SUBSCRIPTION_CORRELATION_FAILED',
+    };
+  }
+
+  const expectedSubId = transition.initial_provider_subscription_id || transition.new_provider_subscription_id;
+  if (parsedEvent.providerSubscriptionId && expectedSubId && parsedEvent.providerSubscriptionId !== expectedSubId) {
+    return {
+      ready: false,
+      reason: `providerSubscriptionId recebido ('${parsedEvent.providerSubscriptionId}') diverge da assinatura travada ('${expectedSubId}')`,
+      failureCode: 'SUBSCRIPTION_CORRELATION_FAILED',
+    };
+  }
+
+  // 4. Payment Correlation Gate
+  if (!parsedEvent.providerPaymentId || !parsedEvent.providerPaymentId.trim()) {
+    return {
+      ready: false,
+      reason: 'Identificador de pagamento do provedor ausente ou inválido',
+      failureCode: 'PAYMENT_CORRELATION_FAILED',
+    };
+  }
+
+  // 5. Payment Settled Gate
+  const isSettledEventType = parsedEvent.eventType === 'payment_confirmed' || parsedEvent.eventType === 'payment_received';
+  if (!isSettledEventType) {
+    return {
+      ready: false,
+      reason: `Tipo de evento financeiro '${parsedEvent.eventType}' não é liquidado`,
+      failureCode: 'PAYMENT_NOT_SETTLED',
+    };
+  }
+
+  if (parsedEvent.status) {
+    const statusUpper = parsedEvent.status.toUpperCase();
+    const isSettledStatus = statusUpper === 'CONFIRMED' || statusUpper === 'RECEIVED';
+    if (!isSettledStatus) {
+      return {
+        ready: false,
+        reason: `Status de pagamento '${parsedEvent.status}' não é liquidado (esperado CONFIRMED ou RECEIVED)`,
+        failureCode: 'PAYMENT_NOT_SETTLED',
+      };
+    }
+  }
+
+  // 6. Amount Validation Gate
+  const paidAmountCents = parsedEvent.amountCents ?? expectedAmountCents;
+  if (paidAmountCents !== expectedAmountCents) {
+    return {
+      ready: false,
+      reason: `Valor pago (${paidAmountCents}¢) diverge do preço travado (${expectedAmountCents}¢)`,
+      failureCode: 'AMOUNT_MISMATCH',
+    };
+  }
+
+  // 7. Currency Gate
+  const eventCurrency = parsedEvent.currency || 'BRL';
+  if (eventCurrency !== expectedCurrency || transition.currency !== expectedCurrency) {
+    return {
+      ready: false,
+      reason: `Moeda '${eventCurrency}' diverge da moeda esperada '${expectedCurrency}'`,
+      failureCode: 'CURRENCY_MISMATCH',
+    };
+  }
+
+  // 8. Cycle / Interval Gate
+  if (parsedEvent.subscriptionCycle && parsedEvent.subscriptionCycle !== transition.target_interval) {
+    return {
+      ready: false,
+      reason: `Ciclo da assinatura no provedor ('${parsedEvent.subscriptionCycle}') diverge do contratado ('${transition.target_interval}')`,
+      failureCode: 'CYCLE_MISMATCH',
+    };
+  }
+
+  if (
+    parsedEvent.subscriptionValueCents !== undefined &&
+    parsedEvent.subscriptionValueCents !== expectedAmountCents
+  ) {
+    return {
+      ready: false,
+      reason: `Valor recorrente da assinatura no provedor (${parsedEvent.subscriptionValueCents}¢) diverge do contratado (${expectedAmountCents}¢)`,
+      failureCode: 'AMOUNT_MISMATCH',
+    };
+  }
+
+  // 9. Renewal / Due Date Validity Gate
+  if (parsedEvent.dueDate && typeof parsedEvent.dueDate === 'string') {
+    const dueDateClean = parsedEvent.dueDate.trim().substring(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDateClean)) {
+      return {
+        ready: false,
+        reason: `Data de vencimento/renovação com formato inválido: '${parsedEvent.dueDate}'`,
+        failureCode: 'RENEWAL_DATE_INVALID',
+      };
+    }
+  }
+
+  return { ready: true };
 }

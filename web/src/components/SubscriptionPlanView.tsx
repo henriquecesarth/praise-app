@@ -8,6 +8,7 @@ import {
   BillingTransactionRecord,
   PlanDefinition,
 } from '../types';
+import { formatDatePtBR } from '../utils/locale';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -244,16 +245,10 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
     return (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   };
 
-  // Formatação de datas em pt-BR
+  // Formatação de datas em pt-BR (segura para date-only sem deslocamento por timezone)
   const formatDateLocal = (dateStr?: string | null) => {
     if (!dateStr) return 'N/A';
-    try {
-      const parsed = new Date(dateStr);
-      if (isNaN(parsed.getTime())) return dateStr;
-      return parsed.toLocaleDateString('pt-BR');
-    } catch {
-      return dateStr;
-    }
+    return formatDatePtBR(dateStr) || dateStr;
   };
 
   // Status helper
@@ -1819,7 +1814,7 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
                           </div>
                           <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #A0AAB0)', marginTop: '3px' }}>
                             Vencimento: {formatDateLocal(tx.due_date)}
-                            {tx.paid_at ? ` · Pago em ${formatDateLocal(tx.paid_at)}` : ''}
+                            {tx.paid_billing_date || tx.paid_at ? ` · Pago em ${formatDateLocal(tx.paid_billing_date || tx.paid_at)}` : ''}
                           </div>
                           {tx.payment_method && (
                             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted, #7D8881)', marginTop: '2px' }}>

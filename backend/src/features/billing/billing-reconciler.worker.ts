@@ -2,6 +2,7 @@ import os from 'os';
 import { config } from '../../config/unifiedConfig';
 import { BillingService } from './billing.service';
 import { BillingRepository } from '../../repositories/BillingRepository';
+import { isBillingTransitionV1 } from './billing.types';
 
 export class BillingReconcilerWorker {
   private timer: NodeJS.Timeout | null = null;
@@ -62,8 +63,25 @@ export class BillingReconcilerWorker {
     let failed = 0;
 
     try {
-      const pendingChanges = await this.billingRepo.getPendingOrFailedPlanChanges('asaas', 20);
+      // 1. Reconciliação V1 Initial Purchase
+      const v1Needing = await this.billingRepo.getV1TransitionsNeedingReconciliation('asaas', 20);
+      for (const item of v1Needing) {
+        if (isBillingTransitionV1(item) && item.execution_strategy === 'immediate_initial_purchase') {
+          processed++;
+          const recResult = await this.billingService.reconcileInitialPurchaseTransition(item.id, this.workerId);
+          if (recResult.success) {
+            succeeded++;
+            console.log(
+              `[BillingReconcilerWorker] Transição V1 recuperada com sucesso: ${item.id} (ministério: ${item.ministry_id})`
+            );
+          } else {
+            failed++;
+          }
+        }
+      }
 
+      // 2. Reconciliação Legacy Supersede
+      const pendingChanges = await this.billingRepo.getPendingOrFailedPlanChanges('asaas', 20);
       for (const change of pendingChanges) {
         processed++;
         const result = await this.billingService.processPlanChangeSupersede(change.id, this.workerId);

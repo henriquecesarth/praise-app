@@ -122,3 +122,28 @@ export interface BuildBillingTransitionRecordParams {
   now?: Date | string;
   expiresAt?: string | null;
 }
+
+export interface InitialPurchaseProviderReadyParams {
+  transition: import('./billing.types').BillingTransitionV1Record;
+  parsedEvent: import('./providers/billing-provider.interface').ParsedWebhookEvent;
+  expectedAmountCents: number;
+  expectedCurrency?: 'BRL';
+}
+
+export interface InitialPurchaseProviderReadyResult {
+  ready: boolean;
+  reason?: string;
+  failureCode?:
+    | 'INVALID_TRANSITION'
+    | 'STRATEGY_MISMATCH'
+    | 'ATTEMPT_TYPE_MISMATCH'
+    | 'CHECKOUT_CORRELATION_FAILED'
+    | 'CUSTOMER_MISMATCH'
+    | 'SUBSCRIPTION_CORRELATION_FAILED'
+    | 'PAYMENT_CORRELATION_FAILED'
+    | 'AMOUNT_MISMATCH'
+    | 'CURRENCY_MISMATCH'
+    | 'CYCLE_MISMATCH'
+    | 'PAYMENT_NOT_SETTLED'
+    | 'RENEWAL_DATE_INVALID';
+}

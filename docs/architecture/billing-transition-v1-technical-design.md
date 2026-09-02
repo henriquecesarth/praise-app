@@ -476,27 +476,73 @@ Para garantir a invariante **No Two Live Renewals** e **No Unsafe Zero Renewals*
    - **Antes de qualquer chamada externa ao gateway (Asaas)**, a transição V1 é construída e gravada com a reivindicação do slot ativo exclusivo via `createTransitionAndClaimSlot`.
    - Se o slot estiver ocupado (`409 ACTIVE_TRANSITION_EXISTS`), a requisição é rejeitada sem gerar clientes, cobranças ou assinaturas no gateway.
    - Em seguida, o checkout hospedado é gerado com `externalReference = initial_checkout_intent_id`, e a tentativa é registrada em `checkout_attempts` via `recordNewCheckoutAttempt` com `attempt_type: 'initial_purchase'`.
-   - Se a chamada ao gateway falhar, a transição é marcada como `transition_status = 'failed'` (preservando rastro) e o erro é propagado.
+   - Se a criação falhar com `DEFINITE_NO_RESOURCE_CREATED` (ex: 400 Bad Request), a transição é marcada como `failed` e `safe_terminal`, liberando o slot.
+   - Se a criação falhar com `OUTCOME_UNCERTAIN` (ex: Timeout de rede, 500 Server Error): o slot permanece retido, a tentativa é registrada como `uncertain`, e a transição entra em `financial_attention_required = true` com reason `UNCERTAIN_CHECKOUT_CREATE_UNRESOLVED`.
 
-2. **Roteamento e Máquina de Estados de Webhooks V1**:
-   - Eventos de webhook com correlação identificada via `externalReference`, `providerCheckoutId` ou `providerSubscriptionId` verificam se a transição é V1 com estratégia `immediate_initial_purchase` e despacham exclusivamente para `handleV1InitialPurchaseWebhook`.
-   - `checkout_canceled` / `checkout_expired`: Marcam a transição como terminalmente segura (`safe_terminal` com status `canceled` ou `failed`) e liberam o active slot via `releaseSlotIfOwnedAndSafe`.
-   - `payment_confirmed` / `payment_received`: Atuam como o portão canônico de ativação financeira.
+2. **Timeout Expiry != Financial Safety Proof (Remoção de Retry por Tempo)**:
+   - O simples decurso de tempo (passagem de `uncertain_until` / TTL do checkout) **NÃO comprova** ausência de recurso financeiro criado no provedor.
+   - Após `uncertain_until`, o sistema **NÃO cria** novo checkout automaticamente via POST `/v3/checkouts`.
+   - Qualquer nova requisição do usuário sobre uma transição com criação incerta não resolvida é rejeitada com `409 Conflict: UNCERTAIN_CHECKOUT_UNRESOLVED`, mantendo o slot retido.
+   - Um novo checkout só é permitido mediante resolução inequívoca:
+     - Recepção de evento terminal do checkout da tentativa (`CHECKOUT_EXPIRED` / `CHECKOUT_CANCELED`) sem qualquer recurso financeiro associado.
+     - Resolução manual/operacional via painel ou reconciliador com auditoria confirmada.
 
-3. **Portão Canônico de Confirmação Financeira & Fail-Closed**:
-   - **Validação de Valor**: `paidAmountCents === target_future_recurring_price_cents`. Se divergente, aciona fail-closed marcando `financial_attention_required = true`, retém o slot e recusa a ativação de cotas.
-   - **Validação de Cliente**: O `providerCustomerId` recebido deve corresponder ao `provider_customer_id` registrado na transição.
-   - **Idempotência**: Se a transição já estiver `completed`, registra a transação financeira (se fornecida) e confirma o processamento sem reativar cotas.
+3. **Eventos de Checkout Escopados por Tentativa (Attempt-Scoped Events)**:
+   - Todo evento de checkout (`CHECKOUT_CREATED`, `CHECKOUT_PAID`, `CHECKOUT_EXPIRED`, `CHECKOUT_CANCELED`) é correlacionado à tentativa específica em `checkout_attempts`.
+   - **Current Attempt Guard**:
+     - Se `CHECKOUT_EXPIRED` ou `CHECKOUT_CANCELED` pertencer a uma tentativa anterior/antiga (`attempt_id !== current_initial_purchase_checkout_attempt_id`), apenas o registro histórico daquela tentativa é atualizado para `expired`/`canceled`. A transição global **NÃO** é marcada como `failed`/`canceled`, **NÃO** entra em `safe_terminal`, e o slot **NÃO** é liberado.
+   - **Stale Paid Event Guard**:
+     - Se `CHECKOUT_PAID` for recebido para uma tentativa antiga enquanto outra tentativa já existe como corrente, o evento **NUNCA** é ignorado silenciosamente: a transição é marcada como `financial_attention_required = true` com motivo `STALE_ATTEMPT_CHECKOUT_PAID`, e o slot permanece retido para auditoria humana sem reembolso automático cego.
+   - **Terminal Checkout Event Safety Guard**:
+     - Um evento `CHECKOUT_EXPIRED` ou `CHECKOUT_CANCELED` só transita o estado global para `failed`/`canceled` com `safe_terminal` e libera o slot se:
+       1. Pertencer à tentativa atual (`isCurrentAttempt === true`).
+       2. Não existir pagamento liquidado registrado na transição (`!initial_provider_payment_id`).
+       3. Não existir assinatura viva no provedor vinculada à transição.
+       4. Não houver atenção financeira pendente (`!financial_attention_required`).
+       5. A transição estiver em `pending_initial_purchase`.
+     - Caso contrário, aciona fail-closed (`TERMINAL_EVENT_WITH_SETTLED_PAYMENT_OR_SUBSCRIPTION`) retendo o slot.
 
-4. **Derivação Temporal de Período por Calendário Exato**:
-   - `current_period_start`: Instante real da confirmação do pagamento (`paymentConfirmationInstant`).
-   - `effective_billing_date`: Data comercial correspondente em `America/Sao_Paulo`.
-   - `current_period_end`: Derivado a partir de `dueDate` do gateway (se posterior à confirmação) ou calculado por adição de meses/anos civis exatos via `addCommercialInterval` (com clamping para fim de mês e anos bissextos: ex. 31/01 -> 28/02, 29/02/2024 -> 28/02/2025).
-   - Eliminação estrita de adições fixas de +30/+365 dias.
+4. **Fronteiras Comerciais de Período de Faturamento & Calendário Civil Exato**:
+   - **Separação Conceitual**:
+     - `effective_at`: Instante ISO operacional em que a ativação de cotas/entitlements ocorreu no LouvAIO.
+     - `effective_billing_date`: Data comercial financeira (`YYYY-MM-DD` em `America/Sao_Paulo`) confirmada pelo provedor como momento da liquidação financeira.
+     - `current_period_start_billing_date`: Data comercial de início do ciclo (idêntica a `effective_billing_date`).
+     - `current_period_end_billing_date`: Data comercial de renovação/término do ciclo.
+     - `current_period_start` / `current_period_end`: Timestamps ISO de compatibilidade legada derivados da data comercial financeira.
+   - **Resiliência a Webhook Atrasado**:
+     - Pagamento confirmado no provedor em `2026-09-01T23:55:00Z`, webhook processado em `2026-09-02T08:00:00Z` -> `effective_billing_date: '2026-09-01'`, `current_period_start_billing_date: '2026-09-01'`, `current_period_end_billing_date: '2026-10-01'` (mensal).
+   - **Clamping de Fim de Mês e Anos Bissextos**:
+     - `2026-01-31` mensal -> `2026-02-28`.
+     - `2024-02-29` anual -> `2025-02-28`.
 
-5. **Finalização Segura e Liberação do Slot**:
-   - `SubscriptionService` atualiza o plano e blocos de membros (única autoridade de cotas de produto).
-   - `BillingSubscriptionRecord` é materializado com status `active`.
-   - `confirmInitialPurchaseActivation` efetua a escrita atômica `write-once` fixando `effective_at`, `effective_billing_date`, `initial_provider_subscription_id`, `initial_provider_payment_id` e marcando `transition_status = 'completed'` e `financial_safety_status = 'safe_terminal'`.
-   - Apenas após `safe_terminal`, o slot determinístico é liberado via `releaseSlotIfOwnedAndSafe`.
-   - Em caso de exceção na ativação pós-pagamento, o sistema marca `financial_attention_required = true`, retém o slot para o reconciliador e NÃO libera acesso indevido nem estorna automaticamente.
+5. **Política de Validação Cruzada Exata de Renovação (Exact Next Due Date Cross-Check)**:
+   - A renovação comercial esperada é calculada estritamente via `expectedCommercialRenewalDate = addCommercialInterval(effective_billing_date, target_interval)`.
+   - Quando o gateway fornece `nextDueDate` (no payload do evento ou via fresh read `getSubscription`):
+     - `candidateNextDueDate` **DEVE corresponder EXATAMENTE** a `expectedCommercialRenewalDate`.
+     - Não se aceita apenas `candidateNextDueDate > effective_billing_date`.
+     - Qualquer divergência (ex: 3 meses para plano mensal, ou mesma data de liquidação) aciona **fail-closed imediato** com reason `RENEWAL_DATE_MISMATCH`, marcação de `financial_attention_required = true`, retenção do slot ativo e **bloqueio de ativação de cotas**.
+
+6. **Modelagem de Idempotência em Duas Camadas (Dual-Layer Idempotency)**:
+   - **Camada 1: Webhook Event Idempotency**:
+     - Autoridade: `provider_event_id` persistido na coleção `billing_webhook_events` com ID `${provider}_${provider_event_id}`.
+     - Registro em etapa síncrona pré-processamento.
+     - Se o documento já existir, a entrega é imediatamente classificada como duplicada (`isDuplicate = true`), retornando HTTP 200 com flag de duplicata e sem executar qualquer mutação de negócio ou promoção de entitlement.
+   - **Camada 2: Financial Transaction Idempotency**:
+     - Autoridade: `provider + provider_payment_id` persistido na coleção `billing_transactions` com ID `${provider}_${provider_payment_id}`.
+     - Múltiplos eventos ou retentativas associados ao mesmo pagamento do gateway (ex: `PAYMENT_CONFIRMED`, `PAYMENT_RECEIVED`) convergem deterministicamente para exatamente 1 registro lógico de transação financeira, preservando o `created_at` original.
+
+7. **Proveniência Temporal da Transação Financeira (Temporal Provenance)**:
+   - **Separação Explícita de Semântica**:
+     - `paid_billing_date`: Data comercial financeira confirmada pelo gateway de pagamento (`YYYY-MM-DD` em `America/Sao_Paulo`). É a autoridade para relatórios fiscais, DRE e agrupamento por dia financeiro.
+     - `paid_at`: Instante operacional em que o LouvAIO observou/processou o evento de pagamento (`ISO 8601`).
+   - Não há fabricação de horários artificiais (ex: `T00:00:00Z` ou `T12:00:00Z`) sobre a data comercial date-only fornecida pelo gateway.
+
+8. **Auditoria de Contrato de Entrada para Transições Paid -> Paid (Phase 3B Preview)**:
+   - A regra canônica para Paid -> Paid é:
+     `target recurrence -> Target Ready -> old recurrence cutover -> scheduled target`.
+   - Early activation é uma compra proporcional opcional e separada, não sendo pré-requisito para o agendamento da nova recorrência e cancelamento/cutover da antiga.
+   - Transições `Paid -> Paid` exigem:
+     - `source_plan_id !== 'free'` e `source_entitlement_snapshot` validado.
+     - Isolamento estrito contra cancelamento prematuro da assinatura de origem antes da confirmação da nova recorrência no provedor.
+     - Prorrogação / prorrogação proporcional (`prorated_adjustment_cents`) calculada exclusivamente via calendar dates.
+     - Escopo reservado para a Fase 3B.

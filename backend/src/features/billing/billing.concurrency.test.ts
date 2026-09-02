@@ -114,6 +114,9 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
       getPlanChange: vi.fn().mockImplementation(async (id: string) => {
         return mockPlanChangesStore.get(id) || null;
       }),
+      getTransitionById: vi.fn().mockImplementation(async (id: string) => {
+        return mockPlanChangesStore.get(id) || null;
+      }),
       setPlanChange: vi.fn().mockImplementation(async (change: any) => {
         mockPlanChangesStore.set(change.id, change);
       }),

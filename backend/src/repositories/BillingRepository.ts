@@ -795,6 +795,8 @@ export class BillingRepository {
     ministryId: string;
     effectiveAt: string;
     effectiveBillingDate: string;
+    currentPeriodStartBillingDate?: string;
+    currentPeriodEndBillingDate?: string;
     providerSubscriptionId: string;
     providerPaymentId?: string | null;
     providerCustomerId?: string | null;
@@ -805,6 +807,8 @@ export class BillingRepository {
       ministryId,
       effectiveAt,
       effectiveBillingDate,
+      currentPeriodStartBillingDate,
+      currentPeriodEndBillingDate,
       providerSubscriptionId,
       providerPaymentId = null,
       providerCustomerId = null,
@@ -818,14 +822,12 @@ export class BillingRepository {
       if (!doc.exists) {
         throw new AppError(404, `Transição '${transitionId}' não encontrada para confirmação de ativação.`);
       }
-
       const current = doc.data() as BillingPlanChangeRecord;
-      if (!isBillingTransitionV1(current)) {
-        throw new AppError(400, `Transição '${transitionId}' não é um registro V1.`);
-      }
-
       if (current.ministry_id !== ministryId) {
-        throw new AppError(403, 'Acesso não autorizado para esta transição.');
+        throw new AppError(403, 'Acesso não autorizado a esta transição de plano.');
+      }
+      if (!isBillingTransitionV1(current)) {
+        throw new AppError(400, 'confirmInitialPurchaseActivation suporta apenas transições V1.');
       }
 
       if (current.execution_strategy !== 'immediate_initial_purchase') {
@@ -872,6 +874,8 @@ export class BillingRepository {
         status: 'completed',
         effective_at: effectiveAt,
         effective_billing_date: effectiveBillingDate,
+        current_period_start_billing_date: currentPeriodStartBillingDate || effectiveBillingDate,
+        current_period_end_billing_date: currentPeriodEndBillingDate || current.current_period_end_billing_date || null,
         initial_provider_subscription_id: providerSubscriptionId,
         new_provider_subscription_id: providerSubscriptionId,
         initial_provider_payment_id: providerPaymentId || current.initial_provider_payment_id || null,
@@ -1104,7 +1108,23 @@ export class BillingRepository {
   }
 
   /**
-   * Bloqueia/Aluga atomicamente uma transição de plano para execução de retry seguro contra concorrência multi-instância
+   * Busca transições V1 que necessitam de reconciliação (resultado incerto, atenção financeira ou pendentes)
+   */
+  async getV1TransitionsNeedingReconciliation(
+    provider: BillingProviderName,
+    limitCount: number = 20
+  ): Promise<BillingPlanChangeRecord[]> {
+    const snapshot = await this.planChangesCollection
+      .where('provider', '==', provider)
+      .where('financial_attention_required', '==', true)
+      .limit(limitCount)
+      .get();
+
+    return snapshot.docs.map((doc: any) => doc.data() as BillingPlanChangeRecord);
+  }
+
+  /**
+   * Bloqueia/Aluga atomicamente uma transição de plano para reconciliação ou retry seguro contra concorrência multi-instância
    */
   async claimPlanChangeForRetry(
     id: string,
@@ -1152,6 +1172,50 @@ export class BillingRepository {
   }
 
   /**
+   * Bloqueia/Aluga atomicamente uma transição V1 para reconciliação automática
+   */
+  async claimTransitionForReconciliation(
+    id: string,
+    lockWorkerId: string,
+    lockDurationMs: number = 60000
+  ): Promise<BillingTransitionV1Record | null> {
+    const docRef = this.planChangesCollection.doc(id);
+
+    return await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      if (!doc.exists) return null;
+
+      const data = doc.data() as BillingPlanChangeRecord;
+      if (!isBillingTransitionV1(data)) return null;
+
+      // Se a transição já for terminal segura e não tiver pendências financeiras, skip
+      if (data.financial_safety_status === 'safe_terminal' && data.transition_status === 'completed') {
+        return null;
+      }
+
+      const now = Date.now();
+      if (data.retry_locked_until) {
+        const lockUntil = new Date(data.retry_locked_until).getTime();
+        if (lockUntil > now && data.retry_locked_by !== lockWorkerId) {
+          return null;
+        }
+      }
+
+      const updatedRecord: BillingTransitionV1Record = {
+        ...data,
+        retry_locked_until: new Date(now + lockDurationMs).toISOString(),
+        retry_locked_by: lockWorkerId,
+        retry_count: (data.retry_count || 0) + 1,
+        last_retry_at: new Date(now).toISOString(),
+        updated_at: new Date(now).toISOString(),
+      };
+
+      t.set(docRef, updatedRecord, { merge: true });
+      return updatedRecord;
+    });
+  }
+
+  /**
    * Libera o bloqueio de uma transição de plano
    */
   async releasePlanChangeLock(id: string): Promise<void> {
@@ -1170,8 +1234,47 @@ export class BillingRepository {
   // Transactions
   // --------------------------------------------------------------------------
 
+  async getTransaction(provider: BillingProviderName, providerPaymentId: string): Promise<BillingTransactionRecord | null> {
+    const docId = `${provider}_${providerPaymentId}`;
+    const doc = await this.transactionsCollection.doc(docId).get();
+    if (doc.exists) {
+      return doc.data() as BillingTransactionRecord;
+    }
+    return null;
+  }
+
   async saveTransaction(transaction: BillingTransactionRecord): Promise<void> {
-    await this.transactionsCollection.doc(transaction.id).set(transaction, { merge: true });
+    const docRef = this.transactionsCollection.doc(transaction.id);
+    await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      if (doc.exists) {
+        const existing = doc.data() as BillingTransactionRecord;
+
+        // Proteção Canônica de Data Financeira (Imutabilidade de paid_billing_date)
+        if (
+          existing.paid_billing_date &&
+          transaction.paid_billing_date &&
+          existing.paid_billing_date !== transaction.paid_billing_date
+        ) {
+          throw new AppError(
+            409,
+            `Conflito de data financeira comercial para a transação ${transaction.id}: existente (${existing.paid_billing_date}) diverge da recebida (${transaction.paid_billing_date}).`,
+            { code: 'CONFLICTING_FINANCIAL_DATE' }
+          );
+        }
+
+        const merged: BillingTransactionRecord = {
+          ...existing,
+          ...transaction,
+          paid_billing_date: existing.paid_billing_date || transaction.paid_billing_date || null,
+          created_at: existing.created_at || transaction.created_at,
+          updated_at: transaction.updated_at || new Date().toISOString(),
+        };
+        t.set(docRef, merged, { merge: true });
+      } else {
+        t.set(docRef, transaction, { merge: true });
+      }
+    });
   }
 
   async getTransactions(ministryId: string, limitCount: number = 50): Promise<BillingTransactionRecord[]> {

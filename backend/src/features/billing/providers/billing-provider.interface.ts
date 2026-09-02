@@ -16,6 +16,8 @@ export type NormalizedWebhookEventType =
   | 'checkout_expired'
   | 'unknown';
 
+export type ProviderErrorOutcome = 'DEFINITE_NO_RESOURCE_CREATED' | 'OUTCOME_UNCERTAIN';
+
 export interface ParsedWebhookEvent {
   providerEventId: string;
   eventType: NormalizedWebhookEventType;
@@ -26,11 +28,16 @@ export interface ParsedWebhookEvent {
   providerPaymentId?: string;
   externalReference?: string;
   amountCents?: number;
+  currency?: string;
   paymentMethod?: string;
   dueDate?: string;
   paymentDate?: string;
+  confirmedDate?: string;
   invoiceUrl?: string;
   status?: string;
+  subscriptionCycle?: BillingInterval;
+  subscriptionValueCents?: number;
+  subscriptionNextDueDate?: string;
 }
 
 export interface ProviderPaymentRecord {
@@ -47,6 +54,8 @@ export interface ProviderPaymentRecord {
 export interface BillingProvider {
   readonly name: BillingProviderName;
 
+  classifyErrorOutcome?(error: any): ProviderErrorOutcome;
+
   createCustomer(params: {
     ministryId: string;
     ministryName: string;
@@ -55,7 +64,28 @@ export interface BillingProvider {
     phone?: string;
   }): Promise<{ providerCustomerId: string }>;
 
+  updateCustomer?(
+    providerCustomerId: string,
+    params: { name?: string; email?: string; phone?: string; taxId?: string }
+  ): Promise<void>;
+
   findCustomerByExternalReference?(externalReference: string): Promise<{ providerCustomerId: string } | null>;
+
+  findSubscriptionByExternalReference?(externalReference: string): Promise<{
+    providerSubscriptionId: string;
+    providerCustomerId?: string;
+    status: string;
+    valueCents: number;
+    cycle?: string;
+    nextDueDate?: string;
+  } | null>;
+
+  findCheckoutByExternalReference?(externalReference: string): Promise<{
+    checkoutId: string;
+    checkoutUrl: string;
+    expiresAt: string | null;
+    status?: string;
+  } | null>;
 
   createCheckout(params: {
     ministryId: string;

@@ -272,6 +272,7 @@ export interface BillingTransactionRecord {
   status: 'pending' | 'paid' | 'overdue' | 'refunded' | 'canceled' | 'failed';
   due_date: string;
   paid_at: string | null;
+  paid_billing_date?: string | null;
   payment_method?: string | null;
   invoice_url?: string | null;
   created_at: string;

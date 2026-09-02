@@ -583,6 +583,59 @@ describe('SubscriptionPlanView Component', () => {
     expect(invoiceLink).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
+  it('deve priorizar paid_billing_date comercial (01/09/2026) sem deslocamento UTC e manter fallback legacy para paid_at', async () => {
+    vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryEssential as any);
+    vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+    vi.spyOn(api, 'getBillingHistory').mockResolvedValue({
+      transactions: [
+        {
+          id: 'tx-commercial-date',
+          ministry_id: 'min-123',
+          provider: 'asaas',
+          provider_payment_id: 'pay_commercial_1',
+          amount_cents: 1490,
+          currency: 'BRL',
+          status: 'paid',
+          due_date: '2026-09-01',
+          paid_at: '2026-09-02T01:00:00Z', // Instante operacional em D+1
+          paid_billing_date: '2026-09-01', // Data comercial em D
+          created_at: '2026-09-02T01:00:00Z',
+          updated_at: '2026-09-02T01:00:00Z',
+        },
+        {
+          id: 'tx-legacy',
+          ministry_id: 'min-123',
+          provider: 'asaas',
+          provider_payment_id: 'pay_legacy_1',
+          amount_cents: 1490,
+          currency: 'BRL',
+          status: 'paid',
+          due_date: '2026-08-30',
+          paid_at: '2026-08-30T15:00:00.000Z',
+          created_at: '2026-08-30T14:00:00.000Z',
+          updated_at: '2026-08-30T15:00:00.000Z',
+        },
+      ],
+    });
+
+    render(
+      <SubscriptionPlanView
+        ministryId="min-123"
+        onBack={mockOnBack}
+        showToast={mockShowToast}
+      />
+    );
+
+    const faturasBtn = await screen.findByRole('button', { name: /Faturas/i });
+    await userEvent.click(faturasBtn);
+
+    expect(await screen.findByText('Histórico de Faturas')).toBeInTheDocument();
+    // Transação com paid_billing_date exibe 01/09/2026 (mesmo com paid_at em 02/09)
+    expect(screen.getByText(/Vencimento: 01\/09\/2026 · Pago em 01\/09\/2026/i)).toBeInTheDocument();
+    // Transação legada sem paid_billing_date exibe fallback de paid_at (30/08/2026)
+    expect(screen.getByText(/Vencimento: 30\/08\/2026 · Pago em 30\/08\/2026/i)).toBeInTheDocument();
+  });
+
   it('CRÍTICO: Polling valida billingInterval e evita falso positivo em upgrade de periodicidade (Lite monthly -> Lite annual)', async () => {
     vi.useFakeTimers();
 

@@ -7,6 +7,7 @@ import {
   ParsedWebhookEvent,
   NormalizedWebhookEventType,
   ProviderPaymentRecord,
+  ProviderErrorOutcome,
 } from '../billing-provider.interface';
 import { AppError } from '../../../../middleware/error-handler';
 import { getCurrentBillingDate } from '../../../../utils/billing-date';
@@ -23,6 +24,45 @@ export class AsaasBillingProvider implements BillingProvider {
     this.apiUrl = (options && 'apiUrl' in options ? (options.apiUrl || '') : config.asaas.apiUrl).replace(/\/+$/, '');
     this.apiKey = options && 'apiKey' in options ? options.apiKey : config.asaas.apiKey;
     this.webhookToken = options && 'webhookToken' in options ? options.webhookToken : config.asaas.webhookToken;
+  }
+
+  /**
+   * Classifica se uma falha na chamada de criação de recurso é definitiva
+   * (certeza de que nenhum recurso financeiro foi gerado no provedor) ou incerta (timeout, 5xx, perda de conexão).
+   */
+  classifyErrorOutcome(error: any): ProviderErrorOutcome {
+    if (!error) {
+      return 'DEFINITE_NO_RESOURCE_CREATED';
+    }
+
+    if (error instanceof AppError) {
+      // 4xx client errors (ex: 400 Bad Request por validação de parâmetros, 401, 403, 404, 422)
+      // indicam que o gateway rejeitou a requisição antes de processar/criar qualquer recurso financeiro.
+      if (error.statusCode >= 400 && error.statusCode < 500 && error.statusCode !== 408) {
+        return 'DEFINITE_NO_RESOURCE_CREATED';
+      }
+      return 'OUTCOME_UNCERTAIN';
+    }
+
+    const message = (error.message || '').toLowerCase();
+    const code = (error.code || '').toLowerCase();
+
+    // Erros de rede, timeout, socket hangup ou abort são intrinsecamente incertos
+    if (
+      code === 'etimedout' ||
+      code === 'econnreset' ||
+      code === 'econnrefused' ||
+      code === 'aborterror' ||
+      code === 'und_err_connect_timeout' ||
+      message.includes('timeout') ||
+      message.includes('network') ||
+      message.includes('econnreset') ||
+      message.includes('fetch failed')
+    ) {
+      return 'OUTCOME_UNCERTAIN';
+    }
+
+    return 'OUTCOME_UNCERTAIN';
   }
 
   /**
@@ -51,6 +91,7 @@ export class AsaasBillingProvider implements BillingProvider {
           email: params.email,
           cpfCnpj: params.taxId,
           phone: params.phone,
+          mobilePhone: params.phone,
           externalReference: params.ministryId,
           notificationDisabled: false,
         }),
@@ -67,6 +108,37 @@ export class AsaasBillingProvider implements BillingProvider {
     } catch (err: any) {
       if (err instanceof AppError) throw err;
       throw new AppError(500, `Falha de comunicação com gateway Asaas: ${err.message}`);
+    }
+  }
+
+  /**
+   * Atualiza os dados de um cliente existente no Asaas
+   */
+  async updateCustomer(
+    providerCustomerId: string,
+    params: { name?: string; email?: string; phone?: string; taxId?: string }
+  ): Promise<void> {
+    if (!this.apiKey) return;
+    try {
+      const response = await fetch(`${this.apiUrl}/customers/${providerCustomerId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          access_token: this.apiKey,
+        },
+        body: JSON.stringify({
+          ...(params.name ? { name: params.name } : {}),
+          ...(params.email ? { email: params.email } : {}),
+          ...(params.phone ? { phone: params.phone, mobilePhone: params.phone } : {}),
+          ...(params.taxId ? { cpfCnpj: params.taxId } : {}),
+        }),
+      });
+      if (!response.ok) {
+        const errBody = (await response.json().catch(() => ({}))) as any;
+        console.warn(`[ASAAS PROVIDER] Falha ao atualizar customer ${providerCustomerId}:`, errBody);
+      }
+    } catch (err: any) {
+      console.warn(`[ASAAS PROVIDER] Erro ao atualizar customer ${providerCustomerId}:`, err.message);
     }
   }
 
@@ -107,6 +179,62 @@ export class AsaasBillingProvider implements BillingProvider {
     } catch (err: any) {
       if (err instanceof AppError) throw err;
       throw new AppError(500, `Falha de comunicação ao buscar cliente por externalReference no Asaas: ${err.message}`);
+    }
+  }
+
+  /**
+   * Localiza uma assinatura existente no Asaas pelo externalReference (checkoutIntentId)
+   */
+  async findSubscriptionByExternalReference(externalReference: string): Promise<{
+    providerSubscriptionId: string;
+    providerCustomerId?: string;
+    status: string;
+    valueCents: number;
+    cycle?: string;
+    nextDueDate?: string;
+  } | null> {
+    if (!this.apiKey) {
+      throw new AppError(500, 'Gateway Asaas não configurado.');
+    }
+
+    try {
+      const queryParams = new URLSearchParams({
+        externalReference,
+        limit: '5',
+      });
+
+      const response = await fetch(`${this.apiUrl}/subscriptions?${queryParams.toString()}`, {
+        headers: {
+          access_token: this.apiKey,
+        },
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) return null;
+        throw new AppError(500, `Falha ao buscar assinatura por externalReference no Asaas (HTTP ${response.status})`);
+      }
+
+      const data = (await response.json()) as any;
+      const items = Array.isArray(data.data) ? data.data : [];
+      const validSub = items.find((s: any) => s.externalReference === externalReference && s.status !== 'DELETED');
+
+      if (validSub && validSub.id) {
+        const rawValue = validSub.value !== undefined ? Number(validSub.value) : 0;
+        const valueCents = !isNaN(rawValue) ? Math.round(rawValue * 100) : 0;
+        return {
+          providerSubscriptionId: validSub.id,
+          providerCustomerId: validSub.customer,
+          status: validSub.status,
+          valueCents,
+          cycle: validSub.cycle,
+          nextDueDate: validSub.nextDueDate,
+        };
+      }
+
+      return null;
+    } catch (err: any) {
+      if (err instanceof AppError) throw err;
+      throw new AppError(500, `Falha de comunicação ao buscar assinatura por externalReference no Asaas: ${err.message}`);
     }
   }
 
@@ -522,18 +650,32 @@ export class AsaasBillingProvider implements BillingProvider {
       return false;
     }
 
-    const receivedToken = headers['asaas-access-token'] ?? headers['asaas_access_token'];
+    const headerKeys = Object.keys(headers || {});
+    const tokenHeaderKey = headerKeys.find(
+      (k) => k.toLowerCase() === 'asaas-access-token' || k.toLowerCase() === 'asaas_access_token'
+    );
+    const receivedToken = tokenHeaderKey ? headers[tokenHeaderKey] : (headers['asaas-access-token'] ?? headers['asaas_access_token']);
 
     if (!receivedToken || typeof receivedToken !== 'string') {
+      console.warn('[ASAAS WEBHOOK AUTH] Cabeçalho de token de webhook ausente ou inválido.', {
+        headerKeys: headerKeys.filter((k) => !k.toLowerCase().includes('secret')),
+      });
       return false;
     }
 
-    const receivedBuf = Buffer.from(receivedToken);
-    const expectedBuf = Buffer.from(this.webhookToken);
+    const cleanReceived = receivedToken.trim();
+    const cleanExpected = this.webhookToken.trim();
 
-    if (receivedBuf.length !== expectedBuf.length) {
+    if (cleanReceived.length !== cleanExpected.length) {
+      console.warn('[ASAAS WEBHOOK AUTH] Divergência no comprimento do token.', {
+        receivedLength: cleanReceived.length,
+        expectedLength: cleanExpected.length,
+      });
       return false;
     }
+
+    const receivedBuf = Buffer.from(cleanReceived);
+    const expectedBuf = Buffer.from(cleanExpected);
 
     return crypto.timingSafeEqual(receivedBuf, expectedBuf);
   }
@@ -631,6 +773,27 @@ export class AsaasBillingProvider implements BillingProvider {
     const valueNumber = rawValue !== undefined ? Number(rawValue) : undefined;
     const amountCents = valueNumber !== undefined && !isNaN(valueNumber) ? Math.round(valueNumber * 100) : undefined;
 
+    let subscriptionCycle: BillingInterval | undefined;
+    if (subscription.cycle === 'YEARLY') {
+      subscriptionCycle = 'annual';
+    } else if (subscription.cycle === 'MONTHLY') {
+      subscriptionCycle = 'monthly';
+    }
+
+    const subRawValue = subscription.value !== undefined ? Number(subscription.value) : undefined;
+    const subscriptionValueCents = subRawValue !== undefined && !isNaN(subRawValue) ? Math.round(subRawValue * 100) : undefined;
+    const subscriptionNextDueDate = typeof subscription.nextDueDate === 'string' && subscription.nextDueDate.trim() ? subscription.nextDueDate.trim() : undefined;
+
+    const confirmedDate =
+      (typeof payment.confirmedDate === 'string' && payment.confirmedDate.trim() ? payment.confirmedDate.trim() : undefined) ||
+      (typeof payment.paymentDate === 'string' && payment.paymentDate.trim() ? payment.paymentDate.trim() : undefined) ||
+      (typeof payment.clientPaymentDate === 'string' && payment.clientPaymentDate.trim() ? payment.clientPaymentDate.trim() : undefined);
+
+    const paymentDate =
+      (typeof payment.paymentDate === 'string' && payment.paymentDate.trim() ? payment.paymentDate.trim() : undefined) ||
+      (typeof payment.confirmedDate === 'string' && payment.confirmedDate.trim() ? payment.confirmedDate.trim() : undefined) ||
+      (typeof payment.clientPaymentDate === 'string' && payment.clientPaymentDate.trim() ? payment.clientPaymentDate.trim() : undefined);
+
     return {
       providerEventId,
       eventType,
@@ -641,11 +804,16 @@ export class AsaasBillingProvider implements BillingProvider {
       providerPaymentId,
       externalReference,
       amountCents,
+      currency: 'BRL',
       paymentMethod: payment.billingType || subscription.billingType,
       dueDate: payment.dueDate || subscription.nextDueDate,
-      paymentDate: payment.paymentDate || payment.confirmedDate,
+      paymentDate,
+      confirmedDate,
       invoiceUrl: payment.invoiceUrl,
       status: payment.status || subscription.status || checkout.status,
+      subscriptionCycle,
+      subscriptionValueCents,
+      subscriptionNextDueDate,
     };
   }
 }

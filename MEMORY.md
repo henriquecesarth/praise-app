@@ -103,7 +103,13 @@ O backend usa Vitest para testes unitários e de integração cobrindo motor de 
 - Alias groups/ministry e campos snake_case/camelCase coexistem por compatibilidade.
 - Versão mínima suportada de Node/npm: Unknown / Not yet verified.
 
-- Política de Transições de Assinatura V1 (ADR 2026-09-01 Revisado): Period-Paid Principle & Separação de Estados (`Asaas subscription != LouvAIO entitlement`). Todo período pago pertence ao cliente até `current_period_end`. Upgrades de plano utilizam a arquitetura `RECURRENCE_FIRST` (autorização da renovação futura do plano alvo em `current_period_end` + oferta opcional de compra de acesso antecipado via ajuste proporcional). Downgrades, reduções de add-ons e trocas de periodicidade (mensal/anual) permanecem agendados para `current_period_end` sem perda antecipada de entitlement nem cobrança sobreposta. Price lock na solicitação. Descoberta de Provedor concluída e homologada em Sandbox (Phase 0A, 0B.1 e 0B.2B concluídas). Phase 1 (Modelo de Persistência, Slot Ativo Determinístico e Invariantes Transacionais) implementada.
+- Política de Transições de Assinatura V1 (ADR 2026-09-01 Revisado): Period-Paid Principle & Separação de Estados (`Asaas subscription != LouvAIO entitlement`). Todo período pago pertence ao cliente até `current_period_end`. Upgrades de plano utilizam a arquitetura `RECURRENCE_FIRST` (autorização da renovação futura do plano alvo em `current_period_end` + oferta opcional de compra de acesso antecipado via ajuste proporcional). Downgrades, reduções de add-ons e trocas de periodicidade (mensal/anual) permanecem agendados para `current_period_end` sem perda antecipada de entitlement nem cobrança sobreposta. Price lock na solicitação.
+- Billing Transition V1 Status:
+  - Phase 1 (Modelo de Persistência, Slot Ativo Determinístico, Invariantes e Attempts): COMPLETE.
+  - Phase 2 (Domain Services, Validações Pré-Checkout, Quotas e Quotes V1): COMPLETE.
+  - Phase 3A (Free -> Paid V1 Initial Purchase): CLOSED AND SANDBOX HOMOLOGATED (Saga completa ponta a ponta homologada no Asaas Sandbox com checkout hospedado, webhooks reais, dupla camada de idempotência de evento e transação financeira, proveniência temporal exata com `paid_billing_date`, liberação determinística do slot ativo e persistência de `safe_terminal`).
+  - Billing Sandbox Bootstrap: READY (Versão 1.1 com isolamento de ambiente, ciclo de vida de processos filhos, supervisão contínua do Quick Tunnel e sincronização idempotente de webhooks).
+  - Phase 3B (Paid -> Paid Transitions: Upgrades Imediatos com Pró-rata e Alterações Agendadas de Ciclo): NOT STARTED (Políticas e domínio preparados, orquestração não iniciada).
 
 ## Known Issues and Implementation Gaps
 

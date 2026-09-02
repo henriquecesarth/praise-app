@@ -153,12 +153,17 @@ describe('BillingService & Gateway Automation Tests', () => {
       getPayment: vi.fn().mockResolvedValue(null),
     };
 
+    const mockUserRepo = {
+      findById: vi.fn().mockResolvedValue({ id: 'usr-1', name: 'Admin', email: 'admin@louvaio.local' }),
+    };
+
     billingService = new BillingService(
       mockBillingRepo as unknown as BillingRepository,
       mockSubscriptionService as unknown as SubscriptionService,
       mockSubscriptionRepo as unknown as SubscriptionRepository,
       mockMinistryRepo as unknown as MinistryRepository,
-      mockProvider
+      mockProvider,
+      mockUserRepo as any
     );
   });
 
