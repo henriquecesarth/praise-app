@@ -29,6 +29,9 @@ export interface MinistrySubscriptionRecord {
   current_period_start: string;
   current_period_end: string | null;
   cancel_at_period_end: boolean;
+  locked_member_quota?: QuotaLimit | null;
+  locked_song_quota?: QuotaLimit | null;
+  entitlement_snapshot?: any | null;
   created_at: string;
   updated_at: string;
 }

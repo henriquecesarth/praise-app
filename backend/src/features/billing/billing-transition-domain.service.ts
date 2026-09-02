@@ -342,13 +342,27 @@ export function buildTransitionCommercialSnapshot(
   // Base de comparação para pró-rata: capacidades de destino no ciclo da origem
   const targetCurrentCyclePrice = calculatePlanPriceCents(target.plan_id, source.interval, target.addon_blocks);
 
+  const sourcePlanDef = getPlanDefinition(source.plan_id);
+  const targetPlanDef = getPlanDefinition(target.plan_id);
+
   const sourceEntitlementSnapshot: EntitlementSnapshot = {
     plan_id: source.plan_id,
     addon_blocks: source.addon_blocks,
+    interval: source.interval,
+    effective_member_quota: getEffectiveMemberQuota(sourcePlanDef, source.addon_blocks),
+    effective_song_quota: getEffectiveSongQuota(sourcePlanDef),
+  };
+
+  const targetEntitlementSnapshot: EntitlementSnapshot = {
+    plan_id: target.plan_id,
+    addon_blocks: target.addon_blocks,
+    interval: target.interval,
+    effective_member_quota: getEffectiveMemberQuota(targetPlanDef, target.addon_blocks),
+    effective_song_quota: getEffectiveSongQuota(targetPlanDef),
   };
 
   const earlyActivationTargetSnapshot: EntitlementSnapshot | null = classification.early_activation_eligible
-    ? { plan_id: target.plan_id, addon_blocks: target.addon_blocks }
+    ? targetEntitlementSnapshot
     : null;
 
   return {
@@ -372,6 +386,7 @@ export function buildTransitionCommercialSnapshot(
     target_addon_blocks: target.addon_blocks,
     target_future_recurring_price_cents: targetRecurringPrice.totalPriceCents,
     target_current_cycle_total_cents: targetCurrentCyclePrice.totalPriceCents,
+    target_entitlement_snapshot: targetEntitlementSnapshot,
     early_activation_target_entitlement_snapshot: earlyActivationTargetSnapshot,
 
     currency: 'BRL',
@@ -605,6 +620,7 @@ export function buildBillingTransitionV1Record(
     target_interval: commercialSnapshot.target_interval,
     target_addon_blocks: commercialSnapshot.target_addon_blocks,
     target_future_recurring_price_cents: commercialSnapshot.target_future_recurring_price_cents,
+    target_entitlement_snapshot: commercialSnapshot.target_entitlement_snapshot || null,
     early_activation_target_entitlement_snapshot: commercialSnapshot.early_activation_target_entitlement_snapshot,
 
     effective_at: commercialSnapshot.execution_strategy === 'immediate_initial_purchase' ? null : commercialSnapshot.effective_at,

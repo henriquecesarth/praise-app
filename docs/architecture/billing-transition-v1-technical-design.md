@@ -133,27 +133,27 @@ export const ACTIVE_TRANSITION_STATES: BillingPlanChangeStatus[] = [
 ```mermaid
 stateDiagram-v2
     [*] --> pending_checkout : createCheckout()
-    
+
     %% Free -> Paid
     pending_checkout --> completed : payment_confirmed (Free -> Paid)
-    
+
     %% Caminho 1: Scheduled Change (Downgrade / Interval Change / Addon Decrease)
     pending_checkout --> awaiting_old_inactivation : subscription_created (nextDueDate futuro)
     awaiting_old_inactivation --> scheduled : inactivateSubscription(old) confirmada
     scheduled --> waiting_effective_payment : now >= effective_at (fatura emitida)
     waiting_effective_payment --> completed : payment_confirmed (now >= effective_at)
-    
+
     %% Caminho 2: Immediate Entitlement Upgrade (Upgrades / Addon Increases / Híbridos)
     pending_checkout --> upgrade_adjustment_pending : checkout de ajuste criado
     upgrade_adjustment_pending --> upgrade_adjustment_confirmed : payment_confirmed do ajuste (Entitlement Promovido Imediatamente)
     upgrade_adjustment_confirmed --> waiting_effective_renewal : now >= effective_at (fatura integral de renovação)
     waiting_effective_renewal --> completed : payment_confirmed (renovação integral confirmada)
-    
+
     %% Cancelamento e Substituição
     scheduled --> canceled : cancelScheduledChange()
     scheduled --> superseded : replaceScheduledChange()
     upgrade_adjustment_confirmed --> canceled : cancel_at_period_end após upgrade (mantém Pro até period_end)
-    
+
     %% Exceções Financeiras
     waiting_effective_payment --> financial_attention_required : payment recebido com now < effective_at
     waiting_effective_payment --> failed : payment_overdue + grace expirado
@@ -557,9 +557,10 @@ Para garantir as invariantes **No Two Live Renewals**, **No Unsafe Zero Renewals
    - Não há fabricação de horários artificiais (ex: `T00:00:00Z` ou `T12:00:00Z`) sobre a data comercial date-only fornecida pelo gateway.
 
 8. **Orquestração de Transição Paid -> Paid V1 (Phase 3B: Scheduled Paid Transition & Old Recurrence Cutover)**:
-   - **Status**: **PHASE 3B.1 COMPLETE, PHASE 3B.2 COMPLETE, PAID -> PAID CLEAN END-TO-END SANDBOX HOMOLOGATED**.
+8. **Orquestração de Transição Paid -> Paid V1 (Phase 3B: Scheduled Paid Transition & Old Recurrence Cutover)**:
+   - **Status**: **PHASE 3B.1 COMPLETE, PHASE 3B.2 COMPLETE, PHASE 3B.3A IMPLEMENTED**.
    - **Regra Canônica de Transição**:
-     `target recurrence -> Target Ready -> old recurrence cutover -> scheduled target`.
+     `target recurrence -> Target Ready -> old recurrence cutover -> scheduled target -> renewal settlement -> target activation`.
    - **Invariantes Consolidadas da Phase 3B**:
      1. **Commercial Dates Persistidas na Criação**: `current_period_start_billing_date`, `current_period_end_billing_date` e `effective_billing_date` são derivados da autoridade interna da assinatura de origem e persistidos diretamente no `INSERT` da transição (`effective_billing_date === current_period_end_billing_date`), sem reparos manuais subsequentes.
      2. **Recurrence-First**: A recorrência do plano alvo é criada e autorizada primeiro no provedor (`pending_future_authorization -> future_target_prepared`) via Hosted Checkout com `nextDueDate` alinhado à fronteira de corte.
@@ -571,11 +572,46 @@ Para garantir as invariantes **No Two Live Renewals**, **No Unsafe Zero Renewals
      5. **Inativação Segura da Origem**: Desarme da assinatura de origem exclusivamente via `PUT /v3/subscriptions/{id}` com payload `{ status: "INACTIVE" }` (sem flags destrutivas e nunca `DELETE`).
      6. **Limpeza Cirúrgica de Cobranças de Origem**: Leitura atualizada (*fresh read*) pós-inativação para identificar faturas `PENDING >= cutoff` remanescentes e remoção atômica via `DELETE /v3/payments/{id}`. Faturas target permanecem intocadas.
      7. **All-Status Safety Gate Final**: Reconciliação exaustiva de todas as faturas da assinatura de origem (`GET /v3/subscriptions/{id}/payments?status=ALL`) comprovando zero cobranças ativas ou pendentes `>= cutoff`.
-     8. **Preservação de Entitlement da Aplicação**: O plano ativo no runtime do LouvAIO permanece estritamente no plano de origem (**Lite**) com as quotas originais até a data da fronteira de renovação. O plano alvo (**Essential**) não é ativado antecipadamente.
-     9. **Slot Retido (Held)**: O slot de transição ativo (`billing_active_transition_slots`) permanece retido em posse da transição no estado `scheduled`, impedindo novas solicitações concorrentes sobre o mesmo ministério.
-     10. **Target PENDING não gera receita**: Faturas target pendentes futuras não são contabilizadas como `BillingTransaction` e não geram receita contábil no momento do agendamento.
-     11. **Semântica Canônica de Cancelamento de Checkout**: Cancelamento explícito e seguro de checkout antes da materialização de obrigação target avança a transição para `transition_status: canceled`, `financial_safety_status: safe_terminal`, `financial_attention_required: false` e libera o slot. Eventos atrasados ou duplicados são tratados com idempotência e proteção attempt-scoped.
-   - **Status das Próximas Fases**:
-     - **RENEWAL-BOUNDARY IMPLEMENTATION**: **NOT STARTED**.
-     - **PHASE 3C EARLY ACTIVATION**: **NOT STARTED**.
-     - *(O escopo concluído compreende a transição agendada Paid -> Paid até o estado `scheduled`)*.
+     8. **Two-Gate Model para Ativação da Renovação (Phase 3B.3A)**:
+        - **Gate A (Financial Gate)**: A cobrança de renovação do plano alvo deve estar comprovadamente liquidada (`CONFIRMED` ou `RECEIVED`). Faturas `PENDING`, `OVERDUE` ou desconhecidas não abrem o gate financeiro.
+        - **Gate B (Commercial Gate)**: A data comercial civil atual (`currentCommercialDate` em `America/Sao_Paulo`) deve atingir ou ultrapassar a fronteira agendada (`currentCommercialDate >= effective_billing_date`).      9. **Target Entitlement Snapshot Imutável (Plan ID != Entitlement Snapshot)**:
+         - A ativação target na fronteira de renovação é imune a drift de catálogo (`plans.config.ts`).
+         - No momento `requested_at` da transição, calcula-se e persiste-se write-once o `target_entitlement_snapshot` contendo: `plan_id`, `addon_blocks`, `interval`, `effective_member_quota` e `effective_song_quota`.
+         - Na renewal activation, o `SubscriptionService` aplica diretamente as cotas travadas do snapshot via `applyLockedEntitlementSnapshot`, gravando `locked_member_quota` e `locked_song_quota` no registro da assinatura da igreja.
+         - O runtime (`resolveAccessMode`) respeita primordialmente os limites travados, garantindo que alterações posteriores nas regras ou capacidades dos planos do catálogo não violem os direitos adquiridos pelo cliente.
+      10. **Autoridade Exata da Primeira Cobrança Alvo & Second-Cycle Distinction**:
+          - O vínculo financeiro é correlacionado estritamente ao `future_provider_payment_id` registrado no cutover.
+          - Exige-se correspondência exata de vencimento: `payment.id === future_provider_payment_id` e `payment.dueDate === effective_billing_date`.
+          - Se o mesmo payment ID tiver sua data de vencimento alterada pelo provedor (`payment.dueDate !== effective_billing_date`), a ativação é bloqueada com `financial_attention_required = true`, reason `TARGET_FIRST_PAYMENT_BOUNDARY_MISMATCH` e slot retido (`HELD`).
+          - Cobranças posteriores da assinatura alvo com outro ID (`payment.id !== future_provider_payment_id` e `payment.dueDate > effective_billing_date`) são roteadas como `SECOND_CYCLE_PAYMENT` e jamais concluem nem interferem na transição agendada original.
+      11. **Liquidação Antecipada Pré-Fronteira (Early Settlement Before Boundary)**: Se o gateway confirmar o pagamento antes da data civil da fronteira comercial (`currentCommercialDate < effective_billing_date`):
+          - Persiste a `BillingTransaction` canônica de forma idempotente (`${provider}_${provider_payment_id}`);
+          - Persiste a prova de liquidação (`successful_renewal_provider_payment_id`, `renewal_paid_billing_date`, `renewal_payment_settled_at`);
+          - **NÃO** promove cotas nem altera o plano em runtime LouvAIO (permanece plano de origem);
+          - A transição **permanece `scheduled`** e o slot ativo **permanece `HELD`**.
+          - Se houver estorno ou chargeback antes da fronteira comercial (`REFUNDED` ou `CHARGEBACK`), a leitura fresh na fronteira detecta a reversão, bloqueia a ativação do plano alvo e sinaliza atenção financeira sem tentar novo estorno.
+      12. **Revalidação Fresh do Contrato Alvo & Safeguards Financeiros**:
+          - Antes de ativar o plano alvo, efetua-se fresh read da assinatura no gateway Asaas e valida-se:
+            - `status === 'ACTIVE'`;
+            - `customer === planChange.provider_customer_id`;
+            - `cycle` corresponde ao `target_interval` (`TARGET_SUBSCRIPTION_CYCLE_MISMATCH`);
+            - `valueCents` corresponde ao `target_future_recurring_price_cents` (`TARGET_SUBSCRIPTION_VALUE_MISMATCH`).
+          - Em caso de inconsistência de data ou valor na gravação da `BillingTransaction`, aciona-se `409 Conflict` gerando `FINANCIAL_TRANSACTION_CONFLICT` com retenção do slot.
+      13. **Activation Local Completion Gate**:
+          - Antes de marcar a transição como `completed` em `billing_plan_changes`, o sistema executa uma validação local de integridade verificando se:
+            1. `freshAppSub` possui o `plan_id` alvo, cotas do snapshot, intervalo correto e datas de início/fim perfeitamente calculadas.
+            2. `freshBillingSub` aponta para o ID da assinatura alvo, possui status `active` e datas comerciais sincronizadas.
+            3. `freshTx` existe com status `paid` e vinculado ao ID de pagamento esperado.
+          - Se qualquer verificação falhar, aborta-se com `ACTIVATION_COMPLETION_GATE_FAILED`, mantendo a transição pendente e o slot ativo estritamente `HELD`.
+      14. **Matriz de Resiliência a Crash & Liberação de Slot**:
+          - **Crash A (após liquidação financeira, antes da transação)**: Slot permanece `HELD`. Reconciliador recupera gravando a transação e promovendo o plano alvo.
+          - **Crash B (após gravar BillingTransaction, antes da promoção de cotas)**: Slot permanece `HELD`. Reconciliador executa idempotência na transação e promove o snapshot.
+          - **Crash C (após promoção de cotas, antes de atualizar ministry subscription)**: Slot permanece `HELD`. Reconciliador reaplica o snapshot e converge o ministério.
+          - **Crash D (após atualizar ministry subscription, antes de alternar autoridade em BillingSubscription)**: Slot permanece `HELD`. Reconciliador comuta a assinatura ativa para a nova recorrência.
+          - **Crash E (após comutar BillingSubscription, antes de transição completed)**: Slot permanece `HELD`. Reconciliador conclui a transição com `financial_safety_status: safe_terminal`.
+          - **Crash F (após transição completed, antes de liberar o slot ativo)**: Reconciliador detecta estado terminal seguro e libera determinística e exclusivamente o slot (`releaseSlotIfOwnedAndSafe`). Nenhum estado parcial libera o slot.
+      15. **Fronteira Atingida com Cobrança Pendente**: Se a data comercial da virada civil for atingida mas a cobrança target ainda estiver `PENDING`: a transição permanece `scheduled`, o plano de origem permanece ativo e o slot permanece `HELD`. (Tratamento de carência / grace pertence à Phase 3B.3B).
+    - **Status das Próximas Fases**:
+      - **PHASE 3B.3B RENEWAL FAILURE / GRACE**: **NOT STARTED**.
+      - **PHASE 3C EARLY ACTIVATION**: **NOT STARTED**.
+      - *(O escopo concluído compreende a liquidação de sucesso da renovação agendada, ativação hardened do plano alvo e resiliência a falhas — Phase 3B.3A)*.

@@ -10,6 +10,8 @@ import {
   resolveAccessMode,
   PlanId,
   EffectiveQuotas,
+  BillingInterval,
+  QuotaLimit,
 } from '../../config/plans.config';
 import {
   MinistrySubscriptionRecord,
@@ -253,6 +255,66 @@ export class SubscriptionService {
       plan_id: targetPlanId,
       member_addon_blocks: newAddonBlocks,
       subscription_mode: targetPlanId === 'free' ? 'free' : 'paid',
+      grace_period_expires_at: graceExpiresAt,
+      updated_at: now.toISOString(),
+    };
+
+    await this.subscriptionRepo.setSubscription(updatedSub);
+    return updatedSub;
+  }
+
+  /**
+   * Aplica o snapshot de entitlement imutável comprado em uma transição de faturamento.
+   * Não recalcula limites a partir do catálogo atual, blindando contra catalog drift.
+   */
+  async applyLockedEntitlementSnapshot(
+    ministryId: string,
+    snapshot: {
+      plan_id: PlanId;
+      addon_blocks: number;
+      interval?: BillingInterval;
+      effective_member_quota?: QuotaLimit;
+      effective_song_quota?: QuotaLimit;
+    }
+  ): Promise<MinistrySubscriptionRecord> {
+    const { subscription, usage } = await this.subscriptionRepo.ensureSubscriptionAndUsage(ministryId);
+    const targetPlanId = snapshot.plan_id;
+    const planDef = getPlanDefinition(targetPlanId);
+
+    const lockedMemberQuota =
+      snapshot.effective_member_quota !== undefined && snapshot.effective_member_quota !== null
+        ? snapshot.effective_member_quota
+        : getEffectiveMemberQuota(planDef, snapshot.addon_blocks);
+
+    const lockedSongQuota =
+      snapshot.effective_song_quota !== undefined && snapshot.effective_song_quota !== null
+        ? snapshot.effective_song_quota
+        : getEffectiveSongQuota(planDef);
+
+    const effectiveQuotas: EffectiveQuotas = {
+      members: lockedMemberQuota,
+      songs: lockedSongQuota,
+    };
+
+    const overLimitInfo = isUsageOverLimit(usage, effectiveQuotas);
+    const now = new Date();
+    let graceExpiresAt: string | null = subscription.grace_period_expires_at;
+
+    if (overLimitInfo.isOverLimit) {
+      graceExpiresAt = new Date(now.getTime() + DEFAULT_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    } else {
+      graceExpiresAt = null;
+    }
+
+    const updatedSub: MinistrySubscriptionRecord = {
+      ...subscription,
+      plan_id: targetPlanId,
+      member_addon_blocks: snapshot.addon_blocks,
+      subscription_mode: targetPlanId === 'free' ? 'free' : 'paid',
+      billing_interval: snapshot.interval || subscription.billing_interval,
+      locked_member_quota: lockedMemberQuota,
+      locked_song_quota: lockedSongQuota,
+      entitlement_snapshot: snapshot,
       grace_period_expires_at: graceExpiresAt,
       updated_at: now.toISOString(),
     };

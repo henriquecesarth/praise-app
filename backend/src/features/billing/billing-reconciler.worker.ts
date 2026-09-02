@@ -107,6 +107,26 @@ export class BillingReconcilerWorker {
             } else {
               failed++;
             }
+          } else if (
+            item.execution_strategy === 'scheduled_paid_transition' &&
+            item.transition_status === 'scheduled'
+          ) {
+            processed++;
+            const renewalResult = await this.billingService.reconcilePaidToPaidRenewalSettlement(item.id, this.workerId);
+            if (renewalResult.success) {
+              succeeded++;
+              console.log(
+                `[BillingReconcilerWorker] Transição V1 Scheduled Renewal ativada com sucesso: ${item.id} (ministério: ${item.ministry_id})`
+              );
+            } else {
+              if (
+                renewalResult.reason !== 'renewal_payment_not_settled' &&
+                renewalResult.reason !== 'early_settlement_recorded_awaiting_boundary' &&
+                renewalResult.reason !== 'boundary_not_reached'
+              ) {
+                failed++;
+              }
+            }
           }
         }
       }

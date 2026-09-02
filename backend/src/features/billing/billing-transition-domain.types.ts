@@ -83,6 +83,7 @@ export interface TransitionCommercialSnapshot {
   target_addon_blocks: number;
   target_future_recurring_price_cents: number;
   target_current_cycle_total_cents: number; // Target capabilities evaluated in source interval
+  target_entitlement_snapshot?: EntitlementSnapshot | null;
   early_activation_target_entitlement_snapshot: EntitlementSnapshot | null;
 
   // Currency & Timestamps

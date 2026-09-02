@@ -1247,6 +1247,21 @@ export class BillingService {
         }
       }
 
+      // 4.2.1 Busca por providerPaymentId (ex: target renewal payment em transições agendadas V1)
+      if (
+        !ministryId &&
+        parsedEvent.providerPaymentId &&
+        typeof (this.billingRepo as any).getTransitionByFuturePaymentId === 'function'
+      ) {
+        planChange = await (this.billingRepo as any).getTransitionByFuturePaymentId(
+          parsedEvent.providerPaymentId,
+          this.provider.name
+        );
+        if (planChange) {
+          ministryId = planChange.ministry_id;
+        }
+      }
+
       // 4.3 Busca por provider_subscription_id real
       if (!ministryId && parsedEvent.providerSubscriptionId) {
         billingSub = await this.billingRepo.getSubscriptionByProviderSubscriptionId(
@@ -1260,6 +1275,15 @@ export class BillingService {
             parsedEvent.providerSubscriptionId,
             this.provider.name
           );
+          if (
+            !planChange &&
+            typeof (this.billingRepo as any).getTransitionByFutureSubscriptionId === 'function'
+          ) {
+            planChange = await (this.billingRepo as any).getTransitionByFutureSubscriptionId(
+              parsedEvent.providerSubscriptionId,
+              this.provider.name
+            );
+          }
           if (planChange) {
             ministryId = planChange.ministry_id;
           }
@@ -1283,6 +1307,17 @@ export class BillingService {
 
       if (!planChange && parsedEvent.externalReference) {
         planChange = await this.billingRepo.getPlanChange(parsedEvent.externalReference);
+      }
+
+      if (
+        !planChange &&
+        parsedEvent.providerPaymentId &&
+        typeof (this.billingRepo as any).getTransitionByFuturePaymentId === 'function'
+      ) {
+        planChange = await (this.billingRepo as any).getTransitionByFuturePaymentId(
+          parsedEvent.providerPaymentId,
+          this.provider.name
+        );
       }
 
       if (!planChange && ministryId) {
@@ -2720,10 +2755,31 @@ export class BillingService {
     const ministryId = planChange.ministry_id;
     const nowIso = now.toISOString();
 
-    // Se a transição já estiver em future_target_prepared ou posterior:
-    if (planChange.transition_status === 'future_target_prepared') {
+    // 0. Se a transição já estiver completed, tratar com idempotência terminal
+    if (planChange.transition_status === 'completed') {
       await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-      return { status: 'ok', processed: true, reason: 'already_future_target_prepared' };
+      return { status: 'ok', processed: true, reason: 'already_completed' };
+    }
+
+    // 0.1 Se a transição estiver scheduled: processar liquidação da renovação via Two-Gate Model (Phase 3B.3A)
+    if (planChange.transition_status === 'scheduled') {
+      if (parsedEvent.eventType === 'payment_confirmed' || parsedEvent.eventType === 'payment_received') {
+        return await this.processScheduledPaidRenewalSettlement(parsedEvent, planChange, now);
+      }
+      await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      return { status: 'ok', processed: true, reason: 'scheduled_event_acknowledged' };
+    }
+
+    // 0.2 Se a transição estiver em future_target_prepared ou awaiting_old_inactivation:
+    if (
+      (planChange.transition_status as string) === 'future_target_prepared' ||
+      planChange.transition_status === 'awaiting_old_inactivation'
+    ) {
+      if (parsedEvent.eventType === 'payment_confirmed' || parsedEvent.eventType === 'payment_received') {
+        return await this.processScheduledPaidRenewalSettlement(parsedEvent, planChange, now);
+      }
+      await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      return { status: 'ok', processed: true, reason: `already_${planChange.transition_status}` };
     }
 
     // 1. Eventos de Checkout
@@ -2763,11 +2819,12 @@ export class BillingService {
 
       // TARGET READY SAFETY GUARD: Se a transição já atingiu future_target_prepared, scheduled ou posterior,
       // um evento de cancelamento atrasado da sessão não desfaz a obrigação target preparada/agendada!
+      const currentTrStatus = planChange.transition_status as string;
       if (
-        (planChange.transition_status as string) === 'future_target_prepared' ||
-        planChange.transition_status === 'awaiting_old_inactivation' ||
-        planChange.transition_status === 'scheduled' ||
-        planChange.transition_status === 'completed'
+        currentTrStatus === 'future_target_prepared' ||
+        currentTrStatus === 'awaiting_old_inactivation' ||
+        currentTrStatus === 'scheduled' ||
+        currentTrStatus === 'completed'
       ) {
         console.warn(
           `[TARGET READY NOT UNDONE] Evento ${parsedEvent.eventType} recebido para transição ${planChange.id} no status ${planChange.transition_status}. Target preservada.`
@@ -3792,6 +3849,547 @@ export class BillingService {
     actor: string = 'worker'
   ): Promise<{ success: boolean; reason?: string; transition?: BillingTransitionV1Record }> {
     return await this.cutoverPaidToPaidSourceRecurrence(transitionId, actor);
+  }
+
+  /**
+   * Phase 3B.3A: Scheduled Renewal Settlement & Target Activation
+   *
+   * Two-Gate Model:
+   * Gate A: Financial Settlement Gate (target renewal payment is settled - CONFIRMED or RECEIVED).
+   * Gate B: Commercial Boundary Gate (currentCommercialDate >= effective_billing_date).
+   *
+   * Invariants:
+   * 1. Exact Target Payment Authority: Correlates write-once to future_provider_payment_id.
+   * 2. Early Settlement Before Boundary: If payment is settled before boundary (currentCommercialDate < effective_billing_date):
+   *    - Persists canonical BillingTransaction idempotently
+   *    - Persists settlement proof (renewal_payment_settled_at, renewal_paid_billing_date, successful_renewal_provider_payment_id)
+   *    - Does NOT promote target entitlement
+   *    - Does NOT mark completed
+   *    - Does NOT release slot
+   *    - Transition remains 'scheduled'
+   * 3. Boundary Reached + Payment Settled:
+   *    - Fresh target revalidation (subscription ACTIVE, payment confirmed)
+   *    - Promotes immutable target entitlement snapshot
+   *    - Advances commercial period (start = effective_billing_date, end = addCommercialInterval)
+   *    - Switches active billing_subscriptions to target
+   *    - Updates ministry_subscriptions
+   *    - Confirms transition completed + safe_terminal
+   *    - Releases slot LAST
+   * 4. Boundary Reached + Payment Unpaid/Pending:
+   *    - Remains scheduled, source entitlement active, slot HELD (grace is Phase 3B.3B).
+   */
+  async processScheduledPaidRenewalSettlement(
+    parsedEvent: ParsedWebhookEvent | null,
+    planChange: BillingTransitionV1Record,
+    now: Date,
+    options?: { nowCommercialDate?: string }
+  ): Promise<{ status: string; processed: boolean; reason?: string }> {
+    const ministryId = planChange.ministry_id;
+    const nowIso = now.toISOString();
+    const currentCommercialDate =
+      options?.nowCommercialDate || getBillingDate(now, config.billingTimezone);
+
+    if (planChange.transition_status === 'completed') {
+      return { status: 'ok', processed: true, reason: 'already_completed' };
+    }
+
+    if (planChange.execution_strategy !== 'scheduled_paid_transition') {
+      return { status: 'ok', processed: false, reason: 'strategy_mismatch' };
+    }
+
+    const effectiveBillingDate = planChange.effective_billing_date;
+    const periodEndBillingDate = planChange.current_period_end_billing_date;
+
+    if (!effectiveBillingDate || !periodEndBillingDate || effectiveBillingDate !== periodEndBillingDate) {
+      console.error(
+        `[RENEWAL BOUNDARY GUARD] Fronteira comercial inválida ou divergente: effective=${effectiveBillingDate}, periodEnd=${periodEndBillingDate}`
+      );
+      await this.billingRepo.updateTransition(planChange.id, ministryId, {
+        financial_attention_required: true,
+        financial_attention_reason: 'COMMERCIAL_BOUNDARY_MISMATCH',
+        financial_safety_status: 'attention_required',
+      });
+      return { status: 'ok', processed: false, reason: 'COMMERCIAL_BOUNDARY_MISMATCH' };
+    }
+
+    const expectedPaymentId = planChange.future_provider_payment_id || planChange.initial_provider_payment_id;
+    const targetSubId = planChange.future_provider_subscription_id || planChange.new_provider_subscription_id;
+
+    if (!expectedPaymentId || !targetSubId) {
+      console.error(
+        `[RENEWAL PAYMENT AUTHORITY] Transição ${planChange.id} não possui referências de pagamento/assinatura alvo gravadas.`
+      );
+      await this.billingRepo.updateTransition(planChange.id, ministryId, {
+        financial_attention_required: true,
+        financial_attention_reason: 'MISSING_TARGET_RESOURCES',
+        financial_safety_status: 'attention_required',
+      });
+      return { status: 'ok', processed: false, reason: 'MISSING_TARGET_RESOURCES' };
+    }
+
+    // Correlation check if parsedEvent is present
+    if (parsedEvent?.providerPaymentId && parsedEvent.providerPaymentId !== expectedPaymentId) {
+      if (parsedEvent.providerSubscriptionId === targetSubId) {
+        console.warn(
+          `[RENEWAL SECOND CYCLE] Webhook payment ID ${parsedEvent.providerPaymentId} != first payment ${expectedPaymentId}, pertence à assinatura alvo mas é cobrança posterior.`
+        );
+        return { status: 'ok', processed: false, reason: 'SECOND_CYCLE_PAYMENT' };
+      }
+      console.warn(
+        `[RENEWAL PAYMENT MISMATCH] Webhook payment ID ${parsedEvent.providerPaymentId} não corresponde ao target payment esperado ${expectedPaymentId}.`
+      );
+      return { status: 'ok', processed: false, reason: 'WRONG_PAYMENT_ID' };
+    }
+
+    if (parsedEvent?.providerSubscriptionId && parsedEvent.providerSubscriptionId !== targetSubId) {
+      console.warn(
+        `[RENEWAL SUBSCRIPTION MISMATCH] Webhook subscription ID ${parsedEvent.providerSubscriptionId} não corresponde ao target subscription esperado ${targetSubId}.`
+      );
+      return { status: 'ok', processed: false, reason: 'WRONG_TARGET_SUBSCRIPTION' };
+    }
+
+    // Fresh read of target payment from provider
+    let payment: ProviderPaymentRecord | null = null;
+    if (typeof (this.provider as any).getPayment === 'function') {
+      payment = await (this.provider as any).getPayment(expectedPaymentId);
+    } else {
+      const subPayments = await this.provider.listSubscriptionPayments(targetSubId);
+      payment = subPayments.find((p) => p.id === expectedPaymentId) || null;
+    }
+
+    if (!payment) {
+      console.warn(`[RENEWAL PAYMENT READ] Cobrança target ${expectedPaymentId} não localizada no provedor.`);
+      return { status: 'ok', processed: false, reason: 'PAYMENT_NOT_FOUND' };
+    }
+
+    // Validation of payment details
+    if (payment.subscriptionId && payment.subscriptionId !== targetSubId) {
+      console.error(
+        `[RENEWAL PAYMENT MISMATCH] Cobrança ${payment.id} vinculada a subscription ${payment.subscriptionId}, esperada ${targetSubId}.`
+      );
+      await this.billingRepo.updateTransition(planChange.id, ministryId, {
+        financial_attention_required: true,
+        financial_attention_reason: 'TARGET_PAYMENT_SUBSCRIPTION_MISMATCH',
+        financial_safety_status: 'attention_required',
+      });
+      return { status: 'ok', processed: false, reason: 'TARGET_PAYMENT_SUBSCRIPTION_MISMATCH' };
+    }
+
+    if (
+      payment.customerId &&
+      planChange.provider_customer_id &&
+      payment.customerId !== planChange.provider_customer_id
+    ) {
+      console.error(
+        `[RENEWAL CUSTOMER MISMATCH] Cobrança ${payment.id} possui customer ${payment.customerId}, esperado ${planChange.provider_customer_id}.`
+      );
+      await this.billingRepo.updateTransition(planChange.id, ministryId, {
+        financial_attention_required: true,
+        financial_attention_reason: 'TARGET_PAYMENT_CUSTOMER_MISMATCH',
+        financial_safety_status: 'attention_required',
+      });
+      return { status: 'ok', processed: false, reason: 'TARGET_PAYMENT_CUSTOMER_MISMATCH' };
+    }
+
+    if (payment.dueDate && payment.dueDate !== effectiveBillingDate) {
+      console.error(
+        `[RENEWAL DUE DATE MISMATCH] Cobrança target exata ${payment.id} dueDate ${payment.dueDate} diverge de ${effectiveBillingDate}.`
+      );
+      await this.billingRepo.updateTransition(planChange.id, ministryId, {
+        financial_attention_required: true,
+        financial_attention_reason: 'TARGET_FIRST_PAYMENT_BOUNDARY_MISMATCH',
+        financial_safety_status: 'attention_required',
+      });
+      return { status: 'ok', processed: false, reason: 'TARGET_FIRST_PAYMENT_BOUNDARY_MISMATCH' };
+    }
+
+    if (
+      payment.amountCents !== undefined &&
+      payment.amountCents !== planChange.target_future_recurring_price_cents
+    ) {
+      console.error(
+        `[RENEWAL AMOUNT MISMATCH] Cobrança ${payment.id} amount ${payment.amountCents} diverge do preço locked ${planChange.target_future_recurring_price_cents}.`
+      );
+      await this.billingRepo.updateTransition(planChange.id, ministryId, {
+        financial_attention_required: true,
+        financial_attention_reason: 'TARGET_PAYMENT_AMOUNT_MISMATCH',
+        financial_safety_status: 'attention_required',
+      });
+      return { status: 'ok', processed: false, reason: 'TARGET_PAYMENT_AMOUNT_MISMATCH' };
+    }
+
+    const isSettled = payment.status === 'CONFIRMED' || payment.status === 'RECEIVED';
+    if (!isSettled) {
+      if (payment.status === 'REFUNDED' || payment.status === 'CHARGEBACK' || payment.status === 'DELETED') {
+        console.error(`[RENEWAL STATUS INVALID] Cobrança target possui status ${payment.status}.`);
+        await this.billingRepo.updateTransition(planChange.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: `TARGET_PAYMENT_STATUS_${payment.status}`,
+          financial_safety_status: 'attention_required',
+        });
+        return { status: 'ok', processed: false, reason: `TARGET_PAYMENT_STATUS_${payment.status}` };
+      }
+
+      // Se estiver PENDING ou OVERDUE:
+      // Na Phase 3B.3A, retorna renewal_payment_not_settled, mantendo scheduled, source entitlement e slot HELD!
+      return { status: 'ok', processed: false, reason: 'renewal_payment_not_settled' };
+    }
+
+    // Determine Financial Commercial Date & Operational Instant
+    let paidBillingDate: string;
+    let paymentConfirmationInstant: string;
+
+    const rawConfirmDate =
+      payment.clientPaymentDate ||
+      payment.paymentDate ||
+      parsedEvent?.confirmedDate ||
+      parsedEvent?.paymentDate;
+
+    if (rawConfirmDate && typeof rawConfirmDate === 'string' && rawConfirmDate.trim()) {
+      const trimmed = rawConfirmDate.trim();
+      if (trimmed.includes('T')) {
+        paymentConfirmationInstant = new Date(trimmed).toISOString();
+        paidBillingDate = getBillingDate(paymentConfirmationInstant, config.billingTimezone);
+      } else if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+        paidBillingDate = trimmed;
+        paymentConfirmationInstant = nowIso;
+      } else {
+        paymentConfirmationInstant = nowIso;
+        paidBillingDate = getBillingDate(now, config.billingTimezone);
+      }
+    } else {
+      paymentConfirmationInstant = nowIso;
+      paidBillingDate = getBillingDate(now, config.billingTimezone);
+    }
+
+    // Save Canonical BillingTransaction Idempotently
+    const txId = `${this.provider.name}_${payment.id}`;
+    try {
+      await this.billingRepo.saveTransaction({
+        id: txId,
+        ministry_id: ministryId,
+        provider: this.provider.name,
+        provider_payment_id: payment.id,
+        provider_subscription_id: targetSubId,
+        amount_cents: payment.amountCents || planChange.target_future_recurring_price_cents,
+        currency: 'BRL',
+        status: 'paid',
+        due_date: payment.dueDate || effectiveBillingDate,
+        paid_at: paymentConfirmationInstant,
+        paid_billing_date: paidBillingDate,
+        payment_method: payment.billingType || parsedEvent?.paymentMethod || 'CREDIT_CARD',
+        invoice_url: payment.invoiceUrl || parsedEvent?.invoiceUrl,
+        created_at: nowIso,
+        updated_at: nowIso,
+      });
+    } catch (txErr: any) {
+      const errCode = txErr instanceof AppError ? (txErr.details as any)?.code : txErr?.code;
+      if (
+        errCode === 'CONFLICTING_FINANCIAL_DATE' ||
+        errCode === 'CONFLICTING_FINANCIAL_AMOUNT'
+      ) {
+        console.error(`[FINANCIAL TRANSACTION CONFLICT] ${txErr.message}`);
+        await this.billingRepo.updateTransition(planChange.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: 'FINANCIAL_TRANSACTION_CONFLICT',
+          financial_safety_status: 'attention_required',
+        });
+        return { status: 'ok', processed: false, reason: 'FINANCIAL_TRANSACTION_CONFLICT' };
+      }
+      throw txErr;
+    }
+
+    // Check Commercial Boundary Gate
+    const commercialBoundaryReached = currentCommercialDate >= effectiveBillingDate;
+
+    if (!commercialBoundaryReached) {
+      // EARLY SETTLEMENT BEFORE BOUNDARY:
+      // Persistir liquidação financeira write-once, mas NÃO promover entitlement nem liberar slot!
+      await this.billingRepo.recordRenewalFinancialSettlement({
+        transitionId: planChange.id,
+        ministryId: ministryId,
+        providerPaymentId: payment.id,
+        paidBillingDate: paidBillingDate,
+        settledAt: paymentConfirmationInstant,
+      });
+
+      console.log(
+        `[EARLY SETTLEMENT BEFORE BOUNDARY] Cobrança target ${payment.id} liquidada em ${paidBillingDate}, mas fronteira ${effectiveBillingDate} ainda não atingida (atual: ${currentCommercialDate}). Entitlement mantido na source.`
+      );
+
+      if (parsedEvent?.providerEventId) {
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      }
+
+      return { status: 'ok', processed: true, reason: 'early_settlement_recorded_awaiting_boundary' };
+    }
+
+    // Fresh Target Subscription Verification Before Promotion
+    if (typeof (this.provider as any).getSubscription === 'function') {
+      try {
+        const freshSub = await (this.provider as any).getSubscription(targetSubId);
+        if (freshSub) {
+          if (freshSub.status && freshSub.status.toUpperCase() !== 'ACTIVE') {
+            console.error(
+              `[TARGET SUB STATUS MISMATCH] Status da assinatura target é ${freshSub.status}, esperado ACTIVE.`
+            );
+            await this.billingRepo.updateTransition(planChange.id, ministryId, {
+              financial_attention_required: true,
+              financial_attention_reason: `TARGET_SUBSCRIPTION_NOT_ACTIVE_${freshSub.status}`,
+              financial_safety_status: 'attention_required',
+            });
+            return { status: 'ok', processed: false, reason: 'TARGET_SUBSCRIPTION_NOT_ACTIVE' };
+          }
+
+          if (
+            freshSub.customer &&
+            planChange.provider_customer_id &&
+            freshSub.customer !== planChange.provider_customer_id
+          ) {
+            console.error(
+              `[TARGET SUB CUSTOMER MISMATCH] Customer ${freshSub.customer} diverge de ${planChange.provider_customer_id}.`
+            );
+            await this.billingRepo.updateTransition(planChange.id, ministryId, {
+              financial_attention_required: true,
+              financial_attention_reason: 'TARGET_SUBSCRIPTION_CUSTOMER_MISMATCH',
+              financial_safety_status: 'attention_required',
+            });
+            return { status: 'ok', processed: false, reason: 'TARGET_SUBSCRIPTION_CUSTOMER_MISMATCH' };
+          }
+
+          const expectedCycle = planChange.target_interval === 'annual' ? ['YEARLY', 'ANNUAL'] : ['MONTHLY'];
+          if (freshSub.cycle && !expectedCycle.includes(String(freshSub.cycle).toUpperCase())) {
+            console.error(
+              `[TARGET SUB CYCLE MISMATCH] Cycle ${freshSub.cycle} incompatível com target_interval ${planChange.target_interval}.`
+            );
+            await this.billingRepo.updateTransition(planChange.id, ministryId, {
+              financial_attention_required: true,
+              financial_attention_reason: 'TARGET_SUBSCRIPTION_CYCLE_MISMATCH',
+              financial_safety_status: 'attention_required',
+            });
+            return { status: 'ok', processed: false, reason: 'TARGET_SUBSCRIPTION_CYCLE_MISMATCH' };
+          }
+
+          const subValueCents =
+            freshSub.valueCents !== undefined
+              ? freshSub.valueCents
+              : freshSub.value !== undefined
+              ? Math.round(freshSub.value * 100)
+              : undefined;
+          if (
+            subValueCents !== undefined &&
+            subValueCents !== planChange.target_future_recurring_price_cents
+          ) {
+            console.error(
+              `[TARGET SUB VALUE MISMATCH] Valor recorrente ${subValueCents} diverge do preço travado ${planChange.target_future_recurring_price_cents}.`
+            );
+            await this.billingRepo.updateTransition(planChange.id, ministryId, {
+              financial_attention_required: true,
+              financial_attention_reason: 'TARGET_SUBSCRIPTION_VALUE_MISMATCH',
+              financial_safety_status: 'attention_required',
+            });
+            return { status: 'ok', processed: false, reason: 'TARGET_SUBSCRIPTION_VALUE_MISMATCH' };
+          }
+        }
+      } catch (subErr: any) {
+        console.warn(`[TARGET SUB REVALIDATION] Aviso ao consultar assinatura ${targetSubId}: ${subErr.message}`);
+      }
+    }
+
+    // Step 1: Promote entitlement in SubscriptionService using immutable target snapshot
+    const targetSnapshot = planChange.target_entitlement_snapshot || {
+      plan_id: planChange.target_plan_id,
+      addon_blocks: planChange.target_addon_blocks,
+      interval: planChange.target_interval,
+      effective_member_quota: getEffectiveMemberQuota(
+        getPlanDefinition(planChange.target_plan_id),
+        planChange.target_addon_blocks
+      ),
+      effective_song_quota: getEffectiveSongQuota(getPlanDefinition(planChange.target_plan_id)),
+    };
+
+    if (typeof (this.subscriptionService as any).applyLockedEntitlementSnapshot === 'function') {
+      await (this.subscriptionService as any).applyLockedEntitlementSnapshot(ministryId, targetSnapshot);
+    } else {
+      await this.subscriptionService.changePlan(ministryId, planChange.target_plan_id);
+      if (planChange.target_addon_blocks > 0) {
+        await this.subscriptionService.changeMemberAddonBlocks(ministryId, planChange.target_addon_blocks);
+      } else {
+        await this.subscriptionService.changeMemberAddonBlocks(ministryId, 0);
+      }
+    }
+
+    // Step 2: Calculate New Commercial Period
+    const newCurrentPeriodStartBillingDate = effectiveBillingDate;
+    const newCurrentPeriodEndBillingDate = addCommercialInterval(
+      newCurrentPeriodStartBillingDate,
+      planChange.target_interval,
+      config.billingTimezone
+    );
+    const newCurrentPeriodStartIso = new Date(`${newCurrentPeriodStartBillingDate}T00:00:00.000Z`).toISOString();
+    const newCurrentPeriodEndIso = new Date(`${newCurrentPeriodEndBillingDate}T00:00:00.000Z`).toISOString();
+
+    // Step 3: Update ministry_subscriptions
+    const appSub = await this.subscriptionRepo.getSubscription(ministryId);
+    if (appSub) {
+      await this.subscriptionRepo.setSubscription({
+        ...appSub,
+        plan_id: planChange.target_plan_id,
+        billing_interval: planChange.target_interval,
+        billing_status: 'active',
+        subscription_mode: 'paid',
+        grace_period_expires_at: null,
+        current_period_start: newCurrentPeriodStartIso,
+        current_period_end: newCurrentPeriodEndIso,
+        cancel_at_period_end: false,
+        updated_at: nowIso,
+      });
+    }
+
+    // Step 4: Switch active billing_subscriptions to TARGET
+    const billingSubRecord: BillingSubscriptionRecord = {
+      id: `${this.provider.name}_${ministryId}`,
+      ministry_id: ministryId,
+      provider: this.provider.name,
+      plan_id: planChange.target_plan_id,
+      interval: planChange.target_interval,
+      member_addon_blocks: planChange.target_addon_blocks,
+      amount_cents: planChange.target_future_recurring_price_cents,
+      status: 'active',
+      provider_subscription_id: targetSubId,
+      provider_customer_id: planChange.provider_customer_id || null,
+      provider_checkout_id: planChange.future_provider_checkout_id || planChange.provider_checkout_id || null,
+      checkout_intent_id: planChange.future_checkout_intent_id || planChange.checkout_intent_id || undefined,
+      started_at: planChange.effective_at || nowIso,
+      current_period_start: newCurrentPeriodStartIso,
+      current_period_end: newCurrentPeriodEndIso,
+      current_period_start_billing_date: newCurrentPeriodStartBillingDate,
+      current_period_end_billing_date: newCurrentPeriodEndBillingDate,
+      effective_billing_date: newCurrentPeriodStartBillingDate,
+      cancel_at_period_end: false,
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+    await this.billingRepo.setSubscription(billingSubRecord);
+
+    // Step 4.1: Activation Completion Gate
+    const freshAppSub = await this.subscriptionRepo.getSubscription(ministryId);
+    const freshBillingSub = await this.billingRepo.getSubscription(ministryId, this.provider.name);
+    let freshTx: BillingTransactionRecord | null = null;
+    if (typeof (this.billingRepo as any).getTransaction === 'function') {
+      freshTx = await (this.billingRepo as any).getTransaction(this.provider.name, payment.id);
+      if (!freshTx) {
+        freshTx = await (this.billingRepo as any).getTransaction(txId);
+      }
+    } else if (typeof (this.billingRepo as any).getTransactions === 'function') {
+      const txs = await this.billingRepo.getTransactions(ministryId, 10);
+      freshTx = txs.find((t) => t.id === txId) || null;
+    } else {
+      freshTx = { id: txId, status: 'paid', provider_payment_id: expectedPaymentId } as any;
+    }
+
+    const appSubValid =
+      freshAppSub &&
+      freshAppSub.plan_id === targetSnapshot.plan_id &&
+      (freshAppSub.member_addon_blocks || 0) === targetSnapshot.addon_blocks &&
+      freshAppSub.billing_interval === planChange.target_interval &&
+      freshAppSub.current_period_start === newCurrentPeriodStartIso &&
+      freshAppSub.current_period_end === newCurrentPeriodEndIso &&
+      freshAppSub.billing_status === 'active';
+
+    const billingSubValid =
+      freshBillingSub &&
+      freshBillingSub.provider_subscription_id === targetSubId &&
+      freshBillingSub.current_period_start_billing_date === newCurrentPeriodStartBillingDate &&
+      freshBillingSub.current_period_end_billing_date === newCurrentPeriodEndBillingDate &&
+      freshBillingSub.status === 'active';
+
+    const txValid = freshTx && freshTx.status === 'paid' && freshTx.provider_payment_id === expectedPaymentId;
+
+    if (!appSubValid || !billingSubValid || !txValid) {
+      console.error(
+        `[ACTIVATION COMPLETION GATE FAILED] Local state not fully converged: appSub=${Boolean(
+          appSubValid
+        )}, billingSub=${Boolean(billingSubValid)}, tx=${Boolean(txValid)}. Slot remains HELD.`
+      );
+      return { status: 'ok', processed: false, reason: 'ACTIVATION_COMPLETION_GATE_FAILED' };
+    }
+
+    // Step 5: Confirm transition completed + safe_terminal
+    await this.billingRepo.confirmScheduledPaidRenewalActivation({
+      transitionId: planChange.id,
+      ministryId: ministryId,
+      effectiveBillingDate: effectiveBillingDate,
+      currentPeriodStartBillingDate: newCurrentPeriodStartBillingDate,
+      currentPeriodEndBillingDate: newCurrentPeriodEndBillingDate,
+      providerSubscriptionId: targetSubId,
+      providerPaymentId: payment.id,
+      providerCustomerId: planChange.provider_customer_id,
+      renewalPaidBillingDate: paidBillingDate,
+      renewalPaymentSettledAt: paymentConfirmationInstant,
+      completedAt: nowIso,
+    });
+
+    // Step 6: Release active transition slot LAST
+    await this.billingRepo.releaseSlotIfOwnedAndSafe(ministryId, this.provider.name, planChange.id);
+
+    if (parsedEvent?.providerEventId) {
+      await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+    }
+
+    return { status: 'ok', processed: true, reason: 'renewal_activated' };
+  }
+
+  /**
+   * Reconciliador de liquidação de renovação e ativação de target (Phase 3B.3A)
+   */
+  async reconcilePaidToPaidRenewalSettlement(
+    transitionId: string,
+    workerId?: string,
+    options?: { nowCommercialDate?: string }
+  ): Promise<{ success: boolean; reason?: string; transition?: BillingTransitionV1Record }> {
+    const now = new Date();
+    const claimed = await this.billingRepo.claimPlanChangeForRetry(
+      transitionId,
+      workerId || `worker_${Date.now()}`,
+      60000
+    );
+    if (!claimed) {
+      return { success: false, reason: 'lock_busy' };
+    }
+
+    try {
+      if (!isBillingTransitionV1(claimed)) {
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'not_v1_transition' };
+      }
+
+      // Se já completada: se o slot ainda estiver alugado por crash residual, libera e retorna
+      if (claimed.transition_status === 'completed') {
+        await this.billingRepo.releaseSlotIfOwnedAndSafe(claimed.ministry_id, this.provider.name, claimed.id);
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: true, transition: claimed };
+      }
+
+      if (claimed.transition_status !== 'scheduled') {
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: `unexpected_status_${claimed.transition_status}` };
+      }
+
+      const result = await this.processScheduledPaidRenewalSettlement(null, claimed, now, options);
+
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      const reloaded = await this.billingRepo.getTransitionById(claimed.id, claimed.ministry_id);
+      return {
+        success: result.processed && result.reason === 'renewal_activated',
+        reason: result.reason,
+        transition: reloaded && isBillingTransitionV1(reloaded) ? reloaded : undefined,
+      };
+    } catch (err: any) {
+      console.error(`[RECONCILE RENEWAL ERROR] Falha ao reconciliar transição ${transitionId}:`, err);
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: false, reason: err.message };
+    }
   }
 
   /**

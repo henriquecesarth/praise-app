@@ -44,6 +44,7 @@ export const IMMUTABLE_TRANSITION_FIELDS: (keyof BillingTransitionV1Record)[] = 
   'source_addon_blocks',
   'source_current_cycle_total_cents',
   'source_entitlement_snapshot',
+  'target_entitlement_snapshot',
   'early_activation_target_entitlement_snapshot',
   'current_period_start',
   'current_period_end',
@@ -427,6 +428,24 @@ export class BillingRepository {
       return snapshotFutureChk.docs[0].data() as BillingPlanChangeRecord;
     }
 
+    const snapshotFuturePay = await this.planChangesCollection
+      .where('provider', '==', provider)
+      .where('future_provider_payment_id', '==', providerId)
+      .limit(1)
+      .get();
+    if (!snapshotFuturePay.empty) {
+      return snapshotFuturePay.docs[0].data() as BillingPlanChangeRecord;
+    }
+
+    const snapshotRenewalPay = await this.planChangesCollection
+      .where('provider', '==', provider)
+      .where('successful_renewal_provider_payment_id', '==', providerId)
+      .limit(1)
+      .get();
+    if (!snapshotRenewalPay.empty) {
+      return snapshotRenewalPay.docs[0].data() as BillingPlanChangeRecord;
+    }
+
     return null;
   }
 
@@ -498,6 +517,7 @@ export class BillingRepository {
           requested_addon_blocks: record.target_addon_blocks,
           expected_amount_cents: record.target_future_recurring_price_cents,
           source_entitlement_snapshot: record.source_entitlement_snapshot,
+          target_entitlement_snapshot: record.target_entitlement_snapshot || null,
           early_activation_target_entitlement_snapshot: record.early_activation_target_entitlement_snapshot || null,
           created_at: record.created_at || nowIso,
           updated_at: nowIso,
@@ -910,6 +930,136 @@ export class BillingRepository {
   }
 
   /**
+   * Confirma atômica e idempotentemente a ativação da renovação de uma transição agendada (Paid -> Paid V1).
+   * Atualiza datas de período, referências de liquidação, transita para completed e safe_terminal.
+   */
+  async confirmScheduledPaidRenewalActivation(params: {
+    transitionId: string;
+    ministryId: string;
+    effectiveBillingDate: string;
+    currentPeriodStartBillingDate: string;
+    currentPeriodEndBillingDate: string;
+    providerSubscriptionId: string;
+    providerPaymentId: string;
+    providerCustomerId?: string | null;
+    renewalPaidBillingDate?: string | null;
+    renewalPaymentSettledAt?: string | null;
+    completedAt?: string;
+  }): Promise<BillingTransitionV1Record> {
+    const {
+      transitionId,
+      ministryId,
+      effectiveBillingDate,
+      currentPeriodStartBillingDate,
+      currentPeriodEndBillingDate,
+      providerSubscriptionId,
+      providerPaymentId,
+      providerCustomerId = null,
+      renewalPaidBillingDate = null,
+      renewalPaymentSettledAt = null,
+      completedAt = new Date().toISOString(),
+    } = params;
+
+    const docRef = this.planChangesCollection.doc(transitionId);
+
+    return await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      if (!doc.exists) {
+        throw new AppError(404, `Transição '${transitionId}' não encontrada para confirmação de renovação.`);
+      }
+      const current = doc.data() as BillingPlanChangeRecord;
+      if (current.ministry_id !== ministryId) {
+        throw new AppError(403, 'Acesso não autorizado a esta transição de plano.');
+      }
+      if (!isBillingTransitionV1(current)) {
+        throw new AppError(400, 'confirmScheduledPaidRenewalActivation suporta apenas transições V1.');
+      }
+
+      if (current.execution_strategy !== 'scheduled_paid_transition') {
+        throw new AppError(
+          400,
+          `Estratégia inválida para confirmScheduledPaidRenewalActivation: '${current.execution_strategy}'.`
+        );
+      }
+
+      // Idempotência: se já completada com as mesmas referências, retorna sem erro
+      if (
+        current.transition_status === 'completed' &&
+        current.financial_safety_status === 'safe_terminal' &&
+        current.effective_billing_date === effectiveBillingDate &&
+        (current.future_provider_subscription_id === providerSubscriptionId ||
+          current.new_provider_subscription_id === providerSubscriptionId)
+      ) {
+        return current;
+      }
+
+      // Validação Write-Once de Effective Date
+      if (current.effective_billing_date && current.effective_billing_date !== effectiveBillingDate) {
+        throw new AppError(
+          409,
+          `Conflito em effective_billing_date: já gravado como '${current.effective_billing_date}', tentativa de alterar para '${effectiveBillingDate}'.`
+        );
+      }
+
+      // Validação Write-Once de Provider Subscription
+      if (
+        current.future_provider_subscription_id &&
+        current.future_provider_subscription_id !== providerSubscriptionId
+      ) {
+        throw new AppError(
+          409,
+          `Conflito em future_provider_subscription_id: já gravado como '${current.future_provider_subscription_id}', tentativa de alterar para '${providerSubscriptionId}'.`
+        );
+      }
+
+      const updated: BillingTransitionV1Record = {
+        ...current,
+        transition_status: 'completed',
+        financial_safety_status: 'safe_terminal',
+        status: 'completed',
+        effective_at: current.effective_at || completedAt,
+        effective_billing_date: effectiveBillingDate,
+        current_period_start_billing_date: currentPeriodStartBillingDate || effectiveBillingDate,
+        current_period_end_billing_date: currentPeriodEndBillingDate || current.current_period_end_billing_date || null,
+        future_provider_subscription_id: providerSubscriptionId,
+        new_provider_subscription_id: providerSubscriptionId,
+        future_provider_payment_id: providerPaymentId || current.future_provider_payment_id || null,
+        successful_renewal_provider_payment_id: providerPaymentId || current.successful_renewal_provider_payment_id || null,
+        renewal_payment_settled_at: renewalPaymentSettledAt || current.renewal_payment_settled_at || completedAt,
+        renewal_paid_billing_date: renewalPaidBillingDate || current.renewal_paid_billing_date || effectiveBillingDate,
+        target_promoted_at: completedAt,
+        provider_customer_id: providerCustomerId || current.provider_customer_id || null,
+        confirmed_at: current.confirmed_at || completedAt,
+        completed_at: completedAt,
+        updated_at: completedAt,
+      };
+
+      const validated = validateBillingTransitionV1(updated);
+      t.set(docRef, validated, { merge: true });
+      return validated;
+    });
+  }
+
+  /**
+   * Persiste a evidência de liquidação financeira da renovação antes de atingir a fronteira comercial.
+   * A transição permanece em 'scheduled' e o slot continua HELD.
+   */
+  async recordRenewalFinancialSettlement(params: {
+    transitionId: string;
+    ministryId: string;
+    providerPaymentId: string;
+    paidBillingDate: string;
+    settledAt: string;
+  }): Promise<BillingTransitionV1Record> {
+    const { transitionId, ministryId, providerPaymentId, paidBillingDate, settledAt } = params;
+    return (await this.updateTransition(transitionId, ministryId, {
+      successful_renewal_provider_payment_id: providerPaymentId,
+      renewal_paid_billing_date: paidBillingDate,
+      renewal_payment_settled_at: settledAt,
+    })) as BillingTransitionV1Record;
+  }
+
+  /**
    * Marca uma transição como segura terminalmente (safe_terminal) após todas as compensações financeiras
    */
   async markFinanciallySafe(
@@ -1156,6 +1306,12 @@ export class BillingRepository {
       .limit(limitCount)
       .get();
 
+    const scheduledSnapshot = await this.planChangesCollection
+      .where('provider', '==', provider)
+      .where('transition_status', '==', 'scheduled')
+      .limit(limitCount)
+      .get();
+
     const seenIds = new Set<string>();
     const results: BillingPlanChangeRecord[] = [];
 
@@ -1164,6 +1320,7 @@ export class BillingRepository {
       ...pendingFutureSnapshot.docs,
       ...targetPreparedSnapshot.docs,
       ...awaitingInactivationSnapshot.docs,
+      ...scheduledSnapshot.docs,
     ]) {
       if (!seenIds.has(doc.id)) {
         seenIds.add(doc.id);
@@ -1285,8 +1442,11 @@ export class BillingRepository {
   // Transactions
   // --------------------------------------------------------------------------
 
-  async getTransaction(provider: BillingProviderName, providerPaymentId: string): Promise<BillingTransactionRecord | null> {
-    const docId = `${provider}_${providerPaymentId}`;
+  async getTransaction(
+    providerOrId: BillingProviderName | string,
+    providerPaymentId?: string
+  ): Promise<BillingTransactionRecord | null> {
+    const docId = providerPaymentId ? `${providerOrId}_${providerPaymentId}` : providerOrId;
     const doc = await this.transactionsCollection.doc(docId).get();
     if (doc.exists) {
       return doc.data() as BillingTransactionRecord;
@@ -1311,6 +1471,19 @@ export class BillingRepository {
             409,
             `Conflito de data financeira comercial para a transação ${transaction.id}: existente (${existing.paid_billing_date}) diverge da recebida (${transaction.paid_billing_date}).`,
             { code: 'CONFLICTING_FINANCIAL_DATE' }
+          );
+        }
+
+        // Proteção Canônica de Valor Financeiro (Imutabilidade de amount_cents)
+        if (
+          existing.amount_cents !== undefined &&
+          transaction.amount_cents !== undefined &&
+          existing.amount_cents !== transaction.amount_cents
+        ) {
+          throw new AppError(
+            409,
+            `Conflito de valor financeiro comercial para a transação ${transaction.id}: existente (${existing.amount_cents}) diverge da recebida (${transaction.amount_cents}).`,
+            { code: 'CONFLICTING_FINANCIAL_AMOUNT' }
           );
         }
 

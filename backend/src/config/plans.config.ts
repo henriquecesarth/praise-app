@@ -43,6 +43,9 @@ export interface SubscriptionStateData {
   cancel_at_period_end?: boolean;
   current_period_start?: string | null;
   current_period_end?: string | null;
+  locked_member_quota?: QuotaLimit | null;
+  locked_song_quota?: QuotaLimit | null;
+  entitlement_snapshot?: any | null;
 }
 
 
@@ -250,8 +253,14 @@ export function resolveAccessMode(
   }
 
   const effectiveQuotas: EffectiveQuotas = {
-    members: getEffectiveMemberQuota(activePlan, activeAddonBlocks),
-    songs: getEffectiveSongQuota(activePlan),
+    members:
+      subscription.locked_member_quota !== undefined && subscription.locked_member_quota !== null
+        ? subscription.locked_member_quota
+        : getEffectiveMemberQuota(activePlan, activeAddonBlocks),
+    songs:
+      subscription.locked_song_quota !== undefined && subscription.locked_song_quota !== null
+        ? subscription.locked_song_quota
+        : getEffectiveSongQuota(activePlan),
   };
 
   const overLimitInfo = isUsageOverLimit(usage, effectiveQuotas);

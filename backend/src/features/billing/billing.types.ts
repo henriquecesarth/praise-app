@@ -182,6 +182,9 @@ export interface LegacyBillingPlanChangeRecord {
 export interface EntitlementSnapshot {
   plan_id: PlanId;
   addon_blocks: number;
+  interval?: BillingInterval;
+  effective_member_quota?: QuotaLimit;
+  effective_song_quota?: QuotaLimit;
 }
 
 export type BillingEarlyActivationQuoteStatus = 'active' | 'expired' | 'consumed' | 'superseded';
@@ -274,6 +277,7 @@ export interface BillingTransitionV1Record {
   target_interval: BillingInterval;
   target_addon_blocks: number;
   target_future_recurring_price_cents: number;
+  target_entitlement_snapshot?: EntitlementSnapshot | null;
   early_activation_target_entitlement_snapshot?: EntitlementSnapshot | null;
 
   // Early Activation Dynamic Quotes & Audit History
@@ -334,6 +338,10 @@ export interface BillingTransitionV1Record {
   financial_attention_reason?: string | null;
   target_ready_verified_at?: string | null;
   renewal_cutoff_date?: string | null;
+  renewal_payment_settled_at?: string | null;
+  renewal_paid_billing_date?: string | null;
+  successful_renewal_provider_payment_id?: string | null;
+  target_promoted_at?: string | null;
   retry_count?: number;
   last_retry_at?: string | null;
   next_retry_at?: string | null;

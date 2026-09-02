@@ -49,6 +49,9 @@ export interface ProviderPaymentRecord {
   amountCents: number;
   billingType?: string;
   externalReference?: string;
+  clientPaymentDate?: string;
+  paymentDate?: string;
+  invoiceUrl?: string;
 }
 
 export interface BillingProvider {
