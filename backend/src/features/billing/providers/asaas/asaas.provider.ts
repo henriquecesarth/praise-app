@@ -589,6 +589,8 @@ export class AsaasBillingProvider implements BillingProvider {
             amountCents,
             billingType: item.billingType,
             externalReference: item.externalReference,
+            ...(item.paymentDate ? { paymentDate: item.paymentDate } : {}),
+            ...(item.clientPaymentDate ? { clientPaymentDate: item.clientPaymentDate } : {}),
           });
         }
 
@@ -666,6 +668,8 @@ export class AsaasBillingProvider implements BillingProvider {
         amountCents,
         billingType: item.billingType,
         externalReference: item.externalReference,
+        ...(item.paymentDate ? { paymentDate: item.paymentDate } : {}),
+        ...(item.clientPaymentDate ? { clientPaymentDate: item.clientPaymentDate } : {}),
       };
     } catch (err: any) {
       if (err instanceof AppError) throw err;

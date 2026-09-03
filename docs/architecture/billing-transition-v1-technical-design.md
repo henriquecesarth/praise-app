@@ -628,4 +628,13 @@ Para garantir as invariantes **No Two Live Renewals**, **No Unsafe Zero Renewals
      - **Status das Próximas Fases**:
      - **PHASE 3C EARLY ACTIVATION**: **NOT STARTED**.
      - **PAID -> FREE TRANSITIONS**: **NOT STARTED**.
-     - *(O escopo concluído compreende as fases 3B.1, 3B.2, 3B.3A e 3B.3B)*.
+     16. **Webhook Event Lifecycle Semantics & Terminality Independence (Phase 3B.3 Hardening)**:
+         - **Independência de Ciclos de Vida**: O ciclo de vida de `BillingWebhookEvent` (uma entrega do provedor) é estritamente independente do ciclo de vida de `BillingTransition` (saga financeira longa).
+         - **Consumo Terminal**: Um webhook consumido com resposta HTTP 2xx **NÃO** permanece em status `processing` apenas porque a transição permanece financeiramente ativa ou pendente de convergência pelo reconciliador.
+         - **Inexistência de Pseudo-Retry via Processing**: Não existe lease interno ou cron de reclaim de eventos em `processing`. A única reexecução possível de um webhook é via redelivery do provedor.
+         - **Autoridade do Reconciliador**: Casos transitórios (`PAYMENT_NOT_FOUND`, `SOURCE_CUTOVER_NOT_COMPLETED`, `ACTIVATION_COMPLETION_GATE_FAILED`, `SOURCE_SUBSCRIPTION_STILL_ACTIVE`) finalizam o webhook individualmente como `processed` (com HTTP 200) e deixam a transição em `scheduled` ou com `financial_attention_required = true` e slot `HELD`. A autoridade de continuidade e convergência longa pertence exclusivamente ao `BillingReconcilerWorker`.
+         - **HTTP ACK Coerente**: HTTP 2xx expressa que a entrega foi consumida com sucesso; HTTP 5xx expressa falha real no processamento (exceção interna, falha de persistência) e solicita redelivery pelo provedor.
+     - **Status das Próximas Fases**:
+     - **PHASE 3C EARLY ACTIVATION**: **NOT STARTED**.
+     - **PAID -> FREE TRANSITIONS**: **NOT STARTED**.
+     - *(O escopo concluído compreende as fases 3B.1, 3B.2, 3B.3A, 3B.3B e 3B.3 Webhook Terminality Hardening)*.

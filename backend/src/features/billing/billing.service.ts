@@ -2701,6 +2701,22 @@ export class BillingService {
           const confirmedPayment = payments.find((p) => p.status === 'CONFIRMED' || p.status === 'RECEIVED');
 
           if (confirmedPayment) {
+            // Proveniência Temporal Rigorosa: a data de liquidação DEVE ser evidência financeira comprovada pelo provedor
+            // (paymentDate ou clientPaymentDate). Vencimento (dueDate) ou relógio atual (now) NUNCA são substitutos de liquidação.
+            const settlementDate = confirmedPayment.paymentDate || confirmedPayment.clientPaymentDate;
+            if (!settlementDate) {
+              console.error(
+                `[RECONCILE INITIAL PURCHASE FAIL CLOSED] Pagamento ${confirmedPayment.id} possui status ${confirmedPayment.status} mas nenhuma data financeira autoritativa (paymentDate/clientPaymentDate).`
+              );
+              await this.billingRepo.updateTransition(claimed.id, ministryId, {
+                financial_attention_required: true,
+                financial_attention_reason: 'SETTLED_PAYMENT_MISSING_FINANCIAL_DATE',
+                financial_safety_status: 'attention_required',
+              });
+              await this.billingRepo.releasePlanChangeLock(claimed.id);
+              return { success: false, reason: 'SETTLED_PAYMENT_MISSING_FINANCIAL_DATE' };
+            }
+
             // Executar ativação segura via webhook handler
             const parsedEvent: any = {
               providerEventId: `rec_${confirmedPayment.id}_${Date.now()}`,
@@ -2712,7 +2728,8 @@ export class BillingService {
               externalReference: checkoutIntentId,
               amountCents: confirmedPayment.amountCents || claimed.target_future_recurring_price_cents,
               dueDate: confirmedPayment.dueDate,
-              paymentDate: now.toISOString(),
+              paymentDate: settlementDate,
+              confirmedDate: settlementDate,
               status: confirmedPayment.status,
               subscriptionNextDueDate: remoteSub.nextDueDate,
             };
@@ -4011,8 +4028,12 @@ export class BillingService {
           `transition_status=${planChange.transition_status}, supersede_status=${planChange.supersede_status}, ` +
           `cleanup_status=${planChange.payment_cleanup_status}. Liquidação e promoção de cotas bloqueadas.`
       );
-      // Retryable transitório: o reconciler convergirá o cutover. Evento permanece em processing
-      // intencionalmente para permitir retry pelo handler quando o cutover completar.
+      // Categoria B: cutover transitoriamente incompleto — o BillingReconcilerWorker
+      // completa o cutover e o settlement de forma autônoma.
+      // O webhook individual é consumido terminalmente: a saga pertence ao reconciler, não ao replay do evento.
+      if (parsedEvent?.providerEventId) {
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      }
       return { status: 'ok', processed: false, reason: 'SOURCE_CUTOVER_NOT_COMPLETED' };
     }
 
@@ -4121,8 +4142,12 @@ export class BillingService {
 
     if (!payment) {
       console.warn(`[RENEWAL PAYMENT READ] Cobrança target ${expectedPaymentId} não localizada no provedor.`);
-      // Retryable transitório: gateway pode não ter propagado a cobrança ainda.
-      // Evento permanece em processing intencionalmente para retry pelo reconciler.
+      // Categoria B: eventual consistency — o reconciler possui future_provider_payment_id
+      // e pode realizar o poll/discovery do pagamento via provider.getPayment de forma autônoma.
+      // O webhook individual é consumido terminalmente: a saga pertence ao reconciler.
+      if (parsedEvent?.providerEventId) {
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      }
       return { status: 'ok', processed: false, reason: 'PAYMENT_NOT_FOUND' };
     }
 
@@ -4557,8 +4582,12 @@ export class BillingService {
             financial_attention_reason: 'SOURCE_SUBSCRIPTION_STILL_ACTIVE_AT_RENEWAL',
             financial_safety_status: 'attention_required',
           });
-          // Retryable: cutover ainda não concluído no provider (race condition). Atenção persistida.
-          // Evento permanece em processing intencionalmente para re-verificação pelo reconciler.
+          // Categoria C: atenção financeira persistida na transição (financial_attention_required=true).
+          // O webhook é consumido terminalmente — a progressão futura é bloqueada intencionalmente
+          // e requer revisão manual ou intervenção do suporte operacional.
+          if (parsedEvent?.providerEventId) {
+            await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+          }
           return { status: 'ok', processed: false, reason: 'SOURCE_SUBSCRIPTION_STILL_ACTIVE' };
         }
       } catch (err: any) {
@@ -4695,8 +4724,12 @@ export class BillingService {
           cutoverValid
         )}. Slot remains HELD.`
       );
-      // Retryable: estado local ainda não convergiu após writes (crash-safety scenario).
-      // Evento permanece em processing intencionalmente; o reconciler re-executará a liquidação.
+      // Categoria B: writes locais ainda não convergidos (crash-safety scenario).
+      // O BillingReconcilerWorker detecta a transição em 'scheduled' e re-executa a liquidação de forma autônoma.
+      // O webhook individual é consumido terminalmente — a saga é do reconciler, não do replay do evento.
+      if (parsedEvent?.providerEventId) {
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      }
       return { status: 'ok', processed: false, reason: 'ACTIVATION_COMPLETION_GATE_FAILED' };
     }
 

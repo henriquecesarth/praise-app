@@ -847,6 +847,8 @@ describe('Phase 3A.1 — Billing Transition V1 Initial Purchase Financial Bounda
           customerId: 'cus_min_test_1',
           status: 'CONFIRMED',
           dueDate: '2026-09-02',
+          paymentDate: '2026-09-02',
+          clientPaymentDate: '2026-09-02',
           amountCents: 1490,
         },
       ]);
@@ -887,6 +889,140 @@ describe('Phase 3A.1 — Billing Transition V1 Initial Purchase Financial Bounda
       const tx = transactionsStore.get('asaas_pay_missing_tx_1');
       expect(tx).toBeDefined();
       expect(tx?.amount_cents).toBe(1490);
+    });
+
+    it('6.3 Proveniência Temporal: dueDate 02/09 com paymentDate 05/09 define paid_billing_date = 05/09 (NÃO dueDate)', async () => {
+      // Checkout com timeout
+      mockProvider.createCheckout.mockRejectedValueOnce(new Error('ETIMEDOUT'));
+      await expect(
+        billingService.createCheckout('min_test_1', 'usr_admin_1', {
+          planId: 'lite',
+          interval: 'monthly',
+          addonBlocks: 0,
+        })
+      ).rejects.toThrow();
+
+      const tr = Array.from(planChangesStore.values())[0] as BillingTransitionV1Record;
+
+      // Provedor confirma que a fatura venceu 02/09 mas foi paga dia 05/09
+      mockProvider.findSubscriptionByExternalReference.mockResolvedValueOnce({
+        providerSubscriptionId: 'sub_diff_dates_999',
+        providerCustomerId: 'cus_min_test_1',
+        status: 'ACTIVE',
+        valueCents: 1490,
+        nextDueDate: '2026-10-05', // Renovação calculada a partir de 05/09, NÃO de 02/09
+      });
+      mockProvider.listSubscriptionPayments.mockResolvedValueOnce([
+        {
+          id: 'pay_diff_dates_888',
+          subscriptionId: 'sub_diff_dates_999',
+          customerId: 'cus_min_test_1',
+          status: 'CONFIRMED',
+          dueDate: '2026-09-02',
+          paymentDate: '2026-09-05', // Autoridade financeira de liquidação
+          amountCents: 1490,
+        },
+      ]);
+
+      const recResult = await billingService.reconcileInitialPurchaseTransition(tr.id, 'worker_test_1');
+      expect(recResult.success).toBe(true);
+
+      // Prova A: Transação financeira registrada com paid_billing_date = '2026-09-05', NÃO '2026-09-02'
+      const tx = transactionsStore.get('asaas_pay_diff_dates_888');
+      expect(tx).toBeDefined();
+      expect(tx?.paid_billing_date).toBe('2026-09-05');
+      expect(tx?.due_date).toBe('2026-09-02');
+
+      // Prova B: Período da assinatura inicia no settlement (05/09) e finaliza em 05/10
+      const billingSub = subscriptionsStore.get('min_test_1');
+      expect(billingSub?.current_period_start_billing_date).toBe('2026-09-05');
+      expect(billingSub?.current_period_end_billing_date).toBe('2026-10-05');
+    });
+
+    it('6.4 clientPaymentDate presente sem paymentDate é respeitado como autoridade de liquidação', async () => {
+      mockProvider.createCheckout.mockRejectedValueOnce(new Error('ETIMEDOUT'));
+      await expect(
+        billingService.createCheckout('min_test_1', 'usr_admin_1', {
+          planId: 'lite',
+          interval: 'monthly',
+          addonBlocks: 0,
+        })
+      ).rejects.toThrow();
+
+      const tr = Array.from(planChangesStore.values())[0] as BillingTransitionV1Record;
+
+      mockProvider.findSubscriptionByExternalReference.mockResolvedValueOnce({
+        providerSubscriptionId: 'sub_client_date_999',
+        providerCustomerId: 'cus_min_test_1',
+        status: 'ACTIVE',
+        valueCents: 1490,
+        nextDueDate: '2026-10-02',
+      });
+      mockProvider.listSubscriptionPayments.mockResolvedValueOnce([
+        {
+          id: 'pay_client_date_888',
+          subscriptionId: 'sub_client_date_999',
+          customerId: 'cus_min_test_1',
+          status: 'RECEIVED',
+          dueDate: '2026-09-02',
+          clientPaymentDate: '2026-09-02', // Sem paymentDate explícito
+          amountCents: 1490,
+        },
+      ]);
+
+      const recResult = await billingService.reconcileInitialPurchaseTransition(tr.id, 'worker_test_1');
+      expect(recResult.success).toBe(true);
+
+      const tx = transactionsStore.get('asaas_pay_client_date_888');
+      expect(tx?.paid_billing_date).toBe('2026-09-02');
+    });
+
+    it('6.5 FAIL CLOSED: pagamento CONFIRMED sem paymentDate nem clientPaymentDate bloqueia ativação e marca atenção', async () => {
+      mockProvider.createCheckout.mockRejectedValueOnce(new Error('ETIMEDOUT'));
+      await expect(
+        billingService.createCheckout('min_test_1', 'usr_admin_1', {
+          planId: 'lite',
+          interval: 'monthly',
+          addonBlocks: 0,
+        })
+      ).rejects.toThrow();
+
+      const tr = Array.from(planChangesStore.values())[0] as BillingTransitionV1Record;
+
+      mockProvider.findSubscriptionByExternalReference.mockResolvedValueOnce({
+        providerSubscriptionId: 'sub_no_date_999',
+        providerCustomerId: 'cus_min_test_1',
+        status: 'ACTIVE',
+        valueCents: 1490,
+        nextDueDate: '2026-10-02',
+      });
+      // Pagamento confirmado mas SEM NENHUMA data financeira autoritativa
+      mockProvider.listSubscriptionPayments.mockResolvedValueOnce([
+        {
+          id: 'pay_no_date_888',
+          subscriptionId: 'sub_no_date_999',
+          customerId: 'cus_min_test_1',
+          status: 'CONFIRMED',
+          dueDate: '2026-09-02', // dueDate NÃO pode ser assumido como settlement
+          amountCents: 1490,
+        },
+      ]);
+
+      const recResult = await billingService.reconcileInitialPurchaseTransition(tr.id, 'worker_test_1');
+      // FAIL CLOSED acionado
+      expect(recResult.success).toBe(false);
+      expect(recResult.reason).toBe('SETTLED_PAYMENT_MISSING_FINANCIAL_DATE');
+
+      // Transição NÃO completada, marcada com atenção financeira e slot retido
+      const updatedTr = planChangesStore.get(tr.id) as BillingTransitionV1Record;
+      expect(updatedTr.transition_status).not.toBe('completed');
+      expect(updatedTr.financial_attention_required).toBe(true);
+      expect(updatedTr.financial_attention_reason).toBe('SETTLED_PAYMENT_MISSING_FINANCIAL_DATE');
+      expect(updatedTr.financial_safety_status).toBe('attention_required');
+
+      // Entitlement NÃO promovido e slot retido
+      expect(mockSubscriptionService.changePlan).not.toHaveBeenCalled();
+      expect(activeSlotsStore.has('slot_min_test_1_asaas')).toBe(true);
     });
   });
 

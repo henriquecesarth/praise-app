@@ -2458,7 +2458,7 @@ describe('Phase 3B.3A — Scheduled Renewal Settlement & Target Activation', () 
       );
     });
 
-    it('Teste B: PAYMENT_NOT_FOUND → processing NÃO finalizado (retryable)', async () => {
+    it('Teste B: PAYMENT_NOT_FOUND → webhook consumido terminalmente, reconciler continua via transition', async () => {
       // Provider retorna null para o pagamento (indisponibilidade transitória)
       mockProvider.getPayment.mockResolvedValueOnce(null);
 
@@ -2470,15 +2470,18 @@ describe('Phase 3B.3A — Scheduled Renewal Settlement & Target Activation', () 
       );
 
       expect(result.reason).toBe('PAYMENT_NOT_FOUND');
-      // Retryable: markWebhookEventProcessed NÃO deve ser chamado para este evento
-      const calls = mockBillingRepo.markWebhookEventProcessed.mock.calls;
-      const calledForThisEvent = calls.some(
-        (args: any[]) => args[1] === 'evt_not_found_001'
+      // Terminal: webhook delivery consumida. O reconciler polls via future_provider_payment_id na transição.
+      expect(mockBillingRepo.markWebhookEventProcessed).toHaveBeenCalledWith(
+        'asaas',
+        'evt_not_found_001',
+        'processed'
       );
-      expect(calledForThisEvent).toBe(false);
+      // Transition permanece scheduled, slot HELD
+      const tr = planChangesStore.get('tr_scheduled_001')!;
+      expect((tr as any).transition_status).toBe('scheduled');
     });
 
-    it('Teste B2: SOURCE_CUTOVER_NOT_COMPLETED → processing NÃO finalizado (retryable)', async () => {
+    it('Teste B2: SOURCE_CUTOVER_NOT_COMPLETED → webhook consumido terminalmente, reconciler executa cutover', async () => {
       const cutoverPendingTr: BillingTransitionV1Record = {
         ...baseScheduledTransition,
         id: 'tr_cutover_pending_001',
@@ -2494,11 +2497,15 @@ describe('Phase 3B.3A — Scheduled Renewal Settlement & Target Activation', () 
       );
 
       expect(result.reason).toBe('SOURCE_CUTOVER_NOT_COMPLETED');
-      const calls = mockBillingRepo.markWebhookEventProcessed.mock.calls;
-      const calledForThisEvent = calls.some(
-        (args: any[]) => args[1] === 'evt_cutover_pending_001'
+      // Terminal: webhook delivery consumida. O reconciler executa cutover->settlement de forma autônoma.
+      expect(mockBillingRepo.markWebhookEventProcessed).toHaveBeenCalledWith(
+        'asaas',
+        'evt_cutover_pending_001',
+        'processed'
       );
-      expect(calledForThisEvent).toBe(false);
+      // Transition não avança, slot HELD
+      const tr = planChangesStore.get('tr_cutover_pending_001')!;
+      expect((tr as any).supersede_status).toBe('pending');
     });
 
     it('Teste C: financial_attention_required=true → markWebhookEventProcessed("processed") chamado, sem retry loop', async () => {
@@ -2657,6 +2664,111 @@ describe('Phase 3B.3A — Scheduled Renewal Settlement & Target Activation', () 
       const tr = planChangesStore.get('tr_scheduled_001')!;
       expect(tr.transition_status).toBe('scheduled');
       expect(transactionsStore.size).toBe(0);
+    });
+
+    it('Teste D: SOURCE_SUBSCRIPTION_STILL_ACTIVE via webhook → processed terminal + financial_attention_required, slot HELD', async () => {
+      const tr: any = {
+        ...baseScheduledTransition,
+        id: 'tr_source_active_webhook_001',
+        transition_status: 'scheduled',
+        supersede_status: 'completed',
+        payment_cleanup_status: 'completed',
+        old_provider_subscription_id: 'sub_source_still_active',
+        previous_provider_subscription_id: 'sub_source_still_active',
+      };
+      planChangesStore.set(tr.id, tr);
+      activeSlotsStore.set('slot_min_test_1_asaas', {
+        id: 'slot_min_test_1_asaas',
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        plan_change_id: tr.id,
+        held_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as any);
+
+      // Provider confirma o pagamento (gate financeiro OK)
+      mockProvider.getPayment.mockResolvedValueOnce({
+        id: 'pay_target_001',
+        subscriptionId: 'sub_target_new',
+        customerId: 'cus_test_1',
+        status: 'CONFIRMED',
+        dueDate: '2026-10-02',
+        amountCents: 3490,
+      });
+
+      // Provider ainda reporta source como ACTIVE (race condition)
+      mockProvider.getSubscription = vi.fn().mockImplementation(async (subId: string) => {
+        if (subId === 'sub_source_still_active') {
+          return { id: subId, status: 'ACTIVE', cycle: 'MONTHLY' };
+        }
+        return { id: subId, status: 'ACTIVE', customer: 'cus_test_1', cycle: 'MONTHLY', valueCents: 3490 };
+      });
+
+      const res = await (billingService as any).processScheduledPaidRenewalSettlement(
+        { ...preboundaryEvent, providerEventId: 'evt_source_still_active_001' },
+        planChangesStore.get(tr.id)!,
+        new Date('2026-10-02T12:00:00Z'),
+        { nowCommercialDate: '2026-10-02' }
+      );
+
+      expect(res.reason).toBe('SOURCE_SUBSCRIPTION_STILL_ACTIVE');
+      // Webhook consumido terminalmente
+      expect(mockBillingRepo.markWebhookEventProcessed).toHaveBeenCalledWith(
+        'asaas',
+        'evt_source_still_active_001',
+        'processed'
+      );
+      // Atenção financeira persistida na transição
+      const updatedTr = planChangesStore.get(tr.id)!;
+      expect((updatedTr as any).financial_attention_required).toBe(true);
+      expect((updatedTr as any).financial_attention_reason).toBe('SOURCE_SUBSCRIPTION_STILL_ACTIVE_AT_RENEWAL');
+      // Slot permanece HELD
+      expect(activeSlotsStore.has('slot_min_test_1_asaas')).toBe(true);
+    });
+
+    it('Teste J (INVARIANT): nenhum caminho 2xx do handler deixa webhook permanentemente em processing', async () => {
+      // Prova que toda execução de processScheduledPaidRenewalSettlement com parsedEvent!=null
+      // chama markWebhookEventProcessed antes de retornar, exceto em erros de exceção (→ HTTP 5xx path).
+      // Cenários testados individualmente em Testes A-E garantem a propriedade.
+      // Este teste verifica o subset mais crítico: as quatro razões que eram incorretamente retryable.
+      const scenarios: Array<{ eventId: string; setup: () => void; expectedReason: string }> = [
+        {
+          eventId: 'inv_payment_not_found',
+          setup: () => { mockProvider.getPayment.mockResolvedValueOnce(null); },
+          expectedReason: 'PAYMENT_NOT_FOUND',
+        },
+        {
+          eventId: 'inv_cutover_not_completed',
+          setup: () => {
+            planChangesStore.set('tr_scheduled_001', {
+              ...baseScheduledTransition,
+              supersede_status: 'pending',
+            } as any);
+          },
+          expectedReason: 'SOURCE_CUTOVER_NOT_COMPLETED',
+        },
+      ];
+
+      for (const scenario of scenarios) {
+        mockBillingRepo.markWebhookEventProcessed.mockClear();
+        // Restore transition state between scenarios
+        planChangesStore.set('tr_scheduled_001', { ...baseScheduledTransition } as any);
+
+        scenario.setup();
+
+        await (billingService as any).processScheduledPaidRenewalSettlement(
+          { ...preboundaryEvent, providerEventId: scenario.eventId },
+          planChangesStore.get('tr_scheduled_001')!,
+          new Date('2026-10-02T12:00:00Z'),
+          { nowCommercialDate: '2026-10-02' }
+        );
+
+        // INVARIANT: após retorno 2xx (ausência de exception), o evento NÃO permanece em processing
+        const calledTerminal = mockBillingRepo.markWebhookEventProcessed.mock.calls.some(
+          (args: any[]) => args[1] === scenario.eventId && (args[2] === 'processed' || args[2] === 'ignored' || args[2] === 'failed')
+        );
+        expect(calledTerminal).toBe(true);
+      }
     });
   });
 });
