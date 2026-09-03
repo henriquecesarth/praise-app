@@ -878,4 +878,293 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
       ).rejects.toThrow(/IDENTITY IMMUTABILITY VIOLATION/);
     });
   });
+
+  describe('Phase 3C.2 — Early Activation Repository Operations (Reservation, Creation, Failure, Quarantine)', () => {
+    const createBaseScheduledTransition = (): BillingTransitionV1Record => {
+      const futureDate = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString();
+      const quoteExpires = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+      const quote: BillingEarlyActivationQuote = {
+        quote_id: 'quote_ea_001',
+        transition_id: 'tr_scheduled_ea_1',
+        ministry_id: 'min_ea_test',
+        source_current_cycle_total_cents: 3490,
+        target_current_cycle_total_cents: 8990,
+        price_delta_cents: 5500,
+        total_days: 30,
+        remaining_days: 15,
+        prorated_adjustment_cents: 2750,
+        currency: 'BRL',
+        priced_at: new Date().toISOString(),
+        quote_effective_billing_date: '2026-10-01',
+        expires_at: quoteExpires,
+        status: 'active',
+        calculation_version: 'proration_v1',
+      };
+
+      const base = createSampleV1Record({
+        id: 'tr_scheduled_ea_1',
+        transition_id: 'tr_scheduled_ea_1',
+        ministry_id: 'min_ea_test',
+        transition_status: 'scheduled',
+        status: 'payment_confirmed',
+        supersede_status: 'completed',
+        payment_cleanup_status: 'completed',
+        financial_safety_status: 'live',
+        effective_billing_date: '2026-10-01',
+        current_early_activation_quote: quote,
+        early_activation_quotes_history: [quote],
+        early_activation_status: 'available',
+      });
+
+      planChangesStore.set(base.id, base);
+      return base;
+    };
+
+    it('1. reserveEarlyActivationCheckoutAttempt: reserva atômica consome quote e cria tentativa local pending', async () => {
+      const base = createBaseScheduledTransition();
+
+      const result = await repo.reserveEarlyActivationCheckoutAttempt({
+        transitionId: base.id,
+        ministryId: base.ministry_id,
+        quoteId: 'quote_ea_001',
+        attemptId: 'att_ea_100',
+        internalCheckoutIntentId: 'intent_ea_100',
+        amountCents: 2750,
+        checkoutMinutesToExpire: 45,
+        quoteExpiresAt: base.current_early_activation_quote!.expires_at,
+      });
+
+      expect(result.transition.early_activation_status).toBe('payment_pending');
+      expect(result.transition.current_early_activation_checkout_attempt_id).toBe('att_ea_100');
+      expect(result.transition.early_activation_checkout_intent_id).toBe('intent_ea_100');
+      expect(result.transition.early_activation_provider_checkout_id).toBeNull();
+      expect(result.transition.current_early_activation_quote?.status).toBe('consumed');
+
+      // Attempt local
+      expect(result.attempt.attempt_id).toBe('att_ea_100');
+      expect(result.attempt.status).toBe('pending');
+      expect(result.attempt.provider_checkout_id).toBeNull();
+      expect(result.attempt.amount_cents).toBe(2750);
+      expect(result.attempt.provider_session_terminal).toBe(false);
+    });
+
+    it('2. reserveEarlyActivationCheckoutAttempt: falha fechada se cotação não for ativa', async () => {
+      const base = createBaseScheduledTransition();
+      base.current_early_activation_quote!.status = 'consumed';
+      planChangesStore.set(base.id, base);
+
+      await expect(
+        repo.reserveEarlyActivationCheckoutAttempt({
+          transitionId: base.id,
+          ministryId: base.ministry_id,
+          quoteId: 'quote_ea_001',
+          attemptId: 'att_ea_101',
+          internalCheckoutIntentId: 'intent_ea_101',
+          amountCents: 2750,
+          checkoutMinutesToExpire: 45,
+          quoteExpiresAt: base.current_early_activation_quote!.expires_at,
+        })
+      ).rejects.toThrow(/não pode ser consumida/);
+    });
+
+    it('3. reserveEarlyActivationCheckoutAttempt: bloqueia segunda reserva simultânea (one-live-obligation)', async () => {
+      const base = createBaseScheduledTransition();
+
+      // Primeira reserva
+      await repo.reserveEarlyActivationCheckoutAttempt({
+        transitionId: base.id,
+        ministryId: base.ministry_id,
+        quoteId: 'quote_ea_001',
+        attemptId: 'att_ea_first',
+        internalCheckoutIntentId: 'intent_ea_first',
+        amountCents: 2750,
+        checkoutMinutesToExpire: 45,
+        quoteExpiresAt: base.current_early_activation_quote!.expires_at,
+      });
+
+      // Segunda chamada concorrente tenta reservar: DEVE FALHAR com 409
+      await expect(
+        repo.reserveEarlyActivationCheckoutAttempt({
+          transitionId: base.id,
+          ministryId: base.ministry_id,
+          quoteId: 'quote_ea_001',
+          attemptId: 'att_ea_second',
+          internalCheckoutIntentId: 'intent_ea_second',
+          amountCents: 2750,
+          checkoutMinutesToExpire: 45,
+          quoteExpiresAt: base.current_early_activation_quote!.expires_at,
+        })
+      ).rejects.toThrow(/Já existe uma obrigação financeira de ativação antecipada/);
+    });
+
+    it('4. recordEarlyActivationCheckoutCreated: grava provider_checkout_id de forma write-once', async () => {
+      const base = createBaseScheduledTransition();
+
+      await repo.reserveEarlyActivationCheckoutAttempt({
+        transitionId: base.id,
+        ministryId: base.ministry_id,
+        quoteId: 'quote_ea_001',
+        attemptId: 'att_ea_created',
+        internalCheckoutIntentId: 'intent_ea_created',
+        amountCents: 2750,
+        checkoutMinutesToExpire: 45,
+        quoteExpiresAt: base.current_early_activation_quote!.expires_at,
+      });
+
+      const updated = await repo.recordEarlyActivationCheckoutCreated({
+        transitionId: base.id,
+        ministryId: base.ministry_id,
+        attemptId: 'att_ea_created',
+        providerCheckoutId: 'chk_asaas_live_123',
+        checkoutUrl: 'https://sandbox.asaas.com/c/chk_asaas_live_123',
+      });
+
+      expect(updated.early_activation_provider_checkout_id).toBe('chk_asaas_live_123');
+      expect(updated.checkout_url).toBe('https://sandbox.asaas.com/c/chk_asaas_live_123');
+
+      const attempt = updated.checkout_attempts?.find((a) => a.attempt_id === 'att_ea_created');
+      expect(attempt?.provider_checkout_id).toBe('chk_asaas_live_123');
+
+      // Idempotência permitida se for o mesmo providerCheckoutId
+      await expect(
+        repo.recordEarlyActivationCheckoutCreated({
+          transitionId: base.id,
+          ministryId: base.ministry_id,
+          attemptId: 'att_ea_created',
+          providerCheckoutId: 'chk_asaas_live_123',
+          checkoutUrl: 'https://sandbox.asaas.com/c/chk_asaas_live_123',
+        })
+      ).resolves.toBeDefined();
+
+      // Conflito write-once se tentar gravar ID divergente: DEVE FALHAR FECHADO com 409
+      await expect(
+        repo.recordEarlyActivationCheckoutCreated({
+          transitionId: base.id,
+          ministryId: base.ministry_id,
+          attemptId: 'att_ea_created',
+          providerCheckoutId: 'chk_asaas_OTHER_456',
+          checkoutUrl: 'https://sandbox.asaas.com/c/chk_asaas_OTHER_456',
+        })
+      ).rejects.toThrow(/Conflito financeiro write-once/);
+    });
+
+    it('5. markEarlyActivationCheckoutCreationFailed: libera status para available se criação falhou antes de obrigação', async () => {
+      const base = createBaseScheduledTransition();
+
+      await repo.reserveEarlyActivationCheckoutAttempt({
+        transitionId: base.id,
+        ministryId: base.ministry_id,
+        quoteId: 'quote_ea_001',
+        attemptId: 'att_ea_failed',
+        internalCheckoutIntentId: 'intent_ea_failed',
+        amountCents: 2750,
+        checkoutMinutesToExpire: 45,
+        quoteExpiresAt: base.current_early_activation_quote!.expires_at,
+      });
+
+      const updated = await repo.markEarlyActivationCheckoutCreationFailed({
+        transitionId: base.id,
+        ministryId: base.ministry_id,
+        attemptId: 'att_ea_failed',
+        failureClassification: 'creation_failed_before_provider_obligation',
+      });
+
+      // Subfluxo reaberto para permitir nova tentativa
+      expect(updated.early_activation_status).toBe('available');
+
+      const attempt = updated.checkout_attempts?.find((a) => a.attempt_id === 'att_ea_failed');
+      expect(attempt?.status).toBe('failed');
+      expect(attempt?.failure_classification).toBe('creation_failed_before_provider_obligation');
+      expect(attempt?.provider_session_terminal).toBe(false);
+
+      // Quote consumida permanece imutável no histórico
+      expect(updated.current_early_activation_quote?.status).toBe('consumed');
+    });
+
+    it('6. markEarlyActivationCheckoutCreateUncertain: quarentena mantém payment_pending e provider_session_terminal false', async () => {
+      const base = createBaseScheduledTransition();
+
+      await repo.reserveEarlyActivationCheckoutAttempt({
+        transitionId: base.id,
+        ministryId: base.ministry_id,
+        quoteId: 'quote_ea_001',
+        attemptId: 'att_ea_unc',
+        internalCheckoutIntentId: 'intent_ea_unc',
+        amountCents: 2750,
+        checkoutMinutesToExpire: 45,
+        quoteExpiresAt: base.current_early_activation_quote!.expires_at,
+      });
+
+      const updated = await repo.markEarlyActivationCheckoutCreateUncertain({
+        transitionId: base.id,
+        ministryId: base.ministry_id,
+        attemptId: 'att_ea_unc',
+        uncertainUntil: '2026-09-15T23:59:59.000Z',
+      });
+
+      expect(updated.early_activation_status).toBe('payment_pending');
+
+      const attempt = updated.checkout_attempts?.find((a) => a.attempt_id === 'att_ea_unc');
+      expect(attempt?.status).toBe('uncertain');
+      expect(attempt?.failure_classification).toBe('unknown');
+      expect(attempt?.uncertain_until).toBe('2026-09-15T23:59:59.000Z');
+      expect(attempt?.provider_session_terminal).toBe(false);
+      expect(attempt?.provider_create_state).toBe('uncertain');
+    });
+
+    it('7. markEarlyActivationCheckoutAttempting: CAS transiciona reserved -> attempting com sucesso', async () => {
+      const base = createBaseScheduledTransition();
+
+      await repo.reserveEarlyActivationCheckoutAttempt({
+        transitionId: base.id,
+        ministryId: base.ministry_id,
+        quoteId: 'quote_ea_001',
+        attemptId: 'att_ea_cas',
+        internalCheckoutIntentId: 'intent_ea_cas',
+        amountCents: 2750,
+        checkoutMinutesToExpire: 45,
+        quoteExpiresAt: base.current_early_activation_quote!.expires_at,
+      });
+
+      const updated = await repo.markEarlyActivationCheckoutAttempting({
+        transitionId: base.id,
+        ministryId: base.ministry_id,
+        attemptId: 'att_ea_cas',
+      });
+
+      const attempt = updated.checkout_attempts?.find((a) => a.attempt_id === 'att_ea_cas');
+      expect(attempt?.provider_create_state).toBe('attempting');
+    });
+
+    it('8. markEarlyActivationCheckoutAttempting: rejeita com 409 ATTEMPT_NOT_RESERVED se já estiver em attempting', async () => {
+      const base = createBaseScheduledTransition();
+
+      await repo.reserveEarlyActivationCheckoutAttempt({
+        transitionId: base.id,
+        ministryId: base.ministry_id,
+        quoteId: 'quote_ea_001',
+        attemptId: 'att_ea_cas2',
+        internalCheckoutIntentId: 'intent_ea_cas2',
+        amountCents: 2750,
+        checkoutMinutesToExpire: 45,
+        quoteExpiresAt: base.current_early_activation_quote!.expires_at,
+      });
+
+      await repo.markEarlyActivationCheckoutAttempting({
+        transitionId: base.id,
+        ministryId: base.ministry_id,
+        attemptId: 'att_ea_cas2',
+      });
+
+      // Segunda chamada com a mesma attempt falha o CAS
+      await expect(
+        repo.markEarlyActivationCheckoutAttempting({
+          transitionId: base.id,
+          ministryId: base.ministry_id,
+          attemptId: 'att_ea_cas2',
+        })
+      ).rejects.toThrow(/não está no estado 'reserved'/);
+    });
+  });
 });

@@ -1324,4 +1324,564 @@ describe('AsaasBillingProvider — Webhook Authentication & Parser Validation', 
       global.fetch = originalFetch;
     });
   });
+
+  describe('Phase 3C.2 — createDetachedCheckout (Early Activation One-Off Adjustment)', () => {
+    const originalFetch = global.fetch;
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
+    it('1. DETACHED payload: chargeTypes DETACHED, CREDIT_CARD only, no subscription block', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+
+      let capturedUrl = '';
+      let capturedInit: any = null;
+
+      global.fetch = vi.fn().mockImplementation(async (url: string, init: any) => {
+        capturedUrl = url;
+        capturedInit = init;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 'chk_detached_123',
+            checkoutUrl: 'https://sandbox.asaas.com/c/chk_detached_123',
+            expiresAt: '2026-09-15T18:00:00.000Z',
+          }),
+        };
+      }) as any;
+
+      const result = await provider.createDetachedCheckout({
+        ministryId: 'min_777',
+        checkoutIntentId: 'intent_min_777_ea_001',
+        providerCustomerId: 'cus_asaas_888',
+        amountCents: 2097, // R$ 20,97
+        description: 'Ajuste Pró-Rata de Ativação Antecipada (pro)',
+        minutesToExpire: 45,
+        successUrl: 'https://app.louvaio.com.br/billing/success',
+        cancelUrl: 'https://app.louvaio.com.br/billing/cancel',
+        expiredUrl: 'https://app.louvaio.com.br/billing/expired',
+      });
+
+      expect(capturedUrl).toBe('https://sandbox.asaas.com/api/v3/checkouts');
+      expect(capturedInit.method).toBe('POST');
+      expect(capturedInit.headers.access_token).toBe('test_api_key');
+
+      const body = JSON.parse(capturedInit.body);
+
+      // Invariantes estritas de checkout avulso
+      expect(body.chargeTypes).toEqual(['DETACHED']);
+      expect(body.billingTypes).toEqual(['CREDIT_CARD']);
+      expect(body.subscription).toBeUndefined(); // SEM bloco subscription!
+      expect(body.minutesToExpire).toBe(45);
+      expect(body.externalReference).toBe('intent_min_777_ea_001');
+      expect(body.customer).toBe('cus_asaas_888');
+      expect(body.customerData).toBeUndefined();
+      expect(body.items).toHaveLength(1);
+      expect(body.items[0].value).toBe(20.97);
+      expect(body.items[0].description).toBe('Ajuste Pró-Rata de Ativação Antecipada (pro)');
+      expect(body.callback).toEqual({
+        successUrl: 'https://app.louvaio.com.br/billing/success',
+        cancelUrl: 'https://app.louvaio.com.br/billing/cancel',
+        expiredUrl: 'https://app.louvaio.com.br/billing/expired',
+      });
+
+      expect(result.checkoutId).toBe('chk_detached_123');
+      expect(result.checkoutUrl).toBe('https://sandbox.asaas.com/checkoutSession/show?id=chk_detached_123');
+      expect(result.expiresAt).toBe('2026-09-15T18:00:00.000Z');
+    });
+
+    it('2. Money serialization: integer cents -> exact decimal BRL', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+
+      const testCases = [
+        { cents: 1, expectedBrl: 0.01 },
+        { cents: 67, expectedBrl: 0.67 },
+        { cents: 1000, expectedBrl: 10 },
+        { cents: 2097, expectedBrl: 20.97 },
+        { cents: 8990, expectedBrl: 89.9 },
+      ];
+
+      for (const tc of testCases) {
+        let sentBody: any = null;
+        global.fetch = vi.fn().mockImplementation(async (_url: string, init: any) => {
+          sentBody = JSON.parse(init.body);
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ id: 'chk_test', checkoutUrl: 'https://test' }),
+          };
+        }) as any;
+
+        await provider.createDetachedCheckout({
+          ministryId: 'min_1',
+          checkoutIntentId: 'intent_1',
+          amountCents: tc.cents,
+          description: 'Ajuste',
+          minutesToExpire: 30,
+          successUrl: 'https://app.louvaio.com.br/success',
+        });
+
+        expect(sentBody.items[0].value).toBe(tc.expectedBrl);
+      }
+    });
+
+    it('3. Exclusão mútua: envia customerData quando providerCustomerId não fornecido', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+
+      let sentBody: any = null;
+      global.fetch = vi.fn().mockImplementation(async (_url: string, init: any) => {
+        sentBody = JSON.parse(init.body);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'chk_customer_data', checkoutUrl: 'https://test' }),
+        };
+      }) as any;
+
+      await provider.createDetachedCheckout({
+        ministryId: 'min_1',
+        checkoutIntentId: 'intent_1',
+        amountCents: 5000,
+        description: 'Ajuste',
+        minutesToExpire: 60,
+        successUrl: 'https://app.louvaio.com.br/success',
+        customerData: {
+          name: 'João Silva',
+          email: 'joao@exemplo.com',
+          cpfCnpj: '12345678901',
+          phone: '11999999999',
+        },
+      });
+
+      expect(sentBody.customer).toBeUndefined();
+      expect(sentBody.customerData).toEqual({
+        name: 'João Silva',
+        email: 'joao@exemplo.com',
+        cpfCnpj: '12345678901',
+        phone: '11999999999',
+      });
+    });
+
+    it('4. Classificação de erro determinístico (HTTP 400 Bad Request): DEFINITE_NO_RESOURCE_CREATED', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+
+      global.fetch = vi.fn().mockImplementation(async () => {
+        return {
+          ok: false,
+          status: 400,
+          json: async () => ({
+            errors: [{ code: 'invalid_parameter', description: 'Parâmetro minutesToExpire inválido' }],
+          }),
+        };
+      }) as any;
+
+      let caughtError: any = null;
+      try {
+        await provider.createDetachedCheckout({
+          ministryId: 'min_1',
+          checkoutIntentId: 'intent_1',
+          amountCents: 5000,
+          description: 'Ajuste',
+          minutesToExpire: 60,
+          successUrl: 'https://app.louvaio.com.br/success',
+        });
+      } catch (err: any) {
+        caughtError = err;
+      }
+
+      expect(caughtError).toBeDefined();
+      expect(caughtError.statusCode).toBe(400);
+
+      const classification = provider.classifyErrorOutcome(caughtError);
+      expect(classification).toBe('DEFINITE_NO_RESOURCE_CREATED');
+    });
+
+    it('5. Classificação de erro incerto (timeout / 5xx): OUTCOME_UNCERTAIN', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+
+      // Simulação 500 Server Error
+      global.fetch = vi.fn().mockImplementation(async () => {
+        return {
+          ok: false,
+          status: 500,
+          json: async () => ({ errors: [{ description: 'Internal server error' }] }),
+        };
+      }) as any;
+
+      let serverError: any = null;
+      try {
+        await provider.createDetachedCheckout({
+          ministryId: 'min_1',
+          checkoutIntentId: 'intent_1',
+          amountCents: 5000,
+          description: 'Ajuste',
+          minutesToExpire: 60,
+          successUrl: 'https://app.louvaio.com.br/success',
+        });
+      } catch (err: any) {
+        serverError = err;
+      }
+
+      expect(provider.classifyErrorOutcome(serverError)).toBe('OUTCOME_UNCERTAIN');
+
+      // Simulação Timeout de rede
+      const timeoutError = new Error('connect ETIMEDOUT 104.26.12.31:443');
+      expect(provider.classifyErrorOutcome(timeoutError)).toBe('OUTCOME_UNCERTAIN');
+
+      // Whitelist explícita de códigos determinísticos contratualmente respaldados do endpoint POST /v3/checkouts:
+      // Apenas 400 e 401 com resposta comprovadamente vinda do Asaas
+      for (const sc of [400, 401]) {
+        const err = new AppError(sc, `Erro ${sc}`);
+        (err as any).statusCode = sc;
+        (err as any).isProviderResponse = true;
+        expect(provider.classifyErrorOutcome(err)).toBe('DEFINITE_NO_RESOURCE_CREATED');
+      }
+
+      // 400 sem origem comprovada do gateway (ex: erro local de parse): FAIL CLOSED
+      const local400 = new AppError(400, 'Local validation error');
+      expect(provider.classifyErrorOutcome(local400)).toBe('OUTCOME_UNCERTAIN');
+
+      // Códigos 4xx que NÃO possuem comprovação contratual de ausência de recurso (403, 404, 422, 408, 409, 429, 418, 499):
+      // FAIL CLOSED como OUTCOME_UNCERTAIN
+      for (const sc of [403, 404, 408, 409, 422, 429, 418, 499]) {
+        const err = new AppError(sc, `Erro ${sc}`);
+        (err as any).statusCode = sc;
+        (err as any).isProviderResponse = true;
+        expect(provider.classifyErrorOutcome(err)).toBe('OUTCOME_UNCERTAIN');
+      }
+    });
+
+    it('6. Recurring checkout payload permanece rigorosamente inalterado', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+
+      let capturedInit: any = null;
+      global.fetch = vi.fn().mockImplementation(async (_url: string, init: any) => {
+        capturedInit = init;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'chk_rec', checkoutUrl: 'https://rec' }),
+        };
+      }) as any;
+
+      await provider.createCheckout({
+        ministryId: 'min_1',
+        planId: 'pro',
+        planName: 'Pro',
+        interval: 'monthly',
+        addonBlocks: 0,
+        amountCents: 8990,
+        successUrl: 'https://app.louvaio.com.br/success',
+      });
+
+      const body = JSON.parse(capturedInit.body);
+      expect(body.chargeTypes).toEqual(['RECURRENT']);
+      expect(body.subscription).toBeDefined();
+      expect(body.subscription.cycle).toBe('MONTHLY');
+    });
+
+    it('7. DETACHED payload: minutesToExpire < 10 é rejeitado antes de emitir fetch', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+      global.fetch = vi.fn();
+
+      await expect(
+        provider.createDetachedCheckout({
+          ministryId: 'min_1',
+          checkoutIntentId: 'intent_1',
+          amountCents: 2500,
+          description: 'Ajuste',
+          minutesToExpire: 9, // Inválido (< 10)
+          successUrl: 'https://app.louvaio.com.br/success',
+        })
+      ).rejects.toThrow(/minutesToExpire deve estar entre 10 e 1440/);
+
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('8. DETACHED payload: minutesToExpire exatamente 10 é aceito e transmitido no payload', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+
+      let capturedInit: any = null;
+      global.fetch = vi.fn().mockImplementation(async (_url: string, init: any) => {
+        capturedInit = init;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'chk_ea_10m' }),
+        };
+      }) as any;
+
+      const res = await provider.createDetachedCheckout({
+        ministryId: 'min_1',
+        checkoutIntentId: 'intent_1',
+        amountCents: 2500,
+        description: 'Ajuste 10m',
+        minutesToExpire: 10,
+        successUrl: 'https://app.louvaio.com.br/success',
+      });
+
+      const body = JSON.parse(capturedInit.body);
+      expect(body.minutesToExpire).toBe(10);
+      expect(body.chargeTypes).toEqual(['DETACHED']);
+      expect(body.billingTypes).toEqual(['CREDIT_CARD']);
+      expect(res.checkoutId).toBe('chk_ea_10m');
+    });
+
+    it('9. DETACHED payload: callback inválido ou ausente é rejeitado antes de emitir fetch', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+      global.fetch = vi.fn();
+
+      await expect(
+        provider.createDetachedCheckout({
+          ministryId: 'min_1',
+          checkoutIntentId: 'intent_1',
+          amountCents: 2500,
+          description: 'Ajuste',
+          minutesToExpire: 15,
+          successUrl: '', // Vazio
+        })
+      ).rejects.toThrow(/Callback inválido/);
+
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('10. DETACHED response: parser funciona com shape mínimo oficial { id: "..." } e gera builder oficial Sandbox', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+
+      global.fetch = vi.fn().mockImplementation(async () => {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'chk_official_minimal_999' }), // apenas 'id'
+        };
+      }) as any;
+
+      const res = await provider.createDetachedCheckout({
+        ministryId: 'min_1',
+        checkoutIntentId: 'intent_1',
+        amountCents: 2500,
+        description: 'Ajuste',
+        minutesToExpire: 30,
+        successUrl: 'https://app.louvaio.com.br/success',
+      });
+
+      expect(res.checkoutId).toBe('chk_official_minimal_999');
+      // Conforme contrato oficial Asaas Sandbox:
+      expect(res.checkoutUrl).toBe('https://sandbox.asaas.com/checkoutSession/show?id=chk_official_minimal_999');
+      // NUNCA gera /c/{id}
+      expect(res.checkoutUrl).not.toContain('/c/');
+    });
+
+    it('11. Produção: shape mínimo { id } gera builder oficial de produção (https://asaas.com/checkoutSession/show?id=...) ', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_prod_key',
+        apiUrl: 'https://api.asaas.com/api/v3',
+      });
+
+      global.fetch = vi.fn().mockImplementation(async () => {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'chk_prod_live_888' }),
+        };
+      }) as any;
+
+      const res = await provider.createDetachedCheckout({
+        ministryId: 'min_prod',
+        checkoutIntentId: 'intent_prod_1',
+        amountCents: 5000,
+        description: 'Ajuste Produção',
+        minutesToExpire: 40,
+        successUrl: 'https://app.louvaio.com.br/success',
+      });
+
+      expect(res.checkoutId).toBe('chk_prod_live_888');
+      expect(res.checkoutUrl).toBe('https://asaas.com/checkoutSession/show?id=chk_prod_live_888');
+      expect(res.checkoutUrl).not.toContain('/c/');
+    });
+
+    it('12. Link documentado: quando response.link for host oficial esperado, usa diretamente', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+
+      const officialLink = 'https://sandbox.asaas.com/checkoutSession/show/chk_doc_link_123';
+      global.fetch = vi.fn().mockImplementation(async () => {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 'chk_doc_link_123',
+            link: officialLink,
+          }),
+        };
+      }) as any;
+
+      const res = await provider.createDetachedCheckout({
+        ministryId: 'min_1',
+        checkoutIntentId: 'intent_1',
+        amountCents: 2500,
+        description: 'Ajuste',
+        minutesToExpire: 30,
+        successUrl: 'https://app.louvaio.com.br/success',
+      });
+
+      expect(res.checkoutId).toBe('chk_doc_link_123');
+      expect(res.checkoutUrl).toBe(officialLink);
+    });
+
+    it('13. Host inesperado no response.link: FAIL CLOSED com erro INVALID_CHECKOUT_LINK_HOST', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+
+      global.fetch = vi.fn().mockImplementation(async () => {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 'chk_phishing_123',
+            link: 'https://malicious-gateway.com/checkoutSession/show/123',
+          }),
+        };
+      }) as any;
+
+      await expect(
+        provider.createDetachedCheckout({
+          ministryId: 'min_1',
+          checkoutIntentId: 'intent_1',
+          amountCents: 2500,
+          description: 'Ajuste',
+          minutesToExpire: 30,
+          successUrl: 'https://app.louvaio.com.br/success',
+        })
+      ).rejects.toThrow(/Host inesperado no link de checkout/);
+    });
+
+    it('14. Resposta 200 sem id: lança erro estruturado com PROVIDER_RESPONSE_MISSING_ID', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+
+      global.fetch = vi.fn().mockImplementation(async () => {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ link: 'https://sandbox.asaas.com/c/some_link' }), // sem id
+        };
+      }) as any;
+
+      await expect(
+        provider.createDetachedCheckout({
+          ministryId: 'min_1',
+          checkoutIntentId: 'intent_1',
+          amountCents: 2500,
+          description: 'Ajuste',
+          minutesToExpire: 30,
+          successUrl: 'https://app.louvaio.com.br/success',
+        })
+      ).rejects.toThrow(/Gateway Asaas não retornou ID de checkout/);
+    });
+
+    it('15. Chamada de checkout emite exatamente UM fetch (sem retries automáticos ocultos em 500, 429 ou timeout)', async () => {
+      const provider = new AsaasBillingProvider({
+        apiKey: 'test_api_key',
+        apiUrl: 'https://sandbox.asaas.com/api/v3',
+      });
+
+      // A) Timeout
+      const fetchTimeoutMock = vi.fn().mockRejectedValue(new Error('AbortError: signal timed out'));
+      global.fetch = fetchTimeoutMock;
+
+      await expect(
+        provider.createDetachedCheckout({
+          ministryId: 'min_1',
+          checkoutIntentId: 'intent_1',
+          amountCents: 2500,
+          description: 'Ajuste',
+          minutesToExpire: 30,
+          successUrl: 'https://app.louvaio.com.br/success',
+        })
+      ).rejects.toThrow();
+
+      expect(fetchTimeoutMock).toHaveBeenCalledTimes(1);
+
+      // B) 500 Server Error
+      const fetch500Mock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: async () => ({ errors: [{ description: 'Internal Server Error' }] }),
+      });
+      global.fetch = fetch500Mock;
+
+      await expect(
+        provider.createDetachedCheckout({
+          ministryId: 'min_1',
+          checkoutIntentId: 'intent_1',
+          amountCents: 2500,
+          description: 'Ajuste',
+          minutesToExpire: 30,
+          successUrl: 'https://app.louvaio.com.br/success',
+        })
+      ).rejects.toThrow();
+
+      expect(fetch500Mock).toHaveBeenCalledTimes(1);
+
+      // C) 429 Rate Limit
+      const fetch429Mock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 429,
+        json: async () => ({ errors: [{ description: 'Too Many Requests' }] }),
+      });
+      global.fetch = fetch429Mock;
+
+      await expect(
+        provider.createDetachedCheckout({
+          ministryId: 'min_1',
+          checkoutIntentId: 'intent_1',
+          amountCents: 2500,
+          description: 'Ajuste',
+          minutesToExpire: 30,
+          successUrl: 'https://app.louvaio.com.br/success',
+        })
+      ).rejects.toThrow();
+
+      expect(fetch429Mock).toHaveBeenCalledTimes(1);
+    });
+  });
 });

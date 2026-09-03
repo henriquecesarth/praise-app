@@ -17,7 +17,14 @@ import {
   mapTransitionStatusToLegacyStatus,
   buildActiveTransitionSlotId,
   buildBillingSubscriptionId,
+  BillingCheckoutAttempt,
+  BillingCheckoutAttemptFailureClassification,
+  BillingEarlyActivationQuote,
 } from '../features/billing/billing.types';
+import {
+  isEarlyAdjustmentObligationFinanciallyLive,
+  canCreateEarlyActivationCheckout,
+} from '../features/billing/billing-transition-domain.service';
 
 export const SAFE_TERMINAL_TRANSITION_STATUSES = [
   'completed',
@@ -895,6 +902,449 @@ export class BillingRepository {
       const merged: BillingTransitionV1Record = {
         ...existing,
         ...updates,
+      };
+
+      const validated = validateBillingTransitionV1(merged);
+      t.set(docRef, validated, { merge: true });
+      return validated;
+    });
+  }
+
+  /**
+   * Reserva atômica da tentativa de checkout de ativação antecipada (Early Activation).
+   * Executa validação de precondições, verificação da invariante de uma única obrigação viva,
+   * consome atomicamente a cotação ativa e persiste a tentativa no estado 'pending' (pré-provedor).
+   */
+  async reserveEarlyActivationCheckoutAttempt(params: {
+    transitionId: string;
+    ministryId: string;
+    quoteId: string;
+    attemptId: string;
+    internalCheckoutIntentId: string;
+    amountCents: number;
+    checkoutMinutesToExpire: number;
+    quoteExpiresAt: string;
+    nowIso?: string;
+  }): Promise<{ transition: BillingTransitionV1Record; attempt: BillingCheckoutAttempt }> {
+    const {
+      transitionId,
+      ministryId,
+      quoteId,
+      attemptId,
+      internalCheckoutIntentId,
+      amountCents,
+      checkoutMinutesToExpire,
+      quoteExpiresAt,
+      nowIso = new Date().toISOString(),
+    } = params;
+
+    const docRef = this.planChangesCollection.doc(transitionId);
+
+    return await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      if (!doc.exists) {
+        throw new AppError(404, `Transição '${transitionId}' não encontrada para reserva de early activation.`);
+      }
+      const existing = doc.data() as BillingPlanChangeRecord;
+      if (existing.ministry_id !== ministryId) {
+        throw new AppError(403, 'Acesso não autorizado a esta transição de plano.');
+      }
+      if (!isBillingTransitionV1(existing)) {
+        throw new AppError(400, 'Early activation é suportado exclusivamente em transições V1.');
+      }
+
+      if (existing.execution_strategy !== 'scheduled_paid_transition') {
+        throw new AppError(400, `Estratégia '${existing.execution_strategy}' não permite early activation.`);
+      }
+
+      if (existing.transition_status !== 'scheduled') {
+        throw new AppError(409, `Transição em status '${existing.transition_status}' não permite early activation.`);
+      }
+
+      if (existing.financial_attention_required === true) {
+        throw new AppError(409, 'Transição requer atenção financeira. Reserva de checkout bloqueada.', {
+          code: 'FINANCIAL_ATTENTION_LOCKED',
+        });
+      }
+
+      if (existing.early_activation_status === 'confirmed') {
+        throw new AppError(409, 'A ativação antecipada já foi confirmada nesta transição.', {
+          code: 'EARLY_ACTIVATION_ALREADY_CONFIRMED',
+        });
+      }
+
+      // Validação da invariante de uma única obrigação viva ou reserva local pendente
+      const earlyAttempts = (existing.checkout_attempts || []).filter((a) => a.attempt_type === 'early_activation');
+      const hasReservedLocal = earlyAttempts.some(
+        (a) => a.status === 'pending' && a.provider_create_state === 'reserved'
+      );
+      if (hasReservedLocal || isEarlyAdjustmentObligationFinanciallyLive(existing)) {
+        throw new AppError(409, 'Já existe uma obrigação financeira de ativação antecipada ativa ou reserva pendente.', {
+          code: 'EARLY_ACTIVATION_OBLIGATION_LIVE',
+        });
+      }
+
+      // Validação da cotação
+      const activeQuote = existing.current_early_activation_quote;
+      if (!activeQuote || activeQuote.quote_id !== quoteId) {
+        throw new AppError(400, 'Cotação de early activation inválida ou divergente da transição.', {
+          code: 'INVALID_EARLY_ACTIVATION_QUOTE',
+        });
+      }
+
+      if (activeQuote.status !== 'active') {
+        throw new AppError(409, `Cotação com status '${activeQuote.status}' não pode ser consumida.`, {
+          code: 'EARLY_ACTIVATION_QUOTE_NOT_ACTIVE',
+        });
+      }
+
+      if (new Date(activeQuote.expires_at).getTime() <= new Date(nowIso).getTime()) {
+        throw new AppError(400, 'A cotação de early activation expirou.', {
+          code: 'EARLY_ACTIVATION_QUOTE_EXPIRED',
+        });
+      }
+
+      // Transiciona a quote para consumed (imutável)
+      const consumedQuote: BillingEarlyActivationQuote = {
+        ...activeQuote,
+        status: 'consumed',
+      };
+
+      const quotesHistory = existing.early_activation_quotes_history
+        ? [...existing.early_activation_quotes_history]
+        : [];
+      const historyIndex = quotesHistory.findIndex((q) => q.quote_id === quoteId);
+      if (historyIndex >= 0) {
+        quotesHistory[historyIndex] = consumedQuote;
+      } else {
+        quotesHistory.push(consumedQuote);
+      }
+
+      // Cria a nova tentativa local (pré-gateway, sem provider_checkout_id ainda)
+      const newAttempt: BillingCheckoutAttempt = {
+        attempt_id: attemptId,
+        transition_id: transitionId,
+        attempt_type: 'early_activation',
+        internal_checkout_intent_id: internalCheckoutIntentId,
+        provider_checkout_id: null,
+        checkout_url: null,
+        quote_id: quoteId,
+        amount_cents: amountCents,
+        currency: 'BRL',
+        status: 'pending',
+        provider_create_state: 'reserved',
+        failure_classification: null,
+        provider_session_terminal: false,
+        created_at: nowIso,
+        checkout_requested_at: nowIso,
+        checkout_minutes_to_expire: checkoutMinutesToExpire,
+        expires_at: quoteExpiresAt,
+      };
+
+      const attempts = existing.checkout_attempts ? [...existing.checkout_attempts] : [];
+      attempts.push(newAttempt);
+
+      const merged: BillingTransitionV1Record = {
+        ...existing,
+        checkout_attempts: attempts,
+        current_early_activation_quote: consumedQuote,
+        early_activation_quotes_history: quotesHistory,
+        early_activation_status: 'payment_pending',
+        current_early_activation_checkout_attempt_id: attemptId,
+        early_activation_checkout_intent_id: internalCheckoutIntentId,
+        early_activation_provider_checkout_id: null,
+        prorated_adjustment_cents: amountCents,
+        updated_at: nowIso,
+      };
+
+      const validated = validateBillingTransitionV1(merged);
+      t.set(docRef, validated, { merge: true });
+      return { transition: validated, attempt: newAttempt };
+    });
+  }
+
+  /**
+   * Transiciona atomicamente a tentativa de checkout do estado 'reserved' para 'attempting' (Two-Phase Commit).
+   * Deve ser chamada IMEDIATAMENTE ANTES do POST /v3/checkouts ao provedor.
+   * Se a tentativa não estiver em 'reserved' (ex: corrida concorrente ou já processada), lança 409 ATTEMPT_NOT_RESERVED.
+   */
+  async markEarlyActivationCheckoutAttempting(params: {
+    transitionId: string;
+    ministryId: string;
+    attemptId: string;
+    nowIso?: string;
+  }): Promise<BillingTransitionV1Record> {
+    const {
+      transitionId,
+      ministryId,
+      attemptId,
+      nowIso = new Date().toISOString(),
+    } = params;
+
+    const docRef = this.planChangesCollection.doc(transitionId);
+
+    return await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      if (!doc.exists) {
+        throw new AppError(404, `Transição '${transitionId}' não encontrada.`);
+      }
+      const existing = doc.data() as BillingPlanChangeRecord;
+      if (existing.ministry_id !== ministryId) {
+        throw new AppError(403, 'Acesso não autorizado a esta transição de plano.');
+      }
+      if (!isBillingTransitionV1(existing)) {
+        throw new AppError(400, 'Operação suportada apenas em transições V1.');
+      }
+
+      const attempts = existing.checkout_attempts ? [...existing.checkout_attempts] : [];
+      const attemptIndex = attempts.findIndex((a) => a.attempt_id === attemptId);
+      if (attemptIndex < 0) {
+        throw new AppError(404, `Tentativa de checkout '${attemptId}' não encontrada na transição.`);
+      }
+
+      const currentAttempt = attempts[attemptIndex];
+
+      // Invariante CAS: a transição para attempting só é permitida se estiver no estado 'reserved'
+      if (currentAttempt.provider_create_state !== 'reserved') {
+        throw new AppError(
+          409,
+          `Conflito CAS: tentativa '${attemptId}' não está no estado 'reserved' (estado atual: '${currentAttempt.provider_create_state || 'unknown'}').`,
+          { code: 'ATTEMPT_NOT_RESERVED' }
+        );
+      }
+
+      const updatedAttempt: BillingCheckoutAttempt = {
+        ...currentAttempt,
+        provider_create_state: 'attempting',
+        checkout_requested_at: nowIso,
+      };
+
+      attempts[attemptIndex] = updatedAttempt;
+
+      const merged: BillingTransitionV1Record = {
+        ...existing,
+        checkout_attempts: attempts,
+        updated_at: nowIso,
+      };
+
+      const validated = validateBillingTransitionV1(merged);
+      t.set(docRef, validated, { merge: true });
+      return validated;
+    });
+  }
+
+  /**
+   * Registra com sucesso inequívoco o checkout gerado no provedor para uma tentativa reservada.
+   * Aplica garantia de write-once sobre provider_checkout_id.
+   */
+  async recordEarlyActivationCheckoutCreated(params: {
+    transitionId: string;
+    ministryId: string;
+    attemptId: string;
+    providerCheckoutId: string;
+    checkoutUrl: string;
+    expiresAt?: string | null;
+    nowIso?: string;
+  }): Promise<BillingTransitionV1Record> {
+    const {
+      transitionId,
+      ministryId,
+      attemptId,
+      providerCheckoutId,
+      checkoutUrl,
+      expiresAt,
+      nowIso = new Date().toISOString(),
+    } = params;
+
+    const docRef = this.planChangesCollection.doc(transitionId);
+
+    return await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      if (!doc.exists) {
+        throw new AppError(404, `Transição '${transitionId}' não encontrada.`);
+      }
+      const existing = doc.data() as BillingPlanChangeRecord;
+      if (existing.ministry_id !== ministryId) {
+        throw new AppError(403, 'Acesso não autorizado a esta transição de plano.');
+      }
+      if (!isBillingTransitionV1(existing)) {
+        throw new AppError(400, 'Operação suportada apenas em transições V1.');
+      }
+
+      const attempts = existing.checkout_attempts ? [...existing.checkout_attempts] : [];
+      const attemptIndex = attempts.findIndex((a) => a.attempt_id === attemptId);
+      if (attemptIndex < 0) {
+        throw new AppError(404, `Tentativa de checkout '${attemptId}' não encontrada na transição.`);
+      }
+
+      const currentAttempt = attempts[attemptIndex];
+
+      // Garantia WRITE-ONCE de provider_checkout_id
+      if (
+        currentAttempt.provider_checkout_id &&
+        currentAttempt.provider_checkout_id !== providerCheckoutId
+      ) {
+        throw new AppError(
+          409,
+          `Conflito financeiro write-once: tentativa '${attemptId}' já possui checkout ID '${currentAttempt.provider_checkout_id}'. Não é permitido rotacionar para '${providerCheckoutId}'.`,
+          { code: 'CHECKOUT_ID_CONFLICT' }
+        );
+      }
+
+      const updatedAttempt: BillingCheckoutAttempt = {
+        ...currentAttempt,
+        provider_create_state: 'created',
+        provider_checkout_id: providerCheckoutId,
+        checkout_url: checkoutUrl,
+        provider_session_terminal: false,
+        ...(expiresAt ? { expires_at: expiresAt } : {}),
+      };
+
+      attempts[attemptIndex] = updatedAttempt;
+
+      const merged: BillingTransitionV1Record = {
+        ...existing,
+        checkout_attempts: attempts,
+        early_activation_provider_checkout_id: providerCheckoutId,
+        checkout_url: checkoutUrl,
+        updated_at: nowIso,
+      };
+
+      const validated = validateBillingTransitionV1(merged);
+      t.set(docRef, validated, { merge: true });
+      return validated;
+    });
+  }
+
+  /**
+   * Registra falha determinística comprovada na criação do checkout (antes de criar obrigação no provedor).
+   * Libera o subfluxo de early activation para 'available' e marca attempt como terminalmente falha.
+   */
+  async markEarlyActivationCheckoutCreationFailed(params: {
+    transitionId: string;
+    ministryId: string;
+    attemptId: string;
+    failureClassification: BillingCheckoutAttemptFailureClassification;
+    reason?: string;
+    nowIso?: string;
+  }): Promise<BillingTransitionV1Record> {
+    const {
+      transitionId,
+      ministryId,
+      attemptId,
+      failureClassification,
+      reason,
+      nowIso = new Date().toISOString(),
+    } = params;
+
+    const docRef = this.planChangesCollection.doc(transitionId);
+
+    return await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      if (!doc.exists) {
+        throw new AppError(404, `Transição '${transitionId}' não encontrada.`);
+      }
+      const existing = doc.data() as BillingPlanChangeRecord;
+      if (existing.ministry_id !== ministryId) {
+        throw new AppError(403, 'Acesso não autorizado a esta transição de plano.');
+      }
+      if (!isBillingTransitionV1(existing)) {
+        throw new AppError(400, 'Operação suportada apenas em transições V1.');
+      }
+
+      const attempts = existing.checkout_attempts ? [...existing.checkout_attempts] : [];
+      const attemptIndex = attempts.findIndex((a) => a.attempt_id === attemptId);
+      if (attemptIndex < 0) {
+        throw new AppError(404, `Tentativa de checkout '${attemptId}' não encontrada.`);
+      }
+
+      const currentAttempt = attempts[attemptIndex];
+      const isPreObligationFailure = failureClassification === 'creation_failed_before_provider_obligation';
+
+      const updatedAttempt: BillingCheckoutAttempt = {
+        ...currentAttempt,
+        status: 'failed',
+        provider_create_state: isPreObligationFailure ? 'rejected_no_obligation' : currentAttempt.provider_create_state,
+        failure_classification: failureClassification,
+        provider_session_terminal: isPreObligationFailure ? false : currentAttempt.provider_session_terminal,
+        completed_at: nowIso,
+      };
+
+      attempts[attemptIndex] = updatedAttempt;
+
+      const merged: BillingTransitionV1Record = {
+        ...existing,
+        checkout_attempts: attempts,
+        // Se a falha ocorreu comprovadamente antes de criar recurso no gateway, o subfluxo retorna para available
+        early_activation_status: isPreObligationFailure ? 'available' : existing.early_activation_status,
+        updated_at: nowIso,
+      };
+
+      const validated = validateBillingTransitionV1(merged);
+      t.set(docRef, validated, { merge: true });
+      return validated;
+    });
+  }
+
+  /**
+   * Registra incerteza (timeout, 5xx, perda de conexão) na criação do checkout.
+   * Mantém a tentativa em quarentena ('uncertain'), o subfluxo em 'payment_pending' e o slot HELD.
+   */
+  async markEarlyActivationCheckoutCreateUncertain(params: {
+    transitionId: string;
+    ministryId: string;
+    attemptId: string;
+    uncertainUntil: string;
+    reason?: string;
+    nowIso?: string;
+  }): Promise<BillingTransitionV1Record> {
+    const {
+      transitionId,
+      ministryId,
+      attemptId,
+      uncertainUntil,
+      reason,
+      nowIso = new Date().toISOString(),
+    } = params;
+
+    const docRef = this.planChangesCollection.doc(transitionId);
+
+    return await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      if (!doc.exists) {
+        throw new AppError(404, `Transição '${transitionId}' não encontrada.`);
+      }
+      const existing = doc.data() as BillingPlanChangeRecord;
+      if (existing.ministry_id !== ministryId) {
+        throw new AppError(403, 'Acesso não autorizado a esta transição de plano.');
+      }
+      if (!isBillingTransitionV1(existing)) {
+        throw new AppError(400, 'Operação suportada apenas em transições V1.');
+      }
+
+      const attempts = existing.checkout_attempts ? [...existing.checkout_attempts] : [];
+      const attemptIndex = attempts.findIndex((a) => a.attempt_id === attemptId);
+      if (attemptIndex < 0) {
+        throw new AppError(404, `Tentativa de checkout '${attemptId}' não encontrada.`);
+      }
+
+      const currentAttempt = attempts[attemptIndex];
+      const updatedAttempt: BillingCheckoutAttempt = {
+        ...currentAttempt,
+        status: 'uncertain',
+        provider_create_state: 'uncertain',
+        failure_classification: 'unknown',
+        provider_session_terminal: false,
+        uncertain_until: uncertainUntil,
+      };
+
+      attempts[attemptIndex] = updatedAttempt;
+
+      const merged: BillingTransitionV1Record = {
+        ...existing,
+        checkout_attempts: attempts,
+        early_activation_status: 'payment_pending',
+        updated_at: nowIso,
       };
 
       const validated = validateBillingTransitionV1(merged);

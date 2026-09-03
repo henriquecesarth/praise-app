@@ -736,28 +736,28 @@ describe('Billing Transition Domain — Phase 2.1 Execution Strategy & Pure Enti
         expect(res.remainingMinutes).toBe(120);
       });
 
-      it('22: clipped by quote expiry when less than 60m remaining', () => {
+      it('22: clipped by quote expiry with safety margin when less than 60m remaining', () => {
         const now = '2026-09-15T10:00:00.000Z';
-        const quoteExpiresAt = '2026-09-15T10:35:00.000Z'; // 35 min restantes
+        const quoteExpiresAt = '2026-09-15T10:35:00.000Z'; // 35 min restantes -> 34 min úteis com margem de 1m
         const res = calculateCheckoutMinutesToExpire(quoteExpiresAt, now);
-        expect(res.minutesToExpire).toBe(35);
+        expect(res.minutesToExpire).toBe(34);
         expect(res.remainingMinutes).toBe(35);
       });
 
-      it('23: <5m throws EARLY_ACTIVATION_QUOTE_TOO_CLOSE_TO_EXPIRY', () => {
+      it('23: <10m provider-valid window throws EARLY_ACTIVATION_QUOTE_TOO_CLOSE_TO_EXPIRY', () => {
         const now = '2026-09-15T10:00:00.000Z';
-        const quoteExpiresAt = '2026-09-15T10:04:30.000Z'; // 4 min restantes
+        const quoteExpiresAt = '2026-09-15T10:10:00.000Z'; // 10 min restantes - 1m margem = 9m úteis (< 10m)
         expect(() => calculateCheckoutMinutesToExpire(quoteExpiresAt, now)).toThrow(
           /Cotação muito próxima do término do dia comercial/i
         );
       });
 
-      it('24: exact 5m behavior explicit (returns 5)', () => {
+      it('24: exact 10m provider minimum behavior explicit (returns 10)', () => {
         const now = '2026-09-15T10:00:00.000Z';
-        const quoteExpiresAt = '2026-09-15T10:05:00.000Z'; // exatos 5 min
+        const quoteExpiresAt = '2026-09-15T10:11:00.000Z'; // 11 min restantes - 1m margem = exatos 10 min
         const res = calculateCheckoutMinutesToExpire(quoteExpiresAt, now);
-        expect(res.minutesToExpire).toBe(5);
-        expect(res.remainingMinutes).toBe(5);
+        expect(res.minutesToExpire).toBe(10);
+        expect(res.remainingMinutes).toBe(11);
       });
 
       it('25: no checkout beyond quote expiry (expired throws)', () => {

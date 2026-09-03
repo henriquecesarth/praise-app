@@ -224,6 +224,13 @@ export type BillingCheckoutAttemptFailureClassification =
   | 'session_canceled'
   | 'unknown';
 
+export type BillingCheckoutAttemptProviderCreateState =
+  | 'reserved'
+  | 'attempting'
+  | 'created'
+  | 'uncertain'
+  | 'rejected_no_obligation';
+
 export interface BillingCheckoutAttempt {
   attempt_id: string;
   transition_id: string;
@@ -235,6 +242,7 @@ export interface BillingCheckoutAttempt {
   amount_cents: number;
   currency: 'BRL';
   status: BillingCheckoutAttemptStatus;
+  provider_create_state?: BillingCheckoutAttemptProviderCreateState | null;
   failure_classification?: BillingCheckoutAttemptFailureClassification | null;
   provider_session_terminal?: boolean | null;
   payment_id?: string | null;

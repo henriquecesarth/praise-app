@@ -39,6 +39,9 @@ import {
   buildBillingTransitionV1Record,
   checkInitialPurchaseProviderReadiness,
   verifyPaidToPaidTargetReadyGate,
+  canCreateEarlyActivationCheckout,
+  canResumeReservedEarlyActivationAttempt,
+  calculateCheckoutMinutesToExpire,
 } from './billing-transition-domain.service';
 import { AppError } from '../../middleware/error-handler';
 import { getCurrentBillingDate, getBillingDate, addCommercialInterval, addCommercialDays } from '../../utils/billing-date';
@@ -4822,5 +4825,280 @@ export class BillingService {
    */
   async getBillingHistory(ministryId: string): Promise<BillingTransactionRecord[]> {
     return await this.billingRepo.getTransactions(ministryId);
+  }
+
+  /**
+   * Phase 3C.2 — Criação de Checkout de Ativação Antecipada (Early Activation) com Ajuste Pró-Rata.
+   * Método orquestrador interno:
+   * 1. Valida precondições da transição e cotação (imutabilidade, data comercial, pre-boundary).
+   * 2. Calcula TTL determinístico através do domínio (calculateCheckoutMinutesToExpire).
+   * 3. Reserva atomicamente a tentativa no Firestore antes de qualquer mutação externa (one-live-obligation).
+   * 4. Dispara chamada avulsa (DETACHED) ao provedor Asaas (sem recorrência, sem raw-card).
+   * 5. Em sucesso: grava provider_checkout_id de forma write-once.
+   * 6. Em falha comprovadamente pré-recurso: grava failure e reabre subfluxo para 'available'.
+   * 7. Em falha incerta (timeout, 5xx): coloca em quarentena ('uncertain'), mantém subfluxo 'payment_pending'.
+   * Zero blind retry. Não ativa entitlement.
+   */
+  async createEarlyActivationCheckout(
+    ministryId: string,
+    userId: string,
+    transitionId: string,
+    quoteId: string,
+    options?: {
+      successUrl?: string;
+      cancelUrl?: string;
+      customerData?: {
+        name?: string;
+        email?: string;
+        cpfCnpj?: string;
+        phone?: string;
+      };
+      now?: Date | string;
+    }
+  ): Promise<{
+    checkoutUrl: string;
+    checkoutId: string;
+    attemptId: string;
+    amountCents: number;
+    minutesToExpire: number;
+    expiresAt: string | null;
+  }> {
+    // 1. Obter a transição V1 vigente
+    const transition = await this.billingRepo.getPlanChange(transitionId);
+    if (!transition) {
+      throw new AppError(404, `Transição '${transitionId}' não encontrada.`);
+    }
+    if (transition.ministry_id !== ministryId) {
+      throw new AppError(403, 'Acesso não autorizado a esta transição de plano.');
+    }
+    if (!isBillingTransitionV1(transition)) {
+      throw new AppError(400, 'Ativação antecipada é suportada exclusivamente em transições V1.');
+    }
+
+    if (transition.execution_strategy !== 'scheduled_paid_transition') {
+      throw new AppError(400, `Estratégia '${transition.execution_strategy}' não permite ativação antecipada.`);
+    }
+
+    if (transition.transition_status !== 'scheduled') {
+      throw new AppError(409, `Transição em status '${transition.transition_status}' não permite ativação antecipada (exigido 'scheduled').`);
+    }
+
+    if (transition.financial_attention_required === true) {
+      throw new AppError(409, 'Transição requer atenção financeira. Operação bloqueada.', {
+        code: 'FINANCIAL_ATTENTION_LOCKED',
+      });
+    }
+
+    if (transition.early_activation_status === 'confirmed') {
+      throw new AppError(409, 'A ativação antecipada já foi confirmada nesta transição.', {
+        code: 'EARLY_ACTIVATION_ALREADY_CONFIRMED',
+      });
+    }
+
+    // Validação de precondição temporal (pre-boundary)
+    const nowIso = options?.now
+      ? (typeof options.now === 'string' ? new Date(options.now) : options.now).toISOString()
+      : new Date().toISOString();
+
+    // 2. Verificar se existe tentativa no estado 'reserved' elegível para retomada segura
+    const resumeCheck = canResumeReservedEarlyActivationAttempt(transition, quoteId, nowIso);
+
+    let attemptId: string;
+    let internalCheckoutIntentId: string;
+    let amountCents: number;
+    let minutesToExpire: number;
+    let quoteExpiresAt: string;
+
+    if (resumeCheck.canResume && resumeCheck.attempt) {
+      // Retomada da mesma reserva: NÃO cria nova tentativa nem consome nova cotação
+      attemptId = resumeCheck.attempt.attempt_id;
+      internalCheckoutIntentId = resumeCheck.attempt.internal_checkout_intent_id;
+      amountCents = resumeCheck.attempt.amount_cents;
+      const quote = transition.current_early_activation_quote!;
+      quoteExpiresAt = quote.expires_at;
+      const ttl = calculateCheckoutMinutesToExpire(quote.expires_at, nowIso);
+      minutesToExpire = ttl.minutesToExpire;
+    } else {
+      // Não é uma retomada: valida elegibilidade para criação de nova tentativa
+      const eligibility = canCreateEarlyActivationCheckout(transition);
+      if (!eligibility.allowed) {
+        throw new AppError(409, eligibility.reason || 'Criação de checkout de ativação antecipada bloqueada.', {
+          code: 'EARLY_ACTIVATION_CHECKOUT_BLOCKED',
+        });
+      }
+
+      // Validação da cotação
+      const quote = transition.current_early_activation_quote;
+      if (!quote || quote.quote_id !== quoteId) {
+        throw new AppError(400, 'Cotação de early activation inválida ou divergente da transição.', {
+          code: 'INVALID_EARLY_ACTIVATION_QUOTE',
+        });
+      }
+
+      if (quote.status !== 'active') {
+        throw new AppError(409, `Cotação com status '${quote.status}' não pode ser utilizada para checkout.`, {
+          code: 'EARLY_ACTIVATION_QUOTE_NOT_ACTIVE',
+        });
+      }
+
+      if (quote.prorated_adjustment_cents <= 0) {
+        throw new AppError(400, 'Valor do ajuste de ativação antecipada deve ser estritamente positivo.', {
+          code: 'INVALID_ADJUSTMENT_AMOUNT',
+        });
+      }
+
+      // Calcula TTL determinístico via função pura de domínio
+      const ttl = calculateCheckoutMinutesToExpire(quote.expires_at, nowIso);
+      minutesToExpire = ttl.minutesToExpire;
+      amountCents = quote.prorated_adjustment_cents;
+      quoteExpiresAt = quote.expires_at;
+
+      attemptId = `att_ea_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      internalCheckoutIntentId = `intent_${ministryId}_ea_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+      // Reserva atômica no repositório com estado 'reserved'
+      await this.billingRepo.reserveEarlyActivationCheckoutAttempt({
+        transitionId,
+        ministryId,
+        quoteId,
+        attemptId,
+        internalCheckoutIntentId,
+        amountCents,
+        checkoutMinutesToExpire: minutesToExpire,
+        quoteExpiresAt,
+        nowIso,
+      });
+    }
+
+    // 3. TWO-PHASE COMMIT CAS: Transiciona atomicamente reserved -> attempting antes do POST
+    // Se duas chamadas concorrentes tentarem executar a mesma tentativa, exatamente UMA ganha o CAS
+    await this.billingRepo.markEarlyActivationCheckoutAttempting({
+      transitionId,
+      ministryId,
+      attemptId,
+      nowIso,
+    });
+
+    // 4. Obter URLs de callback
+    const publicApiUrl = (config.billingPublicApiUrl || '').trim().replace(/\/+$/, '');
+    const defaultSuccessUrl = publicApiUrl
+      ? `${publicApiUrl}/api/v1/billing/checkout-return/success`
+      : 'https://app.louvaio.com.br/ministerio/plano';
+    const defaultCancelUrl = publicApiUrl
+      ? `${publicApiUrl}/api/v1/billing/checkout-return/cancel`
+      : 'https://app.louvaio.com.br/ministerio/plano';
+    const successUrl = options?.successUrl || defaultSuccessUrl;
+    const cancelUrl = options?.cancelUrl || defaultCancelUrl;
+    const expiredUrl = publicApiUrl ? `${publicApiUrl}/api/v1/billing/checkout-return/expired` : cancelUrl;
+
+    if (typeof this.provider.createDetachedCheckout !== 'function') {
+      throw new AppError(500, 'Provedor configurado não suporta criação de checkout avulso (DETACHED).');
+    }
+
+    // 5. Chamada externa ao provedor
+    let checkoutResult: { checkoutUrl: string; checkoutId: string; expiresAt: string | null };
+    try {
+      checkoutResult = await this.provider.createDetachedCheckout({
+        ministryId,
+        checkoutIntentId: internalCheckoutIntentId,
+        providerCustomerId: transition.provider_customer_id || undefined,
+        amountCents,
+        description: `Ajuste Pró-Rata de Ativação Antecipada (${transition.target_plan_id})`,
+        minutesToExpire,
+        successUrl,
+        cancelUrl,
+        expiredUrl,
+        customerData: options?.customerData,
+      });
+    } catch (providerErr: any) {
+      console.error(`[EARLY ACTIVATION CHECKOUT ERROR] Falha no provedor para transição ${transitionId}:`, providerErr);
+
+      const errorOutcome =
+        typeof this.provider.classifyErrorOutcome === 'function'
+          ? this.provider.classifyErrorOutcome(providerErr)
+          : 'OUTCOME_UNCERTAIN';
+
+      if (errorOutcome === 'DEFINITE_NO_RESOURCE_CREATED') {
+        // Falha comprovada antes de criar recurso: libera subfluxo para available
+        await this.billingRepo.markEarlyActivationCheckoutCreationFailed({
+          transitionId,
+          ministryId,
+          attemptId,
+          failureClassification: 'creation_failed_before_provider_obligation',
+          reason: providerErr.message,
+          nowIso,
+        });
+
+        if (providerErr instanceof AppError) throw providerErr;
+        throw new AppError(400, `Falha ao criar checkout de ativação antecipada no gateway: ${providerErr.message}`, {
+          code: 'PROVIDER_CHECKOUT_CREATION_FAILED',
+        });
+      }
+
+      // Falha incerta (timeout, 5xx, perda de rede): quarentena
+      const uncertainUntil = quoteExpiresAt;
+      await this.billingRepo.markEarlyActivationCheckoutCreateUncertain({
+        transitionId,
+        ministryId,
+        attemptId,
+        uncertainUntil,
+        reason: providerErr.message,
+        nowIso,
+      });
+
+      throw new AppError(
+        500,
+        'Instabilidade ao comunicar com gateway de pagamento. A criação do checkout de ativação antecipada está em quarentena para reconciliação.',
+        { code: 'EARLY_ACTIVATION_CHECKOUT_UNCERTAIN' }
+      );
+    }
+
+    // 6. Sucesso no provedor: persistência local resiliente com retry idempotente
+    let persistSuccess = false;
+    let lastPersistError: any = null;
+    for (let retryNum = 1; retryNum <= 3; retryNum++) {
+      try {
+        await this.billingRepo.recordEarlyActivationCheckoutCreated({
+          transitionId,
+          ministryId,
+          attemptId,
+          providerCheckoutId: checkoutResult.checkoutId,
+          checkoutUrl: checkoutResult.checkoutUrl,
+          expiresAt: checkoutResult.expiresAt,
+          nowIso,
+        });
+        persistSuccess = true;
+        break;
+      } catch (err: any) {
+        lastPersistError = err;
+        if (err?.details?.code === 'CHECKOUT_ID_CONFLICT' || err?.message?.includes('write-once')) {
+          throw err;
+        }
+      }
+    }
+
+    if (!persistSuccess) {
+      console.error(
+        `[EARLY ACTIVATION CRITICAL] Falha ao persistir localmente checkout ID '${checkoutResult.checkoutId}' após criação no provedor:`,
+        lastPersistError
+      );
+      throw new AppError(
+        500,
+        `Checkout criado no gateway com ID '${checkoutResult.checkoutId}', mas ocorreu falha ao persistir localmente. A tentativa permanece retida para reconciliação.`,
+        {
+          code: 'CHECKOUT_PERSISTENCE_FAILED_RETAINED',
+          checkoutId: checkoutResult.checkoutId,
+        }
+      );
+    }
+
+    return {
+      checkoutUrl: checkoutResult.checkoutUrl,
+      checkoutId: checkoutResult.checkoutId,
+      attemptId,
+      amountCents,
+      minutesToExpire,
+      expiresAt: checkoutResult.expiresAt,
+    };
   }
 }

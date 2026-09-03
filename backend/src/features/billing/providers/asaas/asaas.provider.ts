@@ -8,11 +8,63 @@ import {
   NormalizedWebhookEventType,
   ProviderPaymentRecord,
   ProviderErrorOutcome,
+  CreateDetachedCheckoutParams,
+  CreateDetachedCheckoutResult,
 } from '../billing-provider.interface';
 import { AppError } from '../../../../middleware/error-handler';
 import { getCurrentBillingDate } from '../../../../utils/billing-date';
 import { providerBrlDecimalToCents, centsToProviderBrlDecimal } from '../../billing-money.utils';
 
+export const HTTP_CREATE_CHECKOUT_TIMEOUT_MS = 25_000;
+
+export function buildOfficialCheckoutUrl(checkoutId: string, isSandbox: boolean): string {
+  const host = isSandbox ? 'https://sandbox.asaas.com' : 'https://asaas.com';
+  return `${host}/checkoutSession/show?id=${checkoutId}`;
+}
+
+export function validateAndResolveCheckoutUrl(
+  data: { id?: string; link?: string },
+  isSandbox: boolean
+): string {
+  if (!data?.id || typeof data.id !== 'string' || !data.id.trim()) {
+    throw new AppError(500, 'Gateway Asaas não retornou ID de checkout na criação.', {
+      code: 'PROVIDER_RESPONSE_MISSING_ID',
+    });
+  }
+
+  const cleanId = data.id.trim();
+
+  if (data.link && typeof data.link === 'string' && data.link.trim()) {
+    try {
+      const parsedUrl = new URL(data.link.trim());
+      const expectedHosts = isSandbox
+        ? ['sandbox.asaas.com']
+        : ['asaas.com', 'www.asaas.com'];
+
+      if (expectedHosts.includes(parsedUrl.hostname.toLowerCase())) {
+        return data.link.trim();
+      }
+
+      throw new AppError(
+        500,
+        `Host inesperado no link de checkout retornado pelo Asaas ('${parsedUrl.hostname}'). Esperado: ${expectedHosts.join(' ou ')}.`,
+        {
+          code: 'INVALID_CHECKOUT_LINK_HOST',
+          checkoutId: cleanId,
+          unexpectedHost: parsedUrl.hostname,
+        }
+      );
+    } catch (err: any) {
+      if (err instanceof AppError) throw err;
+      throw new AppError(500, `Link de checkout malformado retornado pelo Asaas ('${data.link}').`, {
+        code: 'MALFORMED_CHECKOUT_LINK',
+        checkoutId: cleanId,
+      });
+    }
+  }
+
+  return buildOfficialCheckoutUrl(cleanId, isSandbox);
+}
 
 export class AsaasBillingProvider implements BillingProvider {
   readonly name: BillingProviderName = 'asaas';
@@ -37,9 +89,19 @@ export class AsaasBillingProvider implements BillingProvider {
     }
 
     if (error instanceof AppError) {
-      // 4xx client errors (ex: 400 Bad Request por validação de parâmetros, 401, 403, 404, 422)
-      // indicam que o gateway rejeitou a requisição antes de processar/criar qualquer recurso financeiro.
-      if (error.statusCode >= 400 && error.statusCode < 500 && error.statusCode !== 408) {
+      // Whitelist estrita e contratual oficial do endpoint POST /v3/checkouts do Asaas:
+      // Apenas 400 (Bad Request - validação de payload/parâmetros) e 401 (Unauthorized - falha de autenticação/API Key)
+      // possuem comprovação contratual de rejeição prévia à criação de recurso.
+      //
+      // Exigência de Error Origin: a resposta deve ser comprovadamente originária do gateway (isProviderResponse ou responseBody estruturado).
+      //
+      // Códigos como 403, 404, 422 (não documentado oficialmente no create checkout), 409, 429, outros 4xx e 5xx:
+      // FAIL CLOSED como OUTCOME_UNCERTAIN (quarentena conservadora, zero blind retry).
+      const deterministicStatusCodes = [400, 401];
+      const statusCode = (error as any).statusCode || (error as any).status;
+      const isStructuredProviderResponse = (error as any).isProviderResponse === true || !!(error as any).responseBody;
+
+      if (isStructuredProviderResponse && deterministicStatusCodes.includes(statusCode)) {
         return 'DEFINITE_NO_RESOURCE_CREATED';
       }
       return 'OUTCOME_UNCERTAIN';
@@ -52,13 +114,11 @@ export class AsaasBillingProvider implements BillingProvider {
     if (
       code === 'etimedout' ||
       code === 'econnreset' ||
-      code === 'econnrefused' ||
-      code === 'aborterror' ||
-      code === 'und_err_connect_timeout' ||
+      code === 'econnaborted' ||
+      code === 'enetunreach' ||
       message.includes('timeout') ||
-      message.includes('network') ||
-      message.includes('econnreset') ||
-      message.includes('fetch failed')
+      message.includes('socket hang up') ||
+      message.includes('abort')
     ) {
       return 'OUTCOME_UNCERTAIN';
     }
@@ -405,6 +465,120 @@ export class AsaasBillingProvider implements BillingProvider {
         checkoutUrl,
         checkoutId: data.id,
         expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      };
+    } catch (err: any) {
+      if (err instanceof AppError) throw err;
+      throw new AppError(500, `Falha de comunicação com gateway Asaas: ${err.message}`);
+    }
+  }
+
+  /**
+   * Cria uma sessão hospedada no Asaas Checkout (POST /v3/checkouts) para cobrança avulsa (DETACHED),
+   * utilizada exclusivamente para ajuste de ativação antecipada (Early Activation).
+   * Não cria recorrência, não inclui bloco subscription, e não interfere na assinatura futura.
+   */
+  async createDetachedCheckout(
+    params: CreateDetachedCheckoutParams
+  ): Promise<CreateDetachedCheckoutResult> {
+    const value = centsToProviderBrlDecimal(params.amountCents);
+    const externalReference = params.checkoutIntentId;
+
+    if (!this.apiKey) {
+      throw new AppError(500, 'Gateway Asaas não configurado.');
+    }
+
+    if (typeof params.minutesToExpire !== 'number' || params.minutesToExpire < 10 || params.minutesToExpire > 1440) {
+      throw new AppError(
+        400,
+        `minutesToExpire deve estar entre 10 e 1440 minutos conforme contrato oficial do Asaas (POST /v3/checkouts). Recebido: ${params.minutesToExpire}`,
+        { code: 'INVALID_CHECKOUT_TTL' }
+      );
+    }
+
+    if (!params.successUrl || typeof params.successUrl !== 'string' || !params.successUrl.trim()) {
+      throw new AppError(400, 'Callback inválido: successUrl é obrigatória.');
+    }
+
+    const successUrl = params.successUrl.trim();
+    const cancelUrl = (params.cancelUrl && params.cancelUrl.trim()) || successUrl;
+    const expiredUrl = (params.expiredUrl && params.expiredUrl.trim()) || cancelUrl;
+
+    if (!cancelUrl || !expiredUrl) {
+      throw new AppError(400, 'Callback inválido: cancelUrl e expiredUrl são obrigatórias.');
+    }
+
+    if (successUrl.includes('localhost') || successUrl.includes('127.0.0.1')) {
+      throw new AppError(500, 'URL de callback do Asaas inválida ou aponta para localhost.');
+    }
+
+    try {
+      const payload: any = {
+        billingTypes: ['CREDIT_CARD'],
+        chargeTypes: ['DETACHED'],
+        minutesToExpire: params.minutesToExpire,
+        externalReference,
+        callback: {
+          successUrl,
+          cancelUrl,
+          expiredUrl,
+        },
+        items: [
+          {
+            name: 'Ativação Antecipada de Plano',
+            description: params.description,
+            quantity: 1,
+            value,
+          },
+        ],
+      };
+
+      if (params.providerCustomerId && params.providerCustomerId.trim()) {
+        payload.customer = params.providerCustomerId.trim();
+      } else if (params.customerData?.name) {
+        payload.customerData = {
+          name: params.customerData.name,
+          email: params.customerData.email,
+          cpfCnpj: params.customerData.cpfCnpj,
+          phone: params.customerData.phone,
+        };
+      }
+
+      const isSandbox = this.apiUrl.includes('sandbox');
+      const response = await fetch(`${this.apiUrl}/checkouts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          access_token: this.apiKey,
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(HTTP_CREATE_CHECKOUT_TIMEOUT_MS),
+      });
+
+      if (!response.ok) {
+        const errBody = (await response.json().catch(() => ({}))) as any;
+        const message =
+          errBody?.errors?.[0]?.description ||
+          `Falha ao criar checkout avulso no Asaas (HTTP ${response.status})`;
+        const error = new AppError(400, message);
+        (error as any).status = response.status;
+        (error as any).statusCode = response.status;
+        (error as any).responseBody = errBody;
+        (error as any).isProviderResponse = true;
+        throw error;
+      }
+
+      const data = (await response.json().catch(() => ({}))) as {
+        id?: string;
+        link?: string;
+        expiresAt?: string;
+      };
+
+      const checkoutUrl = validateAndResolveCheckoutUrl(data, isSandbox);
+
+      return {
+        checkoutUrl,
+        checkoutId: data.id!,
+        expiresAt: data.expiresAt || null,
       };
     } catch (err: any) {
       if (err instanceof AppError) throw err;

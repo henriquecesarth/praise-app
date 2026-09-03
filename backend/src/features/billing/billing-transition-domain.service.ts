@@ -1100,14 +1100,29 @@ export function classifyCapabilityEligibility(
 }
 
 /**
+ * Opções de configuração para cálculo de TTL do checkout.
+ */
+export interface CheckoutTtlOptions {
+  providerMinimumMinutes?: number; // default: 10 (conforme contrato Asaas POST /v3/checkouts)
+  safetyMarginMinutes?: number; // default: 1 (margem conservadora para absorver latência de rede/criação relativa no gateway)
+  maxMinutes?: number; // default: 60
+}
+
+/**
  * Calcula o tempo de expiração do checkout no gateway em minutos inteiros.
- * Garante que o checkout NUNCA sobreviva à expiração da cotação.
- * Se restar menos de 5 minutos, falha fechado para evitar pagamento com preço defasado.
+ * Garante que o checkout NUNCA sobreviva à expiração da cotação e NUNCA viole o mínimo exigido pelo provedor.
+ * Subtrai margem de segurança conservadora para absorver latência de rede/criação relativa no gateway.
+ * Se o tempo útil resultante for inferior a providerMinimumMinutes (10m), falha fechado antes de qualquer reserva/chamada.
  */
 export function calculateCheckoutMinutesToExpire(
   quoteExpiresAt: string | Date,
-  now?: string | Date
-): { minutesToExpire: number; remainingMinutes: number } {
+  now?: string | Date,
+  options?: CheckoutTtlOptions
+): { minutesToExpire: number; remainingMinutes: number; providerValid: boolean } {
+  const providerMinimumMinutes = options?.providerMinimumMinutes ?? 10;
+  const safetyMarginMinutes = options?.safetyMarginMinutes ?? 1;
+  const maxMinutes = options?.maxMinutes ?? 60;
+
   const nowMs = now ? (typeof now === 'string' ? new Date(now).getTime() : now.getTime()) : Date.now();
   const quoteExpMs = typeof quoteExpiresAt === 'string' ? new Date(quoteExpiresAt).getTime() : quoteExpiresAt.getTime();
 
@@ -1119,17 +1134,23 @@ export function calculateCheckoutMinutesToExpire(
   }
 
   const remainingMinutes = Math.floor(diffMs / 60_000);
+  const safeAvailableMinutes = remainingMinutes - safetyMarginMinutes;
 
-  if (remainingMinutes < 5) {
+  if (safeAvailableMinutes < providerMinimumMinutes) {
     throw new AppError(
       400,
-      'Cotação muito próxima do término do dia comercial. Aguarde a virada do dia para solicitar nova cotação.',
-      { code: 'EARLY_ACTIVATION_QUOTE_TOO_CLOSE_TO_EXPIRY' }
+      `Cotação muito próxima do término do dia comercial (tempo útil de ${safeAvailableMinutes} min inferior ao mínimo de ${providerMinimumMinutes} min do gateway). Aguarde a virada do dia para solicitar nova cotação.`,
+      {
+        code: 'EARLY_ACTIVATION_QUOTE_TOO_CLOSE_TO_EXPIRY',
+        remainingMinutes,
+        safeAvailableMinutes,
+        providerMinimumMinutes,
+      }
     );
   }
 
-  const minutesToExpire = Math.min(60, remainingMinutes);
-  return { minutesToExpire, remainingMinutes };
+  const minutesToExpire = Math.min(maxMinutes, safeAvailableMinutes);
+  return { minutesToExpire, remainingMinutes, providerValid: true };
 }
 
 /**
@@ -1175,6 +1196,9 @@ export function classifyEarlyAdjustmentFinancialState(
   }
 
   if (latestAttempt.status === 'pending') {
+    if (latestAttempt.provider_create_state === 'reserved') {
+      return 'no_obligation';
+    }
     return 'financially_live';
   }
 
@@ -1185,10 +1209,15 @@ export function classifyEarlyAdjustmentFinancialState(
     if (latestAttempt.failure_classification === 'payment_declined_in_session') {
       return 'financially_live';
     }
-    if (latestAttempt.provider_session_terminal === true) {
+    // provider_session_terminal = true só é seguro quando acompanhado de confirmação de sessão terminada
+    if (
+      latestAttempt.provider_session_terminal === true &&
+      (latestAttempt.failure_classification === 'session_expired' ||
+        latestAttempt.failure_classification === 'session_canceled')
+    ) {
       return 'provider_terminal_unpaid';
     }
-    // Fail closed se a causa do failed for desconhecida
+    // Fail closed se a causa do failed for desconhecida ou ambígua
     return 'financially_live';
   }
 
@@ -1197,6 +1226,77 @@ export function classifyEarlyAdjustmentFinancialState(
   }
 
   return 'financially_live';
+}
+
+export interface ResumeEarlyActivationAttemptResult {
+  canResume: boolean;
+  attempt?: BillingCheckoutAttempt;
+  reason?: string;
+}
+
+/**
+ * Predicado puro que determina se uma tentativa de early activation no estado 'reserved'
+ * (localmente reservada, mas onde a chamada de rede ao provedor definitivamente ainda não foi iniciada)
+ * pode ser retomada com a mesma tentativa, sem criar novo attempt_id nem consumir nova quote.
+ */
+export function canResumeReservedEarlyActivationAttempt(
+  transition: BillingTransitionV1Record,
+  quoteId: string,
+  nowIso: string = new Date().toISOString()
+): ResumeEarlyActivationAttemptResult {
+  if (transition.transition_status !== 'scheduled') {
+    return {
+      canResume: false,
+      reason: `Transição em status '${transition.transition_status}' não permite retomada de early activation (exigido 'scheduled').`,
+    };
+  }
+
+  if (transition.financial_attention_required === true) {
+    return {
+      canResume: false,
+      reason: 'Transição requer atenção financeira. Operação bloqueada.',
+    };
+  }
+
+  const attempts = (transition.checkout_attempts || []).filter((a) => a.attempt_type === 'early_activation');
+  if (attempts.length === 0) {
+    return { canResume: false, reason: 'Nenhuma tentativa de early activation encontrada.' };
+  }
+
+  const latest = attempts[attempts.length - 1];
+  if (latest.status !== 'pending' || latest.provider_create_state !== 'reserved') {
+    return {
+      canResume: false,
+      reason: `Tentativa não está no estado 'reserved' elegível para retomada (status: '${latest.status}', provider_create_state: '${latest.provider_create_state}').`,
+    };
+  }
+
+  if (latest.quote_id !== quoteId) {
+    return {
+      canResume: false,
+      reason: `Tentativa reservada pertence à cotação '${latest.quote_id}', divergente da solicitada '${quoteId}'.`,
+    };
+  }
+
+  const quote = transition.current_early_activation_quote;
+  if (!quote || quote.quote_id !== quoteId) {
+    return {
+      canResume: false,
+      reason: 'Cotação atual da transição é inexistente ou divergente da solicitada.',
+    };
+  }
+
+  if (new Date(nowIso).getTime() >= new Date(quote.expires_at).getTime()) {
+    return {
+      canResume: false,
+      reason: 'A cotação vinculada à reserva expirou.',
+    };
+  }
+
+  return {
+    canResume: true,
+    attempt: latest,
+  };
 }
 
 /**
@@ -1245,6 +1345,20 @@ export function canCreateEarlyActivationCheckout(
       allowed: false,
       reason: 'Transição requer atenção financeira. Operação bloqueada.',
       financialState: 'attention_required',
+    };
+  }
+
+  // Se existir uma tentativa local no estado 'reserved', ela não permite criar um NOVO attempt,
+  // mas indica que a MESMA tentativa deve ser retomada via canResumeReservedEarlyActivationAttempt.
+  const earlyAttempts = (transition.checkout_attempts || []).filter((a) => a.attempt_type === 'early_activation');
+  const hasReservedLocalAttempt = earlyAttempts.some(
+    (a) => a.status === 'pending' && a.provider_create_state === 'reserved'
+  );
+  if (hasReservedLocalAttempt) {
+    return {
+      allowed: false,
+      reason: 'Existe uma reserva de checkout local pendente de execução. Retome a mesma tentativa sem criar nova obrigação.',
+      financialState: 'no_obligation',
     };
   }
 

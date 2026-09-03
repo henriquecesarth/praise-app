@@ -56,6 +56,30 @@ export interface ProviderPaymentRecord {
   invoiceUrl?: string;
 }
 
+export interface CreateDetachedCheckoutParams {
+  ministryId: string;
+  checkoutIntentId: string;
+  providerCustomerId?: string;
+  amountCents: number;
+  description: string;
+  minutesToExpire: number;
+  successUrl?: string;
+  cancelUrl?: string;
+  expiredUrl?: string;
+  customerData?: {
+    name?: string;
+    email?: string;
+    cpfCnpj?: string;
+    phone?: string;
+  };
+}
+
+export interface CreateDetachedCheckoutResult {
+  checkoutUrl: string;
+  checkoutId: string;
+  expiresAt: string | null;
+}
+
 export interface BillingProvider {
   readonly name: BillingProviderName;
 
@@ -115,6 +139,13 @@ export interface BillingProvider {
     checkoutId: string;
     expiresAt: string | null;
   }>;
+
+  /**
+   * Cria uma sessão hospedada no gateway para cobrança avulsa/desanexada (DETACHED),
+   * utilizada no ajuste pró-rata de ativação antecipada.
+   * Não cria recorrência nem bloco de assinatura.
+   */
+  createDetachedCheckout?(params: CreateDetachedCheckoutParams): Promise<CreateDetachedCheckoutResult>;
 
   inactivateSubscription(providerSubscriptionId: string): Promise<{ success: boolean }>;
 
