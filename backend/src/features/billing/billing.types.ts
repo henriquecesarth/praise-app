@@ -349,7 +349,18 @@ export interface BillingTransitionV1Record {
   retry_locked_by?: string | null;
   reconcile_locked_until?: string | null;
   reconcile_locked_by?: string | null;
+
+  // Phase 3B.3B Grace & Delinquency Recovery Fields (Write-Once)
+  grace_status?: BillingGraceStatus;
+  grace_started_at?: string | null;
+  grace_start_billing_date?: string | null;
+  grace_end_billing_date?: string | null;
+  grace_entitlement_snapshot?: EntitlementSnapshot | null;
+  grace_expired_at?: string | null;
+  grace_expired_billing_date?: string | null;
 }
+
+export type BillingGraceStatus = 'not_entered' | 'in_grace' | 'expired' | 'resolved';
 
 export type BillingPlanChangeRecord = LegacyBillingPlanChangeRecord | BillingTransitionV1Record;
 
@@ -405,6 +416,20 @@ export function buildActiveTransitionSlotId(ministryId: string, provider: Billin
   }
   const safeMinistry = encodeURIComponent(ministryId);
   return `slot_${safeMinistry}__${provider}`;
+}
+
+/**
+ * Constrói a chave canônica e determinística de documento para BillingSubscription no Firestore.
+ * Formato oficial canônico: `${ministryId}_${provider}`
+ */
+export function buildBillingSubscriptionId(ministryId: string, provider: BillingProviderName): string {
+  if (!ministryId || typeof ministryId !== 'string' || ministryId !== ministryId.trim()) {
+    throw new Error('ministry_id é obrigatório e não pode conter espaços em branco nas extremidades.');
+  }
+  if (provider !== 'asaas' && provider !== 'mock') {
+    throw new Error(`Provedor inválido para BillingSubscription: ${provider}`);
+  }
+  return `${ministryId}_${provider}`;
 }
 
 /**

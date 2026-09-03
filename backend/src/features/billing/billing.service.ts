@@ -30,6 +30,7 @@ import {
   BillingTransitionV1Record,
   BillingCheckoutAttempt,
   isBillingTransitionV1,
+  buildBillingSubscriptionId,
 } from './billing.types';
 import {
   validateTargetContract,
@@ -40,7 +41,7 @@ import {
   verifyPaidToPaidTargetReadyGate,
 } from './billing-transition-domain.service';
 import { AppError } from '../../middleware/error-handler';
-import { getCurrentBillingDate, getBillingDate, addCommercialInterval } from '../../utils/billing-date';
+import { getCurrentBillingDate, getBillingDate, addCommercialInterval, addCommercialDays } from '../../utils/billing-date';
 import { providerBrlDecimalToCents } from './billing-money.utils';
 
 export class BillingService {
@@ -1601,7 +1602,7 @@ export class BillingService {
 
         // Atualizar registro oficial de BillingSubscription (promove a nova assinatura a ativa vigente)
         const newBillingSub: BillingSubscriptionRecord = {
-          id: `${ministryId}_${this.provider.name}`,
+          id: buildBillingSubscriptionId(ministryId, this.provider.name),
           ministry_id: ministryId,
           provider: this.provider.name,
           checkout_intent_id: planChange?.checkout_intent_id || billingSub?.checkout_intent_id,
@@ -2012,7 +2013,7 @@ export class BillingService {
         );
 
         const newBillingSub: BillingSubscriptionRecord = {
-          id: `${ministryId}_${this.provider.name}`,
+          id: buildBillingSubscriptionId(ministryId, this.provider.name),
           ministry_id: ministryId,
           provider: this.provider.name,
           checkout_intent_id: change.checkout_intent_id,
@@ -2540,7 +2541,7 @@ export class BillingService {
 
         // Step 4.3: Atualizar / Criar BillingSubscriptionRecord
         const billingSubRecord: BillingSubscriptionRecord = {
-          id: `${this.provider.name}_${ministryId}`,
+          id: buildBillingSubscriptionId(ministryId, this.provider.name),
           ministry_id: ministryId,
           provider: this.provider.name,
           plan_id: planChange.target_plan_id,
@@ -2761,9 +2762,13 @@ export class BillingService {
       return { status: 'ok', processed: true, reason: 'already_completed' };
     }
 
-    // 0.1 Se a transição estiver scheduled: processar liquidação da renovação via Two-Gate Model (Phase 3B.3A)
+    // 0.1 Se a transição estiver scheduled: processar liquidação/carência da renovação via Single State Machine (Phase 3B.3A/3B)
     if (planChange.transition_status === 'scheduled') {
-      if (parsedEvent.eventType === 'payment_confirmed' || parsedEvent.eventType === 'payment_received') {
+      if (
+        parsedEvent.eventType === 'payment_confirmed' ||
+        parsedEvent.eventType === 'payment_received' ||
+        parsedEvent.eventType === 'payment_overdue'
+      ) {
         return await this.processScheduledPaidRenewalSettlement(parsedEvent, planChange, now);
       }
       await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
@@ -2776,7 +2781,36 @@ export class BillingService {
       planChange.transition_status === 'awaiting_old_inactivation'
     ) {
       if (parsedEvent.eventType === 'payment_confirmed' || parsedEvent.eventType === 'payment_received') {
-        return await this.processScheduledPaidRenewalSettlement(parsedEvent, planChange, now);
+        console.log(
+          `[WEBHOOK CUTOVER ORDERING] Webhook ${parsedEvent.eventType} recebido enquanto em ${planChange.transition_status}. ` +
+            `Disparando source cutover antes da liquidação da renovação.`
+        );
+
+        // 1. Executar o subfluxo de corte de origem de forma atômica/idempotente
+        await this.reconcilePaidToPaidSourceCutover(
+          planChange.id,
+          'webhook_' + (parsedEvent.providerEventId || Date.now())
+        );
+
+        // 2. Re-ler estado fresh da transição
+        const freshTr = await this.billingRepo.getTransitionById(planChange.id, ministryId);
+        if (
+          freshTr &&
+          isBillingTransitionV1(freshTr) &&
+          freshTr.transition_status === 'scheduled' &&
+          freshTr.supersede_status === 'completed'
+        ) {
+          // 3. Somente agora que a transição está comprovadamente scheduled e origem INACTIVE, processar a liquidação
+          return await this.processScheduledPaidRenewalSettlement(parsedEvent, freshTr, now);
+        }
+
+        // Se o cutover não atingiu scheduled (ex: lock ocupado pelo worker ou falha temporária),
+        // NÃO ativa target. Retorna acknowledging event para que o reconciler worker conclua no ciclo seguinte.
+        console.log(
+          `[WEBHOOK CUTOVER ORDERING] Cutover em andamento ou não convergiu para scheduled ainda (status=${(freshTr as any)?.transition_status}). O reconciler worker convergirá.`
+        );
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+        return { status: 'ok', processed: false, reason: 'cutover_in_progress_reconciler_will_converge' };
       }
       await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
       return { status: 'ok', processed: true, reason: `already_${planChange.transition_status}` };
@@ -2933,10 +2967,49 @@ export class BillingService {
 
     // Descobrir pagamentos da assinatura target
     let firstPayment: any = null;
-    if (targetSubId && typeof this.provider.listSubscriptionPayments === 'function') {
-      const payments = await this.provider.listSubscriptionPayments(targetSubId);
+
+    // WEBHOOK EXACT PAYMENT FAST PATH (Seção 4):
+    // Se o evento recebido fornecer providerPaymentId, consultar diretamente a cobrança exata como autoridade primária
+    if (parsedEvent.providerPaymentId && typeof (this.provider as any).getPayment === 'function') {
+      const exactPayment = await (this.provider as any).getPayment(parsedEvent.providerPaymentId);
+      if (exactPayment) {
+        if (!targetSubId && exactPayment.subscriptionId) {
+          targetSubId = exactPayment.subscriptionId;
+        }
+        if (!targetSubId || !exactPayment.subscriptionId || exactPayment.subscriptionId === targetSubId) {
+          firstPayment = exactPayment;
+        }
+      }
+    }
+
+    if (!firstPayment && targetSubId && typeof this.provider.listSubscriptionPayments === 'function') {
+      const payments = await this.provider.listSubscriptionPayments(targetSubId, { status: 'ALL' });
       if (Array.isArray(payments) && payments.length > 0) {
-        firstPayment = payments[0];
+        // SECOND CYCLE PROTECTION (Seção 9):
+        // Filtrar candidatos que correspondem à primeira obrigação contratual exata
+        const candidatePayments = payments.filter((p) => {
+          const pDueDate = (p.originalDueDate || p.dueDate || '').trim().substring(0, 10);
+          return (
+            pDueDate === planChange.effective_billing_date &&
+            p.amountCents === planChange.target_future_recurring_price_cents
+          );
+        });
+
+        if (candidatePayments.length === 1) {
+          firstPayment = candidatePayments[0];
+        } else if (candidatePayments.length > 1) {
+          console.error(
+            `[AMBIGUOUS TARGET PAYMENTS] Assinatura target ${targetSubId} possui múltiplos pagamentos para a mesma boundary ${planChange.effective_billing_date}.`
+          );
+          await this.billingRepo.updateTransition(planChange.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: 'AMBIGUOUS_TARGET_PAYMENTS',
+            financial_safety_status: 'attention_required',
+          });
+          return { status: 'ok', processed: false, reason: 'AMBIGUOUS_TARGET_PAYMENTS' };
+        } else if (payments.length > 0) {
+          firstPayment = payments[0];
+        }
       }
     }
     if (!firstPayment && sessionPayments.length > 0) {
@@ -3097,7 +3170,8 @@ export class BillingService {
         if (attemptCheckoutId) {
           // CASO A: provider_checkout_id É CONHECIDO -> usar caminho documentado: GET /v3/payments?checkoutSession=<checkoutId>
           if (typeof this.provider.listPaymentsByCheckoutSession === 'function') {
-            const checkoutPayments = await this.provider.listPaymentsByCheckoutSession(attemptCheckoutId);
+            const rawPayments = await this.provider.listPaymentsByCheckoutSession(attemptCheckoutId);
+            const checkoutPayments = Array.isArray(rawPayments) ? rawPayments : [];
 
             if (checkoutPayments.length === 0) {
               // 0 cobranças encontradas para a sessão de checkout conhecida: usuário ainda não concluiu ou gateway ainda não materializou
@@ -3162,7 +3236,7 @@ export class BillingService {
       // Descobrir pagamentos da assinatura target
       let payments: ProviderPaymentRecord[] = [];
       if (typeof this.provider.listSubscriptionPayments === 'function') {
-        const subPaymentsRes = await this.provider.listSubscriptionPayments(targetSubId);
+        const subPaymentsRes = await this.provider.listSubscriptionPayments(targetSubId, { status: 'ALL' });
         if (Array.isArray(subPaymentsRes)) {
           payments = subPaymentsRes;
         }
@@ -3185,7 +3259,30 @@ export class BillingService {
         return { success: false, reason: 'payment_not_yet_visible' };
       }
 
-      const firstPayment = subPayments[0];
+      // SECOND CYCLE PROTECTION (Seção 9):
+      // Filtrar candidatos que correspondem à primeira obrigação contratual exata
+      const candidatePayments = subPayments.filter((p) => {
+        const pDueDate = (p.originalDueDate || p.dueDate || '').trim().substring(0, 10);
+        return (
+          pDueDate === claimed.effective_billing_date &&
+          p.amountCents === claimed.target_future_recurring_price_cents
+        );
+      });
+
+      if (candidatePayments.length > 1) {
+        console.error(
+          `[AMBIGUOUS TARGET PAYMENTS] Assinatura target ${targetSubId} possui múltiplos pagamentos (${candidatePayments.length}) para a boundary ${claimed.effective_billing_date}.`
+        );
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: 'AMBIGUOUS_TARGET_PAYMENTS',
+          financial_safety_status: 'attention_required',
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'AMBIGUOUS_TARGET_PAYMENTS' };
+      }
+
+      const firstPayment = candidatePayments.length === 1 ? candidatePayments[0] : subPayments[0];
 
       let subValCents: number | undefined = targetSub?.valueCents;
       if (subValCents === undefined && targetSub?.value !== undefined) {
@@ -3472,7 +3569,7 @@ export class BillingService {
       // Buscar pagamentos da target subscription (listSubscriptionPayments ou listPaymentsByCheckoutSession)
       let targetPayments: ProviderPaymentRecord[] = [];
       if (typeof this.provider.listSubscriptionPayments === 'function') {
-        const pRes = await this.provider.listSubscriptionPayments(targetSubId);
+        const pRes = await this.provider.listSubscriptionPayments(targetSubId, { status: 'ALL' });
         if (Array.isArray(pRes)) targetPayments = pRes;
       }
       if (
@@ -3488,11 +3585,13 @@ export class BillingService {
       const subTargetPayments = targetPayments.filter((p) => !p.subscriptionId || p.subscriptionId === targetSubId);
 
       // Boundary candidates: dueDate == renewalCutoffDate AND amountCents == target_future_recurring_price_cents
-      const boundaryCandidatePayments = subTargetPayments.filter(
-        (p) =>
-          p.dueDate === renewalCutoffDate &&
+      const boundaryCandidatePayments = subTargetPayments.filter((p) => {
+        const pDueDate = (p.originalDueDate || p.dueDate || '').trim().substring(0, 10);
+        return (
+          pDueDate === renewalCutoffDate &&
           p.amountCents === claimed.target_future_recurring_price_cents
-      );
+        );
+      });
 
       if (boundaryCandidatePayments.length === 0) {
         console.error(`[CUTOVER GUARD] Nenhuma cobrança target encontrada para a boundary ${renewalCutoffDate}`);
@@ -3894,7 +3993,50 @@ export class BillingService {
     }
 
     if (planChange.execution_strategy !== 'scheduled_paid_transition') {
+      // Categoria A: consumido, sem mudança. Evento finalizado terminalmente.
+      if (parsedEvent?.providerEventId) {
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      }
       return { status: 'ok', processed: false, reason: 'strategy_mismatch' };
+    }
+
+    // Settlement Precondition Gate: PROIBIDO ativar target antes do source cutover concluído (Section 4 & 5)
+    if (
+      planChange.transition_status !== 'scheduled' ||
+      planChange.supersede_status !== 'completed' ||
+      planChange.payment_cleanup_status !== 'completed'
+    ) {
+      console.warn(
+        `[SETTLEMENT PRECONDITION GATE] Transição ${planChange.id} não está em scheduled ou cutover incompleto: ` +
+          `transition_status=${planChange.transition_status}, supersede_status=${planChange.supersede_status}, ` +
+          `cleanup_status=${planChange.payment_cleanup_status}. Liquidação e promoção de cotas bloqueadas.`
+      );
+      // Retryable transitório: o reconciler convergirá o cutover. Evento permanece em processing
+      // intencionalmente para permitir retry pelo handler quando o cutover completar.
+      return { status: 'ok', processed: false, reason: 'SOURCE_CUTOVER_NOT_COMPLETED' };
+    }
+
+    if (planChange.financial_attention_required === true) {
+      console.warn(
+        `[SETTLEMENT PRECONDITION GATE] Transição ${planChange.id} possui financial_attention_required=true. Bloqueado.`
+      );
+      // Categoria C: atenção financeira persistida na transição. O bloqueio vem do campo financial_attention_required,
+      // não do estado do evento. Finalizar o evento terminalmente.
+      if (parsedEvent?.providerEventId) {
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      }
+      return { status: 'ok', processed: false, reason: 'financial_attention_required' };
+    }
+
+    if (planChange.financial_safety_status !== 'live') {
+      console.warn(
+        `[SETTLEMENT PRECONDITION GATE] Transição ${planChange.id} possui financial_safety_status=${planChange.financial_safety_status} (esperado live). Bloqueado.`
+      );
+      // Categoria C: estado terminal de atenção financeira. Evento finalizado.
+      if (parsedEvent?.providerEventId) {
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      }
+      return { status: 'ok', processed: false, reason: 'FINANCIAL_SAFETY_STATUS_NOT_LIVE' };
     }
 
     const effectiveBillingDate = planChange.effective_billing_date;
@@ -3909,6 +4051,10 @@ export class BillingService {
         financial_attention_reason: 'COMMERCIAL_BOUNDARY_MISMATCH',
         financial_safety_status: 'attention_required',
       });
+      // Categoria C: atenção financeira persistida. Evento finalizado terminalmente.
+      if (parsedEvent?.providerEventId) {
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      }
       return { status: 'ok', processed: false, reason: 'COMMERCIAL_BOUNDARY_MISMATCH' };
     }
 
@@ -3924,6 +4070,10 @@ export class BillingService {
         financial_attention_reason: 'MISSING_TARGET_RESOURCES',
         financial_safety_status: 'attention_required',
       });
+      // Categoria C: atenção financeira persistida. Evento finalizado terminalmente.
+      if (parsedEvent?.providerEventId) {
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      }
       return { status: 'ok', processed: false, reason: 'MISSING_TARGET_RESOURCES' };
     }
 
@@ -3933,11 +4083,19 @@ export class BillingService {
         console.warn(
           `[RENEWAL SECOND CYCLE] Webhook payment ID ${parsedEvent.providerPaymentId} != first payment ${expectedPaymentId}, pertence à assinatura alvo mas é cobrança posterior.`
         );
+        // Categoria A: segundo ciclo corretamente descartado. Evento finalizado terminalmente.
+        if (parsedEvent?.providerEventId) {
+          await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+        }
         return { status: 'ok', processed: false, reason: 'SECOND_CYCLE_PAYMENT' };
       }
       console.warn(
         `[RENEWAL PAYMENT MISMATCH] Webhook payment ID ${parsedEvent.providerPaymentId} não corresponde ao target payment esperado ${expectedPaymentId}.`
       );
+      // Categoria D: webhook de pagamento errado; ignorado definitivamente.
+      if (parsedEvent?.providerEventId) {
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'ignored', `payment_id_mismatch: got ${parsedEvent.providerPaymentId}, expected ${expectedPaymentId}`);
+      }
       return { status: 'ok', processed: false, reason: 'WRONG_PAYMENT_ID' };
     }
 
@@ -3945,6 +4103,10 @@ export class BillingService {
       console.warn(
         `[RENEWAL SUBSCRIPTION MISMATCH] Webhook subscription ID ${parsedEvent.providerSubscriptionId} não corresponde ao target subscription esperado ${targetSubId}.`
       );
+      // Categoria D: webhook de assinatura errada; ignorado definitivamente.
+      if (parsedEvent?.providerEventId) {
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'ignored', `subscription_id_mismatch: got ${parsedEvent.providerSubscriptionId}, expected ${targetSubId}`);
+      }
       return { status: 'ok', processed: false, reason: 'WRONG_TARGET_SUBSCRIPTION' };
     }
 
@@ -3953,12 +4115,14 @@ export class BillingService {
     if (typeof (this.provider as any).getPayment === 'function') {
       payment = await (this.provider as any).getPayment(expectedPaymentId);
     } else {
-      const subPayments = await this.provider.listSubscriptionPayments(targetSubId);
+      const subPayments = await this.provider.listSubscriptionPayments(targetSubId, { status: 'ALL' });
       payment = subPayments.find((p) => p.id === expectedPaymentId) || null;
     }
 
     if (!payment) {
       console.warn(`[RENEWAL PAYMENT READ] Cobrança target ${expectedPaymentId} não localizada no provedor.`);
+      // Retryable transitório: gateway pode não ter propagado a cobrança ainda.
+      // Evento permanece em processing intencionalmente para retry pelo reconciler.
       return { status: 'ok', processed: false, reason: 'PAYMENT_NOT_FOUND' };
     }
 
@@ -3972,6 +4136,10 @@ export class BillingService {
         financial_attention_reason: 'TARGET_PAYMENT_SUBSCRIPTION_MISMATCH',
         financial_safety_status: 'attention_required',
       });
+      // Categoria C: atenção financeira persistida. Evento finalizado terminalmente.
+      if (parsedEvent?.providerEventId) {
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      }
       return { status: 'ok', processed: false, reason: 'TARGET_PAYMENT_SUBSCRIPTION_MISMATCH' };
     }
 
@@ -3988,18 +4156,27 @@ export class BillingService {
         financial_attention_reason: 'TARGET_PAYMENT_CUSTOMER_MISMATCH',
         financial_safety_status: 'attention_required',
       });
+      // Categoria C: atenção financeira persistida. Evento finalizado terminalmente.
+      if (parsedEvent?.providerEventId) {
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      }
       return { status: 'ok', processed: false, reason: 'TARGET_PAYMENT_CUSTOMER_MISMATCH' };
     }
 
-    if (payment.dueDate && payment.dueDate !== effectiveBillingDate) {
+    const effectivePaymentDueDate = payment.originalDueDate || payment.dueDate;
+    if (effectivePaymentDueDate && effectivePaymentDueDate !== effectiveBillingDate) {
       console.error(
-        `[RENEWAL DUE DATE MISMATCH] Cobrança target exata ${payment.id} dueDate ${payment.dueDate} diverge de ${effectiveBillingDate}.`
+        `[RENEWAL DUE DATE MISMATCH] Cobrança target exata ${payment.id} dueDate ${payment.dueDate} (original: ${payment.originalDueDate}) diverge de ${effectiveBillingDate}.`
       );
       await this.billingRepo.updateTransition(planChange.id, ministryId, {
         financial_attention_required: true,
         financial_attention_reason: 'TARGET_FIRST_PAYMENT_BOUNDARY_MISMATCH',
         financial_safety_status: 'attention_required',
       });
+      // Categoria C: atenção financeira persistida. Evento finalizado terminalmente.
+      if (parsedEvent?.providerEventId) {
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      }
       return { status: 'ok', processed: false, reason: 'TARGET_FIRST_PAYMENT_BOUNDARY_MISMATCH' };
     }
 
@@ -4015,6 +4192,10 @@ export class BillingService {
         financial_attention_reason: 'TARGET_PAYMENT_AMOUNT_MISMATCH',
         financial_safety_status: 'attention_required',
       });
+      // Categoria C: atenção financeira persistida. Evento finalizado terminalmente.
+      if (parsedEvent?.providerEventId) {
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      }
       return { status: 'ok', processed: false, reason: 'TARGET_PAYMENT_AMOUNT_MISMATCH' };
     }
 
@@ -4027,12 +4208,137 @@ export class BillingService {
           financial_attention_reason: `TARGET_PAYMENT_STATUS_${payment.status}`,
           financial_safety_status: 'attention_required',
         });
+        // Categoria C: status terminal de pagamento. Atenção financeira persistida. Evento finalizado.
+        if (parsedEvent?.providerEventId) {
+          await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+        }
         return { status: 'ok', processed: false, reason: `TARGET_PAYMENT_STATUS_${payment.status}` };
       }
 
-      // Se estiver PENDING ou OVERDUE:
-      // Na Phase 3B.3A, retorna renewal_payment_not_settled, mantendo scheduled, source entitlement e slot HELD!
-      return { status: 'ok', processed: false, reason: 'renewal_payment_not_settled' };
+      // Se o pagamento target for PENDING ou OVERDUE:
+      const commercialBoundaryReached = currentCommercialDate >= effectiveBillingDate;
+      if (!commercialBoundaryReached) {
+        // Categoria A: Pre-boundary, PENDING/OVERDUE esperado. A transição permanece scheduled e o slot
+        // HELD. O evento foi avaliado corretamente — não há ação a tomar neste momento.
+        // O evento é finalizado terminalmente; o reconciler descobrirá a transition no próximo ciclo.
+        if (parsedEvent?.providerEventId) {
+          await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+        }
+        return { status: 'ok', processed: false, reason: 'renewal_payment_not_settled' };
+      }
+
+      // Phase 3B.3B: Fronteira comercial atingida e target payment NÃO liquidado -> Carência civil de 7 dias [start, end)
+      let graceStartBillingDate = planChange.grace_start_billing_date;
+      let graceEndBillingDate = planChange.grace_end_billing_date;
+      let graceSnapshot = planChange.grace_entitlement_snapshot;
+
+      if (!planChange.grace_started_at || !graceEndBillingDate || !graceSnapshot) {
+        // Entrada write-once em carência: capturar runtime entitlement imediatamente anterior à fronteira
+        const preBoundarySub = await this.subscriptionRepo.getSubscription(ministryId);
+        const activePlanId = preBoundarySub?.plan_id || planChange.source_plan_id;
+        const activeAddonBlocks =
+          preBoundarySub?.member_addon_blocks !== undefined
+            ? preBoundarySub.member_addon_blocks
+            : planChange.source_addon_blocks;
+        const activeInterval = preBoundarySub?.billing_interval || planChange.source_interval;
+
+        graceSnapshot = {
+          plan_id: activePlanId,
+          addon_blocks: activeAddonBlocks,
+          interval: activeInterval,
+          effective_member_quota:
+            preBoundarySub?.locked_member_quota !== undefined && preBoundarySub.locked_member_quota !== null
+              ? preBoundarySub.locked_member_quota
+              : planChange.source_entitlement_snapshot?.effective_member_quota ??
+                getEffectiveMemberQuota(getPlanDefinition(activePlanId), activeAddonBlocks),
+          effective_song_quota:
+            preBoundarySub?.locked_song_quota !== undefined && preBoundarySub.locked_song_quota !== null
+              ? preBoundarySub.locked_song_quota
+              : planChange.source_entitlement_snapshot?.effective_song_quota ??
+                getEffectiveSongQuota(getPlanDefinition(activePlanId)),
+        };
+
+        graceStartBillingDate = effectiveBillingDate;
+        graceEndBillingDate = addCommercialDays(effectiveBillingDate, 7, config.billingTimezone);
+
+        await this.billingRepo.enterScheduledPaidTransitionGrace({
+          transitionId: planChange.id,
+          ministryId,
+          graceStartedAt: nowIso,
+          graceStartBillingDate,
+          graceEndBillingDate,
+          graceEntitlementSnapshot: graceSnapshot,
+        });
+
+      }
+
+      // Sincronização e convergência crash-safe da runtime subscription
+      // Garante que ministry_subscriptions.billing_status seja past_due com grace_period_expires_billing_date
+      // mesmo se o processo tiver sofrido crash imediatamente após enterScheduledPaidTransitionGrace
+      const currentAppSub = await this.subscriptionRepo.getSubscription(ministryId);
+      if (
+        currentAppSub &&
+        (currentAppSub.billing_status !== 'past_due' ||
+          currentAppSub.grace_period_expires_billing_date !== graceEndBillingDate ||
+          currentAppSub.locked_member_quota !== graceSnapshot.effective_member_quota ||
+          currentAppSub.locked_song_quota !== graceSnapshot.effective_song_quota)
+      ) {
+        await this.subscriptionRepo.setSubscription({
+          ...currentAppSub,
+          billing_status: 'past_due',
+          grace_period_expires_at: new Date(`${graceEndBillingDate}T00:00:00.000Z`).toISOString(),
+          grace_period_expires_billing_date: graceEndBillingDate,
+          locked_member_quota: graceSnapshot.effective_member_quota,
+          locked_song_quota: graceSnapshot.effective_song_quota,
+          entitlement_snapshot: graceSnapshot,
+          updated_at: nowIso,
+        });
+      }
+
+      // Avaliação da janela [start, end)
+      const isGraceExpired = currentCommercialDate >= graceEndBillingDate;
+
+      if (isGraceExpired) {
+        await this.billingRepo.recordGraceExpiry({
+          transitionId: planChange.id,
+          ministryId,
+          graceExpiredAt: nowIso,
+          graceExpiredBillingDate: currentCommercialDate,
+        });
+
+        const currentAppSub = await this.subscriptionRepo.getSubscription(ministryId);
+        if (currentAppSub) {
+          await this.subscriptionRepo.setSubscription({
+            ...currentAppSub,
+            billing_status: 'past_due',
+            grace_period_expires_at: new Date(`${graceEndBillingDate}T00:00:00.000Z`).toISOString(),
+            grace_period_expires_billing_date: graceEndBillingDate,
+            locked_member_quota: graceSnapshot.effective_member_quota,
+            locked_song_quota: graceSnapshot.effective_song_quota,
+            updated_at: nowIso,
+          });
+        }
+
+        console.warn(
+          `[GRACE EXPIRED] Carência civil de 7 dias [${graceStartBillingDate}, ${graceEndBillingDate}) expirou em ${currentCommercialDate}. Modo de acesso restrito (dados preservados). Slot HELD.`
+        );
+
+        if (parsedEvent?.providerEventId) {
+          await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+        }
+
+        return { status: 'ok', processed: true, reason: 'grace_expired_restricted' };
+      }
+
+      console.log(
+        `[GRACE ACTIVE] Cobrança target ${expectedPaymentId} não liquidada na fronteira ${effectiveBillingDate}. Carência civil ativa até ${graceEndBillingDate} (atual: ${currentCommercialDate}). Direito de uso preservado. Slot HELD.`
+      );
+
+      if (parsedEvent?.providerEventId) {
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      }
+
+      return { status: 'ok', processed: true, reason: 'grace_entered_unpaid' };
     }
 
     // Determine Financial Commercial Date & Operational Instant
@@ -4124,6 +4430,26 @@ export class BillingService {
       return { status: 'ok', processed: true, reason: 'early_settlement_recorded_awaiting_boundary' };
     }
 
+    // Phase 3B.3B: Se a cobrança target foi liquidada na/após expiração da carência civil:
+    // Bloquear auto-ativação (requer política explícita de delinquency recovery). Slot HELD.
+    const graceEndBillingDate =
+      planChange.grace_end_billing_date || addCommercialDays(effectiveBillingDate, 7, config.billingTimezone);
+
+    if (currentCommercialDate >= graceEndBillingDate) {
+      console.warn(
+        `[LATE PAYMENT AFTER GRACE] Cobrança target ${payment.id} liquidada em ${paidBillingDate}, mas na/após expiração da carência civil ${graceEndBillingDate} (atual: ${currentCommercialDate}). Requer política explícita de delinquency recovery. Slot HELD.`
+      );
+      await this.billingRepo.updateTransition(planChange.id, ministryId, {
+        financial_attention_required: true,
+        financial_attention_reason: 'RENEWAL_SETTLED_AFTER_GRACE_REQUIRES_POLICY',
+        financial_safety_status: 'attention_required',
+      });
+      if (parsedEvent?.providerEventId) {
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      }
+      return { status: 'ok', processed: false, reason: 'RENEWAL_SETTLED_AFTER_GRACE_REQUIRES_POLICY' };
+    }
+
     // Fresh Target Subscription Verification Before Promotion
     if (typeof (this.provider as any).getSubscription === 'function') {
       try {
@@ -4138,6 +4464,10 @@ export class BillingService {
               financial_attention_reason: `TARGET_SUBSCRIPTION_NOT_ACTIVE_${freshSub.status}`,
               financial_safety_status: 'attention_required',
             });
+            // Categoria C: atenção financeira persistida. Evento finalizado terminalmente.
+            if (parsedEvent?.providerEventId) {
+              await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+            }
             return { status: 'ok', processed: false, reason: 'TARGET_SUBSCRIPTION_NOT_ACTIVE' };
           }
 
@@ -4154,6 +4484,10 @@ export class BillingService {
               financial_attention_reason: 'TARGET_SUBSCRIPTION_CUSTOMER_MISMATCH',
               financial_safety_status: 'attention_required',
             });
+            // Categoria C: atenção financeira persistida. Evento finalizado terminalmente.
+            if (parsedEvent?.providerEventId) {
+              await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+            }
             return { status: 'ok', processed: false, reason: 'TARGET_SUBSCRIPTION_CUSTOMER_MISMATCH' };
           }
 
@@ -4167,6 +4501,10 @@ export class BillingService {
               financial_attention_reason: 'TARGET_SUBSCRIPTION_CYCLE_MISMATCH',
               financial_safety_status: 'attention_required',
             });
+            // Categoria C: atenção financeira persistida. Evento finalizado terminalmente.
+            if (parsedEvent?.providerEventId) {
+              await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+            }
             return { status: 'ok', processed: false, reason: 'TARGET_SUBSCRIPTION_CYCLE_MISMATCH' };
           }
 
@@ -4188,11 +4526,43 @@ export class BillingService {
               financial_attention_reason: 'TARGET_SUBSCRIPTION_VALUE_MISMATCH',
               financial_safety_status: 'attention_required',
             });
+            // Categoria C: atenção financeira persistida. Evento finalizado terminalmente.
+            if (parsedEvent?.providerEventId) {
+              await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+            }
             return { status: 'ok', processed: false, reason: 'TARGET_SUBSCRIPTION_VALUE_MISMATCH' };
           }
         }
       } catch (subErr: any) {
         console.warn(`[TARGET SUB REVALIDATION] Aviso ao consultar assinatura ${targetSubId}: ${subErr.message}`);
+      }
+    }
+
+    // Source Provider Fresh Safety Before Activation (Section 5 & 15)
+    const sourceSubId =
+      planChange.previous_provider_subscription_id || planChange.old_provider_subscription_id;
+    if (sourceSubId && sourceSubId !== targetSubId && typeof (this.provider as any).getSubscription === 'function') {
+      try {
+        const freshSourceSub = await (this.provider as any).getSubscription(sourceSubId);
+        if (
+          freshSourceSub &&
+          freshSourceSub.status &&
+          (freshSourceSub.status.toUpperCase() === 'ACTIVE' || freshSourceSub.status.toLowerCase() === 'active')
+        ) {
+          console.error(
+            `[SOURCE SAFETY VIOLATION] Assinatura de origem ${sourceSubId} ainda está ACTIVE no provedor! Ativação cancelada com FAIL-CLOSED.`
+          );
+          await this.billingRepo.updateTransition(planChange.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: 'SOURCE_SUBSCRIPTION_STILL_ACTIVE_AT_RENEWAL',
+            financial_safety_status: 'attention_required',
+          });
+          // Retryable: cutover ainda não concluído no provider (race condition). Atenção persistida.
+          // Evento permanece em processing intencionalmente para re-verificação pelo reconciler.
+          return { status: 'ok', processed: false, reason: 'SOURCE_SUBSCRIPTION_STILL_ACTIVE' };
+        }
+      } catch (err: any) {
+        console.warn(`[SOURCE SAFETY WARNING] Não foi possível re-ler source subscription ${sourceSubId}:`, err?.message);
       }
     }
 
@@ -4239,6 +4609,7 @@ export class BillingService {
         billing_status: 'active',
         subscription_mode: 'paid',
         grace_period_expires_at: null,
+        grace_period_expires_billing_date: null,
         current_period_start: newCurrentPeriodStartIso,
         current_period_end: newCurrentPeriodEndIso,
         cancel_at_period_end: false,
@@ -4248,7 +4619,7 @@ export class BillingService {
 
     // Step 4: Switch active billing_subscriptions to TARGET
     const billingSubRecord: BillingSubscriptionRecord = {
-      id: `${this.provider.name}_${ministryId}`,
+      id: buildBillingSubscriptionId(ministryId, this.provider.name),
       ministry_id: ministryId,
       provider: this.provider.name,
       plan_id: planChange.target_plan_id,
@@ -4295,7 +4666,9 @@ export class BillingService {
       freshAppSub.billing_interval === planChange.target_interval &&
       freshAppSub.current_period_start === newCurrentPeriodStartIso &&
       freshAppSub.current_period_end === newCurrentPeriodEndIso &&
-      freshAppSub.billing_status === 'active';
+      freshAppSub.billing_status === 'active' &&
+      !freshAppSub.grace_period_expires_billing_date &&
+      !freshAppSub.grace_period_expires_at;
 
     const billingSubValid =
       freshBillingSub &&
@@ -4306,12 +4679,24 @@ export class BillingService {
 
     const txValid = freshTx && freshTx.status === 'paid' && freshTx.provider_payment_id === expectedPaymentId;
 
-    if (!appSubValid || !billingSubValid || !txValid) {
+    const freshPlanChange = await this.billingRepo.getTransitionById(planChange.id, ministryId);
+    const cutoverValid =
+      freshPlanChange &&
+      isBillingTransitionV1(freshPlanChange) &&
+      freshPlanChange.supersede_status === 'completed' &&
+      freshPlanChange.payment_cleanup_status === 'completed' &&
+      freshPlanChange.transition_status === 'scheduled';
+
+    if (!appSubValid || !billingSubValid || !txValid || !cutoverValid) {
       console.error(
         `[ACTIVATION COMPLETION GATE FAILED] Local state not fully converged: appSub=${Boolean(
           appSubValid
-        )}, billingSub=${Boolean(billingSubValid)}, tx=${Boolean(txValid)}. Slot remains HELD.`
+        )}, billingSub=${Boolean(billingSubValid)}, tx=${Boolean(txValid)}, cutover=${Boolean(
+          cutoverValid
+        )}. Slot remains HELD.`
       );
+      // Retryable: estado local ainda não convergiu após writes (crash-safety scenario).
+      // Evento permanece em processing intencionalmente; o reconciler re-executará a liquidação.
       return { status: 'ok', processed: false, reason: 'ACTIVATION_COMPLETION_GATE_FAILED' };
     }
 
@@ -4349,21 +4734,25 @@ export class BillingService {
     options?: { nowCommercialDate?: string }
   ): Promise<{ success: boolean; reason?: string; transition?: BillingTransitionV1Record }> {
     const now = new Date();
-    const claimed = await this.billingRepo.claimPlanChangeForRetry(
+    const claimed = await this.billingRepo.claimTransitionForReconciliation(
       transitionId,
       workerId || `worker_${Date.now()}`,
       60000
     );
     if (!claimed) {
+      // Diagnóstico preciso de motivo quando claim retorna null (Seção 11)
+      const current = await this.billingRepo.getTransitionById(transitionId);
+      if (!current) return { success: false, reason: 'transition_not_found' };
+      if (!isBillingTransitionV1(current)) return { success: false, reason: 'not_v1_transition' };
+      if (current.financial_attention_required) return { success: false, reason: 'financial_attention_required' };
+      if (current.financial_safety_status === 'safe_terminal' && current.transition_status === 'completed') {
+        await this.billingRepo.releaseSlotIfOwnedAndSafe(current.ministry_id, this.provider.name, current.id);
+        return { success: true, reason: 'already_completed', transition: current };
+      }
       return { success: false, reason: 'lock_busy' };
     }
 
     try {
-      if (!isBillingTransitionV1(claimed)) {
-        await this.billingRepo.releasePlanChangeLock(claimed.id);
-        return { success: false, reason: 'not_v1_transition' };
-      }
-
       // Se já completada: se o slot ainda estiver alugado por crash residual, libera e retorna
       if (claimed.transition_status === 'completed') {
         await this.billingRepo.releaseSlotIfOwnedAndSafe(claimed.ministry_id, this.provider.name, claimed.id);
@@ -4381,7 +4770,10 @@ export class BillingService {
       await this.billingRepo.releasePlanChangeLock(claimed.id);
       const reloaded = await this.billingRepo.getTransitionById(claimed.id, claimed.ministry_id);
       return {
-        success: result.processed && result.reason === 'renewal_activated',
+        success:
+          (result.processed && result.reason === 'renewal_activated') ||
+          result.reason === 'grace_entered_unpaid' ||
+          result.reason === 'grace_expired_restricted',
         reason: result.reason,
         transition: reloaded && isBillingTransitionV1(reloaded) ? reloaded : undefined,
       };

@@ -116,13 +116,15 @@ export class BillingReconcilerWorker {
             if (renewalResult.success) {
               succeeded++;
               console.log(
-                `[BillingReconcilerWorker] Transição V1 Scheduled Renewal ativada com sucesso: ${item.id} (ministério: ${item.ministry_id})`
+                `[BillingReconcilerWorker] Transição V1 Scheduled Renewal processada com sucesso: ${item.id} (ministério: ${item.ministry_id}, motivo: ${renewalResult.reason})`
               );
             } else {
               if (
                 renewalResult.reason !== 'renewal_payment_not_settled' &&
                 renewalResult.reason !== 'early_settlement_recorded_awaiting_boundary' &&
-                renewalResult.reason !== 'boundary_not_reached'
+                renewalResult.reason !== 'boundary_not_reached' &&
+                renewalResult.reason !== 'grace_entered_unpaid' &&
+                renewalResult.reason !== 'grace_expired_restricted'
               ) {
                 failed++;
               }

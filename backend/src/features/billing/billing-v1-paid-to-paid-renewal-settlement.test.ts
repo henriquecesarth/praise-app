@@ -13,6 +13,7 @@ import { AppError } from '../../middleware/error-handler.js';
 import { config } from '../../config/unifiedConfig.js';
 import { PLANS_CATALOG } from '../../config/plans.config.js';
 import { SubscriptionService as RealSubscriptionService } from '../subscriptions/subscription.service.js';
+import { getBillingDate } from '../../utils/billing-date.js';
 
 describe('Phase 3B.3A — Scheduled Renewal Settlement & Target Activation', () => {
   let billingService: BillingService;
@@ -71,6 +72,8 @@ describe('Phase 3B.3A — Scheduled Renewal Settlement & Target Activation', () 
     expires_at: null,
     old_provider_subscription_id: 'sub_source_old',
     previous_provider_subscription_id: 'sub_source_old',
+    supersede_status: 'completed',
+    payment_cleanup_status: 'completed',
     future_provider_subscription_id: 'sub_target_new',
     new_provider_subscription_id: 'sub_target_new',
     future_provider_payment_id: 'pay_target_001',
@@ -96,11 +99,14 @@ describe('Phase 3B.3A — Scheduled Renewal Settlement & Target Activation', () 
       setCustomer: vi.fn().mockImplementation(async (c: any) => {
         customersStore.set(c.id, c);
       }),
-      getSubscription: vi.fn().mockImplementation(async (ministryId: string) => {
-        return subscriptionsStore.get(ministryId) || null;
+      getSubscription: vi.fn().mockImplementation(async (ministryId: string, provider: string = 'asaas') => {
+        return subscriptionsStore.get(`${ministryId}_${provider}`) || subscriptionsStore.get(ministryId) || null;
       }),
       setSubscription: vi.fn().mockImplementation(async (sub: any) => {
-        subscriptionsStore.set(sub.ministry_id, sub);
+        const canonicalKey = `${sub.ministry_id}_${sub.provider}`;
+        const record = { ...sub, id: canonicalKey };
+        subscriptionsStore.set(canonicalKey, record);
+        subscriptionsStore.set(sub.ministry_id, record);
       }),
       getPlanChange: vi.fn().mockImplementation(async (id: string) => {
         return planChangesStore.get(id) || null;
@@ -167,6 +173,40 @@ describe('Phase 3B.3A — Scheduled Renewal Settlement & Target Activation', () 
         planChangesStore.set(tr.id, updated);
         return updated;
       }),
+      enterScheduledPaidTransitionGrace: vi.fn().mockImplementation(async (params: any) => {
+        const tr = planChangesStore.get(params.transitionId);
+        if (!tr) throw new AppError(404, 'Transição não encontrada');
+        if (!tr.grace_started_at) {
+          const updated = {
+            ...tr,
+            grace_status: 'in_grace',
+            grace_started_at: params.graceStartedAt,
+            grace_start_billing_date: params.graceStartBillingDate,
+            grace_end_billing_date: params.graceEndBillingDate,
+            grace_entitlement_snapshot: params.graceEntitlementSnapshot,
+            updated_at: params.graceStartedAt,
+          };
+          planChangesStore.set(tr.id, updated as any);
+          return updated;
+        }
+        return tr;
+      }),
+      recordGraceExpiry: vi.fn().mockImplementation(async (params: any) => {
+        const tr = planChangesStore.get(params.transitionId);
+        if (!tr) throw new AppError(404, 'Transição não encontrada');
+        if (!tr.grace_expired_at) {
+          const updated = {
+            ...tr,
+            grace_status: 'expired',
+            grace_expired_at: params.graceExpiredAt,
+            grace_expired_billing_date: params.graceExpiredBillingDate,
+            updated_at: params.graceExpiredAt,
+          };
+          planChangesStore.set(tr.id, updated as any);
+          return updated;
+        }
+        return tr;
+      }),
       claimPlanChangeForRetry: vi.fn().mockImplementation(async (id: string, lockWorkerId: string) => {
         const tr = planChangesStore.get(id) as any;
         if (!tr) return null;
@@ -177,6 +217,22 @@ describe('Phase 3B.3A — Scheduled Renewal Settlement & Target Activation', () 
           ...tr,
           retry_locked_by: lockWorkerId,
           retry_locked_until: new Date(Date.now() + 60000).toISOString(),
+        };
+        planChangesStore.set(id, updated);
+        return updated;
+      }),
+      claimTransitionForReconciliation: vi.fn().mockImplementation(async (id: string, lockWorkerId: string, lockDurationMs: number = 60000) => {
+        const tr = planChangesStore.get(id) as any;
+        if (!tr) return null;
+        if (tr.financial_safety_status === 'safe_terminal' && tr.transition_status === 'completed') return null;
+        if (tr.financial_attention_required === true) return null;
+        if (tr.retry_locked_by && tr.retry_locked_until && new Date(tr.retry_locked_until).getTime() > Date.now() && tr.retry_locked_by !== lockWorkerId) {
+          return null;
+        }
+        const updated = {
+          ...tr,
+          retry_locked_by: lockWorkerId,
+          retry_locked_until: new Date(Date.now() + lockDurationMs).toISOString(),
         };
         planChangesStore.set(id, updated);
         return updated;
@@ -284,14 +340,26 @@ describe('Phase 3B.3A — Scheduled Renewal Settlement & Target Activation', () 
 
     mockProvider = {
       name: 'asaas',
-      getSubscription: vi.fn().mockResolvedValue({
-        id: 'sub_target_new',
-        status: 'ACTIVE',
-        value: 34.9,
-        valueCents: 3490,
-        cycle: 'MONTHLY',
-        nextDueDate: '2026-11-02',
-        customer: 'cus_test_1',
+      getSubscription: vi.fn().mockImplementation(async (subId: string) => {
+        if (subId === 'sub_source_old' || (subId && (subId.includes('source') || subId.includes('old')))) {
+          return {
+            id: subId,
+            status: 'INACTIVE',
+            value: 14.9,
+            valueCents: 1490,
+            cycle: 'MONTHLY',
+            customer: 'cus_test_1',
+          };
+        }
+        return {
+          id: subId || 'sub_target_new',
+          status: 'ACTIVE',
+          value: 34.9,
+          valueCents: 3490,
+          cycle: 'MONTHLY',
+          nextDueDate: '2026-11-02',
+          customer: 'cus_test_1',
+        };
       }),
       getPayment: vi.fn().mockResolvedValue({
         id: 'pay_target_001',
@@ -784,7 +852,7 @@ describe('Phase 3B.3A — Scheduled Renewal Settlement & Target Activation', () 
   describe('11. Crash recovery tests', () => {
     it('Crash após promoção de cota -> reconciler completa app sub, billing sub, status completed e libera slot', async () => {
       // Simular que SubscriptionService já foi promovido mas crashou antes de atualizar app subscription e transição
-      const todayDate = new Date().toISOString().slice(0, 10);
+      const todayDate = getBillingDate(new Date(), config.billingTimezone);
       const boundaryTr: BillingTransitionV1Record = {
         ...baseScheduledTransition,
         current_period_start_billing_date: '2026-08-02',
@@ -875,8 +943,8 @@ describe('Phase 3B.3A — Scheduled Renewal Settlement & Target Activation', () 
         { nowCommercialDate: '2026-10-02' }
       );
 
-      expect(result.processed).toBe(false);
-      expect(result.reason).toBe('renewal_payment_not_settled');
+      expect(result.processed).toBe(true);
+      expect(result.reason).toBe('grace_entered_unpaid');
 
       // Mantém plano de origem Lite
       expect(mockSubscriptionService.changePlan).not.toHaveBeenCalled();
@@ -886,6 +954,9 @@ describe('Phase 3B.3A — Scheduled Renewal Settlement & Target Activation', () 
       // Transição permanece scheduled
       const tr = planChangesStore.get('tr_scheduled_001')!;
       expect(tr.transition_status).toBe('scheduled');
+      expect(tr.grace_status).toBe('in_grace');
+      expect(tr.grace_start_billing_date).toBe('2026-10-02');
+      expect(tr.grace_end_billing_date).toBe('2026-10-09');
 
       // Slot permanece HELD
       expect(activeSlotsStore.has('slot_min_test_1_asaas')).toBe(true);
@@ -1436,6 +1507,1156 @@ describe('Phase 3B.3A — Scheduled Renewal Settlement & Target Activation', () 
       expect(tr.financial_attention_required).toBe(true);
       expect(tr.financial_attention_reason).toBe('TARGET_SUBSCRIPTION_VALUE_MISMATCH');
       expect(activeSlotsStore.has('slot_min_test_1_asaas')).toBe(true);
+    });
+  });
+
+  describe('17. V1 Reconciliation Claim & Locking Semantics (Phase 3B.3 Bugfix)', () => {
+    beforeEach(() => {
+      // Configurar transição scheduled padrão herdando todos os snapshots canônicos
+      const trScheduled: any = {
+        ...baseScheduledTransition,
+        id: 'tr_scheduled_claim_test',
+        transition_id: 'tr_scheduled_claim_test',
+        supersede_status: 'completed', // Subfluxo concluído na Phase 3B.2!
+        financial_safety_status: 'live',
+        transition_status: 'scheduled',
+        financial_attention_required: false,
+        financial_attention_reason: null,
+      };
+      planChangesStore.set(trScheduled.id, trScheduled);
+      activeSlotsStore.set('slot_min_test_1_asaas', {
+        id: 'slot_min_test_1_asaas',
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        plan_change_id: trScheduled.id,
+        acquired_at: '2026-09-02T12:00:00.000Z',
+        updated_at: '2026-09-02T12:00:00.000Z',
+        version: 1,
+      } as any);
+    });
+
+    it('A) scheduled + supersede_status=completed + financial_safety_status=live -> renewal reconciliation claim SUCCEEDS', async () => {
+      mockProvider.getPayment.mockResolvedValueOnce({
+        id: 'pay_target_001',
+        subscriptionId: 'sub_target_new',
+        customerId: 'cus_test_1',
+        status: 'CONFIRMED',
+        dueDate: '2026-10-02',
+        amountCents: 3490,
+      });
+      mockProvider.getSubscription.mockResolvedValueOnce({
+        id: 'sub_target_new',
+        status: 'ACTIVE',
+        customer: 'cus_test_1',
+        cycle: 'MONTHLY',
+        valueCents: 3490,
+      });
+
+      const res = await billingService.reconcilePaidToPaidRenewalSettlement(
+        'tr_scheduled_claim_test',
+        'worker_claim_test',
+        { nowCommercialDate: '2026-10-02' }
+      );
+
+      expect(res.success).toBe(true);
+      expect(res.reason).toBe('renewal_activated');
+      const tr = planChangesStore.get('tr_scheduled_claim_test')!;
+      expect(tr.transition_status).toBe('completed');
+      expect(tr.financial_safety_status).toBe('safe_terminal');
+    });
+
+    it('B) completed + safe_terminal -> claim/reconciliation does not rerun business flow (already_completed)', async () => {
+      const tr = planChangesStore.get('tr_scheduled_claim_test')!;
+      tr.transition_status = 'completed';
+      tr.financial_safety_status = 'safe_terminal';
+
+      const res = await billingService.reconcilePaidToPaidRenewalSettlement(
+        'tr_scheduled_claim_test',
+        'worker_claim_test'
+      );
+
+      expect(res.success).toBe(true);
+      expect(res.reason).toBe('already_completed');
+      expect(mockProvider.getPayment).not.toHaveBeenCalled();
+    });
+
+    it('C) HARD BLOCK: financial_attention_required=true -> automatic renewal processing BLOCKED (financial_attention_required, slot HELD)', async () => {
+      const tr = planChangesStore.get('tr_scheduled_claim_test')!;
+      tr.financial_attention_required = true;
+      tr.financial_attention_reason = 'PAYMENT_AMOUNT_MISMATCH';
+
+      const res = await billingService.reconcilePaidToPaidRenewalSettlement(
+        'tr_scheduled_claim_test',
+        'worker_claim_test'
+      );
+
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('financial_attention_required');
+      expect(activeSlotsStore.has('slot_min_test_1_asaas')).toBe(true);
+      expect(mockProvider.getPayment).not.toHaveBeenCalled();
+    });
+
+    it('D) active valid lease owned by another worker -> second worker gets lock_busy', async () => {
+      const tr = planChangesStore.get('tr_scheduled_claim_test') as any;
+      tr.retry_locked_by = 'worker_alpha';
+      tr.retry_locked_until = new Date(Date.now() + 45000).toISOString();
+
+      const res = await billingService.reconcilePaidToPaidRenewalSettlement(
+        'tr_scheduled_claim_test',
+        'worker_beta'
+      );
+
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('lock_busy');
+    });
+
+    it('E) expired lease -> another worker can recover and take over lease', async () => {
+      const tr = planChangesStore.get('tr_scheduled_claim_test') as any;
+      tr.retry_locked_by = 'worker_dead';
+      tr.retry_locked_until = new Date(Date.now() - 5000).toISOString(); // Expirado
+
+      mockProvider.getPayment.mockResolvedValueOnce({
+        id: 'pay_target_001',
+        subscriptionId: 'sub_target_new',
+        customerId: 'cus_test_1',
+        status: 'CONFIRMED',
+        dueDate: '2026-10-02',
+        amountCents: 3490,
+      });
+      mockProvider.getSubscription.mockResolvedValueOnce({
+        id: 'sub_target_new',
+        status: 'ACTIVE',
+        customer: 'cus_test_1',
+        cycle: 'MONTHLY',
+        valueCents: 3490,
+      });
+
+      const res = await billingService.reconcilePaidToPaidRenewalSettlement(
+        'tr_scheduled_claim_test',
+        'worker_recovery',
+        { nowCommercialDate: '2026-10-02' }
+      );
+
+      expect(res.success).toBe(true);
+      expect(res.reason).toBe('renewal_activated');
+    });
+
+    it('F) same worker / retry semantics remain idempotent and can re-acquire lease', async () => {
+      const tr = planChangesStore.get('tr_scheduled_claim_test') as any;
+      tr.retry_locked_by = 'worker_same';
+      tr.retry_locked_until = new Date(Date.now() + 30000).toISOString();
+
+      mockProvider.getPayment.mockResolvedValueOnce({
+        id: 'pay_target_001',
+        subscriptionId: 'sub_target_new',
+        customerId: 'cus_test_1',
+        status: 'CONFIRMED',
+        dueDate: '2026-10-02',
+        amountCents: 3490,
+      });
+      mockProvider.getSubscription.mockResolvedValueOnce({
+        id: 'sub_target_new',
+        status: 'ACTIVE',
+        customer: 'cus_test_1',
+        cycle: 'MONTHLY',
+        valueCents: 3490,
+      });
+
+      const res = await billingService.reconcilePaidToPaidRenewalSettlement(
+        'tr_scheduled_claim_test',
+        'worker_same',
+        { nowCommercialDate: '2026-10-02' }
+      );
+
+      expect(res.success).toBe(true);
+      expect(res.reason).toBe('renewal_activated');
+    });
+
+    it('G) End-to-End Regression: future_target_prepared -> source cutover -> supersede_status completed -> scheduled -> renewal reconciler acquires V1 lock -> processes settled first target payment', async () => {
+      // 1. Simular transição que acabou de passar pelo Cutover (Phase 3B.2)
+      const trPostCutover: any = {
+        ...baseScheduledTransition,
+        id: 'tr_e2e_regression_001',
+        transition_id: 'tr_e2e_regression_001',
+        supersede_status: 'completed', // Subfluxo concluído com sucesso
+        payment_cleanup_status: 'completed',
+        financial_attention_required: false,
+        future_provider_subscription_id: 'sub_target_8f7b',
+        future_provider_payment_id: 'pay_cygipl0svq',
+      };
+      planChangesStore.set(trPostCutover.id, trPostCutover);
+      activeSlotsStore.set('slot_min_test_1_asaas', {
+        id: 'slot_min_test_1_asaas',
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        plan_change_id: trPostCutover.id,
+        acquired_at: '2026-09-02T12:00:00.000Z',
+        updated_at: '2026-09-02T12:00:00.000Z',
+        version: 1,
+      } as any);
+
+      // 2. Mocks de provider: pagamento CONFIRMED na boundary (como observado no Sandbox)
+      mockProvider.getPayment.mockResolvedValueOnce({
+        id: 'pay_cygipl0svq',
+        subscriptionId: 'sub_target_8f7b',
+        customerId: 'cus_test_1',
+        status: 'CONFIRMED',
+        dueDate: '2026-10-02',
+        originalDueDate: '2026-10-02',
+        amountCents: 3490,
+      });
+      mockProvider.getSubscription.mockResolvedValueOnce({
+        id: 'sub_target_8f7b',
+        status: 'ACTIVE',
+        customer: 'cus_test_1',
+        cycle: 'MONTHLY',
+        valueCents: 3490,
+      });
+
+      // 3. Execução do reconciliador de liquidação (o lock DEVE ser adquirido apesar de supersede_status=completed)
+      const res = await billingService.reconcilePaidToPaidRenewalSettlement(
+        'tr_e2e_regression_001',
+        'worker_e2e_reconciler',
+        { nowCommercialDate: '2026-10-02' }
+      );
+
+      expect(res.success).toBe(true);
+      expect(res.reason).toBe('renewal_activated');
+
+      // 4. Verificar mutações canônicas de domínio
+      const trFinal = planChangesStore.get('tr_e2e_regression_001')!;
+      expect(trFinal.transition_status).toBe('completed');
+      expect(trFinal.financial_safety_status).toBe('safe_terminal');
+
+      // Slot liberado por último
+      expect(activeSlotsStore.has('slot_min_test_1_asaas')).toBe(false);
+
+      // Entitlements promovidos para Essential
+      const appSub = appSubscriptionsStore.get('min_test_1')!;
+      expect(appSub.plan_id).toBe('essential');
+      expect(appSub.locked_member_quota).toBe(40);
+      expect(appSub.locked_song_quota).toBe(200);
+      expect(appSub.billing_status).toBe('active');
+
+      // BillingSubscription apontando para sub_target_8f7b
+      const billingSub = subscriptionsStore.get('min_test_1')!;
+      expect(billingSub.provider_subscription_id).toBe('sub_target_8f7b');
+    });
+  });
+
+  describe('18. BillingSubscription Canonical Key & Activation Completion Gate Regression (Phase 3B.3 Fix)', () => {
+    it('18.A) Reprodução do bug e validação da cura: renewal activation persiste BillingSubscription com chave canônica min_x_asaas, getSubscription imediato encontra o registro, Completion Gate aprova billingSub=true e transição conclui', async () => {
+      const tr: any = {
+        ...baseScheduledTransition,
+        id: 'tr_canonical_fix_001',
+        transition_id: 'tr_canonical_fix_001',
+        supersede_status: 'completed',
+        payment_cleanup_status: 'completed',
+        financial_attention_required: false,
+        future_provider_subscription_id: 'sub_target_canon',
+        future_provider_payment_id: 'pay_target_canon',
+      };
+      planChangesStore.set(tr.id, tr);
+      activeSlotsStore.set('slot_min_test_1_asaas', {
+        id: 'slot_min_test_1_asaas',
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        plan_change_id: tr.id,
+        held_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as any);
+
+      mockProvider.getPayment.mockResolvedValueOnce({
+        id: 'pay_target_canon',
+        subscriptionId: 'sub_target_canon',
+        customerId: 'cus_test_1',
+        status: 'CONFIRMED',
+        dueDate: '2026-10-02',
+        originalDueDate: '2026-10-02',
+        amountCents: 3490,
+      });
+      mockProvider.getSubscription.mockResolvedValueOnce({
+        id: 'sub_target_canon',
+        status: 'ACTIVE',
+        customer: 'cus_test_1',
+        cycle: 'MONTHLY',
+        valueCents: 3490,
+      });
+
+      const res = await billingService.reconcilePaidToPaidRenewalSettlement(
+        'tr_canonical_fix_001',
+        'worker_canon',
+        { nowCommercialDate: '2026-10-02' }
+      );
+      expect(res.success).toBe(true);
+      expect(res.reason).toBe('renewal_activated');
+
+      // Verificar que BillingSubscription foi gravada sob a chave canônica min_test_1_asaas
+      const canonicalBillingSub = subscriptionsStore.get('min_test_1_asaas');
+      expect(canonicalBillingSub).toBeDefined();
+      expect(canonicalBillingSub?.id).toBe('min_test_1_asaas');
+      expect(canonicalBillingSub?.provider_subscription_id).toBe('sub_target_canon');
+      expect(canonicalBillingSub?.status).toBe('active');
+
+      // Verificar que transição foi completed e slot foi liberado por último
+      const updatedTr = planChangesStore.get('tr_canonical_fix_001')!;
+      expect(updatedTr.transition_status).toBe('completed');
+      expect(updatedTr.financial_safety_status).toBe('safe_terminal');
+      expect(activeSlotsStore.has('slot_min_test_1_asaas')).toBe(false);
+    });
+
+    it('18.B) Crash Recovery de Estado Parcial (Attempt #3 scenario): runtime app sub já promovido, BillingTransaction paid já gravada, mas BillingSubscription não convergida -> reconciler converge estado, passa Completion Gate e conclui liberando slot', async () => {
+      // Cenário de crash exatamente como no Attempt #3:
+      // Runtime app sub já está em essential (40/200), billing_status active
+      appSubscriptionsStore.set('min_test_1', {
+        ministry_id: 'min_test_1',
+        plan_id: 'essential',
+        billing_interval: 'monthly',
+        billing_status: 'active',
+        locked_member_quota: 40,
+        locked_song_quota: 200,
+        current_period_start: '2026-10-02T00:00:00.000Z',
+        current_period_end: '2026-11-02T00:00:00.000Z',
+      });
+
+      // Transição ainda em scheduled, slot HELD
+      const tr: any = {
+        ...baseScheduledTransition,
+        id: 'tr_partial_crash_001',
+        transition_id: 'tr_partial_crash_001',
+        supersede_status: 'completed',
+        payment_cleanup_status: 'completed',
+        financial_attention_required: false,
+        future_provider_subscription_id: 'sub_target_partial',
+        future_provider_payment_id: 'pay_target_partial',
+      };
+      planChangesStore.set(tr.id, tr);
+      activeSlotsStore.set('slot_min_test_1_asaas', {
+        id: 'slot_min_test_1_asaas',
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        plan_change_id: tr.id,
+        held_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as any);
+
+      // BillingSubscription ainda aponta para source antiga (inconvergente)
+      subscriptionsStore.set('min_test_1_asaas', {
+        id: 'min_test_1_asaas',
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        plan_id: 'lite',
+        status: 'active',
+        provider_subscription_id: 'sub_source_old',
+      } as any);
+
+      // BillingTransaction paid já gravada
+      transactionsStore.set('pay_target_partial', {
+        id: 'asaas_pay_target_partial',
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        provider_payment_id: 'pay_target_partial',
+        status: 'paid',
+        amount_cents: 3490,
+      } as any);
+
+      mockProvider.getPayment.mockResolvedValueOnce({
+        id: 'pay_target_partial',
+        subscriptionId: 'sub_target_partial',
+        customerId: 'cus_test_1',
+        status: 'RECEIVED',
+        dueDate: '2026-10-02',
+        originalDueDate: '2026-10-02',
+        amountCents: 3490,
+      });
+      mockProvider.getSubscription.mockResolvedValueOnce({
+        id: 'sub_target_partial',
+        status: 'ACTIVE',
+        customer: 'cus_test_1',
+        cycle: 'MONTHLY',
+        valueCents: 3490,
+      });
+
+      // Retentativa do reconciliador
+      const res = await billingService.reconcilePaidToPaidRenewalSettlement(
+        'tr_partial_crash_001',
+        'worker_partial',
+        { nowCommercialDate: '2026-10-02' }
+      );
+      expect(res.success).toBe(true);
+      expect(res.reason).toBe('renewal_activated');
+
+      // Convergência confirmada
+      const billingSub = subscriptionsStore.get('min_test_1_asaas');
+      expect(billingSub?.provider_subscription_id).toBe('sub_target_partial');
+      expect(billingSub?.status).toBe('active');
+
+      const updatedTr = planChangesStore.get('tr_partial_crash_001')!;
+      expect(updatedTr.transition_status).toBe('completed');
+      expect(updatedTr.financial_safety_status).toBe('safe_terminal');
+      expect(activeSlotsStore.has('slot_min_test_1_asaas')).toBe(false);
+    });
+  });
+
+  describe('19. Webhook Cutover Ordering, Settlement Precondition Gate & Fresh Source Safety (Phase 3B.3 Fix)', () => {
+    it('12. TEST — EXACT WEBHOOK ORDER FROM SANDBOX: CHECKOUT_PAID -> future_target_prepared -> PAYMENT_CONFIRMED -> cutover executa antes da liquidação -> target ativado somente após scheduled', async () => {
+      // Setup transition in future_target_prepared
+      const tr: any = {
+        ...baseScheduledTransition,
+        id: 'tr_webhook_order_001',
+        transition_id: 'tr_webhook_order_001',
+        transition_status: 'future_target_prepared',
+        supersede_status: 'pending',
+        payment_cleanup_status: 'pending',
+        future_provider_subscription_id: 'sub_target_order',
+        future_provider_payment_id: 'pay_target_order',
+        old_provider_subscription_id: 'sub_source_order',
+        previous_provider_subscription_id: 'sub_source_order',
+      };
+      planChangesStore.set(tr.id, tr);
+      activeSlotsStore.set('slot_min_test_1_asaas', {
+        id: 'slot_min_test_1_asaas',
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        plan_change_id: tr.id,
+        held_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as any);
+
+      // Iniciar runtime app sub em Lite
+      appSubscriptionsStore.set('min_test_1', {
+        ministry_id: 'min_test_1',
+        plan_id: 'lite',
+        billing_interval: 'monthly',
+        billing_status: 'active',
+        locked_member_quota: 20,
+        locked_song_quota: 100,
+      });
+
+      // Mocks de cutover e settlement
+      let sourceStatus = 'ACTIVE';
+      mockProvider.getSubscription = vi.fn().mockImplementation(async (subId: string) => {
+        if (subId === 'sub_source_order') {
+          return { id: subId, status: sourceStatus, cycle: 'MONTHLY' };
+        }
+        return { id: subId, status: 'ACTIVE', customer: 'cus_test_1', cycle: 'MONTHLY', valueCents: 3490 };
+      });
+      mockProvider.inactivateSubscription = vi.fn().mockImplementation(async () => {
+        sourceStatus = 'INACTIVE';
+        return { id: 'sub_source_order', status: 'INACTIVE' };
+      });
+      mockProvider.getPayment.mockResolvedValue({
+        id: 'pay_target_order',
+        subscriptionId: 'sub_target_order',
+        customerId: 'cus_test_1',
+        status: 'CONFIRMED',
+        dueDate: '2026-10-02',
+        amountCents: 3490,
+      });
+      mockProvider.deletePendingSubscriptionPayments = vi.fn().mockResolvedValue({ deleted: 0 });
+      mockProvider.listSubscriptionPayments = vi.fn().mockImplementation(async (subId: string) => {
+        if (subId === 'sub_target_order') {
+          return [
+            {
+              id: 'pay_target_order',
+              subscriptionId: 'sub_target_order',
+              customerId: 'cus_test_1',
+              amountCents: 3490,
+              dueDate: '2026-10-02',
+              status: 'CONFIRMED',
+            },
+          ];
+        }
+        return [];
+      });
+
+      // Webhook PAYMENT_CONFIRMED chega enquanto a transição está em future_target_prepared
+      const parsedEvent: any = {
+        providerEventId: 'evt_sandbox_race_001',
+        eventType: 'payment_confirmed',
+        providerSubscriptionId: 'sub_target_order',
+        providerPaymentId: 'pay_target_order',
+        customerId: 'cus_test_1',
+        amountCents: 3490,
+        status: 'CONFIRMED',
+      };
+
+      const res = await (billingService as any).handleV1PaidToPaidWebhook(
+        parsedEvent,
+        tr,
+        new Date('2026-10-02T12:00:00Z')
+      );
+      expect(res.status).toBe('ok');
+
+      // Verificar que o cutover FOI EXECUTADO
+      expect(mockProvider.inactivateSubscription).toHaveBeenCalledWith('sub_source_order');
+
+      // Verificar que a transição avançou para completed
+      const finalTr = planChangesStore.get('tr_webhook_order_001')!;
+      expect(finalTr.supersede_status).toBe('completed');
+      expect(finalTr.payment_cleanup_status).toBe('completed');
+      expect(finalTr.transition_status).toBe('completed');
+      expect(finalTr.financial_safety_status).toBe('safe_terminal');
+
+      // Verificar que o slot foi liberado por último
+      expect(activeSlotsStore.has('slot_min_test_1_asaas')).toBe(false);
+
+      // Runtime promovido
+      const appSub = appSubscriptionsStore.get('min_test_1');
+      expect(appSub.plan_id).toBe('essential');
+      expect(appSub.locked_member_quota).toBe(40);
+    });
+
+    it('13. TEST — SETTLEMENT CALLED DIRECTLY TOO EARLY: future_target_prepared com boundary atingida -> rejeita com SOURCE_CUTOVER_NOT_COMPLETED, slot HELD', async () => {
+      const tr: any = {
+        ...baseScheduledTransition,
+        id: 'tr_early_direct_001',
+        transition_id: 'tr_early_direct_001',
+        transition_status: 'future_target_prepared',
+        supersede_status: 'pending',
+        payment_cleanup_status: 'pending',
+      };
+      planChangesStore.set(tr.id, tr);
+      activeSlotsStore.set('slot_min_test_1_asaas', {
+        id: 'slot_min_test_1_asaas',
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        plan_change_id: tr.id,
+        held_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as any);
+
+      // Chamar o pipeline de settlement diretamente
+      const res = await billingService.processScheduledPaidRenewalSettlement(
+        null,
+        tr,
+        new Date('2026-10-02T12:00:00Z'),
+        { nowCommercialDate: '2026-10-02' }
+      );
+
+      expect(res.processed).toBe(false);
+      expect(res.reason).toBe('SOURCE_CUTOVER_NOT_COMPLETED');
+
+      // Slot permanece HELD
+      expect(activeSlotsStore.has('slot_min_test_1_asaas')).toBe(true);
+
+      // Transição NÃO foi completed
+      const afterTr = planChangesStore.get('tr_early_direct_001')!;
+      expect(afterTr.transition_status).toBe('future_target_prepared');
+    });
+
+    it('14. TEST — AWAITING OLD INACTIVATION: awaiting_old_inactivation com target CONFIRMED -> rejeita com SOURCE_CUTOVER_NOT_COMPLETED, slot HELD', async () => {
+      const tr: any = {
+        ...baseScheduledTransition,
+        id: 'tr_awaiting_direct_001',
+        transition_id: 'tr_awaiting_direct_001',
+        transition_status: 'awaiting_old_inactivation',
+        supersede_status: 'pending',
+        payment_cleanup_status: 'pending',
+      };
+      planChangesStore.set(tr.id, tr);
+      activeSlotsStore.set('slot_min_test_1_asaas', {
+        id: 'slot_min_test_1_asaas',
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        plan_change_id: tr.id,
+        held_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as any);
+
+      const res = await billingService.processScheduledPaidRenewalSettlement(
+        null,
+        tr,
+        new Date('2026-10-02T12:00:00Z'),
+        { nowCommercialDate: '2026-10-02' }
+      );
+
+      expect(res.processed).toBe(false);
+      expect(res.reason).toBe('SOURCE_CUTOVER_NOT_COMPLETED');
+      expect(activeSlotsStore.has('slot_min_test_1_asaas')).toBe(true);
+    });
+
+    it('15. TEST — SOURCE STILL ACTIVE DESPITE BAD LOCAL FLAG: scheduled + supersede completed local, mas provider retorna source ACTIVE -> FAIL CLOSED com SOURCE_SUBSCRIPTION_STILL_ACTIVE, slot HELD', async () => {
+      const tr: any = {
+        ...baseScheduledTransition,
+        id: 'tr_source_active_lie_001',
+        transition_id: 'tr_source_active_lie_001',
+        transition_status: 'scheduled',
+        supersede_status: 'completed',
+        payment_cleanup_status: 'completed',
+        old_provider_subscription_id: 'sub_source_ghost_active',
+        previous_provider_subscription_id: 'sub_source_ghost_active',
+      };
+      planChangesStore.set(tr.id, tr);
+      activeSlotsStore.set('slot_min_test_1_asaas', {
+        id: 'slot_min_test_1_asaas',
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        plan_change_id: tr.id,
+        held_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as any);
+
+      // Provider retorna que source ainda está ACTIVE!
+      mockProvider.getSubscription = vi.fn().mockImplementation(async (subId: string) => {
+        if (subId === 'sub_source_ghost_active') {
+          return { id: subId, status: 'ACTIVE', cycle: 'MONTHLY' };
+        }
+        return { id: subId, status: 'ACTIVE', customer: 'cus_test_1', cycle: 'MONTHLY', valueCents: 3490 };
+      });
+
+      const res = await billingService.processScheduledPaidRenewalSettlement(
+        null,
+        tr,
+        new Date('2026-10-02T12:00:00Z'),
+        { nowCommercialDate: '2026-10-02' }
+      );
+
+      expect(res.processed).toBe(false);
+      expect(res.reason).toBe('SOURCE_SUBSCRIPTION_STILL_ACTIVE');
+
+      const updatedTr = planChangesStore.get('tr_source_active_lie_001')!;
+      expect(updatedTr.financial_attention_required).toBe(true);
+      expect(updatedTr.financial_attention_reason).toBe('SOURCE_SUBSCRIPTION_STILL_ACTIVE_AT_RENEWAL');
+      expect(activeSlotsStore.has('slot_min_test_1_asaas')).toBe(true);
+    });
+
+    it('16. TEST — SOURCE CONFLICTING PAYMENT APPEARS: cutover detecta cobrança >= cutoff na origem -> attention, slot HELD', async () => {
+      const tr: any = {
+        ...baseScheduledTransition,
+        id: 'tr_conflicting_payment_001',
+        transition_id: 'tr_conflicting_payment_001',
+        transition_status: 'future_target_prepared',
+        supersede_status: 'pending',
+        payment_cleanup_status: 'pending',
+        future_provider_subscription_id: 'sub_target_conflict',
+        old_provider_subscription_id: 'sub_source_conflict',
+        previous_provider_subscription_id: 'sub_source_conflict',
+      };
+      planChangesStore.set(tr.id, tr);
+      activeSlotsStore.set('slot_min_test_1_asaas', {
+        id: 'slot_min_test_1_asaas',
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        plan_change_id: tr.id,
+        held_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as any);
+
+      // Mock cutover detectando cobrança pendente não deletável ou com status conflituoso
+      mockProvider.inactivateSubscription = vi.fn().mockResolvedValue({ id: 'sub_source_conflict', status: 'INACTIVE' });
+      mockProvider.deletePendingSubscriptionPayments = vi.fn().mockResolvedValue({ deleted: 0 });
+      mockProvider.listSubscriptionPayments = vi.fn().mockImplementation(async (subId: string) => {
+        if (subId === 'sub_target_conflict') {
+          return [
+            {
+              id: 'pay_target_conflict',
+              subscriptionId: 'sub_target_conflict',
+              customerId: 'cus_test_1',
+              amountCents: 3490,
+              dueDate: '2026-10-02',
+              status: 'CONFIRMED',
+            },
+          ];
+        }
+        if (subId === 'sub_source_conflict') {
+          return [
+            { id: 'pay_conflict_001', status: 'PENDING', dueDate: '2026-10-05', value: 14.9 },
+          ];
+        }
+        return [];
+      });
+
+      const res = await billingService.reconcilePaidToPaidSourceCutover('tr_conflicting_payment_001', 'test_worker');
+      expect(res.success).toBe(false);
+      expect(['SOURCE_ACTIVE_OBLIGATION_DETECTED', 'SOURCE_PAYMENT_SETTLED_DURING_CUTOVER']).toContain(res.reason);
+
+      const updatedTr = planChangesStore.get('tr_conflicting_payment_001')!;
+      expect(updatedTr.financial_attention_required).toBe(true);
+      expect(activeSlotsStore.has('slot_min_test_1_asaas')).toBe(true);
+    });
+
+    it('17. TEST — HAPPY ORDER: future_target_prepared -> cutover -> source INACTIVE -> supersede completed -> scheduled -> payment CONFIRMED -> target activation -> completed safe_terminal -> slot release', async () => {
+      const tr: any = {
+        ...baseScheduledTransition,
+        id: 'tr_happy_order_001',
+        transition_id: 'tr_happy_order_001',
+        transition_status: 'future_target_prepared',
+        supersede_status: 'pending',
+        payment_cleanup_status: 'pending',
+        future_provider_subscription_id: 'sub_target_happy',
+        future_provider_payment_id: 'pay_target_happy',
+        old_provider_subscription_id: 'sub_source_happy',
+        previous_provider_subscription_id: 'sub_source_happy',
+      };
+      planChangesStore.set(tr.id, tr);
+      activeSlotsStore.set('slot_min_test_1_asaas', {
+        id: 'slot_min_test_1_asaas',
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        plan_change_id: tr.id,
+        held_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as any);
+
+      mockProvider.inactivateSubscription = vi.fn().mockResolvedValue({ id: 'sub_source_happy', status: 'INACTIVE' });
+      mockProvider.deletePendingSubscriptionPayments = vi.fn().mockResolvedValue({ deleted: 1 });
+      mockProvider.listSubscriptionPayments = vi.fn().mockImplementation(async (subId: string) => {
+        if (subId === 'sub_target_happy') {
+          return [
+            {
+              id: 'pay_target_happy',
+              subscriptionId: 'sub_target_happy',
+              customerId: 'cus_test_1',
+              amountCents: 3490,
+              dueDate: '2026-10-02',
+              status: 'CONFIRMED',
+            },
+          ];
+        }
+        return [];
+      });
+      mockProvider.getPayment.mockResolvedValue({
+        id: 'pay_target_happy',
+        subscriptionId: 'sub_target_happy',
+        customerId: 'cus_test_1',
+        status: 'CONFIRMED',
+        dueDate: '2026-10-02',
+        amountCents: 3490,
+      });
+
+      // Passo 1: Cutover
+      const cutoverRes = await billingService.reconcilePaidToPaidSourceCutover('tr_happy_order_001', 'worker_happy');
+      expect(cutoverRes.success).toBe(true);
+
+      const intermediateTr = planChangesStore.get('tr_happy_order_001')!;
+      expect(intermediateTr.transition_status).toBe('scheduled');
+      expect(intermediateTr.supersede_status).toBe('completed');
+      expect(intermediateTr.payment_cleanup_status).toBe('completed');
+
+      // Passo 2: Settlement
+      const settlementRes = await billingService.reconcilePaidToPaidRenewalSettlement(
+        'tr_happy_order_001',
+        'worker_happy',
+        { nowCommercialDate: '2026-10-02' }
+      );
+      expect(settlementRes.success).toBe(true);
+      expect(settlementRes.reason).toBe('renewal_activated');
+
+      // Passo 3: Terminal + Slot liberado
+      const finalTr = planChangesStore.get('tr_happy_order_001')!;
+      expect(finalTr.transition_status).toBe('completed');
+      expect(finalTr.financial_safety_status).toBe('safe_terminal');
+      expect(activeSlotsStore.has('slot_min_test_1_asaas')).toBe(false);
+    });
+
+    it('18. TEST — DUPLICATE / OUT-OF-ORDER EVENTS: múltiplos webhooks duplicados e out-of-order não regridem estado e não duplicam ativações', async () => {
+      const tr: any = {
+        ...baseScheduledTransition,
+        id: 'tr_duplicate_events_001',
+        transition_id: 'tr_duplicate_events_001',
+        transition_status: 'future_target_prepared',
+        supersede_status: 'pending',
+        payment_cleanup_status: 'pending',
+        future_provider_subscription_id: 'sub_target_dup',
+        future_provider_payment_id: 'pay_target_dup',
+        old_provider_subscription_id: 'sub_source_dup',
+        previous_provider_subscription_id: 'sub_source_dup',
+      };
+      planChangesStore.set(tr.id, tr);
+      activeSlotsStore.set('slot_min_test_1_asaas', {
+        id: 'slot_min_test_1_asaas',
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        plan_change_id: tr.id,
+        held_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as any);
+
+      mockProvider.inactivateSubscription = vi.fn().mockResolvedValue({ id: 'sub_source_dup', status: 'INACTIVE' });
+      mockProvider.deletePendingSubscriptionPayments = vi.fn().mockResolvedValue({ deleted: 0 });
+      mockProvider.listSubscriptionPayments = vi.fn().mockImplementation(async (subId: string) => {
+        if (subId === 'sub_target_dup') {
+          return [
+            {
+              id: 'pay_target_dup',
+              subscriptionId: 'sub_target_dup',
+              customerId: 'cus_test_1',
+              amountCents: 3490,
+              dueDate: '2026-10-02',
+              status: 'CONFIRMED',
+            },
+          ];
+        }
+        return [];
+      });
+      mockProvider.getPayment.mockResolvedValue({
+        id: 'pay_target_dup',
+        subscriptionId: 'sub_target_dup',
+        customerId: 'cus_test_1',
+        status: 'CONFIRMED',
+        dueDate: '2026-10-02',
+        amountCents: 3490,
+      });
+
+      const parsedEvent: any = {
+        providerEventId: 'evt_dup_001',
+        eventType: 'payment_confirmed',
+        providerSubscriptionId: 'sub_target_dup',
+        providerPaymentId: 'pay_target_dup',
+        customerId: 'cus_test_1',
+        amountCents: 3490,
+        status: 'CONFIRMED',
+      };
+
+      // 1. Primeiro webhook
+      await (billingService as any).handleV1PaidToPaidWebhook(
+        parsedEvent,
+        tr,
+        new Date('2026-10-02T12:00:00Z')
+      );
+      const afterFirst = planChangesStore.get('tr_duplicate_events_001')!;
+      expect(afterFirst.transition_status).toBe('completed');
+
+      // 2. Webhook duplicado (mesmo evento)
+      const resDup = await (billingService as any).handleV1PaidToPaidWebhook(
+        parsedEvent,
+        afterFirst,
+        new Date('2026-10-02T12:00:00Z')
+      );
+      expect(resDup.reason).toBe('already_completed');
+
+      // 3. Webhook de evento atrasado (ex: checkout_created ou late checkout_paid)
+      const resLate = await (billingService as any).handleV1PaidToPaidWebhook(
+        { ...parsedEvent, providerEventId: 'evt_late_checkout', eventType: 'checkout_created' },
+        afterFirst,
+        new Date('2026-10-02T12:00:00Z')
+      );
+      expect(resLate.reason).toBe('already_completed');
+
+      // O estado permanece completed e safe_terminal
+      const finalTr = planChangesStore.get('tr_duplicate_events_001')!;
+      expect(finalTr.transition_status).toBe('completed');
+      expect(finalTr.financial_safety_status).toBe('safe_terminal');
+    });
+  });
+
+  // ==========================================================================
+  // Suite 20: Webhook Event Lifecycle Semantics (Phase 3B.3 Hardening)
+  //
+  // Valida que processed:false NÃO implica processing permanente.
+  // Categoria A: evento consumido, sem mudança de estado → processed terminal.
+  // Categoria B: falha transitória real → processing (retryable).
+  // Categoria C: financial_attention persistida → processed terminal.
+  // Categoria D: evento de recurso errado → ignored terminal.
+  // ==========================================================================
+  describe('20. Webhook Event Lifecycle Semantics (Phase 3B.3 Hardening)', () => {
+    const preboundaryEvent = {
+      providerEventId: 'evt_overdue_preboundary_001',
+      eventType: 'payment_overdue' as const,
+      rawEventType: 'PAYMENT_OVERDUE',
+      providerPaymentId: 'pay_target_001',
+      providerSubscriptionId: 'sub_target_new',
+      providerCustomerId: 'cus_test_1',
+      amountCents: 3490,
+      dueDate: '2026-10-02',
+    };
+
+    it('Teste A: PAYMENT_OVERDUE pre-boundary → markWebhookEventProcessed("processed") chamado, transição permanece scheduled, slot HELD', async () => {
+      // Pre-boundary: currentCommercialDate < effectiveBillingDate
+      const preboundaryNow = new Date('2026-09-15T10:00:00Z');
+
+      // Provider retorna pagamento OVERDUE (não liquidado)
+      mockProvider.getPayment.mockResolvedValueOnce({
+        id: 'pay_target_001',
+        subscriptionId: 'sub_target_new',
+        customerId: 'cus_test_1',
+        status: 'OVERDUE',
+        dueDate: '2026-10-02',
+        amountCents: 3490,
+      });
+
+      const result = await (billingService as any).processScheduledPaidRenewalSettlement(
+        preboundaryEvent,
+        planChangesStore.get('tr_scheduled_001')!,
+        preboundaryNow,
+        { nowCommercialDate: '2026-09-15' }
+      );
+
+      // Domínio: não há ação a tomar antes da fronteira
+      expect(result.status).toBe('ok');
+      expect(result.processed).toBe(false);
+      expect(result.reason).toBe('renewal_payment_not_settled');
+
+      // Lifecycle: evento marcado como processado terminalmente
+      expect(mockBillingRepo.markWebhookEventProcessed).toHaveBeenCalledWith(
+        'asaas',
+        'evt_overdue_preboundary_001',
+        'processed'
+      );
+
+      // Transição permanece scheduled
+      const tr = planChangesStore.get('tr_scheduled_001')!;
+      expect(tr.transition_status).toBe('scheduled');
+
+      // Slot permanece HELD
+      const slot = activeSlotsStore.get('slot_min_test_1_asaas');
+      expect(slot).toBeDefined();
+      expect(slot?.plan_change_id).toBe('tr_scheduled_001');
+
+      // Nenhuma BillingTransaction criada
+      expect(transactionsStore.size).toBe(0);
+    });
+
+    it('Teste A2: strategy_mismatch → markWebhookEventProcessed("processed") chamado', async () => {
+      const wrongStrategyTr: BillingTransitionV1Record = {
+        ...baseScheduledTransition,
+        id: 'tr_strategy_mismatch_001',
+        execution_strategy: 'immediate_paid_transition' as any,
+      };
+      planChangesStore.set('tr_strategy_mismatch_001', wrongStrategyTr);
+
+      const result = await (billingService as any).processScheduledPaidRenewalSettlement(
+        { ...preboundaryEvent, providerEventId: 'evt_strategy_mismatch_001' },
+        planChangesStore.get('tr_strategy_mismatch_001')!,
+        new Date('2026-09-15T10:00:00Z'),
+        { nowCommercialDate: '2026-09-15' }
+      );
+
+      expect(result.reason).toBe('strategy_mismatch');
+      expect(mockBillingRepo.markWebhookEventProcessed).toHaveBeenCalledWith(
+        'asaas',
+        'evt_strategy_mismatch_001',
+        'processed'
+      );
+    });
+
+    it('Teste A3: SECOND_CYCLE_PAYMENT → markWebhookEventProcessed("processed") chamado', async () => {
+      const secondCycleEvent = {
+        providerEventId: 'evt_second_cycle_001',
+        eventType: 'payment_confirmed' as const,
+        rawEventType: 'PAYMENT_CONFIRMED',
+        providerPaymentId: 'pay_second_cycle_different',
+        providerSubscriptionId: 'sub_target_new', // mesma sub, mas cobrança diferente
+        providerCustomerId: 'cus_test_1',
+        amountCents: 3490,
+        dueDate: '2026-11-02',
+      };
+
+      const result = await (billingService as any).processScheduledPaidRenewalSettlement(
+        secondCycleEvent,
+        planChangesStore.get('tr_scheduled_001')!,
+        new Date('2026-10-02T12:00:00Z'),
+        { nowCommercialDate: '2026-10-02' }
+      );
+
+      expect(result.reason).toBe('SECOND_CYCLE_PAYMENT');
+      expect(mockBillingRepo.markWebhookEventProcessed).toHaveBeenCalledWith(
+        'asaas',
+        'evt_second_cycle_001',
+        'processed'
+      );
+    });
+
+    it('Teste B: PAYMENT_NOT_FOUND → processing NÃO finalizado (retryable)', async () => {
+      // Provider retorna null para o pagamento (indisponibilidade transitória)
+      mockProvider.getPayment.mockResolvedValueOnce(null);
+
+      const result = await (billingService as any).processScheduledPaidRenewalSettlement(
+        { ...preboundaryEvent, providerEventId: 'evt_not_found_001' },
+        planChangesStore.get('tr_scheduled_001')!,
+        new Date('2026-10-02T12:00:00Z'),
+        { nowCommercialDate: '2026-10-02' }
+      );
+
+      expect(result.reason).toBe('PAYMENT_NOT_FOUND');
+      // Retryable: markWebhookEventProcessed NÃO deve ser chamado para este evento
+      const calls = mockBillingRepo.markWebhookEventProcessed.mock.calls;
+      const calledForThisEvent = calls.some(
+        (args: any[]) => args[1] === 'evt_not_found_001'
+      );
+      expect(calledForThisEvent).toBe(false);
+    });
+
+    it('Teste B2: SOURCE_CUTOVER_NOT_COMPLETED → processing NÃO finalizado (retryable)', async () => {
+      const cutoverPendingTr: BillingTransitionV1Record = {
+        ...baseScheduledTransition,
+        id: 'tr_cutover_pending_001',
+        supersede_status: 'pending', // cutover não concluído
+      };
+      planChangesStore.set('tr_cutover_pending_001', cutoverPendingTr);
+
+      const result = await (billingService as any).processScheduledPaidRenewalSettlement(
+        { ...preboundaryEvent, providerEventId: 'evt_cutover_pending_001' },
+        planChangesStore.get('tr_cutover_pending_001')!,
+        new Date('2026-10-02T12:00:00Z'),
+        { nowCommercialDate: '2026-10-02' }
+      );
+
+      expect(result.reason).toBe('SOURCE_CUTOVER_NOT_COMPLETED');
+      const calls = mockBillingRepo.markWebhookEventProcessed.mock.calls;
+      const calledForThisEvent = calls.some(
+        (args: any[]) => args[1] === 'evt_cutover_pending_001'
+      );
+      expect(calledForThisEvent).toBe(false);
+    });
+
+    it('Teste C: financial_attention_required=true → markWebhookEventProcessed("processed") chamado, sem retry loop', async () => {
+      const attentionTr: BillingTransitionV1Record = {
+        ...baseScheduledTransition,
+        id: 'tr_financial_attention_001',
+        financial_attention_required: true,
+        financial_attention_reason: 'MANUAL_REVIEW',
+        financial_safety_status: 'attention_required',
+      };
+      planChangesStore.set('tr_financial_attention_001', attentionTr);
+
+      const result = await (billingService as any).processScheduledPaidRenewalSettlement(
+        { ...preboundaryEvent, providerEventId: 'evt_attention_001' },
+        planChangesStore.get('tr_financial_attention_001')!,
+        new Date('2026-10-02T12:00:00Z'),
+        { nowCommercialDate: '2026-10-02' }
+      );
+
+      expect(result.reason).toBe('financial_attention_required');
+      // Categoria C: bloqueio vem do campo financial_attention_required, não do webhook.
+      // Evento DEVE ser finalizado terminalmente para evitar loop de retry.
+      expect(mockBillingRepo.markWebhookEventProcessed).toHaveBeenCalledWith(
+        'asaas',
+        'evt_attention_001',
+        'processed'
+      );
+      // Transição não deve ter sido alterada
+      const tr = planChangesStore.get('tr_financial_attention_001')!;
+      expect((tr as any).financial_attention_required).toBe(true);
+    });
+
+    it('Teste C2: COMMERCIAL_BOUNDARY_MISMATCH → markWebhookEventProcessed("processed") chamado', async () => {
+      const boundaryMismatchTr: BillingTransitionV1Record = {
+        ...baseScheduledTransition,
+        id: 'tr_boundary_mismatch_001',
+        effective_billing_date: '2026-10-02',
+        current_period_end_billing_date: '2026-10-05', // divergente
+      };
+      planChangesStore.set('tr_boundary_mismatch_001', boundaryMismatchTr);
+
+      const result = await (billingService as any).processScheduledPaidRenewalSettlement(
+        { ...preboundaryEvent, providerEventId: 'evt_boundary_mismatch_001' },
+        planChangesStore.get('tr_boundary_mismatch_001')!,
+        new Date('2026-10-02T12:00:00Z'),
+        { nowCommercialDate: '2026-10-02' }
+      );
+
+      expect(result.reason).toBe('COMMERCIAL_BOUNDARY_MISMATCH');
+      expect(mockBillingRepo.markWebhookEventProcessed).toHaveBeenCalledWith(
+        'asaas',
+        'evt_boundary_mismatch_001',
+        'processed'
+      );
+      // Atenção financeira deve ter sido persistida
+      const tr = planChangesStore.get('tr_boundary_mismatch_001')!;
+      expect((tr as any).financial_attention_required).toBe(true);
+    });
+
+    it('Teste D: WRONG_PAYMENT_ID → markWebhookEventProcessed("ignored") chamado', async () => {
+      const wrongPaymentEvent = {
+        providerEventId: 'evt_wrong_payment_001',
+        eventType: 'payment_confirmed' as const,
+        rawEventType: 'PAYMENT_CONFIRMED',
+        providerPaymentId: 'pay_completely_different', // ID errado
+        providerSubscriptionId: 'sub_completely_different', // sub errada também
+        providerCustomerId: 'cus_test_1',
+        amountCents: 3490,
+        dueDate: '2026-10-02',
+      };
+
+      const result = await (billingService as any).processScheduledPaidRenewalSettlement(
+        wrongPaymentEvent,
+        planChangesStore.get('tr_scheduled_001')!,
+        new Date('2026-10-02T12:00:00Z'),
+        { nowCommercialDate: '2026-10-02' }
+      );
+
+      expect(result.reason).toBe('WRONG_PAYMENT_ID');
+      // Categoria D: ignorado definitivamente
+      expect(mockBillingRepo.markWebhookEventProcessed).toHaveBeenCalledWith(
+        'asaas',
+        'evt_wrong_payment_001',
+        'ignored',
+        expect.stringContaining('pay_completely_different')
+      );
+    });
+
+    it('Teste D2: WRONG_TARGET_SUBSCRIPTION → markWebhookEventProcessed("ignored") chamado', async () => {
+      const wrongSubEvent = {
+        providerEventId: 'evt_wrong_sub_001',
+        eventType: 'payment_confirmed' as const,
+        rawEventType: 'PAYMENT_CONFIRMED',
+        providerPaymentId: 'pay_target_001', // payment correto
+        providerSubscriptionId: 'sub_completely_different', // sub errada
+        providerCustomerId: 'cus_test_1',
+        amountCents: 3490,
+        dueDate: '2026-10-02',
+      };
+
+      const result = await (billingService as any).processScheduledPaidRenewalSettlement(
+        wrongSubEvent,
+        planChangesStore.get('tr_scheduled_001')!,
+        new Date('2026-10-02T12:00:00Z'),
+        { nowCommercialDate: '2026-10-02' }
+      );
+
+      expect(result.reason).toBe('WRONG_TARGET_SUBSCRIPTION');
+      expect(mockBillingRepo.markWebhookEventProcessed).toHaveBeenCalledWith(
+        'asaas',
+        'evt_wrong_sub_001',
+        'ignored',
+        expect.stringContaining('sub_completely_different')
+      );
+    });
+
+    it('Teste E: múltiplos eventos distintos pré-boundary → cada um obtém status processed independentemente', async () => {
+      const preboundaryNow = new Date('2026-09-20T10:00:00Z');
+
+      // Provider retorna OVERDUE para ambas as chamadas
+      const overduePayment = {
+        id: 'pay_target_001',
+        subscriptionId: 'sub_target_new',
+        customerId: 'cus_test_1',
+        status: 'OVERDUE',
+        dueDate: '2026-10-02',
+        amountCents: 3490,
+      };
+      mockProvider.getPayment.mockResolvedValueOnce(overduePayment);
+      mockProvider.getPayment.mockResolvedValueOnce(overduePayment);
+
+      const result1 = await (billingService as any).processScheduledPaidRenewalSettlement(
+        { ...preboundaryEvent, providerEventId: 'evt_overdue_001' },
+        planChangesStore.get('tr_scheduled_001')!,
+        preboundaryNow,
+        { nowCommercialDate: '2026-09-20' }
+      );
+      const result2 = await (billingService as any).processScheduledPaidRenewalSettlement(
+        { ...preboundaryEvent, providerEventId: 'evt_overdue_002' },
+        planChangesStore.get('tr_scheduled_001')!,
+        preboundaryNow,
+        { nowCommercialDate: '2026-09-20' }
+      );
+
+      expect(result1.reason).toBe('renewal_payment_not_settled');
+      expect(result2.reason).toBe('renewal_payment_not_settled');
+
+      // Cada evento chamou markWebhookEventProcessed independentemente
+      const calls = mockBillingRepo.markWebhookEventProcessed.mock.calls;
+      const event1Finalized = calls.some((args: any[]) => args[1] === 'evt_overdue_001' && args[2] === 'processed');
+      const event2Finalized = calls.some((args: any[]) => args[1] === 'evt_overdue_002' && args[2] === 'processed');
+      expect(event1Finalized).toBe(true);
+      expect(event2Finalized).toBe(true);
+
+      // Transição permanece scheduled; entitlement source preservado
+      const tr = planChangesStore.get('tr_scheduled_001')!;
+      expect(tr.transition_status).toBe('scheduled');
+      expect(transactionsStore.size).toBe(0);
     });
   });
 });

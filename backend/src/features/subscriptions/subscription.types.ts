@@ -26,6 +26,7 @@ export interface MinistrySubscriptionRecord {
   suspended_at: string | null;
   suspension_reason: string | null;
   grace_period_expires_at: string | null;
+  grace_period_expires_billing_date?: string | null;
   current_period_start: string;
   current_period_end: string | null;
   cancel_at_period_end: boolean;

@@ -11,10 +11,12 @@ import {
   BillingProviderName,
   BillingTransitionStatus,
   BillingTransitionV1Record,
+  EntitlementSnapshot,
   isBillingTransitionV1,
   validateBillingTransitionV1,
   mapTransitionStatusToLegacyStatus,
   buildActiveTransitionSlotId,
+  buildBillingSubscriptionId,
 } from '../features/billing/billing.types';
 
 export const SAFE_TERMINAL_TRANSITION_STATUSES = [
@@ -165,11 +167,58 @@ export class BillingRepository {
   // --------------------------------------------------------------------------
 
   async getSubscription(ministryId: string, provider: BillingProviderName): Promise<BillingSubscriptionRecord | null> {
-    const docId = `${ministryId}_${provider}`;
-    const doc = await this.subscriptionsCollection.doc(docId).get();
-    if (doc.exists) {
-      return doc.data() as BillingSubscriptionRecord;
+    const canonicalDocId = buildBillingSubscriptionId(ministryId, provider);
+    const invertedDocId = `${provider}_${ministryId}`;
+
+    // Leitura paralela para checagem de chave canônica e chave legada invertida (dual-key conflict safety)
+    const [canonicalDoc, invertedDoc] = await Promise.all([
+      this.subscriptionsCollection.doc(canonicalDocId).get(),
+      this.subscriptionsCollection.doc(invertedDocId).get(),
+    ]);
+
+    const canonicalData = canonicalDoc.exists ? (canonicalDoc.data() as BillingSubscriptionRecord) : null;
+    const invertedData = invertedDoc.exists ? (invertedDoc.data() as BillingSubscriptionRecord) : null;
+
+    if (!canonicalData && !invertedData) {
+      return null;
     }
+
+    if (canonicalData && !invertedData) {
+      return { ...canonicalData, id: canonicalDocId };
+    }
+
+    if (!canonicalData && invertedData) {
+      // Documento histórico em chave legada/invertida: retorna com id normalizado canônico
+      return { ...invertedData, id: canonicalDocId };
+    }
+
+    // Caso excepcional: Ambos os documentos existem (dual-key conflict evaluation)
+    if (canonicalData && invertedData) {
+      // Se apontam para o mesmo provider_subscription_id, o canônico prevalece
+      if (canonicalData.provider_subscription_id === invertedData.provider_subscription_id) {
+        return { ...canonicalData, id: canonicalDocId };
+      }
+
+      // Se um está inativo/cancelado e o outro ativo
+      if (canonicalData.status === 'active' && invertedData.status !== 'active') {
+        return { ...canonicalData, id: canonicalDocId };
+      }
+      if (invertedData.status === 'active' && canonicalData.status !== 'active') {
+        return { ...invertedData, id: canonicalDocId };
+      }
+
+      // Se ambos alegam status active mas com assinaturas divergentes -> FAIL CLOSED
+      console.error(
+        `[DUAL-KEY CONFLICT] Divergência financeira crítica em BillingSubscription para o ministério ${ministryId}: ` +
+          `canônico (${canonicalDocId}) aponta sub=${canonicalData.provider_subscription_id} (status=${canonicalData.status}), ` +
+          `invertido (${invertedDocId}) aponta sub=${invertedData.provider_subscription_id} (status=${invertedData.status}). Fail-closed acionado.`
+      );
+      throw new AppError(
+        500,
+        `DUAL_KEY_FINANCIAL_CONFLICT: Conflito irresolvível entre assinaturas em chaves canônica e legada para o ministério ${ministryId}. Atenção financeira requerida.`
+      );
+    }
+
     return null;
   }
 
@@ -264,7 +313,37 @@ export class BillingRepository {
   }
 
   async setSubscription(subscription: BillingSubscriptionRecord): Promise<void> {
-    await this.subscriptionsCollection.doc(subscription.id).set(subscription, { merge: true });
+    if (!subscription.ministry_id || !subscription.provider) {
+      throw new Error(
+        `[CANONICAL KEY] Impossível persistir BillingSubscription: ministry_id e provider são obrigatórios. (Recebido: ministry_id=${subscription.ministry_id}, provider=${subscription.provider})`
+      );
+    }
+
+    // O repositório é a autoridade canônica da chave. O document ID é derivado exclusivamente aqui.
+    // O caller NÃO consegue forçar um id divergente ou invertido.
+    const canonicalDocId = buildBillingSubscriptionId(subscription.ministry_id, subscription.provider);
+    const normalizedRecord: BillingSubscriptionRecord = {
+      ...subscription,
+      id: canonicalDocId,
+    };
+
+    // Identity Immutability Guard: prevenir merge acidental entre ministérios/provedores divergentes
+    const existingDoc = await this.subscriptionsCollection.doc(canonicalDocId).get();
+    if (existingDoc.exists) {
+      const existing = existingDoc.data() as BillingSubscriptionRecord;
+      if (existing.ministry_id && existing.ministry_id !== subscription.ministry_id) {
+        throw new Error(
+          `[IDENTITY IMMUTABILITY VIOLATION] Conflito de ministry_id em BillingSubscription: existente=${existing.ministry_id}, novo=${subscription.ministry_id}`
+        );
+      }
+      if (existing.provider && existing.provider !== subscription.provider) {
+        throw new Error(
+          `[IDENTITY IMMUTABILITY VIOLATION] Conflito de provider em BillingSubscription: existente=${existing.provider}, novo=${subscription.provider}`
+        );
+      }
+    }
+
+    await this.subscriptionsCollection.doc(canonicalDocId).set(normalizedRecord, { merge: true });
   }
 
   // --------------------------------------------------------------------------
@@ -1032,6 +1111,108 @@ export class BillingRepository {
         confirmed_at: current.confirmed_at || completedAt,
         completed_at: completedAt,
         updated_at: completedAt,
+        grace_status: current.grace_started_at ? 'resolved' : current.grace_status,
+      };
+
+      const validated = validateBillingTransitionV1(updated);
+      t.set(docRef, validated, { merge: true });
+      return validated;
+    });
+  }
+
+  /**
+   * Phase 3B.3B: Persiste a entrada em carência civil de 7 dias [start, end) de forma write-once.
+   * Se a carência já tiver sido iniciada, preserva as datas e o snapshot originais (idempotência).
+   */
+  async enterScheduledPaidTransitionGrace(params: {
+    transitionId: string;
+    ministryId: string;
+    graceStartedAt: string;
+    graceStartBillingDate: string;
+    graceEndBillingDate: string;
+    graceEntitlementSnapshot: EntitlementSnapshot;
+  }): Promise<BillingTransitionV1Record> {
+    const {
+      transitionId,
+      ministryId,
+      graceStartedAt,
+      graceStartBillingDate,
+      graceEndBillingDate,
+      graceEntitlementSnapshot,
+    } = params;
+
+    const docRef = this.planChangesCollection.doc(transitionId);
+
+    return await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      if (!doc.exists) {
+        throw new AppError(404, `Transição '${transitionId}' não encontrada para entrada em carência.`);
+      }
+      const current = doc.data() as BillingPlanChangeRecord;
+      if (current.ministry_id !== ministryId) {
+        throw new AppError(403, 'Acesso não autorizado a esta transição de plano.');
+      }
+      if (!isBillingTransitionV1(current)) {
+        throw new AppError(400, 'enterScheduledPaidTransitionGrace suporta apenas transições V1.');
+      }
+
+      // Write-Once: se já tiver grace_started_at gravado, não recalcula nem sobrescreve
+      if (current.grace_started_at) {
+        return current;
+      }
+
+      const updated: BillingTransitionV1Record = {
+        ...current,
+        grace_status: 'in_grace',
+        grace_started_at: graceStartedAt,
+        grace_start_billing_date: graceStartBillingDate,
+        grace_end_billing_date: graceEndBillingDate,
+        grace_entitlement_snapshot: graceEntitlementSnapshot,
+        updated_at: graceStartedAt,
+      };
+
+      const validated = validateBillingTransitionV1(updated);
+      t.set(docRef, validated, { merge: true });
+      return validated;
+    });
+  }
+
+  /**
+   * Phase 3B.3B: Registra a expiração da carência civil de 7 dias de forma idempotente e write-once.
+   * A transição permanece 'scheduled' e o slot ativo continua HELD.
+   */
+  async recordGraceExpiry(params: {
+    transitionId: string;
+    ministryId: string;
+    graceExpiredAt: string;
+    graceExpiredBillingDate: string;
+  }): Promise<BillingTransitionV1Record> {
+    const { transitionId, ministryId, graceExpiredAt, graceExpiredBillingDate } = params;
+    const docRef = this.planChangesCollection.doc(transitionId);
+
+    return await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      if (!doc.exists) {
+        throw new AppError(404, `Transição '${transitionId}' não encontrada para expiração de carência.`);
+      }
+      const current = doc.data() as BillingPlanChangeRecord;
+      if (current.ministry_id !== ministryId) {
+        throw new AppError(403, 'Acesso não autorizado a esta transição de plano.');
+      }
+      if (!isBillingTransitionV1(current)) {
+        throw new AppError(400, 'recordGraceExpiry suporta apenas transições V1.');
+      }
+
+      if (current.grace_expired_at) {
+        return current;
+      }
+
+      const updated: BillingTransitionV1Record = {
+        ...current,
+        grace_status: 'expired',
+        grace_expired_at: graceExpiredAt,
+        grace_expired_billing_date: graceExpiredBillingDate,
+        updated_at: graceExpiredAt,
       };
 
       const validated = validateBillingTransitionV1(updated);
@@ -1130,6 +1311,14 @@ export class BillingRepository {
       }
       if (transition.transition_status === 'financial_attention_required') {
         return { released: false, reason: 'financial_attention_required' };
+      }
+
+      // Slot Release Invariant: para scheduled_paid_transition, o slot NUNCA pode ser liberado sem cutover de origem concluído
+      if (
+        transition.execution_strategy === 'scheduled_paid_transition' &&
+        (transition.supersede_status !== 'completed' || transition.payment_cleanup_status !== 'completed')
+      ) {
+        return { released: false, reason: 'source_cutover_not_completed' };
       }
 
       t.delete(slotDocRef);
@@ -1398,6 +1587,11 @@ export class BillingRepository {
 
       // Se a transição já for terminal segura e não tiver pendências financeiras, skip
       if (data.financial_safety_status === 'safe_terminal' && data.transition_status === 'completed') {
+        return null;
+      }
+
+      // Hard block: transição que requer atenção financeira manual nunca é processada automaticamente
+      if (data.financial_attention_required === true) {
         return null;
       }
 

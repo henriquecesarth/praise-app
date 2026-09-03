@@ -316,6 +316,7 @@ export class SubscriptionService {
       locked_song_quota: lockedSongQuota,
       entitlement_snapshot: snapshot,
       grace_period_expires_at: graceExpiresAt,
+      grace_period_expires_billing_date: null,
       updated_at: now.toISOString(),
     };
 

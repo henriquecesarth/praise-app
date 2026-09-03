@@ -163,6 +163,7 @@ export interface PaidToPaidTargetReadyParams {
     customerId?: string | null;
     amountCents: number;
     dueDate: string;
+    originalDueDate?: string | null;
     status: string;
   } | null;
   checkoutSessionId?: string | null;

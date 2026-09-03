@@ -1000,7 +1000,8 @@ export function verifyPaidToPaidTargetReadyGate(
 
   // H. Commercial Due Date Gate
   const expectedDueDate = transition.effective_billing_date;
-  const paymentDueDate = firstPayment.dueDate ? firstPayment.dueDate.trim().substring(0, 10) : null;
+  const rawDueDate = firstPayment.originalDueDate || firstPayment.dueDate;
+  const paymentDueDate = rawDueDate ? rawDueDate.trim().substring(0, 10) : null;
   if (!expectedDueDate || paymentDueDate !== expectedDueDate) {
     return {
       ready: false,
@@ -1011,11 +1012,11 @@ export function verifyPaidToPaidTargetReadyGate(
 
   // I. Target Payment State
   const paymentStatusUpper = (firstPayment.status || '').toUpperCase();
-  const validFutureStatuses = ['PENDING', 'AWAITING_PAYMENT'];
+  const validFutureStatuses = ['PENDING', 'AWAITING_PAYMENT', 'CONFIRMED', 'RECEIVED'];
   if (!validFutureStatuses.includes(paymentStatusUpper)) {
     return {
       ready: false,
-      reason: `Status da cobrança futura ('${firstPayment.status}') inválido (esperado PENDING)`,
+      reason: `Status da cobrança ('${firstPayment.status}') inválido para Target Ready (esperado PENDING, AWAITING_PAYMENT, CONFIRMED ou RECEIVED)`,
       failureCode: 'PAYMENT_STATUS_INVALID',
     };
   }

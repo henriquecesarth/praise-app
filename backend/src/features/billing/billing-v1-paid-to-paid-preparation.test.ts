@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BillingService } from './billing.service';
-import { BillingProvider, ParsedWebhookEvent } from './providers/billing-provider.interface';
+import { BillingProvider, ParsedWebhookEvent, ProviderPaymentRecord } from './providers/billing-provider.interface';
 import {
   BillingCustomerRecord,
   BillingSubscriptionRecord,
@@ -1858,6 +1858,228 @@ describe('Phase 3B.1 — Billing Transition V1 Paid -> Paid Target Recurrence Pr
 
       const slotCheck = await mockBillingRepo.getActiveTransitionSlot(ministryId, 'asaas');
       expect(slotCheck).toBeNull();
+    });
+  });
+
+  // ===========================================================================
+  // 10. PHASE 3B.3 SANDBOX BUGFIX: SAME-DAY SETTLED FIRST PAYMENT & QUERY SEMANTICS
+  // ===========================================================================
+  describe('10. Phase 3B.3 Sandbox Bugfix: Same-Day Settled First Payment & Query Semantics', () => {
+    it('10.1 Target Ready PASS quando primeira cobrança alvo já nasce CONFIRMED no checkout', async () => {
+      const ministryId = 'min_sameday_confirmed';
+      const cusId = `cus_${ministryId}`;
+      setupActivePaidContract({
+        ministryId,
+        planId: 'lite',
+        interval: 'monthly',
+        amountCents: 1490,
+        currentPeriodStart: '2026-08-02',
+        currentPeriodEnd: '2026-09-02',
+      });
+
+      const res = await billingService.createCheckout(ministryId, 'usr_test', {
+        planId: 'essential',
+        interval: 'monthly',
+      });
+
+      const slot = await mockBillingRepo.getActiveTransitionSlot(ministryId, 'asaas');
+      const trId = slot!.plan_change_id;
+
+      // Mock de primeira cobrança já CONFIRMED
+      const confirmedPayment: ProviderPaymentRecord = {
+        id: 'pay_target_confirmed',
+        subscriptionId: 'sub_target_conf',
+        customerId: cusId,
+        status: 'CONFIRMED',
+        dueDate: '2026-09-02',
+        amountCents: 3490,
+        billingType: 'CREDIT_CARD',
+      };
+
+      mockProvider.getSubscription.mockResolvedValue({
+        status: 'ACTIVE',
+        cycle: 'MONTHLY',
+        valueCents: 3490,
+        nextDueDate: '2026-10-02',
+        customer: cusId,
+      });
+      mockProvider.listPaymentsByCheckoutSession.mockResolvedValue([confirmedPayment]);
+      mockProvider.listSubscriptionPayments.mockResolvedValue([confirmedPayment]);
+
+      const reconcileResult = await billingService.reconcilePaidToPaidFutureAuthorization(trId, 'worker_1');
+      expect(reconcileResult.success).toBe(true);
+
+      const tr = (await mockBillingRepo.getPlanChange(trId)) as BillingTransitionV1Record;
+      expect(tr.transition_status).toBe('future_target_prepared');
+      expect(tr.future_provider_payment_id).toBe('pay_target_confirmed');
+
+      // Slot permanece HELD
+      const slotCheck = await mockBillingRepo.getActiveTransitionSlot(ministryId, 'asaas');
+      expect(slotCheck).not.toBeNull();
+      expect(slotCheck!.plan_change_id).toBe(trId);
+
+      // Entitlement runtime ainda não foi promovido
+      expect(mockSubscriptionService.changePlan).not.toHaveBeenCalled();
+    });
+
+    it('10.2 Target Ready PASS quando primeira cobrança alvo já nasce RECEIVED', async () => {
+      const ministryId = 'min_sameday_received';
+      const cusId = `cus_${ministryId}`;
+      setupActivePaidContract({
+        ministryId,
+        planId: 'lite',
+        interval: 'monthly',
+        amountCents: 1490,
+        currentPeriodStart: '2026-08-02',
+        currentPeriodEnd: '2026-09-02',
+      });
+
+      const res = await billingService.createCheckout(ministryId, 'usr_test', {
+        planId: 'essential',
+        interval: 'monthly',
+      });
+
+      const slot = await mockBillingRepo.getActiveTransitionSlot(ministryId, 'asaas');
+      const trId = slot!.plan_change_id;
+
+      const receivedPayment: ProviderPaymentRecord = {
+        id: 'pay_target_received',
+        subscriptionId: 'sub_target_rec',
+        customerId: cusId,
+        status: 'RECEIVED',
+        dueDate: '2026-09-02',
+        originalDueDate: '2026-09-02',
+        amountCents: 3490,
+        billingType: 'PIX',
+      };
+
+      mockProvider.getSubscription.mockResolvedValue({
+        status: 'ACTIVE',
+        cycle: 'MONTHLY',
+        valueCents: 3490,
+        nextDueDate: '2026-10-02',
+        customer: cusId,
+      });
+      mockProvider.listPaymentsByCheckoutSession.mockResolvedValue([receivedPayment]);
+      mockProvider.listSubscriptionPayments.mockResolvedValue([receivedPayment]);
+
+      const reconcileResult = await billingService.reconcilePaidToPaidFutureAuthorization(trId, 'worker_1');
+      expect(reconcileResult.success).toBe(true);
+
+      const tr = (await mockBillingRepo.getPlanChange(trId)) as BillingTransitionV1Record;
+      expect(tr.transition_status).toBe('future_target_prepared');
+      expect(tr.future_provider_payment_id).toBe('pay_target_received');
+    });
+
+    it('10.3 Second-Cycle Protection: ignora cobrança do segundo ciclo e elege a primeira boundary exata', async () => {
+      const ministryId = 'min_second_cycle';
+      const cusId = `cus_${ministryId}`;
+      setupActivePaidContract({
+        ministryId,
+        planId: 'lite',
+        interval: 'monthly',
+        amountCents: 1490,
+        currentPeriodStart: '2026-08-02',
+        currentPeriodEnd: '2026-09-02',
+      });
+
+      const res = await billingService.createCheckout(ministryId, 'usr_test', {
+        planId: 'essential',
+        interval: 'monthly',
+      });
+
+      const slot = await mockBillingRepo.getActiveTransitionSlot(ministryId, 'asaas');
+      const trId = slot!.plan_change_id;
+
+      const firstCyclePayment: ProviderPaymentRecord = {
+        id: 'pay_cycle_1',
+        subscriptionId: 'sub_target_sc',
+        customerId: cusId,
+        status: 'CONFIRMED',
+        dueDate: '2026-09-02',
+        amountCents: 3490,
+        billingType: 'CREDIT_CARD',
+      };
+      const secondCyclePayment: ProviderPaymentRecord = {
+        id: 'pay_cycle_2',
+        subscriptionId: 'sub_target_sc',
+        customerId: cusId,
+        status: 'PENDING',
+        dueDate: '2026-10-02', // 2o ciclo
+        amountCents: 3490,
+        billingType: 'CREDIT_CARD',
+      };
+
+      mockProvider.getSubscription.mockResolvedValue({
+        status: 'ACTIVE',
+        cycle: 'MONTHLY',
+        valueCents: 3490,
+        nextDueDate: '2026-10-02',
+        customer: cusId,
+      });
+      mockProvider.listPaymentsByCheckoutSession.mockResolvedValue([secondCyclePayment, firstCyclePayment]);
+      mockProvider.listSubscriptionPayments.mockResolvedValue([secondCyclePayment, firstCyclePayment]);
+
+      const reconcileResult = await billingService.reconcilePaidToPaidFutureAuthorization(trId, 'worker_1');
+      expect(reconcileResult.success).toBe(true);
+
+      const tr = (await mockBillingRepo.getPlanChange(trId)) as BillingTransitionV1Record;
+      expect(tr.future_provider_payment_id).toBe('pay_cycle_1'); // Exatamente o primeiro ciclo
+    });
+
+    it('10.4 Webhook Fast Path: parsedEvent.providerPaymentId consulta diretamente via getPayment', async () => {
+      const ministryId = 'min_fast_path';
+      const cusId = `cus_${ministryId}`;
+      setupActivePaidContract({
+        ministryId,
+        planId: 'lite',
+        interval: 'monthly',
+        amountCents: 1490,
+        currentPeriodStart: '2026-08-02',
+        currentPeriodEnd: '2026-09-02',
+      });
+
+      const res = await billingService.createCheckout(ministryId, 'usr_test', {
+        planId: 'essential',
+        interval: 'monthly',
+      });
+
+      const exactPayment: ProviderPaymentRecord = {
+        id: 'pay_exact_webhook',
+        subscriptionId: 'sub_target_fp',
+        customerId: cusId,
+        status: 'CONFIRMED',
+        dueDate: '2026-09-02',
+        amountCents: 3490,
+        billingType: 'CREDIT_CARD',
+      };
+
+      (mockProvider as any).getPayment = vi.fn().mockResolvedValue(exactPayment);
+      mockProvider.getSubscription.mockResolvedValue({
+        status: 'ACTIVE',
+        cycle: 'MONTHLY',
+        valueCents: 3490,
+        nextDueDate: '2026-10-02',
+        customer: cusId,
+      });
+
+      const paymentEvent: ParsedWebhookEvent = {
+        providerEventId: 'evt_pay_conf_1',
+        rawEventType: 'PAYMENT_CONFIRMED',
+        eventType: 'payment_confirmed',
+        providerCheckoutId: res.checkoutId,
+        providerPaymentId: 'pay_exact_webhook',
+        providerSubscriptionId: 'sub_target_fp',
+        amountCents: 3490,
+        dueDate: '2026-09-02',
+        status: 'CONFIRMED',
+      };
+      mockProvider.parseWebhookEvent.mockReturnValue(paymentEvent);
+
+      const webhookRes = await billingService.handleWebhook({ 'asaas-access-token': 'valid_token' }, {});
+      expect(webhookRes.processed).toBe(true);
+
+      expect((mockProvider as any).getPayment).toHaveBeenCalledWith('pay_exact_webhook');
     });
   });
 });

@@ -31,6 +31,7 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
   // In-memory Firestore store for transactional testing
   const planChangesStore = new Map<string, BillingPlanChangeRecord>();
   const activeSlotsStore = new Map<string, BillingActiveTransitionSlotRecord>();
+  const subscriptionsStore = new Map<string, any>();
 
   const createQueryMock = (filters: Array<{ field: string; op: string; value: any }> = []) => ({
     where: vi.fn().mockImplementation((field: string, op: string, value: any) => {
@@ -64,9 +65,44 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
   beforeEach(() => {
     planChangesStore.clear();
     activeSlotsStore.clear();
+    subscriptionsStore.clear();
     repo = new BillingRepository();
 
     // Mock Firestore collections
+    (repo as any).subscriptionsCollection = {
+      doc: (id: string) => ({
+        id,
+        collectionName: 'billing_subscriptions',
+        get: vi.fn().mockImplementation(async () => {
+          const data = subscriptionsStore.get(id);
+          return { exists: Boolean(data), data: () => data };
+        }),
+        set: vi.fn().mockImplementation(async (data: any, options?: any) => {
+          if (options?.merge && subscriptionsStore.has(id)) {
+            subscriptionsStore.set(id, { ...subscriptionsStore.get(id)!, ...data });
+          } else {
+            subscriptionsStore.set(id, data);
+          }
+        }),
+      }),
+      where: vi.fn().mockImplementation((field: string, op: string, value: any) => {
+        return {
+          where: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockReturnValue({
+            get: vi.fn().mockImplementation(async () => {
+              const matches: any[] = [];
+              for (const record of subscriptionsStore.values()) {
+                if ((record as any)[field] === value) {
+                  matches.push({ id: record.id, data: () => record });
+                }
+              }
+              return { empty: matches.length === 0, docs: matches };
+            }),
+          }),
+        };
+      }),
+    };
+
     (repo as any).planChangesCollection = {
       doc: (id: string) => ({
         id,
@@ -616,6 +652,230 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
       expect(record.execution_strategy).toBe('scheduled_cancel_to_free');
       expect(record.transition_status).toBe('awaiting_old_inactivation');
       expect(record.early_activation_status).toBe('not_applicable');
+    });
+  });
+
+  describe('claimTransitionForReconciliation — V1 Locking Semantics (Phase 3B.3)', () => {
+    const baseV1: any = {
+      id: 'tr_test_claim_1',
+      transition_id: 'tr_test_claim_1',
+      policy_version: 'billing_transition_v1',
+      ministry_id: 'min_test_1',
+      provider: 'asaas',
+      currency: 'BRL',
+      execution_strategy: 'scheduled_paid_transition',
+      early_activation_status: 'available',
+      financial_safety_status: 'live',
+      transition_status: 'scheduled',
+      supersede_status: 'completed',
+      source_plan_id: 'lite',
+      source_interval: 'monthly',
+      source_addon_blocks: 0,
+      target_plan_id: 'essential',
+      target_interval: 'monthly',
+      target_addon_blocks: 0,
+      effective_billing_date: '2026-10-02',
+      created_at: '2026-09-02T12:00:00.000Z',
+      updated_at: '2026-09-02T12:00:00.000Z',
+    };
+
+    it('A) deve permitir claim quando transition_status=scheduled e supersede_status=completed (não bloqueia por subfluxo)', async () => {
+      planChangesStore.set(baseV1.id, { ...baseV1 });
+      const claimed = await repo.claimTransitionForReconciliation(baseV1.id, 'worker_1', 60000);
+
+      expect(claimed).not.toBeNull();
+      expect(claimed?.retry_locked_by).toBe('worker_1');
+      expect(claimed?.retry_count).toBe(1);
+    });
+
+    it('B) deve recusar claim quando transição for terminal segura (completed + safe_terminal)', async () => {
+      planChangesStore.set(baseV1.id, {
+        ...baseV1,
+        transition_status: 'completed',
+        financial_safety_status: 'safe_terminal',
+      });
+      const claimed = await repo.claimTransitionForReconciliation(baseV1.id, 'worker_1', 60000);
+
+      expect(claimed).toBeNull();
+    });
+
+    it('C) HARD BLOCK: deve recusar claim quando financial_attention_required=true', async () => {
+      planChangesStore.set(baseV1.id, {
+        ...baseV1,
+        financial_attention_required: true,
+        financial_attention_reason: 'TEST_MANUAL_INTERVENTION_NEEDED',
+      });
+      const claimed = await repo.claimTransitionForReconciliation(baseV1.id, 'worker_1', 60000);
+
+      expect(claimed).toBeNull();
+    });
+
+    it('D) deve recusar claim (concorrência) quando outro worker tiver lease ativo', async () => {
+      planChangesStore.set(baseV1.id, {
+        ...baseV1,
+        retry_locked_by: 'worker_other',
+        retry_locked_until: new Date(Date.now() + 30000).toISOString(),
+      });
+      const claimed = await repo.claimTransitionForReconciliation(baseV1.id, 'worker_my', 60000);
+
+      expect(claimed).toBeNull();
+    });
+
+    it('E) deve permitir claim (recuperação) quando lease anterior estiver expirado', async () => {
+      planChangesStore.set(baseV1.id, {
+        ...baseV1,
+        retry_locked_by: 'worker_crashed',
+        retry_locked_until: new Date(Date.now() - 5000).toISOString(), // expirado
+      });
+      const claimed = await repo.claimTransitionForReconciliation(baseV1.id, 'worker_recovery', 60000);
+
+      expect(claimed).not.toBeNull();
+      expect(claimed?.retry_locked_by).toBe('worker_recovery');
+    });
+
+    it('F) deve permitir que o mesmo worker renove o lease de forma idempotente', async () => {
+      planChangesStore.set(baseV1.id, {
+        ...baseV1,
+        retry_locked_by: 'worker_same',
+        retry_locked_until: new Date(Date.now() + 10000).toISOString(),
+      });
+      const claimed = await repo.claimTransitionForReconciliation(baseV1.id, 'worker_same', 60000);
+
+      expect(claimed).not.toBeNull();
+      expect(claimed?.retry_locked_by).toBe('worker_same');
+    });
+  });
+
+  describe('BillingSubscription Canonical Key Authority, Roundtrip & Dual-Key Safety (Phase 3B.3 Fix)', () => {
+    const baseSubInput: any = {
+      ministry_id: 'min_test_canonical',
+      provider: 'asaas',
+      plan_id: 'essential',
+      interval: 'monthly',
+      status: 'active',
+      provider_subscription_id: 'sub_asaas_001',
+      provider_customer_id: 'cus_asaas_001',
+      amount_cents: 3490,
+      current_period_start: '2026-09-02T12:00:00.000Z',
+      current_period_end: '2026-10-02T12:00:00.000Z',
+    };
+
+    it('1. Roundtrip: setSubscription normaliza chave canônica min_x_asaas e getSubscription recupera exatamente o mesmo registro', async () => {
+      await repo.setSubscription(baseSubInput);
+
+      const result = await repo.getSubscription('min_test_canonical', 'asaas');
+      expect(result).not.toBeNull();
+      expect(result?.id).toBe('min_test_canonical_asaas');
+      expect(result?.provider_subscription_id).toBe('sub_asaas_001');
+      expect(subscriptionsStore.has('min_test_canonical_asaas')).toBe(true);
+    });
+
+    it('2. Caller não consegue forçar chave invertida: setSubscription com id asaas_min_x grava sob min_x_asaas', async () => {
+      await repo.setSubscription({
+        ...baseSubInput,
+        id: 'asaas_min_test_canonical', // Caller tentando forçar id invertido
+      });
+
+      expect(subscriptionsStore.has('asaas_min_test_canonical')).toBe(false);
+      expect(subscriptionsStore.has('min_test_canonical_asaas')).toBe(true);
+
+      const result = await repo.getSubscription('min_test_canonical', 'asaas');
+      expect(result).not.toBeNull();
+      expect(result?.id).toBe('min_test_canonical_asaas');
+    });
+
+    it('3. Dual-key: quando apenas registro legado/invertido existe, getSubscription recupera e normaliza id canônico', async () => {
+      subscriptionsStore.set('asaas_min_only_legacy', {
+        ...baseSubInput,
+        id: 'asaas_min_only_legacy',
+        ministry_id: 'min_only_legacy',
+      });
+
+      const result = await repo.getSubscription('min_only_legacy', 'asaas');
+      expect(result).not.toBeNull();
+      expect(result?.id).toBe('min_only_legacy_asaas');
+      expect(result?.ministry_id).toBe('min_only_legacy');
+    });
+
+    it('4. Dual-key: quando ambos existem e apontam para a mesma assinatura do provedor, canônico prevalece', async () => {
+      subscriptionsStore.set('min_both_asaas', {
+        ...baseSubInput,
+        id: 'min_both_asaas',
+        ministry_id: 'min_both',
+        provider_subscription_id: 'sub_shared_123',
+      });
+      subscriptionsStore.set('asaas_min_both', {
+        ...baseSubInput,
+        id: 'asaas_min_both',
+        ministry_id: 'min_both',
+        provider_subscription_id: 'sub_shared_123',
+      });
+
+      const result = await repo.getSubscription('min_both', 'asaas');
+      expect(result).not.toBeNull();
+      expect(result?.id).toBe('min_both_asaas');
+    });
+
+    it('5. Dual-key: quando um é active e o outro canceled, o active prevalece', async () => {
+      subscriptionsStore.set('min_both_asaas', {
+        ...baseSubInput,
+        id: 'min_both_asaas',
+        ministry_id: 'min_both',
+        provider_subscription_id: 'sub_target_active',
+        status: 'active',
+      });
+      subscriptionsStore.set('asaas_min_both', {
+        ...baseSubInput,
+        id: 'asaas_min_both',
+        ministry_id: 'min_both',
+        provider_subscription_id: 'sub_source_old',
+        status: 'canceled',
+      });
+
+      const result = await repo.getSubscription('min_both', 'asaas');
+      expect(result).not.toBeNull();
+      expect(result?.provider_subscription_id).toBe('sub_target_active');
+    });
+
+    it('6. Dual-key conflict safety: ambos ativos com assinaturas diferentes gera FAIL-CLOSED com AppError 500', async () => {
+      subscriptionsStore.set('min_divergent_asaas', {
+        ...baseSubInput,
+        id: 'min_divergent_asaas',
+        ministry_id: 'min_divergent',
+        provider_subscription_id: 'sub_sub_A',
+        status: 'active',
+      });
+      subscriptionsStore.set('asaas_min_divergent', {
+        ...baseSubInput,
+        id: 'asaas_min_divergent',
+        ministry_id: 'min_divergent',
+        provider_subscription_id: 'sub_sub_B',
+        status: 'active',
+      });
+
+      await expect(repo.getSubscription('min_divergent', 'asaas')).rejects.toThrow(
+        /DUAL_KEY_FINANCIAL_CONFLICT/
+      );
+    });
+
+    it('7. Identity Immutability: setSubscription recusa merge se ministry_id ou provider divergir do existente', async () => {
+      (repo as any).subscriptionsCollection = {
+        doc: (id: string) => ({
+          get: vi.fn().mockResolvedValue({
+            exists: true,
+            data: () => ({ ministry_id: 'min_divergent', provider: 'asaas' }),
+          }),
+          set: vi.fn(),
+        }),
+      };
+
+      await expect(
+        repo.setSubscription({
+          ...baseSubInput,
+          ministry_id: 'min_new',
+          provider: 'asaas',
+        })
+      ).rejects.toThrow(/IDENTITY IMMUTABILITY VIOLATION/);
     });
   });
 });

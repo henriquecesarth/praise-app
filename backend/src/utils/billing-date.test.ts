@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getCurrentBillingDate, getBillingDate, addCommercialInterval } from './billing-date';
+import { getCurrentBillingDate, getBillingDate, addCommercialInterval, addCommercialDays } from './billing-date';
 
 describe('getBillingDate & getCurrentBillingDate — Deterministic Timezone Billing Date Helper', () => {
   const timeZone = 'America/Sao_Paulo';
@@ -88,6 +88,25 @@ describe('getBillingDate & getCurrentBillingDate — Deterministic Timezone Bill
       expect(addCommercialInterval('2024-02-29', 'annual', timeZone)).toBe('2025-02-28');
       // 15 de setembro de 2026 -> 15 de setembro de 2027
       expect(addCommercialInterval('2026-09-15', 'annual', timeZone)).toBe('2027-09-15');
+    });
+  });
+
+  describe('addCommercialDays — Civil Days Addition', () => {
+    it('deve adicionar exatamente 7 dias civis respeitando o modelo [start, end) da carência', () => {
+      // Exemplo obrigatório de especificação: effective = 2026-10-02 -> grace_end = 2026-10-09
+      expect(addCommercialDays('2026-10-02', 7, timeZone)).toBe('2026-10-09');
+    });
+
+    it('deve cruzar a virada de mês adicionando 7 dias civis (fevereiro não bissexto)', () => {
+      expect(addCommercialDays('2026-02-26', 7, timeZone)).toBe('2026-03-05');
+    });
+
+    it('deve cruzar a virada de mês adicionando 7 dias civis (fevereiro bissexto)', () => {
+      expect(addCommercialDays('2024-02-26', 7, timeZone)).toBe('2024-03-04');
+    });
+
+    it('deve cruzar a virada de ano adicionando 7 dias civis', () => {
+      expect(addCommercialDays('2026-12-28', 7, timeZone)).toBe('2027-01-04');
     });
   });
 });

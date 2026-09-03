@@ -81,3 +81,23 @@ export function addCommercialInterval(
   const targetDayStr = String(targetDay).padStart(2, '0');
   return `${targetYear}-${targetMonthStr}-${targetDayStr}`;
 }
+
+/**
+ * Adiciona um número exato de dias civis comerciais (ex.: 7 dias de carência)
+ * operando estritamente sobre a data civil YYYY-MM-DD em BILLING_TIMEZONE.
+ * Imune a DST, desvios de 168 horas, milissegundos ou conversões UTC imperfeitas.
+ * Ex: 2026-10-02 + 7 dias -> 2026-10-09
+ */
+export function addCommercialDays(
+  startDate: Date | string,
+  days: number,
+  timeZone: string = config.billingTimezone || 'America/Sao_Paulo'
+): string {
+  const startDateStr = getBillingDate(startDate, timeZone);
+  const [year, month, day] = startDateStr.split('-').map(Number);
+  const utcDate = new Date(Date.UTC(year, month - 1, day + days));
+  const targetYear = utcDate.getUTCFullYear();
+  const targetMonth = String(utcDate.getUTCMonth() + 1).padStart(2, '0');
+  const targetDay = String(utcDate.getUTCDate()).padStart(2, '0');
+  return `${targetYear}-${targetMonth}-${targetDay}`;
+}

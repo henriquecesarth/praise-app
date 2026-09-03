@@ -1,3 +1,5 @@
+import { getBillingDate } from '../utils/billing-date';
+
 export type PlanId = 'free' | 'lite' | 'lite_plus' | 'essential' | 'pro' | 'premium';
 export type QuotaLimit = number | 'unlimited';
 export type BillingStatus = 'active' | 'trialing' | 'past_due' | 'canceled';
@@ -40,6 +42,7 @@ export interface SubscriptionStateData {
   expires_at?: string | null;
   administratively_suspended?: boolean;
   grace_period_expires_at?: string | null;
+  grace_period_expires_billing_date?: string | null;
   cancel_at_period_end?: boolean;
   current_period_start?: string | null;
   current_period_end?: string | null;
@@ -273,6 +276,48 @@ export function resolveAccessMode(
       isOverLimit: overLimitInfo.isOverLimit,
       overLimitDetails: overLimitInfo,
       graceDaysRemaining: null,
+      effectiveQuotas,
+    };
+  }
+
+  // 1.1 Inadimplência / Falha de Renovação (past_due): avaliar carência civil de 7 dias [start, end)
+  if (subscription.billing_status === 'past_due') {
+    const graceEndDate =
+      subscription.grace_period_expires_billing_date ||
+      (subscription.grace_period_expires_at ? getBillingDate(subscription.grace_period_expires_at) : null);
+
+    if (graceEndDate) {
+      const currentCommercialDate = getBillingDate(now);
+      if (currentCommercialDate < graceEndDate) {
+        // Dentro da carência civil [start, end): mantém direito de uso e modo normal se dentro das cotas
+        if (!overLimitInfo.isOverLimit) {
+          return {
+            accessMode: 'normal',
+            isOverLimit: false,
+            overLimitDetails: overLimitInfo,
+            graceDaysRemaining: null,
+            effectiveQuotas,
+          };
+        }
+        const expiresAt = subscription.grace_period_expires_at ? new Date(subscription.grace_period_expires_at) : null;
+        const diffMs = expiresAt && !isNaN(expiresAt.getTime()) ? expiresAt.getTime() - now.getTime() : 0;
+        const graceDaysRemaining = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+        return {
+          accessMode: 'grace',
+          isOverLimit: true,
+          overLimitDetails: overLimitInfo,
+          graceDaysRemaining,
+          effectiveQuotas,
+        };
+      }
+    }
+
+    // Carência expirada (ou ausente) com status past_due: restrição operacional (dados preservados)
+    return {
+      accessMode: 'restricted_over_limit',
+      isOverLimit: true,
+      overLimitDetails: overLimitInfo,
+      graceDaysRemaining: 0,
       effectiveQuotas,
     };
   }

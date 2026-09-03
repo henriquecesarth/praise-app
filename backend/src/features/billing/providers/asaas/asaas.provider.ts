@@ -291,6 +291,7 @@ export class AsaasBillingProvider implements BillingProvider {
             customerId: item.customer,
             status: item.status,
             dueDate: item.dueDate,
+            ...(item.originalDueDate ? { originalDueDate: item.originalDueDate } : {}),
             amountCents,
             billingType: item.billingType,
             externalReference: item.externalReference,
@@ -536,7 +537,7 @@ export class AsaasBillingProvider implements BillingProvider {
       throw new AppError(500, 'Gateway Asaas não configurado.');
     }
 
-    const statusFilter = options?.status !== undefined ? options.status : 'PENDING';
+    const statusFilter = options?.status !== undefined ? options.status : 'ALL';
     const limit = 50;
     let offset = 0;
     let hasMore = true;
@@ -584,6 +585,7 @@ export class AsaasBillingProvider implements BillingProvider {
             customerId: item.customer,
             status: item.status,
             dueDate: item.dueDate,
+            ...(item.originalDueDate ? { originalDueDate: item.originalDueDate } : {}),
             amountCents,
             billingType: item.billingType,
             externalReference: item.externalReference,
@@ -660,6 +662,7 @@ export class AsaasBillingProvider implements BillingProvider {
         customerId: item.customer,
         status: item.status,
         dueDate: item.dueDate,
+        ...(item.originalDueDate ? { originalDueDate: item.originalDueDate } : {}),
         amountCents,
         billingType: item.billingType,
         externalReference: item.externalReference,
@@ -873,6 +876,7 @@ export class AsaasBillingProvider implements BillingProvider {
       currency: 'BRL',
       paymentMethod: payment.billingType || subscription.billingType,
       dueDate: payment.dueDate || subscription.nextDueDate,
+      ...(payment.originalDueDate ? { originalDueDate: payment.originalDueDate } : {}),
       paymentDate,
       confirmedDate,
       invoiceUrl: payment.invoiceUrl,

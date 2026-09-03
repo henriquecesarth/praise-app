@@ -751,6 +751,87 @@ describe('AsaasBillingProvider — Webhook Authentication & Parser Validation', 
 
       global.fetch = originalFetch;
     });
+
+    it('F) listSubscriptionPayments: com status=PENDING envia status=PENDING na query URL', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [], hasMore: false }),
+      });
+      global.fetch = mockFetch as any;
+
+      await provider.listSubscriptionPayments('sub_123', { status: 'PENDING' });
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('status=PENDING'),
+        expect.anything()
+      );
+
+      global.fetch = originalFetch;
+    });
+
+    it('G) listSubscriptionPayments: com status=ALL não envia parâmetro status retornando cobranças de qualquer estado', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: [
+            {
+              id: 'pay_settled',
+              subscription: 'sub_123',
+              customer: 'cus_123',
+              status: 'CONFIRMED',
+              dueDate: '2026-09-02',
+              value: 34.9,
+              billingType: 'CREDIT_CARD',
+            },
+          ],
+          hasMore: false,
+        }),
+      });
+      global.fetch = mockFetch as any;
+
+      const payments = await provider.listSubscriptionPayments('sub_123', { status: 'ALL' });
+      expect(payments).toHaveLength(1);
+      expect(payments[0].status).toBe('CONFIRMED');
+      const calledUrl = mockFetch.mock.calls[0][0] as string;
+      expect(calledUrl).not.toContain('status=');
+
+      global.fetch = originalFetch;
+    });
+
+    it('H) getPayment: mapeia status RECEIVED e originalDueDate corretamente', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 'pay_rec_123',
+          subscription: 'sub_123',
+          customer: 'cus_123',
+          status: 'RECEIVED',
+          dueDate: '2026-09-01',
+          originalDueDate: '2026-09-02',
+          value: 34.9,
+          billingType: 'BOLETO',
+        }),
+      });
+      global.fetch = mockFetch as any;
+
+      const payment = await provider.getPayment('pay_rec_123');
+
+      expect(payment).toEqual({
+        id: 'pay_rec_123',
+        subscriptionId: 'sub_123',
+        customerId: 'cus_123',
+        status: 'RECEIVED',
+        dueDate: '2026-09-01',
+        originalDueDate: '2026-09-02',
+        amountCents: 3490,
+        billingType: 'BOLETO',
+        externalReference: undefined,
+      });
+
+      global.fetch = originalFetch;
+    });
   });
 
   describe('8. Asaas Checkout Callback Payload & Localhost Rejection', () => {

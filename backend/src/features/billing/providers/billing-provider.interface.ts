@@ -31,6 +31,7 @@ export interface ParsedWebhookEvent {
   currency?: string;
   paymentMethod?: string;
   dueDate?: string;
+  originalDueDate?: string;
   paymentDate?: string;
   confirmedDate?: string;
   invoiceUrl?: string;
@@ -46,6 +47,7 @@ export interface ProviderPaymentRecord {
   customerId?: string;
   status: string;
   dueDate: string;
+  originalDueDate?: string;
   amountCents: number;
   billingType?: string;
   externalReference?: string;
