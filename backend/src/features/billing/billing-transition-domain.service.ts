@@ -17,6 +17,8 @@ import {
   BillingTransitionStatus,
   BillingTransitionV1Record,
   BillingProviderName,
+  BillingCheckoutAttempt,
+  BillingTransactionRecord,
   mapTransitionStatusToLegacyStatus,
   validateBillingTransitionV1,
 } from './billing.types';
@@ -33,6 +35,13 @@ import {
   BuildBillingTransitionRecordParams,
   PaidToPaidTargetReadyParams,
   PaidToPaidTargetReadyResult,
+  CapabilityEligibilityClassification,
+  CapabilityEligibilityResult,
+  EarlyAdjustmentFinancialState,
+  EarlyActivationBoundarySafeResult,
+  EarlyActivationCheckoutEligibilityResult,
+  EarlyActivationCompletionGateParams,
+  EarlyActivationCompletionGateResult,
 } from './billing-transition-domain.types';
 
 export const BILLING_TIMEZONE_DEFAULT = 'America/Sao_Paulo';
@@ -541,12 +550,16 @@ export function createEarlyActivationQuote(
     ministry_id: options?.ministryId || 'ministry_unassigned',
     source_current_cycle_total_cents: proration.source_current_cycle_total_cents,
     target_current_cycle_total_cents: proration.target_current_cycle_total_cents,
+    price_delta_cents: proration.price_delta_cents,
+    total_days: proration.total_days,
+    remaining_days: proration.remaining_days,
     prorated_adjustment_cents: proration.prorated_adjustment_cents,
     currency: 'BRL',
     priced_at: pricedAtIso,
     quote_effective_billing_date: proration.quote_effective_billing_date,
     expires_at: expiresAtIso,
     status: 'active',
+    calculation_version: 'proration_v1',
   };
 }
 
@@ -1018,6 +1031,414 @@ export function verifyPaidToPaidTargetReadyGate(
       ready: false,
       reason: `Status da cobrança ('${firstPayment.status}') inválido para Target Ready (esperado PENDING, AWAITING_PAYMENT, CONFIRMED ou RECEIVED)`,
       failureCode: 'PAYMENT_STATUS_INVALID',
+    };
+  }
+
+  return { ready: true };
+}
+
+// ============================================================================
+// Phase 3C.1 — Pure Domain Functions for Early Activation with Prorated Adjustment
+// ============================================================================
+
+/**
+ * Classifica a elegibilidade de early activation baseando-se estritamente nas capacidades
+ * operacionais efetivas (membros e músicas) e no delta financeiro.
+ * Exclui metadados comerciais e falha fechado em caso de alterações mistas ou delta <= 0.
+ */
+export function classifyCapabilityEligibility(
+  source: EffectiveCapabilities | EntitlementSnapshot,
+  target: EffectiveCapabilities | EntitlementSnapshot,
+  options?: { priceDeltaCents?: number }
+): CapabilityEligibilityResult {
+  const sourceCapabilities: EffectiveCapabilities = {
+    members: (source as any).effective_member_quota !== undefined ? (source as any).effective_member_quota : (source as any).members,
+    songs: (source as any).effective_song_quota !== undefined ? (source as any).effective_song_quota : (source as any).songs,
+  };
+  const targetCapabilities: EffectiveCapabilities = {
+    members: (target as any).effective_member_quota !== undefined ? (target as any).effective_member_quota : (target as any).members,
+    songs: (target as any).effective_song_quota !== undefined ? (target as any).effective_song_quota : (target as any).songs,
+  };
+
+  const comparison = compareCapabilities(sourceCapabilities, targetCapabilities);
+
+  if (comparison === 'TARGET_STRICTLY_GREATER') {
+    if (options?.priceDeltaCents !== undefined && options.priceDeltaCents <= 0) {
+      return {
+        classification: 'pure_upgrade',
+        early_activation_eligible: false,
+        reason: 'PRICE_DELTA_NOT_POSITIVE',
+      };
+    }
+    return {
+      classification: 'pure_upgrade',
+      early_activation_eligible: true,
+    };
+  }
+
+  if (comparison === 'TARGET_STRICTLY_LOWER') {
+    return {
+      classification: 'pure_downgrade',
+      early_activation_eligible: false,
+      reason: 'CAPABILITIES_DECREASED',
+    };
+  }
+
+  if (comparison === 'MIXED') {
+    return {
+      classification: 'mixed',
+      early_activation_eligible: false,
+      reason: 'MIXED_CAPABILITY_CHANGE',
+    };
+  }
+
+  return {
+    classification: 'no_change',
+    early_activation_eligible: false,
+    reason: 'NO_CAPABILITY_CHANGE',
+  };
+}
+
+/**
+ * Calcula o tempo de expiração do checkout no gateway em minutos inteiros.
+ * Garante que o checkout NUNCA sobreviva à expiração da cotação.
+ * Se restar menos de 5 minutos, falha fechado para evitar pagamento com preço defasado.
+ */
+export function calculateCheckoutMinutesToExpire(
+  quoteExpiresAt: string | Date,
+  now?: string | Date
+): { minutesToExpire: number; remainingMinutes: number } {
+  const nowMs = now ? (typeof now === 'string' ? new Date(now).getTime() : now.getTime()) : Date.now();
+  const quoteExpMs = typeof quoteExpiresAt === 'string' ? new Date(quoteExpiresAt).getTime() : quoteExpiresAt.getTime();
+
+  const diffMs = quoteExpMs - nowMs;
+  if (diffMs <= 0) {
+    throw new AppError(400, 'A cotação de early activation já expirou.', {
+      code: 'EARLY_ACTIVATION_QUOTE_EXPIRED',
+    });
+  }
+
+  const remainingMinutes = Math.floor(diffMs / 60_000);
+
+  if (remainingMinutes < 5) {
+    throw new AppError(
+      400,
+      'Cotação muito próxima do término do dia comercial. Aguarde a virada do dia para solicitar nova cotação.',
+      { code: 'EARLY_ACTIVATION_QUOTE_TOO_CLOSE_TO_EXPIRY' }
+    );
+  }
+
+  const minutesToExpire = Math.min(60, remainingMinutes);
+  return { minutesToExpire, remainingMinutes };
+}
+
+/**
+ * Classificador canônico e unificado do estado financeiro da obrigação de Early Activation.
+ * Impede que diferentes predicados interpretem attempt.status de forma divergente.
+ */
+export function classifyEarlyAdjustmentFinancialState(
+  transition: BillingTransitionV1Record
+): EarlyAdjustmentFinancialState {
+  if (transition.financial_attention_required === true) {
+    return 'attention_required';
+  }
+
+  const isConfirmed = transition.early_activation_status === 'confirmed';
+  if (isConfirmed) {
+    return transition.early_activation_provider_payment_id ? 'settled_converged' : 'settled_unconverged';
+  }
+
+  if (transition.early_activation_provider_payment_id) {
+    return 'settled_unconverged';
+  }
+
+  const earlyAttempts = (transition.checkout_attempts || []).filter(
+    (a) => a.attempt_type === 'early_activation'
+  );
+
+  if (earlyAttempts.length === 0) {
+    return 'no_obligation';
+  }
+
+  const latestAttempt = earlyAttempts[earlyAttempts.length - 1];
+
+  if (latestAttempt.status === 'completed') {
+    return 'settled_unconverged';
+  }
+
+  if (latestAttempt.status === 'uncertain') {
+    return 'uncertain';
+  }
+
+  if (latestAttempt.status === 'uncertain_expired') {
+    return 'uncertain_expired_unresolved';
+  }
+
+  if (latestAttempt.status === 'pending') {
+    return 'financially_live';
+  }
+
+  if (latestAttempt.status === 'failed') {
+    if (latestAttempt.failure_classification === 'creation_failed_before_provider_obligation') {
+      return 'provider_terminal_unpaid';
+    }
+    if (latestAttempt.failure_classification === 'payment_declined_in_session') {
+      return 'financially_live';
+    }
+    if (latestAttempt.provider_session_terminal === true) {
+      return 'provider_terminal_unpaid';
+    }
+    // Fail closed se a causa do failed for desconhecida
+    return 'financially_live';
+  }
+
+  if (latestAttempt.status === 'expired' || latestAttempt.status === 'canceled') {
+    return 'provider_terminal_unpaid';
+  }
+
+  return 'financially_live';
+}
+
+/**
+ * Predicado puro que determina se existe qualquer obrigação financeira viva para a antecipação.
+ */
+export function isEarlyAdjustmentObligationFinanciallyLive(
+  transition: BillingTransitionV1Record
+): boolean {
+  const state = classifyEarlyAdjustmentFinancialState(transition);
+  switch (state) {
+    case 'financially_live':
+    case 'uncertain':
+    case 'uncertain_expired_unresolved':
+    case 'settled_unconverged':
+    case 'attention_required':
+      return true;
+    case 'no_obligation':
+    case 'provider_terminal_unpaid':
+    case 'settled_converged':
+      return false;
+    default:
+      return true; // Fail closed
+  }
+}
+
+/**
+ * Predicado puro da invariante de UMA ÚNICA OBRIGAÇÃO FINANCEIRA VIVA.
+ * Determina se um novo checkout de early activation pode ser criado.
+ */
+export function canCreateEarlyActivationCheckout(
+  transition: BillingTransitionV1Record,
+  options?: { currentCommercialDate?: string; timeZone?: string }
+): EarlyActivationCheckoutEligibilityResult {
+  const timeZone = options?.timeZone || BILLING_TIMEZONE_DEFAULT;
+  const currentCommercialDate = options?.currentCommercialDate || getBillingDate(new Date(), timeZone);
+
+  if (transition.transition_status !== 'scheduled') {
+    return {
+      allowed: false,
+      reason: `Transição em status '${transition.transition_status}' não permite early activation (exigido 'scheduled').`,
+    };
+  }
+
+  if (transition.financial_attention_required === true) {
+    return {
+      allowed: false,
+      reason: 'Transição requer atenção financeira. Operação bloqueada.',
+      financialState: 'attention_required',
+    };
+  }
+
+  if (transition.effective_billing_date && currentCommercialDate >= transition.effective_billing_date) {
+    return {
+      allowed: false,
+      reason: `Data comercial atual (${currentCommercialDate}) atingiu ou ultrapassou a data da renovação (${transition.effective_billing_date}).`,
+    };
+  }
+
+  const financialState = classifyEarlyAdjustmentFinancialState(transition);
+  if (isEarlyAdjustmentObligationFinanciallyLive(transition)) {
+    return {
+      allowed: false,
+      reason: `Existe uma obrigação financeira de early activation ativa ou não resolvida (estado: '${financialState}').`,
+      financialState,
+    };
+  }
+
+  const deltaCents =
+    (transition.target_current_cycle_total_cents || 0) -
+    (transition.source_current_cycle_total_cents || 0);
+
+  if (deltaCents <= 0) {
+    return {
+      allowed: false,
+      reason: 'Diferença de preço do ciclo corrente não é estritamente positiva.',
+      financialState,
+    };
+  }
+
+  return {
+    allowed: true,
+    financialState,
+  };
+}
+
+/**
+ * Predicado puro do Boundary Handoff Gate.
+ * Impede que a Phase 3B.3 marque safe_terminal ou libere o slot se houver obrigações de
+ * early activation pendentes, incertas ou não resolvidas na fronteira de renovação.
+ */
+export function isEarlyActivationBoundarySafe(
+  transition: BillingTransitionV1Record
+): EarlyActivationBoundarySafeResult {
+  if (transition.early_activation_status === 'not_applicable') {
+    return { safe: true, financialState: 'no_obligation' };
+  }
+
+  if (transition.financial_attention_required === true) {
+    return {
+      safe: false,
+      reason: 'Transição com atenção financeira não é segura para finalização na fronteira.',
+      financialState: 'attention_required',
+    };
+  }
+
+  const financialState = classifyEarlyAdjustmentFinancialState(transition);
+
+  if (financialState === 'settled_converged') {
+    return { safe: true, financialState };
+  }
+
+  if (financialState === 'no_obligation') {
+    return { safe: true, financialState };
+  }
+
+  if (financialState === 'provider_terminal_unpaid') {
+    return { safe: true, financialState };
+  }
+
+  return {
+    safe: false,
+    reason: `Subfluxo de early activation em estado financeiro inseguro na fronteira ('${financialState}').`,
+    financialState,
+  };
+}
+
+/**
+ * Predicado puro de validação atômica do Early Activation Completion Gate.
+ * Não faz I/O nem consulta o Firestore diretamente; consome snapshots e evidências já carregados.
+ */
+export function validateEarlyActivationCompletion(
+  params: EarlyActivationCompletionGateParams
+): EarlyActivationCompletionGateResult {
+  const { transition, payment, transaction, attempt, runtimeSubscription } = params;
+
+  const paymentStatusUpper = (payment.status || '').toUpperCase();
+  if (paymentStatusUpper !== 'CONFIRMED' && paymentStatusUpper !== 'RECEIVED') {
+    return {
+      ready: false,
+      reason: `Pagamento ${payment.id} com status não liquidado ('${payment.status}'). Esperado CONFIRMED ou RECEIVED.`,
+    };
+  }
+
+  if (!transition.early_activation_provider_payment_id || transition.early_activation_provider_payment_id !== payment.id) {
+    return {
+      ready: false,
+      reason: `ID do pagamento fornecido ('${payment.id}') diverge do registrado na transição ('${transition.early_activation_provider_payment_id}').`,
+    };
+  }
+
+  if (!transaction) {
+    return {
+      ready: false,
+      reason: 'Registro canônico de BillingTransaction ausente.',
+    };
+  }
+
+  const expectedTxId = `${transition.provider}_${payment.id}`;
+  if (transaction.id !== expectedTxId) {
+    return {
+      ready: false,
+      reason: `ID da BillingTransaction ('${transaction.id}') diverge do esperado ('${expectedTxId}').`,
+    };
+  }
+
+  if (transaction.transaction_type !== 'prorated_early_activation_adjustment') {
+    return {
+      ready: false,
+      reason: `Tipo da transação ('${transaction.transaction_type}') inválido (esperado 'prorated_early_activation_adjustment').`,
+    };
+  }
+
+  const expectedAmountCents =
+    transition.current_early_activation_quote?.prorated_adjustment_cents ||
+    transition.prorated_adjustment_cents ||
+    0;
+
+  if (transaction.amount_cents !== expectedAmountCents || payment.amountCents !== expectedAmountCents) {
+    return {
+      ready: false,
+      reason: `Valor da transação (${transaction.amount_cents}¢) ou do pagamento (${payment.amountCents}¢) diverge do ajuste contratado (${expectedAmountCents}¢).`,
+    };
+  }
+
+  const authoritativePaidDate = transaction.paid_billing_date || payment.paidBillingDate;
+  if (!authoritativePaidDate) {
+    return {
+      ready: false,
+      reason: 'Data civil financeira autoritativa de liquidação (paid_billing_date) ausente na transação e no pagamento.',
+    };
+  }
+
+  if (!attempt || attempt.status !== 'completed') {
+    return {
+      ready: false,
+      reason: `Tentativa de checkout ausente ou não concluída (status: '${attempt?.status}').`,
+    };
+  }
+
+  if (transition.current_early_activation_checkout_attempt_id && attempt.attempt_id !== transition.current_early_activation_checkout_attempt_id) {
+    return {
+      ready: false,
+      reason: `ID da tentativa ('${attempt.attempt_id}') diverge do registrado na transição ('${transition.current_early_activation_checkout_attempt_id}').`,
+    };
+  }
+
+  if (!runtimeSubscription) {
+    return {
+      ready: false,
+      reason: 'Assinatura em runtime (MinistrySubscription) ausente.',
+    };
+  }
+
+  if (
+    runtimeSubscription.plan_id !== transition.target_plan_id ||
+    runtimeSubscription.member_addon_blocks !== transition.target_addon_blocks
+  ) {
+    return {
+      ready: false,
+      reason: `Entitlements do runtime (plano: '${runtimeSubscription.plan_id}', blocos: ${runtimeSubscription.member_addon_blocks}) divergem do target_entitlement_snapshot contratado (plano: '${transition.target_plan_id}', blocos: ${transition.target_addon_blocks}).`,
+    };
+  }
+
+  if (
+    transition.current_period_start &&
+    runtimeSubscription.current_period_start &&
+    runtimeSubscription.current_period_start !== transition.current_period_start
+  ) {
+    return {
+      ready: false,
+      reason: `Data inicial do ciclo corrente (${runtimeSubscription.current_period_start}) foi indevidamente modificada (esperado: ${transition.current_period_start}).`,
+    };
+  }
+
+  if (
+    transition.current_period_end &&
+    runtimeSubscription.current_period_end &&
+    runtimeSubscription.current_period_end !== transition.current_period_end
+  ) {
+    return {
+      ready: false,
+      reason: `Data final do ciclo corrente (${runtimeSubscription.current_period_end}) foi indevidamente modificada (esperado: ${transition.current_period_end}).`,
     };
   }
 

@@ -195,12 +195,16 @@ export interface BillingEarlyActivationQuote {
   ministry_id: string;
   source_current_cycle_total_cents: number;
   target_current_cycle_total_cents: number;
+  price_delta_cents?: number;
+  total_days?: number;
+  remaining_days?: number;
   prorated_adjustment_cents: number;
   currency: 'BRL';
   priced_at: string;
   quote_effective_billing_date: string;
   expires_at: string;
   status: BillingEarlyActivationQuoteStatus;
+  calculation_version?: 'proration_v1';
 }
 
 export type BillingCheckoutAttemptType = 'initial_purchase' | 'future_authorization' | 'early_activation';
@@ -213,6 +217,13 @@ export type BillingCheckoutAttemptStatus =
   | 'uncertain'
   | 'uncertain_expired';
 
+export type BillingCheckoutAttemptFailureClassification =
+  | 'creation_failed_before_provider_obligation'
+  | 'payment_declined_in_session'
+  | 'session_expired'
+  | 'session_canceled'
+  | 'unknown';
+
 export interface BillingCheckoutAttempt {
   attempt_id: string;
   transition_id: string;
@@ -224,6 +235,9 @@ export interface BillingCheckoutAttempt {
   amount_cents: number;
   currency: 'BRL';
   status: BillingCheckoutAttemptStatus;
+  failure_classification?: BillingCheckoutAttemptFailureClassification | null;
+  provider_session_terminal?: boolean | null;
+  payment_id?: string | null;
   created_at: string;
   checkout_requested_at?: string | null;
   checkout_minutes_to_expire?: number | null;
@@ -594,6 +608,8 @@ export function validateBillingTransitionV1(data: any): BillingTransitionV1Recor
 
 export type BillingTransactionStatus = 'pending' | 'paid' | 'overdue' | 'refunded' | 'canceled' | 'failed';
 
+export type BillingTransactionType = 'recurring_payment' | 'prorated_early_activation_adjustment';
+
 export interface BillingTransactionRecord {
   id: string; // e.g. `${provider}_${provider_payment_id}`
   ministry_id: string;
@@ -608,6 +624,9 @@ export interface BillingTransactionRecord {
   paid_billing_date?: string | null;
   payment_method?: string | null;
   invoice_url?: string | null;
+  transaction_type?: BillingTransactionType;
+  quote_id?: string | null;
+  attempt_id?: string | null;
   created_at: string;
   updated_at: string;
 }

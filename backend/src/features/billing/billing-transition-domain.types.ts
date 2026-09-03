@@ -187,3 +187,60 @@ export interface PaidToPaidTargetReadyResult {
     | 'DUE_DATE_MISMATCH'
     | 'PAYMENT_STATUS_INVALID';
 }
+
+// ----------------------------------------------------------------------------
+// Phase 3C.1 — Pure Domain Types for Early Activation with Prorated Adjustment
+// ----------------------------------------------------------------------------
+
+export type CapabilityEligibilityClassification = 'pure_upgrade' | 'pure_downgrade' | 'mixed' | 'no_change';
+
+export interface CapabilityEligibilityResult {
+  classification: CapabilityEligibilityClassification;
+  early_activation_eligible: boolean;
+  reason?: string;
+}
+
+export type EarlyAdjustmentFinancialState =
+  | 'no_obligation'
+  | 'financially_live'
+  | 'provider_terminal_unpaid'
+  | 'uncertain'
+  | 'uncertain_expired_unresolved'
+  | 'settled_unconverged'
+  | 'settled_converged'
+  | 'attention_required';
+
+export interface EarlyActivationBoundarySafeResult {
+  safe: boolean;
+  reason?: string;
+  financialState?: EarlyAdjustmentFinancialState;
+}
+
+export interface EarlyActivationCheckoutEligibilityResult {
+  allowed: boolean;
+  reason?: string;
+  financialState?: EarlyAdjustmentFinancialState;
+}
+
+export interface EarlyActivationCompletionGateParams {
+  transition: import('./billing.types').BillingTransitionV1Record;
+  payment: {
+    id: string;
+    status: string;
+    amountCents: number;
+    paidBillingDate?: string | null;
+  };
+  transaction: import('./billing.types').BillingTransactionRecord | null;
+  attempt: import('./billing.types').BillingCheckoutAttempt | null;
+  runtimeSubscription: {
+    plan_id: PlanId;
+    member_addon_blocks: number;
+    current_period_start?: string | null;
+    current_period_end?: string | null;
+  } | null;
+}
+
+export interface EarlyActivationCompletionGateResult {
+  ready: boolean;
+  reason?: string;
+}
