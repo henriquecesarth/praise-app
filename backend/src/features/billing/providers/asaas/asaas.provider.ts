@@ -332,7 +332,12 @@ export class AsaasBillingProvider implements BillingProvider {
           const message =
             errBody?.errors?.[0]?.description ||
             `Falha ao listar cobranças por checkoutSession no Asaas (HTTP ${response.status})`;
-          throw new AppError(400, message);
+          const appErr = new AppError(response.status, message);
+          (appErr as any).statusCode = response.status;
+          (appErr as any).status = response.status;
+          (appErr as any).isProviderResponse = true;
+          (appErr as any).responseBody = errBody;
+          throw appErr;
         }
 
         const data = (await response.json()) as {
@@ -343,6 +348,9 @@ export class AsaasBillingProvider implements BillingProvider {
 
         const items = Array.isArray(data.data) ? data.data : [];
         for (const item of items) {
+          if (!item || typeof item !== 'object' || !item.id || !item.status) {
+            throw new AppError(502, 'Resposta malformada do provedor Asaas: item de cobrança sem id ou status.');
+          }
           const amountCents = providerBrlDecimalToCents(item.value);
 
           allPayments.push({

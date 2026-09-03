@@ -1155,6 +1155,7 @@ export class BillingService {
       supersede_status: currentBillingSub?.status === 'active' && currentBillingSub.provider_subscription_id ? 'pending' : 'not_applicable',
       payment_cleanup_status: currentBillingSub?.status === 'active' && currentBillingSub.provider_subscription_id ? 'pending' : 'not_applicable',
       renewal_cutoff_date: currentBillingSub?.current_period_end ? getBillingDate(currentBillingSub.current_period_end, config.billingTimezone) : null,
+      last_reconciled_at: null,
       created_at: now.toISOString(),
       expires_at: checkoutResult.expiresAt || new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
       updated_at: now.toISOString(),
@@ -4876,6 +4877,382 @@ export class BillingService {
   }
 
   /**
+   * Reconciliador de ativação antecipada com provider checkout ID conhecido (Phase 3C.5A).
+   *
+   * Recupera cobranças via GET /v3/payments?checkoutSession=<checkoutId> e submete
+   * deterministicamente à state machine canônica de liquidação da Phase 3C.4 (processEarlyActivationAdjustmentSettlement).
+   */
+  async reconcilePaidToPaidEarlyActivationAdjustment(
+    transitionId: string,
+    workerId?: string,
+    options?: { nowCommercialDate?: string }
+  ): Promise<{ success: boolean; reason?: string; transition?: BillingTransitionV1Record }> {
+    const now = new Date();
+    const claimed = await this.billingRepo.claimTransitionForReconciliation(
+      transitionId,
+      workerId || `worker_${Date.now()}`,
+      60000
+    );
+
+    if (!claimed) {
+      const current = await this.billingRepo.getTransitionById(transitionId);
+      if (!current) return { success: false, reason: 'transition_not_found' };
+      if (!isBillingTransitionV1(current)) return { success: false, reason: 'not_v1_transition' };
+      if (current.financial_attention_required) return { success: false, reason: 'financial_attention_required' };
+      if (current.early_activation_status === 'activated') {
+        return { success: true, reason: 'already_activated', transition: current };
+      }
+      return { success: false, reason: 'lock_busy' };
+    }
+
+    try {
+      // 1. Elegibilidade da Transição (Seções 4 e 5)
+      if (claimed.financial_attention_required) {
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'financial_attention_required' };
+      }
+
+      if (claimed.execution_strategy !== 'scheduled_paid_transition') {
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'strategy_mismatch' };
+      }
+
+      if (claimed.transition_status !== 'scheduled') {
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: `unexpected_status_${claimed.transition_status}` };
+      }
+
+      if (claimed.early_activation_status === 'activated') {
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: true, reason: 'already_activated', transition: claimed };
+      }
+
+      if (claimed.early_activation_status === 'not_applicable') {
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'early_activation_not_applicable', transition: claimed };
+      }
+
+      // 2. Verificação de Slot Ownership (Seção 6)
+      const activeSlot = await this.billingRepo.getActiveTransitionSlot(claimed.ministry_id, this.provider.name);
+      if (!activeSlot || activeSlot.plan_change_id !== claimed.id) {
+        console.error(
+          `[RECONCILE EARLY ADJUSTMENT] Slot ativo ausente ou divergente para transição ${claimed.id} (ministério: ${claimed.ministry_id})`
+        );
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'active_slot_missing_or_divergent' };
+      }
+
+      // 3. Localização do Attempt Corrente e Checkout ID
+      const attempts = (claimed.checkout_attempts || []).filter(
+        (a) => a.attempt_type === 'early_activation'
+      );
+      const currentAttemptId = claimed.current_early_activation_checkout_attempt_id;
+      const currentAttempt = attempts.find((a) => a.attempt_id === currentAttemptId);
+
+      // Se attempt incerto sem provider_checkout_id -> QUARANTINE (Seção 3)
+      if (currentAttempt && currentAttempt.status === 'uncertain' && !currentAttempt.provider_checkout_id) {
+        console.warn(
+          `[RECONCILE EARLY ADJUSTMENT] Attempt ${currentAttempt.attempt_id} em quarentena incerta sem provider_checkout_id. Zero provider discovery.`
+        );
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: true, reason: 'quarantine_unknown_checkout', transition: claimed };
+      }
+
+      // Identificar checkout conhecido do attempt corrente
+      const knownCheckoutId =
+        currentAttempt?.provider_checkout_id || claimed.early_activation_provider_checkout_id;
+
+      // 4. Verificação de stale attempts com checkout conhecido precisando de reconciliação de ledger (Seção 23)
+      const staleAttemptsWithCheckout = attempts.filter(
+        (a) => a.attempt_id !== currentAttemptId && Boolean(a.provider_checkout_id) && !a.provider_payment_id
+      );
+
+      for (const staleAtt of staleAttemptsWithCheckout) {
+        if (typeof this.provider.listPaymentsByCheckoutSession === 'function') {
+          try {
+            const stalePayments = await this.provider.listPaymentsByCheckoutSession(staleAtt.provider_checkout_id!);
+            const settledStale = (stalePayments || []).filter(
+              (p) => p.status === 'CONFIRMED' || p.status === 'RECEIVED'
+            );
+            if (settledStale.length > 0) {
+              const p = settledStale[0];
+              const synthEvent: ParsedWebhookEvent = {
+                providerEventId: `reconciler_stale_${p.id}_${p.status}`,
+                eventType: p.status === 'RECEIVED' ? 'payment_received' : 'payment_confirmed',
+                rawEventType: p.status === 'RECEIVED' ? 'PAYMENT_RECEIVED' : 'PAYMENT_CONFIRMED',
+                providerPaymentId: p.id,
+                providerCheckoutId: staleAtt.provider_checkout_id ?? undefined,
+                amountCents: p.amountCents,
+                status: p.status as any,
+                confirmedDate: (p as any).confirmedDate || p.clientPaymentDate || p.paymentDate,
+                paymentDate: p.paymentDate,
+                paymentMethod: p.billingType as any,
+                invoiceUrl: p.invoiceUrl,
+              };
+              await this.processEarlyActivationAdjustmentSettlement(synthEvent, claimed, now, options);
+              await this.billingRepo.releasePlanChangeLock(claimed.id);
+              const reloaded = await this.billingRepo.getTransitionById(claimed.id, claimed.ministry_id);
+              return {
+                success: false,
+                reason: 'stale_attempt_settled_recorded',
+                transition: reloaded && isBillingTransitionV1(reloaded) ? reloaded : undefined,
+              };
+            }
+          } catch (staleErr: any) {
+            console.warn(
+              `[RECONCILE EARLY ADJUSTMENT] Erro ao verificar pagamentos do stale checkout ${staleAtt.provider_checkout_id}:`,
+              staleErr?.message
+            );
+          }
+        }
+      }
+
+      if (!knownCheckoutId) {
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: true, reason: 'no_known_checkout_id', transition: claimed };
+      }
+
+      // 5. Consulta ao Provedor via listPaymentsByCheckoutSession (Seções 2, 7, 26, 27)
+      // 5. Consulta ao Provedor via listPaymentsByCheckoutSession (Seções 2, 7, 26, 27)
+      let payments: ProviderPaymentRecord[];
+      try {
+        if (typeof this.provider.listPaymentsByCheckoutSession !== 'function') {
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'provider_method_not_supported' };
+        }
+        payments = await this.provider.listPaymentsByCheckoutSession(knownCheckoutId);
+      } catch (readErr: any) {
+        const statusCode = (readErr as any)?.statusCode || (readErr as any)?.status;
+        const msg = ((readErr as any)?.message || '').toLowerCase();
+        const isAuth401 =
+          statusCode === 401 ||
+          msg.includes('401') ||
+          msg.includes('unauthorized') ||
+          msg.includes('token');
+        const isForbidden403 =
+          statusCode === 403 || msg.includes('403') || msg.includes('forbidden');
+
+        if (isAuth401) {
+          console.error(
+            `[RECONCILE EARLY ADJUSTMENT] Erro operacional de autenticação (401) do provedor para checkout ${knownCheckoutId}:`,
+            readErr?.message
+          );
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'provider_auth_failure_401' };
+        }
+        if (isForbidden403) {
+          console.error(
+            `[RECONCILE EARLY ADJUSTMENT] Erro operacional de permissão (403) do provedor para checkout ${knownCheckoutId}:`,
+            readErr?.message
+          );
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'provider_auth_failure_403' };
+        }
+
+        console.error(
+          `[RECONCILE EARLY ADJUSTMENT] Falha transitória ao consultar pagamentos da sessão ${knownCheckoutId}:`,
+          readErr?.message
+        );
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'provider_read_failure' };
+      }
+
+      // 6. Validação de Malformed Response (Seção 16)
+      if (!Array.isArray(payments)) {
+        console.error(
+          `[RECONCILE EARLY ADJUSTMENT] Resposta malformada do provedor: pagamentos não é um array para checkout ${knownCheckoutId}`
+        );
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'malformed_provider_response' };
+      }
+
+      for (const p of payments) {
+        if (!p || typeof p !== 'object' || !p.id || !p.status) {
+          console.error(
+            `[RECONCILE EARLY ADJUSTMENT] Resposta malformada do provedor: item sem id ou status para checkout ${knownCheckoutId}`
+          );
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'malformed_provider_response' };
+        }
+      }
+
+      // 7. Zero payments encontrados (Seção 8)
+      if (payments.length === 0) {
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: true, reason: 'no_payments_found', transition: claimed };
+      }
+
+      // 8. Filtragem de Candidatos Compatíveis (Matching Payment Set — Seção 3)
+      const matchingPayments = payments.filter((p) => {
+        if (p.customerId && claimed.provider_customer_id && p.customerId !== claimed.provider_customer_id) {
+          return false;
+        }
+        return true;
+      });
+
+      if (matchingPayments.length === 0) {
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: true, reason: 'no_payments_found', transition: claimed };
+      }
+
+      // 9. Cardinalidade > 1: Múltiplos pagamentos compatíveis para a mesma obrigação (Seções 4, 5, 6, 7, 8, 9, 10)
+      if (matchingPayments.length > 1) {
+        console.warn(
+          `[RECONCILE EARLY ADJUSTMENT] Múltiplos pagamentos compatíveis (${matchingPayments.length}) para a sessão ${knownCheckoutId}. Acionando financial attention.`
+        );
+
+        const settledMatching = matchingPayments.filter(
+          (p) => p.status === 'CONFIRMED' || p.status === 'RECEIVED'
+        );
+
+        let txConflictOccurred = false;
+
+        // Todo pagamento settled deve ser registrado no ledger canônico (Seções 5, 6, 7, 9, 10)
+        for (const sp of settledMatching) {
+          const spTxId = `${this.provider.name}_${sp.id}`;
+          const spPaidDate =
+            (sp as any).confirmedDate || sp.clientPaymentDate || sp.paymentDate || getBillingDate(now);
+          const spAmountCents =
+            sp.amountCents ?? claimed.current_early_activation_quote?.prorated_adjustment_cents ?? 0;
+
+          try {
+            await this.billingRepo.saveTransaction({
+              id: spTxId,
+              ministry_id: claimed.ministry_id,
+              provider: this.provider.name,
+              provider_payment_id: sp.id,
+              amount_cents: spAmountCents,
+              currency: 'BRL',
+              status: 'paid',
+              due_date: sp.dueDate || spPaidDate,
+              paid_at: now.toISOString(),
+              paid_billing_date: spPaidDate,
+              payment_method: (sp.billingType as any) || 'CREDIT_CARD',
+              invoice_url: sp.invoiceUrl,
+              transaction_type: 'prorated_early_activation_adjustment',
+              quote_id: claimed.current_early_activation_quote?.quote_id || null,
+              attempt_id: currentAttempt?.attempt_id || claimed.current_early_activation_checkout_attempt_id,
+              created_at: now.toISOString(),
+              updated_at: now.toISOString(),
+            });
+          } catch (txErr: any) {
+            const errCode = txErr instanceof AppError ? (txErr.details as any)?.code : txErr?.code;
+            if (errCode === 'CONFLICTING_FINANCIAL_DATE' || errCode === 'CONFLICTING_FINANCIAL_AMOUNT') {
+              console.error(
+                `[FINANCIAL TRANSACTION CONFLICT] Conflito em transação de cardinalidade ambígua ${spTxId}: ${txErr.message}`
+              );
+              txConflictOccurred = true;
+            } else {
+              throw txErr;
+            }
+          }
+        }
+
+        const attentionReason = txConflictOccurred
+          ? 'FINANCIAL_TRANSACTION_CONFLICT'
+          : 'EARLY_ADJUSTMENT_MULTIPLE_PROVIDER_PAYMENTS';
+
+        await this.billingRepo.updateTransition(claimed.id, claimed.ministry_id, {
+          financial_attention_required: true,
+          financial_attention_reason: attentionReason,
+          financial_safety_status: 'attention_required',
+        });
+
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        const reloaded = await this.billingRepo.getTransitionById(claimed.id, claimed.ministry_id);
+        return {
+          success: false,
+          reason: attentionReason,
+          transition: reloaded && isBillingTransitionV1(reloaded) ? reloaded : undefined,
+        };
+      }
+
+      // 10. Cardinalidade == 1: Exatamente um pagamento unívoco (Seções 9, 11, 12, 13, 14, 15)
+      const singlePayment = matchingPayments[0];
+
+      if (singlePayment.status === 'CONFIRMED' || singlePayment.status === 'RECEIVED') {
+        const synthEvent: ParsedWebhookEvent = {
+          providerEventId: `reconciler_${singlePayment.id}_${singlePayment.status}`,
+          eventType: singlePayment.status === 'RECEIVED' ? 'payment_received' : 'payment_confirmed',
+          rawEventType: singlePayment.status === 'RECEIVED' ? 'PAYMENT_RECEIVED' : 'PAYMENT_CONFIRMED',
+          providerPaymentId: singlePayment.id,
+          providerCheckoutId: knownCheckoutId ?? undefined,
+          amountCents: singlePayment.amountCents,
+          status: singlePayment.status as any,
+          confirmedDate:
+            (singlePayment as any).confirmedDate ||
+            singlePayment.clientPaymentDate ||
+            singlePayment.paymentDate,
+          paymentDate: singlePayment.paymentDate,
+          paymentMethod: singlePayment.billingType as any,
+          invoiceUrl: singlePayment.invoiceUrl,
+        };
+
+        const settlementResult = await this.processEarlyActivationAdjustmentSettlement(
+          synthEvent,
+          claimed,
+          now,
+          options
+        );
+
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        const reloaded = await this.billingRepo.getTransitionById(claimed.id, claimed.ministry_id);
+        return {
+          success:
+            settlementResult.processed &&
+            settlementResult.reason === 'early_activation_settled_and_promoted',
+          reason: settlementResult.reason,
+          transition: reloaded && isBillingTransitionV1(reloaded) ? reloaded : undefined,
+        };
+      }
+
+      // Nenhum pagamento liquidado. Analisar outros status:
+      // Refunded ou Chargeback (Seção 14):
+      if (singlePayment.status === 'REFUNDED' || singlePayment.status === 'CHARGEBACK') {
+        console.warn(
+          `[RECONCILE EARLY ADJUSTMENT] Pagamento ${singlePayment.id} com status de reversão ${singlePayment.status}. Acionando financial attention.`
+        );
+        await this.billingRepo.updateTransition(claimed.id, claimed.ministry_id, {
+          financial_attention_required: true,
+          financial_attention_reason: 'EARLY_ADJUSTMENT_PAYMENT_REFUNDED',
+          financial_safety_status: 'attention_required',
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        const reloaded = await this.billingRepo.getTransitionById(claimed.id, claimed.ministry_id);
+        return {
+          success: false,
+          reason: 'EARLY_ADJUSTMENT_PAYMENT_REFUNDED',
+          transition: reloaded && isBillingTransitionV1(reloaded) ? reloaded : undefined,
+        };
+      }
+
+      // Pending (Seção 12):
+      if (singlePayment.status === 'PENDING') {
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: true, reason: 'payment_pending', transition: claimed };
+      }
+
+      // Overdue (Seção 13):
+      if (singlePayment.status === 'OVERDUE') {
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: true, reason: 'payment_overdue', transition: claimed };
+      }
+
+      // Status desconhecido (Seção 15):
+      console.warn(
+        `[RECONCILE EARLY ADJUSTMENT] Status de pagamento desconhecido retornado para sessão ${knownCheckoutId}:`,
+        singlePayment.status
+      );
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: false, reason: 'unknown_payment_status', transition: claimed };
+    } catch (err: any) {
+      console.error(`[RECONCILE EARLY ADJUSTMENT] Falha inesperada ao reconciliar transição ${transitionId}:`, err);
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: false, reason: err.message };
+    }
+  }
+
+  /**
    * Determina se um evento de webhook pertence ao subfluxo de early activation (adjustment avulso).
    * Distingue com segurança o adjustment da renovação futura (future_provider_payment_id / target subscription).
    */
@@ -5017,6 +5394,12 @@ export class BillingService {
     const nowIso = now.toISOString();
     const currentCommercialDate =
       options?.nowCommercialDate || getBillingDate(now, config.billingTimezone);
+
+    // Reler a transição mais fresca para garantir idempotência em caso de concorrência
+    const freshStart = await this.billingRepo.getTransitionById(planChange.id, planChange.ministry_id);
+    if (freshStart && isBillingTransitionV1(freshStart)) {
+      planChange = freshStart;
+    }
 
     // 0. Se a transição já estiver completed, idempotência terminal
     if (planChange.transition_status === 'completed') {
@@ -5706,6 +6089,12 @@ export class BillingService {
     if (!freshTr || !isBillingTransitionV1(freshTr)) {
       throw new AppError(404, 'Transição não encontrada após registro de liquidação.');
     }
+    if (freshTr.early_activation_status === 'activated') {
+      if (parsedEvent?.providerEventId) {
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      }
+      return { status: 'ok', processed: true, reason: 'already_activated' };
+    }
 
     // 11. Aplicar target_entitlement_snapshot imutável no runtime (SubscriptionService) (Seções 17 e 18)
     const targetSnapshot = freshTr.target_entitlement_snapshot || {
@@ -5719,11 +6108,24 @@ export class BillingService {
       effective_song_quota: getEffectiveSongQuota(getPlanDefinition(freshTr.target_plan_id)),
     };
 
-    if (typeof (this.subscriptionService as any).applyLockedEntitlementSnapshot === 'function') {
-      await (this.subscriptionService as any).applyLockedEntitlementSnapshot(ministryId, targetSnapshot);
-    } else {
-      await this.subscriptionService.changePlan(ministryId, freshTr.target_plan_id);
-      await this.subscriptionService.changeMemberAddonBlocks(ministryId, freshTr.target_addon_blocks || 0);
+    const preCheckSub = await this.subscriptionRepo.getSubscription(ministryId);
+    const subPlanId = (preCheckSub as any)?.plan_id || (preCheckSub as any)?.planId;
+    const subAddonBlocks = (preCheckSub as any)?.member_addon_blocks ?? (preCheckSub as any)?.addonBlocks ?? 0;
+    const subMemberQuota = (preCheckSub as any)?.locked_member_quota ?? (preCheckSub as any)?.memberQuota;
+
+    const alreadyApplied =
+      Boolean(preCheckSub) &&
+      subPlanId === targetSnapshot.plan_id &&
+      subAddonBlocks === targetSnapshot.addon_blocks &&
+      subMemberQuota === targetSnapshot.effective_member_quota;
+
+    if (!alreadyApplied) {
+      if (typeof (this.subscriptionService as any).applyLockedEntitlementSnapshot === 'function') {
+        await (this.subscriptionService as any).applyLockedEntitlementSnapshot(ministryId, targetSnapshot);
+      } else {
+        await this.subscriptionService.changePlan(ministryId, freshTr.target_plan_id);
+        await this.subscriptionService.changeMemberAddonBlocks(ministryId, freshTr.target_addon_blocks || 0);
+      }
     }
 
     // 12. Convergir MinistrySubscription preservando o período comercial original (Seção 3 & 19)

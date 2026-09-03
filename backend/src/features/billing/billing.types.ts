@@ -169,6 +169,7 @@ export interface LegacyBillingPlanChangeRecord {
   renewal_cutoff_date?: string | null;
   retry_count?: number;
   last_retry_at?: string | null;
+  last_reconciled_at?: string | null;
   next_retry_at?: string | null;
   retry_locked_until?: string | null;
   retry_locked_by?: string | null;
@@ -373,6 +374,7 @@ export interface BillingTransitionV1Record {
   target_promoted_at?: string | null;
   retry_count?: number;
   last_retry_at?: string | null;
+  last_reconciled_at?: string | null;
   next_retry_at?: string | null;
   retry_locked_until?: string | null;
   retry_locked_by?: string | null;

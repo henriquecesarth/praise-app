@@ -696,20 +696,66 @@ Para garantir as invariantes **No Two Live Renewals**, **No Unsafe Zero Renewals
                 - Zero refund automático;
                 - A atenção financeira não resolvida bloqueia qualquer convergência automática posterior de pagamentos do `att_current`.
             - **Materialização e Liquidação após Ativação**: Se a transição já está `activated` e chega um pagamento real em checkout histórico, o entitlement permanece intacto em `activated` (não regride), a `BillingTransaction` do pagamento stale é registrada, aciona `financial_attention_required = true`, slot é mantido `HELD`, zero refund e zero segunda ativação.
-          - **Phase 3C.5 Provider Recovery Contract (Documented for Future Phase)**:
-            - **Known Checkout ID**: Reconciliação via `GET /v3/payments?checkoutSession=<checkoutId>` (`listPaymentsByCheckoutSession(checkoutId)`). Permite correlacionar pagamentos do checkout e invocar idempotentemente `processEarlyActivationAdjustmentSettlement`.
-            - **Unknown Checkout ID (após OUTCOME_UNCERTAIN)**: O gateway Asaas **NÃO** disponibiliza discovery por GET/externalReference. A recuperação é permitida **unicamente** via webhook oficial `CHECKOUT_CREATED` contendo `externalReference` correlacionável ao `internal_checkout_intent_id`. Na ausência de webhook, a tentativa permanece em quarentena / gap de reconciliação. **Zero blind retry**.
-            - **Phase 3C.5 continua: NOT STARTED**.
-          - **Uncertain Create Webhook Recovery: IMPLEMENTED**: Tentativa em `OUTCOME_UNCERTAIN` correlacionada por `externalReference` comuta para `pending` com checkout ID write-once, sem novo POST cego, e liquida via `PAYMENT_CONFIRMED`.
-          - **Integração com Carência (Grace Scenario)**:
-            - Se o pagamento da renovação futura falhar na fronteira após ativação antecipada, a carência entra capturando o snapshot vigente lido no runtime (`essential`), garantindo que o ministério usufrua das cotas do plano alvo ativado antecipadamente sem regredir para a origem.
+          - **Phase 3C.5A — Early Activation Known-Checkout Reconciliation Worker & Reconciler Fairness, Pagination & Starvation Hardening: COMPLETE & TEST MATRIX VALIDATED**:
+            - **Known Checkout ID Contract**: Reconciliação via `GET /v3/payments?checkoutSession=<checkoutId>` (`this.provider.listPaymentsByCheckoutSession(checkoutId)`).
+            - **Isolamento de State Machine**: O reconciliador e o webhook compartilham deterministicamente a mesma state machine da Phase 3C.4 (`processEarlyActivationAdjustmentSettlement`).
+            - **Slot Ownership Gate**: Antes de conceder entitlement ou processar liquidação, confirma que o active transition slot ainda pertence à mesma transição. Se ausente ou divergente, recusa ativação (fail closed).
+            - **Unknown Checkout ID Quarantine**: Tentativas com status `uncertain` e sem `provider_checkout_id` permanecem estritamente em quarentena (`quarantine_unknown_checkout`). A recuperação permanece exclusivamente condicionada a webhook confiável `CHECKOUT_CREATED` com `externalReference`. Zero criação de checkout e zero blind retry.
+            - **Zero Payments Result**: Se a listagem retornar vazia, a transição é mantida em seu estado atual, slot `HELD`, sem atenção espúria.
+            - **Multiple Provider Payments Financial Model**:
+              - *MULTIPLE PROVIDER PAYMENT RECORDS FOR ONE DETACHED OBLIGATION ARE A FINANCIAL SAFETY CONFLICT*.
+              - *SETTLED MEMBERS OF AN AMBIGUOUS SET ARE STILL LEDGER FACTS*: A existência de múltiplos pagamentos torna o entitlement ambíguo, mas pagamentos reais liquidados no gateway são fatos históricos imutáveis e devem ser gravados no ledger canônico como `BillingTransaction` (`${provider}_${provider_payment_id}`).
+              - Conjunto ambíguo (2 settled, 1 settled + 1 pending, 2 pending) aciona `financial_attention_required = true` com motivo `EARLY_ADJUSTMENT_MULTIPLE_PROVIDER_PAYMENTS` (ou `FINANCIAL_TRANSACTION_CONFLICT`), slot `HELD`, **zero automatic entitlement** e **zero auto-refund**.
+            - **Ledger Idempotency**: Ciclos repetidos do worker mantêm exatamente 1 `BillingTransaction` por `provider_payment_id`. A evolução de `CONFIRMED` para `RECEIVED` de uma mesma cobrança atualiza o registro sem duplicar linhas.
+            - **Provider Read Failure Classification**:
+              - *Falhas Transitórias* (timeout, network, 5xx): `provider_read_failure`, sem mutação de estado, sem ativação, permite novo ciclo.
+              - *Falhas Permanentes/Autenticação* (401, 403, contract): `provider_auth_failure_401` ou `provider_auth_failure_403`, erro operacional explícito distinguível, sem mutação financeira, no entitlement, slot `HELD`.
+              - *Respostas Malformadas*: `malformed_provider_response`, fail closed, erro operacional.
+            - **Reconciler Fairness, Pagination & Starvation Freedom (Section 27 & Legacy Hardening)**:
+              - *LIMIT IS NOT PAGINATION*: Bounding simples `.limit(20)` e `.slice(0, 20)` sem cursor de ordenação progressiva causa starvation permanente de registros além da 20ª posição.
+              - *REQUIRED PROPERTY*: Para qualquer transition financeiramente viva e elegível para reconciliação: se o worker continuar executando e a transição continuar elegível, ela deve eventualmente receber uma tentativa de reconciliação em $\lceil N / 20 \rceil$ ciclos ($N$ candidatos elegíveis -> eventualmente todos reconciliados).
+              - *Legacy Compatibility Invariant*: Transições legadas sem `last_reconciled_at` (campo ausente/inexistente) permanecem 100% reconciliáveis. No comparador determinístico canônico, `missing` e `null` são tratados como equivalentes exatos a `never reconciled` (timestamp `0`), recebendo máxima prioridade sobre qualquer registro já recentemente reconciliado.
+              - *Bounded Legacy Normalization Pass with Durable Cursor*:
+                - No início de cada ciclo do `BillingReconcilerWorker`, executa-se `normalizeLegacyTransitionsWithoutScheduling('asaas', 50)`.
+                - Varredura estritamente ordenada por Document ID (`__name__ ASC`) com limite fixo de 50 leituras por ciclo.
+                - Cursor durável persistido em `billing_schedulers/normalization_{provider}`: sobrevive a crashes e restarts de workers.
+                - Elimina starvation no discovery: lotes já normalizados não bloqueiam a varredura e avanço para os documentos legados subsequentes.
+                - Wrap controlado: ao atingir o fim da faixa (`docs.length < remainingLimit`), o cursor do scope é reiniciado para `null` para recomeçar em ciclos futuros, sem hot-loop.
+                - At-least-once safety: grava a normalização primeiro e persiste o avanço do cursor depois.
+                - Fresh transaction check: verifica atomicamente no Firestore se `last_reconciled_at === undefined` antes de gravar `null`, garantindo que NUNCA sobrescreve um timestamp real de agendamento.
+                - Zero business mutation & zero updated_at mutation: grava exclusivamente `last_reconciled_at: null`, mantendo `updated_at`, valores, cotações e status estritamente intactos.
+                - Novas transições geradas pelo sistema já nascem com `last_reconciled_at: null` por padrão.
+                - Normalization bound: max 50 reads/ciclo; Reconciliation bound: max 20 candidatos/ciclo.
+              - *Unified Modern LRR Query*:
+                - `.where('provider', '==', provider).where('transition_status', '==', status).orderBy('last_reconciled_at', 'asc').orderBy('__name__', 'asc').limit(limitCount)`;
+                - No Firestore, `null` é indexado como o menor valor primitivo e assume o topo absoluto da fila (`never reconciled = prioridade máxima`);
+                - Sem dependência de `created_at` na query do banco de dados, blindando transições históricas contra missing-field exclusions do Firestore.
+              - *Least Recently Reconciled (LRR) Canonical FIFO Scheduling*:
+                1. `last_reconciled_at ASC` (missing/null tratados como `0`);
+                2. `created_at ASC` (desempate determinístico em memória);
+                3. `id ASC` (tiebreak estável lexicográfico inviolável).
+              - *Single Authority de Scheduling no Claim*:
+                - `last_reconciled_at` é gravado atomicamente no `claimTransitionForReconciliation` e `claimPlanChangeForRetry` como autoridade soberana de oportunidade de reconciliação;
+                - `releasePlanChangeLock` não mutaciona `last_reconciled_at`, prevenindo que a latência de chamadas externas de rede afete o agendamento.
+              - *Multi-Bucket Fair Round-Robin Interleaving*: A seleção de candidatos distribui 1 vaga por bucket a cada rodada até atingir `limitCount = 20`.
+              - *Financial Attention Does Not Pin Queue*: Registros com `financial_attention_required === true` são isolados pelo `filterHealthy`, operando exclusivamente no bucket `attention` sem bloquear as transições sadias.
+              - *Multi-Worker CAS Safety*: Concorrência transacional segura com claims simultâneos falhando benignamente via CAS lock.
+              - *Durable Progress Over Restarts*: Progresso durável persistido no Firestore sobrevivendo a crashes e restarts de workers.
+              - *Firestore Composite Indexes Versionados*: Exatamente 2 composite indexes versionados em `backend/firestore.indexes.json` e validados por teste estático:
+                1. `(provider ASC, transition_status ASC, last_reconciled_at ASC, __name__ ASC)`
+                2. `(provider ASC, financial_attention_required ASC, last_reconciled_at ASC, __name__ ASC)`
+            - **Batch Failure Isolation**: Falhas operacionais ou de autenticação em uma transição do lote não impedem a reconciliação e ativação bem-sucedida de outras transições sadias do lote.
+            - **Uncertain Create Webhook Recovery: IMPLEMENTED**: Tentativa em `OUTCOME_UNCERTAIN` correlacionada por `externalReference` comuta para `pending` com checkout ID write-once, sem novo POST cego, e liquida via `PAYMENT_CONFIRMED`.
+            - **Integração com Carência (Grace Scenario)**:
+              - Se o pagamento da renovação futura falhar na fronteira após ativação antecipada, a carência entra capturando o snapshot vigente lido no runtime (`essential`), garantindo que o ministério usufrua das cotas do plano alvo ativado antecipadamente sem regredir para a origem.
       - **Status das Próximas Fases**:
       - **PHASE 3C EARLY ACTIVATION**:
         - **Phase 3C.1 (Domain, Eligibility & Proration)**: **COMPLETE**.
         - **Phase 3C.2 (Detached Checkout Preparation & Hardening)**: **COMPLETE**.
         - **Phase 3C.3 (Tenant-Scoped Early Activation API & Final Hardening)**: **COMPLETE**.
         - **Phase 3C.4 (Adjustment Settlement, Idempotent Webhook & Immediate Entitlement Convergence)**: **COMPLETE & HARDENED**.
-        - **Phase 3C.5 (Early Activation Reconciliation & Recovery Worker)**: **NOT STARTED**.
+        - **Phase 3C.5A (Early Activation Known-Checkout Reconciliation Worker & Final Hardening)**: **COMPLETE & TEST MATRIX VALIDATED**.
+        - **Phase 3C.5B (Checkout Expiry / Cancellation Cleanup)**: **NOT STARTED**.
         - **Sandbox Homologation for Early Activation**: **NOT STARTED**.
       - **PAID -> FREE TRANSITIONS**: **NOT STARTED**.
-      - *(O escopo concluído compreende as fases 3B.1, 3B.2, 3B.3A, 3B.3B, 3B.3 Webhook Terminality Hardening, 3C.1, 3C.2, 3C.3 e 3C.4)*.
+      - *(O escopo concluído compreende as fases 3B.1, 3B.2, 3B.3A, 3B.3B, 3B.3 Webhook Terminality Hardening, 3C.1, 3C.2, 3C.3, 3C.4 e 3C.5A)*.

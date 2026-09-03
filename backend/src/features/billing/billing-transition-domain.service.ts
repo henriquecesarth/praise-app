@@ -643,6 +643,7 @@ export function buildBillingTransitionV1Record(
     requested_commercial_date: getBillingDate(commercialSnapshot.price_locked_at, BILLING_TIMEZONE_DEFAULT),
     price_locked_at: commercialSnapshot.price_locked_at,
     requested_at: commercialSnapshot.price_locked_at,
+    last_reconciled_at: null,
     created_at: nowIso,
     updated_at: nowIso,
     expires_at: expiresAt,

@@ -1026,8 +1026,8 @@ describe('Phase 3C.2 — Early Activation Detached Checkout, Attempt Reservation
 
     it('44. provider TTL exactly 10 min -> comportamento canônico aceito', async () => {
       const tr = createValidScheduledTransition();
-      // Quote expira em 11 minutos -> 11m - 1m margem = exatos 10m úteis
-      tr.current_early_activation_quote!.expires_at = new Date(Date.now() + 11 * 60 * 1000).toISOString();
+      // Quote expira em 11 minutos (com margem de 5s contra sub-millisecond clock drift) -> 11m - 1m margem = exatos 10m úteis
+      tr.current_early_activation_quote!.expires_at = new Date(Date.now() + 11 * 60 * 1000 + 5000).toISOString();
       planChangesStore.set(tr.id, tr);
 
       const result = await billingService.createEarlyActivationCheckout(

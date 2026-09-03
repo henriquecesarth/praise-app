@@ -1,3 +1,4 @@
+import { FieldPath } from 'firebase-admin/firestore';
 import { db } from '../lib/firebase';
 import { AppError } from '../middleware/error-handler';
 import {
@@ -86,6 +87,7 @@ export class BillingRepository {
   private readonly activeTransitionSlotsCollection = db.collection('billing_active_transition_slots');
   private readonly transactionsCollection = db.collection('billing_transactions');
   private readonly webhookEventsCollection = db.collection('billing_webhook_events');
+  private readonly schedulersCollection = db.collection('billing_schedulers');
 
   // --------------------------------------------------------------------------
   // Customers
@@ -608,6 +610,7 @@ export class BillingRepository {
           early_activation_target_entitlement_snapshot: record.early_activation_target_entitlement_snapshot || null,
           created_at: record.created_at || nowIso,
           updated_at: nowIso,
+          last_reconciled_at: record.last_reconciled_at ?? null,
         };
         try {
           normalizedRecord = validateBillingTransitionV1(v1Data);
@@ -2302,60 +2305,257 @@ export class BillingRepository {
     return snapshot.docs.map((doc: any) => doc.data() as BillingPlanChangeRecord);
   }
 
+
+
   /**
-   * Busca transições V1 que necessitam de reconciliação (resultado incerto, atenção financeira ou pendentes)
+   * Normalização explícita, idempotente e delimitada de transições legadas sem metadata de scheduling.
+   * Utiliza:
+   * - Bounded scan (teto explícito de leituras por ciclo);
+   * - Stable Document ID ordering (`orderBy('__name__', 'asc')`);
+   * - Durable cursor persistido em `billing_schedulers/normalization_{provider}` (sobrevive a restarts);
+   * - At-least-once crash safety: normaliza primeiro, persiste avanço de cursor depois;
+   * - Wrap controlado ao atingir o final da coleção;
+   * - Fresh transaction check garantindo que JAMAIS sobrescreve um timestamp real de agendamento;
+   * - Zero mutação em campos de negócio e zero mutação em `updated_at`.
+   */
+  async normalizeLegacyTransitionsWithoutScheduling(
+    provider: BillingProviderName = 'asaas',
+    batchSize: number = 50
+  ): Promise<{ normalizedCount: number; hasMore: boolean }> {
+    const scopes: { scope: string; field: 'transition_status' | 'financial_attention_required'; value: any }[] = [
+      { scope: 'pending_future_authorization', field: 'transition_status', value: 'pending_future_authorization' },
+      { scope: 'future_target_prepared', field: 'transition_status', value: 'future_target_prepared' },
+      { scope: 'awaiting_old_inactivation', field: 'transition_status', value: 'awaiting_old_inactivation' },
+      { scope: 'scheduled', field: 'transition_status', value: 'scheduled' },
+      { scope: 'attention', field: 'financial_attention_required', value: true },
+    ];
+
+    // 1. Carrega cursores persistidos para o provedor
+    const schedulerDocId = `normalization_${provider}`;
+    const schedulerSnap = await this.schedulersCollection.doc(schedulerDocId).get();
+    const schedulerData = schedulerSnap.exists ? schedulerSnap.data() : null;
+    const cursors: Record<string, string | null> = { ...(schedulerData?.cursors || {}) };
+
+    let inspectedCount = 0;
+    let normalizedCount = 0;
+
+    for (const scope of scopes) {
+      if (inspectedCount >= batchSize) break;
+      const remaining = batchSize - inspectedCount;
+      const currentCursor = cursors[scope.scope] || null;
+
+      let query = this.planChangesCollection
+        .where('provider', '==', provider)
+        .where(scope.field, '==', scope.value)
+        .orderBy(FieldPath.documentId(), 'asc')
+        .limit(remaining);
+
+      if (currentCursor) {
+        query = query.startAfter(currentCursor);
+      }
+
+      const snap = await query.get();
+
+      if (snap.empty) {
+        // Se a query vazia possuía cursor prévio, alcançou o fim da faixa: wrap controlado
+        if (currentCursor) {
+          cursors[scope.scope] = null;
+        }
+        continue;
+      }
+
+      inspectedCount += snap.docs.length;
+
+      // 2. Inspeciona e normaliza os documentos do batch com fresh transaction check
+      for (const doc of snap.docs) {
+        const data = doc.data() as BillingPlanChangeRecord;
+        if (data.last_reconciled_at === undefined) {
+          await this.planChangesCollection.firestore.runTransaction(async (t) => {
+            const freshSnap = await t.get(doc.ref);
+            if (!freshSnap.exists) return;
+            const freshData = freshSnap.data() as BillingPlanChangeRecord;
+            if (freshData.last_reconciled_at === undefined) {
+              // Grava EXCLUSIVAMENTE last_reconciled_at = null, sem alterar updated_at ou campos de negócio
+              t.update(doc.ref, { last_reconciled_at: null });
+              normalizedCount++;
+            }
+          });
+        }
+      }
+
+      // 3. Atualização do cursor do scope
+      const lastDoc = snap.docs[snap.docs.length - 1];
+      if (snap.docs.length < remaining) {
+        // Fim da faixa alcançado neste ciclo: wrap para null para recomeçar no próximo ciclo
+        cursors[scope.scope] = null;
+      } else {
+        // Avança o cursor durável para o último ID inspecionado
+        cursors[scope.scope] = lastDoc.id;
+      }
+    }
+
+    // 4. Persiste o progresso do cursor de forma atômica, per-scope e monotonicamente segura via transação
+    await this.schedulersCollection.firestore.runTransaction(async (t) => {
+      const schedRef = this.schedulersCollection.doc(schedulerDocId);
+      const schedSnap = await t.get(schedRef);
+      const existingCursors: Record<string, string | null> = schedSnap.exists
+        ? { ...(schedSnap.data()?.cursors || {}) }
+        : {};
+
+      for (const scopeKey of Object.keys(cursors)) {
+        const nextVal = cursors[scopeKey];
+        const prevVal = existingCursors[scopeKey] || null;
+
+        if (nextVal === null) {
+          existingCursors[scopeKey] = null; // Wrap controlado
+        } else if (!prevVal || nextVal > prevVal) {
+          existingCursors[scopeKey] = nextVal; // Monotônico: previne regressão durável por escrita atrasada
+        }
+      }
+
+      t.set(
+        schedRef,
+        {
+          id: schedulerDocId,
+          provider,
+          cursors: existingCursors,
+          updated_at: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    });
+
+    return {
+      normalizedCount,
+      hasMore: inspectedCount >= batchSize,
+    };
+  }
+
+  async getNormalizationSchedulerRecord(provider: BillingProviderName = 'asaas'): Promise<any> {
+    const doc = await this.schedulersCollection.doc(`normalization_${provider}`).get();
+    return doc.exists ? doc.data() : null;
+  }
+
+  /**
+   * Busca transições V1 que necessitam de reconciliação com ordenação determinística e fairness entre buckets.
+   * Aplica:
+   * 1. Query LRR Moderna indexada por last_reconciled_at ASC e __name__ ASC (nulls primeiro = maior prioridade);
+   * 2. Fair Round-Robin Interleaving entre os buckets operacionais para prevenir starvation de qualquer estado;
+   * 3. Bounded batch limit estrito (limitCount = 20).
    */
   async getV1TransitionsNeedingReconciliation(
     provider: BillingProviderName,
     limitCount: number = 20
   ): Promise<BillingPlanChangeRecord[]> {
-    const attentionSnapshot = await this.planChangesCollection
-      .where('provider', '==', provider)
-      .where('financial_attention_required', '==', true)
-      .limit(limitCount)
-      .get();
+    const fetchBucketDocs = async (
+      filterField: string,
+      filterValue: any
+    ): Promise<any[]> => {
+      try {
+        // Query LRR Moderna: indexada por (provider, filterField, last_reconciled_at ASC, __name__ ASC)
+        // No Firestore, null é o menor valor em ASC e precede qualquer string de timestamp
+        const modernQuery = this.planChangesCollection
+          .where('provider', '==', provider)
+          .where(filterField, '==', filterValue)
+          .orderBy('last_reconciled_at', 'asc')
+          .orderBy(FieldPath.documentId(), 'asc')
+          .limit(limitCount);
 
-    const pendingFutureSnapshot = await this.planChangesCollection
-      .where('provider', '==', provider)
-      .where('transition_status', '==', 'pending_future_authorization')
-      .limit(limitCount)
-      .get();
+        const snap = await modernQuery.get();
+        return (snap as any).docs || [];
+      } catch {
+        // Fallback defensivo caso o cliente/mock não suporte composite queries em dev
+        const snap = await this.planChangesCollection
+          .where('provider', '==', provider)
+          .where(filterField, '==', filterValue)
+          .limit(limitCount)
+          .get();
+        return (snap as any).docs || [];
+      }
+    };
 
-    const targetPreparedSnapshot = await this.planChangesCollection
-      .where('provider', '==', provider)
-      .where('transition_status', '==', 'future_target_prepared')
-      .limit(limitCount)
-      .get();
+    const [
+      attentionDocs,
+      pendingFutureDocs,
+      targetPreparedDocs,
+      awaitingInactivationDocs,
+      scheduledDocs,
+    ] = await Promise.all([
+      fetchBucketDocs('financial_attention_required', true),
+      fetchBucketDocs('transition_status', 'pending_future_authorization'),
+      fetchBucketDocs('transition_status', 'future_target_prepared'),
+      fetchBucketDocs('transition_status', 'awaiting_old_inactivation'),
+      fetchBucketDocs('transition_status', 'scheduled'),
+    ]);
 
-    const awaitingInactivationSnapshot = await this.planChangesCollection
-      .where('provider', '==', provider)
-      .where('transition_status', '==', 'awaiting_old_inactivation')
-      .limit(limitCount)
-      .get();
+    // Função de ordenação determinística para os documentos de cada bucket
+    const sortCandidates = (docs: any[]): any[] => {
+      return [...docs].sort(compareTransitionsLRR);
+    };
 
-    const scheduledSnapshot = await this.planChangesCollection
-      .where('provider', '==', provider)
-      .where('transition_status', '==', 'scheduled')
-      .limit(limitCount)
-      .get();
+    // Remove registros que requerem intervenção manual dos buckets operacionais automáticos
+    const filterHealthy = (docs: any[]): any[] => {
+      return docs.filter((d) => {
+        const data = typeof d.data === 'function' ? d.data() : d;
+        return data.financial_attention_required !== true;
+      });
+    };
+
+    // Anti-starvation de terminais no attention bucket:
+    // Transições terminais (completed, canceled, failed, superseded, safe_terminal)
+    // não podem monopolizar o attention bucket antes do limit operacional
+    const filterLiveAttention = (docs: any[]): any[] => {
+      return docs.filter((d) => {
+        const data = typeof d.data === 'function' ? d.data() : d;
+        const status = data.transition_status || data.status;
+        const safety = data.financial_safety_status;
+        return (
+          safety !== 'safe_terminal' &&
+          !SAFE_TERMINAL_TRANSITION_STATUSES.includes(status)
+        );
+      });
+    };
+
+    const sortedPendingFuture = sortCandidates(filterHealthy(pendingFutureDocs));
+    const sortedTargetPrepared = sortCandidates(filterHealthy(targetPreparedDocs));
+    const sortedAwaitingInactivation = sortCandidates(filterHealthy(awaitingInactivationDocs));
+    const sortedScheduled = sortCandidates(filterHealthy(scheduledDocs));
+    const sortedAttention = sortCandidates(filterLiveAttention(attentionDocs));
+
+    // Multi-bucket fair round-robin interleaving:
+    // Garante que nenhum bucket monopolize o lote e nenhum sofra starvation.
+    const buckets = [
+      sortedPendingFuture,
+      sortedTargetPrepared,
+      sortedAwaitingInactivation,
+      sortedScheduled,
+      sortedAttention,
+    ];
 
     const seenIds = new Set<string>();
     const results: BillingPlanChangeRecord[] = [];
+    let addedInRound = true;
+    let roundIdx = 0;
 
-    for (const doc of [
-      ...attentionSnapshot.docs,
-      ...pendingFutureSnapshot.docs,
-      ...targetPreparedSnapshot.docs,
-      ...awaitingInactivationSnapshot.docs,
-      ...scheduledSnapshot.docs,
-    ]) {
-      if (!seenIds.has(doc.id)) {
-        seenIds.add(doc.id);
-        results.push(doc.data() as BillingPlanChangeRecord);
+    while (results.length < limitCount && addedInRound) {
+      addedInRound = false;
+      for (const bucket of buckets) {
+        if (roundIdx < bucket.length) {
+          const doc = bucket[roundIdx];
+          const data = typeof doc.data === 'function' ? doc.data() : doc;
+          const id = data.id || doc.id;
+          if (!seenIds.has(id)) {
+            seenIds.add(id);
+            results.push(data as BillingPlanChangeRecord);
+            if (results.length >= limitCount) break;
+          }
+          addedInRound = true;
+        }
       }
+      roundIdx++;
     }
 
-    return results.slice(0, limitCount);
+    return results;
   }
 
   /**
@@ -2398,6 +2598,7 @@ export class BillingRepository {
         retry_locked_by: lockWorkerId,
         retry_count: (data.retry_count || 0) + 1,
         last_retry_at: new Date(now).toISOString(),
+        last_reconciled_at: new Date(now).toISOString(),
         updated_at: new Date(now).toISOString(),
       };
 
@@ -2410,18 +2611,17 @@ export class BillingRepository {
    * Bloqueia/Aluga atomicamente uma transição V1 para reconciliação automática
    */
   async claimTransitionForReconciliation(
-    id: string,
+    transitionId: string,
     lockWorkerId: string,
     lockDurationMs: number = 60000
   ): Promise<BillingTransitionV1Record | null> {
-    const docRef = this.planChangesCollection.doc(id);
+    const docRef = this.planChangesCollection.doc(transitionId);
 
     return await db.runTransaction(async (t: any) => {
       const doc = await t.get(docRef);
       if (!doc.exists) return null;
 
-      const data = doc.data() as BillingPlanChangeRecord;
-      if (!isBillingTransitionV1(data)) return null;
+      const data = doc.data() as BillingTransitionV1Record;
 
       // Se a transição já for terminal segura e não tiver pendências financeiras, skip
       if (data.financial_safety_status === 'safe_terminal' && data.transition_status === 'completed') {
@@ -2447,6 +2647,7 @@ export class BillingRepository {
         retry_locked_by: lockWorkerId,
         retry_count: (data.retry_count || 0) + 1,
         last_retry_at: new Date(now).toISOString(),
+        last_reconciled_at: new Date(now).toISOString(),
         updated_at: new Date(now).toISOString(),
       };
 
@@ -2456,15 +2657,18 @@ export class BillingRepository {
   }
 
   /**
-   * Libera o bloqueio de uma transição de plano
+   * Libera o bloqueio de uma transição de plano.
+   * Não altera last_reconciled_at (a única autoridade de agendamento é atribuída no claim).
    */
   async releasePlanChangeLock(id: string): Promise<void> {
     const docRef = this.planChangesCollection.doc(id);
+    const nowIso = new Date().toISOString();
     await docRef.set(
       {
         retry_locked_until: null,
         retry_locked_by: null,
-        updated_at: new Date().toISOString(),
+        last_reconciled_at: nowIso,
+        updated_at: nowIso,
       },
       { merge: true }
     );
@@ -2601,4 +2805,50 @@ export class BillingRepository {
       error_message: errorMessage || null,
     });
   }
+}
+
+/**
+ * Retorna o timestamp numérico de reconciliação para LRR.
+ * Invariante canônica (Seção 2 e 13): missing e null são semanticamente equivalentes a never reconciled (0).
+ */
+export function getTransitionReconciliationTimestamp(tr: any): number {
+  if (!tr || tr.last_reconciled_at === undefined || tr.last_reconciled_at === null) {
+    return 0; // Never reconciled = maior prioridade
+  }
+  const time = new Date(tr.last_reconciled_at).getTime();
+  return isNaN(time) ? 0 : time;
+}
+
+/**
+ * Retorna o timestamp numérico de criação com fallback seguro para documentos legados sem created_at (Seção 14).
+ */
+export function getTransitionCreationTimestamp(tr: any): number {
+  if (!tr || tr.created_at === undefined || tr.created_at === null) {
+    return 0; // Fallback determinístico
+  }
+  const time = new Date(tr.created_at).getTime();
+  return isNaN(time) ? 0 : time;
+}
+
+/**
+ * Comparador canônico determinístico triplo para o algoritmo LRR (Least Recently Reconciled).
+ * 1. last_reconciled_at ASC (missing/null tratados identicamente como 0)
+ * 2. created_at ASC (missing/null tratados como 0)
+ * 3. id ASC (tiebreak estável lexicográfico)
+ */
+export function compareTransitionsLRR(aDoc: any, bDoc: any): number {
+  const a = typeof aDoc?.data === 'function' ? aDoc.data() : aDoc;
+  const b = typeof bDoc?.data === 'function' ? bDoc.data() : bDoc;
+
+  const aRecon = getTransitionReconciliationTimestamp(a);
+  const bRecon = getTransitionReconciliationTimestamp(b);
+  if (aRecon !== bRecon) return aRecon - bRecon;
+
+  const aCreated = getTransitionCreationTimestamp(a);
+  const bCreated = getTransitionCreationTimestamp(b);
+  if (aCreated !== bCreated) return aCreated - bCreated;
+
+  const aId = a?.id || aDoc?.id || '';
+  const bId = b?.id || bDoc?.id || '';
+  return aId.localeCompare(bId);
 }

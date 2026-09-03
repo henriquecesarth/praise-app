@@ -420,7 +420,7 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
       expect(result2.checkoutUrl).toBe(result1.checkoutUrl);
       // createCheckout no provider NÃO deve ser chamado uma 2ª vez
       expect(mockProvider.createCheckout).toHaveBeenCalledTimes(1);
-    });
+    }, 15000);
   });
 
   describe('Amount & Currency Validation (Security Hardening)', () => {

@@ -63,6 +63,15 @@ export class BillingReconcilerWorker {
     let failed = 0;
 
     try {
+      // 0. Bounded Normalization Pass: normaliza até 50 registros legados por ciclo de forma segura e idempotente
+      if (typeof this.billingRepo.normalizeLegacyTransitionsWithoutScheduling === 'function') {
+        try {
+          await this.billingRepo.normalizeLegacyTransitionsWithoutScheduling('asaas', 50);
+        } catch (normErr: any) {
+          console.error('[BillingReconcilerWorker] Falha não bloqueante na normalização de transições legadas:', normErr);
+        }
+      }
+
       // 1. Reconciliação V1 Initial Purchase
       const v1Needing = await this.billingRepo.getV1TransitionsNeedingReconciliation('asaas', 20);
       for (const item of v1Needing) {
@@ -112,21 +121,50 @@ export class BillingReconcilerWorker {
             item.transition_status === 'scheduled'
           ) {
             processed++;
-            const renewalResult = await this.billingService.reconcilePaidToPaidRenewalSettlement(item.id, this.workerId);
-            if (renewalResult.success) {
-              succeeded++;
-              console.log(
-                `[BillingReconcilerWorker] Transição V1 Scheduled Renewal processada com sucesso: ${item.id} (ministério: ${item.ministry_id}, motivo: ${renewalResult.reason})`
+            // Se possuir early activation pendente (não ativada e aplicável), reconcilia early activation primeiro (Phase 3C.5A)!
+            if (
+              item.early_activation_status &&
+              item.early_activation_status !== 'activated' &&
+              item.early_activation_status !== 'not_applicable'
+            ) {
+              const earlyResult = await this.billingService.reconcilePaidToPaidEarlyActivationAdjustment(
+                item.id,
+                this.workerId
               );
+              if (earlyResult.success) {
+                succeeded++;
+                console.log(
+                  `[BillingReconcilerWorker] Transição V1 Early Activation reconciliada com sucesso: ${item.id} (ministério: ${item.ministry_id}, motivo: ${earlyResult.reason})`
+                );
+              } else {
+                if (
+                  earlyResult.reason !== 'no_payments_found' &&
+                  earlyResult.reason !== 'payment_pending' &&
+                  earlyResult.reason !== 'payment_overdue' &&
+                  earlyResult.reason !== 'quarantine_unknown_checkout' &&
+                  earlyResult.reason !== 'already_activated' &&
+                  earlyResult.reason !== 'stale_attempt_settled_recorded'
+                ) {
+                  failed++;
+                }
+              }
             } else {
-              if (
-                renewalResult.reason !== 'renewal_payment_not_settled' &&
-                renewalResult.reason !== 'early_settlement_recorded_awaiting_boundary' &&
-                renewalResult.reason !== 'boundary_not_reached' &&
-                renewalResult.reason !== 'grace_entered_unpaid' &&
-                renewalResult.reason !== 'grace_expired_restricted'
-              ) {
-                failed++;
+              const renewalResult = await this.billingService.reconcilePaidToPaidRenewalSettlement(item.id, this.workerId);
+              if (renewalResult.success) {
+                succeeded++;
+                console.log(
+                  `[BillingReconcilerWorker] Transição V1 Scheduled Renewal processada com sucesso: ${item.id} (ministério: ${item.ministry_id}, motivo: ${renewalResult.reason})`
+                );
+              } else {
+                if (
+                  renewalResult.reason !== 'renewal_payment_not_settled' &&
+                  renewalResult.reason !== 'early_settlement_recorded_awaiting_boundary' &&
+                  renewalResult.reason !== 'boundary_not_reached' &&
+                  renewalResult.reason !== 'grace_entered_unpaid' &&
+                  renewalResult.reason !== 'grace_expired_restricted'
+                ) {
+                  failed++;
+                }
               }
             }
           }
