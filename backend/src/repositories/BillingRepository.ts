@@ -21,6 +21,7 @@ import {
   BillingCheckoutAttempt,
   BillingCheckoutAttemptFailureClassification,
   BillingEarlyActivationQuote,
+  V1_RECONCILABLE_TRANSITION_STATUSES,
 } from '../features/billing/billing.types';
 import {
   isEarlyAdjustmentObligationFinanciallyLive,
@@ -2323,11 +2324,12 @@ export class BillingRepository {
     batchSize: number = 50
   ): Promise<{ normalizedCount: number; hasMore: boolean }> {
     const scopes: { scope: string; field: 'transition_status' | 'financial_attention_required'; value: any }[] = [
-      { scope: 'pending_future_authorization', field: 'transition_status', value: 'pending_future_authorization' },
-      { scope: 'future_target_prepared', field: 'transition_status', value: 'future_target_prepared' },
-      { scope: 'awaiting_old_inactivation', field: 'transition_status', value: 'awaiting_old_inactivation' },
-      { scope: 'scheduled', field: 'transition_status', value: 'scheduled' },
-      { scope: 'attention', field: 'financial_attention_required', value: true },
+      ...V1_RECONCILABLE_TRANSITION_STATUSES.map((st) => ({
+        scope: st,
+        field: 'transition_status' as const,
+        value: st,
+      })),
+      { scope: 'attention', field: 'financial_attention_required' as const, value: true },
     ];
 
     // 1. Carrega cursores persistidos para o provedor
@@ -2338,11 +2340,12 @@ export class BillingRepository {
 
     let inspectedCount = 0;
     let normalizedCount = 0;
+    const cursorUpdates: Record<string, { expectedStartCursor: string | null; nextCursor: string | null }> = {};
 
     for (const scope of scopes) {
       if (inspectedCount >= batchSize) break;
       const remaining = batchSize - inspectedCount;
-      const currentCursor = cursors[scope.scope] || null;
+      const startCursor = cursors[scope.scope] || null;
 
       let query = this.planChangesCollection
         .where('provider', '==', provider)
@@ -2350,16 +2353,16 @@ export class BillingRepository {
         .orderBy(FieldPath.documentId(), 'asc')
         .limit(remaining);
 
-      if (currentCursor) {
-        query = query.startAfter(currentCursor);
+      if (startCursor) {
+        query = query.startAfter(startCursor);
       }
 
       const snap = await query.get();
 
       if (snap.empty) {
-        // Se a query vazia possuía cursor prévio, alcançou o fim da faixa: wrap controlado
-        if (currentCursor) {
-          cursors[scope.scope] = null;
+        // Se a query vazia possuía cursor prévio, alcançou o fim da faixa: wrap planejado via CAS
+        if (startCursor) {
+          cursorUpdates[scope.scope] = { expectedStartCursor: startCursor, nextCursor: null };
         }
         continue;
       }
@@ -2383,18 +2386,18 @@ export class BillingRepository {
         }
       }
 
-      // 3. Atualização do cursor do scope
+      // 3. Atualização do cursor do scope com Scan-Start CAS
       const lastDoc = snap.docs[snap.docs.length - 1];
       if (snap.docs.length < remaining) {
-        // Fim da faixa alcançado neste ciclo: wrap para null para recomeçar no próximo ciclo
-        cursors[scope.scope] = null;
+        // Fim da faixa alcançado neste ciclo: planeja wrap para null com pré-condição CAS
+        cursorUpdates[scope.scope] = { expectedStartCursor: startCursor, nextCursor: null };
       } else {
         // Avança o cursor durável para o último ID inspecionado
-        cursors[scope.scope] = lastDoc.id;
+        cursorUpdates[scope.scope] = { expectedStartCursor: startCursor, nextCursor: lastDoc.id };
       }
     }
 
-    // 4. Persiste o progresso do cursor de forma atômica, per-scope e monotonicamente segura via transação
+    // 4. Persiste o progresso do cursor de forma atômica, per-scope e com Scan-Start CAS via transação
     await this.schedulersCollection.firestore.runTransaction(async (t) => {
       const schedRef = this.schedulersCollection.doc(schedulerDocId);
       const schedSnap = await t.get(schedRef);
@@ -2402,14 +2405,27 @@ export class BillingRepository {
         ? { ...(schedSnap.data()?.cursors || {}) }
         : {};
 
-      for (const scopeKey of Object.keys(cursors)) {
-        const nextVal = cursors[scopeKey];
-        const prevVal = existingCursors[scopeKey] || null;
+      for (const scopeKey of Object.keys(cursorUpdates)) {
+        const { expectedStartCursor, nextCursor } = cursorUpdates[scopeKey];
+        const currentCursor = existingCursors[scopeKey] || null;
 
-        if (nextVal === null) {
-          existingCursors[scopeKey] = null; // Wrap controlado
-        } else if (!prevVal || nextVal > prevVal) {
-          existingCursors[scopeKey] = nextVal; // Monotônico: previne regressão durável por escrita atrasada
+        if (nextCursor === null) {
+          // WRAP CAS: só pode resetar para null se o cursor persistido no banco
+          // ainda for exatamente aquele de onde este scan iniciou (sem avanço concorrente por outro worker)
+          if (currentCursor === expectedStartCursor) {
+            existingCursors[scopeKey] = null;
+          }
+          // Caso contrário: stale wrap observation (outro worker já avançou o cursor para um valor mais novo); ignora!
+        } else {
+          // FORWARD ADVANCEMENT CAS:
+          // Só avança se o novo cursor for estritamente maior que o cursor persistido atual
+          if (currentCursor === null) {
+            if (expectedStartCursor === null) {
+              existingCursors[scopeKey] = nextCursor;
+            }
+          } else if (nextCursor > currentCursor) {
+            existingCursors[scopeKey] = nextCursor;
+          }
         }
       }
 
@@ -2448,15 +2464,12 @@ export class BillingRepository {
     limitCount: number = 20
   ): Promise<BillingPlanChangeRecord[]> {
     const fetchBucketDocs = async (
-      filterField: string,
-      filterValue: any
+      status: string
     ): Promise<any[]> => {
       try {
-        // Query LRR Moderna: indexada por (provider, filterField, last_reconciled_at ASC, __name__ ASC)
-        // No Firestore, null é o menor valor em ASC e precede qualquer string de timestamp
         const modernQuery = this.planChangesCollection
           .where('provider', '==', provider)
-          .where(filterField, '==', filterValue)
+          .where('transition_status', '==', status)
           .orderBy('last_reconciled_at', 'asc')
           .orderBy(FieldPath.documentId(), 'asc')
           .limit(limitCount);
@@ -2464,28 +2477,45 @@ export class BillingRepository {
         const snap = await modernQuery.get();
         return (snap as any).docs || [];
       } catch {
-        // Fallback defensivo caso o cliente/mock não suporte composite queries em dev
         const snap = await this.planChangesCollection
           .where('provider', '==', provider)
-          .where(filterField, '==', filterValue)
+          .where('transition_status', '==', status)
           .limit(limitCount)
           .get();
         return (snap as any).docs || [];
       }
     };
 
-    const [
-      attentionDocs,
-      pendingFutureDocs,
-      targetPreparedDocs,
-      awaitingInactivationDocs,
-      scheduledDocs,
-    ] = await Promise.all([
-      fetchBucketDocs('financial_attention_required', true),
-      fetchBucketDocs('transition_status', 'pending_future_authorization'),
-      fetchBucketDocs('transition_status', 'future_target_prepared'),
-      fetchBucketDocs('transition_status', 'awaiting_old_inactivation'),
-      fetchBucketDocs('transition_status', 'scheduled'),
+    // Consulta exclusiva de atenção filtrada estritamente por live statuses (previne starvation por terminais antes do limit)
+    const fetchLiveAttentionDocs = async (status: string): Promise<any[]> => {
+      try {
+        const modernQuery = this.planChangesCollection
+          .where('provider', '==', provider)
+          .where('transition_status', '==', status)
+          .where('financial_attention_required', '==', true)
+          .orderBy('last_reconciled_at', 'asc')
+          .orderBy(FieldPath.documentId(), 'asc')
+          .limit(limitCount);
+
+        const snap = await modernQuery.get();
+        return (snap as any).docs || [];
+      } catch {
+        const snap = await this.planChangesCollection
+          .where('provider', '==', provider)
+          .where('transition_status', '==', status)
+          .where('financial_attention_required', '==', true)
+          .limit(limitCount)
+          .get();
+        return (snap as any).docs || [];
+      }
+    };
+
+    const healthyPromises = V1_RECONCILABLE_TRANSITION_STATUSES.map((st) => fetchBucketDocs(st));
+    const attentionPromises = V1_RECONCILABLE_TRANSITION_STATUSES.map((st) => fetchLiveAttentionDocs(st));
+
+    const [healthyResults, attentionResults] = await Promise.all([
+      Promise.all(healthyPromises),
+      Promise.all(attentionPromises),
     ]);
 
     // Função de ordenação determinística para os documentos de cada bucket
@@ -2516,19 +2546,29 @@ export class BillingRepository {
       });
     };
 
-    const sortedPendingFuture = sortCandidates(filterHealthy(pendingFutureDocs));
-    const sortedTargetPrepared = sortCandidates(filterHealthy(targetPreparedDocs));
-    const sortedAwaitingInactivation = sortCandidates(filterHealthy(awaitingInactivationDocs));
-    const sortedScheduled = sortCandidates(filterHealthy(scheduledDocs));
-    const sortedAttention = sortCandidates(filterLiveAttention(attentionDocs));
+    // Fair Round-Robin interleaving entre os sub-buckets de live attention para evitar viés de status em atenção
+    const sortedAttentionSubBuckets = attentionResults.map((docs) =>
+      sortCandidates(filterLiveAttention(docs))
+    );
+    const sortedAttention: any[] = [];
+    let attAdded = true;
+    let attRound = 0;
+    while (sortedAttention.length < limitCount && attAdded) {
+      attAdded = false;
+      for (const attSub of sortedAttentionSubBuckets) {
+        if (attRound < attSub.length) {
+          sortedAttention.push(attSub[attRound]);
+          attAdded = true;
+          if (sortedAttention.length >= limitCount) break;
+        }
+      }
+      attRound++;
+    }
 
     // Multi-bucket fair round-robin interleaving:
     // Garante que nenhum bucket monopolize o lote e nenhum sofra starvation.
     const buckets = [
-      sortedPendingFuture,
-      sortedTargetPrepared,
-      sortedAwaitingInactivation,
-      sortedScheduled,
+      ...healthyResults.map((docs) => sortCandidates(filterHealthy(docs))),
       sortedAttention,
     ];
 

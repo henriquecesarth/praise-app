@@ -720,14 +720,15 @@ Para garantir as invariantes **No Two Live Renewals**, **No Unsafe Zero Renewals
                 - Varredura estritamente ordenada por Document ID (`__name__ ASC`) com limite fixo de 50 leituras por ciclo.
                 - Cursor durável persistido em `billing_schedulers/normalization_{provider}`: sobrevive a crashes e restarts de workers.
                 - Elimina starvation no discovery: lotes já normalizados não bloqueiam a varredura e avanço para os documentos legados subsequentes.
-                - Wrap controlado: ao atingir o fim da faixa (`docs.length < remainingLimit`), o cursor do scope é reiniciado para `null` para recomeçar em ciclos futuros, sem hot-loop.
+                - Wrap controlado com Scan-Start CAS: ao atingir o fim da faixa (`docs.length < remainingLimit`), planeja wrap para `null` condicionado a `currentPersistedCursor === expectedStartCursor`. Se outro worker tiver avançado o cursor no intervalo, a observação de wrap é considerada stale e o cursor mais novo é estritamente preservado.
+                - Avanço monotônico: atualizações tardias de workers atrasados na mesma faixa jamais regridem o cursor (`nextCursor > currentPersistedCursor`).
                 - At-least-once safety: grava a normalização primeiro e persiste o avanço do cursor depois.
                 - Fresh transaction check: verifica atomicamente no Firestore se `last_reconciled_at === undefined` antes de gravar `null`, garantindo que NUNCA sobrescreve um timestamp real de agendamento.
                 - Zero business mutation & zero updated_at mutation: grava exclusivamente `last_reconciled_at: null`, mantendo `updated_at`, valores, cotações e status estritamente intactos.
                 - Novas transições geradas pelo sistema já nascem com `last_reconciled_at: null` por padrão.
                 - Normalization bound: max 50 reads/ciclo; Reconciliation bound: max 20 candidatos/ciclo.
               - *Unified Modern LRR Query*:
-                - `.where('provider', '==', provider).where('transition_status', '==', status).orderBy('last_reconciled_at', 'asc').orderBy('__name__', 'asc').limit(limitCount)`;
+                - `.where('provider', '==', provider).where('transition_status', '==', status).orderBy('last_reconciled_at', 'asc').orderBy(FieldPath.documentId(), 'asc').limit(limitCount)`;
                 - No Firestore, `null` é indexado como o menor valor primitivo e assume o topo absoluto da fila (`never reconciled = prioridade máxima`);
                 - Sem dependência de `created_at` na query do banco de dados, blindando transições históricas contra missing-field exclusions do Firestore.
               - *Least Recently Reconciled (LRR) Canonical FIFO Scheduling*:
@@ -738,12 +739,16 @@ Para garantir as invariantes **No Two Live Renewals**, **No Unsafe Zero Renewals
                 - `last_reconciled_at` é gravado atomicamente no `claimTransitionForReconciliation` e `claimPlanChangeForRetry` como autoridade soberana de oportunidade de reconciliação;
                 - `releasePlanChangeLock` não mutaciona `last_reconciled_at`, prevenindo que a latência de chamadas externas de rede afete o agendamento.
               - *Multi-Bucket Fair Round-Robin Interleaving*: A seleção de candidatos distribui 1 vaga por bucket a cada rodada até atingir `limitCount = 20`.
-              - *Financial Attention Does Not Pin Queue*: Registros com `financial_attention_required === true` são isolados pelo `filterHealthy`, operando exclusivamente no bucket `attention` sem bloquear as transições sadias.
+              - *Attention Terminal Starvation Guard & Single Source of Live States*:
+                - Consultas de atenção e buckets saudáveis unificados sob a autoridade única canônica `V1_RECONCILABLE_TRANSITION_STATUSES` (`pending_initial_purchase`, `pending_future_authorization`, `future_target_prepared`, `awaiting_old_inactivation`, `scheduled`).
+                - Registros terminais históricos (`completed`, `canceled`, `failed`, `superseded`, `safe_terminal`) com atenção NUNCA são lidos da coleção pelo Firestore e não podem consumir a capacidade do bucket antes de registros operacionais vivos.
+                - Fair round-robin interleaving entre os sub-buckets de live attention para prevenir viés entre status de atenção e prevenir cross-phase starvation (Phase 3A vs 3B vs 3C).
+                - Atenção financeira permanece estritamente fail-closed (sem concessão de cotas, sem auto-cancelamento, sem auto-refund).
               - *Multi-Worker CAS Safety*: Concorrência transacional segura com claims simultâneos falhando benignamente via CAS lock.
               - *Durable Progress Over Restarts*: Progresso durável persistido no Firestore sobrevivendo a crashes e restarts de workers.
               - *Firestore Composite Indexes Versionados*: Exatamente 2 composite indexes versionados em `backend/firestore.indexes.json` e validados por teste estático:
                 1. `(provider ASC, transition_status ASC, last_reconciled_at ASC, __name__ ASC)`
-                2. `(provider ASC, financial_attention_required ASC, last_reconciled_at ASC, __name__ ASC)`
+                2. `(provider ASC, transition_status ASC, financial_attention_required ASC, last_reconciled_at ASC, __name__ ASC)`
             - **Batch Failure Isolation**: Falhas operacionais ou de autenticação em uma transição do lote não impedem a reconciliação e ativação bem-sucedida de outras transições sadias do lote.
             - **Uncertain Create Webhook Recovery: IMPLEMENTED**: Tentativa em `OUTCOME_UNCERTAIN` correlacionada por `externalReference` comuta para `pending` com checkout ID write-once, sem novo POST cego, e liquida via `PAYMENT_CONFIRMED`.
             - **Integração com Carência (Grace Scenario)**:

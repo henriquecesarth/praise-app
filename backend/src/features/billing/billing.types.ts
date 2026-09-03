@@ -96,6 +96,19 @@ export const STRATEGY_ALLOWED_TRANSITION_STATUSES: Record<
   ]),
 };
 
+/**
+ * Conjunto canônico dos status de transição V1 que representam estados financeiramente vivos e reconciliáveis.
+ * Abrange todas as estratégias ativas do runtime (Phase 3A, 3B e 3C).
+ * Estados terminais (completed, canceled, superseded, failed) são estritamente excluídos.
+ */
+export const V1_RECONCILABLE_TRANSITION_STATUSES: readonly BillingTransitionStatus[] = [
+  'pending_initial_purchase',
+  'pending_future_authorization',
+  'future_target_prepared',
+  'awaiting_old_inactivation',
+  'scheduled',
+] as const;
+
 export type BillingEarlyActivationStatus =
   | 'not_applicable'
   | 'available'

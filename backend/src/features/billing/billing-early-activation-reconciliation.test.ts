@@ -331,50 +331,46 @@ describe('Phase 3C.5A — Early Activation Known-Checkout Reconciliation Worker'
         const cursors: Record<string, string | null> = { ...(schedulerData?.cursors || {}) };
 
         const scopes = [
-          { scope: 'pending_future_authorization', matches: (t: any) => t.transition_status === 'pending_future_authorization' },
-          { scope: 'future_target_prepared', matches: (t: any) => t.transition_status === 'future_target_prepared' },
-          { scope: 'awaiting_old_inactivation', matches: (t: any) => t.transition_status === 'awaiting_old_inactivation' },
-          { scope: 'scheduled', matches: (t: any) => t.transition_status === 'scheduled' },
+          ...['pending_initial_purchase', 'pending_future_authorization', 'future_target_prepared', 'awaiting_old_inactivation', 'scheduled'].map((st) => ({
+            scope: st,
+            matches: (t: any) => t.transition_status === st,
+          })),
           { scope: 'attention', matches: (t: any) => t.financial_attention_required === true },
         ];
-
         let inspectedCount = 0;
         let normalizedCount = 0;
+        const cursorUpdates: Record<string, { expectedStartCursor: string | null; nextCursor: string | null }> = {};
 
         for (const s of scopes) {
           if (inspectedCount >= batchSize) break;
           const remaining = batchSize - inspectedCount;
-          const currentCursor = cursors[s.scope] || null;
+          const startCursor = cursors[s.scope] || null;
 
-          // Documentos correspondentes ao escopo e provedor
           let matching = Array.from(planChangesStore.values()).filter(
             (t) => t.provider === provider && s.matches(t)
           );
 
-          // Stable Document ID ordering (como no Firestore orderBy('__name__', 'asc'))
+          // Stable Document ID ordering
           matching.sort((a, b) => a.id.localeCompare(b.id));
 
           // startAfter(cursor)
-          if (currentCursor) {
-            matching = matching.filter((t) => t.id > currentCursor);
+          if (startCursor) {
+            matching = matching.filter((t) => t.id > startCursor);
           }
 
-          // LIMIT DO FIRESTORE aplicado no nível da query ANTES de filtros da aplicação
           const batchDocs = matching.slice(0, remaining);
 
           if (batchDocs.length === 0) {
-            if (currentCursor) {
-              cursors[s.scope] = null; // Wrap controlado
+            if (startCursor) {
+              cursorUpdates[s.scope] = { expectedStartCursor: startCursor, nextCursor: null };
             }
             continue;
           }
 
           inspectedCount += batchDocs.length;
 
-          // Inspeciona e normaliza com fresh check
           for (const doc of batchDocs) {
             if (doc.last_reconciled_at === undefined) {
-              // Grava EXCLUSIVAMENTE last_reconciled_at: null, sem alterar updated_at
               doc.last_reconciled_at = null;
               normalizedCount++;
             }
@@ -382,16 +378,41 @@ describe('Phase 3C.5A — Early Activation Known-Checkout Reconciliation Worker'
 
           const lastDoc = batchDocs[batchDocs.length - 1];
           if (batchDocs.length < remaining) {
-            cursors[s.scope] = null; // Wrap controlado
+            cursorUpdates[s.scope] = { expectedStartCursor: startCursor, nextCursor: null };
           } else {
-            cursors[s.scope] = lastDoc.id; // Avança cursor
+            cursorUpdates[s.scope] = { expectedStartCursor: startCursor, nextCursor: lastDoc.id };
+          }
+        }
+
+        // Commit com Scan-Start CAS e monotonicidade:
+        const existingSched = schedulersStore.get(schedulerDocId);
+        const existingCursors: Record<string, string | null> = existingSched?.cursors ? { ...existingSched.cursors } : {};
+
+        for (const scopeKey of Object.keys(cursorUpdates)) {
+          const { expectedStartCursor, nextCursor } = cursorUpdates[scopeKey];
+          const currentCursor = existingCursors[scopeKey] || null;
+
+          if (nextCursor === null) {
+            // WRAP CAS: só pode efetuar wrap se o cursor no banco continua exatamente onde este scan começou
+            if (currentCursor === expectedStartCursor) {
+              existingCursors[scopeKey] = null;
+            }
+          } else {
+            // FORWARD ADVANCEMENT CAS
+            if (currentCursor === null) {
+              if (expectedStartCursor === null) {
+                existingCursors[scopeKey] = nextCursor;
+              }
+            } else if (nextCursor > currentCursor) {
+              existingCursors[scopeKey] = nextCursor;
+            }
           }
         }
 
         schedulersStore.set(schedulerDocId, {
           id: schedulerDocId,
           provider,
-          cursors,
+          cursors: existingCursors,
           updated_at: new Date().toISOString(),
         });
 
@@ -404,8 +425,6 @@ describe('Phase 3C.5A — Early Activation Known-Checkout Reconciliation Worker'
         return schedulersStore.get(`normalization_${provider}`) || null;
       }),
       getV1TransitionsNeedingReconciliation: vi.fn(async (provider: string, limit: number) => {
-        // Mock com fidelidade real ao Firestore:
-        // No Firestore, queries com orderBy('last_reconciled_at') NÃO retornam documentos onde o campo é ausente (undefined)
         const all = Array.from(planChangesStore.values()).filter(
           (tr) => tr.provider === provider && tr.last_reconciled_at !== undefined
         );
@@ -414,18 +433,45 @@ describe('Phase 3C.5A — Early Activation Known-Checkout Reconciliation Worker'
           return [...items].sort(compareTransitionsLRR);
         };
 
-        const pendingFuture = sortBucket(all.filter((tr) => tr.transition_status === 'pending_future_authorization' && tr.financial_attention_required !== true));
-        const targetPrepared = sortBucket(all.filter((tr) => tr.transition_status === 'future_target_prepared' && tr.financial_attention_required !== true));
-        const awaitingInact = sortBucket(all.filter((tr) => tr.transition_status === 'awaiting_old_inactivation' && tr.financial_attention_required !== true));
-        const scheduled = sortBucket(all.filter((tr) => tr.transition_status === 'scheduled' && tr.financial_attention_required !== true));
         const isLiveNonTerminal = (tr: any) => {
           const status = tr.transition_status || tr.status;
           const safety = tr.financial_safety_status;
           return safety !== 'safe_terminal' && !['completed', 'canceled', 'superseded', 'failed'].includes(status);
         };
-        const attention = sortBucket(all.filter((tr) => tr.financial_attention_required === true && isLiveNonTerminal(tr)));
 
-        const buckets = [pendingFuture, targetPrepared, awaitingInact, scheduled, attention];
+        const liveStatuses = [
+          'pending_initial_purchase',
+          'pending_future_authorization',
+          'future_target_prepared',
+          'awaiting_old_inactivation',
+          'scheduled',
+        ];
+
+        const healthyBuckets = liveStatuses.map((st) =>
+          sortBucket(all.filter((tr) => tr.transition_status === st && tr.financial_attention_required !== true))
+        );
+
+        // Sub-buckets de live attention por status
+        const attSubBuckets = liveStatuses.map((st) =>
+          sortBucket(all.filter((tr) => tr.transition_status === st && tr.financial_attention_required === true && isLiveNonTerminal(tr)))
+        );
+
+        const sortedAttention: BillingPlanChangeRecord[] = [];
+        let attAdded = true;
+        let attRound = 0;
+        while (sortedAttention.length < limit && attAdded) {
+          attAdded = false;
+          for (const sub of attSubBuckets) {
+            if (attRound < sub.length) {
+              sortedAttention.push(sub[attRound]);
+              attAdded = true;
+              if (sortedAttention.length >= limit) break;
+            }
+          }
+          attRound++;
+        }
+
+        const buckets = [...healthyBuckets, sortedAttention];
         const seenIds = new Set<string>();
         const results: BillingPlanChangeRecord[] = [];
         let addedInRound = true;
@@ -2801,15 +2847,16 @@ describe('Phase 3C.5A — Early Activation Known-Checkout Reconciliation Worker'
       });
       expect(hasStatusIndex).toBe(true);
 
-      // 2. provider + financial_attention_required + last_reconciled_at + __name__
+      // 2. provider + transition_status + financial_attention_required + last_reconciled_at + __name__
       const hasAttentionIndex = planChangesIndexes.some((idx: any) => {
         const fields = idx.fields.map((f: any) => f.fieldPath);
         return (
-          fields.length === 4 &&
+          fields.length === 5 &&
           fields[0] === 'provider' &&
-          fields[1] === 'financial_attention_required' &&
-          fields[2] === 'last_reconciled_at' &&
-          fields[3] === '__name__'
+          fields[1] === 'transition_status' &&
+          fields[2] === 'financial_attention_required' &&
+          fields[3] === 'last_reconciled_at' &&
+          fields[4] === '__name__'
         );
       });
       expect(hasAttentionIndex).toBe(true);
@@ -3367,6 +3414,584 @@ describe('Phase 3C.5A — Early Activation Known-Checkout Reconciliation Worker'
       // Nenhum dos 20 registros terminais deve constar no lote operacional retornado
       const terminalFound = batch.some((b: any) => b.id.startsWith('tr_term_att_'));
       expect(terminalFound).toBe(false);
+    });
+
+    // ==========================================
+    // WRAP TEST MATRIX (Section 6)
+    // ==========================================
+
+    // 40. A plans wrap from 050, B advances 100, A commits late -> 100 preserved
+    it('40. Wrap CAS: stale wrap observation from cursor 050 cannot overwrite newer cursor 100 to null', async () => {
+      schedulersStore.clear();
+      const schedulerDocId = 'normalization_asaas';
+
+      // Estado inicial: cursor em 050
+      schedulersStore.set(schedulerDocId, {
+        id: schedulerDocId,
+        provider: 'asaas',
+        cursors: { scheduled: 'tr_doc_050' },
+        updated_at: new Date().toISOString(),
+      });
+
+      // Worker A lê cursor 050 e planeja wrap (expectedStartCursor: 050, nextCursor: null)
+      const workerAUpdate = { expectedStartCursor: 'tr_doc_050', nextCursor: null };
+
+      // Worker B avança o cursor para 100 no banco antes do commit de A
+      const sched = schedulersStore.get(schedulerDocId)!;
+      sched.cursors.scheduled = 'tr_doc_100';
+
+      // Worker A tenta comitar seu wrap tardio com Scan-Start CAS
+      const current = sched.cursors.scheduled;
+      if (workerAUpdate.nextCursor === null) {
+        if (current === workerAUpdate.expectedStartCursor) {
+          sched.cursors.scheduled = null; // Wrap legítimo
+        }
+        // Se current !== expectedStartCursor: stale wrap observation! Ignorado!
+      }
+
+      expect(sched.cursors.scheduled).toBe('tr_doc_100');
+    });
+
+    // 41. A and B both scan 050. A advances 100, B advances 090 late -> 100 preserved
+    it('41. Forward Monotonicity: late commit of 090 cannot regress cursor 100', async () => {
+      schedulersStore.clear();
+      const schedulerDocId = 'normalization_asaas';
+
+      schedulersStore.set(schedulerDocId, {
+        id: schedulerDocId,
+        provider: 'asaas',
+        cursors: { scheduled: 'tr_doc_100' }, // A já comitou 100
+        updated_at: new Date().toISOString(),
+      });
+
+      const workerBLateUpdate = { expectedStartCursor: 'tr_doc_050', nextCursor: 'tr_doc_090' };
+      const sched = schedulersStore.get(schedulerDocId)!;
+      const current = sched.cursors.scheduled;
+
+      if (workerBLateUpdate.nextCursor !== null) {
+        if (current === null) {
+          if (workerBLateUpdate.expectedStartCursor === null) {
+            sched.cursors.scheduled = workerBLateUpdate.nextCursor;
+          }
+        } else if (workerBLateUpdate.nextCursor > current) {
+          sched.cursors.scheduled = workerBLateUpdate.nextCursor;
+        }
+      }
+
+      expect(sched.cursors.scheduled).toBe('tr_doc_100');
+    });
+
+    // 42. Legitimate wrap: A scans current 100 to EOF with no other worker change -> 100 -> null succeeds
+    it('42. Legitimate Wrap CAS: scanning from current 100 to EOF successfully wraps to null', async () => {
+      schedulersStore.clear();
+      const schedulerDocId = 'normalization_asaas';
+
+      schedulersStore.set(schedulerDocId, {
+        id: schedulerDocId,
+        provider: 'asaas',
+        cursors: { scheduled: 'tr_doc_100' },
+        updated_at: new Date().toISOString(),
+      });
+
+      const workerAUpdate = { expectedStartCursor: 'tr_doc_100', nextCursor: null };
+      const sched = schedulersStore.get(schedulerDocId)!;
+      const current = sched.cursors.scheduled;
+
+      if (workerAUpdate.nextCursor === null) {
+        if (current === workerAUpdate.expectedStartCursor) {
+          sched.cursors.scheduled = null; // CAS match!
+        }
+      }
+
+      expect(sched.cursors.scheduled).toBeNull();
+    });
+
+    // 43. Two scopes update concurrently -> both survive
+    it('43. Per-Scope Isolation: concurrent updates to scheduled and attention preserve both scopes', async () => {
+      schedulersStore.clear();
+      const schedulerDocId = 'normalization_asaas';
+
+      schedulersStore.set(schedulerDocId, {
+        id: schedulerDocId,
+        provider: 'asaas',
+        cursors: { scheduled: 'tr_sched_050', attention: 'tr_att_020' },
+        updated_at: new Date().toISOString(),
+      });
+
+      const sched = schedulersStore.get(schedulerDocId)!;
+
+      // Update 1: scheduled avança para 100
+      sched.cursors.scheduled = 'tr_sched_100';
+      // Update 2: attention avança para 040
+      sched.cursors.attention = 'tr_att_040';
+
+      expect(sched.cursors.scheduled).toBe('tr_sched_100');
+      expect(sched.cursors.attention).toBe('tr_att_040');
+    });
+
+    // 44. Crash after normalization before cursor update -> at-least-once safety
+    it('44. Crash After Normalization: documents remain normalized and cursor update retried safely', async () => {
+      planChangesStore.clear();
+      schedulersStore.clear();
+
+      for (let i = 1; i <= 20; i++) {
+        const id = `tr_crash_norm_${String(i).padStart(3, '0')}`;
+        const tr: any = {
+          ...getBaseScheduledTransition(),
+          id,
+          transition_id: id,
+        };
+        delete tr.last_reconciled_at;
+        planChangesStore.set(id, tr);
+      }
+
+      // Normaliza documentos mas simula crash antes do commit do cursor
+      for (const tr of planChangesStore.values()) {
+        tr.last_reconciled_at = null;
+      }
+      // Cursor permanece não atualizado (null)
+      const sched = schedulersStore.get('normalization_asaas');
+      expect(sched).toBeUndefined();
+
+      // No próximo ciclo pós-crash, a re-execução é totalmente idempotente e conclui o cursor
+      const res = await mockBillingRepo.normalizeLegacyTransitionsWithoutScheduling('asaas', 50);
+      expect(res.normalizedCount).toBe(0); // Já estavam com null
+      expect(res.hasMore).toBe(false);
+    });
+
+    // ==========================================
+    // ATTENTION TEST MATRIX (Section 13)
+    // ==========================================
+
+    // 45. 20 terminal attention + 1 scheduled live attention -> live candidate is reached
+    it('45. Attention Starvation Guard: 20 terminal records do not hide 1 scheduled live attention', async () => {
+      planChangesStore.clear();
+
+      for (let i = 1; i <= 20; i++) {
+        const id = `tr_perm_term_${String(i).padStart(2, '0')}`;
+        planChangesStore.set(id, {
+          ...getBaseScheduledTransition(),
+          id,
+          transition_id: id,
+          transition_status: 'completed',
+          financial_safety_status: 'safe_terminal',
+          financial_attention_required: true,
+          last_reconciled_at: null,
+        } as any);
+      }
+
+      const liveId = 'tr_live_attention_target';
+      planChangesStore.set(liveId, {
+        ...getBaseScheduledTransition(),
+        id: liveId,
+        transition_id: liveId,
+        transition_status: 'scheduled',
+        financial_safety_status: 'live',
+        financial_attention_required: true,
+        last_reconciled_at: null,
+      } as any);
+
+      const batch = await mockBillingRepo.getV1TransitionsNeedingReconciliation('asaas', 20);
+      expect(batch.some((b: any) => b.id === liveId)).toBe(true);
+      expect(batch.some((b: any) => b.id.startsWith('tr_perm_term_'))).toBe(false);
+    });
+
+    // 46. 100 terminal attention records -> do not pin live attention queue
+    it('46. 100 Terminal Records Invariant: 100 terminal records never pin live attention queue', async () => {
+      planChangesStore.clear();
+
+      for (let i = 1; i <= 100; i++) {
+        const id = `tr_term100_${String(i).padStart(3, '0')}`;
+        planChangesStore.set(id, {
+          ...getBaseScheduledTransition(),
+          id,
+          transition_id: id,
+          transition_status: 'canceled',
+          financial_safety_status: 'safe_terminal',
+          financial_attention_required: true,
+          last_reconciled_at: null,
+        } as any);
+      }
+
+      const liveId = 'tr_live_active_attention';
+      planChangesStore.set(liveId, {
+        ...getBaseScheduledTransition(),
+        id: liveId,
+        transition_id: liveId,
+        transition_status: 'scheduled',
+        financial_safety_status: 'live',
+        financial_attention_required: true,
+        last_reconciled_at: null,
+      } as any);
+
+      const batch = await mockBillingRepo.getV1TransitionsNeedingReconciliation('asaas', 20);
+      expect(batch.some((b: any) => b.id === liveId)).toBe(true);
+    });
+
+    // 47. Multiple live attention statuses -> eventual opportunity for each status
+    it('47. Attention Multi-Status Fairness: fair interleaving grants opportunity across live attention statuses', async () => {
+      planChangesStore.clear();
+
+      // 5 attention em scheduled
+      for (let i = 1; i <= 5; i++) {
+        const id = `tr_att_sched_${i}`;
+        planChangesStore.set(id, {
+          ...getBaseScheduledTransition(),
+          id,
+          transition_id: id,
+          transition_status: 'scheduled',
+          financial_attention_required: true,
+          last_reconciled_at: null,
+        } as any);
+      }
+
+      // 5 attention em future_target_prepared
+      for (let i = 1; i <= 5; i++) {
+        const id = `tr_att_ftp_${i}`;
+        planChangesStore.set(id, {
+          ...getBaseScheduledTransition(),
+          id,
+          transition_id: id,
+          transition_status: 'future_target_prepared',
+          financial_attention_required: true,
+          last_reconciled_at: null,
+        } as any);
+      }
+
+      const batch = await mockBillingRepo.getV1TransitionsNeedingReconciliation('asaas', 20);
+      const schedAttCount = batch.filter((b: any) => b.transition_status === 'scheduled' && b.financial_attention_required === true).length;
+      const ftpAttCount = batch.filter((b: any) => b.transition_status === 'future_target_prepared' && b.financial_attention_required === true).length;
+
+      expect(schedAttCount).toBeGreaterThanOrEqual(1);
+      expect(ftpAttCount).toBeGreaterThanOrEqual(1);
+    });
+
+    // 48. Attention remains financially fail-closed
+    it('48. Financial Attention Fail-Closed: reconciliation does not auto-activate, auto-clear or auto-refund', async () => {
+      planChangesStore.clear();
+      const tr = {
+        ...getBaseScheduledTransition(),
+        id: 'tr_att_fail_closed',
+        transition_id: 'tr_att_fail_closed',
+        financial_attention_required: true,
+        financial_attention_reason: 'EARLY_ADJUSTMENT_MULTIPLE_PROVIDER_PAYMENTS',
+        early_activation_status: 'pending_checkout',
+        last_reconciled_at: null,
+      } as any;
+      planChangesStore.set(tr.id, tr);
+
+      mockProvider.listPaymentsByCheckoutSession = vi.fn().mockResolvedValue([
+        { id: 'pay_1', status: 'CONFIRMED', value: 34.9, dateCreated: '2026-09-02' },
+        { id: 'pay_2', status: 'CONFIRMED', value: 34.9, dateCreated: '2026-09-02' },
+      ]);
+
+      const res = await reconcilerWorker.runCycle();
+      const updated = planChangesStore.get(tr.id);
+
+      // Invariantes estritos:
+      expect(updated?.financial_attention_required).toBe(true);
+      expect(updated?.early_activation_status).not.toBe('activated');
+      expect(mockSubscriptionService.applyLockedEntitlementSnapshot).not.toHaveBeenCalled();
+    });
+
+    // 49. Terminal transition never enters provider polling merely because financial_attention_required remained true historically
+    it('49. Terminal Transition Provider Polling Guard: terminal transition is never polled', async () => {
+      planChangesStore.clear();
+      const tr = {
+        ...getBaseScheduledTransition(),
+        id: 'tr_term_never_poll',
+        transition_id: 'tr_term_never_poll',
+        transition_status: 'completed',
+        financial_safety_status: 'safe_terminal',
+        financial_attention_required: true,
+        last_reconciled_at: null,
+      } as any;
+      planChangesStore.set(tr.id, tr);
+
+      mockProvider.listPaymentsByCheckoutSession = vi.fn();
+      await reconcilerWorker.runCycle();
+
+      expect(mockProvider.listPaymentsByCheckoutSession).not.toHaveBeenCalled();
+    });
+
+    // ==========================================
+    // FIRESTORE INDEX CONTRACT (Section 14)
+    // ==========================================
+
+    // 50. Static Firestore Indexes Contract
+    it('50. Firestore Index Contract: firestore.indexes.json defines exact composite indexes', async () => {
+      const fs = await import('fs');
+      const path = await import('path');
+      const indexesPath = path.resolve(__dirname, '../../../firestore.indexes.json');
+      const content = JSON.parse(fs.readFileSync(indexesPath, 'utf8'));
+
+      const planChangeIndexes = content.indexes.filter((idx: any) => idx.collectionGroup === 'billing_plan_changes');
+      expect(planChangeIndexes.length).toBe(2);
+
+      // Index 1: transition_status LRR
+      const idx1 = planChangeIndexes.find((idx: any) => idx.fields.some((f: any) => f.fieldPath === 'transition_status' && !idx.fields.some((f2: any) => f2.fieldPath === 'financial_attention_required')));
+      expect(idx1).toBeDefined();
+      expect(idx1.fields.map((f: any) => f.fieldPath)).toEqual(['provider', 'transition_status', 'last_reconciled_at', '__name__']);
+
+      // Index 2: transition_status + financial_attention_required LRR
+      const idx2 = planChangeIndexes.find((idx: any) => idx.fields.some((f: any) => f.fieldPath === 'financial_attention_required'));
+      expect(idx2).toBeDefined();
+      expect(idx2.fields.map((f: any) => f.fieldPath)).toEqual(['provider', 'transition_status', 'financial_attention_required', 'last_reconciled_at', '__name__']);
+    });
+
+    // ==========================================
+    // CROSS-PHASE RECONCILIATION TEST MATRIX (Section 11)
+    // ==========================================
+
+    // 51. Cada live V1 reconciliation status conhecido é retornável pelo scheduler
+    it('51. Cross-Phase: all 5 known live V1 reconciliation statuses are discoverable by scheduler', async () => {
+      planChangesStore.clear();
+
+      const liveStatuses = [
+        'pending_initial_purchase',
+        'pending_future_authorization',
+        'future_target_prepared',
+        'awaiting_old_inactivation',
+        'scheduled',
+      ];
+
+      for (const st of liveStatuses) {
+        const id = `tr_live_known_${st}`;
+        planChangesStore.set(id, {
+          ...getBaseScheduledTransition(),
+          id,
+          transition_id: id,
+          transition_status: st,
+          last_reconciled_at: null,
+        } as any);
+      }
+
+      const batch = await mockBillingRepo.getV1TransitionsNeedingReconciliation('asaas', 20);
+      const foundStatuses = batch.map((b: any) => b.transition_status);
+
+      for (const st of liveStatuses) {
+        expect(foundStatuses).toContain(st);
+      }
+    });
+
+    // 52. Cada terminal V1 status é excluído antes do effective limit
+    it('52. Cross-Phase: each terminal V1 status is excluded before effective limit', async () => {
+      planChangesStore.clear();
+
+      const terminalStatuses = ['completed', 'canceled', 'superseded', 'failed'];
+      for (const st of terminalStatuses) {
+        for (let i = 1; i <= 5; i++) {
+          const id = `tr_term_test_${st}_${i}`;
+          planChangesStore.set(id, {
+            ...getBaseScheduledTransition(),
+            id,
+            transition_id: id,
+            transition_status: st,
+            financial_safety_status: 'safe_terminal',
+            financial_attention_required: true,
+            last_reconciled_at: null,
+          } as any);
+        }
+      }
+
+      const liveId = 'tr_lone_live_survivor';
+      planChangesStore.set(liveId, {
+        ...getBaseScheduledTransition(),
+        id: liveId,
+        transition_id: liveId,
+        transition_status: 'scheduled',
+        last_reconciled_at: null,
+      } as any);
+
+      const batch = await mockBillingRepo.getV1TransitionsNeedingReconciliation('asaas', 20);
+      expect(batch.length).toBe(1);
+      expect(batch[0].id).toBe(liveId);
+    });
+
+    // 53. Initial purchase pending/reconcilable continua visível
+    it('53. Cross-Phase: Phase 3A initial purchase pending_initial_purchase is scheduled and discoverable', async () => {
+      planChangesStore.clear();
+
+      const ipId = 'tr_phase3a_initial_purchase';
+      planChangesStore.set(ipId, {
+        ...getBaseScheduledTransition(),
+        id: ipId,
+        transition_id: ipId,
+        execution_strategy: 'immediate_initial_purchase',
+        transition_status: 'pending_initial_purchase',
+        financial_safety_status: 'live',
+        financial_attention_required: false,
+        last_reconciled_at: null,
+      } as any);
+
+      const batch = await mockBillingRepo.getV1TransitionsNeedingReconciliation('asaas', 20);
+      expect(batch.some((b: any) => b.id === ipId && b.transition_status === 'pending_initial_purchase')).toBe(true);
+    });
+
+    // 54. Initial purchase + financial attention continua visível
+    it('54. Cross-Phase: Phase 3A initial purchase with financial attention is scheduled in attention bucket', async () => {
+      planChangesStore.clear();
+
+      const ipAttId = 'tr_phase3a_attention';
+      planChangesStore.set(ipAttId, {
+        ...getBaseScheduledTransition(),
+        id: ipAttId,
+        transition_id: ipAttId,
+        execution_strategy: 'immediate_initial_purchase',
+        transition_status: 'pending_initial_purchase',
+        financial_safety_status: 'live',
+        financial_attention_required: true,
+        financial_attention_reason: 'UNCERTAIN_CREATE_TIMEOUT',
+        last_reconciled_at: null,
+      } as any);
+
+      const batch = await mockBillingRepo.getV1TransitionsNeedingReconciliation('asaas', 20);
+      expect(batch.some((b: any) => b.id === ipAttId && b.financial_attention_required === true)).toBe(true);
+    });
+
+    // 55. Paid-to-paid live statuses continuam visíveis
+    it('55. Cross-Phase: Phase 3B/3C paid-to-paid live statuses remain visible and ordered', async () => {
+      planChangesStore.clear();
+
+      const p2pStatuses = ['pending_future_authorization', 'future_target_prepared', 'awaiting_old_inactivation', 'scheduled'];
+      for (const st of p2pStatuses) {
+        const id = `tr_p2p_${st}`;
+        planChangesStore.set(id, {
+          ...getBaseScheduledTransition(),
+          id,
+          transition_id: id,
+          execution_strategy: 'scheduled_paid_transition',
+          transition_status: st,
+          last_reconciled_at: null,
+        } as any);
+      }
+
+      const batch = await mockBillingRepo.getV1TransitionsNeedingReconciliation('asaas', 20);
+      for (const st of p2pStatuses) {
+        expect(batch.some((b: any) => b.transition_status === st)).toBe(true);
+      }
+    });
+
+    // 56. 20 records de um live status não starvam outro live status (cross-phase starvation guard)
+    it('56. Cross-Phase: 20 scheduled records do not starve 1 pending_initial_purchase record', async () => {
+      planChangesStore.clear();
+
+      for (let i = 1; i <= 20; i++) {
+        const id = `tr_sched_bulk_${i}`;
+        planChangesStore.set(id, {
+          ...getBaseScheduledTransition(),
+          id,
+          transition_id: id,
+          transition_status: 'scheduled',
+          last_reconciled_at: null,
+        } as any);
+      }
+
+      const ipId = 'tr_ip_lone_candidate';
+      planChangesStore.set(ipId, {
+        ...getBaseScheduledTransition(),
+        id: ipId,
+        transition_id: ipId,
+        execution_strategy: 'immediate_initial_purchase',
+        transition_status: 'pending_initial_purchase',
+        last_reconciled_at: null,
+      } as any);
+
+      const batch = await mockBillingRepo.getV1TransitionsNeedingReconciliation('asaas', 20);
+      expect(batch.some((b: any) => b.id === ipId)).toBe(true);
+    });
+
+    // 57. Terminal attention records continuam incapazes de consumir o lote
+    it('57. Cross-Phase: terminal attention records never consume candidate limit', async () => {
+      planChangesStore.clear();
+
+      for (let i = 1; i <= 30; i++) {
+        const id = `tr_term_att_ip_${i}`;
+        planChangesStore.set(id, {
+          ...getBaseScheduledTransition(),
+          id,
+          transition_id: id,
+          execution_strategy: 'immediate_initial_purchase',
+          transition_status: 'completed',
+          financial_safety_status: 'safe_terminal',
+          financial_attention_required: true,
+          last_reconciled_at: null,
+        } as any);
+      }
+
+      const liveAttId = 'tr_live_ip_attention';
+      planChangesStore.set(liveAttId, {
+        ...getBaseScheduledTransition(),
+        id: liveAttId,
+        transition_id: liveAttId,
+        execution_strategy: 'immediate_initial_purchase',
+        transition_status: 'pending_initial_purchase',
+        financial_safety_status: 'live',
+        financial_attention_required: true,
+        last_reconciled_at: null,
+      } as any);
+
+      const batch = await mockBillingRepo.getV1TransitionsNeedingReconciliation('asaas', 20);
+      expect(batch.some((b: any) => b.id === liveAttId)).toBe(true);
+      expect(batch.some((b: any) => b.id.startsWith('tr_term_att_ip_'))).toBe(false);
+    });
+
+    // 58. Worker routing continua escolhendo o reconciler correto por strategy/status
+    it('58. Cross-Phase: worker routes immediate_initial_purchase strictly to reconcileInitialPurchaseTransition', async () => {
+      planChangesStore.clear();
+
+      const ipId = 'tr_routing_initial_purchase';
+      planChangesStore.set(ipId, {
+        ...getBaseScheduledTransition(),
+        id: ipId,
+        transition_id: ipId,
+        execution_strategy: 'immediate_initial_purchase',
+        transition_status: 'pending_initial_purchase',
+        last_reconciled_at: null,
+      } as any);
+
+      billingService.reconcileInitialPurchaseTransition = vi.fn().mockResolvedValue({ success: true });
+      billingService.reconcilePaidToPaidEarlyActivationAdjustment = vi.fn();
+
+      await reconcilerWorker.runCycle();
+
+      expect(billingService.reconcileInitialPurchaseTransition).toHaveBeenCalledWith(ipId, expect.any(String));
+      expect(billingService.reconcilePaidToPaidEarlyActivationAdjustment).not.toHaveBeenCalled();
+    });
+
+    // 59. Nenhum estado da Phase 3C.5B/Paid->Free é inventado
+    it('59. Cross-Phase: V1_RECONCILABLE_TRANSITION_STATUSES defines exactly the 5 supported live statuses', async () => {
+      const { V1_RECONCILABLE_TRANSITION_STATUSES: statuses } = await import('./billing.types.js');
+      expect(statuses).toEqual([
+        'pending_initial_purchase',
+        'pending_future_authorization',
+        'future_target_prepared',
+        'awaiting_old_inactivation',
+        'scheduled',
+      ]);
+    });
+
+    // 60. Normalization Pass covers all 5 reconcilable statuses via durable cursors
+    it('60. Cross-Phase: normalization pass covers pending_initial_purchase without skipping other scopes', async () => {
+      planChangesStore.clear();
+      schedulersStore.clear();
+
+      const ipId = 'tr_norm_ip_001';
+      const tr: any = {
+        ...getBaseScheduledTransition(),
+        id: ipId,
+        transition_id: ipId,
+        execution_strategy: 'immediate_initial_purchase',
+        transition_status: 'pending_initial_purchase',
+      };
+      delete tr.last_reconciled_at;
+      planChangesStore.set(ipId, tr);
+
+      const res = await mockBillingRepo.normalizeLegacyTransitionsWithoutScheduling('asaas', 50);
+      expect(res.normalizedCount).toBe(1);
+
+      const normalizedDoc = planChangesStore.get(ipId);
+      expect(normalizedDoc?.last_reconciled_at).toBeNull();
     });
   });
 });

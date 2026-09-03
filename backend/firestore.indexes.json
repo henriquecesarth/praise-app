@@ -91,6 +91,7 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "provider", "order": "ASCENDING" },
+        { "fieldPath": "transition_status", "order": "ASCENDING" },
         { "fieldPath": "financial_attention_required", "order": "ASCENDING" },
         { "fieldPath": "last_reconciled_at", "order": "ASCENDING" },
         { "fieldPath": "__name__", "order": "ASCENDING" }
