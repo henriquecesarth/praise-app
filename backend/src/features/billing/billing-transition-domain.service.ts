@@ -1164,12 +1164,18 @@ export function classifyEarlyAdjustmentFinancialState(
     return 'attention_required';
   }
 
-  const isConfirmed = transition.early_activation_status === 'confirmed';
+  const isConfirmed =
+    transition.early_activation_status === 'confirmed' ||
+    transition.early_activation_status === 'activated';
+  const hasPaymentId = Boolean(
+    transition.early_activation_provider_payment_id ||
+    transition.successful_early_adjustment_provider_payment_id
+  );
   if (isConfirmed) {
-    return transition.early_activation_provider_payment_id ? 'settled_converged' : 'settled_unconverged';
+    return hasPaymentId ? 'settled_converged' : 'settled_unconverged';
   }
 
-  if (transition.early_activation_provider_payment_id) {
+  if (hasPaymentId) {
     return 'settled_unconverged';
   }
 
@@ -1337,6 +1343,17 @@ export function canCreateEarlyActivationCheckout(
     return {
       allowed: false,
       reason: `Transição em status '${transition.transition_status}' não permite early activation (exigido 'scheduled').`,
+    };
+  }
+
+  if (
+    transition.early_activation_status === 'confirmed' ||
+    transition.early_activation_status === 'activated'
+  ) {
+    return {
+      allowed: false,
+      reason: 'A ativação antecipada já foi confirmada e aplicada para esta transição.',
+      financialState: 'settled_converged',
     };
   }
 

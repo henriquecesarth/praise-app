@@ -612,7 +612,7 @@ Para garantir as invariantes **No Two Live Renewals**, **No Unsafe Zero Renewals
            - A transição comuta `grace_status` para `resolved`, transiciona para `completed` (`safe_terminal`) e libera o slot `LAST`.
          - **Expiração da Carência & Preservação Estrita de Dados**:
            - Quando `currentCommercialDate >= grace_end_billing_date`, o estado comuta para `grace_status: 'expired'`.
-           - `resolveAccessMode` converte a assinatura para `restricted_over_limit`.
+   - `resolveAccessMode` converte a assinatura para `restricted_over_limit`.
            - **Zero dados deletados**: nenhum membro, música, escala ou registro de assinatura é apagado.
            - A transição **permanece `scheduled`** (não conclui, pois a dívida permanece pendente) e o slot ativo **permanece `HELD`**.
          - **Gap de Política para Pagamento Tardio Pós-Carência**:
@@ -624,23 +624,92 @@ Para garantir as invariantes **No Two Live Renewals**, **No Unsafe Zero Renewals
            - `resolveAccessMode` consome exclusivamente o estado runtime da assinatura (`MinistrySubscription`).
            - Dentro da carência civil (`currentCommercialDate < grace_end_billing_date`), `billing_status === 'past_due'` **NÃO significa `restricted_over_limit`**: o acesso permanece `normal` operando sob o snapshot de direitos travado (`grace_entitlement_snapshot`). A restrição só ocorre na ou após a expiração civil da carência (`currentCommercialDate >= grace_end_billing_date`).
            - Na recuperação (*recovery*), `ministry_subscriptions.billing_status` retorna a `active` e metadados operacionais de carência são neutralizados (`grace_period_expires_billing_date = null`, `grace_period_expires_at = null`).
-         - **Single State Machine Reconciler/Webhook**: Ambos os canais convergem no mesmo avaliador determinístico `processScheduledPaidRenewalSettlement`.
-     - **Status das Próximas Fases**:
-     - **PHASE 3C EARLY ACTIVATION**: **NOT STARTED**.
-     - **PAID -> FREE TRANSITIONS**: **NOT STARTED**.
-     16. **Webhook Event Lifecycle Semantics & Terminality Independence (Phase 3B.3 Hardening)**:
-         - **Independência de Ciclos de Vida**: O ciclo de vida de `BillingWebhookEvent` (uma entrega do provedor) é estritamente independente do ciclo de vida de `BillingTransition` (saga financeira longa).
-         - **Consumo Terminal**: Um webhook consumido com resposta HTTP 2xx **NÃO** permanece em status `processing` apenas porque a transição permanece financeiramente ativa ou pendente de convergência pelo reconciliador.
-         - **Inexistência de Pseudo-Retry via Processing**: Não existe lease interno ou cron de reclaim de eventos em `processing`. A única reexecução possível de um webhook é via redelivery do provedor.
-         - **Autoridade do Reconciliador**: Casos transitórios (`PAYMENT_NOT_FOUND`, `SOURCE_CUTOVER_NOT_COMPLETED`, `ACTIVATION_COMPLETION_GATE_FAILED`, `SOURCE_SUBSCRIPTION_STILL_ACTIVE`) finalizam o webhook individualmente como `processed` (com HTTP 200) e deixam a transição em `scheduled` ou com `financial_attention_required = true` e slot `HELD`. A autoridade de continuidade e convergência longa pertence exclusivamente ao `BillingReconcilerWorker`.
-         - **HTTP ACK Coerente**: HTTP 2xx expressa que a entrega foi consumida com sucesso; HTTP 5xx expressa falha real no processamento (exceção interna, falha de persistência) e solicita redelivery pelo provedor.
-     - **Status das Próximas Fases**:
-     - **PHASE 3C EARLY ACTIVATION**:
-       - **Phase 3C.1 (Domain, Eligibility & Proration)**: **COMPLETE**.
-       - **Phase 3C.2 (Detached Checkout Preparation & Hardening)**: **COMPLETE**.
-       - **Phase 3C.3 (Tenant-Scoped Early Activation API & Final Hardening)**: **COMPLETE**.
-       - **Phase 3C.4 (Adjustment Settlement, Idempotent Webhook & Entitlement Convergence)**: **NOT STARTED**.
-       - **Early Entitlement Activation from Adjustment**: **NOT STARTED**.
-       - **Sandbox Homologation for Early Activation**: **NOT STARTED**.
-     - **PAID -> FREE TRANSITIONS**: **NOT STARTED**.
-     - *(O escopo concluído compreende as fases 3B.1, 3B.2, 3B.3A, 3B.3B, 3B.3 Webhook Terminality Hardening, 3C.1, 3C.2 e 3C.3)*.
+           - **Single State Machine Reconciler/Webhook**: Ambos os canais convergem no mesmo avaliador determinístico `processScheduledPaidRenewalSettlement`.
+      16. **Webhook Event Lifecycle Semantics & Terminality Independence (Phase 3B.3 Hardening)**:
+          - **Independência de Ciclos de Vida**: O ciclo de vida de `BillingWebhookEvent` (uma entrega do provedor) é estritamente independente do ciclo de vida de `BillingTransition` (saga financeira longa).
+          - **Consumo Terminal**: Um webhook consumido com resposta HTTP 2xx **NÃO** permanece em status `processing` apenas porque a transição permanece financeiramente ativa ou pendente de convergência pelo reconciliador.
+          - **Inexistência de Pseudo-Retry via Processing**: Não existe lease interno ou cron de reclaim de eventos em `processing`. A única reexecução possível de um webhook é via redelivery do provedor.
+          - **Autoridade do Reconciliador**: Casos transitórios (`PAYMENT_NOT_FOUND`, `SOURCE_CUTOVER_NOT_COMPLETED`, `ACTIVATION_COMPLETION_GATE_FAILED`, `SOURCE_SUBSCRIPTION_STILL_ACTIVE`) finalizam o webhook individualmente como `processed` (com HTTP 200) e deixam a transição em `scheduled` ou com `financial_attention_required = true` e slot `HELD`. A autoridade de continuidade e convergência longa pertence exclusivamente ao `BillingReconcilerWorker`.
+          - **HTTP ACK Coerente**: HTTP 2xx expressa que a entrega foi consumida com sucesso; HTTP 5xx expressa falha real no processamento (exceção interna, falha de persistência) e solicita redelivery pelo provedor.
+      17. **Early Activation Adjustment Settlement & Immediate Entitlement Convergence (Phase 3C.4)**:
+          - **Máquina de Estados de Liquidação Avulsa (`processEarlyActivationAdjustmentSettlement`)**:
+            - Avaliador canônico e idempotente reutilizável tanto pelo pipeline de webhooks quanto pelo worker reconciliador futuro (Phase 3C.5).
+            - Exige pré-requisitos estritos: `execution_strategy === 'scheduled_paid_transition'`, `transition_status === 'scheduled'`, `supersede_status === 'completed'`, `payment_cleanup_status === 'completed'`, `financial_safety_status === 'live'` e `financial_attention_required !== true`.
+          - **Isolamento Estrito Detached vs. Recurring**:
+            - O pagamento de ajuste pró-rata é avulso (`attempt_type: 'early_activation'`, `chargeTypes: ['DETACHED']`).
+            - O ID da cobrança avulsa nunca substitui nem sobrescreve `future_provider_payment_id` ou `future_provider_subscription_id`.
+            - `isEarlyActivationWebhookEvent` discrimina categoricamente eventos de ajuste de eventos de renovação futuros.
+          - **Campos de Liquidação Financeira Write-Once**:
+            - `early_activation_provider_payment_id`, `successful_early_adjustment_provider_payment_id`, `early_activation_payment_settled_at` e `early_adjustment_paid_billing_date` são gravados atomicamente via `recordEarlyAdjustmentFinancialSettlement`.
+            - Qualquer tentativa de sobrescrever esses IDs com outro pagamento falha fechado (*fail closed*) com `EARLY_ADJUSTMENT_PAYMENT_ID_CONFLICT` e aciona `financial_attention_required = true`.
+          - **Registro Canônico de BillingTransaction**:
+            - Registra `BillingTransaction` com `transaction_type: 'prorated_early_activation_adjustment'`, associando `quote_id` e `attempt_id`.
+            - Em renovação futura bem-sucedida, coexistem exatamente duas `BillingTransaction`s auditáveis: o ajuste avulso e a renovação recorrente (`transaction_type: 'recurring_payment'`).
+          - **Preservação Estrita do Ciclo Comercial da Origem**:
+            - O pagamento avulso compra exclusivamente o direito de uso do target no restante do período corrente.
+            - `current_period_start`, `current_period_end` e `effective_billing_date` **NÃO MUDAM**.
+          - **Commercial Boundary Guard**:
+            - Se `currentCommercialDate >= effective_billing_date` no instante em que o ajuste liquidar:
+              - A `BillingTransaction` canônica é preservada (o dinheiro é real);
+              - O target entitlement **NÃO é auto-promovido** antecipadamente;
+              - O sistema marca `financial_attention_required = true` com motivo `LATE_EARLY_ADJUSTMENT_SETTLEMENT`, mantendo o slot `HELD` e **ZERO estorno automático**.
+          - **Local Early Activation Completion Gate**:
+            - Antes de comutar `early_activation_status` para `'activated'`, valida 7 invariantes em leitura fresh:
+              1. `latestTr.early_activation_provider_payment_id === exactPaymentId`;
+              2. `freshTx.status === 'paid'` e `freshTx.provider_payment_id === exactPaymentId`;
+              3. `freshAppSub.plan_id === targetSnapshot.plan_id`;
+              4. `freshAppSub.current_period_start === currentSub.current_period_start`;
+              5. `freshAppSub.current_period_end === currentSub.current_period_end`;
+              6. `latestTr.future_provider_payment_id !== exactPaymentId`;
+              7. `latestTr.transition_status === 'scheduled'` e `latestTr.financial_safety_status === 'live'`.
+          - **Invariantes Pós-Ativação**:
+            - `early_activation_status` comuta para `'activated'`.
+            - `transition_status` **permanece `'scheduled'`** (NÃO completa a transição).
+            - `financial_safety_status` **permanece `'live'`**.
+            - O deterministic active slot **permanece `'HELD'`**.
+          - **Crash-Safety & Recovery Hardening (Crash Matrix A-F: PROVEN)**:
+            - **Crash A**: Na reexecução, reconhece o pagamento fresh do provedor, persiste evidência e converge até `activated`.
+            - **Crash B**: Na reexecução, a evidência é preservada e `BillingTransaction` é gerada uma única vez.
+            - **Crash C**: Na reexecução, a transação não duplica e o snapshot das cotas é promovido.
+            - **Crash D**: Na reexecução, o snapshot é reaplicado idempotentemente e `appSub` converge.
+            - **Crash E**: O Local Completion Gate reconhece o estado já convergido e comuta para `activated`.
+            - **Crash F**: Webhooks duplicados resultam em retorno `already_activated` (NO-OP idempotente).
+            - **Slot Invariant**: Em todos os pontos A-F, `transition_status === 'scheduled'`, `financial_safety_status === 'live'`, e o slot permanece `HELD`.
+          - **Monotonicidade de Eventos Terminais**: Eventos tardios após ativação não regridem `early_activation_status` nem alteram IDs gravados.
+          - **Write-Once Conflict Protection**: IDs divergentes de checkout/pagamento falham fechado com `financial_attention_required = true`.
+          - **Stale Provider Resource Safety Model (Phase 3C.4 Patch)**:
+            - **Materialização de Checkout Antigo é Conflito Financeiro Potencial**: Se chega `CHECKOUT_CREATED` para uma tentativa antiga (`att_old`) quando já existe `att_current`, potencialmente existem dois recursos financeiros no provedor aptos a receber pagamento.
+            - **Isolamento Estrito**: O `provider_checkout_id` é persistido *write-once* unicamente no `att_old`. O `att_current`, `early_activation_provider_checkout_id` (nível de transição), cotação e IDs de pagamento permanecem estritamente intocados.
+            - **Fail-Closed com Atenção Financeira**: Aciona `financial_attention_required = true`, `financial_attention_reason: 'STALE_PROVIDER_CHECKOUT_MATERIALIZED'`, `financial_safety_status: 'attention_required'`.
+            - **Slot Invariant**: `transition_status === 'scheduled'`, e o slot ativo permanece estritamente `HELD`.
+            - **Sem Auto-Cancelamento ou Auto-Refund**: Zero cancelamento cego e zero estorno automático, prevenindo corridas financeiras com pagamentos já liquidados.
+            - **Conflito Write-Once em Attempt Histórico**: Se `att_old` já possuía `OLD_A` e chega `OLD_B`, preserva `OLD_A`, não sobrescreve e aciona `CHECKOUT_ID_WRITE_ONCE_CONFLICT`.
+            - **Stale Checkout + Pagamento Real Posterior (Stale Settled Payment Ledger Patch)**:
+              - **A SETTLEMENT EVENT IS AN IMMUTABLE HISTORICAL FINANCIAL FACT, EVEN IF THE FINANCIAL STATE IS LATER REVERSED**: A ocorrência da liquidação é um fato histórico financeiro imutável, mesmo que posteriormente exista refund, chargeback ou outra reversão. Um pagamento liquidado no gateway é um fato financeiro real e deve ser registrado no ledger contábil canônico (`BillingTransaction`), mesmo quando não concede direito de uso (`financial validity for entitlement != financial existence`). Não apagar/regravar a existência histórica do settlement.
+              - **stale settled early-adjustment payment → canonical BillingTransaction → financial attention → no entitlement → no auto-refund**:
+                - Gera `BillingTransaction` canônica idempotente com ID `${provider}_${provider_payment_id}`, tipo `prorated_early_activation_adjustment`, apontando para `attempt_id = att_old.attempt_id`, valor real liquidado e data financeira;
+                - Preserva evidência write-once em `att_old.provider_payment_id` e `paid_at`;
+                - NÃO ativa target entitlement (`early_activation_status` permanece inalterado);
+                - NÃO associa o pagamento ao `att_current` e não substitui `early_activation_provider_payment_id` na transição;
+                - Aciona `financial_attention_required = true` com razão `STALE_ATTEMPT_EARLY_ADJUSTMENT_SETTLED` (ou `FINANCIAL_TRANSACTION_CONFLICT` em caso de dados divergentes);
+                - Slot ativo permanece estritamente `HELD` e transição permanece `scheduled`;
+                - Zero refund automático;
+                - A atenção financeira não resolvida bloqueia qualquer convergência automática posterior de pagamentos do `att_current`.
+            - **Materialização e Liquidação após Ativação**: Se a transição já está `activated` e chega um pagamento real em checkout histórico, o entitlement permanece intacto em `activated` (não regride), a `BillingTransaction` do pagamento stale é registrada, aciona `financial_attention_required = true`, slot é mantido `HELD`, zero refund e zero segunda ativação.
+          - **Phase 3C.5 Provider Recovery Contract (Documented for Future Phase)**:
+            - **Known Checkout ID**: Reconciliação via `GET /v3/payments?checkoutSession=<checkoutId>` (`listPaymentsByCheckoutSession(checkoutId)`). Permite correlacionar pagamentos do checkout e invocar idempotentemente `processEarlyActivationAdjustmentSettlement`.
+            - **Unknown Checkout ID (após OUTCOME_UNCERTAIN)**: O gateway Asaas **NÃO** disponibiliza discovery por GET/externalReference. A recuperação é permitida **unicamente** via webhook oficial `CHECKOUT_CREATED` contendo `externalReference` correlacionável ao `internal_checkout_intent_id`. Na ausência de webhook, a tentativa permanece em quarentena / gap de reconciliação. **Zero blind retry**.
+            - **Phase 3C.5 continua: NOT STARTED**.
+          - **Uncertain Create Webhook Recovery: IMPLEMENTED**: Tentativa em `OUTCOME_UNCERTAIN` correlacionada por `externalReference` comuta para `pending` com checkout ID write-once, sem novo POST cego, e liquida via `PAYMENT_CONFIRMED`.
+          - **Integração com Carência (Grace Scenario)**:
+            - Se o pagamento da renovação futura falhar na fronteira após ativação antecipada, a carência entra capturando o snapshot vigente lido no runtime (`essential`), garantindo que o ministério usufrua das cotas do plano alvo ativado antecipadamente sem regredir para a origem.
+      - **Status das Próximas Fases**:
+      - **PHASE 3C EARLY ACTIVATION**:
+        - **Phase 3C.1 (Domain, Eligibility & Proration)**: **COMPLETE**.
+        - **Phase 3C.2 (Detached Checkout Preparation & Hardening)**: **COMPLETE**.
+        - **Phase 3C.3 (Tenant-Scoped Early Activation API & Final Hardening)**: **COMPLETE**.
+        - **Phase 3C.4 (Adjustment Settlement, Idempotent Webhook & Immediate Entitlement Convergence)**: **COMPLETE & HARDENED**.
+        - **Phase 3C.5 (Early Activation Reconciliation & Recovery Worker)**: **NOT STARTED**.
+        - **Sandbox Homologation for Early Activation**: **NOT STARTED**.
+      - **PAID -> FREE TRANSITIONS**: **NOT STARTED**.
+      - *(O escopo concluído compreende as fases 3B.1, 3B.2, 3B.3A, 3B.3B, 3B.3 Webhook Terminality Hardening, 3C.1, 3C.2, 3C.3 e 3C.4)*.

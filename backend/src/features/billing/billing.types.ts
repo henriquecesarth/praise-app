@@ -102,6 +102,7 @@ export type BillingEarlyActivationStatus =
   | 'pending_checkout'
   | 'payment_pending'
   | 'confirmed'
+  | 'activated'
   | 'declined'
   | 'expired';
 
@@ -246,6 +247,8 @@ export interface BillingCheckoutAttempt {
   failure_classification?: BillingCheckoutAttemptFailureClassification | null;
   provider_session_terminal?: boolean | null;
   payment_id?: string | null;
+  provider_payment_id?: string | null;
+  paid_at?: string | null;
   created_at: string;
   checkout_requested_at?: string | null;
   checkout_minutes_to_expire?: number | null;
@@ -363,6 +366,10 @@ export interface BillingTransitionV1Record {
   renewal_payment_settled_at?: string | null;
   renewal_paid_billing_date?: string | null;
   successful_renewal_provider_payment_id?: string | null;
+  successful_early_adjustment_provider_payment_id?: string | null;
+  early_activation_payment_settled_at?: string | null;
+  early_adjustment_paid_billing_date?: string | null;
+  early_activation_activated_at?: string | null;
   target_promoted_at?: string | null;
   retry_count?: number;
   last_retry_at?: string | null;

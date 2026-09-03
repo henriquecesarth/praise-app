@@ -1192,6 +1192,18 @@ export class BillingRepository {
         );
       }
 
+      // Garantia WRITE-ONCE de early_activation_provider_checkout_id na transição
+      if (
+        existing.early_activation_provider_checkout_id &&
+        existing.early_activation_provider_checkout_id !== providerCheckoutId
+      ) {
+        throw new AppError(
+          409,
+          `Conflito financeiro write-once: transição '${transitionId}' já possui checkout ID '${existing.early_activation_provider_checkout_id}'. Não é permitido rotacionar para '${providerCheckoutId}'.`,
+          { code: 'CHECKOUT_ID_CONFLICT' }
+        );
+      }
+
       const updatedAttempt: BillingCheckoutAttempt = {
         ...currentAttempt,
         provider_create_state: 'created',
@@ -2060,6 +2072,7 @@ export class BillingRepository {
     return validateBillingTransitionV1(doc);
   }
 
+
   async getTransitionByEarlyActivationProviderCheckoutId(
     providerCheckoutId: string,
     provider?: BillingProviderName
@@ -2088,6 +2101,176 @@ export class BillingRepository {
     const doc = snapshot.docs[0].data() as BillingPlanChangeRecord;
     if (!isBillingTransitionV1(doc)) return null;
     return validateBillingTransitionV1(doc);
+  }
+
+  /**
+   * Persiste atomicamente a evidência de liquidação financeira do pagamento de ajuste de early activation.
+   * Valida status scheduled, financial safety live e ausência de conflito write-once em early_activation_provider_payment_id.
+   * A transição permanece scheduled e o slot permanece HELD.
+   */
+  async recordEarlyAdjustmentFinancialSettlement(params: {
+    transitionId: string;
+    ministryId: string;
+    providerPaymentId: string;
+    paidBillingDate: string;
+    settledAt: string;
+    attemptId?: string | null;
+    nowIso?: string;
+  }): Promise<BillingTransitionV1Record> {
+    const {
+      transitionId,
+      ministryId,
+      providerPaymentId,
+      paidBillingDate,
+      settledAt,
+      attemptId,
+      nowIso = new Date().toISOString(),
+    } = params;
+
+    const docRef = this.planChangesCollection.doc(transitionId);
+
+    return await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      if (!doc.exists) {
+        throw new AppError(404, `Transição '${transitionId}' não encontrada para liquidação de early adjustment.`);
+      }
+      const current = doc.data() as BillingPlanChangeRecord;
+      if (current.ministry_id !== ministryId) {
+        throw new AppError(403, 'Acesso não autorizado a esta transição de plano.');
+      }
+      if (!isBillingTransitionV1(current)) {
+        throw new AppError(400, 'recordEarlyAdjustmentFinancialSettlement suporta apenas transições V1.');
+      }
+
+      // Write-Once de provider payment ID
+      if (
+        current.early_activation_provider_payment_id &&
+        current.early_activation_provider_payment_id !== providerPaymentId
+      ) {
+        throw new AppError(
+          409,
+          `Conflito financeiro write-once em early adjustment: já existe pagamento '${current.early_activation_provider_payment_id}' gravado. Tentativa de sobrescrever com '${providerPaymentId}'.`,
+          { code: 'EARLY_ADJUSTMENT_PAYMENT_ID_CONFLICT' }
+        );
+      }
+
+      // Atualizar tentativa em checkout_attempts se aplicável
+      const attempts = current.checkout_attempts ? [...current.checkout_attempts] : [];
+      const effectiveAttemptId = attemptId || current.current_early_activation_checkout_attempt_id;
+      if (effectiveAttemptId) {
+        const attIdx = attempts.findIndex((a) => a.attempt_id === effectiveAttemptId);
+        if (attIdx >= 0) {
+          attempts[attIdx] = {
+            ...attempts[attIdx],
+            provider_payment_id: providerPaymentId,
+            paid_at: settledAt,
+            provider_session_terminal: true,
+          };
+        }
+      }
+
+      const updated: BillingTransitionV1Record = {
+        ...current,
+        early_activation_provider_payment_id: providerPaymentId,
+        successful_early_adjustment_provider_payment_id: providerPaymentId,
+        early_activation_payment_settled_at: settledAt,
+        early_adjustment_paid_billing_date: paidBillingDate,
+        checkout_attempts: attempts,
+        updated_at: nowIso,
+      };
+
+      const validated = validateBillingTransitionV1(updated);
+      t.set(docRef, validated, { merge: true });
+      return validated;
+    });
+  }
+
+  /**
+   * Confirma a ativação do entitlement de early activation após a convergência local e de cotas.
+   * Marca early_activation_status = 'activated' e early_activation_activated_at.
+   * A transição PERMANECE em 'scheduled', financial_safety_status 'live' e o slot PERMANECE 'HELD'.
+   */
+  async confirmEarlyActivationEntitlement(params: {
+    transitionId: string;
+    ministryId: string;
+    providerPaymentId: string;
+    attemptId?: string | null;
+    nowIso?: string;
+  }): Promise<BillingTransitionV1Record> {
+    const {
+      transitionId,
+      ministryId,
+      providerPaymentId,
+      attemptId,
+      nowIso = new Date().toISOString(),
+    } = params;
+
+    const docRef = this.planChangesCollection.doc(transitionId);
+
+    return await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      if (!doc.exists) {
+        throw new AppError(404, `Transição '${transitionId}' não encontrada para confirmação de early activation.`);
+      }
+      const current = doc.data() as BillingPlanChangeRecord;
+      if (current.ministry_id !== ministryId) {
+        throw new AppError(403, 'Acesso não autorizado a esta transição de plano.');
+      }
+      if (!isBillingTransitionV1(current)) {
+        throw new AppError(400, 'confirmEarlyActivationEntitlement suporta apenas transições V1.');
+      }
+
+      // Idempotência: se já ativado com o mesmo payment ID, retorna sem mutação
+      if (
+        current.early_activation_status === 'activated' &&
+        current.early_activation_provider_payment_id === providerPaymentId
+      ) {
+        return current;
+      }
+
+      // Validação de pagamento correspondente
+      if (
+        current.early_activation_provider_payment_id &&
+        current.early_activation_provider_payment_id !== providerPaymentId
+      ) {
+        throw new AppError(
+          409,
+          `Conflito em confirmEarlyActivationEntitlement: pagamento esperado '${current.early_activation_provider_payment_id}' != recebido '${providerPaymentId}'.`
+        );
+      }
+
+      const attempts = current.checkout_attempts ? [...current.checkout_attempts] : [];
+      const effectiveAttemptId = attemptId || current.current_early_activation_checkout_attempt_id;
+      if (effectiveAttemptId) {
+        const attIdx = attempts.findIndex((a) => a.attempt_id === effectiveAttemptId);
+        if (attIdx >= 0) {
+          attempts[attIdx] = {
+            ...attempts[attIdx],
+            status: 'completed',
+            completed_at: nowIso,
+            provider_session_terminal: true,
+          };
+        }
+      }
+
+      const updated: BillingTransitionV1Record = {
+        ...current,
+        early_activation_status: 'activated',
+        early_activation_activated_at: nowIso,
+        early_activation_confirmed_at: nowIso,
+        early_activation_provider_payment_id: providerPaymentId,
+        successful_early_adjustment_provider_payment_id: providerPaymentId,
+        checkout_attempts: attempts,
+        // Invariantes estritas de Paid -> Paid:
+        transition_status: 'scheduled',
+        financial_safety_status: 'live',
+        updated_at: nowIso,
+      };
+
+      const validated = validateBillingTransitionV1(updated);
+      t.set(docRef, validated, { merge: true });
+      return validated;
+    });
   }
 
   async getFailedSupersedes(
