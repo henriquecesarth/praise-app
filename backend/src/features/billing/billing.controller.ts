@@ -267,4 +267,122 @@ export class BillingController {
       next(err);
     }
   };
+
+  /**
+   * POST /api/v1/ministries/:ministryId/billing/transitions/:transitionId/early-activation/quote
+   */
+  createEarlyActivationQuote = async (
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const ministryId = this.getMinistryId(req);
+      const userId = req.user?.id;
+      if (!userId) {
+        throw new AppError(401, 'Usuário não autenticado.');
+      }
+      const rawTransitionId = req.params.transitionId;
+      const transitionId = Array.isArray(rawTransitionId) ? rawTransitionId[0] : (rawTransitionId ? String(rawTransitionId) : '');
+      if (!transitionId) {
+        throw new AppError(400, 'transitionId é obrigatório nos parâmetros da rota.');
+      }
+
+      const quoteDto = await this.billingService.createEarlyActivationQuote(
+        ministryId,
+        userId,
+        transitionId
+      );
+
+      res.status(201).json(quoteDto);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /**
+   * POST /api/v1/ministries/:ministryId/billing/transitions/:transitionId/early-activation/checkout
+   */
+  createEarlyActivationCheckout = async (
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const ministryId = this.getMinistryId(req);
+      const userId = req.user?.id;
+      if (!userId) {
+        throw new AppError(401, 'Usuário não autenticado.');
+      }
+      const rawTransitionId = req.params.transitionId;
+      const transitionId = Array.isArray(rawTransitionId) ? rawTransitionId[0] : (rawTransitionId ? String(rawTransitionId) : '');
+      if (!transitionId) {
+        throw new AppError(400, 'transitionId é obrigatório nos parâmetros da rota.');
+      }
+
+      const { quoteId, ...unknownBody } = req.body || {};
+      if (!quoteId || typeof quoteId !== 'string' || !quoteId.trim()) {
+        throw new AppError(400, 'quoteId é obrigatório no corpo da requisição.');
+      }
+
+      // Rejeita campos financeiros ou de callback desconhecidos enviados no body
+      const forbiddenFields = [
+        'amount',
+        'amountCents',
+        'price',
+        'planId',
+        'targetPlanId',
+        'successUrl',
+        'cancelUrl',
+        'expiredUrl',
+      ];
+      for (const field of forbiddenFields) {
+        if (field in unknownBody) {
+          throw new AppError(
+            400,
+            `Campo '${field}' não é permitido no corpo da requisição. Autoridade exclusiva no backend.`
+          );
+        }
+      }
+
+      try {
+        const result = await this.billingService.createEarlyActivationCheckout(
+          ministryId,
+          userId,
+          transitionId,
+          quoteId.trim()
+        );
+
+        res.status(201).json({
+          checkoutUrl: result.checkoutUrl,
+          checkoutId: result.checkoutId,
+          quoteId: result.quoteId,
+          amountCents: result.amountCents,
+          expiresAt: result.expiresAt,
+          transitionId,
+          status: 'payment_pending',
+        });
+      } catch (serviceErr: any) {
+        // HTTP 202 Accepted para resultado incerto com retenção segura da tentativa
+        if (
+          serviceErr instanceof AppError &&
+          serviceErr.details &&
+          (serviceErr.details as any).code === 'CHECKOUT_CREATE_UNCERTAIN'
+        ) {
+          res.status(202).json({
+            status: 'creation_verification_pending',
+            code: 'CHECKOUT_CREATE_UNCERTAIN',
+            message:
+              'Estamos verificando a criação do pagamento junto ao gateway. Por favor, aguarde a confirmação sem tentar novamente.',
+            transitionId,
+            quoteId: quoteId.trim(),
+          });
+          return;
+        }
+        throw serviceErr;
+      }
+    } catch (err) {
+      next(err);
+    }
+  };
 }

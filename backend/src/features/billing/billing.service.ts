@@ -42,7 +42,17 @@ import {
   canCreateEarlyActivationCheckout,
   canResumeReservedEarlyActivationAttempt,
   calculateCheckoutMinutesToExpire,
+  createEarlyActivationQuote,
+  classifyCapabilityEligibility,
+  isEarlyAdjustmentObligationFinanciallyLive,
+  classifyEarlyAdjustmentFinancialState,
+  BILLING_TIMEZONE_DEFAULT,
 } from './billing-transition-domain.service';
+import { TransitionCommercialSnapshot } from './billing-transition-domain.types';
+import {
+  EarlyActivationQuoteResponseDto,
+  EarlyActivationCheckoutResponseDto,
+} from './billing.types';
 import { AppError } from '../../middleware/error-handler';
 import { getCurrentBillingDate, getBillingDate, addCommercialInterval, addCommercialDays } from '../../utils/billing-date';
 import { providerBrlDecimalToCents } from './billing-money.utils';
@@ -4828,15 +4838,213 @@ export class BillingService {
   }
 
   /**
-   * Phase 3C.2 — Criação de Checkout de Ativação Antecipada (Early Activation) com Ajuste Pró-Rata.
-   * Método orquestrador interno:
-   * 1. Valida precondições da transição e cotação (imutabilidade, data comercial, pre-boundary).
-   * 2. Calcula TTL determinístico através do domínio (calculateCheckoutMinutesToExpire).
-   * 3. Reserva atomicamente a tentativa no Firestore antes de qualquer mutação externa (one-live-obligation).
-   * 4. Dispara chamada avulsa (DETACHED) ao provedor Asaas (sem recorrência, sem raw-card).
-   * 5. Em sucesso: grava provider_checkout_id de forma write-once.
-   * 6. Em falha comprovadamente pré-recurso: grava failure e reabre subfluxo para 'available'.
-   * 7. Em falha incerta (timeout, 5xx): coloca em quarentena ('uncertain'), mantém subfluxo 'payment_pending'.
+   * Cria e persiste atomicamente uma cotação determinística de ativação antecipada.
+   * NÃO chama o gateway Asaas (zero provider mutation).
+   * Usa SOMENTE dados econômicos travados da transição V1 (nunca reprecifica via catálogo).
+   */
+  async createEarlyActivationQuote(
+    ministryId: string,
+    userId: string,
+    transitionId: string,
+    options?: { now?: Date | string }
+  ): Promise<EarlyActivationQuoteResponseDto> {
+    if (!ministryId || !transitionId) {
+      throw new AppError(400, 'ministryId e transitionId são obrigatórios.');
+    }
+
+    const transition = await this.billingRepo.getPlanChange(transitionId);
+    if (!transition) {
+      throw new AppError(404, `Transição '${transitionId}' não encontrada.`);
+    }
+
+    if (transition.ministry_id !== ministryId) {
+      throw new AppError(403, 'Acesso não autorizado a esta transição de plano.');
+    }
+
+    if (!isBillingTransitionV1(transition)) {
+      throw new AppError(400, 'Ativação antecipada é suportada exclusivamente em transições V1.');
+    }
+
+    // 1. Validações de pré-requisitos canônicos da transição V1 (Seção 4)
+    if (transition.execution_strategy !== 'scheduled_paid_transition') {
+      throw new AppError(400, `Estratégia '${transition.execution_strategy}' não permite early activation.`);
+    }
+
+    if (transition.transition_status !== 'scheduled') {
+      throw new AppError(400, `Transição em status '${transition.transition_status}' não permite cotação de early activation (exigido 'scheduled').`);
+    }
+
+    if (transition.supersede_status !== 'completed') {
+      throw new AppError(400, 'Transição anterior ainda não foi finalizada (supersede_status incompleto).');
+    }
+
+    if (transition.payment_cleanup_status !== 'completed') {
+      throw new AppError(400, 'Limpeza de cobranças antigas ainda não foi finalizada.');
+    }
+
+    if (transition.financial_safety_status !== 'live') {
+      throw new AppError(400, `Estado de segurança financeira '${transition.financial_safety_status}' inválido.`);
+    }
+
+    if (transition.financial_attention_required === true) {
+      throw new AppError(400, 'Transição requer atenção financeira. Cotação bloqueada.');
+    }
+
+    const timeZone = config.billingTimezone || BILLING_TIMEZONE_DEFAULT;
+    const nowIso = options?.now
+      ? (typeof options.now === 'string' ? new Date(options.now) : options.now).toISOString()
+      : new Date().toISOString();
+    const currentCommercialDate = getBillingDate(nowIso, timeZone);
+
+    if (transition.effective_billing_date && currentCommercialDate >= transition.effective_billing_date) {
+      throw new AppError(
+        400,
+        `Data comercial atual (${currentCommercialDate}) atingiu ou ultrapassou a fronteira da renovação (${transition.effective_billing_date}).`
+      );
+    }
+
+    if (!transition.target_entitlement_snapshot) {
+      throw new AppError(400, 'Snapshot de entitlement de destino ausente na transição.');
+    }
+
+    if (
+      transition.source_current_cycle_total_cents === undefined ||
+      transition.source_current_cycle_total_cents === null ||
+      transition.target_current_cycle_total_cents === undefined ||
+      transition.target_current_cycle_total_cents === null
+    ) {
+      throw new AppError(400, 'Totais financeiros do ciclo corrente ausentes na transição.');
+    }
+
+    const sourceCurrentCycleTotalCents = transition.source_current_cycle_total_cents;
+    const targetCurrentCycleTotalCents = transition.target_current_cycle_total_cents;
+
+    // 2. Validação estrita de Pure Upgrade e Delta Positivo
+    const capabilityCheck = classifyCapabilityEligibility(
+      transition.source_entitlement_snapshot,
+      transition.target_entitlement_snapshot,
+      {
+        priceDeltaCents: targetCurrentCycleTotalCents - sourceCurrentCycleTotalCents,
+      }
+    );
+
+    if (capabilityCheck.classification !== 'pure_upgrade' || !capabilityCheck.early_activation_eligible) {
+      throw new AppError(
+        400,
+        `Transição não é elegível para early activation: classificação '${capabilityCheck.classification}'. Motivo: ${capabilityCheck.reason || 'Upgrade estrito de capacidades obrigatório'}.`
+      );
+    }
+
+    const deltaCents = targetCurrentCycleTotalCents - sourceCurrentCycleTotalCents;
+    if (deltaCents <= 0) {
+      throw new AppError(400, 'Diferença de preço entre destino e origem deve ser estritamente positiva.');
+    }
+
+    // 3. Validação de Ausência de Obrigação Financeira Viva
+    if (isEarlyAdjustmentObligationFinanciallyLive(transition)) {
+      const state = classifyEarlyAdjustmentFinancialState(transition);
+      throw new AppError(
+        409,
+        `Existe uma obrigação financeira de ativação antecipada ativa ou não resolvida (estado: '${state}').`
+      );
+    }
+
+    if (transition.early_activation_status === 'payment_pending') {
+      throw new AppError(409, 'Existe um pagamento de ativação antecipada pendente de confirmação.');
+    }
+
+    // 4. Montar Snapshot Comercial usando ESTRITAMENTE dados travados na transição
+    const classification = classifyTransition(
+      {
+        plan_id: transition.source_plan_id,
+        interval: transition.source_interval,
+        addon_blocks: transition.source_addon_blocks,
+        current_period_start: transition.current_period_start,
+        current_period_end: transition.current_period_end,
+      },
+      {
+        plan_id: transition.target_plan_id,
+        interval: transition.target_interval,
+        addon_blocks: transition.target_addon_blocks,
+      }
+    );
+
+    const commercialSnapshot: TransitionCommercialSnapshot = {
+      classification,
+      transition_type: transition.transition_type,
+      execution_strategy: transition.execution_strategy,
+      early_activation_eligible: true,
+      source_plan_id: transition.source_plan_id,
+      source_interval: transition.source_interval,
+      source_addon_blocks: transition.source_addon_blocks,
+      source_entitlement_snapshot: transition.source_entitlement_snapshot,
+      source_current_cycle_total_cents: sourceCurrentCycleTotalCents,
+      current_period_start: transition.current_period_start,
+      current_period_end: transition.current_period_end,
+      current_period_start_date: transition.current_period_start
+        ? getBillingDate(transition.current_period_start, timeZone)
+        : null,
+      current_period_end_date: transition.current_period_end
+        ? getBillingDate(transition.current_period_end, timeZone)
+        : null,
+      target_plan_id: transition.target_plan_id,
+      target_interval: transition.target_interval,
+      target_addon_blocks: transition.target_addon_blocks,
+      target_future_recurring_price_cents: transition.target_future_recurring_price_cents,
+      target_current_cycle_total_cents: targetCurrentCycleTotalCents,
+      target_entitlement_snapshot: transition.target_entitlement_snapshot,
+      early_activation_target_entitlement_snapshot:
+        transition.early_activation_target_entitlement_snapshot || transition.target_entitlement_snapshot,
+      currency: 'BRL',
+      price_locked_at: transition.price_locked_at,
+      effective_at: transition.effective_at || transition.current_period_end || nowIso,
+      effective_billing_date:
+        transition.effective_billing_date ||
+        (transition.current_period_end ? getBillingDate(transition.current_period_end, timeZone) : currentCommercialDate),
+    };
+
+    // 5. Criar cotação determinística pura (sem chamada externa)
+    const quote = createEarlyActivationQuote(commercialSnapshot, {
+      transitionId,
+      ministryId,
+      now: nowIso,
+      timeZone,
+    });
+
+    // 6. Persistência atômica com CAS no Firestore
+    const { quote: persistedQuote } = await this.billingRepo.recordEarlyActivationQuote({
+      ministryId,
+      transitionId,
+      quote,
+      nowIso,
+    });
+
+    // 7. Retornar DTO de resposta limpo e sanitizado
+    return {
+      quoteId: persistedQuote.quote_id,
+      transitionId: persistedQuote.transition_id,
+      sourcePlanId: transition.source_plan_id,
+      targetPlanId: transition.target_plan_id,
+      currentPeriodStartBillingDate: commercialSnapshot.current_period_start_date || '',
+      currentPeriodEndBillingDate: commercialSnapshot.current_period_end_date || '',
+      quoteBillingDate: persistedQuote.quote_effective_billing_date,
+      totalDays: persistedQuote.total_days || 0,
+      remainingDays: persistedQuote.remaining_days || 0,
+      sourceCurrentCycleTotalCents: persistedQuote.source_current_cycle_total_cents,
+      targetCurrentCycleTotalCents: persistedQuote.target_current_cycle_total_cents,
+      priceDeltaCents: persistedQuote.price_delta_cents || 0,
+      proratedAdjustmentCents: persistedQuote.prorated_adjustment_cents,
+      currency: 'BRL',
+      expiresAt: persistedQuote.expires_at,
+      nextRenewalBillingDate: transition.effective_billing_date || '',
+      nextRecurringAmountCents: transition.target_future_recurring_price_cents,
+    };
+  }
+
+  /**
+   * Inicia o fluxo de checkout avulso (DETACHED) de early activation no Asaas.
+   * Cria registro atômico de tentativa ('reserved') no Firestore ANTES de qualquer chamada externa.
+   * Transiciona 'reserved' -> 'attempting' via CAS estrito.
    * Zero blind retry. Não ativa entitlement.
    */
   async createEarlyActivationCheckout(
@@ -4845,8 +5053,6 @@ export class BillingService {
     transitionId: string,
     quoteId: string,
     options?: {
-      successUrl?: string;
-      cancelUrl?: string;
       customerData?: {
         name?: string;
         email?: string;
@@ -4859,6 +5065,7 @@ export class BillingService {
     checkoutUrl: string;
     checkoutId: string;
     attemptId: string;
+    quoteId: string;
     amountCents: number;
     minutesToExpire: number;
     expiresAt: string | null;
@@ -4910,53 +5117,59 @@ export class BillingService {
     let quoteExpiresAt: string;
 
     if (resumeCheck.canResume && resumeCheck.attempt) {
-      // Retomada da mesma reserva: NÃO cria nova tentativa nem consome nova cotação
+      // Retomada idempotente da mesma tentativa local previamente reservada
       attemptId = resumeCheck.attempt.attempt_id;
       internalCheckoutIntentId = resumeCheck.attempt.internal_checkout_intent_id;
       amountCents = resumeCheck.attempt.amount_cents;
       const quote = transition.current_early_activation_quote!;
       quoteExpiresAt = quote.expires_at;
-      const ttl = calculateCheckoutMinutesToExpire(quote.expires_at, nowIso);
-      minutesToExpire = ttl.minutesToExpire;
+
+      const ttlResult = calculateCheckoutMinutesToExpire(quoteExpiresAt, nowIso, {
+        providerMinimumMinutes: 10,
+        safetyMarginMinutes: 1,
+        maxMinutes: 60,
+      });
+      minutesToExpire = ttlResult.minutesToExpire;
     } else {
-      // Não é uma retomada: valida elegibilidade para criação de nova tentativa
-      const eligibility = canCreateEarlyActivationCheckout(transition);
+      // 2.1 Validação do portão de UMA ÚNICA OBRIGAÇÃO FINANCEIRA VIVA
+      const eligibility = canCreateEarlyActivationCheckout(transition, {
+        timeZone: config.billingTimezone || 'America/Sao_Paulo',
+      });
       if (!eligibility.allowed) {
-        throw new AppError(409, eligibility.reason || 'Criação de checkout de ativação antecipada bloqueada.', {
+        throw new AppError(409, eligibility.reason || 'Operação de checkout não permitida.', {
           code: 'EARLY_ACTIVATION_CHECKOUT_BLOCKED',
+          financialState: eligibility.financialState,
         });
       }
 
-      // Validação da cotação
+      // 2.2 Validar se a cotação solicitada existe e está ativa
       const quote = transition.current_early_activation_quote;
       if (!quote || quote.quote_id !== quoteId) {
-        throw new AppError(400, 'Cotação de early activation inválida ou divergente da transição.', {
-          code: 'INVALID_EARLY_ACTIVATION_QUOTE',
-        });
-      }
-
-      if (quote.status !== 'active') {
-        throw new AppError(409, `Cotação com status '${quote.status}' não pode ser utilizada para checkout.`, {
+        throw new AppError(400, `Cotação de early activation inválida ou divergente da transição (cotação '${quoteId}').`, {
           code: 'EARLY_ACTIVATION_QUOTE_NOT_ACTIVE',
         });
       }
 
-      if (quote.prorated_adjustment_cents <= 0) {
-        throw new AppError(400, 'Valor do ajuste de ativação antecipada deve ser estritamente positivo.', {
-          code: 'INVALID_ADJUSTMENT_AMOUNT',
+      if (quote.status !== 'active') {
+        throw new AppError(400, `Cotação com status '${quote.status}' não pode ser utilizada para checkout.`, {
+          code: 'EARLY_ACTIVATION_QUOTE_INACTIVE',
         });
       }
 
-      // Calcula TTL determinístico via função pura de domínio
-      const ttl = calculateCheckoutMinutesToExpire(quote.expires_at, nowIso);
-      minutesToExpire = ttl.minutesToExpire;
-      amountCents = quote.prorated_adjustment_cents;
       quoteExpiresAt = quote.expires_at;
+      const ttlResult = calculateCheckoutMinutesToExpire(quoteExpiresAt, nowIso, {
+        providerMinimumMinutes: 10,
+        safetyMarginMinutes: 1,
+        maxMinutes: 60,
+      });
+      minutesToExpire = ttlResult.minutesToExpire;
+      amountCents = quote.prorated_adjustment_cents;
 
-      attemptId = `att_ea_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      internalCheckoutIntentId = `intent_${ministryId}_ea_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      // 2.3 Gerar identificadores únicos de tentativa e intenção
+      attemptId = `att_ea_${transitionId}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      internalCheckoutIntentId = `intent_ea_${transitionId}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
-      // Reserva atômica no repositório com estado 'reserved'
+      // 2.4 RESERVA ATÔMICA DA TENTATIVA NO REPOSITÓRIO (CAS)
       await this.billingRepo.reserveEarlyActivationCheckoutAttempt({
         transitionId,
         ministryId,
@@ -4970,8 +5183,7 @@ export class BillingService {
       });
     }
 
-    // 3. TWO-PHASE COMMIT CAS: Transiciona atomicamente reserved -> attempting antes do POST
-    // Se duas chamadas concorrentes tentarem executar a mesma tentativa, exatamente UMA ganha o CAS
+    // 3. TWO-PHASE PROVIDER-CREATE MARKER (CAS): Transiciona atomicamente reserved -> attempting antes do POST
     await this.billingRepo.markEarlyActivationCheckoutAttempting({
       transitionId,
       ministryId,
@@ -4979,17 +5191,18 @@ export class BillingService {
       nowIso,
     });
 
-    // 4. Obter URLs de callback
+    // 4. Obter URLs de callback - autoridade exclusiva do backend (frontend NÃO pode injetar URLs arbitrárias)
     const publicApiUrl = (config.billingPublicApiUrl || '').trim().replace(/\/+$/, '');
-    const defaultSuccessUrl = publicApiUrl
-      ? `${publicApiUrl}/api/v1/billing/checkout-return/success`
-      : 'https://app.louvaio.com.br/ministerio/plano';
-    const defaultCancelUrl = publicApiUrl
-      ? `${publicApiUrl}/api/v1/billing/checkout-return/cancel`
-      : 'https://app.louvaio.com.br/ministerio/plano';
-    const successUrl = options?.successUrl || defaultSuccessUrl;
-    const cancelUrl = options?.cancelUrl || defaultCancelUrl;
-    const expiredUrl = publicApiUrl ? `${publicApiUrl}/api/v1/billing/checkout-return/expired` : cancelUrl;
+    if (!publicApiUrl) {
+      throw new AppError(500, 'URL pública de callback do Billing não configurada.');
+    }
+    if (publicApiUrl.includes('localhost') || publicApiUrl.includes('127.0.0.1')) {
+      throw new AppError(500, 'URL pública de callback do Billing não pode ser localhost.');
+    }
+
+    const successUrl = `${publicApiUrl}/api/v1/billing/checkout-return/success`;
+    const cancelUrl = `${publicApiUrl}/api/v1/billing/checkout-return/cancel`;
+    const expiredUrl = `${publicApiUrl}/api/v1/billing/checkout-return/expired`;
 
     if (typeof this.provider.createDetachedCheckout !== 'function') {
       throw new AppError(500, 'Provedor configurado não suporta criação de checkout avulso (DETACHED).');
@@ -5048,8 +5261,8 @@ export class BillingService {
 
       throw new AppError(
         500,
-        'Instabilidade ao comunicar com gateway de pagamento. A criação do checkout de ativação antecipada está em quarentena para reconciliação.',
-        { code: 'EARLY_ACTIVATION_CHECKOUT_UNCERTAIN' }
+        'Instabilidade ao comunicar com gateway de pagamento. A tentativa está sendo verificada de forma segura pelo sistema. Por favor, aguarde alguns instantes antes de realizar qualquer nova ação.',
+        { code: 'CHECKOUT_CREATE_UNCERTAIN', attemptId }
       );
     }
 
@@ -5096,6 +5309,7 @@ export class BillingService {
       checkoutUrl: checkoutResult.checkoutUrl,
       checkoutId: checkoutResult.checkoutId,
       attemptId,
+      quoteId,
       amountCents,
       minutesToExpire,
       expiresAt: checkoutResult.expiresAt,

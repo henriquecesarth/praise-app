@@ -31,6 +31,19 @@ router.post('/reactivate', requireMinistryRole('admin'), controller.reactivateSu
 router.post('/reconcile', requireMinistryRole('admin'), controller.reconcileSubscription);
 router.get('/history', requireMinistryRole('member'), controller.getBillingHistory);
 
+// Phase 3C.3 — Early Activation Endpoints (Tenant-Scoped, RBAC Admin, Locked Economic Transition Basis)
+router.post(
+  '/transitions/:transitionId/early-activation/quote',
+  requireMinistryRole('admin'),
+  controller.createEarlyActivationQuote
+);
+router.post(
+  '/transitions/:transitionId/early-activation/checkout',
+  requireMinistryRole('admin'),
+  controller.createEarlyActivationCheckout
+);
+
+
 // ----------------------------------------------------------------------------
 // Rotas Administrativas da Plataforma (Protegidas por PLATFORM_ADMIN_SECRET)
 // ----------------------------------------------------------------------------

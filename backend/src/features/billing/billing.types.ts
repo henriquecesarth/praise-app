@@ -693,3 +693,33 @@ export interface CheckoutCreationResult {
   totalPriceCents: number;
   currency: 'BRL';
 }
+
+export interface EarlyActivationQuoteResponseDto {
+  quoteId: string;
+  transitionId: string;
+  sourcePlanId: string;
+  targetPlanId: string;
+  currentPeriodStartBillingDate: string;
+  currentPeriodEndBillingDate: string;
+  quoteBillingDate: string;
+  totalDays: number;
+  remainingDays: number;
+  sourceCurrentCycleTotalCents: number;
+  targetCurrentCycleTotalCents: number;
+  priceDeltaCents: number;
+  proratedAdjustmentCents: number;
+  currency: 'BRL';
+  expiresAt: string;
+  nextRenewalBillingDate: string;
+  nextRecurringAmountCents: number;
+}
+
+export interface EarlyActivationCheckoutResponseDto {
+  checkoutUrl: string;
+  checkoutId: string;
+  quoteId: string;
+  amountCents: number;
+  expiresAt: string | null;
+  transitionId: string;
+  status: 'payment_pending';
+}

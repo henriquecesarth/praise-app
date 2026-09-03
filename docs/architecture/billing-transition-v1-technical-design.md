@@ -635,6 +635,12 @@ Para garantir as invariantes **No Two Live Renewals**, **No Unsafe Zero Renewals
          - **Autoridade do Reconciliador**: Casos transitórios (`PAYMENT_NOT_FOUND`, `SOURCE_CUTOVER_NOT_COMPLETED`, `ACTIVATION_COMPLETION_GATE_FAILED`, `SOURCE_SUBSCRIPTION_STILL_ACTIVE`) finalizam o webhook individualmente como `processed` (com HTTP 200) e deixam a transição em `scheduled` ou com `financial_attention_required = true` e slot `HELD`. A autoridade de continuidade e convergência longa pertence exclusivamente ao `BillingReconcilerWorker`.
          - **HTTP ACK Coerente**: HTTP 2xx expressa que a entrega foi consumida com sucesso; HTTP 5xx expressa falha real no processamento (exceção interna, falha de persistência) e solicita redelivery pelo provedor.
      - **Status das Próximas Fases**:
-     - **PHASE 3C EARLY ACTIVATION**: **NOT STARTED**.
+     - **PHASE 3C EARLY ACTIVATION**:
+       - **Phase 3C.1 (Domain, Eligibility & Proration)**: **COMPLETE**.
+       - **Phase 3C.2 (Detached Checkout Preparation & Hardening)**: **COMPLETE**.
+       - **Phase 3C.3 (Tenant-Scoped Early Activation API & Final Hardening)**: **COMPLETE**.
+       - **Phase 3C.4 (Adjustment Settlement, Idempotent Webhook & Entitlement Convergence)**: **NOT STARTED**.
+       - **Early Entitlement Activation from Adjustment**: **NOT STARTED**.
+       - **Sandbox Homologation for Early Activation**: **NOT STARTED**.
      - **PAID -> FREE TRANSITIONS**: **NOT STARTED**.
-     - *(O escopo concluído compreende as fases 3B.1, 3B.2, 3B.3A, 3B.3B e 3B.3 Webhook Terminality Hardening)*.
+     - *(O escopo concluído compreende as fases 3B.1, 3B.2, 3B.3A, 3B.3B, 3B.3 Webhook Terminality Hardening, 3C.1, 3C.2 e 3C.3)*.

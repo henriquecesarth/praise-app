@@ -24,6 +24,7 @@ import {
 import {
   isEarlyAdjustmentObligationFinanciallyLive,
   canCreateEarlyActivationCheckout,
+  classifyCapabilityEligibility,
 } from '../features/billing/billing-transition-domain.service';
 
 export const SAFE_TERMINAL_TRANSITION_STATUSES = [
@@ -1350,6 +1351,210 @@ export class BillingRepository {
       const validated = validateBillingTransitionV1(merged);
       t.set(docRef, validated, { merge: true });
       return validated;
+    });
+  }
+
+  /**
+   * Persiste atomicamente uma cotação de early activation (CAS via Firestore Transaction).
+   * Valida tenant isolation, status scheduled, ausência de financial attention, ausência de
+   * obrigações financeiramente vivas e atualiza lifecycle da cotação anterior para superseded.
+   */
+  async recordEarlyActivationQuote(params: {
+    ministryId: string;
+    transitionId: string;
+    quote: BillingEarlyActivationQuote;
+    nowIso?: string;
+  }): Promise<{ transition: BillingTransitionV1Record; quote: BillingEarlyActivationQuote }> {
+    const { ministryId, transitionId, quote, nowIso = new Date().toISOString() } = params;
+
+    const docRef = this.planChangesCollection.doc(transitionId);
+
+    return await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      if (!doc.exists) {
+        throw new AppError(404, `Transição '${transitionId}' não encontrada.`);
+      }
+
+      const existing = doc.data() as BillingPlanChangeRecord;
+      if (existing.ministry_id !== ministryId) {
+        throw new AppError(403, 'Acesso não autorizado a esta transição de plano.');
+      }
+
+      if (!isBillingTransitionV1(existing)) {
+        throw new AppError(400, 'Operação suportada apenas em transições V1.');
+      }
+
+      // 1. Revalidação transacional completa de prontidão financeira (Seção 4)
+      if (existing.execution_strategy !== 'scheduled_paid_transition') {
+        throw new AppError(
+          400,
+          `Estratégia '${existing.execution_strategy}' não permite cotação de early activation (exigido 'scheduled_paid_transition').`
+        );
+      }
+
+      if (existing.transition_status !== 'scheduled') {
+        throw new AppError(
+          400,
+          `Transição em status '${existing.transition_status}' não permite cotação de early activation (exigido 'scheduled').`
+        );
+      }
+
+      if (existing.supersede_status !== 'completed') {
+        throw new AppError(
+          400,
+          `Transição anterior não finalizada no commit (supersede_status: '${existing.supersede_status}').`
+        );
+      }
+
+      if (existing.payment_cleanup_status !== 'completed') {
+        throw new AppError(
+          400,
+          `Limpeza de cobranças antigas não finalizada no commit (payment_cleanup_status: '${existing.payment_cleanup_status}').`
+        );
+      }
+
+      if (existing.financial_safety_status !== 'live') {
+        throw new AppError(
+          400,
+          `Estado de segurança financeira '${existing.financial_safety_status}' inválido para cotação (exigido 'live').`
+        );
+      }
+
+      if (existing.financial_attention_required === true) {
+        throw new AppError(400, 'Transição requer atenção financeira. Cotação bloqueada no commit.');
+      }
+
+      if (existing.early_activation_status === 'payment_pending') {
+        throw new AppError(409, 'Existe um pagamento de ativação antecipada pendente de confirmação.');
+      }
+
+      if (isEarlyAdjustmentObligationFinanciallyLive(existing)) {
+        throw new AppError(409, 'Existe uma obrigação financeira de early activation ativa ou não resolvida.');
+      }
+
+      if (!existing.target_entitlement_snapshot) {
+        throw new AppError(400, 'Snapshot de entitlement de destino ausente na transição fresh.');
+      }
+
+      if (
+        existing.source_current_cycle_total_cents === undefined ||
+        existing.source_current_cycle_total_cents === null ||
+        existing.target_current_cycle_total_cents === undefined ||
+        existing.target_current_cycle_total_cents === null
+      ) {
+        throw new AppError(400, 'Totais financeiros do ciclo corrente ausentes na transição fresh.');
+      }
+
+      // 2. Fresh Economic Binding (Seção 5)
+      if (quote.transition_id !== existing.id) {
+        throw new AppError(
+          409,
+          `ID da transição na cotação ('${quote.transition_id}') diverge da transição persistida ('${existing.id}').`,
+          { code: 'STALE_EARLY_ACTIVATION_QUOTE' }
+        );
+      }
+
+      if (quote.ministry_id !== existing.ministry_id) {
+        throw new AppError(
+          403,
+          `Ministério da cotação ('${quote.ministry_id}') diverge do ministério da transição ('${existing.ministry_id}').`,
+          { code: 'STALE_EARLY_ACTIVATION_QUOTE' }
+        );
+      }
+
+      if (quote.source_current_cycle_total_cents !== existing.source_current_cycle_total_cents) {
+        throw new AppError(
+          409,
+          `Valor do ciclo de origem na cotação (${quote.source_current_cycle_total_cents}¢) diverge do valor travado na transição fresh (${existing.source_current_cycle_total_cents}¢).`,
+          { code: 'STALE_EARLY_ACTIVATION_QUOTE' }
+        );
+      }
+
+      if (quote.target_current_cycle_total_cents !== existing.target_current_cycle_total_cents) {
+        throw new AppError(
+          409,
+          `Valor do ciclo de destino na cotação (${quote.target_current_cycle_total_cents}¢) diverge do valor travado na transição fresh (${existing.target_current_cycle_total_cents}¢).`,
+          { code: 'STALE_EARLY_ACTIVATION_QUOTE' }
+        );
+      }
+
+      // 3. Boundary / Quote Date Commit Guard (Seção 6)
+      if (existing.effective_billing_date && quote.quote_effective_billing_date >= existing.effective_billing_date) {
+        throw new AppError(
+          400,
+          `Data comercial da cotação (${quote.quote_effective_billing_date}) atingiu ou ultrapassou a fronteira da renovação (${existing.effective_billing_date}).`,
+          { code: 'QUOTE_BOUNDARY_EXCEEDED' }
+        );
+      }
+
+      const nowTime = new Date(nowIso).getTime();
+      const quoteExpiryTime = new Date(quote.expires_at).getTime();
+      if (nowTime >= quoteExpiryTime) {
+        throw new AppError(400, 'A cotação de early activation já expirou no momento do commit.', {
+          code: 'EARLY_ACTIVATION_QUOTE_EXPIRED',
+        });
+      }
+
+      // 4. Capability Eligibility at Commit (Seção 7)
+      const commitCapabilityCheck = classifyCapabilityEligibility(
+        existing.source_entitlement_snapshot,
+        existing.target_entitlement_snapshot,
+        {
+          priceDeltaCents:
+            existing.target_current_cycle_total_cents - existing.source_current_cycle_total_cents,
+        }
+      );
+
+      if (commitCapabilityCheck.classification !== 'pure_upgrade' || !commitCapabilityCheck.early_activation_eligible) {
+        throw new AppError(
+          400,
+          `Transição não é elegível para early activation no commit: classificação '${commitCapabilityCheck.classification}'. Motivo: ${commitCapabilityCheck.reason || 'Upgrade estrito de capacidades obrigatório'}.`,
+          { code: 'INELIGIBLE_EARLY_ACTIVATION_UPGRADE' }
+        );
+      }
+
+      // 5. Atualiza histórico e current quote
+      const existingHistory = existing.early_activation_quotes_history
+        ? [...existing.early_activation_quotes_history]
+        : [];
+
+      const updatedHistory = existingHistory.map((q) => {
+        if (q.status === 'active') {
+          return { ...q, status: 'superseded' as const };
+        }
+        return q;
+      });
+
+      if (existing.current_early_activation_quote && existing.current_early_activation_quote.status === 'active') {
+        const foundIndex = updatedHistory.findIndex(
+          (q) => q.quote_id === existing.current_early_activation_quote!.quote_id
+        );
+        if (foundIndex >= 0) {
+          updatedHistory[foundIndex] = {
+            ...updatedHistory[foundIndex],
+            status: 'superseded',
+          };
+        } else {
+          updatedHistory.push({
+            ...existing.current_early_activation_quote,
+            status: 'superseded',
+          });
+        }
+      }
+
+      updatedHistory.push(quote);
+
+      const merged: BillingTransitionV1Record = {
+        ...existing,
+        current_early_activation_quote: quote,
+        early_activation_quotes_history: updatedHistory,
+        early_activation_status: 'available',
+        updated_at: nowIso,
+      };
+
+      const validated = validateBillingTransitionV1(merged);
+      t.set(docRef, validated, { merge: true });
+      return { transition: validated, quote };
     });
   }
 
