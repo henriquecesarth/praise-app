@@ -143,7 +143,9 @@ export class BillingReconcilerWorker {
                   earlyResult.reason !== 'payment_overdue' &&
                   earlyResult.reason !== 'quarantine_unknown_checkout' &&
                   earlyResult.reason !== 'already_activated' &&
-                  earlyResult.reason !== 'stale_attempt_settled_recorded'
+                  earlyResult.reason !== 'stale_attempt_settled_recorded' &&
+                  earlyResult.reason !== 'materialized_payment_blocks_checkout_cleanup' &&
+                  earlyResult.reason !== 'local_expiry_awaiting_provider_webhook'
                 ) {
                   failed++;
                 }

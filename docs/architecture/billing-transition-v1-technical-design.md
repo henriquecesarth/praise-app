@@ -753,6 +753,47 @@ Para garantir as invariantes **No Two Live Renewals**, **No Unsafe Zero Renewals
             - **Uncertain Create Webhook Recovery: IMPLEMENTED**: Tentativa em `OUTCOME_UNCERTAIN` correlacionada por `externalReference` comuta para `pending` com checkout ID write-once, sem novo POST cego, e liquida via `PAYMENT_CONFIRMED`.
             - **Integração com Carência (Grace Scenario)**:
               - Se o pagamento da renovação futura falhar na fronteira após ativação antecipada, a carência entra capturando o snapshot vigente lido no runtime (`essential`), garantindo que o ministério usufrua das cotas do plano alvo ativado antecipadamente sem regredir para a origem.
+            - **Phase 3C.5B — Early Activation Checkout Expiry & Cancellation Cleanup (Terminal Monotonicity & Lifecycle Hardening): COMPLETE & HARDENED**:
+              - *Canonical Rule 1: CHECKOUT EXPIRATION AND EXPLICIT CANCELLATION ARE DISTINCT TERMINAL OUTCOMES*.
+                - A expiração natural do Checkout (`ACTIVE -> minutesToExpire -> EXPIRED`) e o cancelamento explícito (`ACTIVE -> POST /v3/checkouts/{id}/cancel -> CANCELED`) representam fatos operacionais distintos no gateway Asaas. `EXPIRED != CANCELED`.
+                - *NATURAL EXPIRY DOES NOT REQUIRE POST CANCEL*: Um checkout que atingiu seu TTL de expiração natural (`now >= attempt.expires_at`) NUNCA deve depender de uma chamada ao endpoint de cancelamento para expirar. A chamada automática de cancelamento após a expiração foi eliminada.
+                - *CHECKOUT_EXPIRED IS AN OFFICIAL PROVIDER EVENT AND IS THE TERMINAL PROVIDER EVIDENCE FOR NATURAL EXPIRY*: O evento oficial de webhook `CHECKOUT_EXPIRED` do Asaas é a autoridade assíncrona que comprova o término da sessão por decurso de prazo. O metadado persistido `expires_at` é apenas operacional para impedir uso como ativo, sem forjar evidência terminal de provedor.
+              - *Canonical Rule 2: TERMINAL CHECKOUT EVENTS ARE MONOTONIC & CANNOT SILENTLY REWRITE HISTORY*.
+                - A LATE CONFLICTING TERMINAL EVENT DOES NOT SILENTLY REWRITE PROVIDER HISTORY: Se uma tentativa já possui terminalidade confirmada como `expired`, um webhook tardio `CHECKOUT_CANCELED` é tratado como no-op benigno idempotente (`attempt_already_expired`) sem sobrescrever `status` nem apagar evidência histórica.
+                - Reciprocamente, se uma tentativa já foi confirmada como `canceled`, um webhook tardio `CHECKOUT_EXPIRED` é tratado como no-op benigno idempotente (`attempt_already_canceled`) sem sobrescrever `status` nem apagar evidência histórica.
+                - Eventos duplicados (`EXPIRED -> EXPIRED`, `CANCELED -> CANCELED`) são estritamente idempotentes, gerando zero mutações espúrias, zero entitlement e zero `BillingTransaction`.
+              - *Canonical Rule 3: MONEY EVIDENCE REMAINS AUTHORITATIVE AS A FINANCIAL FACT EVEN AFTER TERMINAL CHECKOUT STATE*.
+                - Independentemente do estado terminal do checkout (`expired` ou `canceled`), a liquidação comprovada (`PAYMENT_CONFIRMED` ou `PAYMENT_RECEIVED`) é um fato contábil inegável.
+                - Tentativa terminal + pagamento liquidado tardio -> gravação de `BillingTransaction` canônica no ledger histórico, sinalização de `financial_attention_required = true` (`CANCELED_ATTEMPT_WITH_SETTLED_PAYMENT`), slot ativo permanece `HELD`, transição permanece `scheduled`, zero concessão de entitlement no plano atual e zero auto-estorno.
+                - `CHECKOUT_PAID` isolado continua não sendo autoridade de liquidação financeira e não gera entitlement nem `BillingTransaction`.
+              - *Canonical Rule 4: CHECKOUT_EXPIRED REQUIRES A PAYMENT-EXISTENCE SAFETY GATE*.
+                - O evento `CHECKOUT_EXPIRED` atesta a terminalidade do Checkout, mas a autoridade sobre o dinheiro é a consulta de pagamentos da sessão (`listPaymentsByCheckoutSession`).
+                - Se `CHECKOUT_EXPIRED` + 0 pagamentos comprovados: finaliza a tentativa como `status = 'expired'`, `provider_session_terminal = true`, `failure_classification = 'session_expired'`, registrando `expiry_confirmed_at` e liberando `early_activation_status = 'available'` (ou `'expired'` na fronteira). NUNCA grava `status = 'canceled'`.
+                - Se `CHECKOUT_EXPIRED` + pagamento `CONFIRMED` ou `RECEIVED`: desvia para a máquina canônica de liquidação (`processEarlyActivationAdjustmentSettlement`). Se stale attempt: registra `BillingTransaction` no ledger, aciona `financial_attention_required`, sem auto-ativação e sem auto-refund.
+                - Se `CHECKOUT_EXPIRED` + pagamento `PENDING` ou `OVERDUE`: fail-closed (`materialized_payment_blocks_checkout_cleanup`), bloqueia substituição de checkout, slot permanece `HELD`.
+                - Se `CHECKOUT_EXPIRED` + múltiplos pagamentos: grava membros no ledger e aciona atenção financeira (`EARLY_ADJUSTMENT_MULTIPLE_PROVIDER_PAYMENTS`).
+                - Se leitura de pagamentos falhar no webhook `CHECKOUT_EXPIRED`: preserva evidência de checkout expired mas mantém verificação financeira pendente (`status = 'uncertain_expired'`), bloqueando nova obrigação até convergência.
+              - *Canonical Rule 5: SAFE EXPIRY / SAFE CANCELLATION PRESERVES THE SCHEDULED PAID TRANSITION*.
+                - O término seguro da tentativa avulsa (`attempt_type === 'early_activation'`) nunca afeta a transição global (`scheduled_paid_transition`), que permanece `scheduled`.
+                - O slot de transição ativa permanece `HELD`. A assinatura alvo de renovação futura permanece intocada.
+              - *Canonical Rule 6: ZERO PAYMENTS DO NOT PROVE THAT AN UNCERTAIN CANCELLATION SUCCEEDED*.
+                - Se um cancelamento explícito resultou em incerteza (`cancel_state = 'uncertain'`), a observação de zero pagamentos pelo reconciliador NÃO prova que o cancelamento ocorreu.
+                - Reconciler worker NUNCA transiciona `uncertain` para `canceled` por zero pagamentos; mantém em quarentena sem retry cego.
+                - *CHECKOUT_CANCELED + PAYMENT SAFETY GATE*: Apenas a recepção de webhook confiável `CHECKOUT_CANCELED` correlacionado, acompanhada de fresh payment listing com zero pagamentos, atesta a recuperação segura para `canceled`.
+              - *Canonical Rule 7: EXPLICIT CANCELLATION REMAINS STRICTLY PRE-EXPIRY*.
+                - O endpoint `POST /v3/checkouts/{id}/cancel` é restrito estritamente a momentos onde `now < attempt.expires_at`.
+                - Chamadas de cancelamento após a expiração natural são expressamente proibidas (`checkout_already_expired_explicit_cancel_forbidden`).
+                - Quando invocado pre-expiry: preflight payments gate -> durable CAS intent (`cancel_state = 'attempting'`) -> POST cancel -> definite success -> postflight payments gate -> safe canceled terminal evidence.
+                - *Audit of Explicit Cancel Trigger*: A infraestrutura de cancelamento explícito existe em `AsaasBillingProvider.cancelCheckout` e `executeExpiredEarlyActivationCheckoutCleanup`, mas atualmente NENHUM trigger automático de produto ou cron invoca cancelamento pré-expiração. Checkouts avulsos seguem o ciclo de vida de expiração natural via `minutesToExpire`.
+              - *Provider Response Contract Normalization*:
+                - O adapter `AsaasBillingProvider.cancelCheckout` normaliza deterministicamente qualquer resposta HTTP 200 para `{ success: true, status: 'CANCELED' }`, sem acoplamento a shapes não garantidos do payload.
+              - *Lost CHECKOUT_EXPIRED Webhook Gap (Honest Architectural Limit)*:
+                - Como a API do Asaas não oferece `GET /v3/checkouts/{id}` por ID documentado, um webhook `CHECKOUT_EXPIRED` irremediavelmente perdido pode deixar uma lacuna de verificação terminal se o checkout expirar sem webhook e sem pagamentos.
+                - O sistema adota postura estritamente fail-closed: NÃO presume expiração por zero pagamentos e NÃO chama cancelamento após a expiração. Essa lacuna é tratada via quarentena operacional até intervenção ou webhook redelivery.
+              - *Crash Safety, Concurrency & Monotonic Ordering*:
+                - Proteção contra Crash B-E preservada. Monotonicidade garantida: eventos atrasados `CHECKOUT_EXPIRED` ou `CHECKOUT_PAID` após liquidação não regridem o status `activated`. Concorrência entre dois workers resolvida atomicamente com exatamente um CAS intent vencedor.
+              - *47 Testes Dedicados na Suíte Phase 3C.5B*:
+                - Testes cobrem exaustivamente a matriz canônica da Seção 29, a preservação de segurança da Seção 30 e os 10 cenários da Matriz de Conflitos Terminais da Seção 31.
       - **Status das Próximas Fases**:
       - **PHASE 3C EARLY ACTIVATION**:
         - **Phase 3C.1 (Domain, Eligibility & Proration)**: **COMPLETE**.
@@ -760,7 +801,7 @@ Para garantir as invariantes **No Two Live Renewals**, **No Unsafe Zero Renewals
         - **Phase 3C.3 (Tenant-Scoped Early Activation API & Final Hardening)**: **COMPLETE**.
         - **Phase 3C.4 (Adjustment Settlement, Idempotent Webhook & Immediate Entitlement Convergence)**: **COMPLETE & HARDENED**.
         - **Phase 3C.5A (Early Activation Known-Checkout Reconciliation Worker & Final Hardening)**: **COMPLETE & TEST MATRIX VALIDATED**.
-        - **Phase 3C.5B (Checkout Expiry / Cancellation Cleanup)**: **NOT STARTED**.
+        - **Phase 3C.5B (Checkout Expiry / Cancellation Cleanup)**: **COMPLETE & HARDENED**.
         - **Sandbox Homologation for Early Activation**: **NOT STARTED**.
       - **PAID -> FREE TRANSITIONS**: **NOT STARTED**.
-      - *(O escopo concluído compreende as fases 3B.1, 3B.2, 3B.3A, 3B.3B, 3B.3 Webhook Terminality Hardening, 3C.1, 3C.2, 3C.3, 3C.4 e 3C.5A)*.
+      - *(O escopo concluído compreende as fases 3B.1, 3B.2, 3B.3A, 3B.3B, 3B.3 Webhook Terminality Hardening, 3C.1, 3C.2, 3C.3, 3C.4, 3C.5A e 3C.5B)*.

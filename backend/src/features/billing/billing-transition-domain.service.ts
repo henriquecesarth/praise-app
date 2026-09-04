@@ -1159,7 +1159,8 @@ export function calculateCheckoutMinutesToExpire(
  * Impede que diferentes predicados interpretem attempt.status de forma divergente.
  */
 export function classifyEarlyAdjustmentFinancialState(
-  transition: BillingTransitionV1Record
+  transition: BillingTransitionV1Record,
+  now: Date = new Date()
 ): EarlyAdjustmentFinancialState {
   if (transition.financial_attention_required === true) {
     return 'attention_required';
@@ -1189,6 +1190,11 @@ export function classifyEarlyAdjustmentFinancialState(
   }
 
   const latestAttempt = earlyAttempts[earlyAttempts.length - 1];
+
+  // Se o cancelamento estiver em andamento ou com resultado incerto, fail closed como 'uncertain'
+  if (latestAttempt.cancel_state === 'attempting' || latestAttempt.cancel_state === 'uncertain') {
+    return 'uncertain';
+  }
 
   if (latestAttempt.status === 'completed') {
     return 'settled_unconverged';
@@ -1233,6 +1239,27 @@ export function classifyEarlyAdjustmentFinancialState(
   }
 
   return 'financially_live';
+}
+
+/**
+ * Predicado puro que determina se uma tentativa de checkout atingiu sua expiração canônica.
+ * Utiliza estritamente os timestamps de expiração persistidos no attempt ou na transição.
+ * Não utiliza suposições, minutos adivinhados ou relógio de cliente.
+ */
+export function isEarlyActivationCheckoutAttemptExpired(
+  attempt: BillingCheckoutAttempt,
+  transition?: BillingTransitionV1Record,
+  now: Date = new Date()
+): boolean {
+  const expiryIso = attempt.expires_at || transition?.expires_at;
+  if (!expiryIso) {
+    return false;
+  }
+  const expiryTime = new Date(expiryIso).getTime();
+  if (isNaN(expiryTime)) {
+    return false;
+  }
+  return now.getTime() >= expiryTime;
 }
 
 export interface ResumeEarlyActivationAttemptResult {
@@ -1310,9 +1337,10 @@ export function canResumeReservedEarlyActivationAttempt(
  * Predicado puro que determina se existe qualquer obrigação financeira viva para a antecipação.
  */
 export function isEarlyAdjustmentObligationFinanciallyLive(
-  transition: BillingTransitionV1Record
+  transition: BillingTransitionV1Record,
+  now: Date = new Date()
 ): boolean {
-  const state = classifyEarlyAdjustmentFinancialState(transition);
+  const state = classifyEarlyAdjustmentFinancialState(transition, now);
   switch (state) {
     case 'financially_live':
     case 'uncertain':

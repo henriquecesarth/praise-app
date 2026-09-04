@@ -147,6 +147,11 @@ export interface BillingProvider {
    */
   createDetachedCheckout?(params: CreateDetachedCheckoutParams): Promise<CreateDetachedCheckoutResult>;
 
+  /**
+   * Cancela uma sessão de checkout hospedada no provedor (POST /v3/checkouts/{checkoutId}/cancel).
+   */
+  cancelCheckout?(checkoutId: string): Promise<{ success: boolean; status?: string }>;
+
   inactivateSubscription(providerSubscriptionId: string): Promise<{ success: boolean }>;
 
   removeSubscription(providerSubscriptionId: string): Promise<{ success: boolean }>;

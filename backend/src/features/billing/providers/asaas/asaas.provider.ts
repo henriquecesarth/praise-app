@@ -595,6 +595,55 @@ export class AsaasBillingProvider implements BillingProvider {
   }
 
   /**
+   * Cancela uma sessão hospedada no Asaas Checkout (POST /v3/checkouts/{checkoutId}/cancel).
+   * Retorna { success: true, status: 'CANCELED' } em caso de sucesso comprovado do gateway.
+   * Não presume cancelamento seguro em erros (404, 401, 403, 5xx, timeout).
+   */
+  async cancelCheckout(checkoutId: string): Promise<{ success: boolean; status?: string }> {
+    if (!this.apiKey) {
+      throw new AppError(500, 'Gateway Asaas não configurado.');
+    }
+
+    const cleanId = (checkoutId || '').trim();
+    if (!cleanId) {
+      throw new AppError(400, 'checkoutId é obrigatório para cancelamento.');
+    }
+
+    try {
+      const response = await fetch(`${this.apiUrl}/checkouts/${cleanId}/cancel`, {
+        method: 'POST',
+        headers: {
+          access_token: this.apiKey,
+          'Content-Type': 'application/json',
+        },
+        signal: AbortSignal.timeout(HTTP_CREATE_CHECKOUT_TIMEOUT_MS),
+      });
+
+      if (!response.ok) {
+        const errBody = (await response.json().catch(() => ({}))) as any;
+        const message =
+          errBody?.errors?.[0]?.description ||
+          `Falha ao cancelar checkout no Asaas (HTTP ${response.status})`;
+        const appErr = new AppError(response.status >= 500 ? 500 : response.status, message);
+        (appErr as any).statusCode = response.status;
+        (appErr as any).status = response.status;
+        (appErr as any).isProviderResponse = true;
+        (appErr as any).responseBody = errBody;
+        throw appErr;
+      }
+
+      // O gateway Asaas garante HTTP 200 para sucesso de cancelamento.
+      // O adapter normaliza deterministicamente qualquer resposta HTTP 200 para
+      // { success: true, status: 'CANCELED' }, sem depender de formato específico do payload de retorno.
+      await response.json().catch(() => ({}));
+      return { success: true, status: 'CANCELED' };
+    } catch (err: any) {
+      if (err instanceof AppError) throw err;
+      throw new AppError(500, `Falha de comunicação ao cancelar checkout no Asaas: ${err.message}`);
+    }
+  }
+
+  /**
    * Inativa assinatura no Asaas (PUT /v3/subscriptions/{id} com status: INACTIVE).
    * Impede a geração de novas cobranças recorrentes futuras, preservando cobranças
    * existentes pendentes/vencidas e o histórico financeiro da conta.

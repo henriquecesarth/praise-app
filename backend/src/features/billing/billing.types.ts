@@ -246,6 +246,12 @@ export type BillingCheckoutAttemptProviderCreateState =
   | 'uncertain'
   | 'rejected_no_obligation';
 
+export type BillingCheckoutAttemptCancelState =
+  | 'not_requested'
+  | 'attempting'
+  | 'confirmed'
+  | 'uncertain';
+
 export interface BillingCheckoutAttempt {
   attempt_id: string;
   transition_id: string;
@@ -258,6 +264,14 @@ export interface BillingCheckoutAttempt {
   currency: 'BRL';
   status: BillingCheckoutAttemptStatus;
   provider_create_state?: BillingCheckoutAttemptProviderCreateState | null;
+  cancel_state?: BillingCheckoutAttemptCancelState | null;
+  cancellation_intent_id?: string | null;
+  cancellation_requested_at?: string | null;
+  cancellation_confirmed_at?: string | null;
+  cancellation_uncertain_at?: string | null;
+  cancellation_reason?: string | null;
+  provider_expired_at?: string | null;
+  expiry_confirmed_at?: string | null;
   failure_classification?: BillingCheckoutAttemptFailureClassification | null;
   provider_session_terminal?: boolean | null;
   payment_id?: string | null;

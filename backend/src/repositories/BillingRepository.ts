@@ -1371,6 +1371,380 @@ export class BillingRepository {
   }
 
   /**
+   * Registra a intenção durável de cancelamento de um checkout avulso (CAS via Firestore Transaction).
+   * Deve ser chamada IMEDIATAMENTE ANTES do POST /v3/checkouts/{id}/cancel ao provedor.
+   * Se a tentativa já estiver em 'attempting', 'confirmed' ou 'uncertain', rejeita com conflito CAS.
+   */
+  async recordEarlyActivationCheckoutCancelAttempting(params: {
+    transitionId: string;
+    ministryId: string;
+    attemptId: string;
+    cancellationIntentId: string;
+    nowIso?: string;
+  }): Promise<BillingTransitionV1Record> {
+    const {
+      transitionId,
+      ministryId,
+      attemptId,
+      cancellationIntentId,
+      nowIso = new Date().toISOString(),
+    } = params;
+
+    const docRef = this.planChangesCollection.doc(transitionId);
+
+    return await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      if (!doc.exists) {
+        throw new AppError(404, `Transição '${transitionId}' não encontrada.`);
+      }
+      const existing = doc.data() as BillingPlanChangeRecord;
+      if (existing.ministry_id !== ministryId) {
+        throw new AppError(403, 'Acesso não autorizado a esta transição de plano.');
+      }
+      if (!isBillingTransitionV1(existing)) {
+        throw new AppError(400, 'Operação suportada apenas em transições V1.');
+      }
+
+      const attempts = existing.checkout_attempts ? [...existing.checkout_attempts] : [];
+      const attemptIndex = attempts.findIndex((a) => a.attempt_id === attemptId);
+      if (attemptIndex < 0) {
+        throw new AppError(404, `Tentativa de checkout '${attemptId}' não encontrada.`);
+      }
+
+      const currentAttempt = attempts[attemptIndex];
+
+      if (!currentAttempt.provider_checkout_id) {
+        throw new AppError(
+          400,
+          `Tentativa '${attemptId}' não possui provider_checkout_id conhecido. Cancelamento proibido.`,
+          { code: 'UNKNOWN_CHECKOUT_ID_CANCEL_FORBIDDEN' }
+        );
+      }
+
+      if (currentAttempt.cancel_state === 'attempting') {
+        throw new AppError(
+          409,
+          `Conflito CAS: tentativa '${attemptId}' já possui mutação de cancelamento em andamento.`,
+          { code: 'ATTEMPT_CANCEL_ALREADY_IN_PROGRESS' }
+        );
+      }
+
+      if (currentAttempt.cancel_state === 'confirmed' || currentAttempt.status === 'canceled') {
+        throw new AppError(
+          409,
+          `Conflito CAS: tentativa '${attemptId}' já foi cancelada com sucesso.`,
+          { code: 'ATTEMPT_ALREADY_CANCELED' }
+        );
+      }
+
+      if (currentAttempt.cancel_state === 'uncertain') {
+        throw new AppError(
+          409,
+          `Conflito CAS: tentativa '${attemptId}' está com resultado de cancelamento incerto. Blind retry proibido.`,
+          { code: 'ATTEMPT_CANCEL_UNCERTAIN' }
+        );
+      }
+
+      const updatedAttempt: BillingCheckoutAttempt = {
+        ...currentAttempt,
+        cancel_state: 'attempting',
+        cancellation_intent_id: cancellationIntentId,
+        cancellation_requested_at: nowIso,
+      };
+
+      attempts[attemptIndex] = updatedAttempt;
+
+      const merged: BillingTransitionV1Record = {
+        ...existing,
+        checkout_attempts: attempts,
+        updated_at: nowIso,
+      };
+
+      const validated = validateBillingTransitionV1(merged);
+      t.set(docRef, validated, { merge: true });
+      return validated;
+    });
+  }
+
+  /**
+   * Finaliza de forma segura e atômica o cancelamento comprovado do checkout avulso (após post-cancel zero payments).
+   * Preserva a transição em 'scheduled', o slot ativo em 'HELD', e comuta o subfluxo para 'available'
+   * (ou 'expired' se a fronteira comercial de renovação já tiver sido atingida).
+   */
+  async recordEarlyActivationCheckoutCancelConfirmed(params: {
+    transitionId: string;
+    ministryId: string;
+    attemptId: string;
+    nowIso?: string;
+    nowCommercialDate?: string;
+  }): Promise<BillingTransitionV1Record> {
+    const {
+      transitionId,
+      ministryId,
+      attemptId,
+      nowIso = new Date().toISOString(),
+      nowCommercialDate,
+    } = params;
+
+    const docRef = this.planChangesCollection.doc(transitionId);
+
+    return await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      if (!doc.exists) {
+        throw new AppError(404, `Transição '${transitionId}' não encontrada.`);
+      }
+      const existing = doc.data() as BillingPlanChangeRecord;
+      if (existing.ministry_id !== ministryId) {
+        throw new AppError(403, 'Acesso não autorizado a esta transição de plano.');
+      }
+      if (!isBillingTransitionV1(existing)) {
+        throw new AppError(400, 'Operação suportada apenas em transições V1.');
+      }
+
+      const attempts = existing.checkout_attempts ? [...existing.checkout_attempts] : [];
+      const attemptIndex = attempts.findIndex((a) => a.attempt_id === attemptId);
+      if (attemptIndex < 0) {
+        throw new AppError(404, `Tentativa de checkout '${attemptId}' não encontrada.`);
+      }
+
+      const currentAttempt = attempts[attemptIndex];
+
+      const updatedAttempt: BillingCheckoutAttempt = {
+        ...currentAttempt,
+        status: 'canceled',
+        cancel_state: 'confirmed',
+        cancellation_confirmed_at: nowIso,
+        provider_session_terminal: true,
+        failure_classification: 'session_canceled',
+        completed_at: nowIso,
+      };
+
+      attempts[attemptIndex] = updatedAttempt;
+
+      const isBoundaryReached = Boolean(
+        nowCommercialDate &&
+        existing.effective_billing_date &&
+        nowCommercialDate >= existing.effective_billing_date
+      );
+
+      const nextEarlyStatus = isBoundaryReached ? 'expired' : 'available';
+
+      const merged: BillingTransitionV1Record = {
+        ...existing,
+        checkout_attempts: attempts,
+        early_activation_status: nextEarlyStatus,
+        updated_at: nowIso,
+      };
+
+      const validated = validateBillingTransitionV1(merged);
+      t.set(docRef, validated, { merge: true });
+      return validated;
+    });
+  }
+
+  /**
+   * Registra incerteza operacional no cancelamento do checkout (timeout, 5xx, perda de rede ou 404 sem prova).
+   * Quarentena o attempt contra blind retries e preserva o slot e o estado agendado.
+   */
+  async markEarlyActivationCheckoutCancelUncertain(params: {
+    transitionId: string;
+    ministryId: string;
+    attemptId: string;
+    reason?: string;
+    nowIso?: string;
+  }): Promise<BillingTransitionV1Record> {
+    const {
+      transitionId,
+      ministryId,
+      attemptId,
+      reason,
+      nowIso = new Date().toISOString(),
+    } = params;
+
+    const docRef = this.planChangesCollection.doc(transitionId);
+
+    return await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      if (!doc.exists) {
+        throw new AppError(404, `Transição '${transitionId}' não encontrada.`);
+      }
+      const existing = doc.data() as BillingPlanChangeRecord;
+      if (existing.ministry_id !== ministryId) {
+        throw new AppError(403, 'Acesso não autorizado a esta transição de plano.');
+      }
+      if (!isBillingTransitionV1(existing)) {
+        throw new AppError(400, 'Operação suportada apenas em transições V1.');
+      }
+
+      const attempts = existing.checkout_attempts ? [...existing.checkout_attempts] : [];
+      const attemptIndex = attempts.findIndex((a) => a.attempt_id === attemptId);
+      if (attemptIndex < 0) {
+        throw new AppError(404, `Tentativa de checkout '${attemptId}' não encontrada.`);
+      }
+
+      const currentAttempt = attempts[attemptIndex];
+
+      const updatedAttempt: BillingCheckoutAttempt = {
+        ...currentAttempt,
+        cancel_state: 'uncertain',
+        cancellation_uncertain_at: nowIso,
+        cancellation_reason: reason || 'cancellation_outcome_uncertain',
+      };
+
+      attempts[attemptIndex] = updatedAttempt;
+
+      const merged: BillingTransitionV1Record = {
+        ...existing,
+        checkout_attempts: attempts,
+        updated_at: nowIso,
+      };
+
+      const validated = validateBillingTransitionV1(merged);
+      t.set(docRef, validated, { merge: true });
+      return validated;
+    });
+  }
+
+  /**
+   * Finaliza de forma segura e atômica a expiração natural confirmada do checkout avulso (após CHECKOUT_EXPIRED + zero pagamentos).
+   * Preserva a transição em 'scheduled', o slot ativo em 'HELD', e comuta o subfluxo para 'available'
+   * (ou 'expired' se a fronteira comercial de renovação já tiver sido atingida).
+   */
+  async recordEarlyActivationCheckoutExpiredConfirmed(params: {
+    transitionId: string;
+    ministryId: string;
+    attemptId: string;
+    nowIso?: string;
+    nowCommercialDate?: string;
+  }): Promise<BillingTransitionV1Record> {
+    const {
+      transitionId,
+      ministryId,
+      attemptId,
+      nowIso = new Date().toISOString(),
+      nowCommercialDate,
+    } = params;
+
+    const docRef = this.planChangesCollection.doc(transitionId);
+
+    return await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      if (!doc.exists) {
+        throw new AppError(404, `Transição '${transitionId}' não encontrada.`);
+      }
+      const existing = doc.data() as BillingPlanChangeRecord;
+      if (existing.ministry_id !== ministryId) {
+        throw new AppError(403, 'Acesso não autorizado a esta transição de plano.');
+      }
+      if (!isBillingTransitionV1(existing)) {
+        throw new AppError(400, 'Operação suportada apenas em transições V1.');
+      }
+
+      const attempts = existing.checkout_attempts ? [...existing.checkout_attempts] : [];
+      const attemptIndex = attempts.findIndex((a) => a.attempt_id === attemptId);
+      if (attemptIndex < 0) {
+        throw new AppError(404, `Tentativa de checkout '${attemptId}' não encontrada.`);
+      }
+
+      const currentAttempt = attempts[attemptIndex];
+
+      const updatedAttempt: BillingCheckoutAttempt = {
+        ...currentAttempt,
+        status: 'expired',
+        provider_session_terminal: true,
+        failure_classification: 'session_expired',
+        expiry_confirmed_at: nowIso,
+        provider_expired_at: nowIso,
+        completed_at: nowIso,
+      };
+
+      attempts[attemptIndex] = updatedAttempt;
+
+      const isBoundaryReached = Boolean(
+        nowCommercialDate &&
+        existing.effective_billing_date &&
+        nowCommercialDate >= existing.effective_billing_date
+      );
+
+      const nextEarlyStatus = isBoundaryReached ? 'expired' : 'available';
+
+      const merged: BillingTransitionV1Record = {
+        ...existing,
+        checkout_attempts: attempts,
+        early_activation_status: nextEarlyStatus,
+        updated_at: nowIso,
+      };
+
+      const validated = validateBillingTransitionV1(merged);
+      t.set(docRef, validated, { merge: true });
+      return validated;
+    });
+  }
+
+  /**
+   * Registra evidência terminal do provedor (CHECKOUT_EXPIRED) quando a consulta de pagamentos pós-evento falha.
+   * Não conclui safe-expired, mantendo verificação financeira pendente ('uncertain_expired').
+   */
+  async markEarlyActivationCheckoutExpiredPending(params: {
+    transitionId: string;
+    ministryId: string;
+    attemptId: string;
+    reason?: string;
+    nowIso?: string;
+  }): Promise<BillingTransitionV1Record> {
+    const {
+      transitionId,
+      ministryId,
+      attemptId,
+      reason,
+      nowIso = new Date().toISOString(),
+    } = params;
+
+    const docRef = this.planChangesCollection.doc(transitionId);
+
+    return await db.runTransaction(async (t: any) => {
+      const doc = await t.get(docRef);
+      if (!doc.exists) {
+        throw new AppError(404, `Transição '${transitionId}' não encontrada.`);
+      }
+      const existing = doc.data() as BillingPlanChangeRecord;
+      if (existing.ministry_id !== ministryId) {
+        throw new AppError(403, 'Acesso não autorizado a esta transição de plano.');
+      }
+      if (!isBillingTransitionV1(existing)) {
+        throw new AppError(400, 'Operação suportada apenas em transições V1.');
+      }
+
+      const attempts = existing.checkout_attempts ? [...existing.checkout_attempts] : [];
+      const attemptIndex = attempts.findIndex((a) => a.attempt_id === attemptId);
+      if (attemptIndex < 0) {
+        throw new AppError(404, `Tentativa de checkout '${attemptId}' não encontrada.`);
+      }
+
+      const currentAttempt = attempts[attemptIndex];
+
+      const updatedAttempt: BillingCheckoutAttempt = {
+        ...currentAttempt,
+        status: 'uncertain_expired',
+        provider_expired_at: nowIso,
+        failure_classification: 'session_expired',
+      };
+
+      attempts[attemptIndex] = updatedAttempt;
+
+      const merged: BillingTransitionV1Record = {
+        ...existing,
+        checkout_attempts: attempts,
+        updated_at: nowIso,
+      };
+
+      const validated = validateBillingTransitionV1(merged);
+      t.set(docRef, validated, { merge: true });
+      return validated;
+    });
+  }
+
+  /**
    * Persiste atomicamente uma cotação de early activation (CAS via Firestore Transaction).
    * Valida tenant isolation, status scheduled, ausência de financial attention, ausência de
    * obrigações financeiramente vivas e atualiza lifecycle da cotação anterior para superseded.

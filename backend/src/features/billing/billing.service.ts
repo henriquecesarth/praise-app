@@ -46,6 +46,7 @@ import {
   classifyCapabilityEligibility,
   isEarlyAdjustmentObligationFinanciallyLive,
   classifyEarlyAdjustmentFinancialState,
+  isEarlyActivationCheckoutAttemptExpired,
   BILLING_TIMEZONE_DEFAULT,
 } from './billing-transition-domain.service';
 import { TransitionCommercialSnapshot } from './billing-transition-domain.types';
@@ -4885,9 +4886,9 @@ export class BillingService {
   async reconcilePaidToPaidEarlyActivationAdjustment(
     transitionId: string,
     workerId?: string,
-    options?: { nowCommercialDate?: string }
+    options?: { nowCommercialDate?: string; now?: Date }
   ): Promise<{ success: boolean; reason?: string; transition?: BillingTransitionV1Record }> {
-    const now = new Date();
+    const now = options?.now || new Date();
     const claimed = await this.billingRepo.claimTransitionForReconciliation(
       transitionId,
       workerId || `worker_${Date.now()}`,
@@ -5076,8 +5077,44 @@ export class BillingService {
         }
       }
 
-      // 7. Zero payments encontrados (Seção 8)
+      // 7. Avaliação de expiração do checkout attempt (Phase 3C.5B)
+      const isAttemptExpired = currentAttempt
+        ? isEarlyActivationCheckoutAttemptExpired(currentAttempt, claimed, now)
+        : false;
+
       if (payments.length === 0) {
+        // Crash B recovery: se a intenção de cancelamento anterior estava em 'attempting'
+        if (currentAttempt && currentAttempt.cancel_state === 'attempting') {
+          console.warn(
+            `[CHECKOUT CLEANUP] Tentativa ${currentAttempt.attempt_id} encontrada em 'attempting' (Crash B). Marcando 'uncertain' sem blind retry.`
+          );
+          await this.billingRepo.markEarlyActivationCheckoutCancelUncertain({
+            transitionId: claimed.id,
+            ministryId: claimed.ministry_id,
+            attemptId: currentAttempt.attempt_id,
+            reason: 'crash_recovery_uncertain_cancel_attempt',
+            nowIso: now.toISOString(),
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'cancellation_outcome_uncertain' };
+        }
+
+        // Se o cancelamento estiver em 'uncertain': quarentena mantida, zero pagamentos não prova cancelamento, zero blind retry
+        if (currentAttempt && currentAttempt.cancel_state === 'uncertain') {
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'cancellation_outcome_uncertain' };
+        }
+
+        // Se expirou localmente, NÃO chama cancelCheckout! Aguarda webhook oficial CHECKOUT_EXPIRED
+        if (isAttemptExpired) {
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return {
+            success: true,
+            reason: 'local_expiry_awaiting_provider_webhook',
+            transition: claimed,
+          };
+        }
+
         await this.billingRepo.releasePlanChangeLock(claimed.id);
         return { success: true, reason: 'no_payments_found', transition: claimed };
       }
@@ -5091,6 +5128,35 @@ export class BillingService {
       });
 
       if (matchingPayments.length === 0) {
+        if (currentAttempt && currentAttempt.cancel_state === 'attempting') {
+          console.warn(
+            `[CHECKOUT CLEANUP] Tentativa ${currentAttempt.attempt_id} encontrada em 'attempting' (Crash B). Marcando 'uncertain' sem blind retry.`
+          );
+          await this.billingRepo.markEarlyActivationCheckoutCancelUncertain({
+            transitionId: claimed.id,
+            ministryId: claimed.ministry_id,
+            attemptId: currentAttempt.attempt_id,
+            reason: 'crash_recovery_uncertain_cancel_attempt',
+            nowIso: now.toISOString(),
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'cancellation_outcome_uncertain' };
+        }
+
+        if (currentAttempt && currentAttempt.cancel_state === 'uncertain') {
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'cancellation_outcome_uncertain' };
+        }
+
+        if (isAttemptExpired) {
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return {
+            success: true,
+            reason: 'local_expiry_awaiting_provider_webhook',
+            transition: claimed,
+          };
+        }
+
         await this.billingRepo.releasePlanChangeLock(claimed.id);
         return { success: true, reason: 'no_payments_found', transition: claimed };
       }
@@ -5226,16 +5292,22 @@ export class BillingService {
         };
       }
 
-      // Pending (Seção 12):
+      // Pending (Seção 12 / 3C.5B):
       if (singlePayment.status === 'PENDING') {
         await this.billingRepo.releasePlanChangeLock(claimed.id);
-        return { success: true, reason: 'payment_pending', transition: claimed };
+        const reason = isAttemptExpired
+          ? 'materialized_payment_blocks_checkout_cleanup'
+          : 'payment_pending';
+        return { success: true, reason, transition: claimed };
       }
 
-      // Overdue (Seção 13):
+      // Overdue (Seção 13 / 3C.5B):
       if (singlePayment.status === 'OVERDUE') {
         await this.billingRepo.releasePlanChangeLock(claimed.id);
-        return { success: true, reason: 'payment_overdue', transition: claimed };
+        const reason = isAttemptExpired
+          ? 'materialized_payment_blocks_checkout_cleanup'
+          : 'payment_overdue';
+        return { success: true, reason, transition: claimed };
       }
 
       // Status desconhecido (Seção 15):
@@ -5250,6 +5322,323 @@ export class BillingService {
       await this.billingRepo.releasePlanChangeLock(claimed.id);
       return { success: false, reason: err.message };
     }
+  }
+
+  /**
+   * Executa o protocolo atômico e seguro de cancelamento de um checkout avulso de early activation expirado (Phase 3C.5B).
+   * Exige:
+   * 1. Pre-Cancel Payment Gate já avaliado com zero pagamentos.
+   * 2. Intenção durável de mutação com CAS antes do POST cancel.
+   * 3. Chamada ao provedor com tratamento rigoroso de incertezas (timeout, 5xx -> uncertain quarantine; 401/403 -> operational; 404 -> not assumed safe).
+   * 4. Post-Cancel Payment Gate: releitura obrigatória de cobranças após sucesso do POST.
+   * 5. Finalização segura apenas se post-cancel retornar zero pagamentos.
+   */
+  async executeExpiredEarlyActivationCheckoutCleanup(params: {
+    claimed: BillingTransitionV1Record;
+    currentAttempt: BillingCheckoutAttempt;
+    knownCheckoutId: string;
+    now: Date;
+    nowCommercialDate?: string;
+  }): Promise<{ success: boolean; reason: string; transition?: BillingTransitionV1Record }> {
+    const { claimed, currentAttempt, knownCheckoutId, now, nowCommercialDate } = params;
+    const nowIso = now.toISOString();
+
+    // Exigência canônica: cancelamento explícito via provedor só é permitido ANTES da expiração natural
+    if (isEarlyActivationCheckoutAttemptExpired(currentAttempt, claimed, now)) {
+      console.warn(
+        `[CHECKOUT CLEANUP] Checkout ${knownCheckoutId} já atingiu expiração natural. Cancelamento explícito via provedor proibido.`
+      );
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: false, reason: 'checkout_already_expired_explicit_cancel_forbidden' };
+    }
+
+    // 0. Crash B recovery: se o cancel intent já estiver em 'attempting' sem resolução local
+    if (currentAttempt.cancel_state === 'attempting') {
+      console.warn(
+        `[CHECKOUT CLEANUP] Tentativa ${currentAttempt.attempt_id} encontrada em 'attempting' (Crash B). Marcando 'uncertain' sem blind retry.`
+      );
+      await this.billingRepo.markEarlyActivationCheckoutCancelUncertain({
+        transitionId: claimed.id,
+        ministryId: claimed.ministry_id,
+        attemptId: currentAttempt.attempt_id,
+        reason: 'crash_recovery_uncertain_cancel_attempt',
+        nowIso,
+      });
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: false, reason: 'cancellation_outcome_uncertain' };
+    }
+
+    // Se já estiver em 'uncertain': quarentena mantida, zero blind retry
+    if (currentAttempt.cancel_state === 'uncertain') {
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: false, reason: 'cancellation_outcome_uncertain' };
+    }
+
+    // Se já estiver cancelada com segurança: idempotência terminal
+    if (currentAttempt.cancel_state === 'confirmed' || currentAttempt.status === 'canceled') {
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: true, reason: 'already_canceled', transition: claimed };
+    }
+
+    // 0.1 Preflight Payment Gate: se houver pagamentos materializados, aborta cancelamento (Seção 20)
+    if (typeof this.provider.listPaymentsByCheckoutSession === 'function') {
+      let prePayments: ProviderPaymentRecord[] = [];
+      try {
+        prePayments = await this.provider.listPaymentsByCheckoutSession(knownCheckoutId);
+      } catch (preErr: any) {
+        console.error(`[CHECKOUT CLEANUP] Falha ao listar pagamentos no preflight de ${knownCheckoutId}:`, preErr.message);
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'pre_cancel_read_failed' };
+      }
+
+      const matchingPre = (prePayments || []).filter((p) => {
+        if (p.customerId && claimed.provider_customer_id && p.customerId !== claimed.provider_customer_id) {
+          return false;
+        }
+        return true;
+      });
+
+      if (matchingPre.length > 0) {
+        console.warn(`[CHECKOUT CLEANUP] Preflight encontrou pagamentos para ${knownCheckoutId}. Cancelamento abortado.`);
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'pre_cancel_gate_found_payments' };
+      }
+    }
+
+    // 1. Durabilidade da Intenção de Mutação (Seção 11): grava 'attempting' no Firestore via CAS antes do POST
+    const cancellationIntentId = `cancel_ea_${claimed.id}_${currentAttempt.attempt_id}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    try {
+      await this.billingRepo.recordEarlyActivationCheckoutCancelAttempting({
+        transitionId: claimed.id,
+        ministryId: claimed.ministry_id,
+        attemptId: currentAttempt.attempt_id,
+        cancellationIntentId,
+        nowIso,
+      });
+    } catch (casErr: any) {
+      console.warn(`[CHECKOUT CLEANUP] Falha no CAS de cancel attempting para ${claimed.id}:`, casErr.message);
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: false, reason: 'cancel_intent_cas_conflict' };
+    }
+
+    // 2. Chamada ao Provedor (POST /v3/checkouts/{id}/cancel) — Seções 1, 14, 15, 16, 17
+    if (typeof this.provider.cancelCheckout !== 'function') {
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: false, reason: 'provider_cancel_not_supported' };
+    }
+
+    try {
+      await this.provider.cancelCheckout(knownCheckoutId);
+    } catch (cancelErr: any) {
+      const statusCode = (cancelErr as any)?.statusCode || (cancelErr as any)?.status;
+      const msg = ((cancelErr as any)?.message || '').toLowerCase();
+      const isAuth401 = statusCode === 401 || msg.includes('401') || msg.includes('unauthorized');
+      const isForbidden403 = statusCode === 403 || msg.includes('403') || msg.includes('forbidden');
+      const isNotFound404 = statusCode === 404 || msg.includes('404') || msg.includes('not found');
+
+      if (isAuth401) {
+        console.error(`[CHECKOUT CLEANUP] Falha operacional de autenticação (401) ao cancelar ${knownCheckoutId}:`, cancelErr.message);
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'cancel_auth_failure_401' };
+      }
+
+      if (isForbidden403) {
+        console.error(`[CHECKOUT CLEANUP] Falha operacional de permissão (403) ao cancelar ${knownCheckoutId}:`, cancelErr.message);
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'cancel_auth_failure_403' };
+      }
+
+      if (isNotFound404) {
+        // Seção 17: 404 não prova cancelamento seguro sem GET. Fail closed / verification pending.
+        console.warn(`[CHECKOUT CLEANUP] Checkout ${knownCheckoutId} retornou 404 no cancel. Fail closed.`);
+        await this.billingRepo.markEarlyActivationCheckoutCancelUncertain({
+          transitionId: claimed.id,
+          ministryId: claimed.ministry_id,
+          attemptId: currentAttempt.attempt_id,
+          reason: 'provider_cancel_404_not_found',
+          nowIso,
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'provider_cancel_404_not_found' };
+      }
+
+      // Timeout, 5xx, rede (Seção 15): OUTCOME UNCERTAIN
+      console.error(`[CHECKOUT CLEANUP] Falha incerta ao cancelar checkout ${knownCheckoutId}:`, cancelErr.message);
+      await this.billingRepo.markEarlyActivationCheckoutCancelUncertain({
+        transitionId: claimed.id,
+        ministryId: claimed.ministry_id,
+        attemptId: currentAttempt.attempt_id,
+        reason: cancelErr.message,
+        nowIso,
+      });
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: false, reason: 'cancellation_outcome_uncertain' };
+    }
+
+    // 3. POST-CANCEL PAYMENT GATE (Seções 18, 19, 20, 21, 22, 44)
+    if (typeof this.provider.listPaymentsByCheckoutSession !== 'function') {
+      await this.billingRepo.markEarlyActivationCheckoutCancelUncertain({
+        transitionId: claimed.id,
+        ministryId: claimed.ministry_id,
+        attemptId: currentAttempt.attempt_id,
+        reason: 'provider_unsupported_list_payments_by_checkout',
+        nowIso,
+      });
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: false, reason: 'provider_unsupported_list_payments_by_checkout' };
+    }
+
+    let postPayments: ProviderPaymentRecord[];
+    try {
+      postPayments = await this.provider.listPaymentsByCheckoutSession(knownCheckoutId);
+    } catch (postErr: any) {
+      // Seção 44: falha na leitura pós-cancel NÃO comuta para safe canceled.
+      console.error(`[CHECKOUT CLEANUP] Falha no post-cancel payment read de ${knownCheckoutId}:`, postErr.message);
+      await this.billingRepo.markEarlyActivationCheckoutCancelUncertain({
+        transitionId: claimed.id,
+        ministryId: claimed.ministry_id,
+        attemptId: currentAttempt.attempt_id,
+        reason: 'post_cancel_read_failed_verification_pending',
+        nowIso,
+      });
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: false, reason: 'post_cancel_read_failed_verification_pending' };
+    }
+
+    if (!Array.isArray(postPayments)) {
+      await this.billingRepo.markEarlyActivationCheckoutCancelUncertain({
+        transitionId: claimed.id,
+        ministryId: claimed.ministry_id,
+        attemptId: currentAttempt.attempt_id,
+        reason: 'malformed_provider_response_after_cancel',
+        nowIso,
+      });
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: false, reason: 'malformed_provider_response' };
+    }
+
+    // Filtrar pagamentos compatíveis no pós-cancel
+    const postMatching = postPayments.filter((p) => {
+      if (p.customerId && claimed.provider_customer_id && p.customerId !== claimed.provider_customer_id) {
+        return false;
+      }
+      return true;
+    });
+
+    // 4. Se ZERO pagamentos comprovados no postflight (Seção 19): FINALIZAÇÃO SEGURA!
+    if (postMatching.length === 0) {
+      const updated = await this.billingRepo.recordEarlyActivationCheckoutCancelConfirmed({
+        transitionId: claimed.id,
+        ministryId: claimed.ministry_id,
+        attemptId: currentAttempt.attempt_id,
+        nowIso,
+        nowCommercialDate,
+      });
+
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: true, reason: 'safe_canceled', transition: updated };
+    }
+
+    // 5. CORRIDA: Um ou mais pagamentos materializaram durante o cancel! (Seções 20, 21, 22)
+    console.warn(`[CHECKOUT CLEANUP RACE] ${postMatching.length} pagamento(s) materializado(s) durante o cancelamento de ${knownCheckoutId}!`);
+
+    // A) Múltiplos pagamentos no postflight
+    if (postMatching.length > 1) {
+      const settledMatching = postMatching.filter((p) => p.status === 'CONFIRMED' || p.status === 'RECEIVED');
+      for (const sp of settledMatching) {
+        const spTxId = `${this.provider.name}_${sp.id}`;
+        const spPaidDate = (sp as any).confirmedDate || sp.clientPaymentDate || sp.paymentDate || getBillingDate(now);
+        await this.billingRepo.saveTransaction({
+          id: spTxId,
+          ministry_id: claimed.ministry_id,
+          provider: this.provider.name,
+          provider_payment_id: sp.id,
+          amount_cents: sp.amountCents ?? claimed.current_early_activation_quote?.prorated_adjustment_cents ?? 0,
+          currency: 'BRL',
+          status: 'paid',
+          due_date: sp.dueDate || spPaidDate,
+          paid_at: nowIso,
+          paid_billing_date: spPaidDate,
+          payment_method: (sp.billingType as any) || 'CREDIT_CARD',
+          invoice_url: sp.invoiceUrl,
+          transaction_type: 'prorated_early_activation_adjustment',
+          quote_id: claimed.current_early_activation_quote?.quote_id || null,
+          attempt_id: currentAttempt.attempt_id,
+          created_at: nowIso,
+          updated_at: nowIso,
+        });
+      }
+
+      await this.billingRepo.updateTransition(claimed.id, claimed.ministry_id, {
+        financial_attention_required: true,
+        financial_attention_reason: 'EARLY_ADJUSTMENT_MULTIPLE_PROVIDER_PAYMENTS',
+        financial_safety_status: 'attention_required',
+      });
+
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      const reloaded = await this.billingRepo.getTransitionById(claimed.id, claimed.ministry_id);
+      return {
+        success: false,
+        reason: 'EARLY_ADJUSTMENT_MULTIPLE_PROVIDER_PAYMENTS',
+        transition: reloaded && isBillingTransitionV1(reloaded) ? reloaded : undefined,
+      };
+    }
+
+    // B) Exatamente um pagamento materializado
+    const singlePostPayment = postMatching[0];
+
+    // B.1) Se liquidado (CONFIRMED ou RECEIVED) — Seção 21
+    if (singlePostPayment.status === 'CONFIRMED' || singlePostPayment.status === 'RECEIVED') {
+      const synthEvent: ParsedWebhookEvent = {
+        providerEventId: `reconciler_post_cancel_${singlePostPayment.id}_${singlePostPayment.status}`,
+        eventType: singlePostPayment.status === 'RECEIVED' ? 'payment_received' : 'payment_confirmed',
+        rawEventType: singlePostPayment.status === 'RECEIVED' ? 'PAYMENT_RECEIVED' : 'PAYMENT_CONFIRMED',
+        providerPaymentId: singlePostPayment.id,
+        providerCheckoutId: knownCheckoutId,
+        amountCents: singlePostPayment.amountCents,
+        status: singlePostPayment.status as any,
+        confirmedDate: (singlePostPayment as any).confirmedDate || singlePostPayment.clientPaymentDate || singlePostPayment.paymentDate,
+        paymentDate: singlePostPayment.paymentDate,
+        paymentMethod: singlePostPayment.billingType as any,
+        invoiceUrl: singlePostPayment.invoiceUrl,
+      };
+
+      const settlementResult = await this.processEarlyActivationAdjustmentSettlement(
+        synthEvent,
+        claimed,
+        now,
+        { nowCommercialDate }
+      );
+
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      const reloaded = await this.billingRepo.getTransitionById(claimed.id, claimed.ministry_id);
+      return {
+        success: settlementResult.processed && settlementResult.reason === 'early_activation_settled_and_promoted',
+        reason: settlementResult.reason || 'early_activation_settled_race',
+        transition: reloaded && isBillingTransitionV1(reloaded) ? reloaded : undefined,
+      };
+    }
+
+    // B.2) Se PENDING ou OVERDUE — Seção 22
+    if (singlePostPayment.status === 'PENDING' || singlePostPayment.status === 'OVERDUE') {
+      console.warn(`[CHECKOUT CLEANUP RACE] Pagamento ${singlePostPayment.status} materializado no postflight. Não declara safe cancel.`);
+      await this.billingRepo.updateTransition(claimed.id, claimed.ministry_id, {
+        financial_attention_required: true,
+        financial_attention_reason: 'materialized_payment_blocks_checkout_cleanup',
+        financial_safety_status: 'attention_required',
+      });
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      const reloaded = await this.billingRepo.getTransitionById(claimed.id, claimed.ministry_id);
+      return {
+        success: false,
+        reason: 'materialized_payment_blocks_checkout_cleanup',
+        transition: reloaded && isBillingTransitionV1(reloaded) ? reloaded : undefined,
+      };
+    }
+
+    // Outro status: fail closed
+    await this.billingRepo.releasePlanChangeLock(claimed.id);
+    return { success: false, reason: `unexpected_post_cancel_payment_status_${singlePostPayment.status}` };
   }
 
   /**
@@ -5650,27 +6039,42 @@ export class BillingService {
       return { status: 'ok', processed: false, reason: 'FINANCIAL_SAFETY_STATUS_NOT_LIVE' };
     }
 
-    // Canceled/Expired attempt race (Seção 31)
+    // Canceled/Expired attempt race (Seção 29, 30, 31)
     if (matchedAttempt.status === 'canceled' || matchedAttempt.status === 'expired') {
       if (parsedEvent?.eventType === 'payment_confirmed' || parsedEvent?.eventType === 'payment_received') {
         console.error(
-          `[CANCELED ATTEMPT PAYMENT CONFLICT] Pagamento liquidado em tentativa cancelada/expirada ${matchedAttempt.attempt_id}.`
+          `[CANCELED ATTEMPT PAYMENT CONFLICT] Pagamento liquidado em tentativa cancelada/expirada ${matchedAttempt.attempt_id}. Gravando na ledger como stale fact sem conceder entitlement.`
         );
-        await this.billingRepo.updateTransition(planChange.id, ministryId, {
-          financial_attention_required: true,
-          financial_attention_reason: 'CANCELED_ATTEMPT_WITH_SETTLED_PAYMENT',
-          financial_safety_status: 'attention_required',
+        return await this.recordStaleSettledPaymentLedger({
+          planChange,
+          matchedAttempt,
+          parsedEvent,
+          now,
+          nowIso,
+          ministryId,
+          attentionReason: 'CANCELED_ATTEMPT_WITH_SETTLED_PAYMENT',
         });
+      }
+
+      if (parsedEvent?.eventType === 'checkout_paid') {
+        console.warn(
+          `[CANCELED ATTEMPT CHECKOUT_PAID] CHECKOUT_PAID recebido em tentativa cancelada/expirada ${matchedAttempt.attempt_id}. CHECKOUT_PAID sozinho não é autoridade de liquidação.`
+        );
         if (parsedEvent?.providerEventId) {
           await this.billingRepo.markWebhookEventProcessed(
             this.provider.name,
             parsedEvent.providerEventId,
-            'failed',
-            'CANCELED_ATTEMPT_WITH_SETTLED_PAYMENT'
+            'processed',
+            'checkout_paid_on_canceled_attempt_ignored'
           );
         }
-        return { status: 'ok', processed: false, reason: 'CANCELED_ATTEMPT_WITH_SETTLED_PAYMENT' };
+        return { status: 'ok', processed: false, reason: 'checkout_paid_on_canceled_attempt_ignored' };
       }
+
+      if (parsedEvent?.providerEventId) {
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      }
+      return { status: 'ok', processed: true, reason: `attempt_already_${matchedAttempt.status}` };
     }
 
     // 3. Tratamento de eventos de checkout
@@ -5762,7 +6166,7 @@ export class BillingService {
       return { status: 'ok', processed: true, reason: 'checkout_created_acknowledged' };
     }
 
-    if (parsedEvent?.eventType === 'checkout_expired' || parsedEvent?.eventType === 'checkout_canceled') {
+    if (parsedEvent?.eventType === 'checkout_expired') {
       // Monotonicidade: Se o attempt já está 'completed', eventos tardios não regridem o status!
       if (matchedAttempt.status === 'completed') {
         if (parsedEvent.providerEventId) {
@@ -5771,7 +6175,129 @@ export class BillingService {
         return { status: 'ok', processed: true, reason: 'attempt_already_completed' };
       }
 
-      matchedAttempt.status = parsedEvent.eventType === 'checkout_expired' ? 'expired' : 'canceled';
+      // CHECKOUT_EXPIRED Payment Safety Gate (Seção 6, 7, 8, 9, 10, 11)
+      const chkId = matchedAttempt.provider_checkout_id || parsedEvent.providerCheckoutId;
+      if (chkId && typeof this.provider.listPaymentsByCheckoutSession === 'function') {
+        let sessionPayments: ProviderPaymentRecord[] = [];
+        try {
+          sessionPayments = await this.provider.listPaymentsByCheckoutSession(chkId);
+        } catch (postErr: any) {
+          console.error(`[WEBHOOK CHECKOUT_EXPIRED] Falha ao listar pagamentos da sessão ${chkId}:`, postErr.message);
+          await this.billingRepo.markEarlyActivationCheckoutExpiredPending({
+            transitionId: planChange.id,
+            ministryId,
+            attemptId: matchedAttempt.attempt_id,
+            reason: 'webhook_expired_postflight_read_failed',
+            nowIso,
+          });
+          if (parsedEvent.providerEventId) {
+            await this.billingRepo.markWebhookEventProcessed(
+              this.provider.name,
+              parsedEvent.providerEventId,
+              'failed',
+              'webhook_expired_postflight_read_failed'
+            );
+          }
+          return { status: 'ok', processed: false, reason: 'checkout_expired_verification_pending' };
+        }
+
+        const matchingPayments = Array.isArray(sessionPayments)
+          ? sessionPayments.filter((p) => {
+              if (p.customerId && planChange.provider_customer_id && p.customerId !== planChange.provider_customer_id) {
+                return false;
+              }
+              return true;
+            })
+          : [];
+
+        // Pagamento liquidado observado no gate pós-expiração
+        const settled = matchingPayments.filter((p) => p.status === 'CONFIRMED' || p.status === 'RECEIVED');
+        if (settled.length === 1) {
+          const sp = settled[0];
+          const synthEvent: ParsedWebhookEvent = {
+            providerEventId: `webhook_expired_race_${sp.id}_${sp.status}`,
+            eventType: sp.status === 'RECEIVED' ? 'payment_received' : 'payment_confirmed',
+            rawEventType: sp.status === 'RECEIVED' ? 'PAYMENT_RECEIVED' : 'PAYMENT_CONFIRMED',
+            providerPaymentId: sp.id,
+            providerCheckoutId: chkId,
+            amountCents: sp.amountCents,
+            status: sp.status as any,
+            confirmedDate: (sp as any).confirmedDate || sp.clientPaymentDate || sp.paymentDate,
+            paymentDate: sp.paymentDate,
+            paymentMethod: sp.billingType as any,
+            invoiceUrl: sp.invoiceUrl,
+          };
+          const settlementResult = await this.processEarlyActivationAdjustmentSettlement(
+            synthEvent,
+            planChange,
+            now,
+            { nowCommercialDate: currentCommercialDate }
+          );
+          if (parsedEvent.providerEventId) {
+            await this.billingRepo.markWebhookEventProcessed(
+              this.provider.name,
+              parsedEvent.providerEventId,
+              'processed',
+              'routed_to_settlement_race'
+            );
+          }
+          return settlementResult;
+        }
+
+        if (matchingPayments.length > 1) {
+          await this.billingRepo.updateTransition(planChange.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: 'EARLY_ADJUSTMENT_MULTIPLE_PROVIDER_PAYMENTS',
+            financial_safety_status: 'attention_required',
+          });
+          if (parsedEvent.providerEventId) {
+            await this.billingRepo.markWebhookEventProcessed(
+              this.provider.name,
+              parsedEvent.providerEventId,
+              'failed',
+              'EARLY_ADJUSTMENT_MULTIPLE_PROVIDER_PAYMENTS'
+            );
+          }
+          return { status: 'ok', processed: false, reason: 'EARLY_ADJUSTMENT_MULTIPLE_PROVIDER_PAYMENTS' };
+        }
+
+        if (matchingPayments.some((p) => p.status === 'PENDING' || p.status === 'OVERDUE')) {
+          await this.billingRepo.updateTransition(planChange.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: 'materialized_payment_blocks_checkout_cleanup',
+            financial_safety_status: 'attention_required',
+          });
+          if (parsedEvent.providerEventId) {
+            await this.billingRepo.markWebhookEventProcessed(
+              this.provider.name,
+              parsedEvent.providerEventId,
+              'processed',
+              'materialized_payment_blocks_checkout_cleanup'
+            );
+          }
+          return { status: 'ok', processed: false, reason: 'materialized_payment_blocks_checkout_cleanup' };
+        }
+
+        // Zero pagamentos comprovados: finalização segura como EXPIRED (Seção 7)
+        await this.billingRepo.recordEarlyActivationCheckoutExpiredConfirmed({
+          transitionId: planChange.id,
+          ministryId,
+          attemptId: matchedAttempt.attempt_id,
+          nowIso,
+          nowCommercialDate: currentCommercialDate,
+        });
+
+        if (parsedEvent.providerEventId) {
+          await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+        }
+        return { status: 'ok', processed: true, reason: 'safe_expired' };
+      }
+
+      // Fallback se provider não possui listPaymentsByCheckoutSession
+      matchedAttempt.status = 'expired';
+      matchedAttempt.provider_session_terminal = true;
+      matchedAttempt.failure_classification = 'session_expired';
+      matchedAttempt.expiry_confirmed_at = nowIso;
       matchedAttempt.completed_at = nowIso;
       await this.billingRepo.updateTransition(planChange.id, ministryId, {
         checkout_attempts: planChange.checkout_attempts,
@@ -5779,7 +6305,149 @@ export class BillingService {
       if (parsedEvent.providerEventId) {
         await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
       }
-      return { status: 'ok', processed: true, reason: `attempt_${matchedAttempt.status}` };
+      return { status: 'ok', processed: true, reason: 'attempt_expired' };
+    }
+
+    if (parsedEvent?.eventType === 'checkout_canceled') {
+      // Monotonicidade: Se o attempt já está 'completed'
+      if (matchedAttempt.status === 'completed') {
+        if (parsedEvent.providerEventId) {
+          await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+        }
+        return { status: 'ok', processed: true, reason: 'attempt_already_completed' };
+      }
+
+      // CHECKOUT_CANCELED payment safety gate antes de confirmar cancelamento seguro (Seção 17)
+      const chkId = matchedAttempt.provider_checkout_id || parsedEvent.providerCheckoutId;
+      if (chkId && typeof this.provider.listPaymentsByCheckoutSession === 'function') {
+        let sessionPayments: ProviderPaymentRecord[] = [];
+        try {
+          sessionPayments = await this.provider.listPaymentsByCheckoutSession(chkId);
+        } catch (postErr: any) {
+          console.error(`[WEBHOOK CHECKOUT_CANCELED] Falha ao listar pagamentos da sessão ${chkId}:`, postErr.message);
+          await this.billingRepo.markEarlyActivationCheckoutCancelUncertain({
+            transitionId: planChange.id,
+            ministryId,
+            attemptId: matchedAttempt.attempt_id,
+            reason: 'webhook_cancel_postflight_read_failed',
+            nowIso,
+          });
+          if (parsedEvent.providerEventId) {
+            await this.billingRepo.markWebhookEventProcessed(
+              this.provider.name,
+              parsedEvent.providerEventId,
+              'failed',
+              'webhook_cancel_postflight_read_failed'
+            );
+          }
+          return { status: 'ok', processed: false, reason: 'webhook_cancel_verification_pending' };
+        }
+
+        const matchingPayments = Array.isArray(sessionPayments)
+          ? sessionPayments.filter((p) => {
+              if (p.customerId && planChange.provider_customer_id && p.customerId !== planChange.provider_customer_id) {
+                return false;
+              }
+              return true;
+            })
+          : [];
+
+        const settled = matchingPayments.filter((p) => p.status === 'CONFIRMED' || p.status === 'RECEIVED');
+        if (settled.length === 1) {
+          const sp = settled[0];
+          const synthEvent: ParsedWebhookEvent = {
+            providerEventId: `webhook_cancel_race_${sp.id}_${sp.status}`,
+            eventType: sp.status === 'RECEIVED' ? 'payment_received' : 'payment_confirmed',
+            rawEventType: sp.status === 'RECEIVED' ? 'PAYMENT_RECEIVED' : 'PAYMENT_CONFIRMED',
+            providerPaymentId: sp.id,
+            providerCheckoutId: chkId,
+            amountCents: sp.amountCents,
+            status: sp.status as any,
+            confirmedDate: (sp as any).confirmedDate || sp.clientPaymentDate || sp.paymentDate,
+            paymentDate: sp.paymentDate,
+            paymentMethod: sp.billingType as any,
+            invoiceUrl: sp.invoiceUrl,
+          };
+          const settlementResult = await this.processEarlyActivationAdjustmentSettlement(
+            synthEvent,
+            planChange,
+            now,
+            { nowCommercialDate: currentCommercialDate }
+          );
+          if (parsedEvent.providerEventId) {
+            await this.billingRepo.markWebhookEventProcessed(
+              this.provider.name,
+              parsedEvent.providerEventId,
+              'processed',
+              'routed_to_settlement_race'
+            );
+          }
+          return settlementResult;
+        }
+
+        if (matchingPayments.length > 1) {
+          await this.billingRepo.updateTransition(planChange.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: 'EARLY_ADJUSTMENT_MULTIPLE_PROVIDER_PAYMENTS',
+            financial_safety_status: 'attention_required',
+          });
+          if (parsedEvent.providerEventId) {
+            await this.billingRepo.markWebhookEventProcessed(
+              this.provider.name,
+              parsedEvent.providerEventId,
+              'failed',
+              'EARLY_ADJUSTMENT_MULTIPLE_PROVIDER_PAYMENTS'
+            );
+          }
+          return { status: 'ok', processed: false, reason: 'EARLY_ADJUSTMENT_MULTIPLE_PROVIDER_PAYMENTS' };
+        }
+
+        if (matchingPayments.some((p) => p.status === 'PENDING' || p.status === 'OVERDUE')) {
+          await this.billingRepo.updateTransition(planChange.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: 'materialized_payment_blocks_checkout_cleanup',
+            financial_safety_status: 'attention_required',
+          });
+          if (parsedEvent.providerEventId) {
+            await this.billingRepo.markWebhookEventProcessed(
+              this.provider.name,
+              parsedEvent.providerEventId,
+              'processed',
+              'materialized_payment_blocks_checkout_cleanup'
+            );
+          }
+          return { status: 'ok', processed: false, reason: 'materialized_payment_blocks_checkout_cleanup' };
+        }
+
+        // Zero pagamentos comprovados: finalização segura como CANCELED (Seção 17)
+        await this.billingRepo.recordEarlyActivationCheckoutCancelConfirmed({
+          transitionId: planChange.id,
+          ministryId,
+          attemptId: matchedAttempt.attempt_id,
+          nowIso,
+          nowCommercialDate: currentCommercialDate,
+        });
+
+        if (parsedEvent.providerEventId) {
+          await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+        }
+        return { status: 'ok', processed: true, reason: 'safe_canceled' };
+      }
+
+      // Fallback
+      matchedAttempt.status = 'canceled';
+      matchedAttempt.cancel_state = 'confirmed';
+      matchedAttempt.provider_session_terminal = true;
+      matchedAttempt.failure_classification = 'session_canceled';
+      matchedAttempt.cancellation_confirmed_at = nowIso;
+      matchedAttempt.completed_at = nowIso;
+      await this.billingRepo.updateTransition(planChange.id, ministryId, {
+        checkout_attempts: planChange.checkout_attempts,
+      });
+      if (parsedEvent.providerEventId) {
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+      }
+      return { status: 'ok', processed: true, reason: 'attempt_canceled' };
     }
 
     // 4. Descoberta do pagamento exato do provedor
@@ -6240,12 +6908,15 @@ export class BillingService {
     now: Date;
     nowIso: string;
     ministryId: string;
+    attentionReason?: string;
   }): Promise<{ status: string; processed: boolean; reason: string }> {
-    const { planChange, matchedAttempt, parsedEvent, now, nowIso, ministryId } = params;
+    const { planChange, matchedAttempt, parsedEvent, now, nowIso, ministryId, attentionReason } = params;
     const exactPaymentId = parsedEvent?.providerPaymentId || matchedAttempt.provider_payment_id;
 
+    const defaultReason = attentionReason || 'STALE_ATTEMPT_EARLY_ADJUSTMENT_SETTLED';
+
     if (!exactPaymentId) {
-      return { status: 'ok', processed: false, reason: 'STALE_ATTEMPT_EARLY_ADJUSTMENT_SETTLED' };
+      return { status: 'ok', processed: false, reason: defaultReason };
     }
 
     // Validação write-once no próprio attempt antigo: se já tem payment ID diferente
@@ -6351,7 +7022,7 @@ export class BillingService {
       matchedAttempt.paid_at = paymentConfirmationInstant;
     }
 
-    const reason = txConflict ? 'FINANCIAL_TRANSACTION_CONFLICT' : 'STALE_ATTEMPT_EARLY_ADJUSTMENT_SETTLED';
+    const reason = txConflict ? 'FINANCIAL_TRANSACTION_CONFLICT' : defaultReason;
 
     await this.billingRepo.updateTransition(planChange.id, ministryId, {
       checkout_attempts: planChange.checkout_attempts,
@@ -6483,8 +7154,12 @@ export class BillingService {
     }
 
     // 3. Validação de Ausência de Obrigação Financeira Viva
-    if (isEarlyAdjustmentObligationFinanciallyLive(transition)) {
-      const state = classifyEarlyAdjustmentFinancialState(transition);
+    const nowDate = options?.now
+      ? (typeof options.now === 'string' ? new Date(options.now) : options.now)
+      : new Date();
+
+    if (isEarlyAdjustmentObligationFinanciallyLive(transition, nowDate)) {
+      const state = classifyEarlyAdjustmentFinancialState(transition, nowDate);
       throw new AppError(
         409,
         `Existe uma obrigação financeira de ativação antecipada ativa ou não resolvida (estado: '${state}').`
