@@ -1,8 +1,8 @@
 # LouvAIO — Design Técnico: Billing Transition Policy V1 (Revised)
 
 - **Data de Criação**: 2026-09-01
-- **Data de Revisão**: 2026-09-01 (Revisão: *Immediate Upgrade com Pró-rata e Especificação Progressiva da Phase 0B*)
-- **Status**: Documento de Design Técnico Hardened (Phase 0A Validada / Phase 0B Progressive Provider Spike em Design)
+- **Data de Revisão**: 2026-09-04 (Revisão: *Phase 3C Early Activation Completa, Endurecida e Homologada em Sandbox*)
+- **Status**: Documento de Design Técnico Hardened (Phases 0A, 0B, 1, 2, 3A, 3B, 3C Sandbox Homologadas)
 - **Referência**: [`docs/decisions/2026-09-01-billing-transition-policy-v1.md`](../decisions/2026-09-01-billing-transition-policy-v1.md)
 
 ---
@@ -795,13 +795,17 @@ Para garantir as invariantes **No Two Live Renewals**, **No Unsafe Zero Renewals
               - *47 Testes Dedicados na Suíte Phase 3C.5B*:
                 - Testes cobrem exaustivamente a matriz canônica da Seção 29, a preservação de segurança da Seção 30 e os 10 cenários da Matriz de Conflitos Terminais da Seção 31.
       - **Status das Próximas Fases**:
-      - **PHASE 3C EARLY ACTIVATION**:
+      - **PHASE 3C EARLY ACTIVATION**: **IMPLEMENTED, HARDENED & SANDBOX HOMOLOGATED**.
         - **Phase 3C.1 (Domain, Eligibility & Proration)**: **COMPLETE**.
         - **Phase 3C.2 (Detached Checkout Preparation & Hardening)**: **COMPLETE**.
         - **Phase 3C.3 (Tenant-Scoped Early Activation API & Final Hardening)**: **COMPLETE**.
         - **Phase 3C.4 (Adjustment Settlement, Idempotent Webhook & Immediate Entitlement Convergence)**: **COMPLETE & HARDENED**.
         - **Phase 3C.5A (Early Activation Known-Checkout Reconciliation Worker & Final Hardening)**: **COMPLETE & TEST MATRIX VALIDATED**.
-        - **Phase 3C.5B (Checkout Expiry / Cancellation Cleanup)**: **COMPLETE & HARDENED**.
-        - **Sandbox Homologation for Early Activation**: **NOT STARTED**.
+        - **Phase 3C.5B (Checkout Expiry / Cancellation Cleanup — Terminal Monotonicity & Lifecycle Hardening)**: **COMPLETE & HARDENED**.
+        - **Phase 3C.6 (Early Activation End-to-End Sandbox Homologation)**: **COMPLETE & SANDBOX HOMOLOGATED**.
+          - *Scenario A2 (Clean Happy Path)*: Homologação ponta a ponta sem reparo manual contra o Sandbox do Asaas. Cotação matemática exata (1267 centavos), checkout avulso único, liquidação por `PAYMENT_CONFIRMED`, `BillingTransaction` única no ledger contábil, ativação imediata de cotas para Essential, preservação do ciclo comercial da origem, transição `scheduled`, slot canônico `HELD` inalterado, recorrências intactas e reconciliador idempotente (NO-OP).
+          - *Scenario B (Natural Expiry & Safe Retry)*: TTL de 10 minutos no Sandbox. Expiração local segura sem cancelamento HTTP pós-TTL, validação de término oficial por webhook `CHECKOUT_EXPIRED`, conferência de zero pagamentos, tentativa finalizada como `expired` (`provider_session_terminal = true`), transição `scheduled` e slot `HELD` mantidos, re-cotação tardia validada com sucesso.
+          - *Sandbox Hygiene Protocol*: Disciplina de pós-teste com inativação via `PUT` status `INACTIVE` (`provider.inactivateSubscription`), banindo `DELETE /v3/subscriptions/{id}` de rotinas de higiene.
+          - *Limitações Conhecidas*: Webhook suppression total mantida como `NOT_VERIFIED`; cancelamento explícito via provedor em runtime mantido como `NOT_APPLICABLE` (sem trigger de produto ativo).
       - **PAID -> FREE TRANSITIONS**: **NOT STARTED**.
-      - *(O escopo concluído compreende as fases 3B.1, 3B.2, 3B.3A, 3B.3B, 3B.3 Webhook Terminality Hardening, 3C.1, 3C.2, 3C.3, 3C.4, 3C.5A e 3C.5B)*.
+      - *(O escopo concluído compreende as fases 3A, 3B.1, 3B.2, 3B.3A, 3B.3B, 3B.3 Webhook Terminality Hardening, 3C.1, 3C.2, 3C.3, 3C.4, 3C.5A, 3C.5B e 3C.6)*.
