@@ -2373,19 +2373,24 @@ export class BillingRepository {
   }
 
   /**
-   * Phase 3D.3 (Atomic Terminalization Hardening):
+   * Phase 3D.3 (Atomic Terminalization Hardening) — scheduled_cancel_to_free ONLY:
    * Conclui a transição e libera o slot determinístico ativo em UMA ÚNICA transação atômica Firestore.
    * Elimina completamente a janela de inconsistência (Crash Window C: completed + safe_terminal com slot ainda HELD).
    *
+   * Este helper é EXCLUSIVO de scheduled_cancel_to_free. Operações cancellation-specific
+   * (active_cancellation_transition_id, cancel_at_period_end) não se aplicam a outras estratégias.
+   * Chamadores com outras execution_strategy recebem 'unsupported_transition_strategy' (Phase 3D.3B.1).
+   *
    * Pré-condições estritas na transação:
+   * 0. execution_strategy === 'scheduled_cancel_to_free' (strategy gate — defense-in-depth).
    * 1. Slot existe e pertence exclusivamente à transição (slot.plan_change_id === planChangeId).
    * 2. Transição existe, pertence ao ministry_id e é V1.
    * 3. Transição não está em atenção financeira (financial_attention_required !== true && financial_safety_status !== 'attention_required').
    * 4. Assinatura do ministério existe em ministry_subscriptions.
-   * 5. CAS estrito no marker de ownership: para transições scheduled ou live (financial_safety_status === 'live'),
+   * 5. CAS estrito no marker de ownership (APENAS para scheduled_cancel_to_free com transition_status 'scheduled'):
    *    active_cancellation_transition_id DEVE estar presente e ser exatamente igual a planChangeId.
-   *    Ausência (null/undefined/'') é estado divergente — FAIL CLOSED (Phase 3D.3B).
-   *    Para outros status, rejeita somente se marker aponta a outra transição.
+   *    Ausência (null/undefined/'') é estado divergente — FAIL CLOSED.
+   *    Para transições awaiting_old_inactivation ainda em trânsito para scheduled, marker também exigido.
    *
    * Efeitos atômicos em caso de sucesso (mesmo commit Firestore):
    * - Atualiza transitionDoc com status 'completed', financial_safety_status 'safe_terminal', completed_at e updates.
@@ -2416,6 +2421,13 @@ export class BillingRepository {
 
       if (!isBillingTransitionV1(transition)) {
         return { success: false, reason: 'legacy_transition_does_not_own_slot' };
+      }
+
+      // Pré-condição 0: Strategy gate — este helper é exclusivo de scheduled_cancel_to_free (Phase 3D.3B.1).
+      // Outras execution_strategy V1 (scheduled_paid_transition, immediate_initial_purchase) NÃO herdam
+      // semânticas de cancellation marker e NÃO devem terminalizar por este caminho.
+      if (transition.execution_strategy !== 'scheduled_cancel_to_free') {
+        return { success: false, reason: 'unsupported_transition_strategy' };
       }
 
       // Pré-condição 3: Atenção financeira NUNCA pode ser terminalizada nem liberar slot (Sections 15 & 23.10)
@@ -2466,16 +2478,20 @@ export class BillingRepository {
         return { success: false, reason: 'slot_owned_by_another_transition' };
       }
 
-      // Pré-condição 5: CAS estrito no marker de ownership da assinatura (Phase 3D.3B, Sections 5 & 17)
-      // Para transições scheduled ou live (financial_safety_status === 'live'), o marker DEVE estar presente
-      // e ser exatamente igual a planChangeId. Ausência (null/undefined/'') é estado divergente — FAIL CLOSED.
-      // Para outros status, mantém a verificação de divergência quando o marker aponta a outra transição.
-      const isScheduledOrLive =
-        transition.transition_status === 'scheduled' || transition.financial_safety_status === 'live';
+      // Pré-condição 5: CAS estrito no marker de ownership da assinatura (Phase 3D.3B.1, Sections 5 & 17).
+      // Escopo EXCLUSIVO: scheduled_cancel_to_free (garantido pela pré-condição 0 acima).
+      // active_cancellation_transition_id NÃO é invariante global de V1 — pertence apenas ao lifecycle de cancellation.
+      //
+      // Para transições em estado ativo de cancellation (scheduled ou awaiting_old_inactivation),
+      // o marker DEVE estar presente e ser exatamente igual a planChangeId.
+      // Ausência (null/undefined/'') e divergência são estados divergentes — FAIL CLOSED.
       const markerValue = subData?.active_cancellation_transition_id;
-      if (isScheduledOrLive) {
+      const isCancellationActive =
+        transition.transition_status === 'scheduled' ||
+        transition.transition_status === 'awaiting_old_inactivation';
+      if (isCancellationActive) {
         if (!markerValue || markerValue !== planChangeId) {
-          return { success: false, reason: 'marker_required_for_scheduled_or_live' };
+          return { success: false, reason: 'subscription_marker_missing_or_divergent' };
         }
       } else if (markerValue && markerValue !== planChangeId) {
         return { success: false, reason: 'subscription_marker_owned_by_another_transition' };

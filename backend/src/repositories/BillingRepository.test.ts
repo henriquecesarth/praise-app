@@ -1215,6 +1215,16 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
   });
 
   describe('completeTransitionAndReleaseOwnedSlotAtomically — Final Authority & Preconditions', () => {
+    // Fábrica scoped: garante execution_strategy correto para este helper (Phase 3D.3B.1).
+    // NÃO altera createSampleV1Record (usada por outros describe blocks com scheduled_paid_transition).
+    const createCtfRecord = (overrides: Partial<BillingTransitionV1Record> = {}): BillingTransitionV1Record =>
+      createSampleV1Record({
+        execution_strategy: 'scheduled_cancel_to_free',
+        transition_type: 'downgrade',
+        transition_status: 'scheduled',
+        ...overrides,
+      });
+
     it('1. fail closed se transição não existir', async () => {
       const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', 'tr_non_existent', {});
       expect(res.success).toBe(false);
@@ -1222,7 +1232,7 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
     });
 
     it('2. fail closed se houver tenant mismatch', async () => {
-      const record = createSampleV1Record({ id: 'tr_tenant_1', ministry_id: 'min_tenant_A' });
+      const record = createCtfRecord({ id: 'tr_tenant_1', ministry_id: 'min_tenant_A' });
       planChangesStore.set(record.id, record);
 
       const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_tenant_B', 'asaas', record.id, {});
@@ -1231,7 +1241,7 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
     });
 
     it('3. fail closed se transição estiver com financial_attention_required', async () => {
-      const record = createSampleV1Record({
+      const record = createCtfRecord({
         id: 'tr_atten_1',
         ministry_id: 'min_test_1',
         financial_attention_required: true,
@@ -1244,7 +1254,7 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
     });
 
     it('4. fail closed se financial_safety_status for attention_required', async () => {
-      const record = createSampleV1Record({
+      const record = createCtfRecord({
         id: 'tr_atten_2',
         ministry_id: 'min_test_1',
         financial_safety_status: 'attention_required' as any,
@@ -1257,7 +1267,7 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
     });
 
     it('5. fail closed se assinatura do ministério não existir em ministry_subscriptions', async () => {
-      const record = createSampleV1Record({ id: 'tr_no_sub', ministry_id: 'min_test_1' });
+      const record = createCtfRecord({ id: 'tr_no_sub', ministry_id: 'min_test_1' });
       planChangesStore.set(record.id, record);
 
       const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
@@ -1266,7 +1276,7 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
     });
 
     it('6. fail closed se slot não existir no fluxo normal', async () => {
-      const record = createSampleV1Record({ id: 'tr_no_slot', ministry_id: 'min_test_1' });
+      const record = createCtfRecord({ id: 'tr_no_slot', ministry_id: 'min_test_1' });
       planChangesStore.set(record.id, record);
       ministrySubscriptionsStore.set('min_test_1', { active_cancellation_transition_id: record.id });
 
@@ -1276,7 +1286,7 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
     });
 
     it('7. fail closed se slot pertencer a outra transição', async () => {
-      const record = createSampleV1Record({ id: 'tr_my_tx', ministry_id: 'min_test_1' });
+      const record = createCtfRecord({ id: 'tr_my_tx', ministry_id: 'min_test_1' });
       planChangesStore.set(record.id, record);
       ministrySubscriptionsStore.set('min_test_1', { active_cancellation_transition_id: record.id });
 
@@ -1296,17 +1306,18 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
       expect(res.reason).toBe('slot_owned_by_another_transition');
     });
 
-    it('8. fail closed se subscription.active_cancellation_transition_id pertencer a outra transição (CAS mismatch, status não-live)', async () => {
-      // Usa safe_terminal + failed para exercitar o branch else-if (não-scheduled, não-live).
-      // Para live/scheduled, a nova razão é marker_required_for_scheduled_or_live (coberto nos testes 11-15).
+    it('8. [3D.3B.1] fail closed: execution_strategy=scheduled_paid_transition → unsupported_transition_strategy (strategy gate)', async () => {
+      // Prova que outras estratégias V1 vivas não herdam semânticas de cancellation marker.
+      // O strategy gate (precondição 0) rejeita antes de qualquer operação de slot ou marker.
       const record = createSampleV1Record({
-        id: 'tr_my_tx',
+        id: 'tr_paid_transition',
         ministry_id: 'min_test_1',
-        financial_safety_status: 'safe_terminal' as any,
-        transition_status: 'failed' as any,
+        execution_strategy: 'scheduled_paid_transition',
+        transition_status: 'scheduled',
+        financial_safety_status: 'live',
       });
       planChangesStore.set(record.id, record);
-      ministrySubscriptionsStore.set('min_test_1', { active_cancellation_transition_id: 'tr_alien_cancellation' });
+      ministrySubscriptionsStore.set('min_test_1', { active_cancellation_transition_id: null });
 
       const slotId = buildActiveTransitionSlotId('min_test_1', 'asaas');
       activeSlotsStore.set(slotId, {
@@ -1321,11 +1332,15 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
 
       const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
       expect(res.success).toBe(false);
-      expect(res.reason).toBe('subscription_marker_owned_by_another_transition');
+      expect(res.reason).toBe('unsupported_transition_strategy');
+
+      // Zero mutações: slot intacto, marker intacto
+      expect(activeSlotsStore.has(slotId)).toBe(true);
+      expect(ministrySubscriptionsStore.get('min_test_1')?.active_cancellation_transition_id).toBeNull();
     });
 
     it('9. sucesso normal: atualiza transição para completed/safe_terminal, deleta slot e limpa marker na sub atomicamente', async () => {
-      const record = createSampleV1Record({
+      const record = createCtfRecord({
         id: 'tr_success_term',
         ministry_id: 'min_test_1',
         transition_status: 'scheduled',
@@ -1369,7 +1384,7 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
     });
 
     it('10. idempotência: transição já completed e safe_terminal retorna sucesso e repara anomalia de slot se ainda detido', async () => {
-      const record = createSampleV1Record({
+      const record = createCtfRecord({
         id: 'tr_already_done',
         ministry_id: 'min_test_1',
         transition_status: 'completed',
@@ -1402,11 +1417,12 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
       const updatedSub = ministrySubscriptionsStore.get('min_test_1');
       expect(updatedSub?.active_cancellation_transition_id).toBeNull();
     });
-
     // -----------------------------------------------------------------------
-    // Phase 3D.3B — Strict Live Marker CAS
-    // Para transições scheduled ou live (financial_safety_status === 'live'),
-    // ausência do marker é estado divergente → FAIL CLOSED.
+    // Phase 3D.3B.1 — Cancel-to-Free Strategy Isolation & Strict Marker CAS
+    // active_cancellation_transition_id é invariante EXCLUSIVO de scheduled_cancel_to_free.
+    // Outras estratégias V1 live NÃO herdam semânticas de cancellation marker.
+    // Para scheduled_cancel_to_free em estados ativos (scheduled, awaiting_old_inactivation),
+    // ausência ou divergência do marker é estado divergente → FAIL CLOSED.
     // -----------------------------------------------------------------------
 
     const buildSlotForRecord = (record: BillingTransitionV1Record) => {
@@ -1423,8 +1439,8 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
       return slotId;
     };
 
-    it('11. [3D.3B] fail closed: transition_status=scheduled + marker null', async () => {
-      const record = createSampleV1Record({
+    it('11. [3D.3B.1] fail closed: scheduled_cancel_to_free + transition_status=scheduled + marker null', async () => {
+      const record = createCtfRecord({
         id: 'tr_3d3b_null',
         ministry_id: 'min_test_1',
         transition_status: 'scheduled',
@@ -1436,11 +1452,11 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
 
       const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
       expect(res.success).toBe(false);
-      expect(res.reason).toBe('marker_required_for_scheduled_or_live');
+      expect(res.reason).toBe('subscription_marker_missing_or_divergent');
     });
 
-    it('12. [3D.3B] fail closed: transition_status=scheduled + marker string vazia', async () => {
-      const record = createSampleV1Record({
+    it('12. [3D.3B.1] fail closed: scheduled_cancel_to_free + transition_status=scheduled + marker string vazia', async () => {
+      const record = createCtfRecord({
         id: 'tr_3d3b_empty',
         ministry_id: 'min_test_1',
         transition_status: 'scheduled',
@@ -1452,11 +1468,11 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
 
       const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
       expect(res.success).toBe(false);
-      expect(res.reason).toBe('marker_required_for_scheduled_or_live');
+      expect(res.reason).toBe('subscription_marker_missing_or_divergent');
     });
 
-    it('13. [3D.3B] fail closed: transition_status=scheduled + marker undefined (campo ausente)', async () => {
-      const record = createSampleV1Record({
+    it('13. [3D.3B.1] fail closed: scheduled_cancel_to_free + transition_status=scheduled + marker undefined (campo ausente)', async () => {
+      const record = createCtfRecord({
         id: 'tr_3d3b_undef',
         ministry_id: 'min_test_1',
         transition_status: 'scheduled',
@@ -1469,12 +1485,14 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
 
       const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
       expect(res.success).toBe(false);
-      expect(res.reason).toBe('marker_required_for_scheduled_or_live');
+      expect(res.reason).toBe('subscription_marker_missing_or_divergent');
     });
 
-    it('14. [3D.3B] fail closed: financial_safety_status=live (non-scheduled) + marker null', async () => {
-      const record = createSampleV1Record({
-        id: 'tr_3d3b_live_null',
+    it('14. [3D.3B.1] fail closed: scheduled_cancel_to_free + transition_status=awaiting_old_inactivation + marker null', async () => {
+      // awaiting_old_inactivation é estado ativo de cancellation — marker é obrigatório também neste estado.
+      // (Section 14: marker retained durante awaiting_old_inactivation → scheduled → terminalization)
+      const record = createCtfRecord({
+        id: 'tr_3d3b_aoi_null',
         ministry_id: 'min_test_1',
         transition_status: 'awaiting_old_inactivation',
         financial_safety_status: 'live',
@@ -1485,11 +1503,11 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
 
       const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
       expect(res.success).toBe(false);
-      expect(res.reason).toBe('marker_required_for_scheduled_or_live');
+      expect(res.reason).toBe('subscription_marker_missing_or_divergent');
     });
 
-    it('15. [3D.3B] fail closed: transition_status=scheduled + marker divergente (outra transição)', async () => {
-      const record = createSampleV1Record({
+    it('15. [3D.3B.1] fail closed: scheduled_cancel_to_free + transition_status=scheduled + marker divergente (outra transição)', async () => {
+      const record = createCtfRecord({
         id: 'tr_3d3b_diverge',
         ministry_id: 'min_test_1',
         transition_status: 'scheduled',
@@ -1501,25 +1519,100 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
 
       const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
       expect(res.success).toBe(false);
-      expect(res.reason).toBe('marker_required_for_scheduled_or_live');
+      expect(res.reason).toBe('subscription_marker_missing_or_divergent');
     });
 
-    it('16. [3D.3B] regressão: status não-scheduled/live + marker null → sucesso (marker não obrigatório fora do fluxo cancelamento-periodo)', async () => {
-      const record = createSampleV1Record({
-        id: 'tr_3d3b_noncancelled',
+    it('16. [3D.3B.1] regressão: scheduled_cancel_to_free + status não-cancellation-active + marker null → sucesso', async () => {
+      // Usa transition_status = 'superseded' (nem scheduled nem awaiting_old_inactivation).
+      // marker null com status não-ativo de cancellation: não é obrigatório → completa com sucesso.
+      const record = createCtfRecord({
+        id: 'tr_3d3b_superseded',
         ministry_id: 'min_test_1',
-        transition_status: 'awaiting_old_inactivation',
-        financial_safety_status: 'safe_terminal' as any,
+        transition_status: 'superseded' as any,
+        financial_safety_status: 'live',
       });
       planChangesStore.set(record.id, record);
-      // marker null + status não-live: não é obrigatório
       ministrySubscriptionsStore.set('min_test_1', { active_cancellation_transition_id: null });
       buildSlotForRecord(record);
 
       const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
-      // financial_safety_status: safe_terminal não é 'live', transition_status não é 'scheduled'
-      // → marker null é permitido → deve completar com sucesso
+      // superseded não é scheduled nem awaiting_old_inactivation → marker null é permitido
       expect(res.success).toBe(true);
+    });
+
+    it('17. [3D.3B.1] fail closed: execution_strategy=immediate_initial_purchase → unsupported_transition_strategy', async () => {
+      const record = createSampleV1Record({
+        id: 'tr_initial_purchase',
+        ministry_id: 'min_test_1',
+        execution_strategy: 'immediate_initial_purchase',
+        transition_status: 'completed' as any,
+        financial_safety_status: 'safe_terminal',
+      });
+      planChangesStore.set(record.id, record);
+      ministrySubscriptionsStore.set('min_test_1', { active_cancellation_transition_id: null });
+
+      const slotId = buildActiveTransitionSlotId('min_test_1', 'asaas');
+      activeSlotsStore.set(slotId, {
+        id: slotId,
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        plan_change_id: record.id,
+        acquired_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        version: 1,
+      });
+
+      const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('unsupported_transition_strategy');
+
+      // Zero mutações: slot intacto
+      expect(activeSlotsStore.has(slotId)).toBe(true);
+    });
+
+    it('18. [3D.3B.1] invariant: strategy gate rejeitada não muta transition, slot nem marker', async () => {
+      // Prova que a rejeição por strategy gate é completamente sem efeitos colaterais.
+      const record = createSampleV1Record({
+        id: 'tr_isolation_guard',
+        ministry_id: 'min_test_1',
+        execution_strategy: 'scheduled_paid_transition',
+        transition_status: 'scheduled',
+        financial_safety_status: 'live',
+      });
+      planChangesStore.set(record.id, record);
+      const initialMarker = 'tr_cancel_to_free_active';
+      const initialCancelAtPeriodEnd = true;
+      ministrySubscriptionsStore.set('min_test_1', {
+        active_cancellation_transition_id: initialMarker,
+        cancel_at_period_end: initialCancelAtPeriodEnd,
+      });
+
+      const slotId = buildActiveTransitionSlotId('min_test_1', 'asaas');
+      activeSlotsStore.set(slotId, {
+        id: slotId,
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        plan_change_id: record.id,
+        acquired_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        version: 1,
+      });
+
+      const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('unsupported_transition_strategy');
+
+      // Slot intacto
+      expect(activeSlotsStore.has(slotId)).toBe(true);
+      expect(activeSlotsStore.get(slotId)?.plan_change_id).toBe(record.id);
+      // Marker de cancellation intacto (a outra transição de cancellation não foi perturbada)
+      const sub = ministrySubscriptionsStore.get('min_test_1');
+      expect(sub?.active_cancellation_transition_id).toBe(initialMarker);
+      expect(sub?.cancel_at_period_end).toBe(initialCancelAtPeriodEnd);
+      // Transição intacta
+      const storedTx = planChangesStore.get(record.id) as BillingTransitionV1Record;
+      expect(storedTx?.transition_status).toBe('scheduled');
+      expect(storedTx?.financial_safety_status).toBe('live');
     });
   });
 });
