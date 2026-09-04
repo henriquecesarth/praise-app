@@ -658,6 +658,43 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
       expect(summaryPast.quotas.members).toBe(10);
       expect(summaryPast.quotas.songs).toBe(50);
     });
+
+    it('Cenário V1 (Phase 3D.3 Hardening): cancel_at_period_end no passado com active_cancellation_transition_id NÃO transiciona para Free (mantém plano e cotas pagas)', async () => {
+      const mockRepo = {
+        getSubscription: vi.fn(),
+        getUsage: vi.fn().mockResolvedValue({
+          id: 'min-v1-cancel',
+          ministry_id: 'min-v1-cancel',
+          members_count: 15,
+          songs_count: 60,
+        }),
+      };
+      const service = new SubscriptionService(mockRepo as any);
+
+      // Período vencido no passado, mas gerenciado por transição V1:
+      mockRepo.getSubscription.mockResolvedValue({
+        id: 'min-v1-cancel',
+        ministry_id: 'min-v1-cancel',
+        plan_id: 'pro',
+        member_addon_blocks: 0,
+        billing_status: 'active',
+        subscription_mode: 'paid',
+        cancel_at_period_end: true,
+        active_cancellation_transition_id: 'tr_v1_cancel_active_123',
+        current_period_start: '2026-07-01T00:00:00.000Z',
+        current_period_end: '2026-08-01T00:00:00.000Z', // passado
+      });
+
+      const summary = await service.getSubscriptionSummary('min-v1-cancel');
+      // Entitlement permanece PRO pago, NÃO faz auto-cutover para Free
+      expect(summary.plan.id).toBe('pro');
+      expect(summary.subscription.subscriptionMode).toBe('paid');
+      expect(summary.subscription.cancelAtPeriodEnd).toBe(true);
+      expect(summary.subscription.activeCancellationTransitionId).toBe('tr_v1_cancel_active_123');
+      expect(summary.quotas.members).toBe(100);
+      expect(summary.quotas.songs).toBe(500);
+      expect(summary.isOverLimit).toBe(false);
+    });
   });
 });
 

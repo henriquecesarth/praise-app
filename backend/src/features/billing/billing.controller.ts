@@ -91,10 +91,12 @@ export class BillingController {
   ): Promise<void> => {
     try {
       const ministryId = this.getMinistryId(req);
-      const result = await this.billingService.cancelSubscription(ministryId);
+      const userId = req.user?.id;
+      const result = await this.billingService.cancelSubscription(ministryId, { userId });
       res.json({
         message: 'Cancelamento agendado para o final do período vigente.',
         subscription: result,
+        ...(result?.transition ? { transition: result.transition } : {}),
       });
     } catch (err) {
       next(err);

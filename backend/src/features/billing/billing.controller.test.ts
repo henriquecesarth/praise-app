@@ -126,7 +126,7 @@ describe('BillingController Tests', () => {
 
       await controller.cancelSubscription(mockReq as AuthenticatedRequest, mockRes as Response, mockNext);
 
-      expect(mockBillingService.cancelSubscription).toHaveBeenCalledWith('min-100');
+      expect(mockBillingService.cancelSubscription).toHaveBeenCalledWith('min-100', { userId: 'usr-1' });
       expect(mockRes.json).toHaveBeenCalledWith(
         expect.objectContaining({
           message: 'Cancelamento agendado para o final do período vigente.',

@@ -6,6 +6,7 @@ import {
   BillingTransitionV1Record,
   buildActiveTransitionSlotId,
   CANCEL_TO_FREE_ATTENTION_REASONS,
+  ScheduledCancelToFreeResponseDto,
 } from './billing.types';
 import { AppError } from '../../middleware/error-handler';
 import { config } from '../../config/unifiedConfig';
@@ -1004,28 +1005,56 @@ describe('Phase 3D.2 — Provider Do-Not-Renew & Payment Safety Orchestration (S
       expect(mockProvider.removeSubscription).not.toHaveBeenCalled();
     });
 
-    it('48. Option A deployability: public cancelSubscription executes legacy flow without touching V1 slot', async () => {
-      const legacySpy = vi.spyOn(billingService, 'cancelSubscriptionLegacy').mockResolvedValue({
+    it('48. Public cancelSubscription executes V1 flow and delegates to cancelSubscriptionV1', async () => {
+      const v1Spy = vi.spyOn(billingService, 'cancelSubscriptionV1').mockResolvedValue({
         ministry_id: ministryId,
         provider: providerName,
         status: 'active',
         cancel_at_period_end: true,
+        transition: {
+          transitionId: 'tr_test_1',
+          status: 'pending',
+          executionStrategy: 'scheduled_cancel_to_free',
+          targetPlanId: 'free',
+          effectiveBillingDate: '2026-10-01',
+          currentPeriodEnd: '2026-10-01T00:00:00.000Z',
+          cancelAtPeriodEnd: true,
+          entitlementPreserved: true,
+          message: 'Cancelamento agendado para o final do período vigente.',
+        },
       } as any);
+      const legacySpy = vi.spyOn(billingService, 'cancelSubscriptionLegacy');
 
       const res = await billingService.cancelSubscription(ministryId);
 
-      expect(legacySpy).toHaveBeenCalledWith(ministryId);
+      expect(v1Spy).toHaveBeenCalledWith(ministryId, undefined);
+      expect(legacySpy).not.toHaveBeenCalled();
       expect(res.cancel_at_period_end).toBe(true);
-      expect((res as any).transition).toBeUndefined();
+      expect(res.transition).toBeDefined();
     });
 
-    it('49. Controller cancelSubscription returns legacy envelope { message, subscription } without transition DTO', async () => {
+    it('49. Controller cancelSubscription returns envelope { message, subscription, transition } with transition DTO', async () => {
       const controller = new BillingController(billingService, mockSubscriptionService);
+      const mockTransitionDto: ScheduledCancelToFreeResponseDto = {
+        transitionId: 'tr_test_dto',
+        executionStrategy: 'scheduled_cancel_to_free',
+        transitionStatus: 'scheduled',
+        financialSafetyStatus: 'live',
+        sourcePlanId: 'pro',
+        targetPlanId: 'free',
+        effectiveBillingDate: '2026-10-01',
+        currentPeriodEnd: '2026-10-01T00:00:00.000Z',
+        cancelAtPeriodEnd: true,
+        entitlementPreserved: true,
+        message: 'Cancelamento agendado para o final do período vigente.',
+      };
+
       vi.spyOn(billingService, 'cancelSubscription').mockResolvedValue({
         ministry_id: ministryId,
         provider: providerName,
         status: 'active',
         cancel_at_period_end: true,
+        transition: mockTransitionDto,
       } as any);
 
       const mockReq = {
@@ -1041,8 +1070,9 @@ describe('Phase 3D.2 — Provider Do-Not-Renew & Payment Safety Orchestration (S
       expect(jsonMock).toHaveBeenCalledWith({
         message: 'Cancelamento agendado para o final do período vigente.',
         subscription: expect.objectContaining({ cancel_at_period_end: true }),
+        transition: mockTransitionDto,
       });
-      expect(jsonMock.mock.calls[0][0].transition).toBeUndefined();
+      expect(jsonMock.mock.calls[0][0].transition).toEqual(mockTransitionDto);
     });
 
     it('50. Multi-page Case A: Page 1 safe history + Page 2 future CONFIRMED -> attention, never scheduled', async () => {

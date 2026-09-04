@@ -30,6 +30,7 @@ export interface MinistrySubscriptionRecord {
   current_period_start: string;
   current_period_end: string | null;
   cancel_at_period_end: boolean;
+  active_cancellation_transition_id?: string | null;
   locked_member_quota?: QuotaLimit | null;
   locked_song_quota?: QuotaLimit | null;
   entitlement_snapshot?: any | null;
@@ -66,6 +67,7 @@ export interface MinistrySubscriptionStatusSummary {
     currentPeriodStart: string;
     currentPeriodEnd: string | null;
     cancelAtPeriodEnd: boolean;
+    activeCancellationTransitionId?: string | null;
   };
   quotas: EffectiveQuotas;
   usage: {

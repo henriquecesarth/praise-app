@@ -516,8 +516,8 @@ export class BillingService {
     if (planId === 'free') {
       const currentBillingSub = await this.billingRepo.getSubscription(ministryId, this.provider.name);
       if (currentBillingSub && currentBillingSub.status === 'active' && currentBillingSub.plan_id !== 'free') {
-        // Se já possui assinatura paga ativa, agenda o cancelamento para o fim do período
-        await this.cancelSubscription(ministryId);
+        // Se já possui assinatura paga ativa, agenda o cancelamento para o fim do período via V1
+        await this.cancelSubscription(ministryId, { userId });
       } else {
         await this.subscriptionService.changePlan(ministryId, 'free');
       }
@@ -2640,7 +2640,6 @@ export class BillingService {
         financial_attention_required: false,
         financial_attention_reason: null,
         financial_safety_status: 'live',
-        effective_at: finalNowIso,
         updated_at: finalNowIso,
         last_reconciled_at: finalNowIso,
       });
@@ -2659,12 +2658,569 @@ export class BillingService {
   }
 
   /**
-   * Fluxo de cancelamento público preservado no modelo legado (Option A - Deployability Hardening).
-   * A migração pública da rota POST /billing/cancel para V1 é diferida até a Phase 3D.3,
-   * quando o boundary cutover estiver implementado e puder liberar o slot de transição.
+   * Phase 3D.3: Reconciliação do boundary cutover para scheduled_cancel_to_free (scheduled -> completed + Free).
+   *
+   * Responsabilidades:
+   * 1. Trava técnica distribuída (distributed claim) e validação V1.
+   * 2. Validação da estratégia de execução (scheduled_cancel_to_free).
+   * 3. Tratamento de concorrência e idempotência (se já completed, garante liberação de slot se ainda detido).
+   * 4. Gate de Propriedade do Active Transition Slot (Section 8).
+   * 5. Exact Boundary Authority Gate (Section 2 & 4):
+   *    - now < effective_at -> NO-OP explícito waiting_for_period_boundary (paid intact, slot HELD).
+   *    - now >= effective_at -> boundary eligible.
+   *    - effective_billing_date é estritamente o cutoff financeiro para cobranças, não o relógio de entitlement.
+   * 6. Re-validação de Provider Financial Safety no Boundary (Section 9 & 10):
+   *    - GET strict na assinatura de origem: deve ser INACTIVE.
+   *    - Se ACTIVE -> financial_attention_required (source_subscription_reactivated), slot HELD.
+   *    - Se 404 / 401 / 403 / malformed -> financial_attention_required, slot HELD.
+   *    - Se transient -> permanece scheduled, slot HELD, sem regressão de status (Section 11).
+   * 7. Re-validação Exaustiva de Cobranças no Boundary (Section 12, 13, 14, 15):
+   *    - Enumeração exaustiva paginada de cobranças da exact source subscription.
+   *    - Filtragem dueDate >= effective_billing_date.
+   *    - Late settled (CONFIRMED, RECEIVED, RECEIVED_IN_CASH) -> attention_required (unexpected_renewal_payment_detected), no refund, slot HELD.
+   *    - Late OVERDUE / malformed -> attention_required, slot HELD.
+   *    - Late PENDING -> remoção cirúrgica + re-leitura exaustiva obrigatória.
+   * 8. Target Snapshot Authority & Integrity Gate (Sections 16 & 17):
+   *    - Aplicação do snapshot Free 10/50 travado em requested_at (imune a drift no catálogo).
+   *    - Validação de integridade do target snapshot.
+   * 9. Aplicação Idempotente do Entitlement Free (Sections 18, 20, 21, 22, 23):
+   *    - Chama SubscriptionService.applyLockedEntitlementSnapshot (aplica Free, locked quotas 10/50, sem add-ons).
+   *    - Preservação estrita de dados (não deleta membros, músicas, eventos nem histórico).
+   *    - Sem carência de renovação (não entra em grace nem past_due de renovação).
+   *    - Carência de over-limit de dados preservada se o ministério exceder quotas do Free.
+   *    - Atualiza cancel_at_period_end = false na sub da aplicação.
+   *    - Atualiza billing_subscriptions: status = 'canceled', cancel_at_period_end = false, plan_id = 'free'.
+   * 10. Conclusão da Transição e Liberação do Slot (Sections 29, 30, 31):
+   *    - transition_status = 'completed', status = 'completed', financial_safety_status = 'safe_terminal'.
+   *    - Liberação atômica do Active Transition Slot via releaseSlotIfOwnedAndSafe.
+   *    - Liberação da trava técnica de retry.
    */
-  async cancelSubscription(ministryId: string): Promise<BillingSubscriptionRecord> {
-    return this.cancelSubscriptionLegacy(ministryId);
+  async reconcileScheduledCancelToFreeBoundary(
+    transitionId: string,
+    actor: string = 'worker',
+    options?: { now?: Date }
+  ): Promise<{ success: boolean; reason?: string; transition?: BillingTransitionV1Record }> {
+    const claimed = await this.billingRepo.claimPlanChangeForRetry(transitionId, actor, 60000);
+    if (!claimed) {
+      return { success: false, reason: 'locked_by_another_worker' };
+    }
+
+    const ministryId = claimed.ministry_id;
+
+    try {
+      if (!isBillingTransitionV1(claimed)) {
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'unsupported_policy_version' };
+      }
+
+      if (claimed.execution_strategy !== 'scheduled_cancel_to_free') {
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'unsupported_execution_strategy' };
+      }
+
+      // Idempotência: se transição já completed, garante liberação atômica de slot se ainda detido
+      if (claimed.transition_status === 'completed') {
+        if (claimed.financial_safety_status === 'safe_terminal') {
+          try {
+            await this.billingRepo.completeTransitionAndReleaseOwnedSlotAtomically(
+              ministryId,
+              this.provider.name,
+              claimed.id,
+              {}
+            );
+          } catch {}
+        }
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: true, reason: 'already_completed', transition: claimed };
+      }
+
+      // Se já em atenção financeira, fail closed sem mutação de entitlement e slot HELD
+      if (
+        claimed.financial_attention_required === true ||
+        claimed.financial_safety_status === 'attention_required'
+      ) {
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'financial_attention_required', transition: claimed };
+      }
+
+      // Precondição: deve estar em scheduled
+      if (claimed.transition_status !== 'scheduled') {
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'invalid_entry_transition_status', transition: claimed };
+      }
+
+      // Gate de Propriedade do Active Transition Slot (Section 8)
+      const currentSlot = await this.billingRepo.getActiveTransitionSlot(ministryId, this.provider.name);
+      if (
+        !currentSlot ||
+        currentSlot.plan_change_id !== claimed.id ||
+        currentSlot.ministry_id !== ministryId ||
+        currentSlot.provider !== this.provider.name
+      ) {
+        console.error(`[BOUNDARY GUARD] Slot ativo ausente ou divergente para transição ${claimed.id}`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.ACTIVE_SLOT_MISSING_OR_DIVERGENT,
+          financial_safety_status: 'attention_required',
+          updated_at: new Date().toISOString(),
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'active_slot_missing_or_divergent' };
+      }
+
+      // Exact Boundary Authority Gate (Section 2, 4, 5)
+      const boundaryInstantStr = claimed.effective_at || claimed.current_period_end;
+      if (!boundaryInstantStr) {
+        console.error(`[BOUNDARY GUARD] Missing effective_at / current_period_end for transition ${claimed.id}`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: 'missing_effective_at_boundary',
+          financial_safety_status: 'attention_required',
+          updated_at: new Date().toISOString(),
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'missing_effective_at_boundary' };
+      }
+
+      const boundaryDate = new Date(boundaryInstantStr);
+      const nowDate = options?.now || new Date();
+
+      if (nowDate.getTime() < boundaryDate.getTime()) {
+        // Before-boundary: NO-OP explícito, paid entitlement intact, slot HELD (Section 4)
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: true, reason: 'waiting_for_period_boundary', transition: claimed };
+      }
+
+      // Boundary reached (now >= effective_at): prossegue com gates de segurança financeira
+      const sourceSubId = claimed.old_provider_subscription_id || claimed.previous_provider_subscription_id;
+      if (!sourceSubId) {
+        console.error(`[BOUNDARY GUARD] Missing source subscription ID for transition ${claimed.id}`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.PROVIDER_RESOURCE_DIVERGENCE,
+          financial_safety_status: 'attention_required',
+          updated_at: new Date().toISOString(),
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'missing_source_subscription_id' };
+      }
+
+      const cutoffDate = claimed.effective_billing_date;
+      if (!cutoffDate) {
+        console.error(`[BOUNDARY GUARD] Missing effective_billing_date for transition ${claimed.id}`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: 'missing_effective_billing_date',
+          financial_safety_status: 'attention_required',
+          updated_at: new Date().toISOString(),
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'missing_effective_billing_date' };
+      }
+
+      const nowIso = nowDate.toISOString();
+
+      // Gate de Capability Estrita do Provedor
+      if (
+        typeof (this.provider as any).getSubscriptionState !== 'function'
+      ) {
+        console.error(`[BOUNDARY GUARD] Provedor ${this.provider.name} não suporta contrato estrito V1.`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          last_reconciled_at: nowIso,
+          updated_at: nowIso,
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'STRICT_PROVIDER_CONTRACT_UNAVAILABLE' };
+      }
+
+      // STEP 1: Re-provar estado da assinatura de origem no boundary (Section 9 & 10)
+      const subState = await this.getProviderSubscriptionStateStrict(sourceSubId);
+
+      if (subState.outcome === 'NOT_FOUND') {
+        console.error(`[BOUNDARY GUARD] Source subscription ${sourceSubId} 404 (resource divergence)`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.PROVIDER_RESOURCE_DIVERGENCE,
+          financial_safety_status: 'attention_required',
+          updated_at: nowIso,
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'provider_resource_divergence' };
+      }
+
+      if (subState.outcome === 'AUTH_ERROR') {
+        console.error(`[BOUNDARY GUARD] Provider auth failure on GET subscription ${sourceSubId}`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.PROVIDER_AUTH_FAILURE,
+          financial_safety_status: 'attention_required',
+          updated_at: nowIso,
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'provider_auth_failure' };
+      }
+
+      if (subState.outcome === 'MALFORMED_RESPONSE') {
+        console.error(`[BOUNDARY GUARD] Malformed provider subscription response for ${sourceSubId}`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_PROVIDER_SUBSCRIPTION,
+          financial_safety_status: 'attention_required',
+          updated_at: nowIso,
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'malformed_provider_subscription' };
+      }
+
+      if (subState.outcome === 'TRANSIENT_ERROR') {
+        // Erro transiente: não regride para awaiting_old_inactivation! Permanece scheduled, slot HELD (Section 10 & 11)
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          last_reconciled_at: nowIso,
+          updated_at: nowIso,
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'transient_provider_read_error' };
+      }
+
+      if (subState.status === 'ACTIVE') {
+        // Reativação inesperada no provedor! (Section 10)
+        console.error(`[BOUNDARY GUARD] Source subscription unexpectedly ACTIVE at boundary: ${sourceSubId}`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.SOURCE_SUBSCRIPTION_REACTIVATED,
+          financial_safety_status: 'attention_required',
+          updated_at: nowIso,
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'source_subscription_reactivated' };
+      }
+
+      if (subState.status !== 'INACTIVE') {
+        console.error(`[BOUNDARY GUARD] Source subscription unexpected status at boundary: ${subState.status}`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.SOURCE_SUBSCRIPTION_UNEXPECTED_STATUS,
+          financial_safety_status: 'attention_required',
+          updated_at: nowIso,
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'source_subscription_unexpected_status' };
+      }
+
+      // STEP 2: Boundary Payment Safety Recheck (Sections 12, 13, 14, 15)
+      const listRes = await this.listExactSourcePaymentsExhaustive(sourceSubId);
+      if (listRes.outcome === 'ATTENTION') {
+        console.error(`[BOUNDARY PAYMENT SAFETY] Falha estrita ao listar cobranças da source ${sourceSubId}: ${listRes.reason}`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: listRes.reason,
+          financial_safety_status: 'attention_required',
+          updated_at: nowIso,
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: listRes.reason };
+      }
+
+      if (listRes.outcome === 'TRANSIENT') {
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          last_reconciled_at: nowIso,
+          updated_at: nowIso,
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'transient_payment_list_error' };
+      }
+
+      const sourcePayments: ProviderPaymentRecord[] = listRes.payments || [];
+      const futureObligations = sourcePayments.filter(
+        (p) => (!p.subscriptionId || p.subscriptionId === sourceSubId) && p.dueDate && p.dueDate >= cutoffDate
+      );
+
+      for (const pay of futureObligations) {
+        if (!pay.status || typeof pay.status !== 'string') {
+          console.error(`[BOUNDARY PAYMENT SAFETY] Cobrança malformada encontrada: ${pay.id}`);
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_PROVIDER_PAYMENT,
+            financial_safety_status: 'attention_required',
+            updated_at: nowIso,
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'malformed_provider_payment' };
+        }
+
+        if (pay.status === 'CONFIRMED' || pay.status === 'RECEIVED' || pay.status === 'RECEIVED_IN_CASH') {
+          console.error(`[BOUNDARY PAYMENT SAFETY] Cobrança liquidada encontrada na fronteira >= ${cutoffDate}: ${pay.id} (${pay.status})`);
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.UNEXPECTED_RENEWAL_PAYMENT_DETECTED,
+            financial_safety_status: 'attention_required',
+            updated_at: nowIso,
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'unexpected_renewal_payment_detected' };
+        }
+
+        if (pay.status === 'OVERDUE') {
+          console.error(`[BOUNDARY PAYMENT SAFETY] Cobrança vencida (OVERDUE) encontrada na fronteira >= ${cutoffDate}: ${pay.id}`);
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.FUTURE_OVERDUE_OBLIGATION_DETECTED,
+            financial_safety_status: 'attention_required',
+            updated_at: nowIso,
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'future_overdue_obligation_detected' };
+        }
+
+        if (pay.status !== 'PENDING') {
+          console.error(`[BOUNDARY PAYMENT SAFETY] Cobrança com status não permitido na fronteira >= ${cutoffDate}: ${pay.id} (${pay.status})`);
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_PROVIDER_PAYMENT,
+            financial_safety_status: 'attention_required',
+            updated_at: nowIso,
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'malformed_provider_payment' };
+        }
+      }
+
+      // Se houver cobranças PENDING futuras que surgiram tardiamente (Section 13)
+      const pendingToDelete = futureObligations.filter((p) => p.status === 'PENDING');
+      const cleanedIds: string[] = [...(claimed.payment_cleanup_ids || [])];
+
+      if (pendingToDelete.length > 0) {
+        for (const pay of pendingToDelete) {
+          try {
+            await this.provider.removePayment(pay.id);
+            if (!cleanedIds.includes(pay.id)) cleanedIds.push(pay.id);
+          } catch (delErr: any) {
+            console.warn(`[BOUNDARY PAYMENT CLEANUP] Erro ao remover cobrança ${pay.id}: ${delErr.message}`);
+            let recheck: ProviderPaymentRecord | null = null;
+            if (typeof this.provider.getPayment === 'function') {
+              try {
+                recheck = await this.provider.getPayment(pay.id);
+              } catch {}
+            }
+
+            if (
+              recheck &&
+              (recheck.status === 'CONFIRMED' || recheck.status === 'RECEIVED' || recheck.status === 'RECEIVED_IN_CASH')
+            ) {
+              console.error(`[BOUNDARY PAYMENT RACE] Cobrança ${pay.id} foi liquidada durante exclusão!`);
+              await this.billingRepo.updateTransition(claimed.id, ministryId, {
+                financial_attention_required: true,
+                financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.UNEXPECTED_RENEWAL_PAYMENT_DETECTED,
+                financial_safety_status: 'attention_required',
+                updated_at: new Date().toISOString(),
+              });
+              await this.billingRepo.releasePlanChangeLock(claimed.id);
+              return { success: false, reason: 'unexpected_renewal_payment_detected' };
+            }
+
+            await this.billingRepo.updateTransition(claimed.id, ministryId, {
+              payment_cleanup_ids: cleanedIds,
+              last_reconciled_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+            await this.billingRepo.releasePlanChangeLock(claimed.id);
+            return { success: false, reason: 'cleanup_transient_failure' };
+          }
+        }
+
+        // Fresh exhaustive read
+        const freshListRes = await this.listExactSourcePaymentsExhaustive(sourceSubId);
+        if (freshListRes.outcome === 'ATTENTION') {
+          console.error(`[BOUNDARY PAYMENT SAFETY] Falha estrita na re-leitura de cobranças da source ${sourceSubId}: ${freshListRes.reason}`);
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: freshListRes.reason,
+            financial_safety_status: 'attention_required',
+            updated_at: new Date().toISOString(),
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: freshListRes.reason };
+        }
+
+        if (freshListRes.outcome === 'TRANSIENT') {
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            last_reconciled_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'transient_reread_error' };
+        }
+
+        const freshPayments: ProviderPaymentRecord[] = freshListRes.payments || [];
+        const remainingFuture = freshPayments.filter(
+          (p) => (!p.subscriptionId || p.subscriptionId === sourceSubId) && p.dueDate && p.dueDate >= cutoffDate
+        );
+
+        for (const rem of remainingFuture) {
+          if (rem.status === 'CONFIRMED' || rem.status === 'RECEIVED' || rem.status === 'RECEIVED_IN_CASH') {
+            console.error(`[BOUNDARY PAYMENT RACE] Cobrança liquidada detectada após cleanup: ${rem.id}`);
+            await this.billingRepo.updateTransition(claimed.id, ministryId, {
+              financial_attention_required: true,
+              financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.UNEXPECTED_RENEWAL_PAYMENT_DETECTED,
+              financial_safety_status: 'attention_required',
+              updated_at: new Date().toISOString(),
+            });
+            await this.billingRepo.releasePlanChangeLock(claimed.id);
+            return { success: false, reason: 'unexpected_renewal_payment_detected' };
+          }
+
+          if (rem.status === 'OVERDUE') {
+            console.error(`[BOUNDARY PAYMENT SAFETY] Cobrança OVERDUE detectada após cleanup: ${rem.id}`);
+            await this.billingRepo.updateTransition(claimed.id, ministryId, {
+              financial_attention_required: true,
+              financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.FUTURE_OVERDUE_OBLIGATION_DETECTED,
+              financial_safety_status: 'attention_required',
+              updated_at: new Date().toISOString(),
+            });
+            await this.billingRepo.releasePlanChangeLock(claimed.id);
+            return { success: false, reason: 'future_overdue_obligation_detected' };
+          }
+
+          if (rem.status === 'PENDING') {
+            console.warn(`[BOUNDARY PAYMENT CLEANUP] Cobrança PENDING ainda persiste após cleanup: ${rem.id}`);
+            await this.billingRepo.updateTransition(claimed.id, ministryId, {
+              payment_cleanup_ids: cleanedIds,
+              last_reconciled_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+            await this.billingRepo.releasePlanChangeLock(claimed.id);
+            return { success: false, reason: 'cleanup_incomplete' };
+          }
+
+          console.error(`[BOUNDARY PAYMENT SAFETY] Cobrança excepcional detectada após cleanup: ${rem.id} (${rem.status})`);
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_PROVIDER_PAYMENT,
+            financial_safety_status: 'attention_required',
+            updated_at: new Date().toISOString(),
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'malformed_provider_payment' };
+        }
+      }
+
+      // STEP 3: Target Snapshot Authority & Integrity Gate (Sections 16, 17, 22, 23)
+      // Valida a autoridade do snapshot travado na criação contra invariantes de integridade do Free:
+      // - plan_id === 'free'
+      // - addon_blocks === 0
+      // - Quotas numéricas válidas e não-negativas
+      // - early_activation_status === 'not_applicable'
+      // Não hardcoda valores fixos de cotas para não tornar o boundary incompatível com futuras evoluções legítimas do catálogo Free.
+      const targetSnapshot = claimed.target_entitlement_snapshot;
+      if (
+        !targetSnapshot ||
+        targetSnapshot.plan_id !== 'free' ||
+        targetSnapshot.addon_blocks !== 0 ||
+        typeof targetSnapshot.effective_member_quota !== 'number' ||
+        targetSnapshot.effective_member_quota < 0 ||
+        typeof targetSnapshot.effective_song_quota !== 'number' ||
+        targetSnapshot.effective_song_quota < 0 ||
+        claimed.early_activation_status !== 'not_applicable'
+      ) {
+        console.error(`[BOUNDARY GUARD] Target entitlement snapshot malformed for transition ${claimed.id}:`, targetSnapshot);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_TARGET_ENTITLEMENT_SNAPSHOT,
+          financial_safety_status: 'attention_required',
+          updated_at: new Date().toISOString(),
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'malformed_target_entitlement_snapshot' };
+      }
+
+      // STEP 4: Aplicação Idempotente de Entitlement Free (Sections 18, 20, 21, 22, 23, 24)
+      const currentAppSub = await this.subscriptionRepo.getSubscription(ministryId);
+      const isAlreadyFreeEntitled =
+        currentAppSub &&
+        currentAppSub.plan_id === 'free' &&
+        currentAppSub.subscription_mode === 'free' &&
+        currentAppSub.locked_member_quota === targetSnapshot.effective_member_quota &&
+        currentAppSub.locked_song_quota === targetSnapshot.effective_song_quota &&
+        currentAppSub.member_addon_blocks === 0;
+
+      if (!isAlreadyFreeEntitled) {
+        if (typeof (this.subscriptionService as any).applyLockedEntitlementSnapshot === 'function') {
+          await (this.subscriptionService as any).applyLockedEntitlementSnapshot(ministryId, targetSnapshot);
+        }
+      }
+
+      const completionIso = nowDate.toISOString();
+
+      // Sincronizar cancel_at_period_end = false e limpar active_cancellation_transition_id na sub da aplicação (Section 20)
+      const reloadedAppSub = await this.subscriptionRepo.getSubscription(ministryId);
+      if (reloadedAppSub && (reloadedAppSub.cancel_at_period_end || reloadedAppSub.active_cancellation_transition_id)) {
+        await this.subscriptionRepo.setSubscription({
+          ...reloadedAppSub,
+          cancel_at_period_end: false,
+          active_cancellation_transition_id: null,
+          updated_at: completionIso,
+        });
+      }
+
+      // Atualizar projeções de billing_subscriptions (Sections 19 & 46)
+      const currentBillingSub = await this.billingRepo.getSubscription(ministryId, this.provider.name);
+      if (currentBillingSub) {
+        await this.billingRepo.setSubscription({
+          ...currentBillingSub,
+          plan_id: 'free',
+          status: 'canceled',
+          cancel_at_period_end: false,
+          member_addon_blocks: 0,
+          updated_at: completionIso,
+        });
+      }
+
+      // STEP 5 & 6: Conclusão Atômica da Transição e Liberação do Slot (Atomic Terminalization - Section 13)
+      // Executa SOMENTE após convergência confirmada de entitlement local e projeções.
+      // Elimina Crash Window C: completed e remoção do slot ocorrem em UMA ÚNICA transação Firestore.
+      const terminalResult = await this.billingRepo.completeTransitionAndReleaseOwnedSlotAtomically(
+        ministryId,
+        this.provider.name,
+        claimed.id,
+        {
+          completed_at: completionIso,
+          effective_at: claimed.effective_at || completionIso,
+          updated_at: completionIso,
+          last_reconciled_at: completionIso,
+          payment_cleanup_ids: cleanedIds,
+        }
+      );
+
+      if (!terminalResult.success) {
+        console.error(`[BOUNDARY ATOMIC ERROR] Falha ao terminalizar transição e liberar slot para ${claimed.id}: ${terminalResult.reason}`);
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: terminalResult.reason };
+      }
+
+      // STEP 7: Liberação da Trava Técnica Distribuída
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      const reloaded = await this.billingRepo.getTransitionById(claimed.id, ministryId);
+      return {
+        success: true,
+        reason: 'cutover_completed',
+        transition: reloaded && isBillingTransitionV1(reloaded) ? reloaded : undefined,
+      };
+    } catch (err: any) {
+      console.error(`[BOUNDARY ERROR] Falha inesperada ao reconciliar cutover ${claimed.id}:`, err);
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: false, reason: err.message };
+    }
+  }
+
+  /**
+   * Phase 3D.3: Migração canônica do cancelamento público para o fluxo V1 scheduled_cancel_to_free.
+   * Delega exclusivamente para cancelSubscriptionV1.
+   */
+  async cancelSubscription(
+    ministryId: string,
+    options?: { userId?: string; now?: Date | string }
+  ): Promise<BillingSubscriptionRecord & { transition?: ScheduledCancelToFreeResponseDto }> {
+    return this.cancelSubscriptionV1(ministryId, options);
   }
 
   /**
@@ -2788,10 +3344,14 @@ export class BillingService {
     }
 
     const currentAppSub = await this.subscriptionRepo.getSubscription(ministryId);
-    if (currentAppSub && !currentAppSub.cancel_at_period_end) {
+    if (
+      currentAppSub &&
+      (!currentAppSub.cancel_at_period_end || currentAppSub.active_cancellation_transition_id !== currentTransition.id)
+    ) {
       await this.subscriptionRepo.setSubscription({
         ...currentAppSub,
         cancel_at_period_end: true,
+        active_cancellation_transition_id: currentTransition.id,
         updated_at: nowIso,
       });
     }

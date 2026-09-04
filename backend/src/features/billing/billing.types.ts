@@ -808,4 +808,7 @@ export const CANCEL_TO_FREE_ATTENTION_REASONS = {
   CLEANUP_RACE_SETTLED: 'cleanup_race_settled',
   SOURCE_PAYMENT_CLEANUP_INCOMPLETE: 'source_payment_cleanup_incomplete',
   SOURCE_SUBSCRIPTION_UNEXPECTED_STATUS: 'source_subscription_unexpected_status',
+  SOURCE_SUBSCRIPTION_REACTIVATED: 'source_subscription_reactivated',
+  UNEXPECTED_RENEWAL_PAYMENT_DETECTED: 'unexpected_renewal_payment_detected',
+  MALFORMED_TARGET_ENTITLEMENT_SNAPSHOT: 'malformed_target_entitlement_snapshot',
 } as const;

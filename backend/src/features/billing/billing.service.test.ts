@@ -28,6 +28,10 @@ describe('BillingService & Gateway Automation Tests', () => {
 
   beforeEach(() => {
     (config as any).billingPublicApiUrl = 'https://tunnel.trycloudflare.com';
+    const planChangesMap = new Map<string, any>();
+    let activeSlotRecord: any = null;
+    let providerSubStatus = 'ACTIVE';
+
     mockBillingRepo = {
       getCustomer: vi.fn(),
       getCustomerByProviderId: vi.fn(),
@@ -41,8 +45,11 @@ describe('BillingService & Gateway Automation Tests', () => {
       getSubscriptionByCheckoutIntentId: vi.fn(),
       getSubscriptionByProviderId: vi.fn(),
       setSubscription: vi.fn(),
-      getPlanChange: vi.fn(),
-      setPlanChange: vi.fn(),
+      getPlanChange: vi.fn().mockImplementation(async (id: string) => planChangesMap.get(id) || null),
+      getTransitionById: vi.fn().mockImplementation(async (id: string) => planChangesMap.get(id) || null),
+      setPlanChange: vi.fn().mockImplementation(async (c: any) => {
+        planChangesMap.set(c.id, c);
+      }),
       getRecentPendingPlanChange: vi.fn().mockResolvedValue(null),
       getPlanChangeByCheckoutIntentId: vi.fn(),
       getPlanChangeByCheckoutId: vi.fn(),
@@ -50,7 +57,7 @@ describe('BillingService & Gateway Automation Tests', () => {
       getFailedSupersedes: vi.fn().mockResolvedValue([]),
       getPendingOrFailedPlanChanges: vi.fn().mockResolvedValue([]),
       claimPlanChangeForRetry: vi.fn().mockImplementation(async (id: string, lockWorkerId: string) => {
-        const change = await mockBillingRepo.getPlanChange(id);
+        const change = planChangesMap.get(id);
         if (!change || change.status === 'completed') return null;
         return { ...change, retry_locked_by: lockWorkerId };
       }),
@@ -63,24 +70,29 @@ describe('BillingService & Gateway Automation Tests', () => {
         event: evt,
       })),
       markWebhookEventProcessed: vi.fn(),
-      getActiveTransitionSlot: vi.fn().mockResolvedValue(null),
+      getActiveTransitionSlot: vi.fn().mockImplementation(async () => activeSlotRecord),
       getActiveTransitionForMinistry: vi.fn().mockResolvedValue(null),
       createTransitionAndClaimSlot: vi.fn().mockImplementation(async (record: any) => {
+        planChangesMap.set(record.id, record);
+        activeSlotRecord = {
+          id: `slot_${record.ministry_id}_${record.provider}`,
+          ministry_id: record.ministry_id,
+          provider: record.provider,
+          plan_change_id: record.id,
+          acquired_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          version: 1,
+        };
         return {
           planChange: record,
-          slot: {
-            id: `slot_${record.ministry_id}_${record.provider}`,
-            ministry_id: record.ministry_id,
-            provider: record.provider,
-            plan_change_id: record.id,
-            acquired_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            version: 1,
-          },
+          slot: activeSlotRecord,
         };
       }),
       updateTransition: vi.fn().mockImplementation(async (id: string, ministryId: string, updates: any) => {
-        return { id, ministry_id: ministryId, ...updates };
+        const existing = planChangesMap.get(id) || {};
+        const updated = { ...existing, ...updates, id, ministry_id: ministryId };
+        planChangesMap.set(id, updated);
+        return updated;
       }),
       recordNewCheckoutAttempt: vi.fn().mockImplementation(async (transitionId: string, ministryId: string, attempt: any) => {
         return { id: transitionId, ministry_id: ministryId, checkout_attempts: [attempt] };
@@ -88,7 +100,10 @@ describe('BillingService & Gateway Automation Tests', () => {
       confirmInitialPurchaseActivation: vi.fn().mockImplementation(async (params: any) => {
         return { id: params.transitionId, ministry_id: params.ministryId, transition_status: 'completed', financial_safety_status: 'safe_terminal', ...params };
       }),
-      releaseSlotIfOwnedAndSafe: vi.fn().mockResolvedValue(true),
+      releaseSlotIfOwnedAndSafe: vi.fn().mockImplementation(async () => {
+        activeSlotRecord = null;
+        return { released: true };
+      }),
       markFinanciallySafe: vi.fn().mockImplementation(async (id: string, ministryId: string, terminalStatus: string) => {
         return { id, ministry_id: ministryId, transition_status: terminalStatus, financial_safety_status: 'safe_terminal' };
       }),
@@ -151,6 +166,12 @@ describe('BillingService & Gateway Automation Tests', () => {
       listSubscriptionPayments: vi.fn().mockResolvedValue([]),
       removePayment: vi.fn().mockResolvedValue({ success: true }),
       getPayment: vi.fn().mockResolvedValue(null),
+      getSubscriptionState: vi.fn().mockImplementation(async () => ({ outcome: 'FOUND', status: providerSubStatus })),
+      inactivateSubscriptionStrict: vi.fn().mockImplementation(async () => {
+        providerSubStatus = 'INACTIVE';
+        return { outcome: 'SUCCESS' };
+      }),
+      listAllSubscriptionPaymentsStrict: vi.fn().mockResolvedValue({ outcome: 'SUCCESS', payments: [] }),
     };
 
     const mockUserRepo = {
@@ -549,7 +570,7 @@ describe('BillingService & Gateway Automation Tests', () => {
         cancel_at_period_end: false,
       });
 
-      const result = await billingService.cancelSubscription('min-100');
+      const result = await billingService.cancelSubscriptionLegacy('min-100');
 
       expect(result.cancel_at_period_end).toBe(true);
       expect(mockProvider.inactivateSubscription).toHaveBeenCalledWith('sub_123');
@@ -1050,7 +1071,7 @@ describe('BillingService & Gateway Automation Tests', () => {
         status: 'active',
         started_at: '2026-08-01T00:00:00.000Z',
         current_period_start: '2026-08-01T00:00:00.000Z',
-        current_period_end: '2026-09-01T00:00:00.000Z',
+        current_period_end: '2026-10-01T00:00:00.000Z',
         cancel_at_period_end: false,
         created_at: '2026-08-01T00:00:00.000Z',
         updated_at: '2026-08-01T00:00:00.000Z',
@@ -1069,8 +1090,8 @@ describe('BillingService & Gateway Automation Tests', () => {
 
       expect(result.totalPriceCents).toBe(0);
       expect(mockProvider.createCheckout).not.toHaveBeenCalled();
-      // Deve ter chamado inactivateSubscription no Asaas
-      expect(mockProvider.inactivateSubscription).toHaveBeenCalledWith('sub_paid_123');
+      // Deve ter chamado inactivateSubscriptionStrict no Asaas via fluxo V1
+      expect(mockProvider.inactivateSubscriptionStrict).toHaveBeenCalledWith('sub_paid_123');
       expect(mockSubscriptionRepo.setSubscription).toHaveBeenCalledWith(
         expect.objectContaining({
           cancel_at_period_end: true,
@@ -1339,7 +1360,7 @@ describe('BillingService & Gateway Automation Tests', () => {
       ]);
       (mockProvider as any).removePayment = vi.fn().mockResolvedValue({ success: true });
 
-      const updated = await billingService.cancelSubscription('min-100');
+      const updated = await billingService.cancelSubscriptionLegacy('min-100');
 
       expect(updated.cancel_at_period_end).toBe(true);
       expect(mockProvider.inactivateSubscription).toHaveBeenCalledWith('sub_paid_clean_free');
@@ -1711,6 +1732,7 @@ describe('BillingService & Gateway Automation Tests', () => {
 
       // Checkout 2
       mockBillingRepo.getRecentPendingPlanChange.mockResolvedValue(null); // Simula nova intenção
+      mockBillingRepo.getActiveTransitionSlot.mockResolvedValueOnce(null);
       await billingService.createCheckout('min-100', 'usr-1', {
         planId: 'essential',
         interval: 'monthly',

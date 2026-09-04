@@ -197,12 +197,23 @@ export class BillingReconcilerWorker {
             item.transition_status === 'scheduled'
           ) {
             processed++;
-            // Intencional NO-OP: Transição em scheduled aguarda Phase 3D.3 (boundary cutover para Free).
-            // Evita silent fallthrough e não executa cutover prematuro.
-            console.log(
-              `[BillingReconcilerWorker] Transição V1 Scheduled Cancel-to-Free está em scheduled; boundary cutover aguarda Phase 3D.3: ${item.id} (ministério: ${item.ministry_id})`
+            const boundaryResult = await this.billingService.reconcileScheduledCancelToFreeBoundary(
+              item.id,
+              this.workerId
             );
-            succeeded++;
+            if (boundaryResult.success) {
+              succeeded++;
+              console.log(
+                `[BillingReconcilerWorker] Transição V1 Scheduled Cancel-to-Free Boundary processada: ${item.id} (ministério: ${item.ministry_id}, motivo: ${boundaryResult.reason})`
+              );
+            } else {
+              if (
+                boundaryResult.reason !== 'locked_by_another_worker' &&
+                boundaryResult.reason !== 'waiting_for_period_boundary'
+              ) {
+                failed++;
+              }
+            }
           }
         }
       }

@@ -74,17 +74,22 @@ export class SubscriptionService {
     }
 
     // 3. Resolver término de período cancelado ou cortesia expirada
-    const isPeriodEnded = Boolean(
+    // CRÍTICO (Phase 3D.3 Hardening): Se a assinatura possui cancelamento V1 ativo (active_cancellation_transition_id),
+    // a flag cancel_at_period_end é meramente informativa para a UI.
+    // O entitlement NÃO pode convergir para Free pelo relógio local antes da prova estrita dos safety gates pelo reconciliador.
+    // Apenas cancelamentos legados (sem active_cancellation_transition_id) mantêm auto-cutover local pelo relógio.
+    const isLegacyPeriodEnded = Boolean(
       subscription.cancel_at_period_end &&
+      !subscription.active_cancellation_transition_id &&
       subscription.current_period_end &&
       now > new Date(subscription.current_period_end)
     );
 
-    const effectivePlanId = isPeriodEnded ? 'free' : subscription.plan_id;
+    const effectivePlanId = isLegacyPeriodEnded ? 'free' : subscription.plan_id;
     const plan = getPlanDefinition(effectivePlanId);
     const resolvedState = resolveAccessMode(subscription, plan, usage, now);
 
-    const subscriptionMode: SubscriptionMode = isPeriodEnded
+    const subscriptionMode: SubscriptionMode = isLegacyPeriodEnded
       ? 'free'
       : (subscription.subscription_mode || (subscription.plan_id === 'free' ? 'free' : 'paid'));
 
@@ -92,8 +97,8 @@ export class SubscriptionService {
       plan,
       subscription: {
         planId: effectivePlanId,
-        memberAddonBlocks: isPeriodEnded ? 0 : (subscription.member_addon_blocks || 0),
-        billingStatus: isPeriodEnded ? 'canceled' : subscription.billing_status,
+        memberAddonBlocks: isLegacyPeriodEnded ? 0 : (subscription.member_addon_blocks || 0),
+        billingStatus: isLegacyPeriodEnded ? 'canceled' : subscription.billing_status,
         billingInterval: subscription.billing_interval || (
           subscription.current_period_end && subscription.current_period_start
             ? ((new Date(subscription.current_period_end).getTime() - new Date(subscription.current_period_start).getTime()) > 60 * 24 * 60 * 60 * 1000 ? 'annual' : 'monthly')
@@ -112,6 +117,7 @@ export class SubscriptionService {
         currentPeriodStart: subscription.current_period_start,
         currentPeriodEnd: subscription.current_period_end || null,
         cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end),
+        activeCancellationTransitionId: subscription.active_cancellation_transition_id || null,
       },
       quotas: resolvedState.effectiveQuotas,
       usage: {

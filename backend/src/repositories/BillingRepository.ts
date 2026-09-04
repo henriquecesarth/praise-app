@@ -2371,6 +2371,89 @@ export class BillingRepository {
     });
   }
 
+  /**
+   * Phase 3D.3 (Atomic Terminalization Hardening):
+   * Conclui a transição e libera o slot determinístico ativo em UMA ÚNICA transação atômica Firestore.
+   * Elimina completamente a janela de inconsistência (Crash Window C: completed + safe_terminal com slot ainda HELD).
+   *
+   * Pré-condições estritas na transação:
+   * 1. Slot existe e pertence exclusivamente à transição (slot.plan_change_id === planChangeId).
+   * 2. Transição existe, pertence ao ministry_id e é V1.
+   * 3. Transição não está em financial_attention_required.
+   *
+   * Efeitos atômicos:
+   * - Atualiza transitionDoc com status 'completed', financial_safety_status 'safe_terminal', completed_at e updates.
+   * - Remove slotDoc (t.delete).
+   */
+  async completeTransitionAndReleaseOwnedSlotAtomically(
+    ministryId: string,
+    provider: BillingProviderName,
+    planChangeId: string,
+    transitionUpdates: Partial<BillingTransitionV1Record>
+  ): Promise<{ success: boolean; reason?: string }> {
+    const slotId = buildActiveTransitionSlotId(ministryId, provider);
+    const slotDocRef = this.activeTransitionSlotsCollection.doc(slotId);
+    const planChangeDocRef = this.planChangesCollection.doc(planChangeId);
+
+    return await db.runTransaction(async (t: any) => {
+      const planChangeDoc = await t.get(planChangeDocRef);
+      if (!planChangeDoc.exists) {
+        return { success: false, reason: 'transition_not_found' };
+      }
+
+      const transition = planChangeDoc.data() as BillingPlanChangeRecord;
+      if (transition.ministry_id !== ministryId) {
+        return { success: false, reason: 'tenant_mismatch' };
+      }
+
+      if (!isBillingTransitionV1(transition)) {
+        return { success: false, reason: 'legacy_transition_does_not_own_slot' };
+      }
+
+      // Idempotência: se já completada como safe_terminal
+      if (transition.transition_status === 'completed' && transition.financial_safety_status === 'safe_terminal') {
+        const slotDoc = await t.get(slotDocRef);
+        if (!slotDoc.exists) {
+          return { success: true, reason: 'already_completed' };
+        }
+        const slot = slotDoc.data() as BillingActiveTransitionSlotRecord;
+        if (slot.plan_change_id === planChangeId) {
+          t.delete(slotDocRef);
+          return { success: true, reason: 'already_completed' };
+        }
+      }
+
+      if (transition.financial_attention_required === true || transition.transition_status === 'financial_attention_required') {
+        return { success: false, reason: 'financial_attention_required' };
+      }
+
+      const slotDoc = await t.get(slotDocRef);
+      if (!slotDoc.exists) {
+        return { success: false, reason: 'slot_not_found' };
+      }
+
+      const slot = slotDoc.data() as BillingActiveTransitionSlotRecord;
+      if (slot.plan_change_id !== planChangeId) {
+        return { success: false, reason: 'slot_owned_by_another_transition' };
+      }
+
+      // Aplicar updates e marcar completed + safe_terminal atomicamente
+      t.update(planChangeDocRef, {
+        ...transitionUpdates,
+        transition_status: 'completed',
+        status: 'completed',
+        financial_safety_status: 'safe_terminal',
+        financial_attention_required: false,
+        financial_attention_reason: null,
+      });
+
+      // Liberar o slot atomicamente no mesmo commit
+      t.delete(slotDocRef);
+
+      return { success: true };
+    });
+  }
+
   // --------------------------------------------------------------------------
   // V1 Explicit Correlation Lookups
   // --------------------------------------------------------------------------
