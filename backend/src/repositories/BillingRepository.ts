@@ -2382,15 +2382,24 @@ export class BillingRepository {
    * Chamadores com outras execution_strategy recebem 'unsupported_transition_strategy' (Phase 3D.3B.1).
    *
    * Pré-condições estritas na transação:
-   * 0. execution_strategy === 'scheduled_cancel_to_free' (strategy gate — defense-in-depth).
+   * 0. execution_strategy === 'scheduled_cancel_to_free' (strategy gate — defense-in-depth, Phase 3D.3B.1).
    * 1. Slot existe e pertence exclusivamente à transição (slot.plan_change_id === planChangeId).
    * 2. Transição existe, pertence ao ministry_id e é V1.
    * 3. Transição não está em atenção financeira (financial_attention_required !== true && financial_safety_status !== 'attention_required').
    * 4. Assinatura do ministério existe em ministry_subscriptions.
-   * 5. CAS estrito no marker de ownership (APENAS para scheduled_cancel_to_free com transition_status 'scheduled'):
+   * 5. Source status gate (Phase 3D.3B.2): o caminho normal de terminalization aceita APENAS transition_status === 'scheduled'.
+   *    awaiting_old_inactivation, failed, canceled, superseded e qualquer outro status que não seja scheduled ou completed
+   *    são rejeitados com 'invalid_terminalization_source_status'. Isso preserva a state machine:
+   *    awaiting_old_inactivation não pode terminalizar (DO-NOT-RENEW safety ainda não provado).
+   *    failed/canceled/superseded são terminais históricos imutáveis e não podem ser reescritos para completed.
+   * 6. CAS estrito no marker de ownership (APENAS scheduled_cancel_to_free, Phase 3D.3B.1):
    *    active_cancellation_transition_id DEVE estar presente e ser exatamente igual a planChangeId.
    *    Ausência (null/undefined/'') é estado divergente — FAIL CLOSED.
-   *    Para transições awaiting_old_inactivation ainda em trânsito para scheduled, marker também exigido.
+   *
+   * Caminho de idempotência/reparo (único outro estado aceito):
+   *    transition_status === 'completed' AND financial_safety_status === 'safe_terminal'
+   *    Repara anomalia de slot still-HELD de forma CAS-safe.
+   *    completed + attention_required ou completed + live → FAIL CLOSED.
    *
    * Efeitos atômicos em caso de sucesso (mesmo commit Firestore):
    * - Atualiza transitionDoc com status 'completed', financial_safety_status 'safe_terminal', completed_at e updates.
@@ -2447,7 +2456,13 @@ export class BillingRepository {
       const subData = subDoc.data() as any;
 
       // Idempotência: se já completada como safe_terminal (Section 14)
-      if (transition.transition_status === 'completed' && transition.financial_safety_status === 'safe_terminal') {
+      if (transition.transition_status === 'completed') {
+        // completed mas NÃO safe_terminal (ex: completed/live) — fail closed (Phase 3D.3B.2).
+        // Nota: completed + attention_required já é rejeitado pela pré-condição 3 acima com 'financial_attention_required'.
+        if (transition.financial_safety_status !== 'safe_terminal') {
+          return { success: false, reason: 'invalid_terminalization_source_status' };
+        }
+        // completed/safe_terminal: caminho idempotente/reparo CAS-safe
         const slotDoc = await t.get(slotDocRef);
         if (slotDoc.exists) {
           const slot = slotDoc.data() as BillingActiveTransitionSlotRecord;
@@ -2467,6 +2482,15 @@ export class BillingRepository {
         return { success: true, reason: 'already_completed' };
       }
 
+      // Pré-condição 5 (source status gate, Phase 3D.3B.2):
+      // O caminho normal de terminalization aceita APENAS transition_status === 'scheduled'.
+      // Estado machine canônico: scheduled/live → completed/safe_terminal.
+      // awaiting_old_inactivation: DO-NOT-RENEW safety ainda não provada — não pode terminalizar.
+      // failed, canceled, superseded: terminais históricos imutáveis — não podem ser reescritos para completed.
+      if (transition.transition_status !== 'scheduled') {
+        return { success: false, reason: 'invalid_terminalization_source_status' };
+      }
+
       // Pré-condição 1: Slot deve existir e pertencer a esta transição (Section 16)
       const slotDoc = await t.get(slotDocRef);
       if (!slotDoc.exists) {
@@ -2478,23 +2502,17 @@ export class BillingRepository {
         return { success: false, reason: 'slot_owned_by_another_transition' };
       }
 
-      // Pré-condição 5: CAS estrito no marker de ownership da assinatura (Phase 3D.3B.1, Sections 5 & 17).
+      // Pré-condição 6: CAS estrito no marker de ownership da assinatura (Phase 3D.3B.1, Sections 5 & 17).
+      // Garantido pela pré-condição 5: apenas scheduled chega aqui.
       // Escopo EXCLUSIVO: scheduled_cancel_to_free (garantido pela pré-condição 0 acima).
       // active_cancellation_transition_id NÃO é invariante global de V1 — pertence apenas ao lifecycle de cancellation.
       //
-      // Para transições em estado ativo de cancellation (scheduled ou awaiting_old_inactivation),
-      // o marker DEVE estar presente e ser exatamente igual a planChangeId.
+      // Para transition_status === 'scheduled', o marker DEVE estar presente e ser exatamente igual a planChangeId.
       // Ausência (null/undefined/'') e divergência são estados divergentes — FAIL CLOSED.
       const markerValue = subData?.active_cancellation_transition_id;
-      const isCancellationActive =
-        transition.transition_status === 'scheduled' ||
-        transition.transition_status === 'awaiting_old_inactivation';
-      if (isCancellationActive) {
-        if (!markerValue || markerValue !== planChangeId) {
-          return { success: false, reason: 'subscription_marker_missing_or_divergent' };
-        }
-      } else if (markerValue && markerValue !== planChangeId) {
-        return { success: false, reason: 'subscription_marker_owned_by_another_transition' };
+      // Pré-condição 5 garante que apenas 'scheduled' chega aqui — marker é sempre obrigatório neste ponto.
+      if (!markerValue || markerValue !== planChangeId) {
+        return { success: false, reason: 'subscription_marker_missing_or_divergent' };
       }
 
       const nowIso = new Date().toISOString();
