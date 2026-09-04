@@ -11,7 +11,11 @@
 
 ## 1. Objetivo
 
-Executar a homologação de ponta a ponta limpa e definitiva da **Phase 3C Early Activation** contra o ambiente oficial do **Asaas Sandbox**, cobrindo o fluxo feliz de antecipação com pagamento avulso (Scenario A2 Clean), a expiração natural com decurso de prazo de 10 minutos (Scenario B), a reconciliação assíncrona com dados reais do provedor, a retenção de invariantes contábeis e de quotas e o alinhamento da disciplina de higiene pós-teste sem deleção de dados.
+Registrar a homologação definitiva de ponta a ponta da **Phase 3C Early Activation** contra o ambiente oficial do **Asaas Sandbox**, distinguindo com transparência a evolução e o papel de cada cenário:
+- **Scenario A1**: validou fluxo de pagamento, liquidação e ledger, mas foi contaminado por geração incorreta de slot ID no script de teste (`_` vs `__`).
+- **Scenario A2**: validou o fluxo financeiro de checkout avulso, pagamento no Sandbox, liquidação por `PAYMENT_CONFIRMED`, unicidade de ledger e idempotência sem nenhum reparo manual no Firestore com slot canônico; contudo, a fixture de teste utilizou cotas manuais copiadas de mocks de testes unitários (`5/50 -> 15/200`), não constituindo a prova das cotas do catálogo.
+- **Scenario A3 (Authoritative Canonical Entitlement E2E Proof)**: prova canônica definitiva que utilizou a autoridade de produção mais alta (`buildTransitionCommercialSnapshot`, `buildBillingTransitionV1Record`, `createTransitionAndClaimSlot`) sem crafting manual de snapshots, validando as cotas reais do catálogo `PLANS_CATALOG` (`Lite 20/100 -> Essential 40/200`) e a persistência de cotas bloqueadas em `ministry_subscriptions` (`locked_member_quota = 40, locked_song_quota = 200`).
+- **Scenario B (Authoritative Natural Expiry E2E Proof)**: prova canônica de expiração natural por decurso de TTL de 10 minutos com recebimento assíncrono do webhook `CHECKOUT_EXPIRED`, conferência de zero pagamentos, terminalidade limpa e re-cotação tardia segura.
 
 ---
 
@@ -43,44 +47,104 @@ Executar a homologação de ponta a ponta limpa e definitiva da **Phase 3C Early
 
 ---
 
-## 4. Scenario A2 Result (Clean Happy Path — Zero Manual Data Repair)
+## 4. Scenario A2 Result (Mechanism Homologation & Quota Fixture Contamination Disclosure)
 
-- **Fixture Isolada**: `PHASE_3C6_A2_CLEAN_*` (tenant, transição, customer, assinaturas, pagamentos e slot totalmente novos e desacoplados de testes anteriores).
-- **Slot Precondition Proof**:
-  - `canonicalSlotId = buildActiveTransitionSlotId(ministryId, 'asaas')` gerado e verificado como existente antes de qualquer operação.
-  - Status inicial: `held`.
-  - Provedor: `asaas`.
-  - Transição associada: `tr_***`.
-  - Zero slots secundários ou duplicados.
-- **Real Clock & Proration Proof**:
-  - Operação executada sob relógio real de sistema (sem datas manipuladas ou artificiais).
-  - Cotação: `quot_***`.
-  - Saldo proporcional exato: $\text{round-half-up}\left(\frac{(3490 - 1490) \times 19}{30}\right) = 1267\text{ centavos}$ (R$ 12,67).
-  - Correspondência exata de centavos inteiros entre o cálculo teórico e a quote persistida.
-- **Detached Hosted Checkout**:
-  - Exatamente 1 checkout gerado: `chk_***` (`early_activation`).
-  - Cardinalidade de tentativas no Firestore: 1 (`att_***`).
-  - Assinatura de origem (`sub_source_***`) e assinatura alvo futura (`sub_target_***`) preservadas intactas.
-- **Real Sandbox Payment & Settlement Authority**:
-  - Hosted checkout pago via interface oficial do Sandbox com dados de cartão de teste.
-  - Evento intermediário `CHECKOUT_PAID` recebido (marcou terminalidade da sessão, mas não promoveu quotas e não atuou como autoridade de liquidação financeira).
-  - Evento definitivo `PAYMENT_CONFIRMED` recebido e processado: autoridade soberana de liquidação contábil.
-  - Exatamente 1 `BillingTransaction` canônica criada no ledger: `asaas_pay_***` (valor: 1267 centavos, tipo: `prorated_early_activation_adjustment`).
-- **Entitlement Promotion & Lifecycle Invariants**:
-  - `SubscriptionService` promoveu imediatamente as cotas de Lite (20 membros / 100 músicas) para Essential (40 membros / 200 músicas).
-  - `current_period_end` do ministério mantido rigorosamente inalterado no ciclo original.
-  - Transição global permaneceu com status `scheduled`.
-  - Slot canônico ativo permaneceu `held` e idêntico (`BEFORE == AFTER`).
-  - Recorrência futura e recorrência anterior permaneceram intactas.
-- **Reconciler Idempotency**:
-  - Execução secundária do worker `reconcilePaidToPaidEarlyActivationAdjustment` sob relógio real resultou em `already_activated` / NO-OP benigno.
-  - Contagem de transações no ledger: rigorosamente 1.
-  - Contagem de checkouts: rigorosamente 1.
-  - Zero duplicações de cotas.
+- **Papel na Homologação**:
+  - O Scenario A2 foi fundamental para validar o fluxo financeiro completo com slot canônico, eliminando 100% dos reparos manuais de dados que haviam ocorrido no A1.
+  - Provou a cotação com relógio real, cálculo exato de pró-rata em centavos inteiros (1267 centavos / R$ 12,67), criação de checkout avulso único, liquidação oficial via `PAYMENT_CONFIRMED`, gravação de exatamente 1 `BillingTransaction`, preservação do `current_period_end`, retenção do slot canônico em `held` e idempotência do reconciliador sob relógio real (`already_activated` / NO-OP).
+- **Contaminação de Fixture (Quotas Manuais de Testes Unitários)**:
+  - Apesar do mecanismo financeiro 100% válido, o scratch script de teste do A2 instanciou a transição manualmente copiando valores arbitrários de testes unitários:
+    - `source_entitlement_snapshot`: `Lite 5/50`
+    - `target_entitlement_snapshot`: `Essential 15/200`
+  - Portanto, **o Scenario A2 NÃO representa a prova canônica das quotas do catálogo de produtos**.
+- **Causa-Raiz & Auditoria**:
+  - Testes unitários de Early Activation utilizam propositalmente cotas reduzidas (5/50 e 15/200) para isolamento de teste. O harness do A2 copiou inadvertidamente essa fixture mockada em vez de acionar a factory de domínio de produção.
+  - Não se trata de bug de código de produção: o catálogo canônico `PLANS_CATALOG` define estritamente `Lite (20/100)` e `Essential (40/200)`, e o `SubscriptionService` aplicou fielmente o snapshot que constava na transição.
+- **Regra de Harness Estabelecida**:
+  - *SANDBOX HOMOLOGATION FIXTURES MUST NOT COPY UNIT-TEST SNAPSHOTS; ALWAYS USE PRODUCTION DOMAIN AUTHORITIES*.
 
 ---
 
-## 5. Scenario B Result (Natural Expiry & Post-Expiry Safe Retry — Homologated)
+## 5. Scenario A3 Result (Authoritative Canonical Entitlement E2E Proof)
+
+- **Autoridade Canônica de Produção**:
+  - Criado e executado sob o namespace isolado `PHASE_3C6_A3_CANONICAL_*`.
+  - Zero snapshots manuais e zero cópia de mocks de teste.
+  - A transição foi construída integralmente pela cadeia de produção:
+    - `buildTransitionCommercialSnapshot(...)`
+    - `buildBillingTransitionV1Record(...)`
+    - `billingRepo.createTransitionAndClaimSlot(...)`
+- **Verificação Pré-Pagamento dos Snapshots do Catálogo (PLANS_CATALOG)**:
+  - `source_entitlement_snapshot`: `plan_id = 'lite'`, `addon_blocks = 0`, `effective_member_quota = 20`, `effective_song_quota = 100`.
+  - `target_entitlement_snapshot`: `plan_id = 'essential'`, `addon_blocks = 0`, `effective_member_quota = 40`, `effective_song_quota = 200`.
+  - Preços comerciais: R$ 14,90 (1490 centavos) -> R$ 34,90 (3490 centavos).
+  - Estado prévio no `SubscriptionService.getSubscriptionSummary`: `Lite (20 membros / 100 músicas)`.
+- **Cotação Pró-Rata & Checkout Desacoplado**:
+  - Emitida com relógio real do sistema: `quot_***`.
+  - Pró-rata exata em centavos inteiros: $\text{round-half-up}\left(\frac{(3490 - 1490) \times 19}{30}\right) = 1267\text{ centavos}$ (R$ 12,67).
+  - Detached checkout criado no Asaas Sandbox: `chk_***` (`early_activation`, cardinalidade = 1).
+- **Liquidação Real no Asaas Sandbox**:
+  - Pagamento hosted efetuado via cartão de teste do Sandbox.
+  - Cobrança detectada no gateway: `pay_***` com status `CONFIRMED` no valor de R$ 12,67.
+  - Evento de liquidação: `PAYMENT_CONFIRMED` operou como a autoridade de liquidação contábil.
+- **Evidência Contábil (Ledger)**:
+  - Exatamente 1 `BillingTransaction` canônica gravada: `asaas_pay_***` (1267 centavos, tipo `prorated_early_activation_adjustment`). Zero duplicação no ministério.
+- **Promoção Canônica de Entitlement & Quotas Bloqueadas**:
+  - `processEarlyActivationAdjustmentSettlement` invocou `applyLockedEntitlementSnapshot`, gravando no documento `ministry_subscriptions`:
+    - `locked_member_quota = 40`
+    - `locked_song_quota = 200`
+  - `SubscriptionService.getSubscriptionSummary(ministryId)` pós-liquidação retornou efetivamente:
+    - `plan = 'essential'`
+    - `quotas.members = 40`
+    - `quotas.songs = 200`
+- **Invariantes de Ciclo, Slot e Recorrência**:
+  - `current_period_end`: mantido rigorosamente em `2026-09-24T00:00:00.000Z` (preservado).
+  - `effective_billing_date`: mantido em `2026-09-24` (preservado).
+  - `transition_status`: permaneceu `scheduled`.
+  - `early_activation_status`: transitou para `activated`.
+  - Slot canônico ativo: `slot_min_***__asaas` permaneceu `held` associado à mesma transição A3.
+  - Recorrência de origem (`sub_source_***`) e recorrência futura (`sub_target_***`): 100% inalteradas, zero novas assinaturas criadas.
+- **Idempotência do Reconciliador**:
+  - Segunda execução de `reconcilePaidToPaidEarlyActivationAdjustment` sob relógio real retornou `already_activated` / NO-OP.
+  - Total de `BillingTransaction`: estritamente 1. Cotas: estáveis em 40/200.
+
+---
+
+## 6. Snapshot Authority Chain
+
+A comprovação ponta a ponta da autoridade de cotas no Scenario A3 seguiu rigorosamente a seguinte cadeia factual:
+
+```
+PLANS_CATALOG (Lite: 20/100, Essential: 40/200)
+       │
+       ▼
+buildTransitionCommercialSnapshot(...)
+       │
+       ▼
+target_entitlement_snapshot (members: 40, songs: 200)
+       │
+       ▼
+PAYMENT_CONFIRMED (Asaas Sandbox: pay_***, R$ 12,67)
+       │
+       ▼
+processEarlyActivationAdjustmentSettlement(...)
+       │
+       ▼
+applyLockedEntitlementSnapshot(...)
+       │
+       ▼
+ministry_subscriptions.locked_member_quota = 40 / locked_song_quota = 200
+       │
+       ▼
+SubscriptionService.getSubscriptionSummary(...)
+       │
+       ▼
+Effective Quotas: Essential (members: 40, songs: 200)
+```
+
+---
+
+## 7. Scenario B Result (Natural Expiry & Post-Expiry Safe Retry — Homologated Evidence Retained)
 
 - **Configuração de TTL**:
   - Checkout avulso criado com TTL mínimo permitido pelo provedor Asaas no Sandbox: 10 minutos (`minutesToExpire = 10`).
@@ -100,19 +164,19 @@ Executar a homologação de ponta a ponta limpa e definitiva da **Phase 3C Early
 
 ---
 
-## 6. Post-Test Sandbox Hygiene Correction
+## 8. Post-Test Sandbox Hygiene Correction & Discipline
 
 - **Auditoria do Contrato do Provedor**:
   - `DELETE /v3/subscriptions/{id}`: remove o recurso de assinatura e cancela faturas pendentes de forma destrutiva no gateway.
   - `PUT /v3/subscriptions/{id}` com `{ status: 'INACTIVE' }`: inativação não destrutiva canônica recomendada, preservando auditoria financeira.
 - **Correção da Disciplina**:
   - O primeiro ciclo de testes utilizou `DELETE` sobre assinaturas de teste descartáveis.
-  - O Scenario A2 adotou estritamente o método `provider.inactivateSubscription` (`PUT` status `INACTIVE`), sem nenhum uso de `DELETE`.
+  - Os Scenarios A2 e A3 adotaram estritamente o método `provider.inactivateSubscription` (`PUT` status `INACTIVE`), com zero uso de `DELETE`.
   - Todas as transações, tentativas, webhooks e histórico de auditoria permanecem preservados.
 
 ---
 
-## 7. Homologation Limitations & Non-Applicable Flows
+## 9. Homologation Limitations & Non-Applicable Flows
 
 - **LOST WEBHOOK FULL SANDBOX SIMULATION: `NOT_VERIFIED`**:
   - A reconciliação de checkout conhecido sem depender do webhook de pagamento foi validada com sucesso (`known checkout -> listPaymentsByCheckoutSession -> settled payment -> reconciler idempotency`).
@@ -122,23 +186,28 @@ Executar a homologação de ponta a ponta limpa e definitiva da **Phase 3C Early
 
 ---
 
-## 8. Final Checklist & Verification
+## 10. Final Checklist & Verification
 
 | Item | Status | Evidência |
 | :--- | :--- | :--- |
 | Harness Checkpoint `9fcbfb5` | PASS | Confirmado via `git log -5 --oneline` e `git status` |
 | Scenario A1 Contamination Disclosed | PASS | Registrado como contaminado por slot manual no scratch |
 | Production Slot Authority Verified | PASS | `BillingRepository` usa uniformemente `buildActiveTransitionSlotId` |
-| Scenario A2 Clean (Zero Manual Repair) | PASS | Executado com relógio real, slot canônico inicial e zero edits manuais |
-| Exact Proration in Cents | PASS | 1267 centavos (R$ 12,67) calculado e validado |
-| Detached Checkout & Cardinality = 1 | PASS | 1 tentativa, 1 checkout hospedado Asaas |
+| Scenario A2 Quota Contamination Disclosed | PASS | Registrado como contaminado por cotas 5/50 -> 15/200 copiadas de mocks unitários |
+| Scenario A2 Financial Flow Homologated | PASS | Checkout avulso, pagamento real, liquidação, ledger e idempotência validados |
+| Scenario A3 Authoritative Quota Proof | PASS | Homologação canônica ponta a ponta via helpers de produção |
+| Canonical Catalog Lite 20/100 Verified | PASS | `PLANS_CATALOG.lite` validado em runtime antes e durante transição |
+| Canonical Catalog Essential 40/200 Verified | PASS | `PLANS_CATALOG.essential` validado em runtime e persistido no snapshot |
+| Exact Proration in Cents | PASS | 1267 centavos (R$ 12,67) calculado e validado sob relógio real |
+| Detached Checkout Cardinality = 1 | PASS | 1 tentativa, 1 checkout hospedado Asaas |
 | Settlement Authority Separation | PASS | `PAYMENT_CONFIRMED` efetuou a liquidação; `CHECKOUT_PAID` foi intermediário |
-| Ledger & BillingTransaction = 1 | PASS | Exatamente 1 transação contábil criada |
-| Immediate Entitlement Promotion | PASS | Promovido de Lite (20/100) para Essential (40/200) no runtime |
+| Ledger & BillingTransaction = 1 | PASS | Exatamente 1 transação contábil criada no ajuste |
+| Locked Entitlement Persisted (40/200) | PASS | `locked_member_quota = 40`, `locked_song_quota = 200` em `ministry_subscriptions` |
+| Immediate Entitlement Promotion (40/200) | PASS | `SubscriptionService.getSubscriptionSummary` retornou Essential 40/200 |
 | Commercial Period Preserved | PASS | `current_period_end` inalterado |
 | Transition Scheduled & Slot HELD | PASS | Transição permanece `scheduled`, slot canônico mantido `held` |
 | Reconciler Idempotency | PASS | Segunda passada resultou em `already_activated` / NO-OP |
 | Scenario B Natural Expiry Homologated | PASS | Webhook `CHECKOUT_EXPIRED` oficial verificado, 0 pagamentos, retry limpo |
-| Post-Test Hygiene Without DELETE | PASS | Apenas `PUT` status `INACTIVE` utilizado |
+| Post-Test Hygiene Without DELETE | PASS | Apenas `PUT` status `INACTIVE` utilizado (zero `DELETE`) |
 | Zero Production Operations | PASS | Isolamento estrito no ambiente Sandbox |
 | Documentation-Only Change | PASS | Código de produto em `backend/` e `web/` 100% inalterado |
