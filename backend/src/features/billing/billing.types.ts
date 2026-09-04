@@ -399,6 +399,10 @@ export interface BillingTransitionV1Record {
   early_adjustment_paid_billing_date?: string | null;
   early_activation_activated_at?: string | null;
   target_promoted_at?: string | null;
+  // Phase 3D Do-Not-Renew & Cancellation Monotonic Evidence (Write-Once)
+  source_inactivation_attempted_at?: string | null;
+  source_inactivation_confirmed_at?: string | null;
+  payment_cleanup_completed_at?: string | null;
   retry_count?: number;
   last_retry_at?: string | null;
   last_reconciled_at?: string | null;
@@ -791,3 +795,17 @@ export function mapTransitionToScheduledCancelResponseDto(
     message: 'Cancelamento agendado para o final do período vigente.',
   };
 }
+
+export const CANCEL_TO_FREE_ATTENTION_REASONS = {
+  ACTIVE_SLOT_MISSING_OR_DIVERGENT: 'active_slot_missing_or_divergent',
+  PROVIDER_RESOURCE_DIVERGENCE: 'provider_resource_divergence',
+  PROVIDER_AUTH_FAILURE: 'provider_auth_failure',
+  PROVIDER_CLIENT_ERROR: 'provider_client_error',
+  FUTURE_SETTLED_OBLIGATION_DETECTED: 'future_settled_obligation_detected',
+  FUTURE_OVERDUE_OBLIGATION_DETECTED: 'future_overdue_obligation_detected',
+  MALFORMED_PROVIDER_PAYMENT: 'malformed_provider_payment',
+  MALFORMED_PROVIDER_SUBSCRIPTION: 'malformed_provider_subscription',
+  CLEANUP_RACE_SETTLED: 'cleanup_race_settled',
+  SOURCE_PAYMENT_CLEANUP_INCOMPLETE: 'source_payment_cleanup_incomplete',
+  SOURCE_SUBSCRIPTION_UNEXPECTED_STATUS: 'source_subscription_unexpected_status',
+} as const;

@@ -10,6 +10,12 @@ import {
   ProviderErrorOutcome,
   CreateDetachedCheckoutParams,
   CreateDetachedCheckoutResult,
+  ProviderSubscriptionReadOutcomeType,
+  ProviderSubscriptionState,
+  ProviderSubscriptionInactivateOutcomeType,
+  ProviderSubscriptionInactivateResult,
+  ProviderPaymentListOutcomeType,
+  ProviderPaymentListResult,
 } from '../billing-provider.interface';
 import { AppError } from '../../../../middleware/error-handler';
 import { getCurrentBillingDate } from '../../../../utils/billing-date';
@@ -677,6 +683,79 @@ export class AsaasBillingProvider implements BillingProvider {
   }
 
   /**
+   * Inativa assinatura no Asaas de forma estrita para V1 (PUT /v3/subscriptions/{id} com status: INACTIVE).
+   * Distingue explicitamente HTTP 200 (SUCCESS), 404 (NOT_FOUND), 401/403 (AUTH_ERROR), 400 (CLIENT_ERROR) e timeout/5xx (TRANSIENT_ERROR).
+   * NÃO silencia 404 (diferente do legacy inactivateSubscription).
+   */
+  async inactivateSubscriptionStrict(
+    providerSubscriptionId: string
+  ): Promise<ProviderSubscriptionInactivateResult> {
+    if (!this.apiKey) {
+      return {
+        outcome: 'AUTH_ERROR',
+        httpStatus: 500,
+        errorMessage: 'Gateway Asaas não configurado.',
+      };
+    }
+
+    try {
+      const response = await fetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
+        method: 'PUT',
+        headers: {
+          access_token: this.apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status: 'INACTIVE' }),
+      });
+
+      if (response.ok) {
+        return {
+          outcome: 'SUCCESS',
+          httpStatus: response.status,
+        };
+      }
+
+      if (response.status === 404) {
+        return {
+          outcome: 'NOT_FOUND',
+          httpStatus: 404,
+          errorMessage: `Assinatura ${providerSubscriptionId} não encontrada para inativação no Asaas (404).`,
+        };
+      }
+
+      if (response.status === 401 || response.status === 403) {
+        return {
+          outcome: 'AUTH_ERROR',
+          httpStatus: response.status,
+          errorMessage: `Falha de autenticação/autorização ao inativar assinatura no Asaas (HTTP ${response.status}).`,
+        };
+      }
+
+      if (response.status >= 500) {
+        return {
+          outcome: 'TRANSIENT_ERROR',
+          httpStatus: response.status,
+          errorMessage: `Erro temporário no servidor do gateway Asaas (HTTP ${response.status}).`,
+        };
+      }
+
+      const errBody = (await response.json().catch(() => ({}))) as any;
+      const message = errBody?.errors?.[0]?.description || `Erro ao inativar assinatura no Asaas (HTTP ${response.status})`;
+
+      return {
+        outcome: 'CLIENT_ERROR',
+        httpStatus: response.status,
+        errorMessage: message,
+      };
+    } catch (err: any) {
+      return {
+        outcome: 'TRANSIENT_ERROR',
+        errorMessage: `Falha de comunicação/timeout ao inativar assinatura Asaas: ${err.message}`,
+      };
+    }
+  }
+
+  /**
    * Remove definitivamente uma assinatura no Asaas (DELETE /v3/subscriptions/{id}).
    * ATENÇÃO: Segundo a documentação do Asaas, DELETE remove a assinatura e também
    * exclui cobranças pendentes/overdue não pagas. Usar apenas quando remoção explícita for requerida.
@@ -837,6 +916,180 @@ export class AsaasBillingProvider implements BillingProvider {
   }
 
   /**
+   * Lista de forma exaustiva e estrita todas as cobranças da assinatura no Asaas (Phase 3D.2).
+   * Distingue explicitamente:
+   * - SUCCESS: todas as páginas consumidas, pagamentos deduplicados e ordenados.
+   * - NOT_FOUND: HTTP 404 (divergência de recurso - nunca tratado como array vazio).
+   * - AUTH_ERROR: HTTP 401/403.
+   * - TRANSIENT_ERROR: timeout, network error, HTTP 5xx.
+   * - MALFORMED_RESPONSE: payload malformado, conflito de status entre páginas ou limite de paginação excedido.
+   */
+  async listAllSubscriptionPaymentsStrict(
+    providerSubscriptionId: string
+  ): Promise<ProviderPaymentListResult> {
+    if (!this.apiKey) {
+      return {
+        outcome: 'AUTH_ERROR',
+        httpStatus: 500,
+        errorMessage: 'Gateway Asaas não configurado.',
+      };
+    }
+
+    const limit = 50;
+    const MAX_PAGES = 100;
+    let offset = 0;
+    let pageCount = 0;
+    let hasMore = true;
+    let emptyPagesInRow = 0;
+    const seenMap = new Map<string, ProviderPaymentRecord>();
+
+    try {
+      while (hasMore) {
+        if (pageCount >= MAX_PAGES) {
+          console.error(`[ASAAS STRICT LIST] Limite de ${MAX_PAGES} páginas atingido para subscription ${providerSubscriptionId}`);
+          return {
+            outcome: 'MALFORMED_RESPONSE',
+            httpStatus: 500,
+            errorMessage: `Limite de paginação excedido (${MAX_PAGES} páginas).`,
+          };
+        }
+
+        const queryParams = new URLSearchParams({
+          offset: String(offset),
+          limit: String(limit),
+        });
+
+        const response = await fetch(
+          `${this.apiUrl}/subscriptions/${providerSubscriptionId}/payments?${queryParams.toString()}`,
+          {
+            headers: {
+              access_token: this.apiKey,
+            },
+          }
+        );
+
+        if (response.status === 404) {
+          return {
+            outcome: 'NOT_FOUND',
+            httpStatus: 404,
+            errorMessage: `Assinatura ${providerSubscriptionId} não encontrada ao listar cobranças (404).`,
+          };
+        }
+
+        if (response.status === 401 || response.status === 403) {
+          return {
+            outcome: 'AUTH_ERROR',
+            httpStatus: response.status,
+            errorMessage: `Falha de autenticação/autorização ao listar cobranças no Asaas (HTTP ${response.status}).`,
+          };
+        }
+
+        if (response.status >= 500) {
+          return {
+            outcome: 'TRANSIENT_ERROR',
+            httpStatus: response.status,
+            errorMessage: `Erro temporário no servidor do gateway Asaas (HTTP ${response.status}).`,
+          };
+        }
+
+        if (!response.ok) {
+          return {
+            outcome: 'TRANSIENT_ERROR',
+            httpStatus: response.status,
+            errorMessage: `Resposta de erro do gateway Asaas ao listar cobranças (HTTP ${response.status}).`,
+          };
+        }
+
+        const data = (await response.json().catch(() => null)) as any;
+        if (!data || typeof data !== 'object' || !Array.isArray(data.data)) {
+          return {
+            outcome: 'MALFORMED_RESPONSE',
+            httpStatus: 200,
+            errorMessage: 'Gateway Asaas retornou payload malformado para listagem de cobranças.',
+          };
+        }
+
+        const items = data.data;
+        if (items.length === 0) {
+          emptyPagesInRow++;
+          if (emptyPagesInRow > 2 && data.hasMore) {
+            return {
+              outcome: 'MALFORMED_RESPONSE',
+              httpStatus: 200,
+              errorMessage: 'Anomalia na paginação do Asaas: páginas vazias consecutivas com hasMore=true.',
+            };
+          }
+        } else {
+          emptyPagesInRow = 0;
+        }
+
+        for (const item of items) {
+          if (!item || typeof item !== 'object' || !item.id || typeof item.id !== 'string') {
+            return {
+              outcome: 'MALFORMED_RESPONSE',
+              httpStatus: 200,
+              errorMessage: 'Cobrança do Asaas com payload malformado (ID ausente ou inválido).',
+            };
+          }
+
+          const rawStatus = typeof item.status === 'string' ? item.status.trim() : '';
+          if (!rawStatus) {
+            return {
+              outcome: 'MALFORMED_RESPONSE',
+              httpStatus: 200,
+              errorMessage: `Cobrança ${item.id} do Asaas sem status válido.`,
+            };
+          }
+
+          const amountCents = providerBrlDecimalToCents(item.value);
+          const paymentRecord: ProviderPaymentRecord = {
+            id: item.id.trim(),
+            subscriptionId: item.subscription || providerSubscriptionId,
+            customerId: item.customer,
+            status: rawStatus,
+            dueDate: item.dueDate,
+            ...(item.originalDueDate ? { originalDueDate: item.originalDueDate } : {}),
+            amountCents,
+            billingType: item.billingType,
+            externalReference: item.externalReference,
+            ...(item.paymentDate ? { paymentDate: item.paymentDate } : {}),
+            ...(item.clientPaymentDate ? { clientPaymentDate: item.clientPaymentDate } : {}),
+          };
+
+          if (seenMap.has(paymentRecord.id)) {
+            const prev = seenMap.get(paymentRecord.id)!;
+            if (prev.status !== paymentRecord.status) {
+              console.error(`[ASAAS STRICT LIST] Conflito de estado detectado na paginação para cobrança ${paymentRecord.id}: ${prev.status} vs ${paymentRecord.status}`);
+              return {
+                outcome: 'MALFORMED_RESPONSE',
+                httpStatus: 200,
+                errorMessage: `Conflito de estado detectado para a cobrança ${paymentRecord.id}: ${prev.status} vs ${paymentRecord.status}`,
+              };
+            }
+          } else {
+            seenMap.set(paymentRecord.id, paymentRecord);
+          }
+        }
+
+        hasMore = Boolean(data.hasMore && items.length > 0);
+        offset += limit;
+        pageCount++;
+      }
+
+      return {
+        outcome: 'SUCCESS',
+        payments: Array.from(seenMap.values()),
+        httpStatus: 200,
+      };
+    } catch (err: any) {
+      return {
+        outcome: 'TRANSIENT_ERROR',
+        errorMessage: `Falha de comunicação/timeout ao listar cobranças da assinatura Asaas: ${err.message}`,
+      };
+    }
+  }
+
+  /**
    * Remove individualmente uma cobrança PENDING no Asaas (DELETE /v3/payments/{id}).
    * Não utilizar para cobranças CONFIRMED/RECEIVED/OVERDUE.
    */
@@ -943,6 +1196,92 @@ export class AsaasBillingProvider implements BillingProvider {
     } catch (err: any) {
       if (err instanceof AppError) throw err;
       throw new AppError(500, `Falha de comunicação com gateway Asaas: ${err.message}`);
+    }
+  }
+
+  /**
+   * Consulta os dados da assinatura diretamente no Asaas com resultado estruturado estrito (Phase 3D.2).
+   * Distingue explicitamente FOUND, NOT_FOUND (404), AUTH_ERROR (401/403), TRANSIENT_ERROR (timeout/5xx) e MALFORMED_RESPONSE.
+   * Não converte 404 para sucesso nem para null opaco.
+   */
+  async getSubscriptionState(providerSubscriptionId: string): Promise<ProviderSubscriptionState> {
+    if (!this.apiKey) {
+      return {
+        outcome: 'AUTH_ERROR',
+        httpStatus: 500,
+        errorMessage: 'Gateway Asaas não configurado.',
+      };
+    }
+
+    try {
+      const response = await fetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
+        headers: {
+          access_token: this.apiKey,
+        },
+      });
+
+      if (response.status === 404) {
+        return {
+          outcome: 'NOT_FOUND',
+          httpStatus: 404,
+          errorMessage: `Assinatura ${providerSubscriptionId} não encontrada no Asaas (404).`,
+        };
+      }
+
+      if (response.status === 401 || response.status === 403) {
+        return {
+          outcome: 'AUTH_ERROR',
+          httpStatus: response.status,
+          errorMessage: `Falha de autenticação/autorização no gateway Asaas (HTTP ${response.status}).`,
+        };
+      }
+
+      if (response.status >= 500) {
+        return {
+          outcome: 'TRANSIENT_ERROR',
+          httpStatus: response.status,
+          errorMessage: `Erro temporário no servidor do gateway Asaas (HTTP ${response.status}).`,
+        };
+      }
+
+      if (!response.ok) {
+        return {
+          outcome: 'TRANSIENT_ERROR',
+          httpStatus: response.status,
+          errorMessage: `Resposta de erro do gateway Asaas (HTTP ${response.status}).`,
+        };
+      }
+
+      const data = (await response.json().catch(() => null)) as any;
+      if (!data || typeof data !== 'object' || typeof data.status !== 'string' || !data.status.trim()) {
+        return {
+          outcome: 'MALFORMED_RESPONSE',
+          httpStatus: 200,
+          errorMessage: 'Gateway Asaas retornou payload malformado para consulta de assinatura.',
+        };
+      }
+
+      const rawValue = data.value !== undefined ? data.value : undefined;
+      const valueCents = rawValue !== undefined ? providerBrlDecimalToCents(rawValue) : undefined;
+
+      return {
+        outcome: 'FOUND',
+        status: data.status,
+        rawSubscription: {
+          status: data.status,
+          value: data.value,
+          valueCents,
+          cycle: data.cycle,
+          nextDueDate: data.nextDueDate,
+          customer: data.customer,
+        },
+        httpStatus: 200,
+      };
+    } catch (err: any) {
+      return {
+        outcome: 'TRANSIENT_ERROR',
+        errorMessage: `Falha de comunicação/timeout ao consultar assinatura Asaas: ${err.message}`,
+      };
     }
   }
 

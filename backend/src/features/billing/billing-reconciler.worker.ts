@@ -169,6 +169,40 @@ export class BillingReconcilerWorker {
                 }
               }
             }
+          } else if (
+            item.execution_strategy === 'scheduled_cancel_to_free' &&
+            item.transition_status === 'awaiting_old_inactivation'
+          ) {
+            processed++;
+            const doNotRenewResult = await this.billingService.reconcileScheduledCancelToFreeDoNotRenew(
+              item.id,
+              this.workerId
+            );
+            if (doNotRenewResult.success) {
+              succeeded++;
+              console.log(
+                `[BillingReconcilerWorker] Transição V1 Scheduled Cancel-to-Free Do-Not-Renew convergida com sucesso: ${item.id} (ministério: ${item.ministry_id})`
+              );
+            } else {
+              if (
+                doNotRenewResult.reason !== 'locked_by_another_worker' &&
+                doNotRenewResult.reason !== 'awaiting_old_inactivation' &&
+                doNotRenewResult.reason !== 'scheduled'
+              ) {
+                failed++;
+              }
+            }
+          } else if (
+            item.execution_strategy === 'scheduled_cancel_to_free' &&
+            item.transition_status === 'scheduled'
+          ) {
+            processed++;
+            // Intencional NO-OP: Transição em scheduled aguarda Phase 3D.3 (boundary cutover para Free).
+            // Evita silent fallthrough e não executa cutover prematuro.
+            console.log(
+              `[BillingReconcilerWorker] Transição V1 Scheduled Cancel-to-Free está em scheduled; boundary cutover aguarda Phase 3D.3: ${item.id} (ministério: ${item.ministry_id})`
+            );
+            succeeded++;
           }
         }
       }

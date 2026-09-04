@@ -1884,4 +1884,332 @@ describe('AsaasBillingProvider — Webhook Authentication & Parser Validation', 
       expect(fetch429Mock).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('Phase 3D.2 — Strict Provider Read & Inactivation Contract', () => {
+    const provider = new AsaasBillingProvider({
+      apiKey: 'test_api_key',
+      apiUrl: 'https://sandbox.asaas.com/api/v3',
+    });
+
+    describe('getSubscriptionState', () => {
+      it('1. Retorna FOUND e status ACTIVE quando HTTP 200 com payload válido', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 'sub_active_123',
+            status: 'ACTIVE',
+            value: 59.9,
+            cycle: 'MONTHLY',
+            nextDueDate: '2026-10-01',
+            customer: 'cus_123',
+          }),
+        });
+
+        const res = await provider.getSubscriptionState('sub_active_123');
+        expect(res.outcome).toBe('FOUND');
+        expect(res.status).toBe('ACTIVE');
+        expect(res.httpStatus).toBe(200);
+        expect(res.rawSubscription?.valueCents).toBe(5990);
+      });
+
+      it('2. Retorna FOUND e status INACTIVE quando HTTP 200 com status INACTIVE', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 'sub_inactive_123',
+            status: 'INACTIVE',
+            value: 59.9,
+            cycle: 'MONTHLY',
+          }),
+        });
+
+        const res = await provider.getSubscriptionState('sub_inactive_123');
+        expect(res.outcome).toBe('FOUND');
+        expect(res.status).toBe('INACTIVE');
+      });
+
+      it('3. Retorna NOT_FOUND e não silencia HTTP 404', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 404,
+          json: async () => ({ errors: [{ description: 'Subscription not found' }] }),
+        });
+
+        const res = await provider.getSubscriptionState('sub_nonexistent');
+        expect(res.outcome).toBe('NOT_FOUND');
+        expect(res.httpStatus).toBe(404);
+      });
+
+      it('4. Retorna AUTH_ERROR para HTTP 401 e 403', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 401,
+          json: async () => ({ errors: [{ description: 'Invalid API Key' }] }),
+        });
+
+        const res401 = await provider.getSubscriptionState('sub_auth');
+        expect(res401.outcome).toBe('AUTH_ERROR');
+        expect(res401.httpStatus).toBe(401);
+
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 403,
+          json: async () => ({ errors: [{ description: 'Forbidden' }] }),
+        });
+
+        const res403 = await provider.getSubscriptionState('sub_auth');
+        expect(res403.outcome).toBe('AUTH_ERROR');
+        expect(res403.httpStatus).toBe(403);
+      });
+
+      it('5. Retorna TRANSIENT_ERROR para HTTP 500, 502 e timeout', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 500,
+          json: async () => ({ errors: [{ description: 'Internal error' }] }),
+        });
+
+        const res500 = await provider.getSubscriptionState('sub_500');
+        expect(res500.outcome).toBe('TRANSIENT_ERROR');
+        expect(res500.httpStatus).toBe(500);
+
+        global.fetch = vi.fn().mockRejectedValue(new Error('Network timeout'));
+        const resTimeout = await provider.getSubscriptionState('sub_timeout');
+        expect(resTimeout.outcome).toBe('TRANSIENT_ERROR');
+        expect(resTimeout.errorMessage).toContain('timeout');
+      });
+
+      it('6. Retorna MALFORMED_RESPONSE quando JSON não contém status válido', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({ no_status: true }),
+        });
+
+        const res = await provider.getSubscriptionState('sub_malformed');
+        expect(res.outcome).toBe('MALFORMED_RESPONSE');
+      });
+    });
+
+    describe('inactivateSubscriptionStrict', () => {
+      it('7. Retorna SUCCESS quando HTTP 200', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'sub_inact', status: 'INACTIVE' }),
+        });
+
+        const res = await provider.inactivateSubscriptionStrict('sub_inact');
+        expect(res.outcome).toBe('SUCCESS');
+        expect(res.httpStatus).toBe(200);
+      });
+
+      it('8. Retorna NOT_FOUND quando HTTP 404 e NÃO silencia o erro', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 404,
+          json: async () => ({ errors: [{ description: 'Subscription not found' }] }),
+        });
+
+        const res = await provider.inactivateSubscriptionStrict('sub_not_found');
+        expect(res.outcome).toBe('NOT_FOUND');
+        expect(res.httpStatus).toBe(404);
+      });
+
+      it('9. Retorna AUTH_ERROR quando HTTP 401 ou 403', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 401,
+          json: async () => ({ errors: [{ description: 'Unauthorized' }] }),
+        });
+
+        const res = await provider.inactivateSubscriptionStrict('sub_auth');
+        expect(res.outcome).toBe('AUTH_ERROR');
+      });
+
+      it('10. Retorna CLIENT_ERROR quando HTTP 400', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 400,
+          json: async () => ({ errors: [{ description: 'Cannot inactivate subscription' }] }),
+        });
+
+        const res = await provider.inactivateSubscriptionStrict('sub_bad_request');
+        expect(res.outcome).toBe('CLIENT_ERROR');
+        expect(res.httpStatus).toBe(400);
+      });
+
+      it('11. Retorna TRANSIENT_ERROR quando HTTP 500 ou timeout', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 503,
+          json: async () => ({ errors: [{ description: 'Service unavailable' }] }),
+        });
+
+        const res503 = await provider.inactivateSubscriptionStrict('sub_503');
+        expect(res503.outcome).toBe('TRANSIENT_ERROR');
+
+        global.fetch = vi.fn().mockRejectedValue(new Error('Connection reset'));
+        const resTimeout = await provider.inactivateSubscriptionStrict('sub_net_err');
+        expect(resTimeout.outcome).toBe('TRANSIENT_ERROR');
+      });
+
+      it('12. Preserva compatibilidade do método legacy inactivateSubscription tolerando 404', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 404,
+          json: async () => ({ errors: [{ description: 'Subscription not found' }] }),
+        });
+
+        const legacyRes = await provider.inactivateSubscription('sub_legacy_404');
+        expect(legacyRes.success).toBe(true);
+      });
+    });
+
+    describe('listAllSubscriptionPaymentsStrict (Phase 3D.2 Hardening)', () => {
+      it('1. Enumera exaustivamente todas as páginas com limit 50 até hasMore=false', async () => {
+        const page1Items = Array.from({ length: 50 }, (_, i) => ({
+          id: `pay_p1_${i}`,
+          subscription: 'sub_page_test',
+          customer: 'cus_page_test',
+          status: 'PENDING',
+          dueDate: '2026-10-01',
+          value: 29.9,
+          billingType: 'CREDIT_CARD',
+        }));
+        const page2Items = [
+          {
+            id: 'pay_p2_1',
+            subscription: 'sub_page_test',
+            customer: 'cus_page_test',
+            status: 'PENDING',
+            dueDate: '2026-11-01',
+            value: 29.9,
+            billingType: 'CREDIT_CARD',
+          },
+        ];
+
+        const mockFetch = vi
+          .fn()
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              data: page1Items,
+              hasMore: true,
+              totalCount: 51,
+            }),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              data: page2Items,
+              hasMore: false,
+              totalCount: 51,
+            }),
+          });
+        global.fetch = mockFetch as any;
+
+        const res = await provider.listAllSubscriptionPaymentsStrict('sub_page_test');
+        expect(res.outcome).toBe('SUCCESS');
+        expect(res.payments).toHaveLength(51);
+        expect(res.payments![0].id).toBe('pay_p1_0');
+        expect(res.payments![50].id).toBe('pay_p2_1');
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+      });
+
+      it('2. Retorna NOT_FOUND quando HTTP 404 (preservando distinção estrita)', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 404,
+          json: async () => ({ errors: [{ description: 'Subscription not found' }] }),
+        });
+
+        const res = await provider.listAllSubscriptionPaymentsStrict('sub_not_found');
+        expect(res.outcome).toBe('NOT_FOUND');
+        expect(res.httpStatus).toBe(404);
+      });
+
+      it('3. Retorna AUTH_ERROR quando HTTP 401 ou 403', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 401,
+          json: async () => ({ errors: [{ description: 'Unauthorized' }] }),
+        });
+
+        const res = await provider.listAllSubscriptionPaymentsStrict('sub_auth');
+        expect(res.outcome).toBe('AUTH_ERROR');
+      });
+
+      it('4. Retorna TRANSIENT_ERROR quando HTTP 500 ou timeout de rede', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 500,
+          json: async () => ({ errors: [{ description: 'Internal server error' }] }),
+        });
+
+        const res = await provider.listAllSubscriptionPaymentsStrict('sub_500');
+        expect(res.outcome).toBe('TRANSIENT_ERROR');
+
+        global.fetch = vi.fn().mockRejectedValue(new Error('Network timeout'));
+        const resTimeout = await provider.listAllSubscriptionPaymentsStrict('sub_timeout');
+        expect(resTimeout.outcome).toBe('TRANSIENT_ERROR');
+      });
+
+      it('5. Retorna MALFORMED_RESPONSE quando encontra cobrança duplicada com status conflitante entre páginas', async () => {
+        const page1Items = [
+          {
+            id: 'pay_conflict_1',
+            subscription: 'sub_conf',
+            customer: 'cus_conf',
+            status: 'PENDING',
+            dueDate: '2026-10-01',
+            value: 29.9,
+            billingType: 'CREDIT_CARD',
+          },
+        ];
+        const page2Items = [
+          {
+            id: 'pay_conflict_1',
+            subscription: 'sub_conf',
+            customer: 'cus_conf',
+            status: 'CONFIRMED',
+            dueDate: '2026-10-01',
+            value: 29.9,
+            billingType: 'CREDIT_CARD',
+          },
+        ];
+
+        global.fetch = vi
+          .fn()
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({ data: page1Items, hasMore: true }),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({ data: page2Items, hasMore: false }),
+          });
+
+        const res = await provider.listAllSubscriptionPaymentsStrict('sub_conf');
+        expect(res.outcome).toBe('MALFORMED_RESPONSE');
+      });
+
+      it('6. Retorna MALFORMED_RESPONSE se payload do provedor for malformado ou item sem ID', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({ data: [{ no_id: true }] }),
+        });
+
+        const res = await provider.listAllSubscriptionPaymentsStrict('sub_bad');
+        expect(res.outcome).toBe('MALFORMED_RESPONSE');
+      });
+    });
+  });
 });

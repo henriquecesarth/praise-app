@@ -4,7 +4,13 @@ import { SubscriptionService } from '../subscriptions/subscription.service';
 import { SubscriptionRepository } from '../../repositories/SubscriptionRepository';
 import { MinistryRepository } from '../../repositories/MinistryRepository';
 import { UserRepository } from '../../repositories/UserRepository';
-import { BillingProvider, ProviderPaymentRecord, ParsedWebhookEvent } from './providers/billing-provider.interface';
+import {
+  BillingProvider,
+  ProviderPaymentRecord,
+  ParsedWebhookEvent,
+  ProviderSubscriptionState,
+  ProviderSubscriptionInactivateResult,
+} from './providers/billing-provider.interface';
 import { AsaasBillingProvider } from './providers/asaas/asaas.provider';
 import { config } from '../../config/unifiedConfig';
 import {
@@ -31,6 +37,9 @@ import {
   BillingCheckoutAttempt,
   isBillingTransitionV1,
   buildBillingSubscriptionId,
+  ScheduledCancelToFreeResponseDto,
+  mapTransitionToScheduledCancelResponseDto,
+  CANCEL_TO_FREE_ATTENTION_REASONS,
 } from './billing.types';
 import {
   validateTargetContract,
@@ -2004,11 +2013,665 @@ export class BillingService {
   }
 
   /**
-   * Agenda o cancelamento da assinatura ao fim do período atual pago (`cancel_at_period_end`).
-   * Executa PUT status INACTIVE no gateway Asaas para cessar futuras renovações
-   * e executa cleanup de eventuais cobranças futuras PENDING já geradas.
+   * Consulta os dados da assinatura de forma estrita (Phase 3D.2 Hardening).
+   * Exige getSubscriptionState no provedor. Nunca faz fallback silencioso para semântica legada.
+   */
+  private async getProviderSubscriptionStateStrict(
+    providerSubscriptionId: string
+  ): Promise<ProviderSubscriptionState> {
+    if (typeof (this.provider as any).getSubscriptionState === 'function') {
+      return await (this.provider as any).getSubscriptionState(providerSubscriptionId);
+    }
+
+    return {
+      outcome: 'TRANSIENT_ERROR',
+      errorMessage: 'STRICT_PROVIDER_CONTRACT_UNAVAILABLE: Provedor não implementa getSubscriptionState.',
+    };
+  }
+
+  /**
+   * Executa inativação no gateway de forma estrita para V1 (Phase 3D.2 Hardening).
+   * Exige inactivateSubscriptionStrict no provedor. Nunca faz fallback silencioso para semântica legada.
+   */
+  private async inactivateProviderSubscriptionStrict(
+    providerSubscriptionId: string
+  ): Promise<ProviderSubscriptionInactivateResult> {
+    if (typeof (this.provider as any).inactivateSubscriptionStrict === 'function') {
+      return await (this.provider as any).inactivateSubscriptionStrict(providerSubscriptionId);
+    }
+
+    return {
+      outcome: 'TRANSIENT_ERROR',
+      errorMessage: 'STRICT_PROVIDER_CONTRACT_UNAVAILABLE: Provedor não implementa inactivateSubscriptionStrict.',
+    };
+  }
+
+  /**
+   * Lista de forma exaustiva, paginada e fail-closed todas as cobranças da exata assinatura de origem (Phase 3D.2 Hardening).
+   * Consome todas as páginas do provedor, deduplica pagamentos e detecta conflitos de estado.
+   */
+  private async listExactSourcePaymentsExhaustive(
+    sourceSubId: string
+  ): Promise<
+    | { outcome: 'SUCCESS'; payments: ProviderPaymentRecord[] }
+    | { outcome: 'ATTENTION'; reason: string }
+    | { outcome: 'TRANSIENT'; reason: string }
+  > {
+    if (typeof (this.provider as any).listAllSubscriptionPaymentsStrict === 'function') {
+      try {
+        const strictRes = await (this.provider as any).listAllSubscriptionPaymentsStrict(sourceSubId);
+        if (strictRes.outcome === 'NOT_FOUND') {
+          return { outcome: 'ATTENTION', reason: CANCEL_TO_FREE_ATTENTION_REASONS.PROVIDER_RESOURCE_DIVERGENCE };
+        }
+        if (strictRes.outcome === 'AUTH_ERROR') {
+          return { outcome: 'ATTENTION', reason: CANCEL_TO_FREE_ATTENTION_REASONS.PROVIDER_AUTH_FAILURE };
+        }
+        if (strictRes.outcome === 'MALFORMED_RESPONSE') {
+          return { outcome: 'ATTENTION', reason: CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_PROVIDER_PAYMENT };
+        }
+        if (strictRes.outcome === 'TRANSIENT_ERROR') {
+          return { outcome: 'TRANSIENT', reason: strictRes.errorMessage || 'transient_provider_payment_list_error' };
+        }
+        const rawPayments = strictRes.payments || [];
+        if (!Array.isArray(rawPayments)) {
+          return { outcome: 'ATTENTION', reason: CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_PROVIDER_PAYMENT };
+        }
+        const seenMap = new Map<string, ProviderPaymentRecord>();
+        for (const p of rawPayments) {
+          if (!p || !p.id || typeof p.id !== 'string') {
+            return { outcome: 'ATTENTION', reason: CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_PROVIDER_PAYMENT };
+          }
+          if (seenMap.has(p.id)) {
+            const prev = seenMap.get(p.id)!;
+            if (prev.status !== p.status) {
+              console.error(`[PAYMENT SAFETY GATE] Conflito de estado na cobrança ${p.id}: ${prev.status} vs ${p.status}`);
+              return { outcome: 'ATTENTION', reason: CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_PROVIDER_PAYMENT };
+            }
+          } else {
+            seenMap.set(p.id, p);
+          }
+        }
+        return { outcome: 'SUCCESS', payments: Array.from(seenMap.values()) };
+      } catch (err: any) {
+        return { outcome: 'TRANSIENT', reason: err.message || 'transient_provider_payment_list_error' };
+      }
+    }
+
+    if (typeof this.provider.listSubscriptionPayments === 'function') {
+      try {
+        const pList = await this.provider.listSubscriptionPayments(sourceSubId, { status: 'ALL' });
+        if (!Array.isArray(pList)) {
+          return { outcome: 'ATTENTION', reason: CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_PROVIDER_PAYMENT };
+        }
+
+        const seenMap = new Map<string, ProviderPaymentRecord>();
+        for (const p of pList) {
+          if (!p || !p.id || typeof p.id !== 'string') {
+            return { outcome: 'ATTENTION', reason: CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_PROVIDER_PAYMENT };
+          }
+          if (seenMap.has(p.id)) {
+            const prev = seenMap.get(p.id)!;
+            if (prev.status !== p.status) {
+              console.error(`[PAYMENT SAFETY GATE] Conflito de estado na cobrança ${p.id}: ${prev.status} vs ${p.status}`);
+              return { outcome: 'ATTENTION', reason: CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_PROVIDER_PAYMENT };
+            }
+          } else {
+            seenMap.set(p.id, p);
+          }
+        }
+        return { outcome: 'SUCCESS', payments: Array.from(seenMap.values()) };
+      } catch (err: any) {
+        if (err instanceof AppError) {
+          if (err.statusCode === 404 || (err as any).status === 404) {
+            return { outcome: 'ATTENTION', reason: CANCEL_TO_FREE_ATTENTION_REASONS.PROVIDER_RESOURCE_DIVERGENCE };
+          }
+          if (err.statusCode === 401 || err.statusCode === 403) {
+            return { outcome: 'ATTENTION', reason: CANCEL_TO_FREE_ATTENTION_REASONS.PROVIDER_AUTH_FAILURE };
+          }
+          if (err.message && (err.message.includes('malformado') || err.message.includes('Conflito') || err.message.includes('Anomalia') || err.message.includes('Limite de paginação'))) {
+            return { outcome: 'ATTENTION', reason: CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_PROVIDER_PAYMENT };
+          }
+        }
+        return { outcome: 'TRANSIENT', reason: err.message || 'transient_payment_list_error' };
+      }
+    }
+
+    return { outcome: 'ATTENTION', reason: CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_PROVIDER_PAYMENT };
+  }
+
+  /**
+   * Phase 3D.2: Reconciliação do-not-renew para scheduled_cancel_to_free.
+   *
+   * Responsabilidades:
+   * 1. Trava técnica distribuída e validação V1 (scheduled_cancel_to_free).
+   * 2. Gate de Propriedade do Active Transition Slot (Section 9).
+   * 3. Exact Source Subscription Scope: usa exclusivamente old_provider_subscription_id (Section 7).
+   * 4. Strict Inactivation Gate: GET/PUT status INACTIVE comprovado via fresh provider proof (Sections 10 & 11).
+   * 5. Payment Safety Gate: filtra dueDate >= effective_billing_date da exata assinatura de origem (Section 12).
+   * 6. Limpeza cirúrgica de cobranças PENDING futuras (Section 13) e preservação de histórico anterior (Section 15).
+   * 7. Fail-closed imediato em caso de conflitos financeiros (CONFIRMED, RECEIVED, OVERDUE, malformed) (Section 2).
+   * 8. Re-leitura obrigatória comprovando convergência antes de promover (Section 18).
+   * 9. Promoção para scheduled SOMENTE quando DO-NOT-RENEW SAFETY estiver provada. Slot permanece HELD (Section 19).
+   */
+  async reconcileScheduledCancelToFreeDoNotRenew(
+    transitionId: string,
+    actor: string = 'worker',
+    options?: { now?: Date }
+  ): Promise<{ success: boolean; reason?: string; transition?: BillingTransitionV1Record }> {
+    const claimed = await this.billingRepo.claimPlanChangeForRetry(transitionId, actor, 60000);
+    if (!claimed) {
+      return { success: false, reason: 'locked_by_another_worker' };
+    }
+
+    const ministryId = claimed.ministry_id;
+
+    try {
+      if (!isBillingTransitionV1(claimed)) {
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'unsupported_policy_version' };
+      }
+
+      if (claimed.execution_strategy !== 'scheduled_cancel_to_free') {
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'unsupported_execution_strategy' };
+      }
+
+      // Se já alcançou scheduled, idempotente NO-OP
+      if (claimed.transition_status === 'scheduled') {
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: true, reason: 'already_scheduled', transition: claimed };
+      }
+
+      // Se em atenção financeira, não muta
+      if (
+        claimed.financial_attention_required === true ||
+        claimed.financial_safety_status === 'attention_required'
+      ) {
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'financial_attention_required', transition: claimed };
+      }
+
+      // Precondição: deve estar em awaiting_old_inactivation
+      if (claimed.transition_status !== 'awaiting_old_inactivation') {
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'invalid_entry_transition_status', transition: claimed };
+      }
+
+      // Gate de Propriedade do Active Transition Slot (Section 9)
+      const currentSlot = await this.billingRepo.getActiveTransitionSlot(ministryId, this.provider.name);
+      if (
+        !currentSlot ||
+        currentSlot.plan_change_id !== claimed.id ||
+        currentSlot.ministry_id !== ministryId ||
+        currentSlot.provider !== this.provider.name
+      ) {
+        console.error(`[DO-NOT-RENEW GUARD] Slot ativo ausente ou divergente para transição ${claimed.id}`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.ACTIVE_SLOT_MISSING_OR_DIVERGENT,
+          financial_safety_status: 'attention_required',
+          updated_at: new Date().toISOString(),
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'active_slot_missing_or_divergent' };
+      }
+
+      // Exact Source Subscription (Section 7)
+      const sourceSubId = claimed.old_provider_subscription_id || claimed.previous_provider_subscription_id;
+      if (!sourceSubId) {
+        console.error(`[DO-NOT-RENEW GUARD] Missing source subscription ID for transition ${claimed.id}`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.PROVIDER_RESOURCE_DIVERGENCE,
+          financial_safety_status: 'attention_required',
+          updated_at: new Date().toISOString(),
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'missing_source_subscription_id' };
+      }
+
+      const cutoffDate = claimed.effective_billing_date;
+      if (!cutoffDate) {
+        console.error(`[DO-NOT-RENEW GUARD] Missing effective_billing_date for transition ${claimed.id}`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: 'missing_effective_billing_date',
+          financial_safety_status: 'attention_required',
+          updated_at: new Date().toISOString(),
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'missing_effective_billing_date' };
+      }
+
+      const nowIso = (options?.now || new Date()).toISOString();
+
+      // Gate de Capability Estrita do Provedor (Phase 3D.2 Hardening - Section 2)
+      if (
+        typeof (this.provider as any).getSubscriptionState !== 'function' ||
+        typeof (this.provider as any).inactivateSubscriptionStrict !== 'function'
+      ) {
+        console.error(`[DO-NOT-RENEW GUARD] Provedor ${this.provider.name} não suporta contrato estrito V1 (getSubscriptionState / inactivateSubscriptionStrict).`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          last_reconciled_at: nowIso,
+          updated_at: nowIso,
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'STRICT_PROVIDER_CONTRACT_UNAVAILABLE' };
+      }
+
+      // STEP 1: Strict Inactivation Gate (Sections 10 & 11)
+      const subState = await this.getProviderSubscriptionStateStrict(sourceSubId);
+
+      if (subState.outcome === 'NOT_FOUND') {
+        console.error(`[DO-NOT-RENEW GUARD] Source subscription ${sourceSubId} 404 (resource divergence)`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.PROVIDER_RESOURCE_DIVERGENCE,
+          financial_safety_status: 'attention_required',
+          updated_at: nowIso,
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'provider_resource_divergence' };
+      }
+
+      if (subState.outcome === 'AUTH_ERROR') {
+        console.error(`[DO-NOT-RENEW GUARD] Provider auth failure on GET subscription ${sourceSubId}`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.PROVIDER_AUTH_FAILURE,
+          financial_safety_status: 'attention_required',
+          updated_at: nowIso,
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'provider_auth_failure' };
+      }
+
+      if (subState.outcome === 'MALFORMED_RESPONSE') {
+        console.error(`[DO-NOT-RENEW GUARD] Malformed provider subscription response for ${sourceSubId}`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_PROVIDER_SUBSCRIPTION,
+          financial_safety_status: 'attention_required',
+          updated_at: nowIso,
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'malformed_provider_subscription' };
+      }
+
+      if (subState.outcome === 'TRANSIENT_ERROR') {
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          last_reconciled_at: nowIso,
+          updated_at: nowIso,
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'transient_provider_read_error' };
+      }
+
+      if (subState.status === 'INACTIVE') {
+        if (!claimed.source_inactivation_confirmed_at) {
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            source_inactivation_confirmed_at: nowIso,
+            updated_at: nowIso,
+          });
+          claimed.source_inactivation_confirmed_at = nowIso;
+        }
+      } else if (subState.status === 'ACTIVE') {
+        if (!claimed.source_inactivation_attempted_at) {
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            source_inactivation_attempted_at: nowIso,
+            updated_at: nowIso,
+          });
+          claimed.source_inactivation_attempted_at = nowIso;
+        }
+
+        const inactResult = await this.inactivateProviderSubscriptionStrict(sourceSubId);
+        if (inactResult.outcome === 'NOT_FOUND') {
+          console.error(`[DO-NOT-RENEW GUARD] PUT status INACTIVE returned 404 for ${sourceSubId}`);
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.PROVIDER_RESOURCE_DIVERGENCE,
+            financial_safety_status: 'attention_required',
+            updated_at: new Date().toISOString(),
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'provider_resource_divergence' };
+        }
+
+        if (inactResult.outcome === 'AUTH_ERROR') {
+          console.error(`[DO-NOT-RENEW GUARD] PUT status INACTIVE returned auth error for ${sourceSubId}`);
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.PROVIDER_AUTH_FAILURE,
+            financial_safety_status: 'attention_required',
+            updated_at: new Date().toISOString(),
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'provider_auth_failure' };
+        }
+
+        if (inactResult.outcome === 'CLIENT_ERROR') {
+          console.error(`[DO-NOT-RENEW GUARD] PUT status INACTIVE returned client error 400 for ${sourceSubId}`);
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.PROVIDER_CLIENT_ERROR,
+            financial_safety_status: 'attention_required',
+            updated_at: new Date().toISOString(),
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'provider_client_error' };
+        }
+
+        if (inactResult.outcome === 'TRANSIENT_ERROR') {
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            last_reconciled_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'uncertain_put_timeout' };
+        }
+
+        // Fresh GET proof após PUT 200
+        const freshProof = await this.getProviderSubscriptionStateStrict(sourceSubId);
+        if (freshProof.outcome === 'TRANSIENT_ERROR') {
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            last_reconciled_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'transient_fresh_read_error' };
+        }
+
+        if (freshProof.outcome !== 'FOUND' || freshProof.status !== 'INACTIVE') {
+          console.error(`[DO-NOT-RENEW GUARD] Fresh read after PUT did not prove INACTIVE: status=${freshProof.status}`);
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: freshProof.outcome === 'NOT_FOUND'
+              ? CANCEL_TO_FREE_ATTENTION_REASONS.PROVIDER_RESOURCE_DIVERGENCE
+              : CANCEL_TO_FREE_ATTENTION_REASONS.SOURCE_SUBSCRIPTION_UNEXPECTED_STATUS,
+            financial_safety_status: 'attention_required',
+            updated_at: new Date().toISOString(),
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'source_inactivation_not_proven' };
+        }
+
+        const confirmedIso = new Date().toISOString();
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          source_inactivation_confirmed_at: confirmedIso,
+          updated_at: confirmedIso,
+        });
+        claimed.source_inactivation_confirmed_at = confirmedIso;
+      } else {
+        console.error(`[DO-NOT-RENEW GUARD] Source subscription status unexpected: ${subState.status}`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.SOURCE_SUBSCRIPTION_UNEXPECTED_STATUS,
+          financial_safety_status: 'attention_required',
+          updated_at: nowIso,
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'source_subscription_unexpected_status' };
+      }
+
+      // STEP 2: Payment Safety Gate (Sections 12, 13, 14, 15, 16, 17, 18, Hardening Gates 1 & 2)
+      const listRes = await this.listExactSourcePaymentsExhaustive(sourceSubId);
+      if (listRes.outcome === 'ATTENTION') {
+        console.error(`[PAYMENT SAFETY GATE] Falha estrita ao listar cobranças da source ${sourceSubId}: ${listRes.reason}`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: listRes.reason,
+          financial_safety_status: 'attention_required',
+          updated_at: new Date().toISOString(),
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: listRes.reason };
+      }
+
+      if (listRes.outcome === 'TRANSIENT') {
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          last_reconciled_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'transient_payment_list_error' };
+      }
+
+      const sourcePayments: ProviderPaymentRecord[] = listRes.payments || [];
+
+      // Filtrar obrigações para a assinatura exata de origem com dueDate >= cutoffDate
+      const futureObligations = sourcePayments.filter(
+        (p) => (!p.subscriptionId || p.subscriptionId === sourceSubId) && p.dueDate && p.dueDate >= cutoffDate
+      );
+
+      // Classificar todo o conjunto
+      for (const pay of futureObligations) {
+        if (!pay.status || typeof pay.status !== 'string') {
+          console.error(`[PAYMENT SAFETY GATE] Cobrança malformada encontrada: ${pay.id}`);
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_PROVIDER_PAYMENT,
+            financial_safety_status: 'attention_required',
+            updated_at: new Date().toISOString(),
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'malformed_provider_payment' };
+        }
+
+        if (pay.status === 'CONFIRMED' || pay.status === 'RECEIVED' || pay.status === 'RECEIVED_IN_CASH') {
+          console.error(`[PAYMENT SAFETY GATE] Cobrança liquidada encontrada na fronteira >= ${cutoffDate}: ${pay.id} (${pay.status})`);
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.FUTURE_SETTLED_OBLIGATION_DETECTED,
+            financial_safety_status: 'attention_required',
+            updated_at: new Date().toISOString(),
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'future_settled_obligation_detected' };
+        }
+
+        if (pay.status === 'OVERDUE') {
+          console.error(`[PAYMENT SAFETY GATE] Cobrança vencida (OVERDUE) encontrada na fronteira >= ${cutoffDate}: ${pay.id}`);
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.FUTURE_OVERDUE_OBLIGATION_DETECTED,
+            financial_safety_status: 'attention_required',
+            updated_at: new Date().toISOString(),
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'future_overdue_obligation_detected' };
+        }
+
+        if (pay.status !== 'PENDING') {
+          console.error(`[PAYMENT SAFETY GATE] Cobrança com status não permitido na fronteira >= ${cutoffDate}: ${pay.id} (${pay.status})`);
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_PROVIDER_PAYMENT,
+            financial_safety_status: 'attention_required',
+            updated_at: new Date().toISOString(),
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'malformed_provider_payment' };
+        }
+      }
+
+      const pendingToDelete = futureObligations.filter((p) => p.status === 'PENDING');
+      const cleanedIds: string[] = [...(claimed.payment_cleanup_ids || [])];
+
+      for (const pay of pendingToDelete) {
+        try {
+          await this.provider.removePayment(pay.id);
+          if (!cleanedIds.includes(pay.id)) cleanedIds.push(pay.id);
+        } catch (delErr: any) {
+          console.warn(`[PAYMENT CLEANUP] Erro ao remover cobrança ${pay.id}: ${delErr.message}`);
+          let recheck: ProviderPaymentRecord | null = null;
+          if (typeof this.provider.getPayment === 'function') {
+            try {
+              recheck = await this.provider.getPayment(pay.id);
+            } catch {}
+          }
+
+          if (
+            recheck &&
+            (recheck.status === 'CONFIRMED' || recheck.status === 'RECEIVED' || recheck.status === 'RECEIVED_IN_CASH')
+          ) {
+            console.error(`[PAYMENT RACE] Cobrança ${pay.id} foi liquidada durante exclusão!`);
+            await this.billingRepo.updateTransition(claimed.id, ministryId, {
+              financial_attention_required: true,
+              financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.CLEANUP_RACE_SETTLED,
+              financial_safety_status: 'attention_required',
+              updated_at: new Date().toISOString(),
+            });
+            await this.billingRepo.releasePlanChangeLock(claimed.id);
+            return { success: false, reason: 'cleanup_race_settled' };
+          }
+
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            payment_cleanup_ids: cleanedIds,
+            last_reconciled_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'cleanup_transient_failure' };
+        }
+      }
+
+      // Re-leitura obrigatória e exaustiva de todas as cobranças da exata assinatura de origem
+      const freshListRes = await this.listExactSourcePaymentsExhaustive(sourceSubId);
+      if (freshListRes.outcome === 'ATTENTION') {
+        console.error(`[PAYMENT SAFETY GATE] Falha estrita na re-leitura de cobranças da source ${sourceSubId}: ${freshListRes.reason}`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: freshListRes.reason,
+          financial_safety_status: 'attention_required',
+          updated_at: new Date().toISOString(),
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: freshListRes.reason };
+      }
+
+      if (freshListRes.outcome === 'TRANSIENT') {
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          last_reconciled_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'transient_reread_error' };
+      }
+
+      const freshPayments: ProviderPaymentRecord[] = freshListRes.payments || [];
+
+      const remainingFuture = freshPayments.filter(
+        (p) => (!p.subscriptionId || p.subscriptionId === sourceSubId) && p.dueDate && p.dueDate >= cutoffDate
+      );
+
+      for (const rem of remainingFuture) {
+        if (rem.status === 'CONFIRMED' || rem.status === 'RECEIVED' || rem.status === 'RECEIVED_IN_CASH') {
+          console.error(`[PAYMENT RACE] Cobrança liquidada detectada após cleanup: ${rem.id}`);
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.CLEANUP_RACE_SETTLED,
+            financial_safety_status: 'attention_required',
+            updated_at: new Date().toISOString(),
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'cleanup_race_settled' };
+        }
+
+        if (rem.status === 'OVERDUE') {
+          console.error(`[PAYMENT SAFETY GATE] Cobrança OVERDUE detectada após cleanup: ${rem.id}`);
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.FUTURE_OVERDUE_OBLIGATION_DETECTED,
+            financial_safety_status: 'attention_required',
+            updated_at: new Date().toISOString(),
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'future_overdue_obligation_detected' };
+        }
+
+        if (rem.status === 'PENDING') {
+          console.warn(`[PAYMENT CLEANUP] Cobrança PENDING ainda persiste após cleanup: ${rem.id}`);
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            payment_cleanup_ids: cleanedIds,
+            last_reconciled_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: 'cleanup_incomplete' };
+        }
+
+        console.error(`[PAYMENT SAFETY GATE] Cobrança excepcional detectada após cleanup: ${rem.id} (${rem.status})`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_PROVIDER_PAYMENT,
+          financial_safety_status: 'attention_required',
+          updated_at: new Date().toISOString(),
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'malformed_provider_payment' };
+      }
+
+      // Verificação final do status da assinatura de origem
+      const finalSubCheck = await this.getProviderSubscriptionStateStrict(sourceSubId);
+      if (finalSubCheck.outcome !== 'FOUND' || finalSubCheck.status !== 'INACTIVE') {
+        console.error(`[DO-NOT-RENEW GUARD] Source subscription não está INACTIVE na verificação final: status=${finalSubCheck.status}`);
+        await this.billingRepo.updateTransition(claimed.id, ministryId, {
+          financial_attention_required: true,
+          financial_attention_reason: finalSubCheck.outcome === 'NOT_FOUND'
+            ? CANCEL_TO_FREE_ATTENTION_REASONS.PROVIDER_RESOURCE_DIVERGENCE
+            : CANCEL_TO_FREE_ATTENTION_REASONS.SOURCE_SUBSCRIPTION_UNEXPECTED_STATUS,
+          financial_safety_status: 'attention_required',
+          updated_at: new Date().toISOString(),
+        });
+        await this.billingRepo.releasePlanChangeLock(claimed.id);
+        return { success: false, reason: 'source_not_inactive_at_boundary' };
+      }
+
+      // PROMOÇÃO PARA SCHEDULED (Sections 18 & 19)
+      const finalNowIso = new Date().toISOString();
+      await this.billingRepo.updateTransition(claimed.id, ministryId, {
+        transition_status: 'scheduled',
+        status: 'pending',
+        supersede_status: 'completed',
+        payment_cleanup_status: 'completed',
+        payment_cleanup_ids: cleanedIds,
+        payment_cleanup_completed_at: finalNowIso,
+        source_inactivation_confirmed_at: claimed.source_inactivation_confirmed_at || finalNowIso,
+        financial_attention_required: false,
+        financial_attention_reason: null,
+        financial_safety_status: 'live',
+        effective_at: finalNowIso,
+        updated_at: finalNowIso,
+        last_reconciled_at: finalNowIso,
+      });
+
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      const reloaded = await this.billingRepo.getTransitionById(claimed.id, ministryId);
+      return {
+        success: true,
+        transition: reloaded && isBillingTransitionV1(reloaded) ? reloaded : undefined,
+      };
+    } catch (err: any) {
+      console.error(`[DO-NOT-RENEW ERROR] Falha inesperada ao reconciliar cancelamento ${claimed.id}:`, err);
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: false, reason: err.message };
+    }
+  }
+
+  /**
+   * Fluxo de cancelamento público preservado no modelo legado (Option A - Deployability Hardening).
+   * A migração pública da rota POST /billing/cancel para V1 é diferida até a Phase 3D.3,
+   * quando o boundary cutover estiver implementado e puder liberar o slot de transição.
    */
   async cancelSubscription(ministryId: string): Promise<BillingSubscriptionRecord> {
+    return this.cancelSubscriptionLegacy(ministryId);
+  }
+
+  /**
+   * Fluxo legacy de cancelamento preservado internamente para callers e testes legados que não instanciam
+   * a infraestrutura de transições V1 / slots (Section 38).
+   */
+  async cancelSubscriptionLegacy(ministryId: string): Promise<BillingSubscriptionRecord> {
     const billingSub = await this.billingRepo.getSubscription(ministryId, this.provider.name);
     if (!billingSub || billingSub.status === 'canceled') {
       throw new AppError(400, 'Não há assinatura ativa para cancelar neste ministério.');
@@ -2025,7 +2688,6 @@ export class BillingService {
       });
 
       if (!cleanupResult.success) {
-        // Persistir registro de cancelamento/transição pendente para retry
         const nowIso = new Date().toISOString();
         const changeRecord: BillingPlanChangeRecord = {
           id: `cancel_${ministryId}_${Date.now()}`,
@@ -2083,6 +2745,77 @@ export class BillingService {
     }
 
     return updatedBillingSub;
+  }
+
+  /**
+   * Agenda o cancelamento da assinatura ao fim do período atual pago (`cancel_at_period_end`) via fluxo V1 (Phase 3D.2).
+   * 1. Prepara e persiste transição V1 com slot HELD.
+   * 2. Tenta convergir imediatamente a inativação no provedor e limpeza cirúrgica de obrigações futuras.
+   * 3. Retorna resposta segura e compatível.
+   * NUNCA faz fallback silencioso para o fluxo legado (Section 1 e 5).
+   */
+  async cancelSubscriptionV1(
+    ministryId: string,
+    options?: { userId?: string; now?: Date | string }
+  ): Promise<BillingSubscriptionRecord & { transition?: ScheduledCancelToFreeResponseDto }> {
+    // 1. Preparar/reaproveitar transição V1
+    const transition = await this.prepareScheduledCancelToFreeTransition(ministryId, options);
+
+    // 2. Tentar convergir imediatamente do-not-renew
+    let currentTransition = transition;
+    if (currentTransition.transition_status === 'awaiting_old_inactivation') {
+      const rec = await this.reconcileScheduledCancelToFreeDoNotRenew(
+        currentTransition.id,
+        options?.userId || 'public_cancel',
+        options?.now ? { now: typeof options.now === 'string' ? new Date(options.now) : options.now } : undefined
+      );
+      if (rec.transition) {
+        currentTransition = rec.transition;
+      }
+    }
+
+    // 3. Compatibilidade retroativa: sincronizar flag de projeção cancel_at_period_end
+    const nowIso = new Date().toISOString();
+    const currentBillingSub = await this.billingRepo.getSubscription(ministryId, this.provider.name);
+    let updatedBillingSub = currentBillingSub;
+    if (currentBillingSub && !currentBillingSub.cancel_at_period_end) {
+      updatedBillingSub = {
+        ...currentBillingSub,
+        cancel_at_period_end: true,
+        updated_at: nowIso,
+      };
+      await this.billingRepo.setSubscription(updatedBillingSub);
+    }
+
+    const currentAppSub = await this.subscriptionRepo.getSubscription(ministryId);
+    if (currentAppSub && !currentAppSub.cancel_at_period_end) {
+      await this.subscriptionRepo.setSubscription({
+        ...currentAppSub,
+        cancel_at_period_end: true,
+        updated_at: nowIso,
+      });
+    }
+
+    // 4. Atenção financeira: se a transição falhar fechada com atenção, disparar erro com detalhes
+    if (currentTransition.financial_attention_required) {
+      throw new AppError(
+        500,
+        'Identificada pendência ou conflito financeiro no gateway. O cancelamento foi registrado e requer validação financeira operacional.',
+        {
+          code: 'FINANCIAL_ATTENTION_REQUIRED',
+          attentionReason: currentTransition.financial_attention_reason,
+          transitionId: currentTransition.id,
+        }
+      );
+    }
+
+    const transitionDto = mapTransitionToScheduledCancelResponseDto(currentTransition);
+
+    return {
+      ...(updatedBillingSub || ({} as BillingSubscriptionRecord)),
+      cancel_at_period_end: true,
+      transition: transitionDto,
+    };
   }
 
   /**

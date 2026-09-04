@@ -80,6 +80,55 @@ export interface CreateDetachedCheckoutResult {
   expiresAt: string | null;
 }
 
+export type ProviderSubscriptionReadOutcomeType =
+  | 'FOUND'
+  | 'NOT_FOUND'
+  | 'AUTH_ERROR'
+  | 'TRANSIENT_ERROR'
+  | 'MALFORMED_RESPONSE';
+
+export interface ProviderSubscriptionState {
+  outcome: ProviderSubscriptionReadOutcomeType;
+  status?: string;
+  rawSubscription?: {
+    status: string;
+    value?: number;
+    valueCents?: number;
+    cycle?: string;
+    nextDueDate?: string;
+    customer?: string;
+  };
+  httpStatus?: number;
+  errorMessage?: string;
+}
+
+export type ProviderSubscriptionInactivateOutcomeType =
+  | 'SUCCESS'
+  | 'NOT_FOUND'
+  | 'AUTH_ERROR'
+  | 'CLIENT_ERROR'
+  | 'TRANSIENT_ERROR';
+
+export interface ProviderSubscriptionInactivateResult {
+  outcome: ProviderSubscriptionInactivateOutcomeType;
+  httpStatus?: number;
+  errorMessage?: string;
+}
+
+export type ProviderPaymentListOutcomeType =
+  | 'SUCCESS'
+  | 'NOT_FOUND'
+  | 'AUTH_ERROR'
+  | 'TRANSIENT_ERROR'
+  | 'MALFORMED_RESPONSE';
+
+export interface ProviderPaymentListResult {
+  outcome: ProviderPaymentListOutcomeType;
+  payments?: ProviderPaymentRecord[];
+  httpStatus?: number;
+  errorMessage?: string;
+}
+
 export interface BillingProvider {
   readonly name: BillingProviderName;
 
@@ -154,6 +203,10 @@ export interface BillingProvider {
 
   inactivateSubscription(providerSubscriptionId: string): Promise<{ success: boolean }>;
 
+  inactivateSubscriptionStrict?(
+    providerSubscriptionId: string
+  ): Promise<ProviderSubscriptionInactivateResult>;
+
   removeSubscription(providerSubscriptionId: string): Promise<{ success: boolean }>;
 
   cancelSubscription(
@@ -167,6 +220,10 @@ export interface BillingProvider {
     providerSubscriptionId: string,
     options?: { status?: string }
   ): Promise<Array<ProviderPaymentRecord>>;
+
+  listAllSubscriptionPaymentsStrict?(
+    providerSubscriptionId: string
+  ): Promise<ProviderPaymentListResult>;
 
   removePayment(providerPaymentId: string): Promise<{ success: boolean }>;
 
@@ -184,5 +241,7 @@ export interface BillingProvider {
     nextDueDate?: string;
     customer?: string;
   } | null>;
+
+  getSubscriptionState?(providerSubscriptionId: string): Promise<ProviderSubscriptionState>;
 }
 
