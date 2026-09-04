@@ -155,6 +155,10 @@ O backend usa Vitest para testes unitários e de integração cobrindo motor de 
       - *Idempotency & Repair Scope*: O único outro estado aceito pelo helper é `transition_status === 'completed'` AND `financial_safety_status === 'safe_terminal'`, restrito estritamente a idempotência e reparo CAS-safe de slot still-HELD e/ou marker residual. `completed` com `financial_safety_status !== 'safe_terminal'` (ex: `completed/live`) falha fechado com `invalid_terminalization_source_status`.
       - *Callsite & Invariant Verification*: Os dois callsites de produção em `billing.service.ts` (`L2725`, `L3170`) respeitam estritamente essa invariante: L2725 checa `safe_terminal` antes da chamada, e L2747 descarta status divergentes de `scheduled` antes da fronteira comercial em L3170.
       - *Cobertura*: 24 testes no describe block de terminalização atômica (testes 14 e 16 corrigidos para fail-closed; novos testes 19 a 24 cobrindo failed, canceled, completed/live, completed/attention, idempotência limpa e invariante de zero-mutação). 1.120 testes no backend passando. 48 testes no web passando.
+    - Phase 3D.3B.3 (Strict Financial Safety Source Gate — Final Pre-Sandbox Invariant): COMPLETE:
+      - *Strict Scheduled + Live Source Gate*: `completeTransitionAndReleaseOwnedSlotAtomically` exige cumulativa e explicitamente `transition.transition_status === 'scheduled' && transition.financial_safety_status === 'live'`.
+      - *Crossed States Fail Closed*: `scheduled + safe_terminal` é estado inconsistente e agora falha fechado com `invalid_terminalization_source_status` sem mutação de transição, slot nem marker. `completed + live` e `completed + attention` falham fechado. `completed + safe_terminal` permanece o único par terminal idempotente aceito.
+      - *Cobertura*: 26 testes no describe block de terminalização atômica (testes 25 e 26 adicionados cobrindo scheduled/safe_terminal e invariante de zero-mutação). 1.122 testes no backend passando. 48 testes no web passando.
     - Phase 3D.4 (Scheduled Cancel-to-Free End-to-End Sandbox Homologation): PENDING.
 
 ## Known Issues and Implementation Gaps

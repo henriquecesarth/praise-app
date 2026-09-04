@@ -1749,5 +1749,56 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
       expect(sub?.cancel_at_period_end).toBe(true);
       expect((planChangesStore.get(record.id) as BillingTransitionV1Record)?.transition_status).toBe('awaiting_old_inactivation');
     });
+
+    // -----------------------------------------------------------------------
+    // Phase 3D.3B.3 — Strict financial safety source gate (scheduled + live only)
+    // -----------------------------------------------------------------------
+
+    it('25. [3D.3B.3] fail closed: scheduled_cancel_to_free + transition_status=scheduled + financial_safety_status=safe_terminal → invalid_terminalization_source_status', async () => {
+      // scheduled + safe_terminal é estado inconsistente / cruzado — FAIL CLOSED
+      const record = createCtfRecord({
+        id: 'tr_3d3b3_sched_safe_term',
+        ministry_id: 'min_test_1',
+        transition_status: 'scheduled',
+        financial_safety_status: 'safe_terminal',
+      });
+      planChangesStore.set(record.id, record);
+      ministrySubscriptionsStore.set('min_test_1', { active_cancellation_transition_id: record.id });
+      buildSlotForRecord(record);
+
+      const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('invalid_terminalization_source_status');
+    });
+
+    it('26. [3D.3B.3] invariant: scheduled + safe_terminal rejeita sem mutar transition, slot nem marker', async () => {
+      // Prova que scheduled + safe_terminal não deleta slot, não limpa marker e não altera transição
+      const record = createCtfRecord({
+        id: 'tr_3d3b3_zero_mut_safe_term',
+        ministry_id: 'min_test_1',
+        transition_status: 'scheduled',
+        financial_safety_status: 'safe_terminal',
+      });
+      planChangesStore.set(record.id, record);
+      ministrySubscriptionsStore.set('min_test_1', {
+        active_cancellation_transition_id: record.id,
+        cancel_at_period_end: true,
+      });
+      const slotId = buildSlotForRecord(record);
+
+      const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('invalid_terminalization_source_status');
+
+      // Todas as projeções intactas: zero mutações
+      expect(activeSlotsStore.has(slotId)).toBe(true);
+      expect(activeSlotsStore.get(slotId)?.plan_change_id).toBe(record.id);
+      const sub = ministrySubscriptionsStore.get('min_test_1');
+      expect(sub?.active_cancellation_transition_id).toBe(record.id);
+      expect(sub?.cancel_at_period_end).toBe(true);
+      const storedTx = planChangesStore.get(record.id) as BillingTransitionV1Record;
+      expect(storedTx?.transition_status).toBe('scheduled');
+      expect(storedTx?.financial_safety_status).toBe('safe_terminal');
+    });
   });
 });

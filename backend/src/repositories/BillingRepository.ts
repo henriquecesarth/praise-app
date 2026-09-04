@@ -2387,9 +2387,10 @@ export class BillingRepository {
    * 2. Transição existe, pertence ao ministry_id e é V1.
    * 3. Transição não está em atenção financeira (financial_attention_required !== true && financial_safety_status !== 'attention_required').
    * 4. Assinatura do ministério existe em ministry_subscriptions.
-   * 5. Source status gate (Phase 3D.3B.2): o caminho normal de terminalization aceita APENAS transition_status === 'scheduled'.
-   *    awaiting_old_inactivation, failed, canceled, superseded e qualquer outro status que não seja scheduled ou completed
-   *    são rejeitados com 'invalid_terminalization_source_status'. Isso preserva a state machine:
+   * 5. Source status gate (Phase 3D.3B.2 & Phase 3D.3B.3): o caminho normal de terminalization aceita APENAS
+   *    transition_status === 'scheduled' AND financial_safety_status === 'live'.
+   *    scheduled + safe_terminal (inconsistente), awaiting_old_inactivation, failed, canceled, superseded e qualquer outro status
+   *    que não seja scheduled/live são rejeitados com 'invalid_terminalization_source_status'. Isso preserva a state machine:
    *    awaiting_old_inactivation não pode terminalizar (DO-NOT-RENEW safety ainda não provado).
    *    failed/canceled/superseded são terminais históricos imutáveis e não podem ser reescritos para completed.
    * 6. CAS estrito no marker de ownership (APENAS scheduled_cancel_to_free, Phase 3D.3B.1):
@@ -2482,12 +2483,13 @@ export class BillingRepository {
         return { success: true, reason: 'already_completed' };
       }
 
-      // Pré-condição 5 (source status gate, Phase 3D.3B.2):
-      // O caminho normal de terminalization aceita APENAS transition_status === 'scheduled'.
+      // Pré-condição 5 (source status gate, Phase 3D.3B.2 & Phase 3D.3B.3):
+      // O caminho normal de terminalization aceita APENAS transition_status === 'scheduled' AND financial_safety_status === 'live'.
       // Estado machine canônico: scheduled/live → completed/safe_terminal.
+      // scheduled + safe_terminal: estado inconsistente — FAIL CLOSED (Phase 3D.3B.3).
       // awaiting_old_inactivation: DO-NOT-RENEW safety ainda não provada — não pode terminalizar.
       // failed, canceled, superseded: terminais históricos imutáveis — não podem ser reescritos para completed.
-      if (transition.transition_status !== 'scheduled') {
+      if (transition.transition_status !== 'scheduled' || transition.financial_safety_status !== 'live') {
         return { success: false, reason: 'invalid_terminalization_source_status' };
       }
 
