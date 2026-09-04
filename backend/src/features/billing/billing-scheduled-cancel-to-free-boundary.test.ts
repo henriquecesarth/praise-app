@@ -176,10 +176,13 @@ describe('Phase 3D.3 — Period-End Cancel-to-Free Cutover & Public V1 Migration
       }),
       getCustomer: vi.fn().mockResolvedValue({ provider_customer_id: 'cus_exact_3d3' }),
       getActiveTransitionSlot: vi.fn().mockImplementation(async () => activeSlot),
-      getActiveTransitionForMinistry: vi.fn().mockImplementation(async () => ({
-        slot: activeSlot,
-        transition: activeRecord,
-      })),
+      getActiveTransitionForMinistry: vi.fn().mockImplementation(async () => {
+        if (!activeSlot) return null;
+        return {
+          slot: activeSlot,
+          transition: activeRecord,
+        };
+      }),
       createTransitionAndClaimSlot: vi.fn().mockImplementation(async (rec: any) => {
         activeRecord = { ...rec };
         activeSlot = {
@@ -206,11 +209,27 @@ describe('Phase 3D.3 — Period-End Cancel-to-Free Cutover & Public V1 Migration
         return { released: true };
       }),
       completeTransitionAndReleaseOwnedSlotAtomically: vi.fn().mockImplementation(async (minId: string, prov: string, id: string, updates: any) => {
+        if (!appSubRecord) {
+          return { success: false, reason: 'subscription_not_found' };
+        }
+        if (
+          activeRecord.financial_attention_required === true ||
+          activeRecord.transition_status === 'financial_attention_required' ||
+          activeRecord.financial_safety_status === 'attention_required'
+        ) {
+          return { success: false, reason: 'financial_attention_required' };
+        }
         if (!activeSlot || activeSlot.plan_change_id !== id) {
           if (activeRecord.transition_status === 'completed') {
             return { success: true, reason: 'already_completed' };
           }
           return { success: false, reason: 'slot_not_found' };
+        }
+        if (
+          appSubRecord.active_cancellation_transition_id &&
+          appSubRecord.active_cancellation_transition_id !== id
+        ) {
+          return { success: false, reason: 'subscription_marker_owned_by_another_transition' };
         }
         activeRecord = {
           ...activeRecord,
@@ -222,6 +241,8 @@ describe('Phase 3D.3 — Period-End Cancel-to-Free Cutover & Public V1 Migration
           financial_attention_reason: null,
         };
         activeSlot = null;
+        appSubRecord.active_cancellation_transition_id = null;
+        appSubRecord.cancel_at_period_end = false;
         return { success: true };
       }),
       getV1TransitionsNeedingReconciliation: vi.fn().mockResolvedValue([]),
@@ -1208,6 +1229,208 @@ describe('Phase 3D.3 — Period-End Cancel-to-Free Cutover & Public V1 Migration
       expect(V1_RECONCILABLE_TRANSITION_STATUSES).not.toContain('safe_terminal');
       expect(V1_RECONCILABLE_TRANSITION_STATUSES).toContain('scheduled');
       expect(V1_RECONCILABLE_TRANSITION_STATUSES).toContain('awaiting_old_inactivation');
+    });
+  });
+
+  describe('Phase 3D.3A — Terminal Ownership / Canonical Slot Hardening & CAS Audit (Section 23)', () => {
+    it('1. marker present during awaiting', async () => {
+      const awaitingRecord = createScheduledRecord({
+        id: 'tr_awaiting_marker',
+        transition_status: 'awaiting_old_inactivation',
+      });
+      activeRecord = awaitingRecord;
+      appSubRecord.active_cancellation_transition_id = awaitingRecord.id;
+
+      expect(appSubRecord.active_cancellation_transition_id).toBe('tr_awaiting_marker');
+      expect(appSubRecord.active_cancellation_transition_id).toBe(activeRecord.id);
+    });
+
+    it('2. marker present during scheduled', async () => {
+      activeRecord.transition_status = 'scheduled';
+      appSubRecord.active_cancellation_transition_id = activeRecord.id;
+
+      expect(appSubRecord.active_cancellation_transition_id).toBe(activeRecord.id);
+    });
+
+    it('3. marker present during attention (never cleared on financial attention)', async () => {
+      appSubRecord.active_cancellation_transition_id = activeRecord.id;
+
+      // Simulate unexpected settled payment at boundary -> enters financial_attention_required
+      const paymentDate = new Date(boundaryInstant.getTime() + 86400000);
+      mockProvider.listSubscriptionPayments.mockResolvedValueOnce([
+        {
+          id: 'pay_late_settled',
+          subscription: activeRecord.old_provider_subscription_id,
+          status: 'RECEIVED',
+          dueDate: paymentDate.toISOString().split('T')[0],
+          paymentDate: paymentDate.toISOString(),
+          confirmedDate: paymentDate.toISOString(),
+          value: 99.0,
+        },
+      ]);
+
+      const res = await billingService.reconcileScheduledCancelToFreeBoundary(activeRecord.id, 'worker', { now: boundaryInstant });
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('unexpected_renewal_payment_detected');
+      expect(activeRecord.financial_attention_required).toBe(true);
+
+      // Marker MUST still be present on ministry subscription
+      expect(appSubRecord.active_cancellation_transition_id).toBe(activeRecord.id);
+      expect(activeSlot).not.toBeNull();
+    });
+
+    it('4. marker present after Free apply but before terminalization (crash window between STEP 4 and 5)', async () => {
+      appSubRecord.active_cancellation_transition_id = activeRecord.id;
+
+      // STEP 4 applies Free target snapshot
+      mockSubscriptionService.applyLockedEntitlementSnapshot.mockImplementationOnce(async () => {
+        appSubRecord.plan_id = 'free';
+        appSubRecord.subscription_mode = 'free';
+        appSubRecord.locked_member_quota = 10;
+        appSubRecord.locked_song_quota = 50;
+        // Marker MUST be retained
+        expect(appSubRecord.active_cancellation_transition_id).toBe(activeRecord.id);
+        throw new Error('Crash before atomic terminalization');
+      });
+
+      const res = await billingService.reconcileScheduledCancelToFreeBoundary(activeRecord.id, 'worker', { now: boundaryInstant });
+      expect(res.success).toBe(false);
+
+      // Crash occurred before atomic terminalization: marker remains, slot remains held, transition remains scheduled
+      expect(appSubRecord.active_cancellation_transition_id).toBe(activeRecord.id);
+      expect(activeSlot).not.toBeNull();
+      expect(activeRecord.transition_status).toBe('scheduled');
+    });
+
+    it('5. marker cleared atomically at successful terminalization', async () => {
+      appSubRecord.active_cancellation_transition_id = activeRecord.id;
+      appSubRecord.cancel_at_period_end = true;
+
+      const res = await billingService.reconcileScheduledCancelToFreeBoundary(activeRecord.id, 'worker', { now: boundaryInstant });
+      expect(res.success).toBe(true);
+
+      expect(activeRecord.transition_status).toBe('completed');
+      expect(activeRecord.financial_safety_status).toBe('safe_terminal');
+      expect(activeSlot).toBeNull();
+      expect(appSubRecord.active_cancellation_transition_id).toBeNull();
+      expect(appSubRecord.cancel_at_period_end).toBe(false);
+    });
+
+    it('6. transition completed + slot released + marker cleared as one logical commit', async () => {
+      appSubRecord.active_cancellation_transition_id = activeRecord.id;
+
+      const res = await billingService.reconcileScheduledCancelToFreeBoundary(activeRecord.id, 'worker', { now: boundaryInstant });
+      expect(res.success).toBe(true);
+
+      expect(mockBillingRepo.completeTransitionAndReleaseOwnedSlotAtomically).toHaveBeenCalledWith(
+        ministryId,
+        providerName,
+        activeRecord.id,
+        expect.any(Object)
+      );
+      expect(activeRecord.transition_status).toBe('completed');
+      expect(activeSlot).toBeNull();
+      expect(appSubRecord.active_cancellation_transition_id).toBeNull();
+    });
+
+    it('7. transaction failure preserves scheduled + HELD + marker', async () => {
+      appSubRecord.active_cancellation_transition_id = activeRecord.id;
+      mockBillingRepo.completeTransitionAndReleaseOwnedSlotAtomically.mockResolvedValueOnce({
+        success: false,
+        reason: 'transaction_abort',
+      });
+
+      const res = await billingService.reconcileScheduledCancelToFreeBoundary(activeRecord.id, 'worker', { now: boundaryInstant });
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('transaction_abort');
+
+      expect(activeRecord.transition_status).toBe('scheduled');
+      expect(activeSlot).not.toBeNull();
+      expect(appSubRecord.active_cancellation_transition_id).toBe(activeRecord.id);
+    });
+
+    it('8. wrong marker owner fails closed (CAS protection)', async () => {
+      // Subscription marker belongs to another transition!
+      appSubRecord.active_cancellation_transition_id = 'tr_other_conflict';
+
+      const res = await billingService.reconcileScheduledCancelToFreeBoundary(activeRecord.id, 'worker', { now: boundaryInstant });
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('subscription_marker_owned_by_another_transition');
+
+      // Does not delete slot, does not complete transition, does not clear marker
+      expect(activeRecord.transition_status).toBe('scheduled');
+      expect(activeSlot).not.toBeNull();
+      expect(appSubRecord.active_cancellation_transition_id).toBe('tr_other_conflict');
+    });
+
+    it('9. wrong slot owner fails closed', async () => {
+      appSubRecord.active_cancellation_transition_id = activeRecord.id;
+      // Slot owned by another transition
+      activeSlot.plan_change_id = 'tr_other_owner';
+
+      const res = await billingService.reconcileScheduledCancelToFreeBoundary(activeRecord.id, 'worker', { now: boundaryInstant });
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('active_slot_missing_or_divergent');
+
+      expect(activeRecord.transition_status).toBe('scheduled');
+      expect(activeSlot.plan_change_id).toBe('tr_other_owner');
+      expect(appSubRecord.active_cancellation_transition_id).toBe(activeRecord.id);
+    });
+
+    it('10. attention cannot terminalize', async () => {
+      activeRecord.financial_attention_required = true;
+      activeRecord.financial_safety_status = 'attention_required';
+      appSubRecord.active_cancellation_transition_id = activeRecord.id;
+
+      const res = await billingService.reconcileScheduledCancelToFreeBoundary(activeRecord.id, 'worker', { now: boundaryInstant });
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('financial_attention_required');
+
+      expect(mockBillingRepo.completeTransitionAndReleaseOwnedSlotAtomically).not.toHaveBeenCalled();
+      expect(activeSlot).not.toBeNull();
+      expect(appSubRecord.active_cancellation_transition_id).toBe(activeRecord.id);
+    });
+
+    it('11. canonical slot created then exact same canonical slot released', async () => {
+      const canonicalSlotId = buildActiveTransitionSlotId(ministryId, providerName);
+      expect(activeSlot.id).toBe(canonicalSlotId);
+
+      const res = await billingService.reconcileScheduledCancelToFreeBoundary(activeRecord.id, 'worker', { now: boundaryInstant });
+      expect(res.success).toBe(true);
+      expect(activeSlot).toBeNull();
+    });
+
+    it('12. no manual slot format in boundary tests', () => {
+      const expectedSlotId = buildActiveTransitionSlotId(ministryId, providerName);
+      expect(expectedSlotId).not.toContain('undefined');
+      expect(expectedSlotId).toBe(`slot_${ministryId}__${providerName}`);
+    });
+
+    it('13. completed/free duplicate cancel is idempotent (ALREADY_FREE)', async () => {
+      // Cutover finishes normally
+      const res = await billingService.reconcileScheduledCancelToFreeBoundary(activeRecord.id, 'worker', { now: boundaryInstant });
+      expect(res.success).toBe(true);
+
+      // Now billingSub is canceled and plan is free
+      billingSubRecord = {
+        ...billingSubRecord,
+        plan_id: 'free',
+        status: 'canceled',
+        cancel_at_period_end: false,
+      };
+
+      await expect(
+        billingService.cancelSubscription(ministryId, { userId: 'usr_1' })
+      ).rejects.toThrow(/Não há assinatura ativa para cancelar|já possui plano gratuito/i);
+    });
+
+    it('14. completed cancellation leaves no stale marker blocking future paid flow', async () => {
+      const res = await billingService.reconcileScheduledCancelToFreeBoundary(activeRecord.id, 'worker', { now: boundaryInstant });
+      expect(res.success).toBe(true);
+
+      // Ministry subscription has no active cancellation marker
+      expect(appSubRecord.active_cancellation_transition_id).toBeNull();
+      expect(activeSlot).toBeNull();
     });
   });
 });

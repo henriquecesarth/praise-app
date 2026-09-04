@@ -3151,17 +3151,6 @@ export class BillingService {
 
       const completionIso = nowDate.toISOString();
 
-      // Sincronizar cancel_at_period_end = false e limpar active_cancellation_transition_id na sub da aplicação (Section 20)
-      const reloadedAppSub = await this.subscriptionRepo.getSubscription(ministryId);
-      if (reloadedAppSub && (reloadedAppSub.cancel_at_period_end || reloadedAppSub.active_cancellation_transition_id)) {
-        await this.subscriptionRepo.setSubscription({
-          ...reloadedAppSub,
-          cancel_at_period_end: false,
-          active_cancellation_transition_id: null,
-          updated_at: completionIso,
-        });
-      }
-
       // Atualizar projeções de billing_subscriptions (Sections 19 & 46)
       const currentBillingSub = await this.billingRepo.getSubscription(ministryId, this.provider.name);
       if (currentBillingSub) {
@@ -3175,7 +3164,7 @@ export class BillingService {
         });
       }
 
-      // STEP 5 & 6: Conclusão Atômica da Transição e Liberação do Slot (Atomic Terminalization - Section 13)
+      // STEP 5 & 6: Conclusão Atômica da Transição, Liberação do Slot e Limpeza do Marker (Atomic Terminalization - Sections 4, 5, 13)
       // Executa SOMENTE após convergência confirmada de entitlement local e projeções.
       // Elimina Crash Window C: completed e remoção do slot ocorrem em UMA ÚNICA transação Firestore.
       const terminalResult = await this.billingRepo.completeTransitionAndReleaseOwnedSlotAtomically(

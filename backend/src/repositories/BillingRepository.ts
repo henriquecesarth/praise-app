@@ -89,6 +89,7 @@ export class BillingRepository {
   private readonly transactionsCollection = db.collection('billing_transactions');
   private readonly webhookEventsCollection = db.collection('billing_webhook_events');
   private readonly schedulersCollection = db.collection('billing_schedulers');
+  private readonly ministrySubscriptionsCollection = db.collection('ministry_subscriptions');
 
   // --------------------------------------------------------------------------
   // Customers
@@ -2379,11 +2380,14 @@ export class BillingRepository {
    * Pré-condições estritas na transação:
    * 1. Slot existe e pertence exclusivamente à transição (slot.plan_change_id === planChangeId).
    * 2. Transição existe, pertence ao ministry_id e é V1.
-   * 3. Transição não está em financial_attention_required.
+   * 3. Transição não está em atenção financeira (financial_attention_required !== true && financial_safety_status !== 'attention_required').
+   * 4. Assinatura do ministério existe em ministry_subscriptions.
+   * 5. CAS no marker de ownership: active_cancellation_transition_id deve pertencer a esta transição (ou ser null se já limpo).
    *
-   * Efeitos atômicos:
+   * Efeitos atômicos em caso de sucesso (mesmo commit Firestore):
    * - Atualiza transitionDoc com status 'completed', financial_safety_status 'safe_terminal', completed_at e updates.
    * - Remove slotDoc (t.delete).
+   * - Limpa o ownership marker (active_cancellation_transition_id: null, cancel_at_period_end: false) em ministry_subscriptions.
    */
   async completeTransitionAndReleaseOwnedSlotAtomically(
     ministryId: string,
@@ -2394,6 +2398,7 @@ export class BillingRepository {
     const slotId = buildActiveTransitionSlotId(ministryId, provider);
     const slotDocRef = this.activeTransitionSlotsCollection.doc(slotId);
     const planChangeDocRef = this.planChangesCollection.doc(planChangeId);
+    const ministrySubDocRef = this.ministrySubscriptionsCollection.doc(ministryId);
 
     return await db.runTransaction(async (t: any) => {
       const planChangeDoc = await t.get(planChangeDocRef);
@@ -2410,23 +2415,44 @@ export class BillingRepository {
         return { success: false, reason: 'legacy_transition_does_not_own_slot' };
       }
 
-      // Idempotência: se já completada como safe_terminal
-      if (transition.transition_status === 'completed' && transition.financial_safety_status === 'safe_terminal') {
-        const slotDoc = await t.get(slotDocRef);
-        if (!slotDoc.exists) {
-          return { success: true, reason: 'already_completed' };
-        }
-        const slot = slotDoc.data() as BillingActiveTransitionSlotRecord;
-        if (slot.plan_change_id === planChangeId) {
-          t.delete(slotDocRef);
-          return { success: true, reason: 'already_completed' };
-        }
-      }
-
-      if (transition.financial_attention_required === true || transition.transition_status === 'financial_attention_required') {
+      // Pré-condição 3: Atenção financeira NUNCA pode ser terminalizada nem liberar slot (Sections 15 & 23.10)
+      if (
+        transition.financial_attention_required === true ||
+        transition.transition_status === 'financial_attention_required' ||
+        transition.financial_safety_status === 'attention_required'
+      ) {
         return { success: false, reason: 'financial_attention_required' };
       }
 
+      // Pré-condição 4: Assinatura do ministério deve existir (Section 18)
+      const subDoc = await t.get(ministrySubDocRef);
+      if (!subDoc.exists) {
+        return { success: false, reason: 'subscription_not_found' };
+      }
+      const subData = subDoc.data() as any;
+
+      // Idempotência: se já completada como safe_terminal (Section 14)
+      if (transition.transition_status === 'completed' && transition.financial_safety_status === 'safe_terminal') {
+        const slotDoc = await t.get(slotDocRef);
+        if (slotDoc.exists) {
+          const slot = slotDoc.data() as BillingActiveTransitionSlotRecord;
+          if (slot.plan_change_id === planChangeId) {
+            t.delete(slotDocRef);
+          } else {
+            return { success: false, reason: 'slot_owned_by_another_transition' };
+          }
+        }
+        if (subData?.active_cancellation_transition_id === planChangeId) {
+          t.update(ministrySubDocRef, {
+            active_cancellation_transition_id: null,
+            cancel_at_period_end: false,
+            updated_at: new Date().toISOString(),
+          });
+        }
+        return { success: true, reason: 'already_completed' };
+      }
+
+      // Pré-condição 1: Slot deve existir e pertencer a esta transição (Section 16)
       const slotDoc = await t.get(slotDocRef);
       if (!slotDoc.exists) {
         return { success: false, reason: 'slot_not_found' };
@@ -2437,7 +2463,17 @@ export class BillingRepository {
         return { success: false, reason: 'slot_owned_by_another_transition' };
       }
 
-      // Aplicar updates e marcar completed + safe_terminal atomicamente
+      // Pré-condição 5: CAS no marker de ownership da assinatura (Sections 5 & 17)
+      if (
+        subData?.active_cancellation_transition_id &&
+        subData.active_cancellation_transition_id !== planChangeId
+      ) {
+        return { success: false, reason: 'subscription_marker_owned_by_another_transition' };
+      }
+
+      const nowIso = new Date().toISOString();
+
+      // 1. Atualizar transição para completed + safe_terminal
       t.update(planChangeDocRef, {
         ...transitionUpdates,
         transition_status: 'completed',
@@ -2445,10 +2481,19 @@ export class BillingRepository {
         financial_safety_status: 'safe_terminal',
         financial_attention_required: false,
         financial_attention_reason: null,
+        completed_at: transitionUpdates.completed_at || nowIso,
+        updated_at: transitionUpdates.updated_at || nowIso,
       });
 
-      // Liberar o slot atomicamente no mesmo commit
+      // 2. Liberar o slot atomicamente
       t.delete(slotDocRef);
+
+      // 3. Limpar compare-and-clear o ownership marker e cancel_at_period_end atomicamente
+      t.update(ministrySubDocRef, {
+        active_cancellation_transition_id: null,
+        cancel_at_period_end: false,
+        updated_at: nowIso,
+      });
 
       return { success: true };
     });

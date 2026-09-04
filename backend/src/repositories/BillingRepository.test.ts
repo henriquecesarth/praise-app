@@ -32,6 +32,7 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
   const planChangesStore = new Map<string, BillingPlanChangeRecord>();
   const activeSlotsStore = new Map<string, BillingActiveTransitionSlotRecord>();
   const subscriptionsStore = new Map<string, any>();
+  const ministrySubscriptionsStore = new Map<string, any>();
 
   const createQueryMock = (filters: Array<{ field: string; op: string; value: any }> = []) => ({
     where: vi.fn().mockImplementation((field: string, op: string, value: any) => {
@@ -66,9 +67,28 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
     planChangesStore.clear();
     activeSlotsStore.clear();
     subscriptionsStore.clear();
+    ministrySubscriptionsStore.clear();
     repo = new BillingRepository();
 
     // Mock Firestore collections
+    (repo as any).ministrySubscriptionsCollection = {
+      doc: (id: string) => ({
+        id,
+        collectionName: 'ministry_subscriptions',
+        get: vi.fn().mockImplementation(async () => {
+          const data = ministrySubscriptionsStore.get(id);
+          return { exists: Boolean(data), data: () => data };
+        }),
+        set: vi.fn().mockImplementation(async (data: any, options?: any) => {
+          if (options?.merge && ministrySubscriptionsStore.has(id)) {
+            ministrySubscriptionsStore.set(id, { ...ministrySubscriptionsStore.get(id)!, ...data });
+          } else {
+            ministrySubscriptionsStore.set(id, data);
+          }
+        }),
+      }),
+    };
+
     (repo as any).subscriptionsCollection = {
       doc: (id: string) => ({
         id,
@@ -152,6 +172,9 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
           if (docRef.collectionName === 'billing_active_transition_slots' || docRef.id.startsWith('slot_')) {
             const data = activeSlotsStore.get(docRef.id);
             return { exists: Boolean(data), data: () => data };
+          } else if (docRef.collectionName === 'ministry_subscriptions' || docRef.id.startsWith('min_')) {
+            const data = ministrySubscriptionsStore.get(docRef.id);
+            return { exists: Boolean(data), data: () => data };
           } else {
             const data = planChangesStore.get(docRef.id);
             return { exists: Boolean(data), data: () => data };
@@ -164,6 +187,12 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
             } else {
               activeSlotsStore.set(docRef.id, data);
             }
+          } else if (docRef.collectionName === 'ministry_subscriptions' || docRef.id.startsWith('min_')) {
+            if (options?.merge && ministrySubscriptionsStore.has(docRef.id)) {
+              ministrySubscriptionsStore.set(docRef.id, { ...ministrySubscriptionsStore.get(docRef.id)!, ...data });
+            } else {
+              ministrySubscriptionsStore.set(docRef.id, data);
+            }
           } else {
             if (options?.merge && planChangesStore.has(docRef.id)) {
               planChangesStore.set(docRef.id, { ...planChangesStore.get(docRef.id)!, ...data });
@@ -172,9 +201,26 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
             }
           }
         }),
+        update: vi.fn().mockImplementation((docRef: any, data: any) => {
+          if (docRef.collectionName === 'ministry_subscriptions' || docRef.id.startsWith('min_')) {
+            if (ministrySubscriptionsStore.has(docRef.id)) {
+              ministrySubscriptionsStore.set(docRef.id, { ...ministrySubscriptionsStore.get(docRef.id)!, ...data });
+            }
+          } else if (docRef.collectionName === 'billing_active_transition_slots' || docRef.id.startsWith('slot_')) {
+            if (activeSlotsStore.has(docRef.id)) {
+              activeSlotsStore.set(docRef.id, { ...activeSlotsStore.get(docRef.id)!, ...data });
+            }
+          } else {
+            if (planChangesStore.has(docRef.id)) {
+              planChangesStore.set(docRef.id, { ...planChangesStore.get(docRef.id)!, ...data });
+            }
+          }
+        }),
         delete: vi.fn().mockImplementation((docRef: any) => {
           if (docRef.collectionName === 'billing_active_transition_slots' || docRef.id.startsWith('slot_')) {
             activeSlotsStore.delete(docRef.id);
+          } else if (docRef.collectionName === 'ministry_subscriptions' || docRef.id.startsWith('min_')) {
+            ministrySubscriptionsStore.delete(docRef.id);
           } else {
             planChangesStore.delete(docRef.id);
           }
@@ -1165,6 +1211,189 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
           attemptId: 'att_ea_cas2',
         })
       ).rejects.toThrow(/não está no estado 'reserved'/);
+    });
+  });
+
+  describe('completeTransitionAndReleaseOwnedSlotAtomically — Final Authority & Preconditions', () => {
+    it('1. fail closed se transição não existir', async () => {
+      const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', 'tr_non_existent', {});
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('transition_not_found');
+    });
+
+    it('2. fail closed se houver tenant mismatch', async () => {
+      const record = createSampleV1Record({ id: 'tr_tenant_1', ministry_id: 'min_tenant_A' });
+      planChangesStore.set(record.id, record);
+
+      const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_tenant_B', 'asaas', record.id, {});
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('tenant_mismatch');
+    });
+
+    it('3. fail closed se transição estiver com financial_attention_required', async () => {
+      const record = createSampleV1Record({
+        id: 'tr_atten_1',
+        ministry_id: 'min_test_1',
+        financial_attention_required: true,
+      });
+      planChangesStore.set(record.id, record);
+
+      const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('financial_attention_required');
+    });
+
+    it('4. fail closed se financial_safety_status for attention_required', async () => {
+      const record = createSampleV1Record({
+        id: 'tr_atten_2',
+        ministry_id: 'min_test_1',
+        financial_safety_status: 'attention_required' as any,
+      });
+      planChangesStore.set(record.id, record);
+
+      const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('financial_attention_required');
+    });
+
+    it('5. fail closed se assinatura do ministério não existir em ministry_subscriptions', async () => {
+      const record = createSampleV1Record({ id: 'tr_no_sub', ministry_id: 'min_test_1' });
+      planChangesStore.set(record.id, record);
+
+      const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('subscription_not_found');
+    });
+
+    it('6. fail closed se slot não existir no fluxo normal', async () => {
+      const record = createSampleV1Record({ id: 'tr_no_slot', ministry_id: 'min_test_1' });
+      planChangesStore.set(record.id, record);
+      ministrySubscriptionsStore.set('min_test_1', { active_cancellation_transition_id: record.id });
+
+      const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('slot_not_found');
+    });
+
+    it('7. fail closed se slot pertencer a outra transição', async () => {
+      const record = createSampleV1Record({ id: 'tr_my_tx', ministry_id: 'min_test_1' });
+      planChangesStore.set(record.id, record);
+      ministrySubscriptionsStore.set('min_test_1', { active_cancellation_transition_id: record.id });
+
+      const slotId = buildActiveTransitionSlotId('min_test_1', 'asaas');
+      activeSlotsStore.set(slotId, {
+        id: slotId,
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        plan_change_id: 'tr_other_tx',
+        acquired_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        version: 1,
+      });
+
+      const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('slot_owned_by_another_transition');
+    });
+
+    it('8. fail closed se subscription.active_cancellation_transition_id pertencer a outra transição (CAS mismatch)', async () => {
+      const record = createSampleV1Record({ id: 'tr_my_tx', ministry_id: 'min_test_1' });
+      planChangesStore.set(record.id, record);
+      ministrySubscriptionsStore.set('min_test_1', { active_cancellation_transition_id: 'tr_alien_cancellation' });
+
+      const slotId = buildActiveTransitionSlotId('min_test_1', 'asaas');
+      activeSlotsStore.set(slotId, {
+        id: slotId,
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        plan_change_id: record.id,
+        acquired_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        version: 1,
+      });
+
+      const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('subscription_marker_owned_by_another_transition');
+    });
+
+    it('9. sucesso normal: atualiza transição para completed/safe_terminal, deleta slot e limpa marker na sub atomicamente', async () => {
+      const record = createSampleV1Record({
+        id: 'tr_success_term',
+        ministry_id: 'min_test_1',
+        transition_status: 'scheduled',
+      });
+      planChangesStore.set(record.id, record);
+      ministrySubscriptionsStore.set('min_test_1', {
+        active_cancellation_transition_id: record.id,
+        cancel_at_period_end: true,
+      });
+
+      const slotId = buildActiveTransitionSlotId('min_test_1', 'asaas');
+      activeSlotsStore.set(slotId, {
+        id: slotId,
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        plan_change_id: record.id,
+        acquired_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        version: 1,
+      });
+
+      const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {
+        completed_at: '2026-10-01T15:00:00.000Z',
+      });
+
+      expect(res.success).toBe(true);
+
+      // 1. Transição atualizada
+      const updatedTx = planChangesStore.get(record.id) as BillingTransitionV1Record;
+      expect(updatedTx?.transition_status).toBe('completed');
+      expect(updatedTx?.financial_safety_status).toBe('safe_terminal');
+      expect(updatedTx?.completed_at).toBe('2026-10-01T15:00:00.000Z');
+
+      // 2. Slot deletado
+      expect(activeSlotsStore.has(slotId)).toBe(false);
+
+      // 3. Marker da subscription limpo
+      const updatedSub = ministrySubscriptionsStore.get('min_test_1');
+      expect(updatedSub?.active_cancellation_transition_id).toBeNull();
+      expect(updatedSub?.cancel_at_period_end).toBe(false);
+    });
+
+    it('10. idempotência: transição já completed e safe_terminal retorna sucesso e repara anomalia de slot se ainda detido', async () => {
+      const record = createSampleV1Record({
+        id: 'tr_already_done',
+        ministry_id: 'min_test_1',
+        transition_status: 'completed',
+        financial_safety_status: 'safe_terminal',
+      });
+      planChangesStore.set(record.id, record);
+      ministrySubscriptionsStore.set('min_test_1', {
+        active_cancellation_transition_id: record.id,
+        cancel_at_period_end: false,
+      });
+
+      const slotId = buildActiveTransitionSlotId('min_test_1', 'asaas');
+      activeSlotsStore.set(slotId, {
+        id: slotId,
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        plan_change_id: record.id,
+        acquired_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        version: 1,
+      });
+
+      const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
+      expect(res.success).toBe(true);
+      expect(res.reason).toBe('already_completed');
+
+      // Slot foi liberado na reparação
+      expect(activeSlotsStore.has(slotId)).toBe(false);
+      // Marker foi limpo
+      const updatedSub = ministrySubscriptionsStore.get('min_test_1');
+      expect(updatedSub?.active_cancellation_transition_id).toBeNull();
     });
   });
 });
