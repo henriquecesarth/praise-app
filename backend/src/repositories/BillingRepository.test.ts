@@ -1296,8 +1296,15 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
       expect(res.reason).toBe('slot_owned_by_another_transition');
     });
 
-    it('8. fail closed se subscription.active_cancellation_transition_id pertencer a outra transição (CAS mismatch)', async () => {
-      const record = createSampleV1Record({ id: 'tr_my_tx', ministry_id: 'min_test_1' });
+    it('8. fail closed se subscription.active_cancellation_transition_id pertencer a outra transição (CAS mismatch, status não-live)', async () => {
+      // Usa safe_terminal + failed para exercitar o branch else-if (não-scheduled, não-live).
+      // Para live/scheduled, a nova razão é marker_required_for_scheduled_or_live (coberto nos testes 11-15).
+      const record = createSampleV1Record({
+        id: 'tr_my_tx',
+        ministry_id: 'min_test_1',
+        financial_safety_status: 'safe_terminal' as any,
+        transition_status: 'failed' as any,
+      });
       planChangesStore.set(record.id, record);
       ministrySubscriptionsStore.set('min_test_1', { active_cancellation_transition_id: 'tr_alien_cancellation' });
 
@@ -1394,6 +1401,125 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
       // Marker foi limpo
       const updatedSub = ministrySubscriptionsStore.get('min_test_1');
       expect(updatedSub?.active_cancellation_transition_id).toBeNull();
+    });
+
+    // -----------------------------------------------------------------------
+    // Phase 3D.3B — Strict Live Marker CAS
+    // Para transições scheduled ou live (financial_safety_status === 'live'),
+    // ausência do marker é estado divergente → FAIL CLOSED.
+    // -----------------------------------------------------------------------
+
+    const buildSlotForRecord = (record: BillingTransitionV1Record) => {
+      const slotId = buildActiveTransitionSlotId('min_test_1', 'asaas');
+      activeSlotsStore.set(slotId, {
+        id: slotId,
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        plan_change_id: record.id,
+        acquired_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        version: 1,
+      });
+      return slotId;
+    };
+
+    it('11. [3D.3B] fail closed: transition_status=scheduled + marker null', async () => {
+      const record = createSampleV1Record({
+        id: 'tr_3d3b_null',
+        ministry_id: 'min_test_1',
+        transition_status: 'scheduled',
+        financial_safety_status: 'live',
+      });
+      planChangesStore.set(record.id, record);
+      ministrySubscriptionsStore.set('min_test_1', { active_cancellation_transition_id: null });
+      buildSlotForRecord(record);
+
+      const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('marker_required_for_scheduled_or_live');
+    });
+
+    it('12. [3D.3B] fail closed: transition_status=scheduled + marker string vazia', async () => {
+      const record = createSampleV1Record({
+        id: 'tr_3d3b_empty',
+        ministry_id: 'min_test_1',
+        transition_status: 'scheduled',
+        financial_safety_status: 'live',
+      });
+      planChangesStore.set(record.id, record);
+      ministrySubscriptionsStore.set('min_test_1', { active_cancellation_transition_id: '' });
+      buildSlotForRecord(record);
+
+      const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('marker_required_for_scheduled_or_live');
+    });
+
+    it('13. [3D.3B] fail closed: transition_status=scheduled + marker undefined (campo ausente)', async () => {
+      const record = createSampleV1Record({
+        id: 'tr_3d3b_undef',
+        ministry_id: 'min_test_1',
+        transition_status: 'scheduled',
+        financial_safety_status: 'live',
+      });
+      planChangesStore.set(record.id, record);
+      // active_cancellation_transition_id propositalmente ausente do documento
+      ministrySubscriptionsStore.set('min_test_1', { cancel_at_period_end: true });
+      buildSlotForRecord(record);
+
+      const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('marker_required_for_scheduled_or_live');
+    });
+
+    it('14. [3D.3B] fail closed: financial_safety_status=live (non-scheduled) + marker null', async () => {
+      const record = createSampleV1Record({
+        id: 'tr_3d3b_live_null',
+        ministry_id: 'min_test_1',
+        transition_status: 'awaiting_old_inactivation',
+        financial_safety_status: 'live',
+      });
+      planChangesStore.set(record.id, record);
+      ministrySubscriptionsStore.set('min_test_1', { active_cancellation_transition_id: null });
+      buildSlotForRecord(record);
+
+      const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('marker_required_for_scheduled_or_live');
+    });
+
+    it('15. [3D.3B] fail closed: transition_status=scheduled + marker divergente (outra transição)', async () => {
+      const record = createSampleV1Record({
+        id: 'tr_3d3b_diverge',
+        ministry_id: 'min_test_1',
+        transition_status: 'scheduled',
+        financial_safety_status: 'live',
+      });
+      planChangesStore.set(record.id, record);
+      ministrySubscriptionsStore.set('min_test_1', { active_cancellation_transition_id: 'tr_alien_other' });
+      buildSlotForRecord(record);
+
+      const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('marker_required_for_scheduled_or_live');
+    });
+
+    it('16. [3D.3B] regressão: status não-scheduled/live + marker null → sucesso (marker não obrigatório fora do fluxo cancelamento-periodo)', async () => {
+      const record = createSampleV1Record({
+        id: 'tr_3d3b_noncancelled',
+        ministry_id: 'min_test_1',
+        transition_status: 'awaiting_old_inactivation',
+        financial_safety_status: 'safe_terminal' as any,
+      });
+      planChangesStore.set(record.id, record);
+      // marker null + status não-live: não é obrigatório
+      ministrySubscriptionsStore.set('min_test_1', { active_cancellation_transition_id: null });
+      buildSlotForRecord(record);
+
+      const res = await repo.completeTransitionAndReleaseOwnedSlotAtomically('min_test_1', 'asaas', record.id, {});
+      // financial_safety_status: safe_terminal não é 'live', transition_status não é 'scheduled'
+      // → marker null é permitido → deve completar com sucesso
+      expect(res.success).toBe(true);
     });
   });
 });

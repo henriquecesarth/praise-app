@@ -2382,7 +2382,10 @@ export class BillingRepository {
    * 2. Transição existe, pertence ao ministry_id e é V1.
    * 3. Transição não está em atenção financeira (financial_attention_required !== true && financial_safety_status !== 'attention_required').
    * 4. Assinatura do ministério existe em ministry_subscriptions.
-   * 5. CAS no marker de ownership: active_cancellation_transition_id deve pertencer a esta transição (ou ser null se já limpo).
+   * 5. CAS estrito no marker de ownership: para transições scheduled ou live (financial_safety_status === 'live'),
+   *    active_cancellation_transition_id DEVE estar presente e ser exatamente igual a planChangeId.
+   *    Ausência (null/undefined/'') é estado divergente — FAIL CLOSED (Phase 3D.3B).
+   *    Para outros status, rejeita somente se marker aponta a outra transição.
    *
    * Efeitos atômicos em caso de sucesso (mesmo commit Firestore):
    * - Atualiza transitionDoc com status 'completed', financial_safety_status 'safe_terminal', completed_at e updates.
@@ -2463,11 +2466,18 @@ export class BillingRepository {
         return { success: false, reason: 'slot_owned_by_another_transition' };
       }
 
-      // Pré-condição 5: CAS no marker de ownership da assinatura (Sections 5 & 17)
-      if (
-        subData?.active_cancellation_transition_id &&
-        subData.active_cancellation_transition_id !== planChangeId
-      ) {
+      // Pré-condição 5: CAS estrito no marker de ownership da assinatura (Phase 3D.3B, Sections 5 & 17)
+      // Para transições scheduled ou live (financial_safety_status === 'live'), o marker DEVE estar presente
+      // e ser exatamente igual a planChangeId. Ausência (null/undefined/'') é estado divergente — FAIL CLOSED.
+      // Para outros status, mantém a verificação de divergência quando o marker aponta a outra transição.
+      const isScheduledOrLive =
+        transition.transition_status === 'scheduled' || transition.financial_safety_status === 'live';
+      const markerValue = subData?.active_cancellation_transition_id;
+      if (isScheduledOrLive) {
+        if (!markerValue || markerValue !== planChangeId) {
+          return { success: false, reason: 'marker_required_for_scheduled_or_live' };
+        }
+      } else if (markerValue && markerValue !== planChangeId) {
         return { success: false, reason: 'subscription_marker_owned_by_another_transition' };
       }
 
