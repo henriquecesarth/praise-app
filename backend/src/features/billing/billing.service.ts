@@ -1848,6 +1848,162 @@ export class BillingService {
   }
 
   /**
+   * Prepara internamente uma transição canônica V1 de cancelamento para Free (Phase 3D.1).
+   *
+   * Invariantes:
+   * - Aluga deterministicamente o slot único de transição ativa do ministério (`buildActiveTransitionSlotId`).
+   * - Trava o snapshot imutável de origem (plano pago atual, quotas e período) e destino Free (10 membros, 50 músicas, R$ 0).
+   * - O status inicial é estritamente `awaiting_old_inactivation` (DO-NOT-RENEW SAFETY NOT YET PROVEN).
+   * - Idempotente: se já existir uma transição de cancelamento ativa para o ministério, retorna a mesma transição.
+   * - Conflito: se existir outra transição ativa (paid-to-paid ou initial purchase), rejeita com ACTIVE_TRANSITION_EXISTS.
+   * - Não altera o entitlement em ministry_subscriptions (período pago preservado até current_period_end).
+   * - Não executa mutações no provedor (inativação e cleanup serão orquestrados na Phase 3D.2).
+   */
+  async prepareScheduledCancelToFreeTransition(
+    ministryId: string,
+    options?: { userId?: string; now?: Date | string }
+  ): Promise<BillingTransitionV1Record> {
+    if (!ministryId || typeof ministryId !== 'string' || !ministryId.trim()) {
+      throw new AppError(400, 'ministryId é obrigatório para cancelamento.');
+    }
+
+    const trimmedMinistryId = ministryId.trim();
+
+    // 1. Verificar se já existe um slot de transição ativo para este ministério
+    const activeSlot = await this.billingRepo.getActiveTransitionForMinistry(trimmedMinistryId, this.provider.name);
+    if (activeSlot) {
+      if (
+        isBillingTransitionV1(activeSlot.transition) &&
+        activeSlot.transition.execution_strategy === 'scheduled_cancel_to_free' &&
+        (activeSlot.transition.transition_status === 'awaiting_old_inactivation' ||
+          activeSlot.transition.transition_status === 'scheduled' ||
+          activeSlot.transition.transition_status === 'financial_attention_required')
+      ) {
+        // Idempotência: retorna a transição de cancelamento já existente
+        return activeSlot.transition as BillingTransitionV1Record;
+      }
+
+      // Se for de outra estratégia ou estado não idempotente, falha fechado com conflito
+      throw new AppError(
+        409,
+        'Já existe uma transição de plano ativa para este ministério no provedor.',
+        {
+          code: 'ACTIVE_TRANSITION_EXISTS',
+          slotId: activeSlot.slot.id,
+          activePlanChangeId: activeSlot.transition.id,
+          executionStrategy: (activeSlot.transition as any).execution_strategy,
+        }
+      );
+    }
+
+    // 2. Validar existência da assinatura de faturamento atual
+    const currentBillingSub = await this.billingRepo.getSubscription(trimmedMinistryId, this.provider.name);
+    if (!currentBillingSub || currentBillingSub.status === 'canceled') {
+      throw new AppError(400, 'Não há assinatura ativa para cancelar neste ministério.');
+    }
+
+    if (currentBillingSub.plan_id === 'free') {
+      throw new AppError(400, 'Ministério já possui plano gratuito.', { code: 'ALREADY_FREE' });
+    }
+
+    if (!currentBillingSub.provider_subscription_id) {
+      throw new AppError(400, 'Assinatura paga sem identificador de assinatura no provedor.');
+    }
+
+    if (!currentBillingSub.current_period_start || !currentBillingSub.current_period_end) {
+      throw new AppError(
+        400,
+        'Período corrente de faturamento obrigatório para contratos de origem pagos.',
+        { code: 'INVALID_SOURCE_PERIOD' }
+      );
+    }
+
+    const now = options?.now ? (typeof options.now === 'string' ? new Date(options.now) : options.now) : new Date();
+    const periodEnd = new Date(currentBillingSub.current_period_end);
+    if (isNaN(periodEnd.getTime())) {
+      throw new AppError(400, 'Data de término do período corrente inválida.', { code: 'INVALID_SOURCE_PERIOD' });
+    }
+
+    if (now.getTime() >= periodEnd.getTime()) {
+      throw new AppError(
+        400,
+        'Período pago da assinatura já expirou. Convergência para Free deve ser reconciliada.',
+        { code: 'PAID_PERIOD_EXPIRED' }
+      );
+    }
+
+    // 3. Resolver cliente de faturamento existente
+    let providerCustomerId = currentBillingSub.provider_customer_id || null;
+    if (!providerCustomerId) {
+      const customer = await this.billingRepo.getCustomer(trimmedMinistryId, this.provider.name);
+      providerCustomerId = customer?.provider_customer_id || null;
+    }
+
+    // 4. Construir commercial snapshot determinístico para scheduled_cancel_to_free
+    const sourceContract = {
+      plan_id: currentBillingSub.plan_id,
+      interval: currentBillingSub.interval,
+      addon_blocks: currentBillingSub.member_addon_blocks || 0,
+      current_period_start: currentBillingSub.current_period_start,
+      current_period_end: currentBillingSub.current_period_end,
+    };
+
+    const targetContract = {
+      plan_id: 'free' as PlanId,
+      interval: currentBillingSub.interval,
+      addon_blocks: 0,
+    };
+
+    const commercialSnapshot = buildTransitionCommercialSnapshot(sourceContract, targetContract, {
+      requestedAt: now,
+      timeZone: config.billingTimezone,
+    });
+
+    if (commercialSnapshot.execution_strategy !== 'scheduled_cancel_to_free') {
+      throw new AppError(500, `Estratégia calculada inválida para cancelamento: ${commercialSnapshot.execution_strategy}`);
+    }
+
+    // 5. Construir entidade de persistência V1
+    const transitionId = `tr_cancel_${trimmedMinistryId}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const internalIntentId = `intent_cancel_${trimmedMinistryId}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
+    const transitionRecord = buildBillingTransitionV1Record({
+      transitionId,
+      ministryId: trimmedMinistryId,
+      provider: this.provider.name,
+      commercialSnapshot,
+      requestedByUserId: options?.userId || null,
+      providerCustomerId,
+      oldProviderSubscriptionId: currentBillingSub.provider_subscription_id,
+      previousProviderSubscriptionId: currentBillingSub.provider_subscription_id,
+      now,
+    });
+    transitionRecord.checkout_intent_id = internalIntentId;
+
+    // 6. Alugar deterministicamente o slot em transação Firestore CAS-safe
+    try {
+      await this.billingRepo.createTransitionAndClaimSlot(transitionRecord);
+      return transitionRecord;
+    } catch (err: any) {
+      if (err.details?.code === 'ACTIVE_TRANSITION_EXISTS') {
+        // Tratamento de concorrência: reler active transition
+        const existing = await this.billingRepo.getActiveTransitionForMinistry(trimmedMinistryId, this.provider.name);
+        if (
+          existing &&
+          isBillingTransitionV1(existing.transition) &&
+          existing.transition.execution_strategy === 'scheduled_cancel_to_free' &&
+          (existing.transition.transition_status === 'awaiting_old_inactivation' ||
+            existing.transition.transition_status === 'scheduled' ||
+            existing.transition.transition_status === 'financial_attention_required')
+        ) {
+          return existing.transition as BillingTransitionV1Record;
+        }
+      }
+      throw err;
+    }
+  }
+
+  /**
    * Agenda o cancelamento da assinatura ao fim do período atual pago (`cancel_at_period_end`).
    * Executa PUT status INACTIVE no gateway Asaas para cessar futuras renovações
    * e executa cleanup de eventuais cobranças futuras PENDING já geradas.
@@ -1934,6 +2090,27 @@ export class BillingService {
    * Envia PUT /subscriptions/{id} com status: ACTIVE e nextDueDate derivado de current_period_end.
    */
   async reactivateSubscription(ministryId: string): Promise<BillingSubscriptionRecord> {
+    // Proteção contra conflito com cancelamento V1 agendado em andamento (Phase 3D.1)
+    const activeSlot = await this.billingRepo.getActiveTransitionForMinistry(ministryId, this.provider.name);
+    if (
+      activeSlot &&
+      isBillingTransitionV1(activeSlot.transition) &&
+      activeSlot.transition.execution_strategy === 'scheduled_cancel_to_free' &&
+      (activeSlot.transition.transition_status === 'awaiting_old_inactivation' ||
+        activeSlot.transition.transition_status === 'scheduled' ||
+        activeSlot.transition.transition_status === 'financial_attention_required')
+    ) {
+      throw new AppError(
+        409,
+        'Existe um cancelamento agendado em processamento para este ministério. Reativação direta não permitida.',
+        {
+          code: 'ACTIVE_CANCELLATION_TRANSITION_EXISTS',
+          transitionId: activeSlot.transition.id,
+          transitionStatus: activeSlot.transition.transition_status,
+        }
+      );
+    }
+
     const billingSub = await this.billingRepo.getSubscription(ministryId, this.provider.name);
     if (!billingSub || !billingSub.cancel_at_period_end) {
       throw new AppError(400, 'Não há cancelamento pendente para reativar neste ministério.');

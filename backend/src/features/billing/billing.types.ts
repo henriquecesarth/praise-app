@@ -759,3 +759,35 @@ export interface EarlyActivationCheckoutResponseDto {
   transitionId: string;
   status: 'payment_pending';
 }
+
+export interface ScheduledCancelToFreeResponseDto {
+  transitionId: string;
+  executionStrategy: 'scheduled_cancel_to_free';
+  transitionStatus: BillingTransitionStatus;
+  financialSafetyStatus: BillingFinancialSafetyStatus;
+  sourcePlanId: PlanId;
+  targetPlanId: 'free';
+  effectiveBillingDate: string;
+  currentPeriodEnd: string;
+  cancelAtPeriodEnd: true;
+  entitlementPreserved: boolean;
+  message: string;
+}
+
+export function mapTransitionToScheduledCancelResponseDto(
+  transition: BillingTransitionV1Record
+): ScheduledCancelToFreeResponseDto {
+  return {
+    transitionId: transition.id,
+    executionStrategy: 'scheduled_cancel_to_free',
+    transitionStatus: transition.transition_status,
+    financialSafetyStatus: transition.financial_safety_status,
+    sourcePlanId: transition.source_plan_id,
+    targetPlanId: 'free',
+    effectiveBillingDate: transition.effective_billing_date || '',
+    currentPeriodEnd: transition.current_period_end || '',
+    cancelAtPeriodEnd: true,
+    entitlementPreserved: true,
+    message: 'Cancelamento agendado para o final do período vigente.',
+  };
+}
