@@ -1738,4 +1738,641 @@ describe('SubscriptionPlanView Component', () => {
       vi.useRealTimers();
     });
   });
+
+  describe('Phase 4A.3: Non-Admin Read-Only UX Matrix (Section 35)', () => {
+    it('35.1) membro não-admin visualiza catálogo de planos com botões desabilitados ("Apenas administradores")', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryEssential as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-non-admin"
+          canManageBilling={false}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByRole('heading', { level: 2, name: 'Planos disponíveis' })).toBeInTheDocument();
+
+      const adminOnlyButtons = screen.getAllByRole('button', { name: 'Apenas administradores' });
+      expect(adminOnlyButtons.length).toBeGreaterThanOrEqual(1);
+      adminOnlyButtons.forEach((btn) => {
+        expect(btn).toBeDisabled();
+      });
+    });
+
+    it('35.2) membro não-admin visualiza banner informativo de somente leitura', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryEssential as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-non-admin"
+          canManageBilling={false}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(
+        await screen.findByText('Somente administradores do ministério podem alterar a assinatura.')
+      ).toBeInTheDocument();
+    });
+
+    it('35.3) membro não-admin não consegue abrir modal de checkout ou acionar mutação de plano', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryFree as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      const previewSpy = vi.spyOn(api, 'getBillingPreview');
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-non-admin"
+          canManageBilling={false}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByRole('heading', { level: 2, name: 'Planos disponíveis' })).toBeInTheDocument();
+
+      const adminOnlyButtons = screen.getAllByRole('button', { name: 'Apenas administradores' });
+      await userEvent.click(adminOnlyButtons[0]);
+
+      expect(previewSpy).not.toHaveBeenCalled();
+      expect(screen.queryByRole('heading', { level: 3, name: 'Confirmar Alteração de Plano' })).not.toBeInTheDocument();
+    });
+
+    it('35.4) membro não-admin não visualiza botão de cancelar assinatura no plano atual', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryEssential as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-non-admin"
+          canManageBilling={false}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByRole('heading', { level: 2, name: 'Essential' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Cancelar assinatura/i })).not.toBeInTheDocument();
+    });
+
+    it('35.5) membro não-admin não visualiza botão de gerenciar adicionais no plano atual', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryEssential as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-non-admin"
+          canManageBilling={false}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByRole('heading', { level: 2, name: 'Essential' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Gerenciar adicionais/i })).not.toBeInTheDocument();
+    });
+
+    it('35.6) membro não-admin tem controles de adicionais (range input e stepper) desabilitados no catálogo', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryFree as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-non-admin"
+          canManageBilling={false}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByRole('heading', { level: 2, name: 'Planos disponíveis' })).toBeInTheDocument();
+
+      const rangeEssential = screen.getByLabelText('Blocos adicionais para Essential');
+      expect(rangeEssential).toBeDisabled();
+
+      const minusButtons = screen.getAllByLabelText('Diminuir bloco de integrantes');
+      minusButtons.forEach((btn) => expect(btn).toBeDisabled());
+
+      const plusButtons = screen.getAllByLabelText('Aumentar bloco de integrantes');
+      plusButtons.forEach((btn) => expect(btn).toBeDisabled());
+    });
+
+    it('35.7) membro não-admin visualiza banner de suspensão/regularização sem botão de reativação da assinatura', async () => {
+      const mockSuspendedSummary = {
+        ...mockSummaryEssential,
+        subscription: {
+          ...mockSummaryEssential.subscription,
+          billingStatus: 'overdue',
+          accessMode: 'grace',
+          gracePeriodExpiresAt: '2026-09-15T12:00:00.000Z',
+        },
+        graceDaysRemaining: 7,
+      };
+
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSuspendedSummary as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-non-admin"
+          canManageBilling={false}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByText(/Período de adaptação ativo/i)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Reativar agora/i })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Phase 4A.3: Addon Management Matrix (Section 36 & 37)', () => {
+    it('36.1) plano atual Essential ou Pro exibe botão "Gerenciar adicionais" para admin', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryEssential as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      const addonBtn = await screen.findByRole('button', { name: /Gerenciar adicionais/i });
+      expect(addonBtn).toBeInTheDocument();
+      expect(addonBtn).not.toBeDisabled();
+    });
+
+    it('36.2) plano atual Free, Lite, Lite+ ou Premium NÃO exibe botão "Gerenciar adicionais"', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryFree as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      const { rerender } = render(
+        <SubscriptionPlanView
+          ministryId="min-free"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByRole('heading', { level: 2, name: 'Free' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Gerenciar adicionais/i })).not.toBeInTheDocument();
+
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryLitePaid as any);
+
+      rerender(
+        <SubscriptionPlanView
+          ministryId="min-lite"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByRole('heading', { level: 2, name: 'Lite' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Gerenciar adicionais/i })).not.toBeInTheDocument();
+    });
+
+    it('36.3) quando há pendingTransition, botão "Gerenciar adicionais" é desabilitado com tooltip "Alteração em andamento"', async () => {
+      const mockWithPending = {
+        ...mockSummaryEssential,
+        pendingTransition: {
+          transitionId: 'trans-pending-addon',
+          kind: 'addon_increase',
+          status: 'scheduled',
+          requestedAt: '2026-09-01T10:00:00.000Z',
+          effectiveAt: '2026-09-28T12:00:00.000Z',
+          source: { planId: 'essential', interval: 'monthly', addonBlocks: 2 },
+          target: { planId: 'essential', interval: 'monthly', addonBlocks: 3 },
+        },
+      };
+
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockWithPending as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-pending"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      const disabledBtn = await screen.findByRole('button', { name: /Alteração em andamento/i });
+      expect(disabledBtn).toBeInTheDocument();
+      expect(disabledBtn).toBeDisabled();
+      expect(disabledBtn).toHaveAttribute(
+        'title',
+        'Já existe uma alteração de assinatura em andamento.'
+      );
+    });
+
+    it('36.4) clique em "Gerenciar adicionais" abre modal com quantidade atual pré-carregada e touch targets >= 44px', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryEssential as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      const addonBtn = await screen.findByRole('button', { name: /Gerenciar adicionais/i });
+      await userEvent.click(addonBtn);
+
+      expect(await screen.findByRole('heading', { level: 3, name: 'Gerenciar Membros Adicionais' })).toBeInTheDocument();
+      expect(screen.getByText('60 membros (2 blocos)')).toBeInTheDocument();
+      expect(screen.getByText('2 blocos')).toBeInTheDocument();
+
+      const minusBtn = screen.getByRole('button', { name: 'Diminuir blocos adicionais' });
+      const plusBtn = screen.getByRole('button', { name: 'Aumentar blocos adicionais' });
+
+      expect(minusBtn).toHaveStyle({ minWidth: '44px', minHeight: '44px' });
+      expect(plusBtn).toHaveStyle({ minWidth: '44px', minHeight: '44px' });
+    });
+
+    it('36.5) stepper restringe blocos ao intervalo [0, maxMemberAddonBlocks]', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryEssential as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      vi.spyOn(api, 'getBillingPreview').mockResolvedValue({
+        planId: 'essential',
+        planName: 'Essential',
+        interval: 'monthly',
+        addonBlocks: 3,
+        effectiveMembersQuota: 70,
+        effectiveSongsQuota: 200,
+        basePriceCents: 3490,
+        addonsPriceCents: 2970,
+        totalPriceCents: 6460,
+        fullMonthlyEquivalentCents: 6460,
+        annualSavingsCents: 0,
+        currency: 'BRL',
+        currentPlanId: 'essential',
+        isDowngrade: false,
+      });
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await userEvent.click(await screen.findByRole('button', { name: /Gerenciar adicionais/i }));
+
+      const minusBtn = screen.getByRole('button', { name: 'Diminuir blocos adicionais' });
+      const plusBtn = screen.getByRole('button', { name: 'Aumentar blocos adicionais' });
+
+      // Essential maxMemberAddonBlocks = 4, inicial = 2
+      await userEvent.click(plusBtn); // 3
+      await userEvent.click(plusBtn); // 4 (máx)
+
+      expect(screen.getByText('4 blocos')).toBeInTheDocument();
+      expect(plusBtn).toBeDisabled();
+
+      // Decrementar até 0
+      await userEvent.click(minusBtn); // 3
+      await userEvent.click(minusBtn); // 2
+      await userEvent.click(minusBtn); // 1
+      await userEvent.click(minusBtn); // 0 (mín)
+
+      expect(screen.getByText('0 blocos')).toBeInTheDocument();
+      expect(minusBtn).toBeDisabled();
+    });
+
+    it('36.6) alteração de blocos consome prévia autorizada do backend (GET /billing/preview)', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryEssential as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      const previewSpy = vi.spyOn(api, 'getBillingPreview').mockResolvedValue({
+        planId: 'essential',
+        planName: 'Essential',
+        interval: 'monthly',
+        addonBlocks: 3,
+        effectiveMembersQuota: 70,
+        effectiveSongsQuota: 200,
+        basePriceCents: 3490,
+        addonsPriceCents: 2970,
+        totalPriceCents: 6460,
+        fullMonthlyEquivalentCents: 6460,
+        annualSavingsCents: 0,
+        currency: 'BRL',
+        currentPlanId: 'essential',
+        isDowngrade: false,
+      });
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await userEvent.click(await screen.findByRole('button', { name: /Gerenciar adicionais/i }));
+      await userEvent.click(screen.getByRole('button', { name: 'Aumentar blocos adicionais' }));
+
+      expect(previewSpy).toHaveBeenCalledWith('min-admin', 'essential', 'monthly', 3);
+    });
+
+    it('36.7) prévia reflete acréscimo de membros (direction: increase, próximo ciclo)', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryEssential as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      vi.spyOn(api, 'getBillingPreview').mockResolvedValue({
+        planId: 'essential',
+        planName: 'Essential',
+        interval: 'monthly',
+        addonBlocks: 3,
+        effectiveMembersQuota: 70,
+        effectiveSongsQuota: 200,
+        basePriceCents: 3490,
+        addonsPriceCents: 2970,
+        totalPriceCents: 6460,
+        fullMonthlyEquivalentCents: 6460,
+        annualSavingsCents: 0,
+        currency: 'BRL',
+        currentPlanId: 'essential',
+        isDowngrade: false,
+      });
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await userEvent.click(await screen.findByRole('button', { name: /Gerenciar adicionais/i }));
+      await userEvent.click(screen.getByRole('button', { name: 'Aumentar blocos adicionais' }));
+
+      expect(
+        await screen.findByText(
+          'Acréscimo de 10 membros adicionais. A alteração será agendada e entrará em vigor no próximo ciclo de faturamento.'
+        )
+      ).toBeInTheDocument();
+
+      const submitBtn = screen.getByRole('button', { name: 'Prosseguir para Pagamento' });
+      expect(submitBtn).toBeEnabled();
+    });
+
+    it('36.8) prévia reflete redução de membros (direction: decrease, término do período)', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryEssential as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      vi.spyOn(api, 'getBillingPreview').mockResolvedValue({
+        planId: 'essential',
+        planName: 'Essential',
+        interval: 'monthly',
+        addonBlocks: 1,
+        effectiveMembersQuota: 50,
+        effectiveSongsQuota: 200,
+        basePriceCents: 3490,
+        addonsPriceCents: 990,
+        totalPriceCents: 4480,
+        fullMonthlyEquivalentCents: 4480,
+        annualSavingsCents: 0,
+        currency: 'BRL',
+        currentPlanId: 'essential',
+        isDowngrade: false,
+        downgradeImpact: {
+          isOverLimit: false,
+          membersOver: false,
+          songsOver: false,
+          gracePeriodDays: 7,
+        },
+      });
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await userEvent.click(await screen.findByRole('button', { name: /Gerenciar adicionais/i }));
+      await userEvent.click(screen.getByRole('button', { name: 'Diminuir blocos adicionais' }));
+
+      expect(
+        await screen.findByText(
+          'Redução de 10 membros adicionais. A alteração será aplicada no término do período vigente.'
+        )
+      ).toBeInTheDocument();
+
+      const submitBtn = screen.getByRole('button', { name: 'Confirmar alteração' });
+      expect(submitBtn).toBeEnabled();
+    });
+
+    it('36.9) redução de membros com ocupação acima da nova cota exibe alerta de limite (downgrade capacity warning)', async () => {
+      const mockSummaryHighUsage = {
+        ...mockSummaryEssential,
+        usage: { membersCount: 45, songsCount: 115 },
+      };
+
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryHighUsage as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      vi.spyOn(api, 'getBillingPreview').mockResolvedValue({
+        planId: 'essential',
+        planName: 'Essential',
+        interval: 'monthly',
+        addonBlocks: 0,
+        effectiveMembersQuota: 40,
+        effectiveSongsQuota: 200,
+        basePriceCents: 3490,
+        addonsPriceCents: 0,
+        totalPriceCents: 3490,
+        fullMonthlyEquivalentCents: 3490,
+        annualSavingsCents: 0,
+        currency: 'BRL',
+        currentPlanId: 'essential',
+        isDowngrade: false,
+        downgradeImpact: {
+          isOverLimit: true,
+          membersOver: true,
+          songsOver: false,
+          gracePeriodDays: 7,
+        },
+      });
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await userEvent.click(await screen.findByRole('button', { name: /Gerenciar adicionais/i }));
+      // Diminuir de 2 para 0 blocos
+      await userEvent.click(screen.getByRole('button', { name: 'Diminuir blocos adicionais' }));
+      await userEvent.click(screen.getByRole('button', { name: 'Diminuir blocos adicionais' }));
+
+      const alert = await screen.findByRole('alert');
+      expect(alert).toBeInTheDocument();
+      expect(alert).toHaveTextContent(/Atenção ao limite de integrantes: seu ministério possui 45 integrantes e a nova capacidade será 40 integrantes/i);
+    });
+
+    it('36.10) submissão de alteração de adicionais cria checkout e persiste CheckoutIntent com expectedAddonBlocks', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryEssential as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      vi.spyOn(api, 'getBillingPreview').mockResolvedValue({
+        planId: 'essential',
+        planName: 'Essential',
+        interval: 'monthly',
+        addonBlocks: 3,
+        effectiveMembersQuota: 70,
+        effectiveSongsQuota: 200,
+        basePriceCents: 3490,
+        addonsPriceCents: 2970,
+        totalPriceCents: 6460,
+        fullMonthlyEquivalentCents: 6460,
+        annualSavingsCents: 0,
+        currency: 'BRL',
+        currentPlanId: 'essential',
+        isDowngrade: false,
+      });
+
+      const checkoutSpy = vi.spyOn(api, 'createBillingCheckout').mockResolvedValue({
+        checkoutUrl: 'https://sandbox.asaas.com/c/addon_checkout_123',
+        checkoutId: 'chk_addon_123',
+        expiresAt: null,
+        totalPriceCents: 6460,
+        currency: 'BRL',
+      });
+
+      delete (window as any).location;
+      (window as any).location = { href: '' };
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await userEvent.click(await screen.findByRole('button', { name: /Gerenciar adicionais/i }));
+      await userEvent.click(screen.getByRole('button', { name: 'Aumentar blocos adicionais' }));
+
+      const submitBtn = await screen.findByRole('button', { name: 'Prosseguir para Pagamento' });
+      await userEvent.click(submitBtn);
+
+      expect(checkoutSpy).toHaveBeenCalledWith('min-admin', {
+        planId: 'essential',
+        interval: 'monthly',
+        addonBlocks: 3,
+      });
+
+      const rawIntent = sessionStorage.getItem('louvaio_checkout_intent');
+      expect(rawIntent).not.toBeNull();
+      const parsedIntent = JSON.parse(rawIntent!);
+      expect(parsedIntent.ministryId).toBe('min-admin');
+      expect(parsedIntent.expectedPlanId).toBe('essential');
+      expect(parsedIntent.expectedInterval).toBe('monthly');
+      expect(parsedIntent.expectedAddonBlocks).toBe(3);
+    });
+
+    it('36.11) botão de submissão permanece desabilitado quando a quantidade alvo é igual à quantidade atual (prevenção de no-op)', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryEssential as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await userEvent.click(await screen.findByRole('button', { name: /Gerenciar adicionais/i }));
+
+      const submitBtn = screen.getByRole('button', { name: 'Selecione uma quantidade diferente' });
+      expect(submitBtn).toBeDisabled();
+      expect(
+        screen.getByText('A quantidade selecionada é igual à atual. Ajuste os blocos para prosseguir.')
+      ).toBeInTheDocument();
+    });
+
+    it('36.12) modal de adicionais fecha com botão Cancelar, backdrop e tecla Escape sem mutações', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryEssential as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      // Abrir modal
+      await userEvent.click(await screen.findByRole('button', { name: /Gerenciar adicionais/i }));
+      expect(await screen.findByRole('heading', { level: 3, name: 'Gerenciar Membros Adicionais' })).toBeInTheDocument();
+
+      // Fechar com botão Cancelar
+      await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }));
+      expect(screen.queryByRole('heading', { level: 3, name: 'Gerenciar Membros Adicionais' })).not.toBeInTheDocument();
+
+      // Reabrir e fechar com Escape
+      await userEvent.click(screen.getByRole('button', { name: /Gerenciar adicionais/i }));
+      expect(await screen.findByRole('heading', { level: 3, name: 'Gerenciar Membros Adicionais' })).toBeInTheDocument();
+
+      await userEvent.keyboard('{Escape}');
+      expect(screen.queryByRole('heading', { level: 3, name: 'Gerenciar Membros Adicionais' })).not.toBeInTheDocument();
+    });
+
+    it('37.1) alternância de ministério ou rebaixamento de papel fecha modal aberto e aplica modo somente leitura', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryEssential as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      const { rerender } = render(
+        <SubscriptionPlanView
+          ministryId="min-admin-a"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      // Admin no ministério A abre o modal
+      await userEvent.click(await screen.findByRole('button', { name: /Gerenciar adicionais/i }));
+      expect(await screen.findByRole('heading', { level: 3, name: 'Gerenciar Membros Adicionais' })).toBeInTheDocument();
+
+      // Alternância para ministério B onde o usuário é apenas membro (canManageBilling={false})
+      rerender(
+        <SubscriptionPlanView
+          ministryId="min-member-b"
+          canManageBilling={false}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      // Modal fecha imediatamente e entra em modo somente leitura
+      expect(screen.queryByRole('heading', { level: 3, name: 'Gerenciar Membros Adicionais' })).not.toBeInTheDocument();
+      expect(
+        await screen.findByText('Somente administradores do ministério podem alterar a assinatura.')
+      ).toBeInTheDocument();
+    });
+  });
 });

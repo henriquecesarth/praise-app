@@ -378,6 +378,7 @@ export function MinistryView({
     return (
       <SubscriptionPlanView
         ministryId={activeMinistry.id}
+        canManageBilling={userRole === 'admin'}
         onBack={() => navigateSection()}
         showToast={showToast}
       />

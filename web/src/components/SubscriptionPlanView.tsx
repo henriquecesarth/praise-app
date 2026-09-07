@@ -34,6 +34,7 @@ import {
 
 interface Props {
   ministryId: string;
+  canManageBilling?: boolean;
   onBack: () => void;
   showToast?: (msg: string, type?: 'success' | 'error') => void;
 }
@@ -49,7 +50,12 @@ interface CheckoutIntent {
 
 const CHECKOUT_INTENT_KEY = 'louvaio_checkout_intent';
 
-export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, showToast }) => {
+export const SubscriptionPlanView: React.FC<Props> = ({
+  ministryId,
+  canManageBilling = true,
+  onBack,
+  showToast,
+}) => {
   const [summary, setSummary] = useState<MinistrySubscriptionSummary | null>(null);
   const [plansData, setPlansData] = useState<PlansResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -72,6 +78,13 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
   const [historyTransactions, setHistoryTransactions] = useState<BillingTransactionRecord[]>([]);
   const [historyLoading, setHistoryLoading] = useState<boolean>(false);
   const [actionLoading, setActionLoading] = useState<boolean>(false);
+
+  // Addon Management Modal State
+  const [showAddonModal, setShowAddonModal] = useState<boolean>(false);
+  const [addonTargetBlocks, setAddonTargetBlocks] = useState<number>(0);
+  const [addonPreviewData, setAddonPreviewData] = useState<CheckoutPreviewResult | null>(null);
+  const [addonPreviewLoading, setAddonPreviewLoading] = useState<boolean>(false);
+  const [addonCheckoutLoading, setAddonCheckoutLoading] = useState<boolean>(false);
 
   // Post-Checkout Polling State
   const [postCheckoutProcessing, setPostCheckoutProcessing] = useState<boolean>(false);
@@ -103,6 +116,16 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
     }
   }, [ministryId]);
 
+  // Se as permissões mudarem para não-admin enquanto montado, fechar modais de mutação
+  useEffect(() => {
+    if (!canManageBilling) {
+      setShowCancelModal(false);
+      setShowAddonModal(false);
+      setPreviewPlan(null);
+      setPreviewData(null);
+    }
+  }, [canManageBilling]);
+
   // Carregamento inicial, isolamento de tenant e detecção de retorno pós-checkout
   useEffect(() => {
     // 1. Limpar rigorosamente todos os estados prévios ao trocar de ministério
@@ -112,6 +135,11 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
     setHistoryTransactions([]);
     setShowCancelModal(false);
     setShowHistoryModal(false);
+    setShowAddonModal(false);
+    setAddonTargetBlocks(0);
+    setAddonPreviewData(null);
+    setAddonPreviewLoading(false);
+    setAddonCheckoutLoading(false);
     setError(null);
     setPostCheckoutProcessing(false);
 
@@ -282,12 +310,15 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
         if (showHistoryModal) {
           setShowHistoryModal(false);
         }
+        if (showAddonModal) {
+          setShowAddonModal(false);
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [previewPlan, showCancelModal, showHistoryModal]);
+  }, [previewPlan, showCancelModal, showHistoryModal, showAddonModal]);
 
   // Formatação monetária BRL oficial
   const formatCents = (cents?: number) => {
@@ -452,6 +483,11 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
 
   // Abre modal de preview de checkout consumindo cálculo do backend
   const handleOpenCheckoutPreview = async (targetPlan: PlanDefinition) => {
+    if (!canManageBilling) {
+      showToast?.('Somente administradores do ministério podem alterar a assinatura.', 'error');
+      return;
+    }
+
     const currentPlanId = summary?.plan?.id;
     const currentInterval = summary?.subscription?.billingInterval ?? 'monthly';
     if (targetPlan.id === currentPlanId && currentInterval === 'annual' && interval === 'monthly') {
@@ -475,6 +511,10 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
 
   // Inicia o checkout com persistência segura de intenção e redirect
   const handleStartCheckout = async () => {
+    if (!canManageBilling) {
+      showToast?.('Somente administradores do ministério podem alterar a assinatura.', 'error');
+      return;
+    }
     if (!previewPlan) return;
 
     const currentPlanId = summary?.plan?.id;
@@ -544,6 +584,10 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
 
   // Cancelar renovação da assinatura no fim do período vigente
   const handleConfirmCancel = async () => {
+    if (!canManageBilling) {
+      showToast?.('Somente administradores do ministério podem alterar a assinatura.', 'error');
+      return;
+    }
     setCancelLoading(true);
     try {
       await api.cancelBillingSubscription(ministryId);
@@ -559,6 +603,10 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
 
   // Reativar assinatura com chamada ao endpoint backend
   const handleReactivateSubscription = async () => {
+    if (!canManageBilling) {
+      showToast?.('Somente administradores do ministério podem alterar a assinatura.', 'error');
+      return;
+    }
     setActionLoading(true);
     try {
       await api.reactivateBillingSubscription(ministryId);
@@ -568,6 +616,95 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
       showToast?.(err.message || 'Erro ao reativar assinatura', 'error');
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  // Abrir modal de gerenciamento de membros adicionais
+  const handleOpenAddonModal = () => {
+    if (!canManageBilling) {
+      showToast?.('Somente administradores do ministério podem alterar a assinatura.', 'error');
+      return;
+    }
+    if (summary?.pendingTransition) {
+      showToast?.('Já existe uma alteração de assinatura em andamento.', 'error');
+      return;
+    }
+    const currentBlocks = summary?.subscription?.memberAddonBlocks || 0;
+    setAddonTargetBlocks(currentBlocks);
+    setAddonPreviewData(null);
+    setAddonPreviewLoading(false);
+    setShowAddonModal(true);
+  };
+
+  // Alterar blocos adicionais no modal e buscar prévia do backend
+  const handleUpdateAddonTargetBlocks = async (newBlocks: number) => {
+    if (!canManageBilling || summary?.pendingTransition || !summary?.plan) return;
+    const bounded = Math.max(0, Math.min(summary.plan.maxMemberAddonBlocks, newBlocks));
+    setAddonTargetBlocks(bounded);
+
+    const currentBlocks = summary.subscription.memberAddonBlocks || 0;
+    if (bounded === currentBlocks) {
+      setAddonPreviewData(null);
+      setAddonPreviewLoading(false);
+      return;
+    }
+
+    setAddonPreviewLoading(true);
+    try {
+      const preview = await api.getBillingPreview(
+        ministryId,
+        summary.plan.id,
+        summary.subscription.billingInterval || 'monthly',
+        bounded
+      );
+      setAddonPreviewData(preview);
+    } catch (err: any) {
+      showToast?.(err.message || 'Erro ao carregar prévia dos adicionais', 'error');
+      setAddonPreviewData(null);
+    } finally {
+      setAddonPreviewLoading(false);
+    }
+  };
+
+  // Confirmar alteração de adicionais via checkout
+  const handleConfirmAddonCheckout = async () => {
+    if (!canManageBilling || summary?.pendingTransition || !summary?.plan) return;
+    const currentBlocks = summary.subscription.memberAddonBlocks || 0;
+    if (addonTargetBlocks === currentBlocks) return;
+
+    setAddonCheckoutLoading(true);
+    const billingInterval = summary.subscription.billingInterval || 'monthly';
+    try {
+      const result = await api.createBillingCheckout(ministryId, {
+        planId: summary.plan.id,
+        interval: billingInterval,
+        addonBlocks: addonTargetBlocks,
+      });
+
+      const intent: CheckoutIntent = {
+        ministryId,
+        expectedPlanId: summary.plan.id,
+        expectedInterval: billingInterval,
+        expectedAddonBlocks: addonTargetBlocks,
+        timestamp: Date.now(),
+        expiresAt: result.expiresAt || null,
+      };
+
+      try {
+        sessionStorage.setItem(CHECKOUT_INTENT_KEY, JSON.stringify(intent));
+      } catch (e) {
+        console.warn('Não foi possível gravar intenção de checkout no sessionStorage:', e);
+      }
+
+      if (result.checkoutUrl) {
+        showToast?.('Redirecionando para o checkout seguro...', 'success');
+        window.location.href = result.checkoutUrl;
+      }
+    } catch (err: any) {
+      sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
+      showToast?.(err.message || 'Erro ao processar alteração de adicionais', 'error');
+    } finally {
+      setAddonCheckoutLoading(false);
     }
   };
 
@@ -886,15 +1023,17 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
             </div>
           </div>
 
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={handleReactivateSubscription}
-            disabled={actionLoading}
-            style={{ fontSize: '0.85rem', padding: '6px 14px' }}
-          >
-            {actionLoading ? 'Processando...' : 'Reativar Assinatura'}
-          </button>
+          {canManageBilling && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={handleReactivateSubscription}
+              disabled={actionLoading}
+              style={{ fontSize: '0.85rem', padding: '6px 14px' }}
+            >
+              {actionLoading ? 'Processando...' : 'Reativar Assinatura'}
+            </button>
+          )}
         </div>
       )}
 
@@ -1226,24 +1365,84 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
               </div>
             )}
 
-            {plan.id !== 'free' && subscription.subscriptionMode !== 'complimentary' && !subscription.cancelAtPeriodEnd && (
-              <button
-                type="button"
-                onClick={() => setShowCancelModal(true)}
-                disabled={actionLoading}
-                style={{
-                  background: 'none',
-                  border: '1px solid rgba(255, 255, 255, 0.1)',
-                  color: 'var(--text-secondary, #A0AAB0)',
-                  fontSize: '0.8rem',
-                  padding: '6px 10px',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                }}
-              >
-                Cancelar assinatura
-              </button>
-            )}
+            {/* Gerenciar Adicionais (Apenas Essential e Pro pagos para administradores) */}
+            {canManageBilling &&
+              plan.allowMemberAddons &&
+              plan.maxMemberAddonBlocks > 0 &&
+              plan.id !== 'free' &&
+              subscription.subscriptionMode === 'paid' &&
+              !subscription.administrativelySuspended &&
+              subscription.accessMode !== 'suspended' &&
+              !subscription.cancelAtPeriodEnd && (
+                summary?.pendingTransition ? (
+                  <button
+                    type="button"
+                    disabled
+                    title="Já existe uma alteração de assinatura em andamento."
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      background: 'rgba(255, 255, 255, 0.03)',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      color: 'var(--text-muted, #7D8881)',
+                      fontSize: '0.8rem',
+                      padding: '6px 12px',
+                      borderRadius: '6px',
+                      cursor: 'not-allowed',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <Users size={14} />
+                    <span>Alteração em andamento</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleOpenAddonModal}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      background: 'rgba(255, 255, 255, 0.06)',
+                      border: '1px solid var(--border-color, #2D3A34)',
+                      color: 'var(--text-primary, #F5EFE6)',
+                      fontSize: '0.8rem',
+                      padding: '6px 12px',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <Users size={14} />
+                    <span>Gerenciar adicionais</span>
+                  </button>
+                )
+              )}
+
+            {/* Cancelar Assinatura (Apenas Admin) */}
+            {canManageBilling &&
+              plan.id !== 'free' &&
+              subscription.subscriptionMode !== 'complimentary' &&
+              !subscription.cancelAtPeriodEnd &&
+              !summary?.pendingTransition && (
+                <button
+                  type="button"
+                  onClick={() => setShowCancelModal(true)}
+                  disabled={actionLoading}
+                  style={{
+                    background: 'none',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    color: 'var(--text-secondary, #A0AAB0)',
+                    fontSize: '0.8rem',
+                    padding: '6px 10px',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancelar assinatura
+                </button>
+              )}
           </div>
         </div>
 
@@ -1458,6 +1657,27 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
           </div>
         </div>
 
+        {!canManageBilling && (
+          <div
+            role="note"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '10px 14px',
+              borderRadius: '8px',
+              background: 'rgba(255, 255, 255, 0.04)',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+              fontSize: '0.85rem',
+              color: 'var(--text-secondary, #A0AAB0)',
+              marginBottom: '16px',
+            }}
+          >
+            <ShieldAlert size={16} color="var(--text-muted, #7D8881)" />
+            <span>Somente administradores do ministério podem alterar a assinatura.</span>
+          </div>
+        )}
+
         <div
           style={{
             display: 'grid',
@@ -1609,7 +1829,7 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
                         <button
                           type="button"
                           aria-label="Diminuir bloco de integrantes"
-                          disabled={addonBlocks <= 0}
+                          disabled={!canManageBilling || addonBlocks <= 0}
                           onClick={() =>
                             setSelectedAddonBlocks((prev) => ({
                               ...prev,
@@ -1626,8 +1846,8 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            cursor: addonBlocks <= 0 ? 'not-allowed' : 'pointer',
-                            opacity: addonBlocks <= 0 ? 0.4 : 1,
+                            cursor: !canManageBilling || addonBlocks <= 0 ? 'not-allowed' : 'pointer',
+                            opacity: !canManageBilling || addonBlocks <= 0 ? 0.4 : 1,
                           }}
                         >
                           <Minus size={14} />
@@ -1638,6 +1858,7 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
                           min={0}
                           max={p.maxMemberAddonBlocks}
                           value={addonBlocks}
+                          disabled={!canManageBilling}
                           aria-label={`Blocos adicionais para ${p.name}`}
                           onChange={(e) =>
                             setSelectedAddonBlocks((prev) => ({
@@ -1645,13 +1866,18 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
                               [p.id]: parseInt(e.target.value, 10),
                             }))
                           }
-                          style={{ flex: 1, accentColor: 'var(--louvaio-terracotta, #B85A3C)' }}
+                          style={{
+                            flex: 1,
+                            accentColor: 'var(--louvaio-terracotta, #B85A3C)',
+                            cursor: !canManageBilling ? 'not-allowed' : 'pointer',
+                            opacity: !canManageBilling ? 0.6 : 1,
+                          }}
                         />
 
                         <button
                           type="button"
                           aria-label="Aumentar bloco de integrantes"
-                          disabled={addonBlocks >= p.maxMemberAddonBlocks}
+                          disabled={!canManageBilling || addonBlocks >= p.maxMemberAddonBlocks}
                           onClick={() =>
                             setSelectedAddonBlocks((prev) => ({
                               ...prev,
@@ -1668,8 +1894,8 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            cursor: addonBlocks >= p.maxMemberAddonBlocks ? 'not-allowed' : 'pointer',
-                            opacity: addonBlocks >= p.maxMemberAddonBlocks ? 0.4 : 1,
+                            cursor: !canManageBilling || addonBlocks >= p.maxMemberAddonBlocks ? 'not-allowed' : 'pointer',
+                            opacity: !canManageBilling || addonBlocks >= p.maxMemberAddonBlocks ? 0.4 : 1,
                           }}
                         >
                           <Plus size={14} />
@@ -1706,6 +1932,25 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
                       }}
                     >
                       Plano atual
+                    </button>
+                  ) : !canManageBilling ? (
+                    <button
+                      type="button"
+                      disabled
+                      style={{
+                        width: '100%',
+                        padding: '12px',
+                        borderRadius: '10px',
+                        background: 'rgba(255, 255, 255, 0.03)',
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        color: 'var(--text-muted, #7D8881)',
+                        fontWeight: 600,
+                        fontSize: '0.85rem',
+                        cursor: 'not-allowed',
+                      }}
+                      title="Somente administradores do ministério podem alterar a assinatura."
+                    >
+                      Apenas administradores
                     </button>
                   ) : isTransitionBlocked ? (
                     <button
@@ -1929,7 +2174,7 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
                   <button
                     type="button"
                     onClick={handleStartCheckout}
-                    disabled={checkoutLoading}
+                    disabled={checkoutLoading || !canManageBilling}
                     className="btn btn-primary"
                     style={{
                       flex: 2,
@@ -1957,6 +2202,343 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
                 </div>
               </div>
             ) : null}
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Gerenciamento de Membros Adicionais */}
+      {showAddonModal && canManageBilling && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="addon-modal-title"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.75)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '16px',
+          }}
+          onClick={() => {
+            if (!addonCheckoutLoading) setShowAddonModal(false);
+          }}
+        >
+          <div
+            style={{
+              background: 'var(--surface-color, #1A2421)',
+              border: '1px solid var(--border-color, #2D3A34)',
+              borderRadius: '20px',
+              padding: '24px',
+              maxWidth: '520px',
+              width: '100%',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+              <div>
+                <h3
+                  id="addon-modal-title"
+                  style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-primary, #F5EFE6)' }}
+                >
+                  Gerenciar Membros Adicionais
+                </h3>
+                <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary, #A0AAB0)' }}>
+                  {plan.name} · Ciclo {subscription.billingInterval === 'annual' ? 'Anual' : 'Mensal'}
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Fechar modal de adicionais"
+                onClick={() => setShowAddonModal(false)}
+                disabled={addonCheckoutLoading}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-secondary, #A0AAB0)',
+                  cursor: 'pointer',
+                  padding: '4px',
+                }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Configuração atual vs nova */}
+            <div
+              style={{
+                background: 'var(--surface-variant, #23322D)',
+                borderRadius: '12px',
+                padding: '16px',
+                marginBottom: '16px',
+                border: '1px solid var(--border-color, #2D3A34)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted, #7D8881)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Capacidade Atual
+                </span>
+                <span style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary, #F5EFE6)' }}>
+                  {quotas.members} membros ({subscription.memberAddonBlocks || 0} {subscription.memberAddonBlocks === 1 ? 'bloco' : 'blocos'})
+                </span>
+              </div>
+
+              {/* Seletor de blocos alvo */}
+              <div>
+                <div style={{ fontSize: '0.8rem', color: '#F59E0B', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px', fontWeight: 700 }}>
+                  Nova Quantidade de Blocos
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                  <button
+                    type="button"
+                    aria-label="Diminuir blocos adicionais"
+                    disabled={addonTargetBlocks <= 0 || addonPreviewLoading || addonCheckoutLoading}
+                    onClick={() => handleUpdateAddonTargetBlocks(addonTargetBlocks - 1)}
+                    style={{
+                      minWidth: '44px',
+                      minHeight: '44px',
+                      borderRadius: '8px',
+                      background: 'rgba(255,255,255,0.08)',
+                      border: '1px solid var(--border-color, #2D3A34)',
+                      color: 'var(--text-primary, #F5EFE6)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: addonTargetBlocks <= 0 || addonPreviewLoading || addonCheckoutLoading ? 'not-allowed' : 'pointer',
+                      opacity: addonTargetBlocks <= 0 ? 0.4 : 1,
+                    }}
+                  >
+                    <Minus size={18} />
+                  </button>
+
+                  <div style={{ textAlign: 'center', flex: 1 }}>
+                    <div style={{ fontSize: '1.4rem', fontWeight: 900, color: 'var(--text-primary, #F5EFE6)' }}>
+                      {addonTargetBlocks} {addonTargetBlocks === 1 ? 'bloco' : 'blocos'}
+                    </div>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #A0AAB0)' }}>
+                      +{addonTargetBlocks * 10} membros adicionais ({typeof plan.baseMembers === 'number' ? plan.baseMembers + addonTargetBlocks * 10 : plan.baseMembers} membros no total)
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    aria-label="Aumentar blocos adicionais"
+                    disabled={addonTargetBlocks >= plan.maxMemberAddonBlocks || addonPreviewLoading || addonCheckoutLoading}
+                    onClick={() => handleUpdateAddonTargetBlocks(addonTargetBlocks + 1)}
+                    style={{
+                      minWidth: '44px',
+                      minHeight: '44px',
+                      borderRadius: '8px',
+                      background: 'rgba(255,255,255,0.08)',
+                      border: '1px solid var(--border-color, #2D3A34)',
+                      color: 'var(--text-primary, #F5EFE6)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: addonTargetBlocks >= plan.maxMemberAddonBlocks || addonPreviewLoading || addonCheckoutLoading ? 'not-allowed' : 'pointer',
+                      opacity: addonTargetBlocks >= plan.maxMemberAddonBlocks ? 0.4 : 1,
+                    }}
+                  >
+                    <Plus size={18} />
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted, #7D8881)', textAlign: 'center', marginTop: '10px' }}>
+                Limite máximo do plano {plan.name}: {plan.maxMemberAddonBlocks} blocos (+{plan.maxMemberAddonBlocks * 10} membros extras)
+              </div>
+            </div>
+
+            {/* Estado de mesma quantidade */}
+            {addonTargetBlocks === (subscription.memberAddonBlocks || 0) && (
+              <div
+                style={{
+                  padding: '12px 14px',
+                  borderRadius: '10px',
+                  background: 'rgba(255, 255, 255, 0.04)',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  fontSize: '0.85rem',
+                  color: 'var(--text-secondary, #A0AAB0)',
+                  marginBottom: '16px',
+                  textAlign: 'center',
+                }}
+              >
+                A quantidade selecionada é igual à atual. Ajuste os blocos para prosseguir.
+              </div>
+            )}
+
+            {/* Carregamento de Prévia */}
+            {addonPreviewLoading && (
+              <div style={{ textAlign: 'center', padding: '16px', color: 'var(--text-secondary, #A0AAB0)', fontSize: '0.85rem' }}>
+                <RefreshCw size={16} className="animate-spin" style={{ display: 'inline-block', marginRight: '6px' }} />
+                Calculando nova prévia...
+              </div>
+            )}
+
+            {/* Prévia Financeira Autorizada do Backend */}
+            {!addonPreviewLoading && addonPreviewData && addonTargetBlocks !== (subscription.memberAddonBlocks || 0) && (
+              <div style={{ marginBottom: '16px' }}>
+                <div
+                  style={{
+                    background: 'var(--surface-variant, #23322D)',
+                    borderRadius: '10px',
+                    padding: '12px 16px',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    marginBottom: '12px',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: 'var(--text-secondary, #A0AAB0)', marginBottom: '4px' }}>
+                    <span>Plano base ({plan.name}):</span>
+                    <span>{formatCents(addonPreviewData.basePriceCents)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: 'var(--text-secondary, #A0AAB0)', marginBottom: '8px' }}>
+                    <span>Adicionais ({addonTargetBlocks} blocos):</span>
+                    <span>{formatCents(addonPreviewData.addonsPriceCents)}</span>
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'baseline',
+                      borderTop: '1px solid rgba(255,255,255,0.1)',
+                      paddingTop: '8px',
+                    }}
+                  >
+                    <span style={{ fontWeight: 700, color: 'var(--text-primary, #F5EFE6)', fontSize: '0.95rem' }}>
+                      Novo Total:
+                    </span>
+                    <span style={{ fontWeight: 900, color: 'var(--text-primary, #F5EFE6)', fontSize: '1.2rem' }}>
+                      {formatCents(addonPreviewData.totalPriceCents)}
+                      <span style={{ fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-secondary, #A0AAB0)' }}>
+                        {subscription.billingInterval === 'annual' ? '/ano' : '/mês'}
+                      </span>
+                    </span>
+                  </div>
+                </div>
+
+                {addonTargetBlocks > (subscription.memberAddonBlocks || 0) ? (
+                  <div
+                    style={{
+                      padding: '10px 14px',
+                      borderRadius: '8px',
+                      background: 'rgba(16, 185, 129, 0.1)',
+                      border: '1px solid rgba(16, 185, 129, 0.3)',
+                      fontSize: '0.82rem',
+                      color: 'var(--text-primary, #F5EFE6)',
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    Acréscimo de {(addonTargetBlocks - (subscription.memberAddonBlocks || 0)) * 10} membros adicionais. A alteração será agendada e entrará em vigor no próximo ciclo de faturamento.
+                  </div>
+                ) : (
+                  <div>
+                    {(addonPreviewData.downgradeImpact?.membersOver || usage.membersCount > (typeof plan.baseMembers === 'number' ? plan.baseMembers + addonTargetBlocks * 10 : Infinity)) ? (
+                      <div
+                        role="alert"
+                        style={{
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: '10px',
+                          padding: '12px 14px',
+                          borderRadius: '8px',
+                          background: 'rgba(184, 90, 60, 0.15)',
+                          border: '1px solid var(--louvaio-terracotta, #B85A3C)',
+                          color: 'var(--text-primary, #F5EFE6)',
+                          fontSize: '0.82rem',
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        <AlertTriangle size={18} color="var(--louvaio-terracotta, #B85A3C)" style={{ flexShrink: 0, marginTop: '2px' }} />
+                        <div>
+                          <strong>Atenção ao limite de integrantes:</strong> seu ministério possui {usage.membersCount} integrantes e a nova capacidade será {typeof plan.baseMembers === 'number' ? plan.baseMembers + addonTargetBlocks * 10 : 0} integrantes. Nenhum integrante será apagado, mas novas adições serão bloqueadas após a carência.
+                        </div>
+                      </div>
+                    ) : (
+                      <div
+                        style={{
+                          padding: '10px 14px',
+                          borderRadius: '8px',
+                          background: 'rgba(217, 119, 6, 0.1)',
+                          border: '1px solid rgba(217, 119, 6, 0.3)',
+                          fontSize: '0.82rem',
+                          color: 'var(--text-primary, #F5EFE6)',
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        Redução de {((subscription.memberAddonBlocks || 0) - addonTargetBlocks) * 10} membros adicionais. A alteração será aplicada no término do período vigente.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Ações */}
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '20px' }}>
+              <button
+                type="button"
+                onClick={() => setShowAddonModal(false)}
+                disabled={addonCheckoutLoading}
+                style={{
+                  padding: '10px 18px',
+                  borderRadius: '10px',
+                  background: 'transparent',
+                  border: '1px solid var(--border-color, #2D3A34)',
+                  color: 'var(--text-secondary, #A0AAB0)',
+                  fontWeight: 600,
+                  fontSize: '0.9rem',
+                  cursor: addonCheckoutLoading ? 'not-allowed' : 'pointer',
+                  minHeight: '44px',
+                }}
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                onClick={handleConfirmAddonCheckout}
+                disabled={
+                  addonTargetBlocks === (subscription.memberAddonBlocks || 0) ||
+                  addonPreviewLoading ||
+                  addonCheckoutLoading
+                }
+                className="btn btn-primary"
+                style={{
+                  padding: '10px 20px',
+                  borderRadius: '10px',
+                  fontWeight: 700,
+                  fontSize: '0.9rem',
+                  minHeight: '44px',
+                  opacity:
+                    addonTargetBlocks === (subscription.memberAddonBlocks || 0) ||
+                    addonPreviewLoading ||
+                    addonCheckoutLoading
+                      ? 0.5
+                      : 1,
+                  cursor:
+                    addonTargetBlocks === (subscription.memberAddonBlocks || 0) ||
+                    addonPreviewLoading ||
+                    addonCheckoutLoading
+                      ? 'not-allowed'
+                      : 'pointer',
+                }}
+              >
+                {addonCheckoutLoading
+                  ? 'Processando...'
+                  : addonTargetBlocks === (subscription.memberAddonBlocks || 0)
+                  ? 'Selecione uma quantidade diferente'
+                  : addonTargetBlocks > (subscription.memberAddonBlocks || 0)
+                  ? 'Prosseguir para Pagamento'
+                  : 'Confirmar alteração'}
+              </button>
+            </div>
           </div>
         </div>
       )}
