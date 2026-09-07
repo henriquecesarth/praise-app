@@ -7,6 +7,8 @@ import {
   CheckoutPreviewResult,
   BillingTransactionRecord,
   PlanDefinition,
+  CustomerFacingTransitionKind,
+  CustomerFacingTransitionStatus,
 } from '../types';
 import { formatDatePtBR } from '../utils/locale';
 import {
@@ -146,10 +148,28 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
 
     // 3. Detectar retorno pós-checkout via query params ou intent pendente
     const urlParams = new URLSearchParams(window.location.search);
-    const isCheckoutSuccessUrl =
-      urlParams.get('checkout') === 'success' ||
-      urlParams.get('status') === 'success' ||
-      urlParams.get('billing') === 'success';
+    const checkoutStatus = urlParams.get('status') || urlParams.get('checkout') || urlParams.get('billing');
+    const isCheckoutSuccessUrl = checkoutStatus === 'success';
+    const isCheckoutCancelUrl = checkoutStatus === 'cancel';
+    const isCheckoutExpiredUrl = checkoutStatus === 'expired';
+
+    // 3a. Retorno com cancelamento explícito
+    if (isCheckoutCancelUrl) {
+      sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
+      const cleanUrl = window.location.pathname;
+      window.history.replaceState({}, '', cleanUrl);
+      showToast?.('Pagamento cancelado. Nenhuma alteração foi concluída.');
+      return;
+    }
+
+    // 3b. Retorno com link de pagamento expirado
+    if (isCheckoutExpiredUrl) {
+      sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
+      const cleanUrl = window.location.pathname;
+      window.history.replaceState({}, '', cleanUrl);
+      showToast?.('O link de pagamento expirou. Você pode tentar novamente.');
+      return;
+    }
 
     if (isCheckoutSuccessUrl || savedIntent) {
       setPostCheckoutProcessing(true);
@@ -168,7 +188,19 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
         const updated = await loadData(true);
 
         if (updated) {
-          // Validação semântica estrita: exige plano, intervalo, addons e status ativo
+          // 1. Atenção financeira ou revisão necessária detectada na transição pendente
+          if (updated.pendingTransition?.status === 'attention_required') {
+            if (pollingRef.current) window.clearInterval(pollingRef.current);
+            sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
+            setPostCheckoutProcessing(false);
+            showToast?.(
+              'Recebemos sua solicitação, mas ela precisa de revisão antes de ser concluída.',
+              'error'
+            );
+            return;
+          }
+
+          // 2. Validação de ativação imediata (convergência de planId ativo)
           const matchesPlan = savedIntent
             ? updated.plan.id === savedIntent.expectedPlanId
             : updated.plan.id !== 'free';
@@ -183,19 +215,37 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
               ? updated.subscription.memberAddonBlocks === savedIntent.expectedAddonBlocks
               : true;
 
-          const isSemanticallyConfirmed =
+          const isImmediateActiveConfirmed =
             updated.subscription.billingStatus === 'active' &&
             matchesPlan &&
             matchesInterval &&
             matchesAddons &&
             (updated.subscription.subscriptionMode === 'paid' || (savedIntent && savedIntent.expectedPlanId === 'free'));
 
-          if (isSemanticallyConfirmed) {
+          if (isImmediateActiveConfirmed) {
             if (pollingRef.current) window.clearInterval(pollingRef.current);
             sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
             setPostCheckoutProcessing(false);
             showToast?.('Assinatura confirmada com sucesso!', 'success');
             return;
+          }
+
+          // 3. Validação de transição agendada (paid-to-paid, downgrade, troca de ciclo)
+          const pending = updated.pendingTransition;
+          if (pending && pending.status === 'scheduled') {
+            const matchesPendingTarget = savedIntent
+              ? pending.target.planId === savedIntent.expectedPlanId &&
+                pending.target.interval === savedIntent.expectedInterval &&
+                pending.target.addonBlocks === (savedIntent.expectedAddonBlocks || 0)
+              : true;
+
+            if (matchesPendingTarget) {
+              if (pollingRef.current) window.clearInterval(pollingRef.current);
+              sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
+              setPostCheckoutProcessing(false);
+              showToast?.('Alteração agendada com sucesso!', 'success');
+              return;
+            }
           }
         }
 
@@ -249,6 +299,94 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
   const formatDateLocal = (dateStr?: string | null) => {
     if (!dateStr) return 'N/A';
     return formatDatePtBR(dateStr) || dateStr;
+  };
+
+  const getPlanDisplayName = (planId: string) => {
+    const found = plansData?.plans.find((p) => p.id === planId);
+    if (found) return found.name;
+    switch (planId) {
+      case 'free':
+        return 'Free';
+      case 'lite':
+        return 'Lite';
+      case 'lite_plus':
+        return 'Lite+';
+      case 'essential':
+        return 'Essential';
+      case 'pro':
+        return 'Pro';
+      case 'premium':
+        return 'Premium';
+      default:
+        return planId;
+    }
+  };
+
+  const getTransitionKindLabel = (kind: CustomerFacingTransitionKind): string => {
+    switch (kind) {
+      case 'initial_purchase':
+        return 'Assinatura inicial em andamento';
+      case 'plan_upgrade':
+        return 'Upgrade agendado';
+      case 'plan_downgrade':
+        return 'Alteração de plano agendada';
+      case 'interval_change':
+        return 'Alteração de ciclo agendada';
+      case 'addon_increase':
+        return 'Acréscimo de membros agendado';
+      case 'addon_decrease':
+        return 'Redução de membros agendada';
+      case 'cancel_to_free':
+        return 'Cancelamento agendado';
+      case 'mixed_change':
+      default:
+        return 'Alteração de assinatura agendada';
+    }
+  };
+
+  const getTransitionStatusInfo = (status: CustomerFacingTransitionStatus) => {
+    switch (status) {
+      case 'awaiting_payment':
+        return {
+          label: 'Aguardando confirmação do pagamento',
+          icon: Clock,
+          bg: 'rgba(217, 119, 6, 0.18)',
+          color: '#F59E0B',
+          border: '1px solid #D97706',
+        };
+      case 'processing':
+        return {
+          label: 'Processando alteração',
+          icon: RefreshCw,
+          bg: 'rgba(59, 130, 246, 0.18)',
+          color: '#60A5FA',
+          border: '1px solid #3B82F6',
+        };
+      case 'scheduled':
+        return {
+          label: 'Alteração agendada',
+          icon: Clock,
+          bg: 'rgba(217, 119, 6, 0.18)',
+          color: '#F59E0B',
+          border: '1px solid #D97706',
+        };
+      case 'attention_required':
+        return {
+          label: 'Revisão necessária',
+          icon: AlertTriangle,
+          bg: 'rgba(184, 90, 60, 0.18)',
+          color: 'var(--louvaio-terracotta, #B85A3C)',
+          border: '1px solid var(--louvaio-terracotta, #B85A3C)',
+        };
+      default:
+        return {
+          label: status,
+          icon: Clock,
+          bg: 'rgba(255, 255, 255, 0.1)',
+          color: 'var(--text-secondary, #A0AAB0)',
+          border: '1px solid rgba(255, 255, 255, 0.2)',
+        };
+    }
   };
 
   // Status helper
@@ -721,7 +859,7 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
       </div>
 
       {/* Banner de Cancelamento Agendado */}
-      {subscription.cancelAtPeriodEnd && (
+      {subscription.cancelAtPeriodEnd && !summary.pendingTransition && (
         <div
           style={{
             background: 'rgba(217, 119, 6, 0.15)',
@@ -815,6 +953,192 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
         </div>
       )}
 
+      {/* Card de Transição Pendente / Agendada */}
+      {summary.pendingTransition && (() => {
+        const pending = summary.pendingTransition;
+        const statusInfo = getTransitionStatusInfo(pending.status);
+        const TransitionStatusIcon = statusInfo.icon;
+        const isAttention = pending.status === 'attention_required';
+
+        return (
+          <section
+            aria-labelledby="pending-transition-heading"
+            style={{
+              background: 'var(--surface-color, #1A2421)',
+              borderRadius: '16px',
+              padding: '24px',
+              border: isAttention
+                ? '1px solid var(--louvaio-terracotta, #B85A3C)'
+                : '1px solid rgba(217, 119, 6, 0.5)',
+              marginBottom: '32px',
+              boxShadow: 'var(--brand-shadow, 0 12px 32px rgba(0,0,0,0.2))',
+            }}
+          >
+            {/* Header da Transição */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '12px',
+                marginBottom: '16px',
+              }}
+            >
+              <div>
+                <span
+                  style={{
+                    fontSize: '0.75rem',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.08em',
+                    fontWeight: 700,
+                    color: isAttention ? 'var(--louvaio-terracotta, #B85A3C)' : '#F59E0B',
+                  }}
+                >
+                  Solicitação em andamento
+                </span>
+                <h2
+                  id="pending-transition-heading"
+                  style={{
+                    margin: '4px 0 0 0',
+                    fontSize: '1.35rem',
+                    fontWeight: 800,
+                    color: 'var(--text-primary, #F5EFE6)',
+                  }}
+                >
+                  {getTransitionKindLabel(pending.kind)}
+                </h2>
+              </div>
+
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '6px 12px',
+                  borderRadius: '999px',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  background: statusInfo.bg,
+                  color: statusInfo.color,
+                  border: statusInfo.border,
+                }}
+              >
+                <TransitionStatusIcon size={14} aria-hidden="true" />
+                <span>{statusInfo.label}</span>
+              </span>
+            </div>
+
+            {/* Banner de Atenção se status === attention_required */}
+            {isAttention && (
+              <div
+                role="alert"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  background: 'rgba(184, 90, 60, 0.15)',
+                  border: '1px solid var(--louvaio-terracotta, #B85A3C)',
+                  borderRadius: '10px',
+                  padding: '12px 16px',
+                  marginBottom: '16px',
+                  color: 'var(--text-primary, #F5EFE6)',
+                  fontSize: '0.85rem',
+                }}
+              >
+                <AlertTriangle size={20} color="var(--louvaio-terracotta, #B85A3C)" style={{ flexShrink: 0 }} />
+                <span>Recebemos sua solicitação, mas ela precisa de revisão antes de ser concluída.</span>
+              </div>
+            )}
+
+            {/* Comparativo de Contratos (Source -> Target) */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+                gap: '16px',
+                marginBottom: '16px',
+              }}
+            >
+              {/* Contrato Atual (Source) */}
+              <div
+                style={{
+                  background: 'var(--surface-variant, #23322D)',
+                  borderRadius: '12px',
+                  padding: '14px 16px',
+                  border: '1px solid var(--border-color, #2D3A34)',
+                }}
+              >
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted, #7D8881)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>
+                  Contrato de Origem
+                </div>
+                <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary, #F5EFE6)' }}>
+                  {getPlanDisplayName(pending.source.planId)}
+                </div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #A0AAB0)', marginTop: '2px' }}>
+                  Ciclo: {pending.source.interval === 'annual' ? 'Anual' : 'Mensal'}
+                  {pending.source.addonBlocks > 0 && ` · +${pending.source.addonBlocks * 10} membros`}
+                </div>
+              </div>
+
+              {/* Contrato Futuro (Target) */}
+              <div
+                style={{
+                  background: 'var(--surface-variant, #23322D)',
+                  borderRadius: '12px',
+                  padding: '14px 16px',
+                  border: '1px solid rgba(217, 119, 6, 0.3)',
+                }}
+              >
+                <div style={{ fontSize: '0.75rem', color: '#F59E0B', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>
+                  Novo Contrato (Destino)
+                </div>
+                <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary, #F5EFE6)' }}>
+                  {getPlanDisplayName(pending.target.planId)}
+                </div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #A0AAB0)', marginTop: '2px' }}>
+                  Ciclo: {pending.target.interval === 'annual' ? 'Anual' : 'Mensal'}
+                  {pending.target.addonBlocks > 0 && ` · +${pending.target.addonBlocks * 10} membros`}
+                </div>
+              </div>
+            </div>
+
+            {/* Informações de Vigência e Preservação de Dados */}
+            <div
+              style={{
+                fontSize: '0.85rem',
+                color: 'var(--text-secondary, #A0AAB0)',
+                lineHeight: 1.5,
+                paddingTop: '8px',
+                borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+              }}
+            >
+              {pending.effectiveAt ? (
+                pending.kind === 'cancel_to_free' ? (
+                  <div>
+                    Seu plano atual permanece ativo até{' '}
+                    <strong style={{ color: 'var(--text-primary, #F5EFE6)' }}>
+                      {formatDateLocal(pending.effectiveAt)}
+                    </strong>
+                    . Nenhum dado será apagado do seu ministério. Músicas, escalas e integrantes continuam 100% preservados.
+                  </div>
+                ) : (
+                  <div>
+                    Entra em vigor em{' '}
+                    <strong style={{ color: 'var(--text-primary, #F5EFE6)' }}>
+                      {formatDateLocal(pending.effectiveAt)}
+                    </strong>
+                    . Até lá, você mantém o acesso integral aos recursos do seu plano atual.
+                  </div>
+                )
+              ) : (
+                <div>Entra em vigor assim que o pagamento for confirmado pelo gateway.</div>
+              )}
+            </div>
+          </section>
+        );
+      })()}
+
       {/* Card do Plano Atual */}
       <section
         aria-labelledby="current-plan-heading"
@@ -840,9 +1164,26 @@ export const SubscriptionPlanView: React.FC<Props> = ({ ministryId, onBack, show
             >
               Plano atual do seu ministério
             </span>
-            <h2 id="current-plan-heading" style={{ margin: '4px 0 0 0', fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary, #F5EFE6)' }}>
-              {plan.name}
-            </h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+              <h2 id="current-plan-heading" style={{ margin: 0, fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary, #F5EFE6)' }}>
+                {plan.name}
+              </h2>
+              {plan.id !== 'free' && subscription.billingInterval && (
+                <span
+                  style={{
+                    padding: '2px 8px',
+                    borderRadius: '6px',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    background: 'rgba(255, 255, 255, 0.08)',
+                    color: 'var(--text-secondary, #A0AAB0)',
+                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                  }}
+                >
+                  {subscription.billingInterval === 'annual' ? 'Anual' : 'Mensal'}
+                </span>
+              )}
+            </div>
             {subscription.currentPeriodStart && (
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted, #7D8881)', marginTop: '4px' }}>
                 Período atual: {formatDateLocal(subscription.currentPeriodStart)}

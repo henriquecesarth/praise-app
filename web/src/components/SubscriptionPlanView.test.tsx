@@ -93,11 +93,13 @@ describe('SubscriptionPlanView Component', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     sessionStorage.clear();
+    window.history.replaceState({}, '', '/');
   });
 
   afterEach(() => {
     vi.clearAllTimers();
     sessionStorage.clear();
+    window.history.replaceState({}, '', '/');
   });
 
   it('deve renderizar o plano atual, quotas, add-ons e os 6 planos disponíveis', async () => {
@@ -1191,6 +1193,546 @@ describe('SubscriptionPlanView Component', () => {
 
       // Polling deve ter finalizado com sucesso
       expect(mockShowToast).toHaveBeenCalledWith('Assinatura confirmada com sucesso!', 'success');
+      expect(sessionStorage.getItem('louvaio_checkout_intent')).toBeNull();
+
+      vi.useRealTimers();
+    });
+  });
+
+  describe('Phase 4A.2: Pending Transition Card Matrix (Section 41)', () => {
+    const createMockPendingTransition = (overrides: Record<string, any> = {}) => ({
+      transitionId: 'trans-pending-001',
+      kind: 'plan_upgrade',
+      status: 'scheduled',
+      requestedAt: '2026-09-01T10:00:00.000Z',
+      effectiveAt: '2026-09-30T12:00:00.000Z',
+      source: {
+        planId: 'lite',
+        interval: 'monthly',
+        addonBlocks: 0,
+      },
+      target: {
+        planId: 'essential',
+        interval: 'monthly',
+        addonBlocks: 0,
+      },
+      ...overrides,
+    });
+
+    it('41.1) deve renderizar "Assinatura inicial em andamento" para kind initial_purchase', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryFree,
+        pendingTransition: createMockPendingTransition({
+          kind: 'initial_purchase',
+          status: 'awaiting_payment',
+          source: { planId: 'free', interval: 'monthly', addonBlocks: 0 },
+          target: { planId: 'lite', interval: 'monthly', addonBlocks: 0 },
+          effectiveAt: null,
+        }),
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(<SubscriptionPlanView ministryId="min-123" onBack={mockOnBack} showToast={mockShowToast} />);
+
+      expect(await screen.findByRole('heading', { level: 2, name: 'Assinatura inicial em andamento' })).toBeInTheDocument();
+      expect(screen.getByText('Aguardando confirmação do pagamento')).toBeInTheDocument();
+      expect(screen.getByText(/assim que o pagamento for confirmado/i)).toBeInTheDocument();
+    });
+
+    it('41.2) deve renderizar "Upgrade agendado" para kind plan_upgrade', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryLitePaid,
+        pendingTransition: createMockPendingTransition({ kind: 'plan_upgrade' }),
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(<SubscriptionPlanView ministryId="min-123" onBack={mockOnBack} showToast={mockShowToast} />);
+
+      expect(await screen.findByRole('heading', { level: 2, name: 'Upgrade agendado' })).toBeInTheDocument();
+      expect(screen.getByText('Alteração agendada')).toBeInTheDocument();
+    });
+
+    it('41.3) deve renderizar "Alteração de plano agendada" para kind plan_downgrade', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryEssential,
+        pendingTransition: createMockPendingTransition({
+          kind: 'plan_downgrade',
+          source: { planId: 'essential', interval: 'monthly', addonBlocks: 0 },
+          target: { planId: 'lite', interval: 'monthly', addonBlocks: 0 },
+        }),
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(<SubscriptionPlanView ministryId="min-123" onBack={mockOnBack} showToast={mockShowToast} />);
+
+      expect(await screen.findByRole('heading', { level: 2, name: 'Alteração de plano agendada' })).toBeInTheDocument();
+    });
+
+    it('41.4) deve renderizar "Alteração de ciclo agendada" para kind interval_change', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryEssential,
+        pendingTransition: createMockPendingTransition({
+          kind: 'interval_change',
+          source: { planId: 'essential', interval: 'monthly', addonBlocks: 0 },
+          target: { planId: 'essential', interval: 'annual', addonBlocks: 0 },
+        }),
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(<SubscriptionPlanView ministryId="min-123" onBack={mockOnBack} showToast={mockShowToast} />);
+
+      expect(await screen.findByRole('heading', { level: 2, name: 'Alteração de ciclo agendada' })).toBeInTheDocument();
+    });
+
+    it('41.5) deve renderizar "Acréscimo de membros agendado" para kind addon_increase', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryEssential,
+        pendingTransition: createMockPendingTransition({
+          kind: 'addon_increase',
+          source: { planId: 'essential', interval: 'monthly', addonBlocks: 0 },
+          target: { planId: 'essential', interval: 'monthly', addonBlocks: 2 },
+        }),
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(<SubscriptionPlanView ministryId="min-123" onBack={mockOnBack} showToast={mockShowToast} />);
+
+      expect(await screen.findByRole('heading', { level: 2, name: 'Acréscimo de membros agendado' })).toBeInTheDocument();
+      expect(screen.getAllByText(/\+20 membros/).length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('41.6) deve renderizar "Redução de membros agendada" para kind addon_decrease', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryEssential,
+        pendingTransition: createMockPendingTransition({
+          kind: 'addon_decrease',
+          source: { planId: 'essential', interval: 'monthly', addonBlocks: 2 },
+          target: { planId: 'essential', interval: 'monthly', addonBlocks: 0 },
+        }),
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(<SubscriptionPlanView ministryId="min-123" onBack={mockOnBack} showToast={mockShowToast} />);
+
+      expect(await screen.findByRole('heading', { level: 2, name: 'Redução de membros agendada' })).toBeInTheDocument();
+    });
+
+    it('41.7) deve renderizar "Cancelamento agendado", vigência e garantia de preservação de dados para cancel_to_free', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryEssential,
+        subscription: {
+          ...mockSummaryEssential.subscription,
+          cancelAtPeriodEnd: true,
+          currentPeriodEnd: '2026-09-30T12:00:00.000Z',
+        },
+        pendingTransition: createMockPendingTransition({
+          kind: 'cancel_to_free',
+          status: 'scheduled',
+          source: { planId: 'essential', interval: 'monthly', addonBlocks: 0 },
+          target: { planId: 'free', interval: 'monthly', addonBlocks: 0 },
+          effectiveAt: '2026-09-30T12:00:00.000Z',
+        }),
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(<SubscriptionPlanView ministryId="min-123" onBack={mockOnBack} showToast={mockShowToast} />);
+
+      expect(await screen.findByRole('heading', { level: 2, name: 'Cancelamento agendado' })).toBeInTheDocument();
+      expect(screen.getByText(/Nenhum dado será apagado do seu ministério/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/30\/09\/2026/).length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('41.8) deve renderizar "Alteração de assinatura agendada" para kind mixed_change', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryEssential,
+        pendingTransition: createMockPendingTransition({
+          kind: 'mixed_change',
+          source: { planId: 'essential', interval: 'monthly', addonBlocks: 0 },
+          target: { planId: 'pro', interval: 'annual', addonBlocks: 1 },
+        }),
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(<SubscriptionPlanView ministryId="min-123" onBack={mockOnBack} showToast={mockShowToast} />);
+
+      expect(await screen.findByRole('heading', { level: 2, name: 'Alteração de assinatura agendada' })).toBeInTheDocument();
+    });
+
+    it('41.9) status processing: exibe "Processando alteração"', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryLitePaid,
+        pendingTransition: createMockPendingTransition({
+          status: 'processing',
+        }),
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(<SubscriptionPlanView ministryId="min-123" onBack={mockOnBack} showToast={mockShowToast} />);
+
+      expect(await screen.findByText('Processando alteração')).toBeInTheDocument();
+    });
+
+    it('41.10) status attention_required: exibe "Revisão necessária" e banner de aviso customer-safe', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryLitePaid,
+        pendingTransition: createMockPendingTransition({
+          status: 'attention_required',
+        }),
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(<SubscriptionPlanView ministryId="min-123" onBack={mockOnBack} showToast={mockShowToast} />);
+
+      expect(await screen.findByText('Revisão necessária')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Recebemos sua solicitação, mas ela precisa de revisão antes de ser concluída.'
+      );
+    });
+
+    it('41.11) snapshots de origem e destino exibem nomes dos planos e ciclos', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryLitePaid,
+        pendingTransition: createMockPendingTransition({
+          source: { planId: 'lite', interval: 'monthly', addonBlocks: 0 },
+          target: { planId: 'pro', interval: 'annual', addonBlocks: 3 },
+        }),
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(<SubscriptionPlanView ministryId="min-123" onBack={mockOnBack} showToast={mockShowToast} />);
+
+      expect(await screen.findByText('Contrato de Origem')).toBeInTheDocument();
+      expect(screen.getByText('Novo Contrato (Destino)')).toBeInTheDocument();
+      expect(screen.getByText(/\+30 membros/)).toBeInTheDocument();
+    });
+
+    it('41.12) quando pendingTransition for null, card de transição pendente NÃO é renderizado', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryEssential,
+        pendingTransition: null,
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(<SubscriptionPlanView ministryId="min-123" onBack={mockOnBack} showToast={mockShowToast} />);
+
+      expect(await screen.findByRole('heading', { level: 2, name: 'Essential' })).toBeInTheDocument();
+      expect(screen.queryByText('Solicitação em andamento')).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { level: 2, name: 'Upgrade agendado' })).not.toBeInTheDocument();
+    });
+
+    it('41.13) card do plano atual exibe indicador de ciclo Mensal e Anual', async () => {
+      // Teste com mensal
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryEssential,
+        subscription: {
+          ...mockSummaryEssential.subscription,
+          billingInterval: 'monthly',
+        },
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      const { unmount } = render(<SubscriptionPlanView ministryId="min-123" onBack={mockOnBack} showToast={mockShowToast} />);
+      expect(await screen.findByRole('heading', { level: 2, name: 'Essential' })).toBeInTheDocument();
+      expect(screen.getAllByText('Mensal').length).toBeGreaterThanOrEqual(2);
+      unmount();
+
+      // Teste com anual
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryEssential,
+        subscription: {
+          ...mockSummaryEssential.subscription,
+          billingInterval: 'annual',
+        },
+      } as any);
+
+      render(<SubscriptionPlanView ministryId="min-123" onBack={mockOnBack} showToast={mockShowToast} />);
+      expect(await screen.findByRole('heading', { level: 2, name: 'Essential' })).toBeInTheDocument();
+      expect(screen.getAllByText('Anual').length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  describe('Phase 4A.2: Checkout Return & Polling Matrix (Section 42)', () => {
+    it('42.1) convergência imediata: detecta novo planId ativo e encerra polling com "Assinatura confirmada com sucesso!"', async () => {
+      vi.useFakeTimers();
+
+      sessionStorage.setItem(
+        'louvaio_checkout_intent',
+        JSON.stringify({
+          ministryId: 'min-polling-42',
+          expectedPlanId: 'essential',
+          expectedInterval: 'monthly',
+          expectedAddonBlocks: 0,
+          timestamp: Date.now(),
+        })
+      );
+
+      const getSubSpy = vi.spyOn(api, 'getMinistrySubscription');
+      // Mount + tick 1: ainda Free
+      getSubSpy.mockResolvedValueOnce(mockSummaryFree as any);
+      // Tick 2: ativação confirmada Essential
+      getSubSpy.mockResolvedValueOnce({
+        ...mockSummaryEssential,
+        subscription: {
+          ...mockSummaryEssential.subscription,
+          planId: 'essential',
+          billingInterval: 'monthly',
+          memberAddonBlocks: 0,
+          billingStatus: 'active',
+          subscriptionMode: 'paid',
+        },
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(<SubscriptionPlanView ministryId="min-polling-42" onBack={mockOnBack} showToast={mockShowToast} />);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      expect(screen.getByText('Pagamento em processamento')).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2500);
+      });
+
+      expect(mockShowToast).toHaveBeenCalledWith('Assinatura confirmada com sucesso!', 'success');
+      expect(sessionStorage.getItem('louvaio_checkout_intent')).toBeNull();
+
+      vi.useRealTimers();
+    });
+
+    it('42.2) convergência agendada: planId permanece na origem mas pendingTransition atinge scheduled -> encerra com "Alteração agendada com sucesso!"', async () => {
+      vi.useFakeTimers();
+
+      sessionStorage.setItem(
+        'louvaio_checkout_intent',
+        JSON.stringify({
+          ministryId: 'min-polling-scheduled',
+          expectedPlanId: 'pro',
+          expectedInterval: 'monthly',
+          expectedAddonBlocks: 0,
+          timestamp: Date.now(),
+        })
+      );
+
+      const getSubSpy = vi.spyOn(api, 'getMinistrySubscription');
+      // Mount + tick 1: Essential sem pending
+      getSubSpy.mockResolvedValueOnce(mockSummaryEssential as any);
+      // Tick 2: Essential com pendingTransition Pro scheduled!
+      getSubSpy.mockResolvedValueOnce({
+        ...mockSummaryEssential,
+        pendingTransition: {
+          transitionId: 'trans-sched-002',
+          kind: 'plan_upgrade',
+          status: 'scheduled',
+          requestedAt: '2026-09-01T10:00:00.000Z',
+          effectiveAt: '2026-09-30T12:00:00.000Z',
+          source: { planId: 'essential', interval: 'monthly', addonBlocks: 0 },
+          target: { planId: 'pro', interval: 'monthly', addonBlocks: 0 },
+        },
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(<SubscriptionPlanView ministryId="min-polling-scheduled" onBack={mockOnBack} showToast={mockShowToast} />);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      expect(screen.getByText('Pagamento em processamento')).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2500);
+      });
+
+      expect(mockShowToast).toHaveBeenCalledWith('Alteração agendada com sucesso!', 'success');
+      expect(sessionStorage.getItem('louvaio_checkout_intent')).toBeNull();
+
+      vi.useRealTimers();
+    });
+
+    it('42.3) status attention_required encerra polling com aviso ao usuário', async () => {
+      vi.useFakeTimers();
+
+      sessionStorage.setItem(
+        'louvaio_checkout_intent',
+        JSON.stringify({
+          ministryId: 'min-polling-attention',
+          expectedPlanId: 'pro',
+          expectedInterval: 'monthly',
+          expectedAddonBlocks: 0,
+          timestamp: Date.now(),
+        })
+      );
+
+      const getSubSpy = vi.spyOn(api, 'getMinistrySubscription');
+      getSubSpy.mockResolvedValueOnce(mockSummaryEssential as any);
+      getSubSpy.mockResolvedValueOnce({
+        ...mockSummaryEssential,
+        pendingTransition: {
+          transitionId: 'trans-att-003',
+          kind: 'plan_upgrade',
+          status: 'attention_required',
+          requestedAt: '2026-09-01T10:00:00.000Z',
+          effectiveAt: '2026-09-30T12:00:00.000Z',
+          source: { planId: 'essential', interval: 'monthly', addonBlocks: 0 },
+          target: { planId: 'pro', interval: 'monthly', addonBlocks: 0 },
+        },
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(<SubscriptionPlanView ministryId="min-polling-attention" onBack={mockOnBack} showToast={mockShowToast} />);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2500);
+      });
+
+      expect(mockShowToast).toHaveBeenCalledWith(
+        'Recebemos sua solicitação, mas ela precisa de revisão antes de ser concluída.',
+        'error'
+      );
+      expect(sessionStorage.getItem('louvaio_checkout_intent')).toBeNull();
+
+      vi.useRealTimers();
+    });
+
+    it('42.4) retorno com ?status=cancel: não inicia polling, limpa intent, exibe toast e limpa URL', async () => {
+      window.history.pushState({}, '', '/ministerio/plano?status=cancel');
+      sessionStorage.setItem(
+        'louvaio_checkout_intent',
+        JSON.stringify({
+          ministryId: 'min-cancel-ret',
+          expectedPlanId: 'essential',
+          expectedInterval: 'monthly',
+          expectedAddonBlocks: 0,
+          timestamp: Date.now(),
+        })
+      );
+
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryFree as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(<SubscriptionPlanView ministryId="min-cancel-ret" onBack={mockOnBack} showToast={mockShowToast} />);
+
+      expect(mockShowToast).toHaveBeenCalledWith('Pagamento cancelado. Nenhuma alteração foi concluída.');
+      expect(sessionStorage.getItem('louvaio_checkout_intent')).toBeNull();
+      expect(window.location.search).toBe('');
+      expect(screen.queryByText('Pagamento em processamento')).not.toBeInTheDocument();
+    });
+
+    it('42.5) retorno com ?status=expired: não inicia polling, limpa intent, exibe toast e limpa URL', async () => {
+      window.history.pushState({}, '', '/ministerio/plano?status=expired');
+      sessionStorage.setItem(
+        'louvaio_checkout_intent',
+        JSON.stringify({
+          ministryId: 'min-expired-ret',
+          expectedPlanId: 'essential',
+          expectedInterval: 'monthly',
+          expectedAddonBlocks: 0,
+          timestamp: Date.now(),
+        })
+      );
+
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryFree as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(<SubscriptionPlanView ministryId="min-expired-ret" onBack={mockOnBack} showToast={mockShowToast} />);
+
+      expect(mockShowToast).toHaveBeenCalledWith('O link de pagamento expirou. Você pode tentar novamente.');
+      expect(sessionStorage.getItem('louvaio_checkout_intent')).toBeNull();
+      expect(window.location.search).toBe('');
+      expect(screen.queryByText('Pagamento em processamento')).not.toBeInTheDocument();
+    });
+
+    it('42.6) carga direta sem status param com intent expirada não inicia polling e remove intent', async () => {
+      sessionStorage.setItem(
+        'louvaio_checkout_intent',
+        JSON.stringify({
+          ministryId: 'min-stale',
+          expectedPlanId: 'essential',
+          expectedInterval: 'monthly',
+          expectedAddonBlocks: 0,
+          timestamp: Date.now() - 7200000, // 2 horas atrás (> 60 min)
+        })
+      );
+
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryFree as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(<SubscriptionPlanView ministryId="min-stale" onBack={mockOnBack} showToast={mockShowToast} />);
+
+      expect(sessionStorage.getItem('louvaio_checkout_intent')).toBeNull();
+      expect(screen.queryByText('Pagamento em processamento')).not.toBeInTheDocument();
+    });
+
+    it('42.7) intent de outro ministério é ignorada e descartada sem polling (tenant isolation)', async () => {
+      sessionStorage.setItem(
+        'louvaio_checkout_intent',
+        JSON.stringify({
+          ministryId: 'min-other-ministry',
+          expectedPlanId: 'pro',
+          expectedInterval: 'annual',
+          expectedAddonBlocks: 0,
+          timestamp: Date.now(),
+        })
+      );
+
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryFree as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(<SubscriptionPlanView ministryId="min-current-ministry" onBack={mockOnBack} showToast={mockShowToast} />);
+
+      expect(sessionStorage.getItem('louvaio_checkout_intent')).toBeNull();
+      expect(screen.queryByText('Pagamento em processamento')).not.toBeInTheDocument();
+    });
+
+    it('42.8) retorno com ?status=success limpa parâmetros da URL sem recarregar a página', async () => {
+      window.history.pushState({}, '', '/ministerio/plano?status=success');
+
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryEssential as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(<SubscriptionPlanView ministryId="min-clean-url" onBack={mockOnBack} showToast={mockShowToast} />);
+
+      expect(window.location.search).toBe('');
+    });
+
+    it('42.9) timeout de polling encerra processamento e exibe mensagem informativa do gateway', async () => {
+      vi.useFakeTimers();
+
+      sessionStorage.setItem(
+        'louvaio_checkout_intent',
+        JSON.stringify({
+          ministryId: 'min-timeout',
+          expectedPlanId: 'pro',
+          expectedInterval: 'monthly',
+          expectedAddonBlocks: 0,
+          timestamp: Date.now(),
+        })
+      );
+
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryEssential as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(<SubscriptionPlanView ministryId="min-timeout" onBack={mockOnBack} showToast={mockShowToast} />);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      expect(screen.getByText('Pagamento em processamento')).toBeInTheDocument();
+
+      // Avançar 18 ticks (18 * 2500ms = 45000ms)
+      for (let i = 0; i < 18; i++) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2500);
+        });
+      }
+
+      expect(mockShowToast).toHaveBeenCalledWith(
+        'Seu pagamento ainda pode estar sendo processado pelo gateway. Você pode consultar esta página novamente em alguns instantes.',
+        'success'
+      );
       expect(sessionStorage.getItem('louvaio_checkout_intent')).toBeNull();
 
       vi.useRealTimers();
