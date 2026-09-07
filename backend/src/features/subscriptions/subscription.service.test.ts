@@ -696,5 +696,216 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
       expect(summary.isOverLimit).toBe(false);
     });
   });
-});
 
+  // --------------------------------------------------------------------------
+  // 7. Phase 4A.1: Customer Billing Summary Normalization
+  // --------------------------------------------------------------------------
+  describe('7. Phase 4A.1: Customer Billing Summary Normalization', () => {
+    it('deve retornar pendingTransition = null e paymentStatus.state = "current" quando não há transição ativa', async () => {
+      const mockSubRepo = {
+        getSubscription: vi.fn().mockResolvedValue({
+          id: 'min-1',
+          ministry_id: 'min-1',
+          plan_id: 'essential',
+          member_addon_blocks: 0,
+          billing_status: 'active',
+          subscription_mode: 'paid',
+          cancel_at_period_end: false,
+          current_period_start: '2026-09-01T00:00:00.000Z',
+          current_period_end: '2026-10-01T00:00:00.000Z',
+        }),
+        getUsage: vi.fn().mockResolvedValue({
+          id: 'min-1',
+          ministry_id: 'min-1',
+          members_count: 5,
+          songs_count: 20,
+        }),
+      };
+      const mockBillingRepo = {
+        getActiveTransitionForMinistry: vi.fn().mockResolvedValue(null),
+        getSubscription: vi.fn().mockResolvedValue({
+          id: 'min-1_asaas',
+          ministry_id: 'min-1',
+          provider: 'asaas',
+          status: 'active',
+        }),
+      };
+
+      const service = new SubscriptionService(mockSubRepo as any, mockBillingRepo as any);
+      const summary = await service.getSubscriptionSummary('min-1');
+
+      expect(summary.pendingTransition).toBeNull();
+      expect(summary.paymentStatus).toEqual({
+        state: 'current',
+        graceEndsAt: null,
+      });
+      expect(summary.graceReason).toBe('none');
+    });
+
+    it('deve projetar pendingTransition quando existe slot ativo com transição V1 agendada', async () => {
+      const mockSubRepo = {
+        getSubscription: vi.fn().mockResolvedValue({
+          id: 'min-2',
+          ministry_id: 'min-2',
+          plan_id: 'lite',
+          member_addon_blocks: 0,
+          billing_status: 'active',
+          subscription_mode: 'paid',
+          cancel_at_period_end: false,
+          current_period_start: '2026-09-01T00:00:00.000Z',
+          current_period_end: '2026-10-01T00:00:00.000Z',
+        }),
+        getUsage: vi.fn().mockResolvedValue({
+          id: 'min-2',
+          ministry_id: 'min-2',
+          members_count: 10,
+          songs_count: 40,
+        }),
+      };
+      const mockBillingRepo = {
+        getActiveTransitionForMinistry: vi.fn().mockResolvedValue({
+          slot: {
+            id: 'slot_min-2__asaas',
+            ministry_id: 'min-2',
+            provider: 'asaas',
+            plan_change_id: 'tr_plan_up_456',
+          },
+          transition: {
+            id: 'tr_plan_up_456',
+            transition_id: 'tr_plan_up_456',
+            policy_version: 'billing_transition_v1',
+            ministry_id: 'min-2',
+            provider: 'asaas',
+            execution_strategy: 'scheduled_paid_transition',
+            transition_status: 'scheduled',
+            financial_safety_status: 'live',
+            source_plan_id: 'lite',
+            source_interval: 'monthly',
+            source_addon_blocks: 0,
+            target_plan_id: 'essential',
+            target_interval: 'monthly',
+            target_addon_blocks: 0,
+            requested_at: '2026-09-07T12:00:00.000Z',
+            effective_at: '2026-10-01T00:00:00.000Z',
+          },
+        }),
+        getSubscription: vi.fn().mockResolvedValue({
+          id: 'min-2_asaas',
+          ministry_id: 'min-2',
+          provider: 'asaas',
+          status: 'active',
+        }),
+      };
+
+      const service = new SubscriptionService(mockSubRepo as any, mockBillingRepo as any);
+      const summary = await service.getSubscriptionSummary('min-2');
+
+      expect(summary.pendingTransition).not.toBeNull();
+      expect(summary.pendingTransition?.transitionId).toBe('tr_plan_up_456');
+      expect(summary.pendingTransition?.kind).toBe('plan_upgrade');
+      expect(summary.pendingTransition?.status).toBe('scheduled');
+      expect(summary.pendingTransition?.effectiveAt).toBe('2026-10-01T00:00:00.000Z');
+      expect(summary.pendingTransition?.source.planId).toBe('lite');
+      expect(summary.pendingTransition?.target.planId).toBe('essential');
+    });
+
+    it('deve projetar past_due e graceReason = "payment_failure" quando a assinatura estiver inadimplente em carência', async () => {
+      const graceEnd = new Date(Date.now() + 7 * 86400000).toISOString();
+      const mockSubRepo = {
+        getSubscription: vi.fn().mockResolvedValue({
+          id: 'min-delinquent',
+          ministry_id: 'min-delinquent',
+          plan_id: 'essential',
+          member_addon_blocks: 0,
+          billing_status: 'past_due',
+          subscription_mode: 'paid',
+          cancel_at_period_end: false,
+          grace_period_expires_at: graceEnd,
+          current_period_start: '2026-08-01T00:00:00.000Z',
+          current_period_end: '2026-09-01T00:00:00.000Z',
+        }),
+        getUsage: vi.fn().mockResolvedValue({
+          id: 'min-delinquent',
+          ministry_id: 'min-delinquent',
+          members_count: 50, // > 40 cotas do Essential -> triggers isOverLimit
+          songs_count: 50,
+        }),
+      };
+      const mockBillingRepo = {
+        getActiveTransitionForMinistry: vi.fn().mockResolvedValue(null),
+        getSubscription: vi.fn().mockResolvedValue({
+          id: 'min-delinquent_asaas',
+          ministry_id: 'min-delinquent',
+          provider: 'asaas',
+          status: 'past_due',
+        }),
+      };
+
+      const service = new SubscriptionService(mockSubRepo as any, mockBillingRepo as any);
+      const summary = await service.getSubscriptionSummary('min-delinquent');
+
+      expect(summary.paymentStatus).toEqual({
+        state: 'past_due',
+        graceEndsAt: graceEnd,
+      });
+      expect(summary.subscription.accessMode).toBe('grace');
+      expect(summary.graceReason).toBe('payment_failure');
+    });
+
+    it('deve garantir isolamento de tenant: não expõe transição ativa de outro ministério', async () => {
+      const mockSubRepo = {
+        getSubscription: vi.fn().mockResolvedValue({
+          id: 'min-tenant-A',
+          ministry_id: 'min-tenant-A',
+          plan_id: 'lite',
+          member_addon_blocks: 0,
+          billing_status: 'active',
+          subscription_mode: 'paid',
+          cancel_at_period_end: false,
+          current_period_start: '2026-09-01T00:00:00.000Z',
+          current_period_end: '2026-10-01T00:00:00.000Z',
+        }),
+        getUsage: vi.fn().mockResolvedValue({
+          id: 'min-tenant-A',
+          ministry_id: 'min-tenant-A',
+          members_count: 5,
+          songs_count: 20,
+        }),
+      };
+      // Retorna acidentalmente transição do Tenant B
+      const mockBillingRepo = {
+        getActiveTransitionForMinistry: vi.fn().mockResolvedValue({
+          slot: {
+            id: 'slot_min-tenant-A__asaas',
+            ministry_id: 'min-tenant-A',
+            provider: 'asaas',
+            plan_change_id: 'tr_tenant_B',
+          },
+          transition: {
+            id: 'tr_tenant_B',
+            transition_id: 'tr_tenant_B',
+            policy_version: 'billing_transition_v1',
+            ministry_id: 'min-tenant-B', // DIVERGENTE
+            provider: 'asaas',
+            execution_strategy: 'scheduled_paid_transition',
+            transition_status: 'scheduled',
+            financial_safety_status: 'live',
+            source_plan_id: 'pro',
+            source_interval: 'monthly',
+            source_addon_blocks: 0,
+            target_plan_id: 'premium',
+            target_interval: 'monthly',
+            target_addon_blocks: 0,
+          },
+        }),
+        getSubscription: vi.fn().mockResolvedValue(null),
+      };
+
+      const service = new SubscriptionService(mockSubRepo as any, mockBillingRepo as any);
+      const summary = await service.getSubscriptionSummary('min-tenant-A');
+
+      // Tenant isolation: transição do tenant B é descartada
+      expect(summary.pendingTransition).toBeNull();
+    });
+  });
+});

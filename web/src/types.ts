@@ -217,8 +217,49 @@ export interface MinistrySubscriptionRecord {
   currentPeriodStart: string;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
+  activeCancellationTransitionId?: string | null;
 }
 
+export type CustomerFacingTransitionKind =
+  | 'initial_purchase'
+  | 'plan_upgrade'
+  | 'plan_downgrade'
+  | 'interval_change'
+  | 'addon_increase'
+  | 'addon_decrease'
+  | 'cancel_to_free'
+  | 'mixed_change';
+
+export type CustomerFacingTransitionStatus =
+  | 'awaiting_payment'
+  | 'processing'
+  | 'scheduled'
+  | 'attention_required';
+
+export interface CustomerFacingTransitionContractSnapshot {
+  planId: PlanId;
+  interval: BillingInterval;
+  addonBlocks: number;
+}
+
+export interface CustomerFacingPendingTransitionDto {
+  transitionId: string;
+  kind: CustomerFacingTransitionKind;
+  status: CustomerFacingTransitionStatus;
+  requestedAt: string;
+  effectiveAt: string | null;
+  source: CustomerFacingTransitionContractSnapshot;
+  target: CustomerFacingTransitionContractSnapshot;
+}
+
+export type CustomerPaymentHealthState = 'current' | 'past_due';
+
+export interface CustomerPaymentStatusDto {
+  state: CustomerPaymentHealthState;
+  graceEndsAt: string | null;
+}
+
+export type CustomerGraceReason = 'payment_failure' | 'usage_over_limit' | 'none';
 
 export interface MinistrySubscriptionSummary {
   plan: PlanDefinition;
@@ -228,7 +269,11 @@ export interface MinistrySubscriptionSummary {
   isOverLimit: boolean;
   overLimitDetails: OverLimitDetails;
   graceDaysRemaining: number | null;
+  pendingTransition?: CustomerFacingPendingTransitionDto | null;
+  paymentStatus?: CustomerPaymentStatusDto;
+  graceReason?: CustomerGraceReason;
 }
+
 
 export interface CheckoutPreviewResult {
   planId: PlanId;

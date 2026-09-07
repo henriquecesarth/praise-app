@@ -7,6 +7,11 @@ import {
   PlanDefinition,
   EffectiveQuotas,
 } from '../../config/plans.config';
+import {
+  CustomerFacingPendingTransitionDto,
+  CustomerPaymentStatusDto,
+  CustomerGraceReason,
+} from '../billing/billing.types';
 
 export type SubscriptionMode = 'free' | 'paid' | 'complimentary';
 
@@ -80,4 +85,7 @@ export interface MinistrySubscriptionStatusSummary {
     songsOver: boolean;
   };
   graceDaysRemaining: number | null;
+  pendingTransition: CustomerFacingPendingTransitionDto | null;
+  paymentStatus: CustomerPaymentStatusDto;
+  graceReason: CustomerGraceReason;
 }

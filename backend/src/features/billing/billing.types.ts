@@ -812,3 +812,48 @@ export const CANCEL_TO_FREE_ATTENTION_REASONS = {
   UNEXPECTED_RENEWAL_PAYMENT_DETECTED: 'unexpected_renewal_payment_detected',
   MALFORMED_TARGET_ENTITLEMENT_SNAPSHOT: 'malformed_target_entitlement_snapshot',
 } as const;
+
+// ============================================================================
+// Phase 4A.1: Customer-Facing Billing Summary & Transition DTOs
+// ============================================================================
+
+export type CustomerFacingTransitionKind =
+  | 'initial_purchase'
+  | 'plan_upgrade'
+  | 'plan_downgrade'
+  | 'interval_change'
+  | 'addon_increase'
+  | 'addon_decrease'
+  | 'cancel_to_free'
+  | 'mixed_change';
+
+export type CustomerFacingTransitionStatus =
+  | 'awaiting_payment'
+  | 'processing'
+  | 'scheduled'
+  | 'attention_required';
+
+export interface CustomerFacingTransitionContractSnapshot {
+  planId: PlanId;
+  interval: BillingInterval;
+  addonBlocks: number;
+}
+
+export interface CustomerFacingPendingTransitionDto {
+  transitionId: string;
+  kind: CustomerFacingTransitionKind;
+  status: CustomerFacingTransitionStatus;
+  requestedAt: string;
+  effectiveAt: string | null;
+  source: CustomerFacingTransitionContractSnapshot;
+  target: CustomerFacingTransitionContractSnapshot;
+}
+
+export type CustomerPaymentHealthState = 'current' | 'past_due';
+
+export interface CustomerPaymentStatusDto {
+  state: CustomerPaymentHealthState;
+  graceEndsAt: string | null;
+}
+
+export type CustomerGraceReason = 'payment_failure' | 'usage_over_limit' | 'none';

@@ -1,4 +1,5 @@
 import { SubscriptionRepository } from '../../repositories/SubscriptionRepository';
+import { BillingRepository } from '../../repositories/BillingRepository';
 import {
   PLANS_CATALOG,
   DEFAULT_PLAN_ID,
@@ -19,12 +20,23 @@ import {
   MinistrySubscriptionStatusSummary,
   SubscriptionMode,
 } from './subscription.types';
+import {
+  CustomerFacingPendingTransitionDto,
+  BillingSubscriptionRecord,
+} from '../billing/billing.types';
+import {
+  mapToCustomerFacingTransition,
+  resolveCustomerPaymentStatus,
+  resolveCustomerGraceReason,
+} from '../billing/customer-transition-summary.mapper';
 import { AppError } from '../../middleware/error-handler';
 
 export class SubscriptionService {
   constructor(
-    private readonly subscriptionRepo: SubscriptionRepository = new SubscriptionRepository()
+    private readonly subscriptionRepo: SubscriptionRepository = new SubscriptionRepository(),
+    private readonly billingRepo: BillingRepository = new BillingRepository()
   ) {}
+
 
   /**
    * Retorna o resumo completo de assinatura, quotas e uso para um ministério.
@@ -93,6 +105,42 @@ export class SubscriptionService {
       ? 'free'
       : (subscription.subscription_mode || (subscription.plan_id === 'free' ? 'free' : 'paid'));
 
+    // 4. Resolver transição pendente ativa e estado de saúde de pagamento (Phase 4A.1)
+    let pendingTransition: CustomerFacingPendingTransitionDto | null = null;
+    let billingSub: BillingSubscriptionRecord | null = null;
+
+    try {
+      if (this.billingRepo && typeof this.billingRepo.getActiveTransitionForMinistry === 'function') {
+        const activeTransitionResult = await this.billingRepo.getActiveTransitionForMinistry(ministryId, 'asaas');
+        if (activeTransitionResult?.transition) {
+          pendingTransition = mapToCustomerFacingTransition(activeTransitionResult.transition, ministryId);
+        }
+      }
+    } catch (_err) {
+      // Fail-closed: se a leitura do slot ou validação falhar, não expõe transição pendente inválida
+      pendingTransition = null;
+    }
+
+    try {
+      if (this.billingRepo && typeof this.billingRepo.getSubscription === 'function') {
+        billingSub = await this.billingRepo.getSubscription(ministryId, 'asaas');
+      }
+    } catch (_err) {
+      billingSub = null;
+    }
+
+    const paymentStatus = resolveCustomerPaymentStatus(
+      billingSub,
+      subscriptionMode,
+      subscription.grace_period_expires_at || null
+    );
+
+    const graceReason = resolveCustomerGraceReason(
+      resolvedState.accessMode,
+      paymentStatus.state,
+      resolvedState.isOverLimit
+    );
+
     return {
       plan,
       subscription: {
@@ -127,8 +175,12 @@ export class SubscriptionService {
       isOverLimit: resolvedState.isOverLimit,
       overLimitDetails: resolvedState.overLimitDetails,
       graceDaysRemaining: resolvedState.graceDaysRemaining,
+      pendingTransition,
+      paymentStatus,
+      graceReason,
     };
   }
+
 
   /**
    * Concede manualmente um plano de cortesia (complimentary) a um ministério por autoridade da plataforma.
