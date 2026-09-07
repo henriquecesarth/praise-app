@@ -2158,7 +2158,7 @@ export class BillingService {
     actor: string = 'worker',
     options?: { now?: Date }
   ): Promise<{ success: boolean; reason?: string; transition?: BillingTransitionV1Record }> {
-    const claimed = await this.billingRepo.claimPlanChangeForRetry(transitionId, actor, 60000);
+    const claimed = await this.billingRepo.claimTransitionForReconciliation(transitionId, actor, 60000);
     if (!claimed) {
       return { success: false, reason: 'locked_by_another_worker' };
     }
@@ -2166,11 +2166,6 @@ export class BillingService {
     const ministryId = claimed.ministry_id;
 
     try {
-      if (!isBillingTransitionV1(claimed)) {
-        await this.billingRepo.releasePlanChangeLock(claimed.id);
-        return { success: false, reason: 'unsupported_policy_version' };
-      }
-
       if (claimed.execution_strategy !== 'scheduled_cancel_to_free') {
         await this.billingRepo.releasePlanChangeLock(claimed.id);
         return { success: false, reason: 'unsupported_execution_strategy' };
@@ -2700,7 +2695,7 @@ export class BillingService {
     actor: string = 'worker',
     options?: { now?: Date }
   ): Promise<{ success: boolean; reason?: string; transition?: BillingTransitionV1Record }> {
-    const claimed = await this.billingRepo.claimPlanChangeForRetry(transitionId, actor, 60000);
+    const claimed = await this.billingRepo.claimTransitionForReconciliation(transitionId, actor, 60000);
     if (!claimed) {
       return { success: false, reason: 'locked_by_another_worker' };
     }
@@ -2708,11 +2703,6 @@ export class BillingService {
     const ministryId = claimed.ministry_id;
 
     try {
-      if (!isBillingTransitionV1(claimed)) {
-        await this.billingRepo.releasePlanChangeLock(claimed.id);
-        return { success: false, reason: 'unsupported_policy_version' };
-      }
-
       if (claimed.execution_strategy !== 'scheduled_cancel_to_free') {
         await this.billingRepo.releasePlanChangeLock(claimed.id);
         return { success: false, reason: 'unsupported_execution_strategy' };

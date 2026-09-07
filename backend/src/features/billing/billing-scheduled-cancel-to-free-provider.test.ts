@@ -168,7 +168,7 @@ describe('Phase 3D.2 — Provider Do-Not-Renew & Payment Safety Orchestration (S
         };
         return { transition: activeRecord, slot: activeSlot };
       }),
-      claimPlanChangeForRetry: vi.fn().mockImplementation(async (id: string) => {
+      claimTransitionForReconciliation: vi.fn().mockImplementation(async (id: string) => {
         if (activeRecord && activeRecord.id === id) return activeRecord;
         return null;
       }),

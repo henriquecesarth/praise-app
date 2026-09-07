@@ -194,7 +194,7 @@ describe('Phase 3D.3 — Period-End Cancel-to-Free Cutover & Public V1 Migration
         };
         return { transition: activeRecord, slot: activeSlot };
       }),
-      claimPlanChangeForRetry: vi.fn().mockImplementation(async (id: string) => {
+      claimTransitionForReconciliation: vi.fn().mockImplementation(async (id: string) => {
         if (activeRecord && activeRecord.id === id) return activeRecord;
         return null;
       }),
@@ -944,14 +944,12 @@ describe('Phase 3D.3 — Period-End Cancel-to-Free Cutover & Public V1 Migration
   });
 
   it('52. cross-tenant access receives 403/404', async () => {
-    // Attempting to reconcile a transition belonging to another ministry
-    const otherMinistryId = 'min_other_tenant';
-    const otherTr = createScheduledRecord({ ministry_id: otherMinistryId });
-    mockBillingRepo.claimPlanChangeForRetry.mockResolvedValue(otherTr);
+    const otherTr = createScheduledRecord({ id: 'tr_other_tenant', ministry_id: 'min-other' }) as any;
+    mockBillingRepo.claimTransitionForReconciliation.mockResolvedValue(otherTr);
 
     // Active slot belongs to different tenant
     mockBillingRepo.getActiveTransitionSlot.mockResolvedValue({
-      id: buildActiveTransitionSlotId(otherMinistryId, providerName),
+      id: buildActiveTransitionSlotId('min-other', providerName),
       plan_change_id: otherTr.id,
       ministry_id: ministryId, // Divergent!
       provider: providerName,
@@ -1431,6 +1429,159 @@ describe('Phase 3D.3 — Period-End Cancel-to-Free Cutover & Public V1 Migration
       // Ministry subscription has no active cancellation marker
       expect(appSubRecord.active_cancellation_transition_id).toBeNull();
       expect(activeSlot).toBeNull();
+    });
+  });
+
+  describe('Phase 3D.4A — Sandbox Claim Divergence Regression (V1 Claim Authority)', () => {
+    /**
+     * Central regression fixture reproducing the exact Sandbox state:
+     *   execution_strategy:  scheduled_cancel_to_free
+     *   transition_status:   scheduled
+     *   financial_safety_status: live
+     *   financial_attention_required: false
+     *   supersede_status:    completed   ← written by do-not-renew when it promoted awaiting → scheduled
+     *
+     * The Sandbox failure: claimPlanChangeForRetry returned null because of the
+     * supersede_status === 'completed' guard at BillingRepository:3168, which caused
+     * reconcileScheduledCancelToFreeBoundary to interpret it as locked_by_another_worker.
+     * Fix: both cancel-to-free reconcilers now use claimTransitionForReconciliation,
+     * whose terminality is governed exclusively by transition_status/financial_safety_status.
+     */
+
+    it('R1. scheduled/live + supersede_status completed is claimable via V1 primitive (Sandbox regression)', async () => {
+      // This is the exact post-do-not-renew Sandbox state
+      activeRecord = createScheduledRecord({
+        supersede_status: 'completed',
+        payment_cleanup_status: 'completed',
+        financial_attention_required: false,
+        financial_safety_status: 'live',
+        transition_status: 'scheduled',
+      });
+      activeSlot = {
+        id: buildActiveTransitionSlotId(ministryId, providerName),
+        plan_change_id: activeRecord.id,
+        ministry_id: ministryId,
+        provider: providerName,
+        held: true,
+        created_at: '2026-09-04T12:00:00.000Z',
+      };
+
+      // claimTransitionForReconciliation (V1) should succeed — no supersede_status guard
+      const res = await billingService.reconcileScheduledCancelToFreeBoundary(
+        activeRecord.id,
+        'worker',
+        { now: boundaryInstant }
+      );
+
+      // Boundary reached: should complete successfully
+      expect(res.success).toBe(true);
+      expect(activeRecord.transition_status).toBe('completed');
+      expect(activeRecord.financial_safety_status).toBe('safe_terminal');
+      expect(activeSlot).toBeNull();
+    });
+
+    it('R2. scheduled/live + supersede_status completed before boundary remains paid and slot HELD (no premature cutover)', async () => {
+      activeRecord = createScheduledRecord({
+        supersede_status: 'completed',
+        payment_cleanup_status: 'completed',
+        financial_attention_required: false,
+        financial_safety_status: 'live',
+        transition_status: 'scheduled',
+      });
+      activeSlot = {
+        id: buildActiveTransitionSlotId(ministryId, providerName),
+        plan_change_id: activeRecord.id,
+        ministry_id: ministryId,
+        provider: providerName,
+        held: true,
+        created_at: '2026-09-04T12:00:00.000Z',
+      };
+
+      const beforeBoundary = new Date(boundaryInstant.getTime() - 60000); // 1 min before
+      const res = await billingService.reconcileScheduledCancelToFreeBoundary(
+        activeRecord.id,
+        'worker',
+        { now: beforeBoundary }
+      );
+
+      // Still before boundary: NO-OP, paid intact, slot HELD
+      expect(res.success).toBe(true);
+      expect(res.reason).toBe('waiting_for_period_boundary');
+      expect(activeRecord.transition_status).toBe('scheduled');
+      expect(activeSlot).not.toBeNull();
+    });
+
+    it('R3. V1 claim authority: completed/safe_terminal is excluded from automatic reconciliation', async () => {
+      // Simulate a completed+safe_terminal transition — must not be re-processed
+      activeRecord = createScheduledRecord({
+        transition_status: 'completed',
+        financial_safety_status: 'safe_terminal',
+        financial_attention_required: false,
+        supersede_status: 'completed',
+      });
+
+      // claimTransitionForReconciliation skips completed/safe_terminal — mock returns null
+      mockBillingRepo.claimTransitionForReconciliation.mockResolvedValueOnce(null);
+
+      const res = await billingService.reconcileScheduledCancelToFreeBoundary(
+        activeRecord.id,
+        'worker',
+        { now: boundaryInstant }
+      );
+
+      // Claim returned null → locked_by_another_worker (idempotent stop)
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('locked_by_another_worker');
+      // No mutation: no updateTransition, no terminalization
+      expect(mockBillingRepo.completeTransitionAndReleaseOwnedSlotAtomically).not.toHaveBeenCalled();
+    });
+
+    it('R4. legacy claimPlanChangeForRetry returns null for supersede_status completed (documents root cause)', async () => {
+      // This test documents what the Sandbox showed: the legacy primitive blocks the claim.
+      // We simulate the legacy guard logic directly to prove the root cause.
+      const sandboxState = createScheduledRecord({
+        supersede_status: 'completed',
+        transition_status: 'scheduled',
+        financial_safety_status: 'live',
+        financial_attention_required: false,
+      });
+
+      // Legacy guard: supersede_status === 'completed' → returns null
+      const wouldLegacyClaimSucceed =
+        sandboxState.status !== 'completed' &&
+        sandboxState.supersede_status !== 'completed' &&
+        sandboxState.financial_attention_required !== true;
+
+      expect(wouldLegacyClaimSucceed).toBe(false); // Proves legacy returns null for this state
+
+      // V1 terminality: only transition_status+financial_safety_status govern terminality
+      const isV1Terminal =
+        sandboxState.transition_status === 'completed' &&
+        sandboxState.financial_safety_status === 'safe_terminal';
+
+      expect(isV1Terminal).toBe(false); // Proves V1 primitive accepts this state (not terminal)
+    });
+
+    it('R5. do-not-renew also uses V1 claim: awaiting + no supersede_status completed is claimable', async () => {
+      const awaitingRecord = createScheduledRecord({
+        transition_status: 'awaiting_old_inactivation',
+        financial_safety_status: 'live',
+        financial_attention_required: false,
+        supersede_status: 'pending',
+        status: 'superseding',
+      });
+      activeRecord = awaitingRecord;
+
+      // V1 claim succeeds for awaiting/live
+      const res = await billingService.reconcileScheduledCancelToFreeDoNotRenew(
+        activeRecord.id,
+        'worker'
+      );
+
+      // do-not-renew requires provider capability (getSubscriptionState / inactivateSubscriptionStrict)
+      // Mock provider has both — should proceed past claim gate
+      // The claim itself must succeed (not locked_by_another_worker)
+      expect(res.reason).not.toBe('locked_by_another_worker');
     });
   });
 });

@@ -61,6 +61,14 @@ describe('BillingService & Gateway Automation Tests', () => {
         if (!change || change.status === 'completed') return null;
         return { ...change, retry_locked_by: lockWorkerId };
       }),
+      claimTransitionForReconciliation: vi.fn().mockImplementation(async (id: string, lockWorkerId: string) => {
+        const change = planChangesMap.get(id);
+        if (!change) return null;
+        // V1 terminality: only completed+safe_terminal is excluded from automatic reconciliation
+        if (change.transition_status === 'completed' && change.financial_safety_status === 'safe_terminal') return null;
+        if (change.financial_attention_required === true) return null;
+        return { ...change, retry_locked_by: lockWorkerId };
+      }),
       releasePlanChangeLock: vi.fn(),
       saveTransaction: vi.fn(),
       getTransactions: vi.fn(),
