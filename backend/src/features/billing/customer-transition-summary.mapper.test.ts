@@ -24,7 +24,7 @@ function createMockTransitionV1(overrides: Partial<BillingTransitionV1Record> = 
     early_activation_status: 'available',
     financial_safety_status: 'live',
     transition_type: 'upgrade',
-    status: 'scheduled',
+    status: 'payment_confirmed',
     requested_plan_id: 'essential',
     requested_interval: 'monthly',
     requested_addon_blocks: 0,
