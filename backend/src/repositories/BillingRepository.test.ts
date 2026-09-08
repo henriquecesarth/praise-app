@@ -17,6 +17,7 @@ import {
   validateBillingTransitionV1,
   mapTransitionStatusToLegacyStatus,
   buildActiveTransitionSlotId,
+  buildBillingSubscriptionId,
 } from '../features/billing/billing.types';
 import {
   buildTransitionCommercialSnapshot,
@@ -172,6 +173,9 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
           if (docRef.collectionName === 'billing_active_transition_slots' || docRef.id.startsWith('slot_')) {
             const data = activeSlotsStore.get(docRef.id);
             return { exists: Boolean(data), data: () => data };
+          } else if (docRef.collectionName === 'billing_subscriptions') {
+            const data = subscriptionsStore.get(docRef.id);
+            return { exists: Boolean(data), data: () => data };
           } else if (docRef.collectionName === 'ministry_subscriptions' || docRef.id.startsWith('min_')) {
             const data = ministrySubscriptionsStore.get(docRef.id);
             return { exists: Boolean(data), data: () => data };
@@ -186,6 +190,12 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
               activeSlotsStore.set(docRef.id, { ...activeSlotsStore.get(docRef.id)!, ...data });
             } else {
               activeSlotsStore.set(docRef.id, data);
+            }
+          } else if (docRef.collectionName === 'billing_subscriptions') {
+            if (options?.merge && subscriptionsStore.has(docRef.id)) {
+              subscriptionsStore.set(docRef.id, { ...subscriptionsStore.get(docRef.id)!, ...data });
+            } else {
+              subscriptionsStore.set(docRef.id, data);
             }
           } else if (docRef.collectionName === 'ministry_subscriptions' || docRef.id.startsWith('min_')) {
             if (options?.merge && ministrySubscriptionsStore.has(docRef.id)) {
@@ -202,7 +212,11 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
           }
         }),
         update: vi.fn().mockImplementation((docRef: any, data: any) => {
-          if (docRef.collectionName === 'ministry_subscriptions' || docRef.id.startsWith('min_')) {
+          if (docRef.collectionName === 'billing_subscriptions') {
+            if (subscriptionsStore.has(docRef.id)) {
+              subscriptionsStore.set(docRef.id, { ...subscriptionsStore.get(docRef.id)!, ...data });
+            }
+          } else if (docRef.collectionName === 'ministry_subscriptions' || docRef.id.startsWith('min_')) {
             if (ministrySubscriptionsStore.has(docRef.id)) {
               ministrySubscriptionsStore.set(docRef.id, { ...ministrySubscriptionsStore.get(docRef.id)!, ...data });
             }
@@ -219,6 +233,8 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
         delete: vi.fn().mockImplementation((docRef: any) => {
           if (docRef.collectionName === 'billing_active_transition_slots' || docRef.id.startsWith('slot_')) {
             activeSlotsStore.delete(docRef.id);
+          } else if (docRef.collectionName === 'billing_subscriptions') {
+            subscriptionsStore.delete(docRef.id);
           } else if (docRef.collectionName === 'ministry_subscriptions' || docRef.id.startsWith('min_')) {
             ministrySubscriptionsStore.delete(docRef.id);
           } else {
@@ -1799,6 +1815,1192 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
       const storedTx = planChangesStore.get(record.id) as BillingTransitionV1Record;
       expect(storedTx?.transition_status).toBe('scheduled');
       expect(storedTx?.financial_safety_status).toBe('safe_terminal');
+    });
+  });
+
+  // ==========================================================================
+  // Phase 4A.4.1 Cancellation Reversal Persistence Primitives & Validation
+  // ==========================================================================
+
+  describe('validateBillingTransitionV1 — Cancellation Reversal Subworkflow Fields (Phase 4A.4.1)', () => {
+    const createBaseCtfRecord = (): BillingTransitionV1Record =>
+      createSampleV1Record({
+        id: 'tr_ctf_val_1',
+        execution_strategy: 'scheduled_cancel_to_free',
+        transition_type: 'downgrade',
+        transition_status: 'scheduled',
+        status: 'payment_confirmed',
+        financial_safety_status: 'live',
+        effective_at: '2026-10-01T00:00:00.000Z',
+        current_period_end: '2026-10-01T00:00:00.000Z',
+        target_plan_id: 'free',
+        requested_plan_id: 'free',
+        target_future_recurring_price_cents: 0,
+        expected_amount_cents: 0,
+      });
+
+    it('1. aceita transição scheduled_cancel_to_free sem campos de reversão (backward compatibility)', () => {
+      const record = createBaseCtfRecord();
+      expect(() => validateBillingTransitionV1(record)).not.toThrow();
+    });
+
+    it('2. aceita subworkflow com status "requested" e timestamp ISO válido', () => {
+      const record = createBaseCtfRecord();
+      record.cancellation_reversal_status = 'requested';
+      record.cancellation_reversal_requested_at = '2026-09-15T10:00:00.000Z';
+      record.cancellation_reversal_requested_by = 'usr_admin_123';
+      expect(() => validateBillingTransitionV1(record)).not.toThrow();
+    });
+
+    it('3. aceita subworkflow com status "completed" e timestamp ISO válido', () => {
+      const record = createBaseCtfRecord();
+      record.transition_status = 'canceled';
+      record.status = 'canceled';
+      record.financial_safety_status = 'safe_terminal';
+      record.cancellation_reversal_status = 'completed';
+      record.cancellation_reversal_completed_at = '2026-09-15T10:05:00.000Z';
+      expect(() => validateBillingTransitionV1(record)).not.toThrow();
+    });
+
+    it('4. aceita subworkflow com status "attention_required" e razão não vazia', () => {
+      const record = createBaseCtfRecord();
+      record.cancellation_reversal_status = 'attention_required';
+      record.cancellation_reversal_attention_reason = 'provider_reactivation_failed';
+      expect(() => validateBillingTransitionV1(record)).not.toThrow();
+    });
+
+    it('5. rejeita status de reversão inválido', () => {
+      const record = createBaseCtfRecord();
+      (record as any).cancellation_reversal_status = 'invalid_status';
+      expect(() => validateBillingTransitionV1(record)).toThrow(/cancellation_reversal_status inválido/i);
+    });
+
+    it('6. rejeita cancellation_reversal_status em immediate_initial_purchase', () => {
+      const record = createSampleV1Record({
+        execution_strategy: 'immediate_initial_purchase',
+        transition_status: 'pending_initial_purchase',
+        status: 'pending',
+        target_plan_id: 'essential',
+        requested_plan_id: 'essential',
+        source_plan_id: 'free',
+        early_activation_status: 'not_applicable',
+        cancellation_reversal_status: 'requested',
+        cancellation_reversal_requested_at: '2026-09-15T10:00:00.000Z',
+      });
+      expect(() => validateBillingTransitionV1(record)).toThrow(/só é permitido para a estratégia 'scheduled_cancel_to_free'/i);
+    });
+
+    it('7. rejeita cancellation_reversal_status em scheduled_paid_transition', () => {
+      const record = createSampleV1Record({
+        execution_strategy: 'scheduled_paid_transition',
+        transition_status: 'scheduled',
+        status: 'payment_confirmed',
+        effective_billing_date: '2026-10-01',
+        current_period_start: '2026-09-01T00:00:00.000Z',
+        current_period_end: '2026-10-01T00:00:00.000Z',
+        cancellation_reversal_status: 'requested',
+        cancellation_reversal_requested_at: '2026-09-15T10:00:00.000Z',
+      });
+      expect(() => validateBillingTransitionV1(record)).toThrow(/só é permitido para a estratégia 'scheduled_cancel_to_free'/i);
+    });
+
+    it('8. rejeita campos de reversão avulsos em scheduled_paid_transition', () => {
+      const record = createSampleV1Record({
+        execution_strategy: 'scheduled_paid_transition',
+        transition_status: 'scheduled',
+        status: 'payment_confirmed',
+        effective_billing_date: '2026-10-01',
+        current_period_start: '2026-09-01T00:00:00.000Z',
+        current_period_end: '2026-10-01T00:00:00.000Z',
+        cancellation_reversal_requested_by: 'usr_admin',
+      });
+      expect(() => validateBillingTransitionV1(record)).toThrow(/só são permitidos para a estratégia 'scheduled_cancel_to_free'/i);
+    });
+
+    it('9. rejeita status "requested" se cancellation_reversal_requested_at for ausente', () => {
+      const record = createBaseCtfRecord();
+      record.cancellation_reversal_status = 'requested';
+      record.cancellation_reversal_requested_at = null;
+      expect(() => validateBillingTransitionV1(record)).toThrow(/exige cancellation_reversal_requested_at ISO válido/i);
+    });
+
+    it('10. rejeita status "requested" se cancellation_reversal_requested_at for data inválida', () => {
+      const record = createBaseCtfRecord();
+      record.cancellation_reversal_status = 'requested';
+      record.cancellation_reversal_requested_at = 'data-invalida';
+      expect(() => validateBillingTransitionV1(record)).toThrow(/exige cancellation_reversal_requested_at ISO válido/i);
+    });
+
+    it('11. rejeita status "completed" se cancellation_reversal_completed_at for ausente', () => {
+      const record = createBaseCtfRecord();
+      record.transition_status = 'canceled';
+      record.status = 'canceled';
+      record.financial_safety_status = 'safe_terminal';
+      record.cancellation_reversal_status = 'completed';
+      record.cancellation_reversal_completed_at = null;
+      expect(() => validateBillingTransitionV1(record)).toThrow(/exige cancellation_reversal_completed_at ISO válido/i);
+    });
+
+    it('12. rejeita status "completed" se cancellation_reversal_completed_at for data inválida', () => {
+      const record = createBaseCtfRecord();
+      record.transition_status = 'canceled';
+      record.status = 'canceled';
+      record.financial_safety_status = 'safe_terminal';
+      record.cancellation_reversal_status = 'completed';
+      record.cancellation_reversal_completed_at = 'not-a-date';
+      expect(() => validateBillingTransitionV1(record)).toThrow(/exige cancellation_reversal_completed_at ISO válido/i);
+    });
+
+    it('13. rejeita status "attention_required" se cancellation_reversal_attention_reason for vazio', () => {
+      const record = createBaseCtfRecord();
+      record.cancellation_reversal_status = 'attention_required';
+      record.cancellation_reversal_attention_reason = '   ';
+      expect(() => validateBillingTransitionV1(record)).toThrow(/exige cancellation_reversal_attention_reason não vazio/i);
+    });
+
+    it('14. rejeita cancellation_reversal_requested_by se for string vazia', () => {
+      const record = createBaseCtfRecord();
+      record.cancellation_reversal_requested_by = '   ';
+      expect(() => validateBillingTransitionV1(record)).toThrow(/deve ser uma string não vazia/i);
+    });
+  });
+
+  describe('beginCancellationReversalAtomically — Phase 4A.4.1', () => {
+    const createCtfRecord = (overrides: Partial<BillingTransitionV1Record> = {}): BillingTransitionV1Record =>
+      createSampleV1Record({
+        id: 'tr_begin_rev_1',
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        execution_strategy: 'scheduled_cancel_to_free',
+        transition_type: 'downgrade',
+        transition_status: 'scheduled',
+        status: 'payment_confirmed',
+        financial_safety_status: 'live',
+        effective_at: '2026-10-01T00:00:00.000Z',
+        current_period_end: '2026-10-01T00:00:00.000Z',
+        target_plan_id: 'free',
+        requested_plan_id: 'free',
+        target_future_recurring_price_cents: 0,
+        expected_amount_cents: 0,
+        ...overrides,
+      });
+
+    const setupValidCtfState = (overrides: Partial<BillingTransitionV1Record> = {}) => {
+      const record = createCtfRecord(overrides);
+      planChangesStore.set(record.id, record);
+
+      const slotId = buildActiveTransitionSlotId(record.ministry_id, record.provider);
+      activeSlotsStore.set(slotId, {
+        id: slotId,
+        ministry_id: record.ministry_id,
+        provider: record.provider,
+        plan_change_id: record.id,
+        acquired_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        version: 1,
+      });
+
+      ministrySubscriptionsStore.set(record.ministry_id, {
+        id: record.ministry_id,
+        plan_id: 'essential',
+        addon_blocks: 0,
+        active_cancellation_transition_id: record.id,
+        cancel_at_period_end: true,
+        current_period_end: record.effective_at || '2026-10-01T00:00:00.000Z',
+        updated_at: new Date().toISOString(),
+      });
+
+      const billingSubId = buildBillingSubscriptionId(record.ministry_id, record.provider);
+      subscriptionsStore.set(billingSubId, {
+        id: billingSubId,
+        ministry_id: record.ministry_id,
+        provider: record.provider,
+        status: 'active',
+        cancel_at_period_end: true,
+        current_period_end: record.effective_at || '2026-10-01T00:00:00.000Z',
+        updated_at: new Date().toISOString(),
+      });
+
+      return { record, slotId, billingSubId };
+    };
+
+    it('1. fail closed se transição não existir', async () => {
+      const res = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', 'tr_not_found');
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('transition_not_found');
+    });
+
+    it('2. fail closed em tenant mismatch', async () => {
+      const { record } = setupValidCtfState({ ministry_id: 'min_tenant_A' });
+      const res = await repo.beginCancellationReversalAtomically('min_tenant_B', 'asaas', record.id);
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('tenant_mismatch');
+    });
+
+    it('3. fail closed em transição legada', async () => {
+      const legacyRecord: any = { id: 'tr_legacy_1', ministry_id: 'min_test_1', policy_version: 'legacy' };
+      planChangesStore.set(legacyRecord.id, legacyRecord);
+      const res = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', legacyRecord.id);
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('legacy_transition_unsupported');
+    });
+
+    it('4. fail closed se execution_strategy não for scheduled_cancel_to_free', async () => {
+      const { record } = setupValidCtfState({ execution_strategy: 'scheduled_paid_transition' as any });
+      const res = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id);
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('unsupported_transition_strategy');
+    });
+
+    it('5. fail closed se financial_attention_required for true', async () => {
+      const { record } = setupValidCtfState({ financial_attention_required: true });
+      const res = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id);
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('financial_attention_required');
+    });
+
+    it('6. fail closed se financial_safety_status for attention_required', async () => {
+      const { record } = setupValidCtfState({ financial_safety_status: 'attention_required' });
+      const res = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id);
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('financial_attention_required');
+    });
+
+    it('7. fail closed se reversão já tiver status "completed"', async () => {
+      const { record } = setupValidCtfState({ cancellation_reversal_status: 'completed' });
+      const res = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id);
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('reversal_already_completed');
+    });
+
+    it('8. fail closed se reversão já tiver status "attention_required"', async () => {
+      const { record } = setupValidCtfState({ cancellation_reversal_status: 'attention_required' });
+      const res = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id);
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('reversal_attention_required');
+    });
+
+    it('9. fail closed se transition_status !== "scheduled"', async () => {
+      const { record } = setupValidCtfState({ transition_status: 'awaiting_old_inactivation' });
+      const res = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id);
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('invalid_source_status');
+    });
+
+    it('10. fail closed se financial_safety_status !== "live"', async () => {
+      const { record } = setupValidCtfState({ financial_safety_status: 'safe_terminal' });
+      const res = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id);
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('invalid_source_status');
+    });
+
+    it('11. fail closed se effective_at estiver ausente', async () => {
+      const { record } = setupValidCtfState({ effective_at: null, current_period_end: null });
+      const res = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id);
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('missing_effective_at_boundary');
+    });
+
+    it('12. fail closed se now >= effective_at (boundary_expired)', async () => {
+      const { record } = setupValidCtfState({ effective_at: '2026-10-01T00:00:00.000Z' });
+      // Exato instante da fronteira
+      const resExact = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id, 'user_1', {
+        nowIso: '2026-10-01T00:00:00.000Z',
+      });
+      expect(resExact.success).toBe(false);
+      expect(resExact.reason).toBe('boundary_expired');
+
+      // 1ms após a fronteira
+      const resPast = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id, 'user_1', {
+        nowIso: '2026-10-01T00:00:00.001Z',
+      });
+      expect(resPast.success).toBe(false);
+      expect(resPast.reason).toBe('boundary_expired');
+    });
+
+    it('13. fail closed se lease for de outro worker (lease_not_owned)', async () => {
+      const { record } = setupValidCtfState({
+        retry_locked_by: 'worker_alpha',
+        retry_locked_until: '2026-09-20T00:00:00.000Z',
+      });
+      const res = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id, 'user_1', {
+        nowIso: '2026-09-15T12:00:00.000Z',
+        expectedLockOwner: 'worker_beta',
+      });
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('lease_not_owned');
+    });
+
+    it('14. fail closed se lease estiver expirado (lease_expired)', async () => {
+      const { record } = setupValidCtfState({
+        retry_locked_by: 'worker_alpha',
+        retry_locked_until: '2026-09-10T00:00:00.000Z',
+      });
+      const res = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id, 'user_1', {
+        nowIso: '2026-09-15T12:00:00.000Z',
+        expectedLockOwner: 'worker_alpha',
+      });
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('lease_expired');
+    });
+
+    it('15. fail closed se slot ativo não existir', async () => {
+      const { record, slotId } = setupValidCtfState();
+      activeSlotsStore.delete(slotId);
+      const res = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id, 'user_1', {
+        nowIso: '2026-09-15T12:00:00.000Z',
+      });
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('slot_not_found');
+    });
+
+    it('16. fail closed se slot pertencer a outra transição', async () => {
+      const { record, slotId } = setupValidCtfState();
+      activeSlotsStore.set(slotId, { ...activeSlotsStore.get(slotId)!, plan_change_id: 'tr_other_999' });
+      const res = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id, 'user_1', {
+        nowIso: '2026-09-15T12:00:00.000Z',
+      });
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('slot_owned_by_another_transition');
+    });
+
+    it('17. fail closed se ministry_subscriptions não existir', async () => {
+      const { record } = setupValidCtfState();
+      ministrySubscriptionsStore.delete('min_test_1');
+      const res = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id, 'user_1', {
+        nowIso: '2026-09-15T12:00:00.000Z',
+      });
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('subscription_not_found');
+    });
+
+    it('18. fail closed se marker em ministry_subscriptions for ausente ou divergente', async () => {
+      const { record } = setupValidCtfState();
+      ministrySubscriptionsStore.set('min_test_1', {
+        ...ministrySubscriptionsStore.get('min_test_1'),
+        active_cancellation_transition_id: 'tr_other_divergent',
+      });
+      const res = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id, 'user_1', {
+        nowIso: '2026-09-15T12:00:00.000Z',
+      });
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('subscription_marker_missing_or_divergent');
+    });
+
+    it('19. fail closed se cancel_at_period_end em ministry_subscriptions for false', async () => {
+      const { record } = setupValidCtfState();
+      ministrySubscriptionsStore.set('min_test_1', {
+        ...ministrySubscriptionsStore.get('min_test_1'),
+        cancel_at_period_end: false,
+      });
+      const res = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id, 'user_1', {
+        nowIso: '2026-09-15T12:00:00.000Z',
+      });
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('subscription_cancel_at_period_end_false');
+    });
+
+    it('20. fail closed se billing_subscriptions não existir', async () => {
+      const { record, billingSubId } = setupValidCtfState();
+      subscriptionsStore.delete(billingSubId);
+      const res = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id, 'user_1', {
+        nowIso: '2026-09-15T12:00:00.000Z',
+      });
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('billing_subscription_not_found');
+    });
+
+    it('21. fail closed se cancel_at_period_end em billing_subscriptions for false', async () => {
+      const { record, billingSubId } = setupValidCtfState();
+      subscriptionsStore.set(billingSubId, {
+        ...subscriptionsStore.get(billingSubId),
+        cancel_at_period_end: false,
+      });
+      const res = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id, 'user_1', {
+        nowIso: '2026-09-15T12:00:00.000Z',
+      });
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('billing_subscription_cancel_at_period_end_false');
+    });
+
+    it('22. caminho normal: transiciona subworkflow para "requested" de forma atômica', async () => {
+      const { record, slotId, billingSubId } = setupValidCtfState();
+      const res = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id, 'usr_admin_1', {
+        nowIso: '2026-09-15T12:00:00.000Z',
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.transition).toBeDefined();
+      expect(res.transition?.cancellation_reversal_status).toBe('requested');
+      expect(res.transition?.cancellation_reversal_requested_at).toBe('2026-09-15T12:00:00.000Z');
+      expect(res.transition?.cancellation_reversal_requested_by).toBe('usr_admin_1');
+
+      // Persistência atualizada
+      const stored = planChangesStore.get(record.id) as BillingTransitionV1Record;
+      expect(stored.cancellation_reversal_status).toBe('requested');
+      expect(stored.cancellation_reversal_requested_at).toBe('2026-09-15T12:00:00.000Z');
+      expect(stored.cancellation_reversal_requested_by).toBe('usr_admin_1');
+
+      // Invariantes globais intactas: slot continua HELD, markers mantidos, entitlement inalterado
+      expect(activeSlotsStore.has(slotId)).toBe(true);
+      expect(ministrySubscriptionsStore.get('min_test_1')?.active_cancellation_transition_id).toBe(record.id);
+      expect(ministrySubscriptionsStore.get('min_test_1')?.cancel_at_period_end).toBe(true);
+      expect(subscriptionsStore.get(billingSubId)?.cancel_at_period_end).toBe(true);
+      expect(stored.transition_status).toBe('scheduled');
+      expect(stored.financial_safety_status).toBe('live');
+    });
+
+    it('23. idempotência: chamadas repetidas retornam reversal_already_requested sem sobrescrever requested_at', async () => {
+      const { record } = setupValidCtfState();
+      // Primeira chamada
+      const firstRes = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id, 'usr_first', {
+        nowIso: '2026-09-15T12:00:00.000Z',
+      });
+      expect(firstRes.success).toBe(true);
+
+      // Segunda chamada com outro timestamp e outro ator
+      const secondRes = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id, 'usr_second', {
+        nowIso: '2026-09-15T13:00:00.000Z',
+      });
+      expect(secondRes.success).toBe(true);
+      expect(secondRes.reason).toBe('reversal_already_requested');
+      expect(secondRes.transition?.cancellation_reversal_status).toBe('requested');
+      // Preserva o timestamp e ator originais
+      expect(secondRes.transition?.cancellation_reversal_requested_at).toBe('2026-09-15T12:00:00.000Z');
+      expect(secondRes.transition?.cancellation_reversal_requested_by).toBe('usr_first');
+    });
+  });
+
+  describe('completeCancellationReversalAndReleaseOwnedSlotAtomically — Phase 4A.4.1', () => {
+    const createCtfRecord = (overrides: Partial<BillingTransitionV1Record> = {}): BillingTransitionV1Record =>
+      createSampleV1Record({
+        id: 'tr_comp_rev_1',
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        execution_strategy: 'scheduled_cancel_to_free',
+        transition_type: 'downgrade',
+        transition_status: 'scheduled',
+        financial_safety_status: 'live',
+        effective_at: '2026-10-01T00:00:00.000Z',
+        current_period_end: '2026-10-01T00:00:00.000Z',
+        target_plan_id: 'free',
+        requested_plan_id: 'free',
+        target_future_recurring_price_cents: 0,
+        expected_amount_cents: 0,
+        cancellation_reversal_status: 'requested',
+        cancellation_reversal_requested_at: '2026-09-15T10:00:00.000Z',
+        cancellation_reversal_requested_by: 'usr_admin_1',
+        ...overrides,
+      });
+
+    const setupValidCtfRequestedState = (overrides: Partial<BillingTransitionV1Record> = {}) => {
+      const record = createCtfRecord(overrides);
+      planChangesStore.set(record.id, record);
+
+      const slotId = buildActiveTransitionSlotId(record.ministry_id, record.provider);
+      activeSlotsStore.set(slotId, {
+        id: slotId,
+        ministry_id: record.ministry_id,
+        provider: record.provider,
+        plan_change_id: record.id,
+        acquired_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        version: 1,
+      });
+
+      ministrySubscriptionsStore.set(record.ministry_id, {
+        id: record.ministry_id,
+        plan_id: 'essential',
+        addon_blocks: 0,
+        active_cancellation_transition_id: record.id,
+        cancel_at_period_end: true,
+        current_period_end: record.effective_at || '2026-10-01T00:00:00.000Z',
+        updated_at: new Date().toISOString(),
+      });
+
+      const billingSubId = buildBillingSubscriptionId(record.ministry_id, record.provider);
+      subscriptionsStore.set(billingSubId, {
+        id: billingSubId,
+        ministry_id: record.ministry_id,
+        provider: record.provider,
+        status: 'active',
+        cancel_at_period_end: true,
+        current_period_end: record.effective_at || '2026-10-01T00:00:00.000Z',
+        updated_at: new Date().toISOString(),
+      });
+
+      return { record, slotId, billingSubId };
+    };
+
+    it('1. fail closed se transição não existir', async () => {
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        'tr_not_found'
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('transition_not_found');
+    });
+
+    it('2. fail closed em tenant mismatch', async () => {
+      const { record } = setupValidCtfRequestedState({ ministry_id: 'min_tenant_A' });
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_tenant_B',
+        'asaas',
+        record.id
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('tenant_mismatch');
+    });
+
+    it('3. fail closed em transição legada', async () => {
+      const legacyRecord: any = { id: 'tr_legacy_2', ministry_id: 'min_test_1', policy_version: 'legacy' };
+      planChangesStore.set(legacyRecord.id, legacyRecord);
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        legacyRecord.id
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('legacy_transition_unsupported');
+    });
+
+    it('4. fail closed se execution_strategy não for scheduled_cancel_to_free', async () => {
+      const { record } = setupValidCtfRequestedState({ execution_strategy: 'scheduled_paid_transition' as any });
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('unsupported_transition_strategy');
+    });
+
+    it('5. fail closed se financial_attention_required for true', async () => {
+      const { record } = setupValidCtfRequestedState({ financial_attention_required: true });
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('financial_attention_required');
+    });
+
+    it('6. fail closed se ministry_subscriptions não existir', async () => {
+      const { record } = setupValidCtfRequestedState();
+      ministrySubscriptionsStore.delete('min_test_1');
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('subscription_not_found');
+    });
+
+    it('7. fail closed se billing_subscriptions não existir', async () => {
+      const { record, billingSubId } = setupValidCtfRequestedState();
+      subscriptionsStore.delete(billingSubId);
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('billing_subscription_not_found');
+    });
+
+    it('8. idempotência terminal: transição já canceled/safe_terminal e recursos limpos retorna already_completed', async () => {
+      const { record, slotId, billingSubId } = setupValidCtfRequestedState({
+        transition_status: 'canceled',
+        status: 'canceled',
+        financial_safety_status: 'safe_terminal',
+        cancellation_reversal_status: 'completed',
+        cancellation_reversal_completed_at: '2026-09-15T12:00:00.000Z',
+      });
+      // Recursos pós-terminalização limpos:
+      activeSlotsStore.delete(slotId);
+      ministrySubscriptionsStore.set('min_test_1', {
+        ...ministrySubscriptionsStore.get('min_test_1'),
+        active_cancellation_transition_id: null,
+        cancel_at_period_end: false,
+      });
+      subscriptionsStore.set(billingSubId, {
+        ...subscriptionsStore.get(billingSubId),
+        cancel_at_period_end: false,
+      });
+
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id
+      );
+      expect(res.success).toBe(true);
+      expect(res.reason).toBe('already_completed');
+    });
+
+    it('9. divergência terminal: transição canceled/safe_terminal mas slot ainda HELD → fail closed', async () => {
+      const { record, slotId, billingSubId } = setupValidCtfRequestedState({
+        transition_status: 'canceled',
+        status: 'canceled',
+        financial_safety_status: 'safe_terminal',
+        cancellation_reversal_status: 'completed',
+        cancellation_reversal_completed_at: '2026-09-15T12:00:00.000Z',
+      });
+      // Slot retido indevidamente
+      expect(activeSlotsStore.has(slotId)).toBe(true);
+      ministrySubscriptionsStore.set('min_test_1', {
+        ...ministrySubscriptionsStore.get('min_test_1'),
+        active_cancellation_transition_id: null,
+        cancel_at_period_end: false,
+      });
+      subscriptionsStore.set(billingSubId, {
+        ...subscriptionsStore.get(billingSubId),
+        cancel_at_period_end: false,
+      });
+
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('terminal_divergence_slot_held');
+    });
+
+    it('10. divergência terminal: transição canceled/safe_terminal mas marker retido → fail closed', async () => {
+      const { record, slotId, billingSubId } = setupValidCtfRequestedState({
+        transition_status: 'canceled',
+        status: 'canceled',
+        financial_safety_status: 'safe_terminal',
+        cancellation_reversal_status: 'completed',
+        cancellation_reversal_completed_at: '2026-09-15T12:00:00.000Z',
+      });
+      activeSlotsStore.delete(slotId);
+      // Marker ainda aponta para esta transição
+      ministrySubscriptionsStore.set('min_test_1', {
+        ...ministrySubscriptionsStore.get('min_test_1'),
+        active_cancellation_transition_id: record.id,
+        cancel_at_period_end: false,
+      });
+      subscriptionsStore.set(billingSubId, {
+        ...subscriptionsStore.get(billingSubId),
+        cancel_at_period_end: false,
+      });
+
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('terminal_divergence_marker_retained');
+    });
+
+    it('11. divergência terminal: transição canceled/safe_terminal mas cancel_at_period_end retido em ministry_subscriptions → fail closed', async () => {
+      const { record, slotId, billingSubId } = setupValidCtfRequestedState({
+        transition_status: 'canceled',
+        status: 'canceled',
+        financial_safety_status: 'safe_terminal',
+        cancellation_reversal_status: 'completed',
+        cancellation_reversal_completed_at: '2026-09-15T12:00:00.000Z',
+      });
+      activeSlotsStore.delete(slotId);
+      ministrySubscriptionsStore.set('min_test_1', {
+        ...ministrySubscriptionsStore.get('min_test_1'),
+        active_cancellation_transition_id: null,
+        cancel_at_period_end: true,
+      });
+      subscriptionsStore.set(billingSubId, {
+        ...subscriptionsStore.get(billingSubId),
+        cancel_at_period_end: false,
+      });
+
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('terminal_divergence_cancel_flag_retained');
+    });
+
+    it('12. divergência terminal: transição canceled/safe_terminal mas cancel_at_period_end retido em billing_subscriptions → fail closed', async () => {
+      const { record, slotId, billingSubId } = setupValidCtfRequestedState({
+        transition_status: 'canceled',
+        status: 'canceled',
+        financial_safety_status: 'safe_terminal',
+        cancellation_reversal_status: 'completed',
+        cancellation_reversal_completed_at: '2026-09-15T12:00:00.000Z',
+      });
+      activeSlotsStore.delete(slotId);
+      ministrySubscriptionsStore.set('min_test_1', {
+        ...ministrySubscriptionsStore.get('min_test_1'),
+        active_cancellation_transition_id: null,
+        cancel_at_period_end: false,
+      });
+      subscriptionsStore.set(billingSubId, {
+        ...subscriptionsStore.get(billingSubId),
+        cancel_at_period_end: true,
+      });
+
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('terminal_divergence_billing_cancel_flag_retained');
+    });
+
+    it('13. divergência terminal: transição canceled/safe_terminal mas reversal_status !== "completed" → fail closed', async () => {
+      const { record, slotId, billingSubId } = setupValidCtfRequestedState({
+        transition_status: 'canceled',
+        status: 'canceled',
+        financial_safety_status: 'safe_terminal',
+        cancellation_reversal_status: 'requested',
+      });
+      activeSlotsStore.delete(slotId);
+      ministrySubscriptionsStore.set('min_test_1', {
+        ...ministrySubscriptionsStore.get('min_test_1'),
+        active_cancellation_transition_id: null,
+        cancel_at_period_end: false,
+      });
+      subscriptionsStore.set(billingSubId, {
+        ...subscriptionsStore.get(billingSubId),
+        cancel_at_period_end: false,
+      });
+
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('terminal_divergence_reversal_status_invalid');
+    });
+
+    it('14. fail closed se transition_status !== "scheduled"', async () => {
+      const { record } = setupValidCtfRequestedState({ transition_status: 'awaiting_old_inactivation' });
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('invalid_source_status');
+    });
+
+    it('15. fail closed se financial_safety_status !== "live"', async () => {
+      const { record } = setupValidCtfRequestedState({ financial_safety_status: 'attention_required' });
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('financial_attention_required');
+    });
+
+    it('16. fail closed se cancellation_reversal_status !== "requested"', async () => {
+      const { record } = setupValidCtfRequestedState({ cancellation_reversal_status: undefined });
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('reversal_not_requested');
+    });
+
+    it('17. fail closed se boundary já tiver expirado (now >= effective_at)', async () => {
+      const { record } = setupValidCtfRequestedState({ effective_at: '2026-10-01T00:00:00.000Z' });
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id,
+        { nowIso: '2026-10-01T00:00:00.000Z' }
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('boundary_expired');
+    });
+
+    it('18. fail closed se lease for de outro worker (lease_not_owned)', async () => {
+      const { record } = setupValidCtfRequestedState({
+        retry_locked_by: 'worker_alpha',
+        retry_locked_until: '2026-09-20T00:00:00.000Z',
+      });
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id,
+        { nowIso: '2026-09-15T12:00:00.000Z', expectedLockOwner: 'worker_beta' }
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('lease_not_owned');
+    });
+
+    it('19. fail closed se lease estiver expirado (lease_expired)', async () => {
+      const { record } = setupValidCtfRequestedState({
+        retry_locked_by: 'worker_alpha',
+        retry_locked_until: '2026-09-10T00:00:00.000Z',
+      });
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id,
+        { nowIso: '2026-09-15T12:00:00.000Z', expectedLockOwner: 'worker_alpha' }
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('lease_expired');
+    });
+
+    it('20. fail closed se slot não existir', async () => {
+      const { record, slotId } = setupValidCtfRequestedState();
+      activeSlotsStore.delete(slotId);
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id,
+        { nowIso: '2026-09-15T12:00:00.000Z' }
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('slot_not_found');
+    });
+
+    it('21. fail closed se slot pertencer a outra transição', async () => {
+      const { record, slotId } = setupValidCtfRequestedState();
+      activeSlotsStore.set(slotId, { ...activeSlotsStore.get(slotId)!, plan_change_id: 'tr_other_123' });
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id,
+        { nowIso: '2026-09-15T12:00:00.000Z' }
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('slot_owned_by_another_transition');
+    });
+
+    it('22. fail closed se marker na assinatura do ministério for ausente ou divergente', async () => {
+      const { record } = setupValidCtfRequestedState();
+      ministrySubscriptionsStore.set('min_test_1', {
+        ...ministrySubscriptionsStore.get('min_test_1'),
+        active_cancellation_transition_id: 'tr_divergent_xyz',
+      });
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id,
+        { nowIso: '2026-09-15T12:00:00.000Z' }
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('subscription_marker_missing_or_divergent');
+    });
+
+    it('23. fail closed se cancel_at_period_end em ministry_subscriptions for false', async () => {
+      const { record } = setupValidCtfRequestedState();
+      ministrySubscriptionsStore.set('min_test_1', {
+        ...ministrySubscriptionsStore.get('min_test_1'),
+        cancel_at_period_end: false,
+      });
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id,
+        { nowIso: '2026-09-15T12:00:00.000Z' }
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('subscription_cancel_at_period_end_false');
+    });
+
+    it('24. fail closed se cancel_at_period_end em billing_subscriptions for false', async () => {
+      const { record, billingSubId } = setupValidCtfRequestedState();
+      subscriptionsStore.set(billingSubId, {
+        ...subscriptionsStore.get(billingSubId),
+        cancel_at_period_end: false,
+      });
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id,
+        { nowIso: '2026-09-15T12:00:00.000Z' }
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('billing_subscription_cancel_at_period_end_false');
+    });
+
+    it('25. caminho normal: completa reversão atomicamente liberando o slot e limpando os markers', async () => {
+      const { record, slotId, billingSubId } = setupValidCtfRequestedState();
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id,
+        { nowIso: '2026-09-15T12:05:00.000Z' }
+      );
+
+      expect(res.success).toBe(true);
+
+      // 1. Transição marcada como canceled / safe_terminal com reversal completed
+      const storedTx = planChangesStore.get(record.id) as BillingTransitionV1Record;
+      expect(storedTx.transition_status).toBe('canceled');
+      expect(storedTx.status).toBe('canceled');
+      expect(storedTx.financial_safety_status).toBe('safe_terminal');
+      expect(storedTx.cancellation_reversal_status).toBe('completed');
+      expect(storedTx.cancellation_reversal_completed_at).toBe('2026-09-15T12:05:00.000Z');
+
+      // 2. Slot foi liberado (deletado)
+      expect(activeSlotsStore.has(slotId)).toBe(false);
+
+      // 3. ministry_subscriptions limpo
+      const ministrySub = ministrySubscriptionsStore.get('min_test_1');
+      expect(ministrySub.active_cancellation_transition_id).toBeNull();
+      expect(ministrySub.cancel_at_period_end).toBe(false);
+      // Quotas e plano intactos!
+      expect(ministrySub.plan_id).toBe('essential');
+
+      // 4. billing_subscriptions limpo
+      const billingSub = subscriptionsStore.get(billingSubId);
+      expect(billingSub.cancel_at_period_end).toBe(false);
+      expect(billingSub.status).toBe('active');
+    });
+
+    it('26. zero-mutation invariant: em caso de falha (boundary_expired), nenhum documento é modificado', async () => {
+      const { record, slotId, billingSubId } = setupValidCtfRequestedState();
+      const res = await repo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+        'min_test_1',
+        'asaas',
+        record.id,
+        { nowIso: '2026-10-01T00:00:00.000Z' }
+      );
+
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('boundary_expired');
+
+      // Zero mutações
+      expect(activeSlotsStore.has(slotId)).toBe(true);
+      expect(ministrySubscriptionsStore.get('min_test_1')?.active_cancellation_transition_id).toBe(record.id);
+      expect(ministrySubscriptionsStore.get('min_test_1')?.cancel_at_period_end).toBe(true);
+      expect(subscriptionsStore.get(billingSubId)?.cancel_at_period_end).toBe(true);
+      const storedTx = planChangesStore.get(record.id) as BillingTransitionV1Record;
+      expect(storedTx.transition_status).toBe('scheduled');
+      expect(storedTx.financial_safety_status).toBe('live');
+      expect(storedTx.cancellation_reversal_status).toBe('requested');
+    });
+  });
+
+  describe('setCancellationReversalAttentionAtomically — Phase 4A.4.1', () => {
+    const createCtfRecord = (overrides: Partial<BillingTransitionV1Record> = {}): BillingTransitionV1Record =>
+      createSampleV1Record({
+        id: 'tr_att_rev_1',
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        execution_strategy: 'scheduled_cancel_to_free',
+        transition_type: 'downgrade',
+        transition_status: 'scheduled',
+        financial_safety_status: 'live',
+        effective_at: '2026-10-01T00:00:00.000Z',
+        current_period_end: '2026-10-01T00:00:00.000Z',
+        target_plan_id: 'free',
+        requested_plan_id: 'free',
+        target_future_recurring_price_cents: 0,
+        expected_amount_cents: 0,
+        cancellation_reversal_status: 'requested',
+        ...overrides,
+      });
+
+    it('1. fail closed se attentionReason for vazio ou inválido', async () => {
+      const res = await repo.setCancellationReversalAttentionAtomically('min_test_1', 'tr_any', '');
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('invalid_attention_reason');
+
+      const resSpace = await repo.setCancellationReversalAttentionAtomically('min_test_1', 'tr_any', '   ');
+      expect(resSpace.success).toBe(false);
+      expect(resSpace.reason).toBe('invalid_attention_reason');
+    });
+
+    it('2. fail closed se transição não existir', async () => {
+      const res = await repo.setCancellationReversalAttentionAtomically(
+        'min_test_1',
+        'tr_not_found',
+        'provider_reversal_error'
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('transition_not_found');
+    });
+
+    it('3. fail closed em tenant mismatch', async () => {
+      const record = createCtfRecord({ ministry_id: 'min_tenant_A' });
+      planChangesStore.set(record.id, record);
+      const res = await repo.setCancellationReversalAttentionAtomically(
+        'min_tenant_B',
+        record.id,
+        'provider_reversal_error'
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('tenant_mismatch');
+    });
+
+    it('4. fail closed em transição legada', async () => {
+      const legacyRecord: any = { id: 'tr_leg_att', ministry_id: 'min_test_1', policy_version: 'legacy' };
+      planChangesStore.set(legacyRecord.id, legacyRecord);
+      const res = await repo.setCancellationReversalAttentionAtomically(
+        'min_test_1',
+        legacyRecord.id,
+        'provider_reversal_error'
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('legacy_transition_unsupported');
+    });
+
+    it('5. fail closed se execution_strategy não for scheduled_cancel_to_free', async () => {
+      const record = createCtfRecord({ execution_strategy: 'scheduled_paid_transition' as any });
+      planChangesStore.set(record.id, record);
+      const res = await repo.setCancellationReversalAttentionAtomically(
+        'min_test_1',
+        record.id,
+        'provider_reversal_error'
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('unsupported_transition_strategy');
+    });
+
+    it('6. fail closed se transição já for terminal (completed ou canceled)', async () => {
+      const recordCompleted = createCtfRecord({
+        id: 'tr_term_comp',
+        transition_status: 'completed',
+        financial_safety_status: 'safe_terminal',
+      });
+      planChangesStore.set(recordCompleted.id, recordCompleted);
+      const resComp = await repo.setCancellationReversalAttentionAtomically(
+        'min_test_1',
+        recordCompleted.id,
+        'provider_reversal_error'
+      );
+      expect(resComp.success).toBe(false);
+      expect(resComp.reason).toBe('transition_already_terminal');
+
+      const recordCanceled = createCtfRecord({
+        id: 'tr_term_canc',
+        transition_status: 'canceled',
+        financial_safety_status: 'safe_terminal',
+      });
+      planChangesStore.set(recordCanceled.id, recordCanceled);
+      const resCanc = await repo.setCancellationReversalAttentionAtomically(
+        'min_test_1',
+        recordCanceled.id,
+        'provider_reversal_error'
+      );
+      expect(resCanc.success).toBe(false);
+      expect(resCanc.reason).toBe('transition_already_terminal');
+    });
+
+    it('7. fail closed em divergência de lease', async () => {
+      const record = createCtfRecord({
+        retry_locked_by: 'worker_alpha',
+        retry_locked_until: '2026-09-20T00:00:00.000Z',
+      });
+      planChangesStore.set(record.id, record);
+      const res = await repo.setCancellationReversalAttentionAtomically(
+        'min_test_1',
+        record.id,
+        'provider_reversal_error',
+        { nowIso: '2026-09-15T12:00:00.000Z', expectedLockOwner: 'worker_beta' }
+      );
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('lease_not_owned');
+    });
+
+    it('8. sucesso: marca atenção financeira e preserva slot, marker e quotas', async () => {
+      const record = createCtfRecord();
+      planChangesStore.set(record.id, record);
+
+      const slotId = buildActiveTransitionSlotId(record.ministry_id, record.provider);
+      activeSlotsStore.set(slotId, {
+        id: slotId,
+        ministry_id: record.ministry_id,
+        provider: record.provider,
+        plan_change_id: record.id,
+        acquired_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        version: 1,
+      });
+
+      const res = await repo.setCancellationReversalAttentionAtomically(
+        'min_test_1',
+        record.id,
+        'provider_reactivation_ambiguous',
+        { nowIso: '2026-09-15T12:00:00.000Z' }
+      );
+
+      expect(res.success).toBe(true);
+
+      const storedTx = planChangesStore.get(record.id) as BillingTransitionV1Record;
+      expect(storedTx.cancellation_reversal_status).toBe('attention_required');
+      expect(storedTx.cancellation_reversal_attention_reason).toBe('provider_reactivation_ambiguous');
+      expect(storedTx.financial_attention_required).toBe(true);
+      expect(storedTx.financial_attention_reason).toBe('provider_reactivation_ambiguous');
+      expect(storedTx.financial_safety_status).toBe('attention_required');
+
+      // Slot permanece estritamente HELD
+      expect(activeSlotsStore.has(slotId)).toBe(true);
+    });
+  });
+
+  describe('Reconciliation Visibility — Phase 4A.4.1', () => {
+    it('1. transição scheduled_cancel_to_free com cancellation_reversal_status "requested" é visível em getV1TransitionsNeedingReconciliation', async () => {
+      const record = createSampleV1Record({
+        id: 'tr_reconcile_ctf_rev_1',
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        execution_strategy: 'scheduled_cancel_to_free',
+        transition_type: 'downgrade',
+        transition_status: 'scheduled',
+        financial_safety_status: 'live',
+        effective_at: '2026-10-01T00:00:00.000Z',
+        current_period_end: '2026-10-01T00:00:00.000Z',
+        target_plan_id: 'free',
+        requested_plan_id: 'free',
+        target_future_recurring_price_cents: 0,
+        expected_amount_cents: 0,
+        cancellation_reversal_status: 'requested',
+        cancellation_reversal_requested_at: '2026-09-15T10:00:00.000Z',
+      });
+      planChangesStore.set(record.id, record);
+
+      const transitions = await repo.getV1TransitionsNeedingReconciliation('asaas', 10);
+      const found = transitions.find((t) => t.id === record.id);
+      expect(found).toBeDefined();
+      expect((found as BillingTransitionV1Record)?.transition_status).toBe('scheduled');
+      expect((found as BillingTransitionV1Record)?.cancellation_reversal_status).toBe('requested');
+    });
+
+    it('2. transição em attention_required é visível no bucket de atenção', async () => {
+      const record = createSampleV1Record({
+        id: 'tr_reconcile_ctf_rev_att_1',
+        ministry_id: 'min_test_1',
+        provider: 'asaas',
+        execution_strategy: 'scheduled_cancel_to_free',
+        transition_type: 'downgrade',
+        transition_status: 'scheduled',
+        financial_safety_status: 'attention_required',
+        financial_attention_required: true,
+        effective_at: '2026-10-01T00:00:00.000Z',
+        current_period_end: '2026-10-01T00:00:00.000Z',
+        target_plan_id: 'free',
+        requested_plan_id: 'free',
+        target_future_recurring_price_cents: 0,
+        expected_amount_cents: 0,
+        cancellation_reversal_status: 'attention_required',
+        cancellation_reversal_attention_reason: 'provider_error',
+      });
+      planChangesStore.set(record.id, record);
+
+      const transitions = await repo.getV1TransitionsNeedingReconciliation('asaas', 10);
+      const found = transitions.find((t) => t.id === record.id);
+      expect(found).toBeDefined();
+      expect(found?.financial_attention_required).toBe(true);
+      expect((found as BillingTransitionV1Record)?.cancellation_reversal_status).toBe('attention_required');
     });
   });
 });

@@ -420,9 +420,18 @@ export interface BillingTransitionV1Record {
   grace_entitlement_snapshot?: EntitlementSnapshot | null;
   grace_expired_at?: string | null;
   grace_expired_billing_date?: string | null;
+
+  // Phase 4A.4.1 Cancellation Reversal Subworkflow Fields
+  cancellation_reversal_status?: BillingCancellationReversalStatus;
+  cancellation_reversal_requested_at?: string | null;
+  cancellation_reversal_requested_by?: string | null;
+  cancellation_reversal_completed_at?: string | null;
+  cancellation_reversal_attention_reason?: string | null;
 }
 
 export type BillingGraceStatus = 'not_entered' | 'in_grace' | 'expired' | 'resolved';
+
+export type BillingCancellationReversalStatus = 'requested' | 'completed' | 'attention_required';
 
 export type BillingPlanChangeRecord = LegacyBillingPlanChangeRecord | BillingTransitionV1Record;
 
@@ -649,6 +658,90 @@ export function validateBillingTransitionV1(data: any): BillingTransitionV1Recor
   const expectedLegacyStatus = mapTransitionStatusToLegacyStatus(data.transition_status);
   if (data.status !== expectedLegacyStatus) {
     throw new Error(`Drift detectado em status: status legado '${data.status}' não corresponde a transition_status '${data.transition_status}'.`);
+  }
+
+  // 4. Validação do subworkflow de Reversão de Cancelamento (Phase 4A.4.1)
+  const validReversalStatuses: BillingCancellationReversalStatus[] = ['requested', 'completed', 'attention_required'];
+  if (data.cancellation_reversal_status !== undefined && data.cancellation_reversal_status !== null) {
+    if (!validReversalStatuses.includes(data.cancellation_reversal_status)) {
+      throw new Error(`cancellation_reversal_status inválido: '${data.cancellation_reversal_status}'.`);
+    }
+    if (data.execution_strategy !== 'scheduled_cancel_to_free') {
+      throw new Error("cancellation_reversal_status só é permitido para a estratégia 'scheduled_cancel_to_free'.");
+    }
+    if (data.cancellation_reversal_status === 'requested') {
+      if (
+        !data.cancellation_reversal_requested_at ||
+        typeof data.cancellation_reversal_requested_at !== 'string' ||
+        Number.isNaN(Date.parse(data.cancellation_reversal_requested_at))
+      ) {
+        throw new Error("cancellation_reversal_status === 'requested' exige cancellation_reversal_requested_at ISO válido.");
+      }
+    }
+    if (data.cancellation_reversal_status === 'completed') {
+      if (
+        !data.cancellation_reversal_completed_at ||
+        typeof data.cancellation_reversal_completed_at !== 'string' ||
+        Number.isNaN(Date.parse(data.cancellation_reversal_completed_at))
+      ) {
+        throw new Error("cancellation_reversal_status === 'completed' exige cancellation_reversal_completed_at ISO válido.");
+      }
+    }
+    if (data.cancellation_reversal_status === 'attention_required') {
+      if (
+        !data.cancellation_reversal_attention_reason ||
+        typeof data.cancellation_reversal_attention_reason !== 'string' ||
+        !data.cancellation_reversal_attention_reason.trim()
+      ) {
+        throw new Error("cancellation_reversal_status === 'attention_required' exige cancellation_reversal_attention_reason não vazio.");
+      }
+    }
+  }
+
+  const hasOtherReversalFields =
+    data.cancellation_reversal_requested_at !== undefined ||
+    data.cancellation_reversal_requested_by !== undefined ||
+    data.cancellation_reversal_completed_at !== undefined ||
+    data.cancellation_reversal_attention_reason !== undefined;
+
+  if (hasOtherReversalFields && data.execution_strategy !== 'scheduled_cancel_to_free') {
+    throw new Error("Campos de cancellation_reversal só são permitidos para a estratégia 'scheduled_cancel_to_free'.");
+  }
+
+  if (data.cancellation_reversal_requested_at) {
+    if (
+      typeof data.cancellation_reversal_requested_at !== 'string' ||
+      Number.isNaN(Date.parse(data.cancellation_reversal_requested_at))
+    ) {
+      throw new Error("cancellation_reversal_requested_at deve ser uma data ISO válida.");
+    }
+  }
+
+  if (data.cancellation_reversal_completed_at) {
+    if (
+      typeof data.cancellation_reversal_completed_at !== 'string' ||
+      Number.isNaN(Date.parse(data.cancellation_reversal_completed_at))
+    ) {
+      throw new Error("cancellation_reversal_completed_at deve ser uma data ISO válida.");
+    }
+  }
+
+  if (data.cancellation_reversal_requested_by !== undefined && data.cancellation_reversal_requested_by !== null) {
+    if (
+      typeof data.cancellation_reversal_requested_by !== 'string' ||
+      !data.cancellation_reversal_requested_by.trim()
+    ) {
+      throw new Error("cancellation_reversal_requested_by deve ser uma string não vazia.");
+    }
+  }
+
+  if (data.cancellation_reversal_attention_reason !== undefined && data.cancellation_reversal_attention_reason !== null) {
+    if (
+      typeof data.cancellation_reversal_attention_reason !== 'string' ||
+      !data.cancellation_reversal_attention_reason.trim()
+    ) {
+      throw new Error("cancellation_reversal_attention_reason deve ser uma string não vazia.");
+    }
   }
 
   return data as BillingTransitionV1Record;
