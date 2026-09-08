@@ -10,6 +10,7 @@ import {
   ParsedWebhookEvent,
   ProviderSubscriptionState,
   ProviderSubscriptionInactivateResult,
+  ProviderSubscriptionReactivateResult,
 } from './providers/billing-provider.interface';
 import { AsaasBillingProvider } from './providers/asaas/asaas.provider';
 import { config } from '../../config/unifiedConfig';
@@ -40,6 +41,7 @@ import {
   ScheduledCancelToFreeResponseDto,
   mapTransitionToScheduledCancelResponseDto,
   CANCEL_TO_FREE_ATTENTION_REASONS,
+  CANCELLATION_REVERSAL_ATTENTION_REASONS,
 } from './billing.types';
 import {
   validateTargetContract,
@@ -2873,6 +2875,21 @@ export class BillingService {
       }
 
       if (subState.status === 'ACTIVE') {
+        if (claimed.cancellation_reversal_status === 'requested') {
+          console.error(
+            `[BOUNDARY GUARD] Source subscription ACTIVE at boundary but reversal is requested for transition ${claimed.id}`
+          );
+          await this.billingRepo.updateTransition(claimed.id, ministryId, {
+            financial_attention_required: true,
+            financial_attention_reason: CANCELLATION_REVERSAL_ATTENTION_REASONS.PROVIDER_RESTORED_BUT_BOUNDARY_EXPIRED,
+            financial_safety_status: 'attention_required',
+            cancellation_reversal_status: 'attention_required',
+            cancellation_reversal_attention_reason: CANCELLATION_REVERSAL_ATTENTION_REASONS.PROVIDER_RESTORED_BUT_BOUNDARY_EXPIRED,
+            updated_at: nowIso,
+          });
+          await this.billingRepo.releasePlanChangeLock(claimed.id);
+          return { success: false, reason: CANCELLATION_REVERSAL_ATTENTION_REASONS.PROVIDER_RESTORED_BUT_BOUNDARY_EXPIRED };
+        }
         // Reativação inesperada no provedor! (Section 10)
         console.error(`[BOUNDARY GUARD] Source subscription unexpectedly ACTIVE at boundary: ${sourceSubId}`);
         await this.billingRepo.updateTransition(claimed.id, ministryId, {
@@ -3167,6 +3184,9 @@ export class BillingService {
           updated_at: completionIso,
           last_reconciled_at: completionIso,
           payment_cleanup_ids: cleanedIds,
+          ...(claimed.cancellation_reversal_status === 'requested'
+            ? { cancellation_reversal_status: 'expired' as const }
+            : {}),
         }
       );
 
@@ -3355,6 +3375,568 @@ export class BillingService {
       cancel_at_period_end: true,
       transition: transitionDto,
     };
+  }
+
+  /**
+   * Executa reativação no gateway de forma estrita para V1 Cancellation Reversal (Phase 4A.4.2).
+   */
+  private async reactivateProviderSubscriptionStrict(
+    providerSubscriptionId: string,
+    nextDueDate?: string
+  ): Promise<ProviderSubscriptionReactivateResult> {
+    if (typeof (this.provider as any).reactivateSubscriptionStrict === 'function') {
+      return await (this.provider as any).reactivateSubscriptionStrict(providerSubscriptionId, nextDueDate);
+    }
+
+    return {
+      outcome: 'TRANSIENT_ERROR',
+      errorMessage: 'STRICT_PROVIDER_CONTRACT_UNAVAILABLE: Provedor não implementa reactivateSubscriptionStrict.',
+    };
+  }
+
+  /**
+   * Valida a segurança financeira de cobranças da assinatura de origem durante a reversão de cancelamento (Phase 4A.4.2).
+   *
+   * Regras (Phase 4A.4.0B + 4A.4.2):
+   * - Cobranças devem pertencer à assinatura de origem.
+   * - Cobranças liquidadas inesperadas (CONFIRMED, RECEIVED, RECEIVED_IN_CASH) na/após a fronteira -> FAIL CLOSED (reversal_unexpected_settled_payment).
+   * - Cobranças OVERDUE -> FAIL CLOSED (future_overdue_obligation_detected).
+   * - Cobranças com status malformado ou desconhecido -> FAIL CLOSED (malformed_provider_payment).
+   * - Zero obrigações futuras -> VÁLIDO (Asaas não gera PENDING síncrono após PUT ACTIVE).
+   * - Exatamente 1 PENDING com dueDate === expectedCutoff -> VÁLIDO.
+   * - Exatamente 1 PENDING com dueDate !== expectedCutoff -> FAIL CLOSED (reversal_pending_payment_wrong_due_date).
+   * - Múltiplas cobranças PENDING (> 1) -> FAIL CLOSED (reversal_multiple_pending_payments).
+   *
+   * NUNCA remove ou reescreve cobranças inesperadas durante a reversão (preserva evidência financeira imutável).
+   */
+  validateReversalPaymentSafety(
+    futureObligations: ProviderPaymentRecord[],
+    expectedCutoff: string,
+    sourceSubId: string
+  ): { valid: true } | { valid: false; reason: string; attentionReason: string } {
+    for (const pay of futureObligations) {
+      if (!pay.status || typeof pay.status !== 'string') {
+        return {
+          valid: false,
+          reason: 'malformed_provider_payment',
+          attentionReason: CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_PROVIDER_PAYMENT,
+        };
+      }
+
+      if (
+        pay.status === 'CONFIRMED' ||
+        pay.status === 'RECEIVED' ||
+        pay.status === 'RECEIVED_IN_CASH'
+      ) {
+        return {
+          valid: false,
+          reason: 'unexpected_settled_payment',
+          attentionReason: CANCELLATION_REVERSAL_ATTENTION_REASONS.UNEXPECTED_SETTLED_PAYMENT,
+        };
+      }
+
+      if (pay.status === 'OVERDUE') {
+        return {
+          valid: false,
+          reason: 'overdue_payment_detected',
+          attentionReason: CANCEL_TO_FREE_ATTENTION_REASONS.FUTURE_OVERDUE_OBLIGATION_DETECTED,
+        };
+      }
+
+      if (pay.status !== 'PENDING') {
+        return {
+          valid: false,
+          reason: 'unexpected_payment_status',
+          attentionReason: CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_PROVIDER_PAYMENT,
+        };
+      }
+    }
+
+    const pendingPayments = futureObligations.filter((p) => p.status === 'PENDING');
+
+    if (pendingPayments.length === 0) {
+      return { valid: true };
+    }
+
+    if (pendingPayments.length === 1) {
+      const singlePay = pendingPayments[0];
+      if (singlePay.dueDate !== expectedCutoff) {
+        return {
+          valid: false,
+          reason: 'pending_payment_wrong_due_date',
+          attentionReason: CANCELLATION_REVERSAL_ATTENTION_REASONS.PENDING_PAYMENT_WRONG_DUE_DATE,
+        };
+      }
+      return { valid: true };
+    }
+
+    return {
+      valid: false,
+      reason: 'multiple_pending_payments',
+      attentionReason: CANCELLATION_REVERSAL_ATTENTION_REASONS.MULTIPLE_PENDING_PAYMENTS,
+    };
+  }
+
+  /**
+   * Orquestra a execução da reversão de cancelamento sob lease já adquirido (Phase 4A.4.2).
+   */
+  async executeCancellationReversalOrchestration(
+    transition: BillingTransitionV1Record,
+    lockOwner: string,
+    options?: { now?: Date }
+  ): Promise<{ success: boolean; reason?: string; transition?: BillingTransitionV1Record }> {
+    const ministryId = transition.ministry_id;
+    const nowDate = options?.now || new Date();
+    const nowIso = nowDate.toISOString();
+
+    const sourceSubId = transition.old_provider_subscription_id || transition.previous_provider_subscription_id;
+    if (!sourceSubId) {
+      await this.billingRepo.setCancellationReversalAttentionAtomically(
+        ministryId,
+        this.provider.name,
+        transition.id,
+        CANCEL_TO_FREE_ATTENTION_REASONS.PROVIDER_RESOURCE_DIVERGENCE,
+        { expectedLockOwner: lockOwner, nowIso }
+      );
+      await this.billingRepo.releasePlanChangeLock(transition.id);
+      return { success: false, reason: 'missing_source_subscription_id' };
+    }
+
+    const expectedCutoff = transition.effective_billing_date;
+    if (!expectedCutoff) {
+      await this.billingRepo.setCancellationReversalAttentionAtomically(
+        ministryId,
+        this.provider.name,
+        transition.id,
+        'missing_effective_billing_date',
+        { expectedLockOwner: lockOwner, nowIso }
+      );
+      await this.billingRepo.releasePlanChangeLock(transition.id);
+      return { success: false, reason: 'missing_effective_billing_date' };
+    }
+
+    // Boundary Gate
+    const boundaryInstantStr = transition.effective_at || transition.current_period_end;
+    if (boundaryInstantStr && nowDate.getTime() >= new Date(boundaryInstantStr).getTime()) {
+      const subState = await this.getProviderSubscriptionStateStrict(sourceSubId);
+      if (subState.outcome === 'TRANSIENT_ERROR') {
+        await this.billingRepo.releasePlanChangeLock(transition.id);
+        return { success: false, reason: 'transient_provider_read_error' };
+      }
+
+      if (subState.outcome === 'FOUND' && subState.status === 'ACTIVE') {
+        // Case B: Provider ACTIVE at boundary
+        await this.billingRepo.setCancellationReversalAttentionAtomically(
+          ministryId,
+          this.provider.name,
+          transition.id,
+          CANCELLATION_REVERSAL_ATTENTION_REASONS.PROVIDER_RESTORED_BUT_BOUNDARY_EXPIRED,
+          { expectedLockOwner: lockOwner, nowIso }
+        );
+        await this.billingRepo.releasePlanChangeLock(transition.id);
+        return {
+          success: false,
+          reason: CANCELLATION_REVERSAL_ATTENTION_REASONS.PROVIDER_RESTORED_BUT_BOUNDARY_EXPIRED,
+        };
+      }
+
+      // Case A: Provider INACTIVE at boundary -> reversal expired
+      await this.billingRepo.updateTransition(transition.id, ministryId, {
+        cancellation_reversal_status: 'expired',
+        updated_at: nowIso,
+      });
+      await this.billingRepo.releasePlanChangeLock(transition.id);
+      return { success: false, reason: 'boundary_expired' };
+    }
+
+    // Provider Strict Contract Check
+    if (
+      typeof (this.provider as any).getSubscriptionState !== 'function' ||
+      typeof (this.provider as any).reactivateSubscriptionStrict !== 'function'
+    ) {
+      await this.billingRepo.releasePlanChangeLock(transition.id);
+      return { success: false, reason: 'STRICT_PROVIDER_CONTRACT_UNAVAILABLE' };
+    }
+
+    // STEP 1: Prova inicial do estado da assinatura de origem
+    const initialSubState = await this.getProviderSubscriptionStateStrict(sourceSubId);
+
+    if (initialSubState.outcome === 'TRANSIENT_ERROR') {
+      await this.billingRepo.releasePlanChangeLock(transition.id);
+      return { success: false, reason: 'transient_provider_read_error' };
+    }
+
+    if (initialSubState.outcome === 'NOT_FOUND') {
+      await this.billingRepo.setCancellationReversalAttentionAtomically(
+        ministryId,
+        this.provider.name,
+        transition.id,
+        CANCEL_TO_FREE_ATTENTION_REASONS.PROVIDER_RESOURCE_DIVERGENCE,
+        { expectedLockOwner: lockOwner, nowIso }
+      );
+      await this.billingRepo.releasePlanChangeLock(transition.id);
+      return { success: false, reason: 'provider_resource_divergence' };
+    }
+
+    if (initialSubState.outcome === 'AUTH_ERROR') {
+      await this.billingRepo.setCancellationReversalAttentionAtomically(
+        ministryId,
+        this.provider.name,
+        transition.id,
+        CANCEL_TO_FREE_ATTENTION_REASONS.PROVIDER_AUTH_FAILURE,
+        { expectedLockOwner: lockOwner, nowIso }
+      );
+      await this.billingRepo.releasePlanChangeLock(transition.id);
+      return { success: false, reason: 'provider_auth_failure' };
+    }
+
+    if (initialSubState.outcome === 'MALFORMED_RESPONSE') {
+      await this.billingRepo.setCancellationReversalAttentionAtomically(
+        ministryId,
+        this.provider.name,
+        transition.id,
+        CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_PROVIDER_SUBSCRIPTION,
+        { expectedLockOwner: lockOwner, nowIso }
+      );
+      await this.billingRepo.releasePlanChangeLock(transition.id);
+      return { success: false, reason: 'malformed_provider_subscription' };
+    }
+
+    let isProviderActive = false;
+    let providerNextDueDate: string | null | undefined = undefined;
+
+    if (initialSubState.status === 'INACTIVE') {
+      const reactivateRes = await this.reactivateProviderSubscriptionStrict(sourceSubId, expectedCutoff);
+
+      if (reactivateRes.outcome === 'AUTH_ERROR') {
+        await this.billingRepo.setCancellationReversalAttentionAtomically(
+          ministryId,
+          this.provider.name,
+          transition.id,
+          CANCEL_TO_FREE_ATTENTION_REASONS.PROVIDER_AUTH_FAILURE,
+          { expectedLockOwner: lockOwner, nowIso }
+        );
+        await this.billingRepo.releasePlanChangeLock(transition.id);
+        return { success: false, reason: 'provider_auth_failure' };
+      }
+
+      if (reactivateRes.outcome === 'NOT_FOUND') {
+        await this.billingRepo.setCancellationReversalAttentionAtomically(
+          ministryId,
+          this.provider.name,
+          transition.id,
+          CANCEL_TO_FREE_ATTENTION_REASONS.PROVIDER_RESOURCE_DIVERGENCE,
+          { expectedLockOwner: lockOwner, nowIso }
+        );
+        await this.billingRepo.releasePlanChangeLock(transition.id);
+        return { success: false, reason: 'provider_resource_divergence' };
+      }
+
+      if (reactivateRes.outcome === 'CLIENT_ERROR') {
+        await this.billingRepo.setCancellationReversalAttentionAtomically(
+          ministryId,
+          this.provider.name,
+          transition.id,
+          CANCEL_TO_FREE_ATTENTION_REASONS.PROVIDER_CLIENT_ERROR,
+          { expectedLockOwner: lockOwner, nowIso }
+        );
+        await this.billingRepo.releasePlanChangeLock(transition.id);
+        return { success: false, reason: 'provider_client_error' };
+      }
+
+      if (reactivateRes.outcome === 'MALFORMED_RESPONSE') {
+        await this.billingRepo.setCancellationReversalAttentionAtomically(
+          ministryId,
+          this.provider.name,
+          transition.id,
+          CANCEL_TO_FREE_ATTENTION_REASONS.MALFORMED_PROVIDER_SUBSCRIPTION,
+          { expectedLockOwner: lockOwner, nowIso }
+        );
+        await this.billingRepo.releasePlanChangeLock(transition.id);
+        return { success: false, reason: 'malformed_provider_subscription' };
+      }
+
+      if (reactivateRes.outcome === 'TRANSIENT_ERROR') {
+        // Crash Window B: PUT retornou erro temporário/timeout. Verifica via fresh GET se o gateway reativou antes da queda.
+        const freshCheck = await this.getProviderSubscriptionStateStrict(sourceSubId);
+        if (freshCheck.outcome === 'FOUND' && freshCheck.status === 'ACTIVE') {
+          isProviderActive = true;
+          providerNextDueDate = freshCheck.rawSubscription?.nextDueDate;
+        } else {
+          await this.billingRepo.releasePlanChangeLock(transition.id);
+          return { success: false, reason: 'transient_provider_mutation_error' };
+        }
+      } else if (reactivateRes.outcome === 'SUCCESS') {
+        isProviderActive = true;
+        providerNextDueDate = reactivateRes.nextDueDate;
+      }
+    } else if (initialSubState.status === 'ACTIVE') {
+      // Crash Window A: já estava ACTIVE no gateway (recuperação legítima ou reativação prévia sem avanço local)
+      isProviderActive = true;
+      providerNextDueDate = initialSubState.rawSubscription?.nextDueDate;
+    } else {
+      await this.billingRepo.setCancellationReversalAttentionAtomically(
+        ministryId,
+        this.provider.name,
+        transition.id,
+        CANCEL_TO_FREE_ATTENTION_REASONS.SOURCE_SUBSCRIPTION_UNEXPECTED_STATUS,
+        { expectedLockOwner: lockOwner, nowIso }
+      );
+      await this.billingRepo.releasePlanChangeLock(transition.id);
+      return { success: false, reason: 'source_subscription_unexpected_status' };
+    }
+
+    if (!isProviderActive) {
+      await this.billingRepo.releasePlanChangeLock(transition.id);
+      return { success: false, reason: 'provider_not_active' };
+    }
+
+    // Validação de nextDueDate se retornado pelo provedor
+    if (providerNextDueDate && providerNextDueDate !== expectedCutoff) {
+      await this.billingRepo.setCancellationReversalAttentionAtomically(
+        ministryId,
+        this.provider.name,
+        transition.id,
+        CANCELLATION_REVERSAL_ATTENTION_REASONS.NEXT_DUE_DATE_DIVERGENCE,
+        { expectedLockOwner: lockOwner, nowIso }
+      );
+      await this.billingRepo.releasePlanChangeLock(transition.id);
+      return { success: false, reason: CANCELLATION_REVERSAL_ATTENTION_REASONS.NEXT_DUE_DATE_DIVERGENCE };
+    }
+
+    // STEP 2: Leitura exaustiva de pagamentos e validação de segurança financeira
+    const listRes = await this.listExactSourcePaymentsExhaustive(sourceSubId);
+
+    if (listRes.outcome === 'ATTENTION') {
+      await this.billingRepo.setCancellationReversalAttentionAtomically(
+        ministryId,
+        this.provider.name,
+        transition.id,
+        listRes.reason,
+        { expectedLockOwner: lockOwner, nowIso }
+      );
+      await this.billingRepo.releasePlanChangeLock(transition.id);
+      return { success: false, reason: listRes.reason };
+    }
+
+    if (listRes.outcome === 'TRANSIENT') {
+      // Crash Window C: listagem temporariamente indisponível com provider já ACTIVE. Libera lock para retry pelo reconciliador.
+      await this.billingRepo.releasePlanChangeLock(transition.id);
+      return { success: false, reason: 'transient_payment_list_error' };
+    }
+
+    const sourcePayments = listRes.payments || [];
+    const futureObligations = sourcePayments.filter(
+      (p) => (!p.subscriptionId || p.subscriptionId === sourceSubId) && p.dueDate && p.dueDate >= expectedCutoff
+    );
+
+    const safetyValidation = this.validateReversalPaymentSafety(futureObligations, expectedCutoff, sourceSubId);
+    if (!safetyValidation.valid) {
+      await this.billingRepo.setCancellationReversalAttentionAtomically(
+        ministryId,
+        this.provider.name,
+        transition.id,
+        safetyValidation.attentionReason,
+        { expectedLockOwner: lockOwner, nowIso }
+      );
+      await this.billingRepo.releasePlanChangeLock(transition.id);
+      return { success: false, reason: safetyValidation.reason };
+    }
+
+    // STEP 3: Second-Gate Proof (Fresh read confirmando que o provedor permanece ACTIVE)
+    const finalSubCheck = await this.getProviderSubscriptionStateStrict(sourceSubId);
+    if (finalSubCheck.outcome === 'TRANSIENT_ERROR') {
+      await this.billingRepo.releasePlanChangeLock(transition.id);
+      return { success: false, reason: 'transient_provider_read_error' };
+    }
+
+    if (finalSubCheck.outcome !== 'FOUND' || finalSubCheck.status !== 'ACTIVE') {
+      await this.billingRepo.setCancellationReversalAttentionAtomically(
+        ministryId,
+        this.provider.name,
+        transition.id,
+        CANCEL_TO_FREE_ATTENTION_REASONS.SOURCE_SUBSCRIPTION_UNEXPECTED_STATUS,
+        { expectedLockOwner: lockOwner, nowIso }
+      );
+      await this.billingRepo.releasePlanChangeLock(transition.id);
+      return { success: false, reason: 'source_subscription_unexpected_status' };
+    }
+
+    // STEP 4: Terminalização Atômica da Reversão, Liberação do Slot e Limpeza do Marker
+    const completeRes = await this.billingRepo.completeCancellationReversalAndReleaseOwnedSlotAtomically(
+      ministryId,
+      this.provider.name,
+      transition.id,
+      {
+        expectedLockOwner: lockOwner,
+        nowIso,
+        transitionUpdates: {
+          last_reconciled_at: nowIso,
+        },
+      }
+    );
+
+    if (!completeRes.success) {
+      if (completeRes.reason === 'boundary_expired') {
+        await this.billingRepo.setCancellationReversalAttentionAtomically(
+          ministryId,
+          this.provider.name,
+          transition.id,
+          CANCELLATION_REVERSAL_ATTENTION_REASONS.PROVIDER_RESTORED_BUT_BOUNDARY_EXPIRED,
+          { expectedLockOwner: lockOwner, nowIso }
+        );
+      }
+      await this.billingRepo.releasePlanChangeLock(transition.id);
+      return { success: false, reason: completeRes.reason };
+    }
+
+    // STEP 5: Liberação da Trava Técnica Distribuída
+    await this.billingRepo.releasePlanChangeLock(transition.id);
+
+    const reloaded = await this.billingRepo.getTransitionById(transition.id, ministryId);
+    return {
+      success: true,
+      reason: 'reversal_completed',
+      transition: reloaded && isBillingTransitionV1(reloaded) ? reloaded : undefined,
+    };
+  }
+
+  /**
+   * Solicita e orquestra a reversão de cancelamento (uncancel) de uma assinatura agendada para Free (Phase 4A.4.2).
+   */
+  async requestScheduledCancellationReversal(
+    ministryId: string,
+    actorUserId: string,
+    options?: { now?: Date; transitionId?: string }
+  ): Promise<{ success: boolean; reason?: string; transition?: BillingTransitionV1Record }> {
+    if (!actorUserId || typeof actorUserId !== 'string' || !actorUserId.trim()) {
+      return { success: false, reason: 'actor_user_id_required' };
+    }
+
+    const activeSlot = await this.billingRepo.getActiveTransitionSlot(ministryId, this.provider.name);
+    let transition: BillingPlanChangeRecord | null = null;
+
+    if (activeSlot) {
+      transition = await this.billingRepo.getTransitionById(activeSlot.plan_change_id, ministryId);
+    } else if (options?.transitionId) {
+      transition = await this.billingRepo.getTransitionById(options.transitionId, ministryId);
+    }
+
+    if (!transition) {
+      if (!activeSlot) {
+        const appSub = await this.subscriptionRepo.getSubscription(ministryId);
+        if (appSub && appSub.cancel_at_period_end === false) {
+          return { success: false, reason: 'reversal_already_completed' };
+        }
+      }
+      return { success: false, reason: activeSlot ? 'transition_not_found' : 'no_active_cancellation_found' };
+    }
+
+    if (!isBillingTransitionV1(transition)) {
+      return { success: false, reason: 'transition_not_found' };
+    }
+
+    if (transition.execution_strategy !== 'scheduled_cancel_to_free') {
+      return { success: false, reason: 'unsupported_transition_strategy' };
+    }
+
+    if (transition.cancellation_reversal_status === 'completed') {
+      return { success: false, reason: 'reversal_already_completed' };
+    }
+
+    if (transition.cancellation_reversal_status === 'attention_required') {
+      return { success: false, reason: 'reversal_attention_required' };
+    }
+
+    if (transition.cancellation_reversal_status === 'expired') {
+      return { success: false, reason: 'reversal_already_expired' };
+    }
+
+    if (transition.transition_status !== 'scheduled' || transition.financial_safety_status !== 'live') {
+      return { success: false, reason: 'invalid_source_status' };
+    }
+
+    const nowDate = options?.now || new Date();
+    const boundaryInstantStr = transition.effective_at || transition.current_period_end;
+    if (boundaryInstantStr && nowDate.getTime() >= new Date(boundaryInstantStr).getTime()) {
+      return { success: false, reason: 'boundary_expired' };
+    }
+
+    const lockOwner = `cancellation_reversal:${crypto.randomUUID()}`;
+    const claimed = await this.billingRepo.claimTransitionForReconciliation(transition.id, lockOwner, 60000);
+    if (!claimed) {
+      return { success: false, reason: 'locked_by_another_worker' };
+    }
+
+    const nowIso = nowDate.toISOString();
+    const beginRes = await this.billingRepo.beginCancellationReversalAtomically(
+      ministryId,
+      this.provider.name,
+      transition.id,
+      actorUserId,
+      {
+        expectedLockOwner: lockOwner,
+        nowIso,
+      }
+    );
+
+    if (!beginRes.success) {
+      await this.billingRepo.releasePlanChangeLock(transition.id);
+      return { success: false, reason: beginRes.reason };
+    }
+
+    const transitionToOrchestrate = beginRes.transition || claimed;
+    return await this.executeCancellationReversalOrchestration(transitionToOrchestrate, lockOwner, options);
+  }
+
+  /**
+   * Reconcilia a reversão de cancelamento agendado em andamento via worker assíncrono (Phase 4A.4.2).
+   */
+  async reconcileScheduledCancellationReversal(
+    transitionId: string,
+    workerId: string,
+    options?: { now?: Date }
+  ): Promise<{ success: boolean; reason?: string; transition?: BillingTransitionV1Record }> {
+    const claimed = await this.billingRepo.claimTransitionForReconciliation(transitionId, workerId, 60000);
+    if (!claimed) {
+      return { success: false, reason: 'locked_by_another_worker' };
+    }
+
+    if (claimed.execution_strategy !== 'scheduled_cancel_to_free') {
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: false, reason: 'unsupported_transition_strategy' };
+    }
+
+    if (claimed.cancellation_reversal_status === 'completed') {
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: true, reason: 'already_completed', transition: claimed };
+    }
+
+    if (
+      claimed.financial_attention_required === true ||
+      claimed.financial_safety_status === 'attention_required' ||
+      claimed.cancellation_reversal_status === 'attention_required'
+    ) {
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: false, reason: 'financial_attention_required', transition: claimed };
+    }
+
+    if (claimed.cancellation_reversal_status === 'expired') {
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: false, reason: 'reversal_already_expired', transition: claimed };
+    }
+
+    if (claimed.cancellation_reversal_status !== 'requested') {
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: false, reason: 'reversal_not_requested', transition: claimed };
+    }
+
+    if (claimed.transition_status !== 'scheduled' || claimed.financial_safety_status !== 'live') {
+      await this.billingRepo.releasePlanChangeLock(claimed.id);
+      return { success: false, reason: 'invalid_source_status', transition: claimed };
+    }
+
+    return await this.executeCancellationReversalOrchestration(claimed, workerId, options);
   }
 
   /**

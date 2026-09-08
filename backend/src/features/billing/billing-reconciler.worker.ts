@@ -197,21 +197,44 @@ export class BillingReconcilerWorker {
             item.transition_status === 'scheduled'
           ) {
             processed++;
-            const boundaryResult = await this.billingService.reconcileScheduledCancelToFreeBoundary(
-              item.id,
-              this.workerId
-            );
-            if (boundaryResult.success) {
-              succeeded++;
-              console.log(
-                `[BillingReconcilerWorker] Transição V1 Scheduled Cancel-to-Free Boundary processada: ${item.id} (ministério: ${item.ministry_id}, motivo: ${boundaryResult.reason})`
+            if (item.cancellation_reversal_status === 'requested') {
+              const reversalResult = await this.billingService.reconcileScheduledCancellationReversal(
+                item.id,
+                this.workerId
               );
+              if (reversalResult.success) {
+                succeeded++;
+                console.log(
+                  `[BillingReconcilerWorker] Transição V1 Scheduled Cancel-to-Free Reversal processada: ${item.id} (ministério: ${item.ministry_id}, motivo: ${reversalResult.reason})`
+                );
+              } else {
+                if (
+                  reversalResult.reason !== 'locked_by_another_worker' &&
+                  reversalResult.reason !== 'waiting_for_period_boundary' &&
+                  reversalResult.reason !== 'transient_provider_read_error' &&
+                  reversalResult.reason !== 'transient_provider_mutation_error' &&
+                  reversalResult.reason !== 'transient_payment_list_error'
+                ) {
+                  failed++;
+                }
+              }
             } else {
-              if (
-                boundaryResult.reason !== 'locked_by_another_worker' &&
-                boundaryResult.reason !== 'waiting_for_period_boundary'
-              ) {
-                failed++;
+              const boundaryResult = await this.billingService.reconcileScheduledCancelToFreeBoundary(
+                item.id,
+                this.workerId
+              );
+              if (boundaryResult.success) {
+                succeeded++;
+                console.log(
+                  `[BillingReconcilerWorker] Transição V1 Scheduled Cancel-to-Free Boundary processada: ${item.id} (ministério: ${item.ministry_id}, motivo: ${boundaryResult.reason})`
+                );
+              } else {
+                if (
+                  boundaryResult.reason !== 'locked_by_another_worker' &&
+                  boundaryResult.reason !== 'waiting_for_period_boundary'
+                ) {
+                  failed++;
+                }
               }
             }
           }

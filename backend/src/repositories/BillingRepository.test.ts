@@ -2057,6 +2057,44 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
       recordOrphanBy.cancellation_reversal_requested_by = 'usr_admin_1';
       expect(() => validateBillingTransitionV1(recordOrphanBy)).toThrow(/presentes sem cancellation_reversal_status definido/i);
     });
+
+    it('22. aceita subworkflow com status "expired" e campos obrigatórios preenchidos', () => {
+      const record = createBaseCtfRecord();
+      record.cancellation_reversal_status = 'expired';
+      record.cancellation_reversal_requested_at = '2026-09-15T10:00:00.000Z';
+      record.cancellation_reversal_requested_by = 'usr_admin_123';
+      expect(() => validateBillingTransitionV1(record)).not.toThrow();
+    });
+
+    it('23. rejeita status "expired" se cancellation_reversal_completed_at estiver presente', () => {
+      const record = createBaseCtfRecord();
+      record.cancellation_reversal_status = 'expired';
+      record.cancellation_reversal_requested_at = '2026-09-15T10:00:00.000Z';
+      record.cancellation_reversal_requested_by = 'usr_admin_123';
+      record.cancellation_reversal_completed_at = '2026-09-15T10:05:00.000Z';
+      expect(() => validateBillingTransitionV1(record)).toThrow(/não permite cancellation_reversal_completed_at/i);
+    });
+
+    it('24. rejeita status "expired" se cancellation_reversal_attention_reason estiver presente', () => {
+      const record = createBaseCtfRecord();
+      record.cancellation_reversal_status = 'expired';
+      record.cancellation_reversal_requested_at = '2026-09-15T10:00:00.000Z';
+      record.cancellation_reversal_requested_by = 'usr_admin_123';
+      record.cancellation_reversal_attention_reason = 'some_reason';
+      expect(() => validateBillingTransitionV1(record)).toThrow(/não permite cancellation_reversal_attention_reason/i);
+    });
+
+    it('25. rejeita status "expired" sem requested_at ou requested_by prévios', () => {
+      const recordNoReqAt = createBaseCtfRecord();
+      recordNoReqAt.cancellation_reversal_status = 'expired';
+      recordNoReqAt.cancellation_reversal_requested_by = 'usr_admin_123';
+      expect(() => validateBillingTransitionV1(recordNoReqAt)).toThrow(/exige cancellation_reversal_requested_at ISO válido/i);
+
+      const recordNoReqBy = createBaseCtfRecord();
+      recordNoReqBy.cancellation_reversal_status = 'expired';
+      recordNoReqBy.cancellation_reversal_requested_at = '2026-09-15T10:00:00.000Z';
+      expect(() => validateBillingTransitionV1(recordNoReqBy)).toThrow(/deve ser uma string não vazia/i);
+    });
   });
 
   describe('beginCancellationReversalAtomically — Phase 4A.4.1', () => {
@@ -2217,6 +2255,19 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
       });
       expect(res.success).toBe(false);
       expect(res.reason).toBe('reversal_attention_required');
+    });
+
+    it('8b. fail closed se reversão já tiver status "expired"', async () => {
+      const { record } = setupValidCtfState({
+        cancellation_reversal_status: 'expired',
+        cancellation_reversal_requested_at: '2026-09-15T10:00:00.000Z',
+        cancellation_reversal_requested_by: 'usr_admin',
+      });
+      const res = await repo.beginCancellationReversalAtomically('min_test_1', 'asaas', record.id, 'user_1', {
+        expectedLockOwner: 'worker_lease_1',
+      });
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('reversal_already_expired');
     });
 
     it('9. fail closed se transition_status !== "scheduled"', async () => {

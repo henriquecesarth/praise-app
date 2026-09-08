@@ -115,6 +115,22 @@ export interface ProviderSubscriptionInactivateResult {
   errorMessage?: string;
 }
 
+export type ProviderSubscriptionReactivateOutcomeType =
+  | 'SUCCESS'
+  | 'NOT_FOUND'
+  | 'AUTH_ERROR'
+  | 'CLIENT_ERROR'
+  | 'TRANSIENT_ERROR'
+  | 'MALFORMED_RESPONSE';
+
+export interface ProviderSubscriptionReactivateResult {
+  outcome: ProviderSubscriptionReactivateOutcomeType;
+  httpStatus?: number;
+  status?: string;
+  nextDueDate?: string;
+  errorMessage?: string;
+}
+
 export type ProviderPaymentListOutcomeType =
   | 'SUCCESS'
   | 'NOT_FOUND'
@@ -215,6 +231,11 @@ export interface BillingProvider {
   ): Promise<{ success: boolean; canceledAtPeriodEnd: boolean }>;
 
   reactivateSubscription(providerSubscriptionId: string, nextDueDate?: string): Promise<{ success: boolean }>;
+
+  reactivateSubscriptionStrict?(
+    providerSubscriptionId: string,
+    nextDueDate?: string
+  ): Promise<ProviderSubscriptionReactivateResult>;
 
   listSubscriptionPayments(
     providerSubscriptionId: string,

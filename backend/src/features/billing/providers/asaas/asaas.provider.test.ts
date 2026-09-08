@@ -2068,6 +2068,141 @@ describe('AsaasBillingProvider — Webhook Authentication & Parser Validation', 
       });
     });
 
+    describe('reactivateSubscriptionStrict (Phase 4A.4.2)', () => {
+      it('1. Retorna SUCCESS com status ACTIVE e nextDueDate quando HTTP 200', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'sub_react', status: 'ACTIVE', nextDueDate: '2026-10-01' }),
+        });
+
+        const res = await provider.reactivateSubscriptionStrict('sub_react', '2026-10-01');
+        expect(res.outcome).toBe('SUCCESS');
+        expect(res.httpStatus).toBe(200);
+        expect(res.status).toBe('ACTIVE');
+        expect(res.nextDueDate).toBe('2026-10-01');
+      });
+
+      it('2. Envia payload correto { status: "ACTIVE", nextDueDate } via PUT para /subscriptions/{id}', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'sub_react_payload', status: 'ACTIVE', nextDueDate: '2026-11-15' }),
+        });
+        global.fetch = fetchMock;
+
+        await provider.reactivateSubscriptionStrict('sub_react_payload', '2026-11-15');
+
+        expect(fetchMock).toHaveBeenCalledWith(
+          'https://sandbox.asaas.com/api/v3/subscriptions/sub_react_payload',
+          expect.objectContaining({
+            method: 'PUT',
+            body: JSON.stringify({ status: 'ACTIVE', nextDueDate: '2026-11-15' }),
+          })
+        );
+      });
+
+      it('3. Envia payload { status: "ACTIVE" } sem nextDueDate quando nextDueDate não fornecido', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'sub_react_no_due', status: 'ACTIVE' }),
+        });
+        global.fetch = fetchMock;
+
+        await provider.reactivateSubscriptionStrict('sub_react_no_due');
+
+        expect(fetchMock).toHaveBeenCalledWith(
+          'https://sandbox.asaas.com/api/v3/subscriptions/sub_react_no_due',
+          expect.objectContaining({
+            method: 'PUT',
+            body: JSON.stringify({ status: 'ACTIVE' }),
+          })
+        );
+      });
+
+      it('4. Retorna NOT_FOUND quando HTTP 404 e NÃO silencia o erro', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 404,
+          json: async () => ({ errors: [{ description: 'Subscription not found' }] }),
+        });
+
+        const res = await provider.reactivateSubscriptionStrict('sub_not_found', '2026-10-01');
+        expect(res.outcome).toBe('NOT_FOUND');
+        expect(res.httpStatus).toBe(404);
+      });
+
+      it('5. Retorna AUTH_ERROR quando HTTP 401', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 401,
+          json: async () => ({ errors: [{ description: 'Unauthorized' }] }),
+        });
+
+        const res = await provider.reactivateSubscriptionStrict('sub_auth_401', '2026-10-01');
+        expect(res.outcome).toBe('AUTH_ERROR');
+        expect(res.httpStatus).toBe(401);
+      });
+
+      it('6. Retorna AUTH_ERROR quando HTTP 403', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 403,
+          json: async () => ({ errors: [{ description: 'Forbidden' }] }),
+        });
+
+        const res = await provider.reactivateSubscriptionStrict('sub_auth_403', '2026-10-01');
+        expect(res.outcome).toBe('AUTH_ERROR');
+        expect(res.httpStatus).toBe(403);
+      });
+
+      it('7. Retorna CLIENT_ERROR quando HTTP 400 com mensagem extraída do provedor', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 400,
+          json: async () => ({ errors: [{ description: 'Assinatura não pode ser reativada' }] }),
+        });
+
+        const res = await provider.reactivateSubscriptionStrict('sub_bad_req', '2026-10-01');
+        expect(res.outcome).toBe('CLIENT_ERROR');
+        expect(res.httpStatus).toBe(400);
+        expect(res.errorMessage).toBe('Assinatura não pode ser reativada');
+      });
+
+      it('8. Retorna TRANSIENT_ERROR quando HTTP 500 ou 503', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 503,
+          json: async () => ({ errors: [{ description: 'Service unavailable' }] }),
+        });
+
+        const res503 = await provider.reactivateSubscriptionStrict('sub_503', '2026-10-01');
+        expect(res503.outcome).toBe('TRANSIENT_ERROR');
+        expect(res503.httpStatus).toBe(503);
+      });
+
+      it('9. Retorna TRANSIENT_ERROR em caso de timeout / falha de rede', async () => {
+        global.fetch = vi.fn().mockRejectedValue(new Error('ETIMEDOUT'));
+
+        const resTimeout = await provider.reactivateSubscriptionStrict('sub_timeout', '2026-10-01');
+        expect(resTimeout.outcome).toBe('TRANSIENT_ERROR');
+        expect(resTimeout.errorMessage).toContain('ETIMEDOUT');
+      });
+
+      it('10. Retorna MALFORMED_RESPONSE quando HTTP 200 com payload malformado ou nulo', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => null,
+        });
+
+        const res = await provider.reactivateSubscriptionStrict('sub_malformed', '2026-10-01');
+        expect(res.outcome).toBe('MALFORMED_RESPONSE');
+        expect(res.httpStatus).toBe(200);
+      });
+    });
+
     describe('listAllSubscriptionPaymentsStrict (Phase 3D.2 Hardening)', () => {
       it('1. Enumera exaustivamente todas as páginas com limit 50 até hasMore=false', async () => {
         const page1Items = Array.from({ length: 50 }, (_, i) => ({

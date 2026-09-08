@@ -431,7 +431,7 @@ export interface BillingTransitionV1Record {
 
 export type BillingGraceStatus = 'not_entered' | 'in_grace' | 'expired' | 'resolved';
 
-export type BillingCancellationReversalStatus = 'requested' | 'completed' | 'attention_required';
+export type BillingCancellationReversalStatus = 'requested' | 'completed' | 'attention_required' | 'expired';
 
 export type BillingPlanChangeRecord = LegacyBillingPlanChangeRecord | BillingTransitionV1Record;
 
@@ -660,8 +660,8 @@ export function validateBillingTransitionV1(data: any): BillingTransitionV1Recor
     throw new Error(`Drift detectado em status: status legado '${data.status}' não corresponde a transition_status '${data.transition_status}'.`);
   }
 
-  // 4. Validação do subworkflow de Reversão de Cancelamento (Phase 4A.4.1 & 4A.4.1A Hardening)
-  const validReversalStatuses: BillingCancellationReversalStatus[] = ['requested', 'completed', 'attention_required'];
+  // 4. Validação do subworkflow de Reversão de Cancelamento (Phase 4A.4.1 & 4A.4.1A Hardening & Phase 4A.4.2)
+  const validReversalStatuses: BillingCancellationReversalStatus[] = ['requested', 'completed', 'attention_required', 'expired'];
   const hasReversalStatus = data.cancellation_reversal_status !== undefined && data.cancellation_reversal_status !== null;
   const hasOtherReversalFields =
     (data.cancellation_reversal_requested_at !== undefined && data.cancellation_reversal_requested_at !== null) ||
@@ -736,6 +736,15 @@ export function validateBillingTransitionV1(data: any): BillingTransitionV1Recor
       }
       if (data.cancellation_reversal_completed_at !== undefined && data.cancellation_reversal_completed_at !== null) {
         throw new Error("cancellation_reversal_status === 'attention_required' não permite cancellation_reversal_completed_at.");
+      }
+    }
+
+    if (data.cancellation_reversal_status === 'expired') {
+      if (data.cancellation_reversal_completed_at !== undefined && data.cancellation_reversal_completed_at !== null) {
+        throw new Error("cancellation_reversal_status === 'expired' não permite cancellation_reversal_completed_at.");
+      }
+      if (data.cancellation_reversal_attention_reason !== undefined && data.cancellation_reversal_attention_reason !== null) {
+        throw new Error("cancellation_reversal_status === 'expired' não permite cancellation_reversal_attention_reason.");
       }
     }
   }
@@ -900,6 +909,14 @@ export const CANCEL_TO_FREE_ATTENTION_REASONS = {
   SOURCE_SUBSCRIPTION_REACTIVATED: 'source_subscription_reactivated',
   UNEXPECTED_RENEWAL_PAYMENT_DETECTED: 'unexpected_renewal_payment_detected',
   MALFORMED_TARGET_ENTITLEMENT_SNAPSHOT: 'malformed_target_entitlement_snapshot',
+} as const;
+
+export const CANCELLATION_REVERSAL_ATTENTION_REASONS = {
+  PROVIDER_RESTORED_BUT_BOUNDARY_EXPIRED: 'reversal_provider_restored_but_boundary_expired',
+  MULTIPLE_PENDING_PAYMENTS: 'reversal_multiple_pending_payments',
+  PENDING_PAYMENT_WRONG_DUE_DATE: 'reversal_pending_payment_wrong_due_date',
+  UNEXPECTED_SETTLED_PAYMENT: 'reversal_unexpected_settled_payment',
+  NEXT_DUE_DATE_DIVERGENCE: 'reversal_next_due_date_divergence',
 } as const;
 
 // ============================================================================

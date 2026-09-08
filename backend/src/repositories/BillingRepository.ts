@@ -2653,6 +2653,10 @@ export class BillingRepository {
         return { success: false, reason: 'reversal_attention_required' };
       }
 
+      if (transition.cancellation_reversal_status === 'expired') {
+        return { success: false, reason: 'reversal_already_expired' };
+      }
+
       if (transition.transition_status !== 'scheduled' || transition.financial_safety_status !== 'live') {
         return { success: false, reason: 'invalid_source_status' };
       }

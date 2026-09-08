@@ -14,6 +14,8 @@ import {
   ProviderSubscriptionState,
   ProviderSubscriptionInactivateOutcomeType,
   ProviderSubscriptionInactivateResult,
+  ProviderSubscriptionReactivateOutcomeType,
+  ProviderSubscriptionReactivateResult,
   ProviderPaymentListOutcomeType,
   ProviderPaymentListResult,
 } from '../billing-provider.interface';
@@ -832,6 +834,96 @@ export class AsaasBillingProvider implements BillingProvider {
     } catch (err: any) {
       if (err instanceof AppError) throw err;
       throw new AppError(500, `Falha de comunicação ao reativar assinatura Asaas: ${err.message}`);
+    }
+  }
+
+  /**
+   * Reativa assinatura no Asaas de forma estrita para V1 (PUT /v3/subscriptions/{id} com status: ACTIVE e nextDueDate).
+   * Distingue explicitamente HTTP 200 (SUCCESS), 404 (NOT_FOUND), 401/403 (AUTH_ERROR), 400 (CLIENT_ERROR),
+   * timeout/5xx (TRANSIENT_ERROR) e payload malformado (MALFORMED_RESPONSE).
+   * Não cria novas assinaturas nem cobranças. Não usa DELETE.
+   */
+  async reactivateSubscriptionStrict(
+    providerSubscriptionId: string,
+    nextDueDate?: string
+  ): Promise<ProviderSubscriptionReactivateResult> {
+    if (!this.apiKey) {
+      return {
+        outcome: 'AUTH_ERROR',
+        httpStatus: 500,
+        errorMessage: 'Gateway Asaas não configurado.',
+      };
+    }
+
+    try {
+      const bodyPayload: Record<string, any> = { status: 'ACTIVE' };
+      if (nextDueDate) {
+        bodyPayload.nextDueDate = nextDueDate;
+      }
+
+      const response = await fetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
+        method: 'PUT',
+        headers: {
+          access_token: this.apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(bodyPayload),
+      });
+
+      if (response.ok) {
+        const data = (await response.json().catch(() => null)) as any;
+        if (!data || typeof data !== 'object') {
+          return {
+            outcome: 'MALFORMED_RESPONSE',
+            httpStatus: response.status,
+            errorMessage: 'Gateway Asaas retornou payload malformado ou vazio ao reativar assinatura.',
+          };
+        }
+        return {
+          outcome: 'SUCCESS',
+          httpStatus: response.status,
+          status: data.status,
+          nextDueDate: data.nextDueDate || null,
+        };
+      }
+
+      if (response.status === 404) {
+        return {
+          outcome: 'NOT_FOUND',
+          httpStatus: 404,
+          errorMessage: `Assinatura ${providerSubscriptionId} não encontrada para reativação no Asaas (404).`,
+        };
+      }
+
+      if (response.status === 401 || response.status === 403) {
+        return {
+          outcome: 'AUTH_ERROR',
+          httpStatus: response.status,
+          errorMessage: `Falha de autenticação/autorização ao reativar assinatura no Asaas (HTTP ${response.status}).`,
+        };
+      }
+
+      if (response.status >= 500) {
+        return {
+          outcome: 'TRANSIENT_ERROR',
+          httpStatus: response.status,
+          errorMessage: `Erro temporário no servidor do gateway Asaas ao reativar assinatura (HTTP ${response.status}).`,
+        };
+      }
+
+      const errBody = (await response.json().catch(() => ({}))) as any;
+      const message = errBody?.errors?.[0]?.description || `Erro ao reativar assinatura no Asaas (HTTP ${response.status})`;
+
+      return {
+        outcome: 'CLIENT_ERROR',
+        httpStatus: response.status,
+        errorMessage: message,
+      };
+    } catch (err: any) {
+      return {
+        outcome: 'TRANSIENT_ERROR',
+        errorMessage: `Falha de comunicação/timeout ao reativar assinatura Asaas: ${err.message}`,
+      };
     }
   }
 
