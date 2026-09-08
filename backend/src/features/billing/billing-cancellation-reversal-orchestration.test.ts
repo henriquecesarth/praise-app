@@ -879,6 +879,7 @@ describe('Phase 4A.4.2 — V1 Cancellation Reversal Provider Orchestration', () 
       expect(activeRecord.cancellation_reversal_status).toBe('requested');
       expect(activeRecord.financial_attention_required).toBe(false);
       expect(activeSlot).not.toBeNull();
+      expect(mockBillingRepo.releasePlanChangeLock).toHaveBeenCalled();
     });
 
     it('5.5 Divergência de nextDueDate: gateway retorna nextDueDate diferente da fronteira esperada na recuperação', async () => {

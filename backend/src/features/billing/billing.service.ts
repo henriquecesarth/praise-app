@@ -3969,34 +3969,185 @@ export class BillingService {
   }
 
   /**
-   * Reativa uma assinatura que havia sido marcada com `cancel_at_period_end`.
-   * Envia PUT /subscriptions/{id} com status: ACTIVE e nextDueDate derivado de current_period_end.
+   * Reativa uma assinatura que havia sido marcada com `cancel_at_period_end` ou desfaz um cancelamento agendado V1 (Phase 4A.4.3).
+   *
+   * Se existir uma transição canônica V1 agendada para Free (`scheduled_cancel_to_free`), delega para
+   * o motor canônico de reversão `requestScheduledCancellationReversal`.
+   * Caso contrário, preserva o comportamento de reativação legada.
    */
-  async reactivateSubscription(ministryId: string): Promise<BillingSubscriptionRecord> {
-    // Proteção contra conflito com cancelamento V1 agendado em andamento (Phase 3D.1)
-    const activeSlot = await this.billingRepo.getActiveTransitionForMinistry(ministryId, this.provider.name);
+  async reactivateSubscription(
+    ministryId: string,
+    actorUserId?: string,
+    options?: { now?: Date; transitionId?: string }
+  ): Promise<BillingSubscriptionRecord & { reversalResult?: any }> {
+    const trimmedMinistryId = ministryId.trim();
+
+    // 1. Verificar se existe transição canônica V1 de cancelamento para Free ativa
+    const activeSlot = await this.billingRepo.getActiveTransitionForMinistry(trimmedMinistryId, this.provider.name);
+
     if (
       activeSlot &&
       isBillingTransitionV1(activeSlot.transition) &&
-      activeSlot.transition.execution_strategy === 'scheduled_cancel_to_free' &&
-      (activeSlot.transition.transition_status === 'awaiting_old_inactivation' ||
-        activeSlot.transition.transition_status === 'scheduled' ||
-        activeSlot.transition.transition_status === 'financial_attention_required')
+      activeSlot.transition.execution_strategy === 'scheduled_cancel_to_free'
     ) {
-      throw new AppError(
-        409,
-        'Existe um cancelamento agendado em processamento para este ministério. Reativação direta não permitida.',
-        {
-          code: 'ACTIVE_CANCELLATION_TRANSITION_EXISTS',
-          transitionId: activeSlot.transition.id,
-          transitionStatus: activeSlot.transition.transition_status,
+      const transitionStatus = activeSlot.transition.transition_status;
+
+      if (!actorUserId || typeof actorUserId !== 'string' || !actorUserId.trim()) {
+        // Chamada sem actorUserId (ex: legado direto sem autenticação de usuário):
+        // preserva a guarda original da Phase 3D
+        if (
+          transitionStatus === 'awaiting_old_inactivation' ||
+          transitionStatus === 'scheduled' ||
+          transitionStatus === 'financial_attention_required'
+        ) {
+          throw new AppError(
+            409,
+            'Existe um cancelamento agendado em processamento para este ministério. Reativação direta não permitida.',
+            {
+              code: 'ACTIVE_CANCELLATION_TRANSITION_EXISTS',
+              transitionId: activeSlot.transition.id,
+              transitionStatus,
+            }
+          );
         }
-      );
+      }
+
+      // Se a transição de cancelamento agendado estiver em processamento preliminar (awaiting_old_inactivation)
+      if (transitionStatus === 'awaiting_old_inactivation') {
+        throw new AppError(
+          409,
+          'Existe um cancelamento agendado em processamento para este ministério. Aguarde a conclusão antes de reativar.',
+          {
+            code: 'ACTIVE_CANCELLATION_TRANSITION_EXISTS',
+            transitionId: activeSlot.transition.id,
+            transitionStatus,
+          }
+        );
+      }
+
+      // Se estiver em atenção financeira
+      if (
+        transitionStatus === 'financial_attention_required' ||
+        activeSlot.transition.financial_attention_required === true
+      ) {
+        throw new AppError(
+          409,
+          'A assinatura requer verificação antes de continuar. Entre em contato com o suporte.',
+          {
+            code: 'FINANCIAL_ATTENTION_REQUIRED',
+            transitionId: activeSlot.transition.id,
+            transitionStatus,
+          }
+        );
+      }
+
+      // Se for transição scheduled e live: canalizar para o motor canônico V1 de reversão
+      if (transitionStatus === 'scheduled') {
+        const reversalRes = await this.requestScheduledCancellationReversal(
+          trimmedMinistryId,
+          actorUserId,
+          options
+        );
+
+        if (!reversalRes.success) {
+          if (reversalRes.reason === 'reversal_already_completed') {
+            // Idempotência amigável: reversão já foi concluída
+            const existingSub = await this.billingRepo.getSubscription(trimmedMinistryId, this.provider.name);
+            if (existingSub) {
+              return { ...existingSub, reversalResult: reversalRes };
+            }
+          }
+
+          if (reversalRes.reason === 'no_active_cancellation_found') {
+            throw new AppError(
+              400,
+              'Não há cancelamento agendado para desfazer neste ministério.',
+              { code: 'NO_ACTIVE_CANCELLATION_FOUND' }
+            );
+          }
+
+          if (
+            reversalRes.reason === 'boundary_expired' ||
+            reversalRes.reason === 'cancellation_boundary_reached'
+          ) {
+            throw new AppError(
+              400,
+              'O período da assinatura já encerrou. O cancelamento não pode mais ser desfeito.',
+              { code: 'CANCELLATION_BOUNDARY_REACHED' }
+            );
+          }
+
+          if (
+            reversalRes.reason === 'locked_by_another_worker' ||
+            reversalRes.reason === 'concurrent_cancellation_in_progress'
+          ) {
+            throw new AppError(
+              409,
+              'Existe uma operação de faturamento em andamento. Tente novamente em instantes.',
+              { code: 'CONCURRENT_BILLING_OPERATION' }
+            );
+          }
+
+          if (
+            reversalRes.reason === 'source_subscription_reactivated' ||
+            reversalRes.reason === 'financial_attention_required' ||
+            reversalRes.reason === 'reversal_attention_required' ||
+            reversalRes.reason === 'provider_resource_divergence' ||
+            reversalRes.reason === 'next_due_date_divergence'
+          ) {
+            throw new AppError(
+              409,
+              'A assinatura requer verificação antes de continuar. Entre em contato com o suporte.',
+              { code: 'FINANCIAL_ATTENTION_REQUIRED', reason: reversalRes.reason }
+            );
+          }
+
+          if (
+            reversalRes.reason === 'transient_provider_mutation_error' ||
+            reversalRes.reason === 'transient_payment_list_error' ||
+            reversalRes.reason === 'transient_reread_error'
+          ) {
+            throw new AppError(
+              503,
+              'Instabilidade temporária na comunicação com o provedor de pagamentos. Tente novamente em instantes.',
+              { code: 'PROVIDER_TRANSIENT_ERROR' }
+            );
+          }
+
+          if (reversalRes.reason === 'actor_user_id_required') {
+            throw new AppError(
+              400,
+              'Identificação de usuário é obrigatória para desfazer cancelamento.',
+              { code: 'ACTOR_USER_ID_REQUIRED' }
+            );
+          }
+
+          throw new AppError(
+            400,
+            'Não foi possível desfazer o cancelamento agendado.',
+            { code: 'REVERSAL_FAILED', reason: reversalRes.reason }
+          );
+        }
+
+        // Sucesso na reversão V1
+        const updatedBillingSub = await this.billingRepo.getSubscription(trimmedMinistryId, this.provider.name);
+        if (!updatedBillingSub) {
+          throw new AppError(500, 'Assinatura não encontrada após conclusão da reversão.');
+        }
+
+        return {
+          ...updatedBillingSub,
+          reversalResult: reversalRes,
+        };
+      }
     }
 
-    const billingSub = await this.billingRepo.getSubscription(ministryId, this.provider.name);
+    // 2. Fluxo Legado: executado quando NÃO existe transição V1 cancel_to_free ativa
+    const billingSub = await this.billingRepo.getSubscription(trimmedMinistryId, this.provider.name);
     if (!billingSub || !billingSub.cancel_at_period_end) {
-      throw new AppError(400, 'Não há cancelamento pendente para reativar neste ministério.');
+      throw new AppError(400, 'Não há cancelamento pendente para reativar neste ministério.', {
+        code: 'NO_ACTIVE_CANCELLATION_FOUND',
+      });
     }
 
     if (billingSub.provider_subscription_id) {
@@ -4014,7 +4165,7 @@ export class BillingService {
     };
     await this.billingRepo.setSubscription(updatedBillingSub);
 
-    const currentAppSub = await this.subscriptionRepo.getSubscription(ministryId);
+    const currentAppSub = await this.subscriptionRepo.getSubscription(trimmedMinistryId);
     if (currentAppSub) {
       await this.subscriptionRepo.setSubscription({
         ...currentAppSub,

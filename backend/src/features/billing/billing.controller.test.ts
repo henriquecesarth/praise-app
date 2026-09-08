@@ -136,19 +136,47 @@ describe('BillingController Tests', () => {
   });
 
   describe('POST /api/v1/ministries/:ministryId/billing/reactivate', () => {
-    it('deve reativar assinatura e retornar mensagem de sucesso', async () => {
+    it('deve reativar assinatura legada e retornar mensagem de sucesso', async () => {
       mockBillingService.reactivateSubscription.mockResolvedValue({
         cancel_at_period_end: false,
       });
 
       await controller.reactivateSubscription(mockReq as AuthenticatedRequest, mockRes as Response, mockNext);
 
-      expect(mockBillingService.reactivateSubscription).toHaveBeenCalledWith('min-100');
+      expect(mockBillingService.reactivateSubscription).toHaveBeenCalledWith('min-100', 'usr-1');
       expect(mockRes.json).toHaveBeenCalledWith(
         expect.objectContaining({
           message: 'Assinatura reativada com sucesso.',
         })
       );
+    });
+
+    it('deve retornar mensagem específica e payload quando for reversão V1', async () => {
+      mockBillingService.reactivateSubscription.mockResolvedValue({
+        cancel_at_period_end: false,
+        reversalResult: { success: true, reason: 'reversal_completed' },
+      });
+
+      await controller.reactivateSubscription(mockReq as AuthenticatedRequest, mockRes as Response, mockNext);
+
+      expect(mockBillingService.reactivateSubscription).toHaveBeenCalledWith('min-100', 'usr-1');
+      expect(mockRes.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Cancelamento desfeito com sucesso.',
+          reversalResult: { success: true, reason: 'reversal_completed' },
+        })
+      );
+    });
+
+    it('deve rejeitar com 401 se usuário não estiver autenticado', async () => {
+      mockReq.user = undefined;
+
+      await controller.reactivateSubscription(mockReq as AuthenticatedRequest, mockRes as Response, mockNext);
+
+      expect(mockNext).toHaveBeenCalledWith(expect.any(AppError));
+      const err = mockNext.mock.calls[0][0];
+      expect(err.statusCode).toBe(401);
+      expect(mockBillingService.reactivateSubscription).not.toHaveBeenCalled();
     });
   });
 

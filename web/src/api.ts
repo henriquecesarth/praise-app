@@ -1073,12 +1073,12 @@ export const api = {
 
   reactivateBillingSubscription: async (
     ministryId: string
-  ): Promise<{ message: string; subscription: any }> => {
+  ): Promise<{ message: string; subscription: any; reversalResult?: any }> => {
     const response = await fetch(`${API_URL}/ministries/${ministryId}/billing/reactivate`, {
       method: 'POST',
       headers: getHeaders(),
     });
-    return handleResponse<{ message: string; subscription: any }>(response);
+    return handleResponse<{ message: string; subscription: any; reversalResult?: any }>(response);
   },
 
   getBillingHistory: async (

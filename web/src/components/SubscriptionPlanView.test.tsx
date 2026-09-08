@@ -2375,4 +2375,398 @@ describe('SubscriptionPlanView Component', () => {
       ).toBeInTheDocument();
     });
   });
+
+  describe('Phase 4A.4.3: Customer Cancellation Reversal (Uncancel) Flow (Sections 36-43)', () => {
+    const createCancelToFreePendingTransition = (overrides: Record<string, any> = {}) => ({
+      transitionId: 'trans-cancel-001',
+      kind: 'cancel_to_free',
+      status: 'scheduled',
+      requestedAt: '2026-09-01T10:00:00.000Z',
+      effectiveAt: '2026-09-30T12:00:00.000Z',
+      source: {
+        planId: 'essential',
+        interval: 'monthly',
+        addonBlocks: 0,
+      },
+      target: {
+        planId: 'free',
+        interval: 'monthly',
+        addonBlocks: 0,
+      },
+      ...overrides,
+    });
+
+    const mockSummaryWithCancel = {
+      ...mockSummaryEssential,
+      pendingTransition: createCancelToFreePendingTransition(),
+    };
+
+    it('36.1) admin + pending cancel_to_free exibe botão "Desfazer cancelamento" no card de transição pendente', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryWithCancel as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByRole('heading', { level: 2, name: /Cancelamento agendado/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Desfazer cancelamento' })).toBeInTheDocument();
+    });
+
+    it('36.2) não-admin (canManageBilling={false}) NÃO exibe o botão "Desfazer cancelamento"', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryWithCancel as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-member"
+          canManageBilling={false}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByRole('heading', { level: 2, name: /Cancelamento agendado/i })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Desfazer cancelamento' })).not.toBeInTheDocument();
+    });
+
+    it('36.3) transição pendente diferente de cancel_to_free (ex: plan_upgrade) NÃO exibe "Desfazer cancelamento"', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryLitePaid,
+        pendingTransition: {
+          transitionId: 'trans-upgrade-001',
+          kind: 'plan_upgrade',
+          status: 'scheduled',
+          requestedAt: '2026-09-01T10:00:00.000Z',
+          effectiveAt: '2026-09-30T12:00:00.000Z',
+          source: { planId: 'lite', interval: 'monthly', addonBlocks: 0 },
+          target: { planId: 'essential', interval: 'monthly', addonBlocks: 0 },
+        },
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByRole('heading', { level: 2, name: /Upgrade agendado/i })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Desfazer cancelamento' })).not.toBeInTheDocument();
+    });
+
+    it('36.4) transição cancel_to_free em atenção financeira oculta botão "Desfazer cancelamento"', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryWithCancel,
+        pendingTransition: createCancelToFreePendingTransition({ status: 'attention_required' }),
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByRole('heading', { level: 2, name: /Cancelamento agendado/i })).toBeInTheDocument();
+      expect(screen.getByText('Revisão necessária')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Desfazer cancelamento' })).not.toBeInTheDocument();
+    });
+
+    it('36.5) quando não há transição pendente, botão "Desfazer cancelamento" não é renderizado', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue({
+        ...mockSummaryEssential,
+        pendingTransition: null,
+      } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByRole('heading', { level: 2, name: 'Essential' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Desfazer cancelamento' })).not.toBeInTheDocument();
+    });
+
+    it('37.1) admin clica em CTA -> abre modal -> confirma -> API chamada uma vez -> toast de sucesso -> reload remove card', async () => {
+      const getSubSpy = vi.spyOn(api, 'getMinistrySubscription')
+        .mockResolvedValueOnce(mockSummaryWithCancel as any)
+        .mockResolvedValueOnce({
+          ...mockSummaryEssential,
+          pendingTransition: null,
+        } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      const reactivateSpy = vi.spyOn(api, 'reactivateBillingSubscription').mockResolvedValue({
+        message: 'Cancelamento desfeito com sucesso.',
+        subscription: mockSummaryEssential.subscription,
+      } as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      const ctaBtn = await screen.findByRole('button', { name: 'Desfazer cancelamento' });
+      await userEvent.click(ctaBtn);
+
+      expect(await screen.findByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 3, name: 'Desfazer cancelamento?' })).toBeInTheDocument();
+
+      const modalConfirmBtn = screen.getAllByRole('button', { name: 'Desfazer cancelamento' })[1];
+      await userEvent.click(modalConfirmBtn);
+
+      expect(reactivateSpy).toHaveBeenCalledTimes(1);
+      expect(reactivateSpy).toHaveBeenCalledWith('min-admin');
+      expect(mockShowToast).toHaveBeenCalledWith(
+        'Cancelamento desfeito. Sua assinatura continuará ativa.',
+        'success'
+      );
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { level: 2, name: /Cancelamento agendado/i })).not.toBeInTheDocument();
+      expect(getSubSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('38.1) proteção contra duplo clique durante execução de reversão', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryWithCancel as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      let resolvePromise: (val: any) => void;
+      const pendingPromise = new Promise((resolve) => {
+        resolvePromise = resolve;
+      });
+      const reactivateSpy = vi.spyOn(api, 'reactivateBillingSubscription').mockImplementation(() => pendingPromise as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Desfazer cancelamento' }));
+      const modalConfirmBtn = screen.getAllByRole('button', { name: 'Desfazer cancelamento' })[1];
+
+      await userEvent.click(modalConfirmBtn);
+      expect(reactivateSpy).toHaveBeenCalledTimes(1);
+
+      expect(screen.getAllByText('Processando...').length).toBeGreaterThanOrEqual(1);
+
+      const disabledBtn = screen.getAllByRole('button', { name: /Processando/i })[1];
+      expect(disabledBtn).toBeDisabled();
+      await userEvent.click(disabledBtn);
+
+      expect(reactivateSpy).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        resolvePromise!({ message: 'ok', subscription: mockSummaryEssential.subscription });
+      });
+    });
+
+    it('38.2) fechamento do modal por Voltar, backdrop ou Escape não chama API', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryWithCancel as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      const reactivateSpy = vi.spyOn(api, 'reactivateBillingSubscription');
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      // 1. Fechar por Voltar
+      await userEvent.click(await screen.findByRole('button', { name: 'Desfazer cancelamento' }));
+      expect(await screen.findByRole('dialog')).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'Voltar' }));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+      // 2. Fechar por Escape
+      await userEvent.click(screen.getByRole('button', { name: 'Desfazer cancelamento' }));
+      expect(await screen.findByRole('dialog')).toBeInTheDocument();
+      await userEvent.keyboard('{Escape}');
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+      expect(reactivateSpy).not.toHaveBeenCalled();
+    });
+
+    it('39.1) erro transiente exibe toast seguro e mantém card de transição para nova tentativa', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryWithCancel as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      vi.spyOn(api, 'reactivateBillingSubscription').mockRejectedValue({
+        details: { code: 'PROVIDER_TRANSIENT_ERROR' },
+        message: 'Instabilidade temporária na comunicação com o provedor de pagamentos.',
+      });
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Desfazer cancelamento' }));
+      const modalConfirmBtn = screen.getAllByRole('button', { name: 'Desfazer cancelamento' })[1];
+      await userEvent.click(modalConfirmBtn);
+
+      expect(mockShowToast).toHaveBeenCalledWith(
+        'Não foi possível concluir agora. Tente novamente em instantes.',
+        'error'
+      );
+      expect(screen.getByRole('heading', { level: 2, name: /Cancelamento agendado/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Desfazer cancelamento' })).toBeInTheDocument();
+    });
+
+    it('40.1) erro de atenção financeira exibe toast de verificação e recarrega dados', async () => {
+      const getSubSpy = vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryWithCancel as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      vi.spyOn(api, 'reactivateBillingSubscription').mockRejectedValue({
+        details: { code: 'FINANCIAL_ATTENTION_REQUIRED' },
+        message: 'A assinatura requer verificação antes de continuar.',
+      });
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Desfazer cancelamento' }));
+      const modalConfirmBtn = screen.getAllByRole('button', { name: 'Desfazer cancelamento' })[1];
+      await userEvent.click(modalConfirmBtn);
+
+      expect(mockShowToast).toHaveBeenCalledWith(
+        'Não foi possível concluir automaticamente. A assinatura precisa de verificação antes de continuar.',
+        'error'
+      );
+      expect(getSubSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('41.1) erro de cancelamento não encontrado / prazo encerrado exibe toast e recarrega dados', async () => {
+      const getSubSpy = vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryWithCancel as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      vi.spyOn(api, 'reactivateBillingSubscription').mockRejectedValue({
+        details: { code: 'NO_ACTIVE_CANCELLATION_FOUND' },
+        message: 'Não há cancelamento agendado para desfazer neste ministério.',
+      });
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Desfazer cancelamento' }));
+      const modalConfirmBtn = screen.getAllByRole('button', { name: 'Desfazer cancelamento' })[1];
+      await userEvent.click(modalConfirmBtn);
+
+      expect(mockShowToast).toHaveBeenCalledWith(
+        'Não há cancelamento agendado para desfazer neste ministério.',
+        'error'
+      );
+      expect(getSubSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('42.1) alternância de ministério enquanto in-flight descarta resultado assíncrono', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryWithCancel as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      let resolvePromise: (val: any) => void;
+      const pendingPromise = new Promise((resolve) => {
+        resolvePromise = resolve;
+      });
+      vi.spyOn(api, 'reactivateBillingSubscription').mockImplementation(() => pendingPromise as any);
+
+      const { rerender } = render(
+        <SubscriptionPlanView
+          ministryId="min-admin-a"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Desfazer cancelamento' }));
+      const modalConfirmBtn = screen.getAllByRole('button', { name: 'Desfazer cancelamento' })[1];
+      await userEvent.click(modalConfirmBtn);
+
+      rerender(
+        <SubscriptionPlanView
+          ministryId="min-admin-b"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await act(async () => {
+        resolvePromise!({ message: 'ok', subscription: mockSummaryEssential.subscription });
+      });
+
+      expect(mockShowToast).not.toHaveBeenCalledWith(
+        'Cancelamento desfeito. Sua assinatura continuará ativa.',
+        'success'
+      );
+    });
+
+    it('43.1) rebaixamento de papel (canManageBilling -> false) enquanto modal está aberto fecha o modal', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryWithCancel as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      const { rerender } = render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Desfazer cancelamento' }));
+      expect(await screen.findByRole('dialog')).toBeInTheDocument();
+
+      rerender(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={false}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+  });
 });

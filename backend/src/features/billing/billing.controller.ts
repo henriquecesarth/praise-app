@@ -113,10 +113,17 @@ export class BillingController {
   ): Promise<void> => {
     try {
       const ministryId = this.getMinistryId(req);
-      const result = await this.billingService.reactivateSubscription(ministryId);
+      const userId = req.user?.id;
+      if (!userId) {
+        throw new AppError(401, 'Usuário não autenticado.');
+      }
+      const result = await this.billingService.reactivateSubscription(ministryId, userId);
       res.json({
-        message: 'Assinatura reativada com sucesso.',
+        message: result?.reversalResult
+          ? 'Cancelamento desfeito com sucesso.'
+          : 'Assinatura reativada com sucesso.',
         subscription: result,
+        ...(result?.reversalResult ? { reversalResult: result.reversalResult } : {}),
       });
     } catch (err) {
       next(err);

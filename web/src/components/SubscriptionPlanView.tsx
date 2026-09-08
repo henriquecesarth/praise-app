@@ -86,6 +86,15 @@ export const SubscriptionPlanView: React.FC<Props> = ({
   const [addonPreviewLoading, setAddonPreviewLoading] = useState<boolean>(false);
   const [addonCheckoutLoading, setAddonCheckoutLoading] = useState<boolean>(false);
 
+  // Cancellation Reversal (Uncancel) State (Phase 4A.4.3)
+  const [showUncancelModal, setShowUncancelModal] = useState<boolean>(false);
+  const [uncancelLoading, setUncancelLoading] = useState<boolean>(false);
+  const currentMinistryIdRef = useRef<string>(ministryId);
+
+  useEffect(() => {
+    currentMinistryIdRef.current = ministryId;
+  }, [ministryId]);
+
   // Post-Checkout Polling State
   const [postCheckoutProcessing, setPostCheckoutProcessing] = useState<boolean>(false);
   const pollingRef = useRef<any>(null);
@@ -121,6 +130,7 @@ export const SubscriptionPlanView: React.FC<Props> = ({
     if (!canManageBilling) {
       setShowCancelModal(false);
       setShowAddonModal(false);
+      setShowUncancelModal(false);
       setPreviewPlan(null);
       setPreviewData(null);
     }
@@ -136,6 +146,8 @@ export const SubscriptionPlanView: React.FC<Props> = ({
     setShowCancelModal(false);
     setShowHistoryModal(false);
     setShowAddonModal(false);
+    setShowUncancelModal(false);
+    setUncancelLoading(false);
     setAddonTargetBlocks(0);
     setAddonPreviewData(null);
     setAddonPreviewLoading(false);
@@ -313,12 +325,15 @@ export const SubscriptionPlanView: React.FC<Props> = ({
         if (showAddonModal) {
           setShowAddonModal(false);
         }
+        if (showUncancelModal && !uncancelLoading) {
+          setShowUncancelModal(false);
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [previewPlan, showCancelModal, showHistoryModal, showAddonModal]);
+  }, [previewPlan, showCancelModal, showHistoryModal, showAddonModal, showUncancelModal, uncancelLoading]);
 
   // Formatação monetária BRL oficial
   const formatCents = (cents?: number) => {
@@ -598,6 +613,63 @@ export const SubscriptionPlanView: React.FC<Props> = ({
       showToast?.(err.message || 'Erro ao cancelar assinatura', 'error');
     } finally {
       setCancelLoading(false);
+    }
+  };
+
+  // Desfazer cancelamento agendado V1 (Phase 4A.4.3)
+  const handleConfirmUncancel = async () => {
+    if (!canManageBilling) {
+      showToast?.('Somente administradores do ministério podem alterar a assinatura.', 'error');
+      setShowUncancelModal(false);
+      return;
+    }
+    if (uncancelLoading) return;
+
+    const targetMinistryId = ministryId;
+    setUncancelLoading(true);
+    try {
+      await api.reactivateBillingSubscription(targetMinistryId);
+      // Tenant switch guard: se o ministério mudou enquanto a requisição estava em trânsito, descarta o efeito
+      if (targetMinistryId !== currentMinistryIdRef.current) {
+        return;
+      }
+      showToast?.('Cancelamento desfeito. Sua assinatura continuará ativa.', 'success');
+      setShowUncancelModal(false);
+      await loadData();
+    } catch (err: any) {
+      if (targetMinistryId !== currentMinistryIdRef.current) {
+        return;
+      }
+      setShowUncancelModal(false);
+      const code = err.details?.code || err.code;
+      const message = err.message || '';
+
+      if (
+        code === 'CONCURRENT_BILLING_OPERATION' ||
+        code === 'PROVIDER_TRANSIENT_ERROR' ||
+        message.includes('instabilidade') ||
+        message.includes('em andamento')
+      ) {
+        showToast?.('Não foi possível concluir agora. Tente novamente em instantes.', 'error');
+      } else if (
+        code === 'FINANCIAL_ATTENTION_REQUIRED' ||
+        message.includes('verificação')
+      ) {
+        showToast?.('Não foi possível concluir automaticamente. A assinatura precisa de verificação antes de continuar.', 'error');
+        await loadData();
+      } else if (
+        code === 'NO_ACTIVE_CANCELLATION_FOUND' ||
+        code === 'CANCELLATION_BOUNDARY_REACHED' ||
+        message.includes('Não há cancelamento') ||
+        message.includes('já encerrou')
+      ) {
+        showToast?.(err.message || 'Não há cancelamento ativo para desfazer.', 'error');
+        await loadData();
+      } else {
+        showToast?.(err.message || 'Não foi possível desfazer o cancelamento agendado.', 'error');
+      }
+    } finally {
+      setUncancelLoading(false);
     }
   };
 
@@ -1274,6 +1346,36 @@ export const SubscriptionPlanView: React.FC<Props> = ({
                 <div>Entra em vigor assim que o pagamento for confirmado pelo gateway.</div>
               )}
             </div>
+
+            {/* Ação de Desfazer Cancelamento para admin (Phase 4A.4.3) */}
+            {pending.kind === 'cancel_to_free' &&
+              canManageBilling &&
+              pending.status !== 'attention_required' && (
+                <div
+                  style={{
+                    marginTop: '16px',
+                    paddingTop: '16px',
+                    borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'flex-end',
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => setShowUncancelModal(true)}
+                    disabled={uncancelLoading || actionLoading}
+                    style={{
+                      fontSize: '0.85rem',
+                      padding: '8px 16px',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {uncancelLoading ? 'Processando...' : 'Desfazer cancelamento'}
+                  </button>
+                </div>
+              )}
           </section>
         );
       })()}
@@ -2645,6 +2747,120 @@ export const SubscriptionPlanView: React.FC<Props> = ({
                   </>
                 ) : (
                   <span>Confirmar cancelamento</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Desfazer Cancelamento (Phase 4A.4.3) */}
+      {showUncancelModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="uncancel-modal-title"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.75)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px',
+            zIndex: 1000,
+            backdropFilter: 'blur(4px)',
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !uncancelLoading) {
+              setShowUncancelModal(false);
+            }
+          }}
+        >
+          <div
+            style={{
+              background: 'var(--surface-color, #1A2421)',
+              borderRadius: '20px',
+              maxWidth: '480px',
+              width: '100%',
+              padding: '24px',
+              border: '1px solid var(--border-color, #2D3A34)',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+              <Clock size={24} color="#F59E0B" />
+              <h3 id="uncancel-modal-title" style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-primary, #F5EFE6)' }}>
+                Desfazer cancelamento?
+              </h3>
+            </div>
+
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #A0AAB0)', lineHeight: 1.5, marginBottom: '16px' }}>
+              Sua assinatura continuará ativa e as cobranças recorrentes voltarão a ocorrer normalmente a partir do próximo ciclo.
+            </p>
+
+            <div
+              style={{
+                background: 'rgba(255, 255, 255, 0.03)',
+                borderRadius: '10px',
+                padding: '14px',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                fontSize: '0.85rem',
+                color: 'var(--text-primary, #F5EFE6)',
+                lineHeight: 1.5,
+                marginBottom: '20px',
+              }}
+            >
+              • O cancelamento agendado será retirado imediatamente.<br />
+              • Seu plano atual continuará ativo sem interrupção.<br />
+              • Nenhuma cobrança adicional será gerada neste ciclo.
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button
+                type="button"
+                onClick={() => setShowUncancelModal(false)}
+                disabled={uncancelLoading}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  borderRadius: '10px',
+                  background: 'transparent',
+                  border: '1px solid var(--border-color, #2D3A34)',
+                  color: 'var(--text-secondary, #A0AAB0)',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Voltar
+              </button>
+
+              <button
+                type="button"
+                onClick={handleConfirmUncancel}
+                disabled={uncancelLoading}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  borderRadius: '10px',
+                  background: 'var(--louvaio-terracotta, #B85A3C)',
+                  border: 'none',
+                  color: '#FFFFFF',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                }}
+              >
+                {uncancelLoading ? (
+                  <>
+                    <RefreshCw size={16} className="animate-spin" />
+                    <span>Processando...</span>
+                  </>
+                ) : (
+                  <span>Desfazer cancelamento</span>
                 )}
               </button>
             </div>
