@@ -506,6 +506,20 @@ describe('Phase 4A.4.2 — V1 Cancellation Reversal Provider Orchestration', () 
       expect(res.reason).toBe('no_active_cancellation_found');
     });
 
+    it('2.2b rejeita com no_active_cancellation_found para assinatura ativa com cancel_at_period_end false e sem slot', async () => {
+      activeSlot = null;
+      appSubRecord.cancel_at_period_end = false;
+      appSubRecord.active_cancellation_transition_id = null;
+      billingSubRecord.cancel_at_period_end = false;
+
+      const res = await billingService.requestScheduledCancellationReversal(ministryId, 'user_admin_1');
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('no_active_cancellation_found');
+      expect(mockProvider.reactivateSubscriptionStrict).not.toHaveBeenCalled();
+      expect(mockBillingRepo.updateTransition).not.toHaveBeenCalled();
+      expect(appSubRecord.plan_id).toBe('essential');
+    });
+
     it('2.3 rejeita quando a transição referenciada pelo slot não existe', async () => {
       mockBillingRepo.getTransitionById.mockResolvedValueOnce(null);
       const res = await billingService.requestScheduledCancellationReversal(ministryId, 'user_admin_1');
@@ -599,19 +613,27 @@ describe('Phase 4A.4.2 — V1 Cancellation Reversal Provider Orchestration', () 
       expect(mockBillingRepo.releasePlanChangeLock).toHaveBeenCalled();
     });
 
-    it('3.2 idempotência: chamada duplicada após completion retorna reversal_already_completed', async () => {
+    it('3.2 idempotência: chamada duplicada após completion com transitionId retorna reversal_already_completed', async () => {
       // Primeira execução bem-sucedida
       await billingService.requestScheduledCancellationReversal(ministryId, 'usr_pastor_1', {
         now: beforeBoundaryDate,
       });
 
-      // Segunda chamada com mesmo ID
+      // Segunda chamada com explicit transitionId após completion
       const secondRes = await billingService.requestScheduledCancellationReversal(ministryId, 'usr_pastor_1', {
         now: beforeBoundaryDate,
+        transitionId: activeRecord.id,
       });
 
       expect(secondRes.success).toBe(false);
       expect(secondRes.reason).toBe('reversal_already_completed');
+
+      // Terceira chamada sem transitionId após slot liberado retorna no_active_cancellation_found
+      const thirdRes = await billingService.requestScheduledCancellationReversal(ministryId, 'usr_pastor_1', {
+        now: beforeBoundaryDate,
+      });
+      expect(thirdRes.success).toBe(false);
+      expect(thirdRes.reason).toBe('no_active_cancellation_found');
     });
   });
 
@@ -703,7 +725,9 @@ describe('Phase 4A.4.2 — V1 Cancellation Reversal Provider Orchestration', () 
   });
 
   describe('5. Crash Windows & Recovery Scenarios', () => {
-    it('5.1 Crash Window A: Provedor já está ACTIVE no primeiro GET (recupera sem PUT duplicado)', async () => {
+    it('5.1A nova solicitação de reversão com provedor já ACTIVE falha fechado com atenção financeira (source_subscription_reactivated)', async () => {
+      // Estado de nova solicitação (cancellation_reversal_status undefined)
+      activeRecord.cancellation_reversal_status = undefined;
       mockProvider.getSubscriptionState.mockResolvedValue({
         outcome: 'FOUND',
         status: 'ACTIVE',
@@ -718,11 +742,51 @@ describe('Phase 4A.4.2 — V1 Cancellation Reversal Provider Orchestration', () 
         now: beforeBoundaryDate,
       });
 
+      expect(res.success).toBe(false);
+      expect(res.reason).toBe('source_subscription_reactivated');
+      // Provedor já estava ACTIVE antes de qualquer mutação PUT LouvAIO -> atenção sem avanço
+      expect(mockProvider.reactivateSubscriptionStrict).not.toHaveBeenCalled();
+      expect(mockBillingRepo.completeCancellationReversalAndReleaseOwnedSlotAtomically).not.toHaveBeenCalled();
+      expect(activeRecord.financial_attention_required).toBe(true);
+      expect(activeRecord.financial_safety_status).toBe('attention_required');
+      expect(activeRecord.cancellation_reversal_status).toBe('attention_required');
+      expect(activeRecord.cancellation_reversal_attention_reason).toBe('source_subscription_reactivated');
+      expect(activeSlot).not.toBeNull();
+      expect(appSubRecord.cancel_at_period_end).toBe(true);
+      expect(appSubRecord.active_cancellation_transition_id).toBe(activeRecord.id);
+      expect(appSubRecord.plan_id).toBe('essential');
+    });
+
+    it('5.1B Crash Window A (Recovery): transição já solicitada previamente com provedor já ACTIVE recupera com sucesso sem PUT duplicado', async () => {
+      // Estado de proveniência: reversão foi previamente solicitada e persistida duravelmente
+      activeRecord.cancellation_reversal_status = 'requested';
+      activeRecord.cancellation_reversal_requested_at = '2026-09-04T12:00:00.000Z';
+      activeRecord.cancellation_reversal_requested_by = 'usr_pastor_1';
+
+      mockProvider.getSubscriptionState.mockResolvedValue({
+        outcome: 'FOUND',
+        status: 'ACTIVE',
+        httpStatus: 200,
+        rawSubscription: {
+          status: 'ACTIVE',
+          nextDueDate: effectiveBillingDate,
+        },
+      });
+
+      const res = await billingService.requestScheduledCancellationReversal(ministryId, 'usr_pastor_1', {
+        now: beforeBoundaryDate,
+      });
+
       expect(res.success).toBe(true);
       expect(res.reason).toBe('reversal_completed');
-      // Nenhum PUT foi emitido porque já estava ACTIVE
+      // Nenhum PUT foi emitido porque já estava ACTIVE na recuperação legítima
       expect(mockProvider.reactivateSubscriptionStrict).not.toHaveBeenCalled();
       expect(activeRecord.cancellation_reversal_status).toBe('completed');
+      expect(activeRecord.transition_status).toBe('canceled');
+      expect(activeRecord.financial_safety_status).toBe('safe_terminal');
+      expect(activeSlot).toBeNull();
+      expect(appSubRecord.cancel_at_period_end).toBe(false);
+      expect(appSubRecord.active_cancellation_transition_id).toBeNull();
     });
 
     it('5.2 Crash Window B (Recovery): PUT retorna TRANSIENT_ERROR, mas fresh GET confirma ACTIVE', async () => {
@@ -817,7 +881,11 @@ describe('Phase 4A.4.2 — V1 Cancellation Reversal Provider Orchestration', () 
       expect(activeSlot).not.toBeNull();
     });
 
-    it('5.5 Divergência de nextDueDate: gateway retorna nextDueDate diferente da fronteira esperada', async () => {
+    it('5.5 Divergência de nextDueDate: gateway retorna nextDueDate diferente da fronteira esperada na recuperação', async () => {
+      activeRecord.cancellation_reversal_status = 'requested';
+      activeRecord.cancellation_reversal_requested_at = '2026-09-04T12:00:00.000Z';
+      activeRecord.cancellation_reversal_requested_by = 'usr_pastor_1';
+
       mockProvider.getSubscriptionState.mockResolvedValueOnce({
         outcome: 'FOUND',
         status: 'ACTIVE',
@@ -828,7 +896,7 @@ describe('Phase 4A.4.2 — V1 Cancellation Reversal Provider Orchestration', () 
         },
       });
 
-      const res = await billingService.requestScheduledCancellationReversal(ministryId, 'user_1', {
+      const res = await billingService.requestScheduledCancellationReversal(ministryId, 'usr_pastor_1', {
         now: beforeBoundaryDate,
       });
 
@@ -1010,6 +1078,33 @@ describe('Phase 4A.4.2 — V1 Cancellation Reversal Provider Orchestration', () 
       expect(res.succeeded).toBe(1);
       expect(boundarySpy).toHaveBeenCalledWith(activeRecord.id, expect.any(String));
       expect(reversalSpy).not.toHaveBeenCalled();
+    });
+
+    it('8.3 reconcileScheduledCancellationReversal executa com modo recovery e completa Crash Window A com provedor ACTIVE', async () => {
+      activeRecord.cancellation_reversal_status = 'requested';
+      activeRecord.cancellation_reversal_requested_at = '2026-09-04T12:00:00.000Z';
+      activeRecord.cancellation_reversal_requested_by = 'usr_admin';
+
+      mockProvider.getSubscriptionState.mockResolvedValue({
+        outcome: 'FOUND',
+        status: 'ACTIVE',
+        httpStatus: 200,
+        rawSubscription: {
+          status: 'ACTIVE',
+          nextDueDate: effectiveBillingDate,
+        },
+      });
+
+      const res = await billingService.reconcileScheduledCancellationReversal(activeRecord.id, 'worker_1', {
+        now: beforeBoundaryDate,
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.reason).toBe('reversal_completed');
+      expect(mockProvider.reactivateSubscriptionStrict).not.toHaveBeenCalled();
+      expect(activeRecord.cancellation_reversal_status).toBe('completed');
+      expect(activeSlot).toBeNull();
+      expect(appSubRecord.cancel_at_period_end).toBe(false);
     });
   });
 });

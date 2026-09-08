@@ -3483,7 +3483,11 @@ export class BillingService {
   async executeCancellationReversalOrchestration(
     transition: BillingTransitionV1Record,
     lockOwner: string,
-    options?: { now?: Date }
+    options?: {
+      now?: Date;
+      transitionId?: string;
+      reversalExecutionMode?: 'new_request' | 'recovery';
+    }
   ): Promise<{ success: boolean; reason?: string; transition?: BillingTransitionV1Record }> {
     const ministryId = transition.ministry_id;
     const nowDate = options?.now || new Date();
@@ -3671,7 +3675,28 @@ export class BillingService {
         providerNextDueDate = reactivateRes.nextDueDate;
       }
     } else if (initialSubState.status === 'ACTIVE') {
-      // Crash Window A: já estava ACTIVE no gateway (recuperação legítima ou reativação prévia sem avanço local)
+      if (options?.reversalExecutionMode !== 'recovery') {
+        // CASE A: NEW REVERSAL REQUEST + PROVIDER ALREADY ACTIVE
+        // Provedor já estava ACTIVE antes de qualquer mutação PUT nesta invocação.
+        // Trata-se de uma divergência de reativação externa/inesperada (Phase 3D).
+        // Falha fechado com atenção financeira e NUNCA emite PUT nem terminaliza.
+        await this.billingRepo.setCancellationReversalAttentionAtomically(
+          ministryId,
+          this.provider.name,
+          transition.id,
+          CANCEL_TO_FREE_ATTENTION_REASONS.SOURCE_SUBSCRIPTION_REACTIVATED,
+          { expectedLockOwner: lockOwner, nowIso }
+        );
+        await this.billingRepo.releasePlanChangeLock(transition.id);
+        return {
+          success: false,
+          reason: CANCEL_TO_FREE_ATTENTION_REASONS.SOURCE_SUBSCRIPTION_REACTIVATED,
+        };
+      }
+
+      // CASE B: RECOVERY (Crash Window A)
+      // Transição já estava duravelmente em 'requested' antes desta invocação.
+      // PUT prévio alcançou o Asaas com sucesso antes de queda ou avanço local.
       isProviderActive = true;
       providerNextDueDate = initialSubState.rawSubscription?.nextDueDate;
     } else {
@@ -3823,12 +3848,6 @@ export class BillingService {
     }
 
     if (!transition) {
-      if (!activeSlot) {
-        const appSub = await this.subscriptionRepo.getSubscription(ministryId);
-        if (appSub && appSub.cancel_at_period_end === false) {
-          return { success: false, reason: 'reversal_already_completed' };
-        }
-      }
       return { success: false, reason: activeSlot ? 'transition_not_found' : 'no_active_cancellation_found' };
     }
 
@@ -3885,8 +3904,15 @@ export class BillingService {
       return { success: false, reason: beginRes.reason };
     }
 
+    const reversalExecutionMode: 'new_request' | 'recovery' =
+      beginRes.reason === 'reversal_already_requested' ? 'recovery' : 'new_request';
+
     const transitionToOrchestrate = beginRes.transition || claimed;
-    return await this.executeCancellationReversalOrchestration(transitionToOrchestrate, lockOwner, options);
+    return await this.executeCancellationReversalOrchestration(
+      transitionToOrchestrate,
+      lockOwner,
+      { ...options, reversalExecutionMode }
+    );
   }
 
   /**
@@ -3936,7 +3962,10 @@ export class BillingService {
       return { success: false, reason: 'invalid_source_status', transition: claimed };
     }
 
-    return await this.executeCancellationReversalOrchestration(claimed, workerId, options);
+    return await this.executeCancellationReversalOrchestration(claimed, workerId, {
+      ...options,
+      reversalExecutionMode: 'recovery',
+    });
   }
 
   /**
