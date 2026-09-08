@@ -127,4 +127,21 @@ describe('API Client & Structured Error Handling', () => {
       expect.objectContaining({ method: 'POST' })
     );
   });
+
+  it('reactivateBillingSubscription retorna BillingReactivationResponse com success, message e outcome', async () => {
+    const mockReactivation = {
+      success: true,
+      message: 'Cancelamento desfeito com sucesso.',
+      outcome: 'cancellation_reversed' as const,
+    };
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: vi.fn().mockResolvedValue(JSON.stringify(mockReactivation)),
+    } as any);
+    global.fetch = fetchSpy;
+
+    const res = await api.reactivateBillingSubscription('min-123');
+    expect(res).toEqual(mockReactivation);
+  });
 });

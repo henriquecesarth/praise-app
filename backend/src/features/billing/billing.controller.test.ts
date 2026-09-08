@@ -136,36 +136,46 @@ describe('BillingController Tests', () => {
   });
 
   describe('POST /api/v1/ministries/:ministryId/billing/reactivate', () => {
-    it('deve reativar assinatura legada e retornar mensagem de sucesso', async () => {
+    it('deve reativar assinatura legada e retornar DTO minimizado com outcome legacy_reactivated', async () => {
       mockBillingService.reactivateSubscription.mockResolvedValue({
         cancel_at_period_end: false,
+        provider_subscription_id: 'sub_prov_123',
       });
 
       await controller.reactivateSubscription(mockReq as AuthenticatedRequest, mockRes as Response, mockNext);
 
       expect(mockBillingService.reactivateSubscription).toHaveBeenCalledWith('min-100', 'usr-1');
-      expect(mockRes.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: 'Assinatura reativada com sucesso.',
-        })
-      );
+      expect(mockRes.json).toHaveBeenCalledWith({
+        success: true,
+        message: 'Assinatura reativada com sucesso.',
+        outcome: 'legacy_reactivated',
+      });
+      const responsePayload = (mockRes.json as any).mock.calls[0][0];
+      expect(responsePayload).not.toHaveProperty('subscription');
+      expect(responsePayload).not.toHaveProperty('provider_subscription_id');
+      expect(responsePayload).not.toHaveProperty('reversalResult');
     });
 
-    it('deve retornar mensagem específica e payload quando for reversão V1', async () => {
+    it('deve retornar DTO minimizado com outcome cancellation_reversed quando for reversão V1', async () => {
       mockBillingService.reactivateSubscription.mockResolvedValue({
         cancel_at_period_end: false,
-        reversalResult: { success: true, reason: 'reversal_completed' },
+        provider_subscription_id: 'sub_prov_123',
+        reversalResult: { success: true, reason: 'reversal_completed', retry_locked_by: 'worker_1' },
       });
 
       await controller.reactivateSubscription(mockReq as AuthenticatedRequest, mockRes as Response, mockNext);
 
       expect(mockBillingService.reactivateSubscription).toHaveBeenCalledWith('min-100', 'usr-1');
-      expect(mockRes.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: 'Cancelamento desfeito com sucesso.',
-          reversalResult: { success: true, reason: 'reversal_completed' },
-        })
-      );
+      expect(mockRes.json).toHaveBeenCalledWith({
+        success: true,
+        message: 'Cancelamento desfeito com sucesso.',
+        outcome: 'cancellation_reversed',
+      });
+      const responsePayload = (mockRes.json as any).mock.calls[0][0];
+      expect(responsePayload).not.toHaveProperty('subscription');
+      expect(responsePayload).not.toHaveProperty('reversalResult');
+      expect(responsePayload).not.toHaveProperty('provider_subscription_id');
+      expect(responsePayload).not.toHaveProperty('retry_locked_by');
     });
 
     it('deve rejeitar com 401 se usuário não estiver autenticado', async () => {

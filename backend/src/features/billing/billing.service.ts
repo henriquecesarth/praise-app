@@ -3831,7 +3831,7 @@ export class BillingService {
    */
   async requestScheduledCancellationReversal(
     ministryId: string,
-    actorUserId: string,
+    actorUserId?: string,
     options?: { now?: Date; transitionId?: string }
   ): Promise<{ success: boolean; reason?: string; transition?: BillingTransitionV1Record }> {
     if (!actorUserId || typeof actorUserId !== 'string' || !actorUserId.trim()) {
@@ -4142,7 +4142,27 @@ export class BillingService {
       }
     }
 
-    // 2. Fluxo Legado: executado quando NÃO existe transição V1 cancel_to_free ativa
+    // 2. Verificação de integridade de propriedade V1 (Phase 4A.4.3A):
+    // Se a assinatura da aplicação ainda possui marcador de cancelamento V1 ativo
+    // (active_cancellation_transition_id), mas nenhum slot ativo canônico foi localizado,
+    // temos uma divergência de posse/slot (slot ausente com marcador retido).
+    // O sistema DEVE falhar fechado com FINANCIAL_ATTENTION_REQUIRED e NUNCA prosseguir
+    // para a reativação legada no provedor (zero mutações no gateway).
+    const currentAppSub = await this.subscriptionRepo.getSubscription(trimmedMinistryId);
+    if (currentAppSub?.active_cancellation_transition_id) {
+      throw new AppError(
+        409,
+        'A assinatura requer verificação antes de continuar. Entre em contato com o suporte.',
+        {
+          code: 'FINANCIAL_ATTENTION_REQUIRED',
+          reason: 'slot_missing_with_active_cancellation_marker',
+          transitionId: currentAppSub.active_cancellation_transition_id,
+        }
+      );
+    }
+
+    // 3. Fluxo Legado: executado estritamente quando NÃO existe transição V1 cancel_to_free
+    // ativa e NÃO há nenhum marcador V1 órfão ou divergente na assinatura.
     const billingSub = await this.billingRepo.getSubscription(trimmedMinistryId, this.provider.name);
     if (!billingSub || !billingSub.cancel_at_period_end) {
       throw new AppError(400, 'Não há cancelamento pendente para reativar neste ministério.', {
@@ -4165,7 +4185,6 @@ export class BillingService {
     };
     await this.billingRepo.setSubscription(updatedBillingSub);
 
-    const currentAppSub = await this.subscriptionRepo.getSubscription(trimmedMinistryId);
     if (currentAppSub) {
       await this.subscriptionRepo.setSubscription({
         ...currentAppSub,

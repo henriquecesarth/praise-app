@@ -627,15 +627,17 @@ export const SubscriptionPlanView: React.FC<Props> = ({
 
     const targetMinistryId = ministryId;
     setUncancelLoading(true);
+
+    let mutationSucceeded = false;
     try {
       await api.reactivateBillingSubscription(targetMinistryId);
       // Tenant switch guard: se o ministério mudou enquanto a requisição estava em trânsito, descarta o efeito
       if (targetMinistryId !== currentMinistryIdRef.current) {
         return;
       }
+      mutationSucceeded = true;
       showToast?.('Cancelamento desfeito. Sua assinatura continuará ativa.', 'success');
       setShowUncancelModal(false);
-      await loadData();
     } catch (err: any) {
       if (targetMinistryId !== currentMinistryIdRef.current) {
         return;
@@ -656,7 +658,11 @@ export const SubscriptionPlanView: React.FC<Props> = ({
         message.includes('verificação')
       ) {
         showToast?.('Não foi possível concluir automaticamente. A assinatura precisa de verificação antes de continuar.', 'error');
-        await loadData();
+        try {
+          await loadData();
+        } catch {
+          // Falha secundária de recarregamento não bloqueia o tratamento de erro
+        }
       } else if (
         code === 'NO_ACTIVE_CANCELLATION_FOUND' ||
         code === 'CANCELLATION_BOUNDARY_REACHED' ||
@@ -664,12 +670,36 @@ export const SubscriptionPlanView: React.FC<Props> = ({
         message.includes('já encerrou')
       ) {
         showToast?.(err.message || 'Não há cancelamento ativo para desfazer.', 'error');
-        await loadData();
+        try {
+          await loadData();
+        } catch {
+          // Falha secundária de recarregamento não bloqueia o tratamento de erro
+        }
       } else {
         showToast?.(err.message || 'Não foi possível desfazer o cancelamento agendado.', 'error');
       }
+      return;
     } finally {
       setUncancelLoading(false);
+    }
+
+    // Se a mutação de reversão foi concluída com sucesso no backend, o reload autoritativo
+    // é executado em bloco isolado para nunca mascarar o sucesso como falha de mutação (Finding 3).
+    if (mutationSucceeded) {
+      try {
+        const reloaded = await loadData();
+        if (!reloaded && targetMinistryId === currentMinistryIdRef.current) {
+          showToast?.(
+            'Cancelamento desfeito com sucesso. Recarregue a página para atualizar o status.'
+          );
+        }
+      } catch {
+        if (targetMinistryId === currentMinistryIdRef.current) {
+          showToast?.(
+            'Cancelamento desfeito com sucesso. Recarregue a página para atualizar o status.'
+          );
+        }
+      }
     }
   };
 

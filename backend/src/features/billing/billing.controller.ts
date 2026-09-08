@@ -118,12 +118,13 @@ export class BillingController {
         throw new AppError(401, 'Usuário não autenticado.');
       }
       const result = await this.billingService.reactivateSubscription(ministryId, userId);
+      const isReversal = Boolean((result as any)?.reversalResult);
       res.json({
-        message: result?.reversalResult
+        success: true,
+        message: isReversal
           ? 'Cancelamento desfeito com sucesso.'
           : 'Assinatura reativada com sucesso.',
-        subscription: result,
-        ...(result?.reversalResult ? { reversalResult: result.reversalResult } : {}),
+        outcome: isReversal ? 'cancellation_reversed' : 'legacy_reactivated',
       });
     } catch (err) {
       next(err);

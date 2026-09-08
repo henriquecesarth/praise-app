@@ -99,6 +99,7 @@ describe('Phase 4A.4.3 — Public V1 Cancellation Reversal API & Dispatch Matrix
     mockProvider = {
       name: 'asaas',
       reactivateSubscription: vi.fn().mockResolvedValue({ success: true }),
+      reactivateSubscriptionStrict: vi.fn().mockResolvedValue({ success: true }),
     };
 
     billingService = new BillingService(
@@ -190,18 +191,15 @@ describe('Phase 4A.4.3 — Public V1 Cancellation Reversal API & Dispatch Matrix
       await controller.reactivateSubscription(mockReq as AuthenticatedRequest, mockRes as Response, mockNext);
 
       expect(reversalSpy).toHaveBeenCalledWith(MINISTRY_ID, USER_ADMIN_ID, undefined);
-      expect(mockRes.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: 'Cancelamento desfeito com sucesso.',
-          subscription: expect.objectContaining({
-            cancel_at_period_end: false,
-          }),
-          reversalResult: expect.objectContaining({
-            success: true,
-            reason: 'reversal_completed',
-          }),
-        })
-      );
+      expect(mockRes.json).toHaveBeenCalledWith({
+        success: true,
+        message: 'Cancelamento desfeito com sucesso.',
+        outcome: 'cancellation_reversed',
+      });
+      const resPayload = (mockRes.json as any).mock.calls[0][0];
+      expect(resPayload).not.toHaveProperty('subscription');
+      expect(resPayload).not.toHaveProperty('reversalResult');
+      expect(resPayload).not.toHaveProperty('provider_subscription_id');
     });
 
     it('6. V1 reversão bem-sucedida retorna resposta customer-safe com status HTTP 200', async () => {
@@ -227,12 +225,14 @@ describe('Phase 4A.4.3 — Public V1 Cancellation Reversal API & Dispatch Matrix
 
       await controller.reactivateSubscription(mockReq as AuthenticatedRequest, mockRes as Response, mockNext);
 
-      expect(mockRes.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: 'Cancelamento desfeito com sucesso.',
-          subscription: expect.any(Object),
-        })
-      );
+      expect(mockRes.json).toHaveBeenCalledWith({
+        success: true,
+        message: 'Cancelamento desfeito com sucesso.',
+        outcome: 'cancellation_reversed',
+      });
+      const resPayload = (mockRes.json as any).mock.calls[0][0];
+      expect(resPayload).not.toHaveProperty('subscription');
+      expect(resPayload).not.toHaveProperty('reversalResult');
     });
 
     it('10. Reativação legada permanece disponível quando não existe cancelamento V1', async () => {
@@ -255,14 +255,15 @@ describe('Phase 4A.4.3 — Public V1 Cancellation Reversal API & Dispatch Matrix
       await controller.reactivateSubscription(mockReq as AuthenticatedRequest, mockRes as Response, mockNext);
 
       expect(mockProvider.reactivateSubscription).toHaveBeenCalledWith('sub_legacy_123', expect.any(String));
-      expect(mockRes.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: 'Assinatura reativada com sucesso.',
-          subscription: expect.objectContaining({
-            cancel_at_period_end: false,
-          }),
-        })
-      );
+      expect(mockRes.json).toHaveBeenCalledWith({
+        success: true,
+        message: 'Assinatura reativada com sucesso.',
+        outcome: 'legacy_reactivated',
+      });
+      const resPayload = (mockRes.json as any).mock.calls[0][0];
+      expect(resPayload).not.toHaveProperty('subscription');
+      expect(resPayload).not.toHaveProperty('provider_subscription_id');
+      expect(resPayload).not.toHaveProperty('reversalResult');
     });
   });
 
@@ -394,14 +395,14 @@ describe('Phase 4A.4.3 — Public V1 Cancellation Reversal API & Dispatch Matrix
 
       await controller.reactivateSubscription(mockReq as AuthenticatedRequest, mockRes as Response, mockNext);
 
-      expect(mockRes.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: 'Cancelamento desfeito com sucesso.',
-          subscription: expect.objectContaining({
-            cancel_at_period_end: false,
-          }),
-        })
-      );
+      expect(mockRes.json).toHaveBeenCalledWith({
+        success: true,
+        message: 'Cancelamento desfeito com sucesso.',
+        outcome: 'cancellation_reversed',
+      });
+      const resPayload = (mockRes.json as any).mock.calls[0][0];
+      expect(resPayload).not.toHaveProperty('subscription');
+      expect(resPayload).not.toHaveProperty('reversalResult');
     });
 
     it('13. Expiração na fronteira periódica (boundary_expired) mapeia para HTTP 400', async () => {
@@ -456,6 +457,112 @@ describe('Phase 4A.4.3 — Public V1 Cancellation Reversal API & Dispatch Matrix
       const err = mockNext.mock.calls[0][0];
       expect(err.statusCode).toBe(409);
       expect(err.details?.code).toBe('FINANCIAL_ATTENTION_REQUIRED');
+    });
+  });
+
+  describe('Slot/Marker Divergence & Response Minimization Hardening (Phase 4A.4.3A)', () => {
+    it('16. Slot V1 ausente com active_cancellation_transition_id na assinatura falha fechado com 409 FINANCIAL_ATTENTION_REQUIRED e zero mutações de provedor', async () => {
+      // Slot missing from transition repo
+      mockBillingRepo.getActiveTransitionForMinistry.mockResolvedValue(null);
+      // App subscription has orphan/unresolved active_cancellation_transition_id marker
+      mockSubscriptionRepo.getSubscription.mockResolvedValue({
+        id: MINISTRY_ID,
+        plan_id: 'essential',
+        cancel_at_period_end: true,
+        active_cancellation_transition_id: 'cancel_trans_orphan_999',
+      });
+      // Billing repo has cancel_at_period_end: true
+      mockBillingRepo.getSubscription.mockResolvedValue({
+        id: 'sub_row_1',
+        ministry_id: MINISTRY_ID,
+        provider: 'asaas',
+        plan_id: 'essential',
+        cancel_at_period_end: true,
+        provider_subscription_id: 'sub_legacy_should_not_touch',
+        current_period_end: '2026-10-01T00:00:00.000Z',
+      });
+
+      await controller.reactivateSubscription(mockReq as AuthenticatedRequest, mockRes as Response, mockNext);
+
+      expect(mockNext).toHaveBeenCalledWith(expect.any(AppError));
+      const err = mockNext.mock.calls[0][0];
+      expect(err.statusCode).toBe(409);
+      expect(err.details?.code).toBe('FINANCIAL_ATTENTION_REQUIRED');
+      expect(err.details?.reason).toBe('slot_missing_with_active_cancellation_marker');
+      expect(err.details?.transitionId).toBe('cancel_trans_orphan_999');
+
+      // Zero provider mutations
+      expect(mockProvider.reactivateSubscription).not.toHaveBeenCalled();
+      expect(mockProvider.reactivateSubscriptionStrict).not.toHaveBeenCalled();
+      // Zero billing/subscription repo mutations
+      expect(mockBillingRepo.setSubscription).not.toHaveBeenCalled();
+      expect(mockSubscriptionRepo.setSubscription).not.toHaveBeenCalled();
+    });
+
+    it('17. Slot V1 presente com id divergente vs active_cancellation_transition_id falha fechado pelo motor V1 sem mutação legada', async () => {
+      const activeTransition = buildScheduledCancelTransition({ id: 'trans_slot_111' });
+      mockBillingRepo.getActiveTransitionForMinistry.mockResolvedValue({
+        slot: { id: 'slot_1', plan_change_id: activeTransition.id },
+        transition: activeTransition,
+      });
+
+      const reversalSpy = vi.spyOn(billingService, 'requestScheduledCancellationReversal').mockResolvedValue({
+        success: false,
+        reason: 'provider_resource_divergence',
+      });
+
+      await controller.reactivateSubscription(mockReq as AuthenticatedRequest, mockRes as Response, mockNext);
+
+      expect(reversalSpy).toHaveBeenCalledWith(MINISTRY_ID, USER_ADMIN_ID, undefined);
+      expect(mockNext).toHaveBeenCalledWith(expect.any(AppError));
+      const err = mockNext.mock.calls[0][0];
+      expect(err.statusCode).toBe(409);
+      expect(err.details?.code).toBe('FINANCIAL_ATTENTION_REQUIRED');
+      expect(err.details?.reason).toBe('provider_resource_divergence');
+      expect(mockProvider.reactivateSubscription).not.toHaveBeenCalled();
+      expect(mockProvider.reactivateSubscriptionStrict).not.toHaveBeenCalled();
+    });
+
+    it('18. Resposta de reversão e reativação minimizada omite completamente segredos, IDs de provedor e metadados internos', async () => {
+      const activeTransition = buildScheduledCancelTransition();
+      mockBillingRepo.getActiveTransitionForMinistry.mockResolvedValue({
+        slot: { id: 'slot_1', plan_change_id: activeTransition.id },
+        transition: activeTransition,
+      });
+      vi.spyOn(billingService, 'requestScheduledCancellationReversal').mockResolvedValue({
+        success: true,
+        reason: 'reversal_completed',
+        transition: {
+          ...activeTransition,
+          cancellation_reversal_status: 'completed',
+          provider_subscription_id: 'sub_prov_secret',
+          payment_cleanup_ids: ['pay_1', 'pay_2'],
+          retry_locked_by: 'worker_secret',
+        } as any,
+      });
+      mockBillingRepo.getSubscription.mockResolvedValue({
+        id: 'sub_row_1',
+        ministry_id: MINISTRY_ID,
+        provider: 'asaas',
+        plan_id: 'essential',
+        provider_subscription_id: 'sub_prov_secret',
+        cancel_at_period_end: false,
+      });
+
+      await controller.reactivateSubscription(mockReq as AuthenticatedRequest, mockRes as Response, mockNext);
+
+      const payload = (mockRes.json as any).mock.calls[0][0];
+      expect(Object.keys(payload).sort()).toEqual(['message', 'outcome', 'success'].sort());
+      expect(payload).toEqual({
+        success: true,
+        message: 'Cancelamento desfeito com sucesso.',
+        outcome: 'cancellation_reversed',
+      });
+      expect(payload).not.toHaveProperty('subscription');
+      expect(payload).not.toHaveProperty('reversalResult');
+      expect(payload).not.toHaveProperty('provider_subscription_id');
+      expect(payload).not.toHaveProperty('payment_cleanup_ids');
+      expect(payload).not.toHaveProperty('retry_locked_by');
     });
   });
 });

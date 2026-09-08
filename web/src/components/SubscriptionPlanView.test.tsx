@@ -465,8 +465,9 @@ describe('SubscriptionPlanView Component', () => {
     vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockScheduledCancelSummary as any);
     vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
     const reactivateSpy = vi.spyOn(api, 'reactivateBillingSubscription').mockResolvedValue({
+      success: true,
       message: 'Assinatura reativada',
-      subscription: { ...mockSummaryEssential.subscription, cancelAtPeriodEnd: false },
+      outcome: 'legacy_reactivated',
     });
 
     render(
@@ -2766,6 +2767,47 @@ describe('SubscriptionPlanView Component', () => {
         />
       );
 
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('Phase 4A.4.3A: mutação de reversão bem-sucedida com falha no recarregamento subsequente exibe toast informativo e NUNCA reporta erro de cancelamento', async () => {
+      vi.spyOn(api, 'getMinistrySubscription')
+        .mockResolvedValueOnce(mockSummaryWithCancel as any)
+        .mockRejectedValueOnce(new Error('Network offline on reload'));
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      const reactivateSpy = vi.spyOn(api, 'reactivateBillingSubscription').mockResolvedValue({
+        success: true,
+        message: 'Cancelamento desfeito com sucesso.',
+        outcome: 'cancellation_reversed',
+      });
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      const ctaBtn = await screen.findByRole('button', { name: 'Desfazer cancelamento' });
+      await userEvent.click(ctaBtn);
+
+      const modalConfirmBtn = screen.getAllByRole('button', { name: 'Desfazer cancelamento' })[1];
+      await userEvent.click(modalConfirmBtn);
+
+      expect(reactivateSpy).toHaveBeenCalledTimes(1);
+      expect(mockShowToast).toHaveBeenCalledWith(
+        'Cancelamento desfeito. Sua assinatura continuará ativa.',
+        'success'
+      );
+      expect(mockShowToast).toHaveBeenCalledWith(
+        'Cancelamento desfeito com sucesso. Recarregue a página para atualizar o status.'
+      );
+      expect(mockShowToast).not.toHaveBeenCalledWith(
+        expect.stringMatching(/Não foi possível desfazer o cancelamento/i),
+        'error'
+      );
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
   });
