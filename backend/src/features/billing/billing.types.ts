@@ -660,24 +660,59 @@ export function validateBillingTransitionV1(data: any): BillingTransitionV1Recor
     throw new Error(`Drift detectado em status: status legado '${data.status}' não corresponde a transition_status '${data.transition_status}'.`);
   }
 
-  // 4. Validação do subworkflow de Reversão de Cancelamento (Phase 4A.4.1)
+  // 4. Validação do subworkflow de Reversão de Cancelamento (Phase 4A.4.1 & 4A.4.1A Hardening)
   const validReversalStatuses: BillingCancellationReversalStatus[] = ['requested', 'completed', 'attention_required'];
-  if (data.cancellation_reversal_status !== undefined && data.cancellation_reversal_status !== null) {
+  const hasReversalStatus = data.cancellation_reversal_status !== undefined && data.cancellation_reversal_status !== null;
+  const hasOtherReversalFields =
+    (data.cancellation_reversal_requested_at !== undefined && data.cancellation_reversal_requested_at !== null) ||
+    (data.cancellation_reversal_requested_by !== undefined && data.cancellation_reversal_requested_by !== null) ||
+    (data.cancellation_reversal_completed_at !== undefined && data.cancellation_reversal_completed_at !== null) ||
+    (data.cancellation_reversal_attention_reason !== undefined && data.cancellation_reversal_attention_reason !== null);
+
+  if (hasReversalStatus && data.execution_strategy !== 'scheduled_cancel_to_free') {
+    throw new Error("cancellation_reversal_status só é permitido para a estratégia 'scheduled_cancel_to_free'.");
+  }
+
+  if (hasOtherReversalFields && data.execution_strategy !== 'scheduled_cancel_to_free') {
+    throw new Error("Campos de cancellation_reversal só são permitidos para a estratégia 'scheduled_cancel_to_free'.");
+  }
+
+  // F5: Rejeição de campos de reversão órfãos sem status correspondente
+  if (!hasReversalStatus && hasOtherReversalFields) {
+    throw new Error("Campos de cancellation_reversal presentes sem cancellation_reversal_status definido.");
+  }
+
+  if (hasReversalStatus) {
     if (!validReversalStatuses.includes(data.cancellation_reversal_status)) {
       throw new Error(`cancellation_reversal_status inválido: '${data.cancellation_reversal_status}'.`);
     }
-    if (data.execution_strategy !== 'scheduled_cancel_to_free') {
-      throw new Error("cancellation_reversal_status só é permitido para a estratégia 'scheduled_cancel_to_free'.");
+
+    // F5: cancellation_reversal_requested_at e cancellation_reversal_requested_by são obrigatórios em todos os status de reversão
+    if (
+      !data.cancellation_reversal_requested_at ||
+      typeof data.cancellation_reversal_requested_at !== 'string' ||
+      Number.isNaN(Date.parse(data.cancellation_reversal_requested_at))
+    ) {
+      throw new Error(`cancellation_reversal_status === '${data.cancellation_reversal_status}' exige cancellation_reversal_requested_at ISO válido.`);
     }
+
+    if (
+      !data.cancellation_reversal_requested_by ||
+      typeof data.cancellation_reversal_requested_by !== 'string' ||
+      !data.cancellation_reversal_requested_by.trim()
+    ) {
+      throw new Error("cancellation_reversal_requested_by deve ser uma string não vazia.");
+    }
+
     if (data.cancellation_reversal_status === 'requested') {
-      if (
-        !data.cancellation_reversal_requested_at ||
-        typeof data.cancellation_reversal_requested_at !== 'string' ||
-        Number.isNaN(Date.parse(data.cancellation_reversal_requested_at))
-      ) {
-        throw new Error("cancellation_reversal_status === 'requested' exige cancellation_reversal_requested_at ISO válido.");
+      if (data.cancellation_reversal_completed_at !== undefined && data.cancellation_reversal_completed_at !== null) {
+        throw new Error("cancellation_reversal_status === 'requested' não permite cancellation_reversal_completed_at.");
+      }
+      if (data.cancellation_reversal_attention_reason !== undefined && data.cancellation_reversal_attention_reason !== null) {
+        throw new Error("cancellation_reversal_status === 'requested' não permite cancellation_reversal_attention_reason.");
       }
     }
+
     if (data.cancellation_reversal_status === 'completed') {
       if (
         !data.cancellation_reversal_completed_at ||
@@ -686,7 +721,11 @@ export function validateBillingTransitionV1(data: any): BillingTransitionV1Recor
       ) {
         throw new Error("cancellation_reversal_status === 'completed' exige cancellation_reversal_completed_at ISO válido.");
       }
+      if (data.cancellation_reversal_attention_reason !== undefined && data.cancellation_reversal_attention_reason !== null) {
+        throw new Error("cancellation_reversal_status === 'completed' não permite cancellation_reversal_attention_reason.");
+      }
     }
+
     if (data.cancellation_reversal_status === 'attention_required') {
       if (
         !data.cancellation_reversal_attention_reason ||
@@ -695,52 +734,9 @@ export function validateBillingTransitionV1(data: any): BillingTransitionV1Recor
       ) {
         throw new Error("cancellation_reversal_status === 'attention_required' exige cancellation_reversal_attention_reason não vazio.");
       }
-    }
-  }
-
-  const hasOtherReversalFields =
-    data.cancellation_reversal_requested_at !== undefined ||
-    data.cancellation_reversal_requested_by !== undefined ||
-    data.cancellation_reversal_completed_at !== undefined ||
-    data.cancellation_reversal_attention_reason !== undefined;
-
-  if (hasOtherReversalFields && data.execution_strategy !== 'scheduled_cancel_to_free') {
-    throw new Error("Campos de cancellation_reversal só são permitidos para a estratégia 'scheduled_cancel_to_free'.");
-  }
-
-  if (data.cancellation_reversal_requested_at) {
-    if (
-      typeof data.cancellation_reversal_requested_at !== 'string' ||
-      Number.isNaN(Date.parse(data.cancellation_reversal_requested_at))
-    ) {
-      throw new Error("cancellation_reversal_requested_at deve ser uma data ISO válida.");
-    }
-  }
-
-  if (data.cancellation_reversal_completed_at) {
-    if (
-      typeof data.cancellation_reversal_completed_at !== 'string' ||
-      Number.isNaN(Date.parse(data.cancellation_reversal_completed_at))
-    ) {
-      throw new Error("cancellation_reversal_completed_at deve ser uma data ISO válida.");
-    }
-  }
-
-  if (data.cancellation_reversal_requested_by !== undefined && data.cancellation_reversal_requested_by !== null) {
-    if (
-      typeof data.cancellation_reversal_requested_by !== 'string' ||
-      !data.cancellation_reversal_requested_by.trim()
-    ) {
-      throw new Error("cancellation_reversal_requested_by deve ser uma string não vazia.");
-    }
-  }
-
-  if (data.cancellation_reversal_attention_reason !== undefined && data.cancellation_reversal_attention_reason !== null) {
-    if (
-      typeof data.cancellation_reversal_attention_reason !== 'string' ||
-      !data.cancellation_reversal_attention_reason.trim()
-    ) {
-      throw new Error("cancellation_reversal_attention_reason deve ser uma string não vazia.");
+      if (data.cancellation_reversal_completed_at !== undefined && data.cancellation_reversal_completed_at !== null) {
+        throw new Error("cancellation_reversal_status === 'attention_required' não permite cancellation_reversal_completed_at.");
+      }
     }
   }
 

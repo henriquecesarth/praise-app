@@ -2583,16 +2583,29 @@ export class BillingRepository {
     ministryId: string,
     provider: BillingProviderName,
     transitionId: string,
-    actorUserId?: string | null,
-    options?: {
+    actorUserId: string | null,
+    options: {
+      expectedLockOwner: string;
       nowIso?: string;
-      expectedLockOwner?: string;
     }
   ): Promise<{
     success: boolean;
     reason?: string;
     transition?: BillingTransitionV1Record;
   }> {
+    // F2: Mandatory Lease Pre-condition
+    if (!options?.expectedLockOwner || typeof options.expectedLockOwner !== 'string' || !options.expectedLockOwner.trim()) {
+      return { success: false, reason: 'lease_required' };
+    }
+
+    if (!actorUserId || typeof actorUserId !== 'string' || !actorUserId.trim()) {
+      return { success: false, reason: 'actor_user_id_required' };
+    }
+
+    if (provider !== 'asaas' && provider !== 'mock') {
+      return { success: false, reason: 'provider_mismatch' };
+    }
+
     const slotId = buildActiveTransitionSlotId(ministryId, provider);
     const slotDocRef = this.activeTransitionSlotsCollection.doc(slotId);
     const planChangeDocRef = this.planChangesCollection.doc(transitionId);
@@ -2609,6 +2622,11 @@ export class BillingRepository {
       const transition = planChangeDoc.data() as BillingPlanChangeRecord;
       if (transition.ministry_id !== ministryId) {
         return { success: false, reason: 'tenant_mismatch' };
+      }
+
+      // F3: Provider Binding Check
+      if (transition.provider !== provider) {
+        return { success: false, reason: 'provider_mismatch' };
       }
 
       if (!isBillingTransitionV1(transition)) {
@@ -2657,13 +2675,12 @@ export class BillingRepository {
         return { success: false, reason: 'boundary_expired' };
       }
 
-      if (options?.expectedLockOwner) {
-        if (transition.retry_locked_by !== options.expectedLockOwner) {
-          return { success: false, reason: 'lease_not_owned' };
-        }
-        if (!transition.retry_locked_until || new Date(transition.retry_locked_until).getTime() <= nowMs) {
-          return { success: false, reason: 'lease_expired' };
-        }
+      // F2: Mandatory Lease CAS
+      if (!transition.retry_locked_by || transition.retry_locked_by !== options.expectedLockOwner) {
+        return { success: false, reason: 'lease_not_owned' };
+      }
+      if (!transition.retry_locked_until || new Date(transition.retry_locked_until).getTime() <= nowMs) {
+        return { success: false, reason: 'lease_expired' };
       }
 
       const slotDoc = await t.get(slotDocRef);
@@ -2709,7 +2726,7 @@ export class BillingRepository {
       const updates: Partial<BillingTransitionV1Record> = {
         cancellation_reversal_status: 'requested',
         cancellation_reversal_requested_at: nowIso,
-        cancellation_reversal_requested_by: actorUserId || null,
+        cancellation_reversal_requested_by: actorUserId.trim(),
         updated_at: nowIso,
       };
 
@@ -2740,15 +2757,24 @@ export class BillingRepository {
     ministryId: string,
     provider: BillingProviderName,
     transitionId: string,
-    options?: {
+    options: {
+      expectedLockOwner: string;
       nowIso?: string;
-      expectedLockOwner?: string;
       transitionUpdates?: Partial<BillingTransitionV1Record>;
     }
   ): Promise<{
     success: boolean;
     reason?: string;
   }> {
+    // F1: Mandatory Lease Pre-condition
+    if (!options?.expectedLockOwner || typeof options.expectedLockOwner !== 'string' || !options.expectedLockOwner.trim()) {
+      return { success: false, reason: 'lease_required' };
+    }
+
+    if (provider !== 'asaas' && provider !== 'mock') {
+      return { success: false, reason: 'provider_mismatch' };
+    }
+
     const slotId = buildActiveTransitionSlotId(ministryId, provider);
     const slotDocRef = this.activeTransitionSlotsCollection.doc(slotId);
     const planChangeDocRef = this.planChangesCollection.doc(transitionId);
@@ -2765,6 +2791,11 @@ export class BillingRepository {
       const transition = planChangeDoc.data() as BillingPlanChangeRecord;
       if (transition.ministry_id !== ministryId) {
         return { success: false, reason: 'tenant_mismatch' };
+      }
+
+      // F3: Provider Binding Check
+      if (transition.provider !== provider) {
+        return { success: false, reason: 'provider_mismatch' };
       }
 
       if (!isBillingTransitionV1(transition)) {
@@ -2845,13 +2876,12 @@ export class BillingRepository {
         return { success: false, reason: 'boundary_expired' };
       }
 
-      if (options?.expectedLockOwner) {
-        if (transition.retry_locked_by !== options.expectedLockOwner) {
-          return { success: false, reason: 'lease_not_owned' };
-        }
-        if (!transition.retry_locked_until || new Date(transition.retry_locked_until).getTime() <= nowMs) {
-          return { success: false, reason: 'lease_expired' };
-        }
+      // F1: Mandatory Lease CAS
+      if (!transition.retry_locked_by || transition.retry_locked_by !== options.expectedLockOwner) {
+        return { success: false, reason: 'lease_not_owned' };
+      }
+      if (!transition.retry_locked_until || new Date(transition.retry_locked_until).getTime() <= nowMs) {
+        return { success: false, reason: 'lease_expired' };
       }
 
       if (!slotExists) {
@@ -2881,6 +2911,8 @@ export class BillingRepository {
         transition_status: 'canceled',
         status: 'canceled',
         financial_safety_status: 'safe_terminal',
+        financial_attention_required: false,
+        financial_attention_reason: null,
         cancellation_reversal_status: 'completed',
         cancellation_reversal_completed_at: nowIso,
         updated_at: nowIso,
@@ -2912,11 +2944,12 @@ export class BillingRepository {
    */
   async setCancellationReversalAttentionAtomically(
     ministryId: string,
+    provider: BillingProviderName,
     transitionId: string,
     attentionReason: string,
-    options?: {
+    options: {
+      expectedLockOwner: string;
       nowIso?: string;
-      expectedLockOwner?: string;
     }
   ): Promise<{
     success: boolean;
@@ -2926,7 +2959,19 @@ export class BillingRepository {
       return { success: false, reason: 'invalid_attention_reason' };
     }
 
+    // F4: Mandatory Lease Pre-condition
+    if (!options?.expectedLockOwner || typeof options.expectedLockOwner !== 'string' || !options.expectedLockOwner.trim()) {
+      return { success: false, reason: 'lease_required' };
+    }
+
+    if (provider !== 'asaas' && provider !== 'mock') {
+      return { success: false, reason: 'provider_mismatch' };
+    }
+
+    const slotId = buildActiveTransitionSlotId(ministryId, provider);
+    const slotDocRef = this.activeTransitionSlotsCollection.doc(slotId);
     const planChangeDocRef = this.planChangesCollection.doc(transitionId);
+    const ministrySubDocRef = this.ministrySubscriptionsCollection.doc(ministryId);
 
     return await db.runTransaction(async (t: any) => {
       const planChangeDoc = await t.get(planChangeDocRef);
@@ -2937,6 +2982,11 @@ export class BillingRepository {
       const transition = planChangeDoc.data() as BillingPlanChangeRecord;
       if (transition.ministry_id !== ministryId) {
         return { success: false, reason: 'tenant_mismatch' };
+      }
+
+      // F3: Provider Binding Check
+      if (transition.provider !== provider) {
+        return { success: false, reason: 'provider_mismatch' };
       }
 
       if (!isBillingTransitionV1(transition)) {
@@ -2955,24 +3005,53 @@ export class BillingRepository {
         return { success: false, reason: 'transition_already_terminal' };
       }
 
+      // F4: Source status MUST be scheduled + live
+      if (transition.transition_status !== 'scheduled' || transition.financial_safety_status !== 'live') {
+        return { success: false, reason: 'invalid_source_status' };
+      }
+
+      // F4: Subworkflow MUST be 'requested'
+      if (transition.cancellation_reversal_status !== 'requested') {
+        return { success: false, reason: 'reversal_not_requested' };
+      }
+
+      // F4: Mandatory Lease CAS
       const now = options?.nowIso ? new Date(options.nowIso) : new Date();
       const nowMs = now.getTime();
-      if (options?.expectedLockOwner) {
-        if (transition.retry_locked_by !== options.expectedLockOwner) {
-          return { success: false, reason: 'lease_not_owned' };
-        }
-        if (!transition.retry_locked_until || new Date(transition.retry_locked_until).getTime() <= nowMs) {
-          return { success: false, reason: 'lease_expired' };
-        }
+      if (!transition.retry_locked_by || transition.retry_locked_by !== options.expectedLockOwner) {
+        return { success: false, reason: 'lease_not_owned' };
+      }
+      if (!transition.retry_locked_until || new Date(transition.retry_locked_until).getTime() <= nowMs) {
+        return { success: false, reason: 'lease_expired' };
+      }
+
+      // F4: Slot CAS: Slot MUST exist and belong to transition & ministry
+      const slotDoc = await t.get(slotDocRef);
+      if (!slotDoc.exists) {
+        return { success: false, reason: 'slot_not_found' };
+      }
+      const slot = slotDoc.data() as BillingActiveTransitionSlotRecord;
+      if (slot.plan_change_id !== transitionId || slot.ministry_id !== ministryId) {
+        return { success: false, reason: 'slot_owned_by_another_transition' };
+      }
+
+      // F4: Marker CAS: ministrySub MUST exist and have active_cancellation_transition_id === transitionId
+      const ministrySubDoc = await t.get(ministrySubDocRef);
+      if (!ministrySubDoc.exists) {
+        return { success: false, reason: 'subscription_not_found' };
+      }
+      const ministrySub = ministrySubDoc.data() as any;
+      if (ministrySub.active_cancellation_transition_id !== transitionId) {
+        return { success: false, reason: 'subscription_marker_missing_or_divergent' };
       }
 
       const nowIso = options?.nowIso || now.toISOString();
 
       t.update(planChangeDocRef, {
         cancellation_reversal_status: 'attention_required',
-        cancellation_reversal_attention_reason: attentionReason,
+        cancellation_reversal_attention_reason: attentionReason.trim(),
         financial_attention_required: true,
-        financial_attention_reason: attentionReason,
+        financial_attention_reason: attentionReason.trim(),
         financial_safety_status: 'attention_required',
         updated_at: nowIso,
       });
