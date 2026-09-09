@@ -21,13 +21,14 @@ import { SchedulesView } from './components/SchedulesView';
 import { ScheduleDetailView } from './components/ScheduleDetailView';
 import { CreateScheduleModal, ScheduleItem } from './components/CreateScheduleModal';
 import { MinistryView } from './components/MinistryView';
+import { LiturgiesView } from './components/LiturgiesView';
 import { RestrictedBanner } from './components/RestrictedBanner';
 import { BottomNav } from './components/BottomNav';
 import { InstallPWAPrompt } from './components/InstallPWAPrompt';
 import { Header } from './components/Header';
 import { MobileAccountMenu } from './components/MobileAccountMenu';
 import { louvaioTheme } from './theme/louvaioTheme';
-import { Search, SlidersHorizontal, Plus, CheckCircle, XCircle, Menu, Music, Edit3, KeyRound, UserPlus, LogOut, Building2, Home, Calendar as CalendarIcon, Sun, Moon } from 'lucide-react';
+import { Search, SlidersHorizontal, Plus, CheckCircle, XCircle, Menu, Music, Edit3, KeyRound, UserPlus, LogOut, Building2, Home, Calendar as CalendarIcon, Sun, Moon, BookOpen } from 'lucide-react';
 
 interface Toast {
   id: string;
@@ -152,6 +153,8 @@ export default function App() {
       if (activeTab === 'songs') loadSongs();
       else if (activeTab === 'folders') loadFolders();
       else if (activeTab === 'artists') loadArtists();
+    } else if (mainModule === 'liturgies') {
+      loadSongs();
     }
   }, [mainModule, activeTab, activeGroup]);
 
@@ -917,6 +920,31 @@ export default function App() {
 
           <button
             onClick={() => {
+              setMainModule('liturgies');
+            }}
+            title={sidebarOpen ? undefined : 'Liturgias'}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: sidebarOpen ? 'flex-start' : 'center',
+              gap: '12px',
+              padding: sidebarOpen ? '10px 14px' : '10px 0',
+              borderRadius: '8px',
+              border: 'none',
+              backgroundColor: mainModule === 'liturgies' ? 'var(--primary-color)' : 'transparent',
+              color: mainModule === 'liturgies' ? '#FFFFFF' : 'var(--surface-sidebar-text)',
+              cursor: 'pointer',
+              fontWeight: 600,
+              textAlign: 'left',
+              transition: 'all var(--transition-fast)',
+            }}
+          >
+            <BookOpen size={20} />
+            {sidebarOpen && <span>Liturgias</span>}
+          </button>
+
+          <button
+            onClick={() => {
               setMainModule('ministry');
             }}
             title={sidebarOpen ? undefined : 'Ministério'}
@@ -951,7 +979,8 @@ export default function App() {
               mainModule === 'dashboard' ? 'Painel Inicial' :
                 mainModule === 'repertoire' ? 'Repertório do Louvor' :
                   mainModule === 'cifrador' ? 'Estúdio de Cifras Inteligentes' :
-                    mainModule === 'schedules' ? 'Escalas do Louvor' : 'Ministério'
+                    mainModule === 'schedules' ? 'Escalas do Louvor' :
+                      mainModule === 'liturgies' ? 'Liturgias & Ordem de Culto' : 'Ministério'
             }
             subtitle={activeGroup ? activeGroup.name : 'Nenhum ministério selecionado'}
             rightActions={
@@ -1294,6 +1323,16 @@ export default function App() {
                   onTeamModalStateChange={setIsTeamModalOpen}
                   section={routeState.ministrySection}
                   onNavigateSection={(section) => navigate(section ? `/ministerio/${section}` : '/ministerio')}
+                  onNavigateToLiturgies={() => setMainModule('liturgies')}
+                />
+              )}
+
+              {mainModule === 'liturgies' && activeGroup && (
+                <LiturgiesView
+                  groupId={activeGroup.id}
+                  userRole={userRole}
+                  allSongs={songs}
+                  showToast={showToast}
                 />
               )}
 

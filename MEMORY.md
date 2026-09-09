@@ -221,6 +221,7 @@ Itens duráveis e priorizados catalogados em docs/system-status.md:
 - Otimização Pré-Lançamento de Custos, Consultas e Escalabilidade.
 - Hardening de Segurança em Autenticação, Autorização, RBAC e Anti-IDOR.
 - Integração de SaaS Billing, Checkout Hospedado, Webhooks Idempotentes, Future Payment Cleanup, Worker de Reconciliação, Early Activation Proration/Settlement e Cancel-to-Free com Asaas (fluxos 3A, 3B, 3C e 3D homologados em Sandbox; gaps de customer reuse e troca de ciclo no mesmo plano permanecem catalogados).
+- Fase 5A: Acessibilidade e Navegação de Liturgias (GAP-004 resolvido; rota canônica /liturgias, sidebar desktop e cartão Ministério no mobile; preservação estrita de 5 itens no BottomNav; isolamento de tenant; RBAC admin/member; suite web com 156 testes passando e zero alterações de backend/billing).
 
 ## Current Work
 

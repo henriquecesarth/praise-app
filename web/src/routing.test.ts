@@ -9,12 +9,14 @@ describe('application routes', () => {
       repertoire: '/repertorio',
       cifrador: '/cifras',
       ministry: '/ministerio',
+      liturgies: '/liturgias',
     });
   });
 
-  it('parses detail deep links', () => {
+  it('parses detail deep links and liturgies canonical route', () => {
     expect(parseAppRoute('/repertorio/song%201')).toMatchObject({ module: 'repertoire', songId: 'song 1' });
     expect(parseAppRoute('/escalas/schedule-1')).toMatchObject({ module: 'schedules', scheduleId: 'schedule-1' });
+    expect(parseAppRoute('/liturgias')).toMatchObject({ module: 'liturgies', isKnown: true });
     expect(pathForSong('song 1')).toBe('/repertorio/song%201');
     expect(pathForSchedule('schedule/1')).toBe('/escalas/schedule%2F1');
   });

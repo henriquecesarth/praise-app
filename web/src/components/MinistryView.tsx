@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { Ministry, MinistryRole } from '../types';
 import { FloatingInput } from './ui/FloatingInput';
@@ -11,7 +12,7 @@ import { SubscriptionPlanView } from './SubscriptionPlanView';
 import {
   Edit2, Check, X, UserPlus, Users, Info, Link, Shield, Tag,
   Layers, Trash2, LogOut, ChevronRight, MoreVertical, Plus, User,
-  CalendarDays, AtSign, Copy, CheckCircle, Sparkles,
+  CalendarDays, AtSign, Copy, CheckCircle, Sparkles, BookOpen,
 } from 'lucide-react';
 
 interface MinistryMemberItem {
@@ -56,6 +57,7 @@ interface Props {
   onTeamModalStateChange?: (isOpen: boolean) => void;
   section?: string;
   onNavigateSection?: (section?: string) => void;
+  onNavigateToLiturgies?: () => void;
 }
 
 type ActiveTab = 'info' | 'members';
@@ -72,7 +74,9 @@ export function MinistryView({
   onTeamModalStateChange,
   section,
   onNavigateSection,
+  onNavigateToLiturgies,
 }: Props) {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<ActiveTab>('info');
   const [showTeams, setShowTeams] = useState(false);
   const [showRoles, setShowRoles] = useState(false);
@@ -560,6 +564,29 @@ export function MinistryView({
                 <div>
                   <div className="ministry-action-title">Modelos de Roteiro</div>
                   <div className="ministry-action-desc">Modelos de roteiro usados na escala</div>
+                </div>
+              </div>
+              <ChevronRight size={16} className="ministry-chevron" />
+            </button>
+            {/* Liturgias & Ordem de Culto — ACTIVE */}
+            <button
+              className="ministry-action-row-btn"
+              onClick={() => {
+                if (onNavigateToLiturgies) {
+                  onNavigateToLiturgies();
+                } else {
+                  navigate('/liturgias');
+                }
+              }}
+              aria-label="Abrir liturgias e ordem de culto"
+            >
+              <div className="ministry-action-row-left">
+                <div className="ministry-action-icon primary">
+                  <BookOpen size={18} />
+                </div>
+                <div>
+                  <div className="ministry-action-title">Liturgias & Ordem de Culto</div>
+                  <div className="ministry-action-desc">Ordem dos cultos e programação musical</div>
                 </div>
               </div>
               <ChevronRight size={16} className="ministry-chevron" />

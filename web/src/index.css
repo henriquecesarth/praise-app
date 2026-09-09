@@ -6799,6 +6799,16 @@ button,
     flex: 1 !important;
   }
 
+  :root:not(.dark) .modal-content.liturgy-modal {
+    background-color: var(--surface-color) !important;
+  }
+
+  :root:not(.dark) .modal-content.liturgy-modal .modal-header,
+  :root:not(.dark) .modal-content.liturgy-modal .form-actions {
+    background: rgba(255, 255, 255, 0.96) !important;
+    border-color: var(--border-color) !important;
+  }
+
   /* Full-Screen Schedule Chat Modal on Mobile */
   .modal-content.schedule-chat-modal {
     position: fixed !important;

@@ -101,7 +101,7 @@ Consulte a especificação detalhada em [Estrutura Comercial e Planos](plans-and
 ## Current Limits
 
 - Avisos do dashboard são dados mock locais.
-- Liturgias têm componente, mas não estão acessíveis pela navegação principal.
+- Liturgias acessíveis via rota canônica /liturgias, sidebar desktop e cartão Ministério no mobile.
 - Persistência Smart Chords não está alinhada ponta a ponta.
 - Não há gateway de pagamento integrado nesta etapa inicial (apenas modelagem de limites).
 - Não há mobile nativo no checkout.

@@ -38,7 +38,7 @@ Snapshot do estado operacional e técnico do LouvAIO. Este documento separa fato
 | INC-001 | Route aliases | O diretório features/groups implementa GroupRepository e group routes, mas app.ts não monta groupRoutes. /api/v1/groups monta ministryRoutes, portanto o módulo groups dedicado fica inalcançável e o alias usa coleções ministry_*. | backend/src/app.ts, features/groups/, MinistryRepository.ts |
 | INC-005 | Smart Chords endpoints | O frontend usa /smart-chords/song/:songId; o backend expõe somente /smart-chords e /smart-chords/:id. | web/src/api.ts, smart_chord.routes.ts |
 
-INC-002 e INC-003 foram corrigidos na implementação do sistema de planos. INC-004, INC-006, INC-007, INC-008, INC-009, INC-010, INC-011 e INC-012 foram integralmente resolvidos na fase de Authentication & Authorization Security Hardening (2026-08-29). GAP-011 (Asaas Customer Reuse) foi integralmente implementado, protegido contra concorrência e revalidado com sucesso em Sandbox (2026-09-01).
+INC-002 e INC-003 foram corrigidos na implementação do sistema de planos. INC-004, INC-006, INC-007, INC-008, INC-009, INC-010, INC-011 e INC-012 foram integralmente resolvidos na fase de Authentication & Authorization Security Hardening (2026-08-29). GAP-011 (Asaas Customer Reuse) foi integralmente implementado, protegido contra concorrência e revalidado com sucesso em Sandbox (2026-09-01). GAP-004 (Liturgies navigation) foi resolvido na Fase 5A (2026-09-09), expondo LiturgiesView via rota canônica /liturgias, sidebar desktop e Ministério no mobile.
 
 ## Incomplete Implementation / Known Gaps
 
@@ -46,7 +46,7 @@ INC-002 e INC-003 foram corrigidos na implementação do sistema de planos. INC-
 | --- | --- | --- | --- |
 | GAP-002 | Lint | Backend declara eslint src/, mas não possui ESLint em dependencies/devDependencies nem arquivo de configuração. Web não declara lint. | backend/package.json, inventário |
 | GAP-003 | Smart Chords list | api.getSmartChords retorna sempre um array vazio e não chama o endpoint backend. | web/src/api.ts |
-| GAP-004 | Liturgies navigation | LiturgiesView existe e chama a API, mas App.tsx apenas o importa; não há renderização/rota ativa desse componente. | App.tsx, LiturgiesView.tsx |
+| GAP-004 | Liturgies navigation | RESOLVIDO (Fase 5A): LiturgiesView exposto na rota /liturgias, sidebar desktop e card Ministério no mobile; RBAC e isolamento de tenant preservados. | App.tsx, LiturgiesView.tsx, routing.ts |
 | GAP-005 | Dashboard announcements | Avisos exibidos no dashboard vêm de MOCK_ANNOUNCEMENTS local, sem persistência/API. | DashboardView.tsx |
 | GAP-006 | Supabase migration residue | @supabase/supabase-js permanece como dependência; env.ts expõe campos vazios e lib/supabase.ts retorna null. | backend/package.json, config/env.ts, lib/supabase.ts |
 | GAP-008 | Infrastructure | Não há CI/CD, Docker, migrations ou schema Firestore versionado. | inventário |

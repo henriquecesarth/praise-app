@@ -1,4 +1,4 @@
-export type MainModuleType = 'dashboard' | 'repertoire' | 'cifrador' | 'schedules' | 'ministry';
+export type MainModuleType = 'dashboard' | 'repertoire' | 'cifrador' | 'schedules' | 'ministry' | 'liturgies';
 
 export interface AppRouteState {
   module: MainModuleType;
@@ -15,6 +15,7 @@ export const MODULE_PATHS: Record<MainModuleType, string> = {
   repertoire: '/repertorio',
   cifrador: '/cifras',
   ministry: '/ministerio',
+  liturgies: '/liturgias',
 };
 
 const decodeSegment = (value: string | undefined) => {
@@ -34,6 +35,7 @@ export function parseAppRoute(pathname: string): AppRouteState {
   if (normalized === '/repertorio') return { module: 'repertoire', isKnown: true };
   if (normalized === '/cifras') return { module: 'cifrador', isKnown: true };
   if (normalized === '/ministerio') return { module: 'ministry', isKnown: true };
+  if (normalized === '/liturgias') return { module: 'liturgies', isKnown: true };
 
   const scheduleMatch = normalized.match(/^\/escalas\/([^/]+)$/);
   if (scheduleMatch) {
@@ -72,4 +74,8 @@ export function pathForSchedule(scheduleId: string) {
 
 export function pathForMinistrySection(section?: string) {
   return section ? `/ministerio/${encodeURIComponent(section)}` : '/ministerio';
+}
+
+export function pathForLiturgies() {
+  return '/liturgias';
 }
