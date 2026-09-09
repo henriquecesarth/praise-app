@@ -626,4 +626,88 @@ describe('Phase 4A.1: Customer Billing Summary Normalization', () => {
       });
     });
   });
+
+  describe('Phase 4A.6: Delinquency, Grace & Payment Recovery Mapper Matrix', () => {
+    it('1. resolveCustomerPaymentStatus with past_due sets canRecoverPayment = true and reflects graceEndsAt', () => {
+      const billingSub: Partial<BillingSubscriptionRecord> = { status: 'past_due' };
+      const status = resolveCustomerPaymentStatus(
+        billingSub as BillingSubscriptionRecord,
+        'paid',
+        '2026-10-15T00:00:00.000Z'
+      );
+      expect(status.state).toBe('past_due');
+      expect(status.graceEndsAt).toBe('2026-10-15T00:00:00.000Z');
+      expect(status.canRecoverPayment).toBe(true);
+      expect(status.recoveryInvoiceUrl).toBeNull();
+    });
+
+    it('2. resolveCustomerPaymentStatus exposes recoveryInvoiceUrl when provided and past_due', () => {
+      const billingSub: Partial<BillingSubscriptionRecord> = { status: 'past_due' };
+      const status = resolveCustomerPaymentStatus(
+        billingSub as BillingSubscriptionRecord,
+        'paid',
+        '2026-10-15T00:00:00.000Z',
+        {
+          recoveryInvoiceUrl: 'https://sandbox.asaas.com/i/rec_123',
+        }
+      );
+      expect(status.state).toBe('past_due');
+      expect(status.canRecoverPayment).toBe(true);
+      expect(status.recoveryInvoiceUrl).toBe('https://sandbox.asaas.com/i/rec_123');
+    });
+
+    it('3. resolveCustomerPaymentStatus disables canRecoverPayment when financialAttentionRequired is true', () => {
+      const billingSub: Partial<BillingSubscriptionRecord> = { status: 'past_due' };
+      const status = resolveCustomerPaymentStatus(
+        billingSub as BillingSubscriptionRecord,
+        'paid',
+        '2026-10-15T00:00:00.000Z',
+        {
+          recoveryInvoiceUrl: 'https://sandbox.asaas.com/i/rec_123',
+          financialAttentionRequired: true,
+        }
+      );
+      expect(status.state).toBe('past_due');
+      expect(status.canRecoverPayment).toBe(false);
+      expect(status.recoveryInvoiceUrl).toBeNull();
+    });
+
+    it('4. resolveCustomerPaymentStatus detects delinquency from appBillingStatus when billingSub is null', () => {
+      const status = resolveCustomerPaymentStatus(null, 'paid', '2026-10-10T00:00:00.000Z', {
+        appBillingStatus: 'past_due',
+        recoveryInvoiceUrl: 'https://sandbox.asaas.com/i/rec_app_sub',
+      });
+      expect(status.state).toBe('past_due');
+      expect(status.graceEndsAt).toBe('2026-10-10T00:00:00.000Z');
+      expect(status.canRecoverPayment).toBe(true);
+      expect(status.recoveryInvoiceUrl).toBe('https://sandbox.asaas.com/i/rec_app_sub');
+    });
+
+    it('5. resolveCustomerPaymentStatus with complimentary mode never enables recovery or past_due', () => {
+      const billingSub: Partial<BillingSubscriptionRecord> = { status: 'past_due' };
+      const status = resolveCustomerPaymentStatus(
+        billingSub as BillingSubscriptionRecord,
+        'complimentary',
+        '2026-10-15T00:00:00.000Z',
+        {
+          recoveryInvoiceUrl: 'https://sandbox.asaas.com/i/rec_123',
+        }
+      );
+      expect(status.state).toBe('current');
+      expect(status.graceEndsAt).toBeNull();
+      expect(status.canRecoverPayment).toBe(false);
+      expect(status.recoveryInvoiceUrl).toBeNull();
+    });
+
+    it('6. resolveCustomerPaymentStatus with free mode never enables recovery or past_due', () => {
+      const status = resolveCustomerPaymentStatus(null, 'free', null, {
+        appBillingStatus: 'past_due',
+        recoveryInvoiceUrl: 'https://sandbox.asaas.com/i/rec_123',
+      });
+      expect(status.state).toBe('current');
+      expect(status.graceEndsAt).toBeNull();
+      expect(status.canRecoverPayment).toBe(false);
+      expect(status.recoveryInvoiceUrl).toBeNull();
+    });
+  });
 });

@@ -974,6 +974,8 @@ export type CustomerPaymentHealthState = 'current' | 'past_due';
 export interface CustomerPaymentStatusDto {
   state: CustomerPaymentHealthState;
   graceEndsAt: string | null;
+  canRecoverPayment?: boolean;
+  recoveryInvoiceUrl?: string | null;
 }
 
 export type CustomerGraceReason = 'payment_failure' | 'usage_over_limit' | 'none';

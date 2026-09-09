@@ -738,6 +738,8 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
       expect(summary.paymentStatus).toEqual({
         state: 'current',
         graceEndsAt: null,
+        canRecoverPayment: false,
+        recoveryInvoiceUrl: null,
       });
       expect(summary.graceReason).toBe('none');
     });
@@ -847,6 +849,8 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
       expect(summary.paymentStatus).toEqual({
         state: 'past_due',
         graceEndsAt: graceEnd,
+        canRecoverPayment: true,
+        recoveryInvoiceUrl: null,
       });
       expect(summary.subscription.accessMode).toBe('grace');
       expect(summary.graceReason).toBe('payment_failure');
@@ -906,6 +910,173 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
 
       // Tenant isolation: transição do tenant B é descartada
       expect(summary.pendingTransition).toBeNull();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // 8. Phase 4A.6: Delinquency, Grace & Payment Recovery Normalization
+  // --------------------------------------------------------------------------
+  describe('8. Phase 4A.6: Delinquency, Grace & Payment Recovery Normalization', () => {
+    it('deve expor canRecoverPayment = true e recoveryInvoiceUrl quando há cobrança em aberto com fatura', async () => {
+      const graceEnd = new Date(Date.now() + 5 * 86400000).toISOString();
+      const mockSubRepo = {
+        getSubscription: vi.fn().mockResolvedValue({
+          id: 'min-recovery-1',
+          ministry_id: 'min-recovery-1',
+          plan_id: 'essential',
+          member_addon_blocks: 0,
+          billing_status: 'past_due',
+          subscription_mode: 'paid',
+          cancel_at_period_end: false,
+          grace_period_expires_at: graceEnd,
+          current_period_start: '2026-08-01T00:00:00.000Z',
+          current_period_end: '2026-09-01T00:00:00.000Z',
+        }),
+        getUsage: vi.fn().mockResolvedValue({
+          id: 'min-recovery-1',
+          ministry_id: 'min-recovery-1',
+          members_count: 20,
+          songs_count: 50,
+        }),
+      };
+      const mockBillingRepo = {
+        getActiveTransitionForMinistry: vi.fn().mockResolvedValue(null),
+        getSubscription: vi.fn().mockResolvedValue({
+          id: 'min-recovery-1_asaas',
+          ministry_id: 'min-recovery-1',
+          provider: 'asaas',
+          status: 'past_due',
+        }),
+        getTransactions: vi.fn().mockResolvedValue([
+          {
+            id: 'asaas_pay_overdue_123',
+            ministry_id: 'min-recovery-1',
+            status: 'overdue',
+            amount_cents: 3490,
+            invoice_url: 'https://sandbox.asaas.com/i/rec_invoice_123',
+          },
+        ]),
+      };
+
+      const service = new SubscriptionService(mockSubRepo as any, mockBillingRepo as any);
+      const summary = await service.getSubscriptionSummary('min-recovery-1');
+
+      expect(summary.paymentStatus.state).toBe('past_due');
+      expect(summary.paymentStatus.graceEndsAt).toBe(graceEnd);
+      expect(summary.paymentStatus.canRecoverPayment).toBe(true);
+      expect(summary.paymentStatus.recoveryInvoiceUrl).toBe('https://sandbox.asaas.com/i/rec_invoice_123');
+      expect(summary.subscription.billingStatus).toBe('past_due');
+    });
+
+    it('deve desabilitar canRecoverPayment quando transição ativa possui financial_attention_required', async () => {
+      const graceEnd = new Date(Date.now() + 3 * 86400000).toISOString();
+      const mockSubRepo = {
+        getSubscription: vi.fn().mockResolvedValue({
+          id: 'min-recovery-attention',
+          ministry_id: 'min-recovery-attention',
+          plan_id: 'essential',
+          member_addon_blocks: 0,
+          billing_status: 'past_due',
+          subscription_mode: 'paid',
+          cancel_at_period_end: false,
+          grace_period_expires_at: graceEnd,
+          current_period_start: '2026-08-01T00:00:00.000Z',
+          current_period_end: '2026-09-01T00:00:00.000Z',
+        }),
+        getUsage: vi.fn().mockResolvedValue({
+          id: 'min-recovery-attention',
+          ministry_id: 'min-recovery-attention',
+          members_count: 20,
+          songs_count: 50,
+        }),
+      };
+      const mockBillingRepo = {
+        getActiveTransitionForMinistry: vi.fn().mockResolvedValue({
+          slot: {
+            id: 'slot_min-recovery-attention__asaas',
+            ministry_id: 'min-recovery-attention',
+            provider: 'asaas',
+            plan_change_id: 'tr_attention_123',
+          },
+          transition: {
+            id: 'tr_attention_123',
+            transition_id: 'tr_attention_123',
+            policy_version: 'billing_transition_v1',
+            ministry_id: 'min-recovery-attention',
+            provider: 'asaas',
+            execution_strategy: 'scheduled_paid_transition',
+            transition_status: 'scheduled',
+            financial_safety_status: 'attention_required',
+            financial_attention_required: true,
+            source_plan_id: 'essential',
+            source_interval: 'monthly',
+            source_addon_blocks: 0,
+            target_plan_id: 'pro',
+            target_interval: 'monthly',
+            target_addon_blocks: 0,
+          },
+        }),
+        getSubscription: vi.fn().mockResolvedValue({
+          id: 'min-recovery-attention_asaas',
+          ministry_id: 'min-recovery-attention',
+          provider: 'asaas',
+          status: 'past_due',
+        }),
+        getTransactions: vi.fn().mockResolvedValue([
+          {
+            id: 'asaas_pay_overdue_456',
+            ministry_id: 'min-recovery-attention',
+            status: 'overdue',
+            amount_cents: 3490,
+            invoice_url: 'https://sandbox.asaas.com/i/rec_invoice_456',
+          },
+        ]),
+      };
+
+      const service = new SubscriptionService(mockSubRepo as any, mockBillingRepo as any);
+      const summary = await service.getSubscriptionSummary('min-recovery-attention');
+
+      expect(summary.paymentStatus.state).toBe('past_due');
+      expect(summary.paymentStatus.canRecoverPayment).toBe(false);
+      expect(summary.paymentStatus.recoveryInvoiceUrl).toBeNull();
+    });
+
+    it('deve manter canRecoverPayment = false para planos cortesia ou gratuitos mesmo que billingSub indique past_due', async () => {
+      const mockSubRepo = {
+        getSubscription: vi.fn().mockResolvedValue({
+          id: 'min-complimentary-delinquent',
+          ministry_id: 'min-complimentary-delinquent',
+          plan_id: 'essential',
+          member_addon_blocks: 0,
+          billing_status: 'past_due',
+          subscription_mode: 'complimentary',
+          cancel_at_period_end: false,
+          current_period_start: '2026-08-01T00:00:00.000Z',
+          current_period_end: '2026-09-01T00:00:00.000Z',
+        }),
+        getUsage: vi.fn().mockResolvedValue({
+          id: 'min-complimentary-delinquent',
+          ministry_id: 'min-complimentary-delinquent',
+          members_count: 10,
+          songs_count: 20,
+        }),
+      };
+      const mockBillingRepo = {
+        getActiveTransitionForMinistry: vi.fn().mockResolvedValue(null),
+        getSubscription: vi.fn().mockResolvedValue({
+          id: 'min-complimentary-delinquent_asaas',
+          ministry_id: 'min-complimentary-delinquent',
+          provider: 'asaas',
+          status: 'past_due',
+        }),
+      };
+
+      const service = new SubscriptionService(mockSubRepo as any, mockBillingRepo as any);
+      const summary = await service.getSubscriptionSummary('min-complimentary-delinquent');
+
+      expect(summary.paymentStatus.state).toBe('current');
+      expect(summary.paymentStatus.canRecoverPayment).toBe(false);
+      expect(summary.paymentStatus.recoveryInvoiceUrl).toBeNull();
     });
   });
 });

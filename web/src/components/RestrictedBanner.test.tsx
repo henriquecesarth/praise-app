@@ -105,4 +105,60 @@ describe('RestrictedBanner Component', () => {
     expect(screen.getByText(/Violação dos termos de uso/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Ver detalhes da assinatura/i })).toBeInTheDocument();
   });
+
+  it('deve renderizar banner de GRACE com mensagem de falha de pagamento quando graceReason for payment_failure', async () => {
+    const gracePaymentSummary: MinistrySubscriptionSummary = {
+      ...baseSummary,
+      subscription: {
+        ...baseSummary.subscription,
+        billingStatus: 'past_due',
+        accessMode: 'grace',
+      },
+      graceReason: 'payment_failure',
+      graceDaysRemaining: 4,
+      paymentStatus: {
+        state: 'past_due',
+        graceEndsAt: '2026-09-12T12:00:00.000Z',
+        canRecoverPayment: true,
+      },
+    };
+
+    render(<RestrictedBanner summary={gracePaymentSummary} onNavigateToPlans={mockOnNavigate} />);
+
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(screen.getByText('Regularização de pagamento pendente')).toBeInTheDocument();
+    expect(screen.getByText(/Não conseguimos confirmar a renovação da assinatura/i)).toBeInTheDocument();
+    expect(screen.getByText(/4 dias restantes/i)).toBeInTheDocument();
+    expect(screen.getByText(/Seus dados continuam 100% preservados/i)).toBeInTheDocument();
+
+    const cta = screen.getByRole('button', { name: /Regularizar pagamento/i });
+    await userEvent.click(cta);
+    expect(mockOnNavigate).toHaveBeenCalledTimes(1);
+  });
+
+  it('deve renderizar banner de RESTRICTED_OVER_LIMIT com mensagem de pendência financeira quando paymentStatus for past_due', async () => {
+    const restrictedPaymentSummary: MinistrySubscriptionSummary = {
+      ...baseSummary,
+      subscription: {
+        ...baseSummary.subscription,
+        billingStatus: 'past_due',
+        accessMode: 'restricted_over_limit',
+      },
+      paymentStatus: {
+        state: 'past_due',
+        graceEndsAt: null,
+        canRecoverPayment: true,
+      },
+    };
+
+    render(<RestrictedBanner summary={restrictedPaymentSummary} onNavigateToPlans={mockOnNavigate} />);
+
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(screen.getByText('Acesso restrito por pendência financeira')).toBeInTheDocument();
+    expect(screen.getByText(/O período de regularização expirou\. Seus dados continuam 100% preservados/i)).toBeInTheDocument();
+
+    const cta = screen.getByRole('button', { name: /Regularizar pagamento/i });
+    await userEvent.click(cta);
+    expect(mockOnNavigate).toHaveBeenCalledTimes(1);
+  });
 });

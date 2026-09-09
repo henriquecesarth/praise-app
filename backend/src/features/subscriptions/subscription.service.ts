@@ -105,13 +105,14 @@ export class SubscriptionService {
       ? 'free'
       : (subscription.subscription_mode || (subscription.plan_id === 'free' ? 'free' : 'paid'));
 
-    // 4. Resolver transição pendente ativa e estado de saúde de pagamento (Phase 4A.1)
+    // 4. Resolver transição pendente ativa e estado de saúde de pagamento (Phase 4A.1 & Phase 4A.6)
     let pendingTransition: CustomerFacingPendingTransitionDto | null = null;
     let billingSub: BillingSubscriptionRecord | null = null;
+    let activeTransitionResult: any = null;
 
     try {
       if (this.billingRepo && typeof this.billingRepo.getActiveTransitionForMinistry === 'function') {
-        const activeTransitionResult = await this.billingRepo.getActiveTransitionForMinistry(ministryId, 'asaas');
+        activeTransitionResult = await this.billingRepo.getActiveTransitionForMinistry(ministryId, 'asaas');
         if (activeTransitionResult?.transition) {
           pendingTransition = mapToCustomerFacingTransition(activeTransitionResult.transition, ministryId);
         }
@@ -119,6 +120,7 @@ export class SubscriptionService {
     } catch (_err) {
       // Fail-closed: se a leitura do slot ou validação falhar, não expõe transição pendente inválida
       pendingTransition = null;
+      activeTransitionResult = null;
     }
 
     try {
@@ -129,10 +131,39 @@ export class SubscriptionService {
       billingSub = null;
     }
 
+    // Phase 4A.6: Obter URL de recuperação de cobrança em aberto (se inadimplente)
+    let recoveryInvoiceUrl: string | null = null;
+    const isPastDue = subscription.billing_status === 'past_due' || billingSub?.status === 'past_due';
+    const hasFinancialAttention = Boolean(
+      activeTransitionResult?.transition?.financial_attention_required ||
+      activeTransitionResult?.transition?.financial_safety_status === 'attention_required'
+    );
+
+    if (isPastDue && !hasFinancialAttention) {
+      try {
+        if (this.billingRepo && typeof this.billingRepo.getTransactions === 'function') {
+          const txs = await this.billingRepo.getTransactions(ministryId, 5);
+          const overdueTx = (txs || []).find(
+            (t: any) => (t.status === 'overdue' || t.status === 'pending') && t.invoice_url
+          );
+          if (overdueTx?.invoice_url) {
+            recoveryInvoiceUrl = overdueTx.invoice_url;
+          }
+        }
+      } catch (_err) {
+        recoveryInvoiceUrl = null;
+      }
+    }
+
     const paymentStatus = resolveCustomerPaymentStatus(
       billingSub,
       subscriptionMode,
-      subscription.grace_period_expires_at || null
+      subscription.grace_period_expires_at || null,
+      {
+        appBillingStatus: subscription.billing_status,
+        recoveryInvoiceUrl,
+        financialAttentionRequired: hasFinancialAttention,
+      }
     );
 
     const graceReason = resolveCustomerGraceReason(

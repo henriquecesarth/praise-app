@@ -100,6 +100,7 @@ export const SubscriptionPlanView: React.FC<Props> = ({
   const [earlyActivationQuoteLoading, setEarlyActivationQuoteLoading] = useState<boolean>(false);
   const [earlyActivationQuoteError, setEarlyActivationQuoteError] = useState<string | null>(null);
   const [earlyActivationCheckoutLoading, setEarlyActivationCheckoutLoading] = useState<boolean>(false);
+  const [verifyPaymentLoading, setVerifyPaymentLoading] = useState<boolean>(false);
 
   const currentMinistryIdRef = useRef<string>(ministryId);
 
@@ -510,7 +511,9 @@ export const SubscriptionPlanView: React.FC<Props> = ({
     accessMode?: string,
     suspended?: boolean,
     cancelAtPeriodEnd?: boolean,
-    subscriptionMode?: string
+    subscriptionMode?: string,
+    billingStatus?: string,
+    paymentHealthState?: string
   ) => {
     if (suspended || accessMode === 'suspended') {
       return {
@@ -539,9 +542,10 @@ export const SubscriptionPlanView: React.FC<Props> = ({
         border: '1px solid #D97706',
       };
     }
+    const isPastDue = billingStatus === 'past_due' || paymentHealthState === 'past_due';
     if (accessMode === 'restricted_over_limit') {
       return {
-        label: 'Uso acima do plano',
+        label: isPastDue ? 'Pagamento pendente (restrito)' : 'Uso acima do plano',
         icon: AlertTriangle,
         bg: 'rgba(184, 90, 60, 0.18)',
         color: 'var(--louvaio-terracotta, #B85A3C)',
@@ -550,8 +554,17 @@ export const SubscriptionPlanView: React.FC<Props> = ({
     }
     if (accessMode === 'grace') {
       return {
-        label: 'Período de adaptação',
+        label: isPastDue ? 'Pagamento pendente (em carência)' : 'Período de adaptação',
         icon: Clock,
+        bg: 'rgba(217, 119, 6, 0.18)',
+        color: '#F59E0B',
+        border: '1px solid #D97706',
+      };
+    }
+    if (isPastDue) {
+      return {
+        label: 'Pagamento pendente',
+        icon: AlertTriangle,
         bg: 'rgba(217, 119, 6, 0.18)',
         color: '#F59E0B',
         border: '1px solid #D97706',
@@ -570,6 +583,11 @@ export const SubscriptionPlanView: React.FC<Props> = ({
   const handleOpenCheckoutPreview = async (targetPlan: PlanDefinition) => {
     if (!canManageBilling) {
       showToast?.('Somente administradores do ministério podem alterar a assinatura.', 'error');
+      return;
+    }
+
+    if (summary?.paymentStatus?.state === 'past_due' || summary?.subscription?.billingStatus === 'past_due') {
+      showToast?.('Regularize o pagamento pendente antes de alterar o plano.', 'error');
       return;
     }
 
@@ -884,6 +902,10 @@ export const SubscriptionPlanView: React.FC<Props> = ({
       showToast?.('Já existe uma alteração de assinatura em andamento.', 'error');
       return;
     }
+    if (summary?.paymentStatus?.state === 'past_due' || summary?.subscription?.billingStatus === 'past_due') {
+      showToast?.('Regularize o pagamento pendente antes de alterar os adicionais.', 'error');
+      return;
+    }
     const currentBlocks = summary?.subscription?.memberAddonBlocks || 0;
     setAddonTargetBlocks(currentBlocks);
     setAddonPreviewData(null);
@@ -974,6 +996,36 @@ export const SubscriptionPlanView: React.FC<Props> = ({
       showToast?.(err.message || 'Erro ao carregar histórico de faturas', 'error');
     } finally {
       setHistoryLoading(false);
+    }
+  };
+
+  // Verificar e reconciliar pagamento pendente (Phase 4A.6)
+  const handleVerifyPayment = async () => {
+    if (!canManageBilling || verifyPaymentLoading) return;
+    const targetMinistryId = currentMinistryIdRef.current;
+    setVerifyPaymentLoading(true);
+    try {
+      const res = await api.reconcileBillingSubscription(targetMinistryId);
+      if (currentMinistryIdRef.current !== targetMinistryId) return;
+
+      const updated = await loadData();
+      if (currentMinistryIdRef.current !== targetMinistryId) return;
+
+      if (
+        res?.reconciled &&
+        (updated?.paymentStatus?.state === 'current' || updated?.subscription?.billingStatus === 'active')
+      ) {
+        showToast?.('Pagamento confirmado e assinatura regularizada!', 'success');
+      } else {
+        showToast?.('Aguardando confirmação do pagamento pelo gateway.');
+      }
+    } catch (err: any) {
+      if (currentMinistryIdRef.current !== targetMinistryId) return;
+      showToast?.(err.message || 'Erro ao verificar regularização do pagamento', 'error');
+    } finally {
+      if (currentMinistryIdRef.current === targetMinistryId) {
+        setVerifyPaymentLoading(false);
+      }
     }
   };
 
@@ -1110,7 +1162,9 @@ export const SubscriptionPlanView: React.FC<Props> = ({
     subscription.accessMode,
     subscription.administrativelySuspended,
     subscription.cancelAtPeriodEnd,
-    subscription.subscriptionMode
+    subscription.subscriptionMode,
+    subscription.billingStatus,
+    summary.paymentStatus?.state
   );
   const StatusIcon = statusBadge.icon;
 
@@ -1293,59 +1347,244 @@ export const SubscriptionPlanView: React.FC<Props> = ({
       )}
 
       {/* Banner de Período de Adaptação (Grace Period) */}
-      {subscription.accessMode === 'grace' && summary.graceDaysRemaining !== null && (
-        <div
-          role="alert"
-          style={{
-            background: 'rgba(217, 119, 6, 0.15)',
-            border: '1px solid #D97706',
-            borderRadius: '12px',
-            padding: '16px',
-            marginBottom: '24px',
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: '12px',
-          }}
-        >
-          <Clock size={22} color="#F59E0B" style={{ flexShrink: 0, marginTop: '2px' }} />
-          <div>
-            <div style={{ fontWeight: 700, color: 'var(--text-primary, #F5EFE6)', fontSize: '0.95rem' }}>
-              Período de adaptação ativo ({summary.graceDaysRemaining} {summary.graceDaysRemaining === 1 ? 'dia restante' : 'dias restantes'})
-            </div>
-            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #A0AAB0)', marginTop: '4px', lineHeight: 1.4 }}>
-              Seu ministério está acima dos limites do plano atual. Seus dados continuam <strong>100% preservados e não serão apagados</strong>. Você tem até{' '}
-              <strong>{formatDateLocal(subscription.gracePeriodExpiresAt)}</strong> para ajustar o uso ou fazer upgrade antes que novas inclusões sejam restritas.
-            </div>
-          </div>
-        </div>
-      )}
+      {subscription.accessMode === 'grace' && summary.graceDaysRemaining !== null && (() => {
+        const isPaymentFailure = summary.graceReason === 'payment_failure' || summary.paymentStatus?.state === 'past_due';
+        const isAttention = summary.pendingTransition?.status === 'attention_required';
 
-      {/* Banner de Uso Restrito por Excesso */}
-      {subscription.accessMode === 'restricted_over_limit' && (
-        <div
-          role="alert"
-          style={{
-            background: 'rgba(184, 90, 60, 0.15)',
-            border: '1px solid var(--louvaio-terracotta, #B85A3C)',
-            borderRadius: '12px',
-            padding: '16px',
-            marginBottom: '24px',
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: '12px',
-          }}
-        >
-          <AlertTriangle size={22} color="var(--louvaio-terracotta, #B85A3C)" style={{ flexShrink: 0, marginTop: '2px' }} />
-          <div>
-            <div style={{ fontWeight: 700, color: 'var(--text-primary, #F5EFE6)', fontSize: '0.95rem' }}>
-              Uso acima do limite do plano
-            </div>
-            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #A0AAB0)', marginTop: '4px', lineHeight: 1.4 }}>
-              Seus dados continuam preservados para consulta. Novas inclusões de integrantes ou músicas estão temporariamente bloqueadas. Faça um upgrade ou reduza o uso para retomar as operações.
+        return (
+          <div
+            role="alert"
+            style={{
+              background: 'rgba(217, 119, 6, 0.15)',
+              border: '1px solid #D97706',
+              borderRadius: '12px',
+              padding: '16px',
+              marginBottom: '24px',
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '12px',
+            }}
+          >
+            <Clock size={22} color="#F59E0B" style={{ flexShrink: 0, marginTop: '2px' }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, color: 'var(--text-primary, #F5EFE6)', fontSize: '0.95rem' }}>
+                {isPaymentFailure
+                  ? `Não conseguimos confirmar a renovação da assinatura (${summary.graceDaysRemaining} ${summary.graceDaysRemaining === 1 ? 'dia restante' : 'dias restantes'})`
+                  : `Período de adaptação ativo (${summary.graceDaysRemaining} ${summary.graceDaysRemaining === 1 ? 'dia restante' : 'dias restantes'})`}
+              </div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #A0AAB0)', marginTop: '4px', lineHeight: 1.4 }}>
+                {isPaymentFailure ? (
+                  <>
+                    Seu acesso continua disponível durante o período de regularização até{' '}
+                    <strong>{formatDateLocal(subscription.gracePeriodExpiresAt)}</strong>. Seus dados continuam{' '}
+                    <strong>100% preservados</strong>. Regularize o pagamento para restabelecer a renovação automática da assinatura.
+                  </>
+                ) : (
+                  <>
+                    Seu ministério está acima dos limites do plano atual. Seus dados continuam{' '}
+                    <strong>100% preservados e não serão apagados</strong>. Você tem até{' '}
+                    <strong>{formatDateLocal(subscription.gracePeriodExpiresAt)}</strong> para ajustar o uso ou fazer upgrade antes que novas inclusões sejam restritas.
+                  </>
+                )}
+              </div>
+
+              {isPaymentFailure && (
+                <div style={{ marginTop: '12px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  {isAttention ? (
+                    <span style={{ fontSize: '0.85rem', color: 'var(--louvaio-terracotta, #B85A3C)', fontWeight: 600 }}>
+                      Precisamos verificar sua assinatura antes de continuar.
+                    </span>
+                  ) : canManageBilling ? (
+                    <>
+                      {summary.paymentStatus?.canRecoverPayment && (
+                        summary.paymentStatus.recoveryInvoiceUrl ? (
+                          <a
+                            href={summary.paymentStatus.recoveryInvoiceUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="btn btn-primary"
+                            style={{
+                              padding: '8px 16px',
+                              borderRadius: '8px',
+                              fontSize: '0.85rem',
+                              fontWeight: 700,
+                              textDecoration: 'none',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                            }}
+                          >
+                            <CreditCard size={15} />
+                            <span>Regularizar pagamento</span>
+                            <ExternalLink size={13} />
+                          </a>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={handleOpenHistory}
+                            className="btn btn-primary"
+                            style={{
+                              padding: '8px 16px',
+                              borderRadius: '8px',
+                              fontSize: '0.85rem',
+                              fontWeight: 700,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                            }}
+                          >
+                            <CreditCard size={15} />
+                            <span>Regularizar pagamento</span>
+                          </button>
+                        )
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleVerifyPayment}
+                        disabled={verifyPaymentLoading}
+                        className="btn btn-secondary"
+                        style={{
+                          padding: '8px 14px',
+                          borderRadius: '8px',
+                          fontSize: '0.85rem',
+                          fontWeight: 600,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                        }}
+                      >
+                        <RefreshCw size={14} className={verifyPaymentLoading ? 'animate-spin' : ''} />
+                        <span>{verifyPaymentLoading ? 'Verificando...' : 'Verificar pagamento'}</span>
+                      </button>
+                    </>
+                  ) : (
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #A0AAB0)' }}>
+                      Entre em contato com um administrador do ministério para regularizar o pagamento.
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
+
+      {/* Banner de Uso Restrito por Excesso / Pendência Financeira */}
+      {subscription.accessMode === 'restricted_over_limit' && (() => {
+        const isPaymentRestricted = summary.paymentStatus?.state === 'past_due' || summary.subscription.billingStatus === 'past_due';
+        const isAttention = summary.pendingTransition?.status === 'attention_required';
+
+        return (
+          <div
+            role="alert"
+            style={{
+              background: 'rgba(184, 90, 60, 0.15)',
+              border: '1px solid var(--louvaio-terracotta, #B85A3C)',
+              borderRadius: '12px',
+              padding: '16px',
+              marginBottom: '24px',
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '12px',
+            }}
+          >
+            <AlertTriangle size={22} color="var(--louvaio-terracotta, #B85A3C)" style={{ flexShrink: 0, marginTop: '2px' }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, color: 'var(--text-primary, #F5EFE6)', fontSize: '0.95rem' }}>
+                {isPaymentRestricted ? 'Acesso restrito por pendência financeira' : 'Uso acima do limite do plano'}
+              </div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #A0AAB0)', marginTop: '4px', lineHeight: 1.4 }}>
+                {isPaymentRestricted ? (
+                  <>
+                    O período de regularização expirou. Seus dados continuam <strong>100% preservados para consulta</strong>. Novas inclusões de integrantes ou músicas estão temporariamente bloqueadas. Regularize o pagamento para restaurar o acesso completo.
+                  </>
+                ) : (
+                  <>
+                    Seus dados continuam preservados para consulta. Novas inclusões de integrantes ou músicas estão temporariamente bloqueadas. Faça um upgrade ou reduza o uso para retomar as operações.
+                  </>
+                )}
+              </div>
+
+              {isPaymentRestricted && (
+                <div style={{ marginTop: '12px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  {isAttention ? (
+                    <span style={{ fontSize: '0.85rem', color: 'var(--louvaio-terracotta, #B85A3C)', fontWeight: 600 }}>
+                      Precisamos verificar sua assinatura antes de continuar.
+                    </span>
+                  ) : canManageBilling ? (
+                    <>
+                      {summary.paymentStatus?.canRecoverPayment && (
+                        summary.paymentStatus.recoveryInvoiceUrl ? (
+                          <a
+                            href={summary.paymentStatus.recoveryInvoiceUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="btn btn-primary"
+                            style={{
+                              padding: '8px 16px',
+                              borderRadius: '8px',
+                              fontSize: '0.85rem',
+                              fontWeight: 700,
+                              textDecoration: 'none',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                            }}
+                          >
+                            <CreditCard size={15} />
+                            <span>Regularizar pagamento</span>
+                            <ExternalLink size={13} />
+                          </a>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={handleOpenHistory}
+                            className="btn btn-primary"
+                            style={{
+                              padding: '8px 16px',
+                              borderRadius: '8px',
+                              fontSize: '0.85rem',
+                              fontWeight: 700,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                            }}
+                          >
+                            <CreditCard size={15} />
+                            <span>Regularizar pagamento</span>
+                          </button>
+                        )
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleVerifyPayment}
+                        disabled={verifyPaymentLoading}
+                        className="btn btn-secondary"
+                        style={{
+                          padding: '8px 14px',
+                          borderRadius: '8px',
+                          fontSize: '0.85rem',
+                          fontWeight: 600,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                        }}
+                      >
+                        <RefreshCw size={14} className={verifyPaymentLoading ? 'animate-spin' : ''} />
+                        <span>{verifyPaymentLoading ? 'Verificando...' : 'Verificar pagamento'}</span>
+                      </button>
+                    </>
+                  ) : (
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #A0AAB0)' }}>
+                      Entre em contato com um administrador do ministério para regularizar o pagamento.
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Card de Transição Pendente / Agendada */}
       {summary.pendingTransition && (() => {
@@ -1806,6 +2045,28 @@ export const SubscriptionPlanView: React.FC<Props> = ({
                     <Users size={14} />
                     <span>Alteração em andamento</span>
                   </button>
+                ) : (summary?.paymentStatus?.state === 'past_due' || summary?.subscription?.billingStatus === 'past_due') ? (
+                  <button
+                    type="button"
+                    disabled
+                    title="Regularize o pagamento pendente antes de alterar adicionais."
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      background: 'rgba(255, 255, 255, 0.03)',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      color: 'var(--text-muted, #7D8881)',
+                      fontSize: '0.8rem',
+                      padding: '6px 12px',
+                      borderRadius: '6px',
+                      cursor: 'not-allowed',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <Users size={14} />
+                    <span>Gerenciar adicionais</span>
+                  </button>
                 ) : (
                   <button
                     type="button"
@@ -1835,7 +2096,9 @@ export const SubscriptionPlanView: React.FC<Props> = ({
               plan.id !== 'free' &&
               subscription.subscriptionMode !== 'complimentary' &&
               !subscription.cancelAtPeriodEnd &&
-              !summary?.pendingTransition && (
+              !summary?.pendingTransition &&
+              summary?.paymentStatus?.state !== 'past_due' &&
+              subscription.billingStatus !== 'past_due' && (
                 <button
                   type="button"
                   onClick={() => setShowCancelModal(true)}
@@ -2379,6 +2642,25 @@ export const SubscriptionPlanView: React.FC<Props> = ({
                       }}
                     >
                       Alteração para mensal indisponível
+                    </button>
+                  ) : (summary?.paymentStatus?.state === 'past_due' || summary?.subscription?.billingStatus === 'past_due') ? (
+                    <button
+                      type="button"
+                      disabled
+                      style={{
+                        width: '100%',
+                        padding: '12px',
+                        borderRadius: '10px',
+                        background: 'rgba(255, 255, 255, 0.03)',
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        color: 'var(--text-muted, #7D8881)',
+                        fontWeight: 600,
+                        fontSize: '0.85rem',
+                        cursor: 'not-allowed',
+                      }}
+                      title="Regularize o pagamento pendente antes de alterar o plano."
+                    >
+                      Pagamento pendente
                     </button>
                   ) : (
                     <button

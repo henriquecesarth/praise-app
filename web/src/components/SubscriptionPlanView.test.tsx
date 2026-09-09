@@ -3755,4 +3755,318 @@ describe('SubscriptionPlanView Component', () => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
   });
+
+  describe('Phase 4A.6: Delinquency, Grace & Payment Recovery Customer UX Matrix', () => {
+    const mockSummaryGracePaymentFailure = {
+      plan: { id: 'essential', name: 'Essential', baseMembers: 40, baseSongs: 200, allowMemberAddons: true, maxMemberAddonBlocks: 4, monthlyPriceCents: 3490, annualPriceCents: 37692, addonBlockMonthlyPriceCents: 990, addonBlockAnnualPriceCents: 10692 },
+      subscription: {
+        planId: 'essential',
+        memberAddonBlocks: 0,
+        billingStatus: 'past_due',
+        subscriptionMode: 'paid',
+        administrativelySuspended: false,
+        suspendedAt: null,
+        suspensionReason: null,
+        accessMode: 'grace',
+        gracePeriodExpiresAt: '2026-09-15T12:00:00.000Z',
+        currentPeriodStart: '2026-08-01T12:00:00.000Z',
+        currentPeriodEnd: '2026-09-01T12:00:00.000Z',
+        cancelAtPeriodEnd: false,
+      },
+      quotas: { members: 40, songs: 200 },
+      usage: { membersCount: 15, songsCount: 50 },
+      isOverLimit: false,
+      overLimitDetails: { membersOver: false, songsOver: false },
+      graceDaysRemaining: 5,
+      graceReason: 'payment_failure',
+      paymentStatus: {
+        state: 'past_due',
+        graceEndsAt: '2026-09-15T12:00:00.000Z',
+        canRecoverPayment: true,
+        recoveryInvoiceUrl: 'https://asaas.com/i/rec-grace-123',
+      },
+    };
+
+    const mockSummaryRestrictedPaymentFailure = {
+      ...mockSummaryGracePaymentFailure,
+      subscription: {
+        ...mockSummaryGracePaymentFailure.subscription,
+        accessMode: 'restricted_over_limit',
+        gracePeriodExpiresAt: '2026-09-08T12:00:00.000Z',
+      },
+      graceDaysRemaining: 0,
+    };
+
+    it('46.1) status badge: exibe rótulo correto para cada modalidade de past_due (grace e restrito)', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryGracePaymentFailure as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      const { unmount } = render(
+        <SubscriptionPlanView
+          ministryId="min-delinq-badge-1"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByText('Pagamento pendente (em carência)')).toBeInTheDocument();
+      unmount();
+
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryRestrictedPaymentFailure as any);
+      render(
+        <SubscriptionPlanView
+          ministryId="min-delinq-badge-2"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByText('Pagamento pendente (restrito)')).toBeInTheDocument();
+    });
+
+    it('46.2) banner de carência por falha de pagamento: exibe aviso de renovação, dias restantes e preservação de dados', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryGracePaymentFailure as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-delinq-grace"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByText(/Não conseguimos confirmar a renovação da assinatura \(5 dias restantes\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/100% preservados/i)).toBeInTheDocument();
+    });
+
+    it('46.3) banner de acesso restrito por inadimplência: exibe aviso de bloqueio de novas operações e preservação de dados', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryRestrictedPaymentFailure as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-delinq-restricted"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByText('Acesso restrito por pendência financeira')).toBeInTheDocument();
+      expect(screen.getByText(/O período de regularização expirou\. Seus dados continuam/i)).toBeInTheDocument();
+      expect(screen.getByText(/100% preservados para consulta/i)).toBeInTheDocument();
+    });
+
+    it('46.4) admin recovery CTA: link direto para fatura de regularização com atributos de segurança', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryGracePaymentFailure as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-delinq-cta"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      const links = await screen.findAllByRole('link', { name: /Regularizar pagamento/i });
+      expect(links.length).toBeGreaterThan(0);
+      const recoveryLink = links[0];
+      expect(recoveryLink).toHaveAttribute('href', 'https://asaas.com/i/rec-grace-123');
+      expect(recoveryLink).toHaveAttribute('target', '_blank');
+      expect(recoveryLink).toHaveAttribute('rel', 'noopener noreferrer');
+    });
+
+    it('46.5) admin fallback CTA: abre histórico quando não há recoveryInvoiceUrl direto', async () => {
+      const summaryWithoutDirectUrl = {
+        ...mockSummaryGracePaymentFailure,
+        paymentStatus: {
+          state: 'past_due',
+          graceEndsAt: '2026-09-15T12:00:00.000Z',
+          canRecoverPayment: true,
+          recoveryInvoiceUrl: null,
+        },
+      };
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(summaryWithoutDirectUrl as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      vi.spyOn(api, 'getBillingHistory').mockResolvedValue({ transactions: [] } as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-delinq-fallback"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      const buttons = await screen.findAllByRole('button', { name: /Regularizar pagamento/i });
+      expect(buttons.length).toBeGreaterThan(0);
+      await userEvent.click(buttons[0]);
+
+      // Deve abrir o modal de histórico
+      expect(await screen.findByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByText('Histórico de Faturas')).toBeInTheDocument();
+    });
+
+    it('46.6) admin verification: botão Verificar pagamento chama reconcileBillingSubscription e exibe toast de sucesso', async () => {
+      vi.spyOn(api, 'getMinistrySubscription')
+        .mockResolvedValueOnce(mockSummaryGracePaymentFailure as any)
+        .mockResolvedValueOnce({
+          ...mockSummaryGracePaymentFailure,
+          subscription: {
+            ...mockSummaryGracePaymentFailure.subscription,
+            billingStatus: 'active',
+            accessMode: 'normal',
+          },
+          paymentStatus: {
+            state: 'current',
+            graceEndsAt: null,
+            canRecoverPayment: false,
+          },
+        } as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      const reconcileSpy = vi.spyOn(api, 'reconcileBillingSubscription').mockResolvedValue({
+        message: 'Reconciliation complete',
+        reconciled: true,
+        subscription: { billingStatus: 'active' },
+      });
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-delinq-verify-success"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      const verifyBtns = await screen.findAllByRole('button', { name: /Verificar pagamento/i });
+      expect(verifyBtns.length).toBeGreaterThan(0);
+      await userEvent.click(verifyBtns[0]);
+
+      expect(reconcileSpy).toHaveBeenCalledWith('min-delinq-verify-success');
+      expect(mockShowToast).toHaveBeenCalledWith('Pagamento confirmado e assinatura regularizada!', 'success');
+    });
+
+    it('46.7) admin verification: quando gateway ainda não confirmou, exibe toast informativo de aguardo', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryGracePaymentFailure as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      vi.spyOn(api, 'reconcileBillingSubscription').mockResolvedValue({
+        message: 'Still pending in gateway',
+        reconciled: false,
+        subscription: { billingStatus: 'past_due' },
+      });
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-delinq-verify-wait"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      const verifyBtns = await screen.findAllByRole('button', { name: /Verificar pagamento/i });
+      expect(verifyBtns.length).toBeGreaterThan(0);
+      await userEvent.click(verifyBtns[0]);
+
+      expect(mockShowToast).toHaveBeenCalledWith('Aguardando confirmação do pagamento pelo gateway.');
+    });
+
+    it('46.8) não-admin: modo somente leitura sem CTAs de regularização e exibe mensagem informativa', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryGracePaymentFailure as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-delinq-member"
+          canManageBilling={false}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByText(/Não conseguimos confirmar a renovação da assinatura/i)).toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: /Regularizar pagamento/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Verificar pagamento/i })).not.toBeInTheDocument();
+      expect(screen.getByText(/Entre em contato com um administrador do ministério para regularizar o pagamento/i)).toBeInTheDocument();
+    });
+
+    it('46.9) mutações concorrentes bloqueadas: botões do catálogo e adicionais ficam desabilitados durante inadimplência', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryGracePaymentFailure as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-delinq-blocked"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      // Botão de adicionais desabilitado
+      const addonBtn = await screen.findByTitle('Regularize o pagamento pendente antes de alterar adicionais.');
+      expect(addonBtn).toBeDisabled();
+      expect(addonBtn).toHaveTextContent('Gerenciar adicionais');
+
+      // Botões de catálogo de outros planos desabilitados com texto 'Pagamento pendente'
+      const catalogButtons = screen.getAllByTitle('Regularize o pagamento pendente antes de alterar o plano.');
+      expect(catalogButtons.length).toBeGreaterThan(0);
+      for (const btn of catalogButtons) {
+        expect(btn).toBeDisabled();
+        expect(btn).toHaveTextContent('Pagamento pendente');
+      }
+    });
+
+    it('46.10) isolamento e concorrência: alternância de ministério durante verificação de pagamento descarta resposta assíncrona', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryGracePaymentFailure as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      let resolveReconcile: (val: any) => void;
+      const reconcilePromise = new Promise((resolve) => {
+        resolveReconcile = resolve;
+      });
+      vi.spyOn(api, 'reconcileBillingSubscription').mockImplementation(() => reconcilePromise as any);
+
+      const { rerender } = render(
+        <SubscriptionPlanView
+          ministryId="min-delinq-iso-a"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      const verifyBtns = await screen.findAllByRole('button', { name: /Verificar pagamento/i });
+      await userEvent.click(verifyBtns[0]);
+
+      // Troca de ministério antes da resposta
+      rerender(
+        <SubscriptionPlanView
+          ministryId="min-delinq-iso-b"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await act(async () => {
+        resolveReconcile!({
+          message: 'Done',
+          reconciled: true,
+          subscription: { billingStatus: 'active' },
+        });
+      });
+
+      // Não deve emitir toast de sucesso para min-delinq-iso-b
+      expect(mockShowToast).not.toHaveBeenCalledWith('Pagamento confirmado e assinatura regularizada!', 'success');
+    });
+  });
 });

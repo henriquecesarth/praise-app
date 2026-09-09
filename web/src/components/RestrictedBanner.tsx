@@ -106,6 +106,8 @@ export const RestrictedBanner: React.FC<Props> = ({ summary, onNavigateToPlans }
   // 2. Período de Graça (Grace)
   if (accessMode === 'grace') {
     const days = summary.graceDaysRemaining ?? 0;
+    const isPaymentFailure = summary.graceReason === 'payment_failure' || summary.paymentStatus?.state === 'past_due';
+
     return (
       <aside
         role="alert"
@@ -144,7 +146,7 @@ export const RestrictedBanner: React.FC<Props> = ({ summary, onNavigateToPlans }
                 color: 'var(--text-primary, #F5EFE6)',
               }}
             >
-              Período de adaptação ativo
+              {isPaymentFailure ? 'Regularização de pagamento pendente' : 'Período de adaptação ativo'}
             </h4>
             <p
               style={{
@@ -154,50 +156,64 @@ export const RestrictedBanner: React.FC<Props> = ({ summary, onNavigateToPlans }
                 lineHeight: 1.4,
               }}
             >
-              Seu ministério está acima dos limites do plano atual. Você tem{' '}
-              <strong>
-                {days} {days === 1 ? 'dia restante' : 'dias restantes'}
-              </strong>{' '}
-              para ajustar sua utilização antes que novas operações sejam restringidas.
+              {isPaymentFailure ? (
+                <>
+                  Não conseguimos confirmar a renovação da assinatura. Você tem{' '}
+                  <strong>
+                    {days} {days === 1 ? 'dia restante' : 'dias restantes'}
+                  </strong>{' '}
+                  no período de regularização enquanto seu acesso continua disponível. Seus dados continuam 100% preservados.
+                </>
+              ) : (
+                <>
+                  Seu ministério está acima dos limites do plano atual. Você tem{' '}
+                  <strong>
+                    {days} {days === 1 ? 'dia restante' : 'dias restantes'}
+                  </strong>{' '}
+                  para ajustar sua utilização antes que novas operações sejam restringidas.
+                </>
+              )}
             </p>
 
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: '8px',
-                marginTop: '8px',
-              }}
-            >
-              {summary.overLimitDetails.membersOver && (
-                <span
-                  style={{
-                    fontSize: '0.75rem',
-                    padding: '2px 8px',
-                    borderRadius: '4px',
-                    background: 'rgba(217, 119, 6, 0.2)',
-                    color: '#F59E0B',
-                    fontWeight: 600,
-                  }}
-                >
-                  Membros: {summary.usage.membersCount} / {summary.quotas.members}
-                </span>
-              )}
-              {summary.overLimitDetails.songsOver && (
-                <span
-                  style={{
-                    fontSize: '0.75rem',
-                    padding: '2px 8px',
-                    borderRadius: '4px',
-                    background: 'rgba(217, 119, 6, 0.2)',
-                    color: '#F59E0B',
-                    fontWeight: 600,
-                  }}
-                >
-                  Músicas: {summary.usage.songsCount} / {summary.quotas.songs}
-                </span>
-              )}
-            </div>
+            {!isPaymentFailure && (
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '8px',
+                  marginTop: '8px',
+                }}
+              >
+                {summary.overLimitDetails.membersOver && (
+                  <span
+                    style={{
+                      fontSize: '0.75rem',
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      background: 'rgba(217, 119, 6, 0.2)',
+                      color: '#F59E0B',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Membros: {summary.usage.membersCount} / {summary.quotas.members}
+                  </span>
+                )}
+                {summary.overLimitDetails.songsOver && (
+                  <span
+                    style={{
+                      fontSize: '0.75rem',
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      background: 'rgba(217, 119, 6, 0.2)',
+                      color: '#F59E0B',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Músicas: {summary.usage.songsCount} / {summary.quotas.songs}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -221,7 +237,7 @@ export const RestrictedBanner: React.FC<Props> = ({ summary, onNavigateToPlans }
                 gap: '6px',
               }}
             >
-              <span>Ver plano e utilização</span>
+              <span>{isPaymentFailure ? 'Regularizar pagamento' : 'Ver plano e utilização'}</span>
               <ArrowRight size={14} aria-hidden="true" />
             </button>
           </div>
@@ -230,8 +246,10 @@ export const RestrictedBanner: React.FC<Props> = ({ summary, onNavigateToPlans }
     );
   }
 
-  // 3. Modo Restrito por Excesso de Uso (Restricted Over Limit)
+  // 3. Modo Restrito por Excesso de Uso / Pendência Financeira (Restricted Over Limit)
   if (accessMode === 'restricted_over_limit') {
+    const isPaymentRestricted = summary.paymentStatus?.state === 'past_due' || summary.subscription.billingStatus === 'past_due';
+
     return (
       <aside
         role="alert"
@@ -270,7 +288,7 @@ export const RestrictedBanner: React.FC<Props> = ({ summary, onNavigateToPlans }
                 color: 'var(--text-primary, #F5EFE6)',
               }}
             >
-              Uso acima do limite do plano
+              {isPaymentRestricted ? 'Acesso restrito por pendência financeira' : 'Uso acima do limite do plano'}
             </h4>
             <p
               style={{
@@ -280,48 +298,59 @@ export const RestrictedBanner: React.FC<Props> = ({ summary, onNavigateToPlans }
                 lineHeight: 1.4,
               }}
             >
-              Seu ministério está acima dos limites do plano atual. Seus dados continuam disponíveis
-              para consulta. Para retomar as operações do ministério, reduza a utilização até os
-              limites do plano ou altere o plano quando essa opção estiver disponível.
+              {isPaymentRestricted ? (
+                <>
+                  O período de regularização expirou. Seus dados continuam 100% preservados para consulta.
+                  Regularize o pagamento da assinatura para restaurar o acesso completo.
+                </>
+              ) : (
+                <>
+                  Seu ministério está acima dos limites do plano atual. Seus dados continuam disponíveis
+                  para consulta. Para retomar as operações do ministério, reduza a utilização até os
+                  limites do plano ou altere o plano quando essa opção estiver disponível.
+                </>
+              )}
             </p>
 
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: '8px',
-                marginTop: '8px',
-              }}
-            >
-              {summary.overLimitDetails.membersOver && (
-                <span
-                  style={{
-                    fontSize: '0.75rem',
-                    padding: '2px 8px',
-                    borderRadius: '4px',
-                    background: 'rgba(184, 90, 60, 0.2)',
-                    color: 'var(--louvaio-terracotta, #B85A3C)',
-                    fontWeight: 600,
-                  }}
-                >
-                  Membros: {summary.usage.membersCount} / {summary.quotas.members}
-                </span>
-              )}
-              {summary.overLimitDetails.songsOver && (
-                <span
-                  style={{
-                    fontSize: '0.75rem',
-                    padding: '2px 8px',
-                    borderRadius: '4px',
-                    background: 'rgba(184, 90, 60, 0.2)',
-                    color: 'var(--louvaio-terracotta, #B85A3C)',
-                    fontWeight: 600,
-                  }}
-                >
-                  Músicas: {summary.usage.songsCount} / {summary.quotas.songs}
-                </span>
-              )}
-            </div>
+            {!isPaymentRestricted && (
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '8px',
+                  marginTop: '8px',
+                }}
+              >
+                {summary.overLimitDetails.membersOver && (
+                  <span
+                    style={{
+                      fontSize: '0.75rem',
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      background: 'rgba(184, 90, 60, 0.2)',
+                      color: 'var(--louvaio-terracotta, #B85A3C)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Membros: {summary.usage.membersCount} / {summary.quotas.members}
+                  </span>
+                )}
+                {summary.overLimitDetails.songsOver && (
+                  <span
+                    style={{
+                      fontSize: '0.75rem',
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      background: 'rgba(184, 90, 60, 0.2)',
+                      color: 'var(--louvaio-terracotta, #B85A3C)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Músicas: {summary.usage.songsCount} / {summary.quotas.songs}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -345,7 +374,7 @@ export const RestrictedBanner: React.FC<Props> = ({ summary, onNavigateToPlans }
                 gap: '6px',
               }}
             >
-              <span>Ver detalhes</span>
+              <span>{isPaymentRestricted ? 'Regularizar pagamento' : 'Ver detalhes'}</span>
               <ArrowRight size={14} aria-hidden="true" />
             </button>
           </div>

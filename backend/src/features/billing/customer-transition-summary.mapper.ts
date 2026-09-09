@@ -1,4 +1,4 @@
-import { PlanId, BillingInterval, AccessMode } from '../../config/plans.config';
+import { PlanId, BillingInterval, AccessMode, BillingStatus } from '../../config/plans.config';
 import {
   BillingTransitionV1Record,
   BillingPlanChangeRecord,
@@ -302,19 +302,32 @@ export function mapToCustomerFacingTransition(
 export function resolveCustomerPaymentStatus(
   billingSub: BillingSubscriptionRecord | null,
   subscriptionMode: SubscriptionMode,
-  gracePeriodExpiresAt: string | null
+  gracePeriodExpiresAt: string | null,
+  options?: {
+    appBillingStatus?: BillingStatus;
+    recoveryInvoiceUrl?: string | null;
+    financialAttentionRequired?: boolean;
+  }
 ): CustomerPaymentStatusDto {
   if (subscriptionMode === 'complimentary' || subscriptionMode === 'free') {
     return {
       state: 'current',
       graceEndsAt: null,
+      canRecoverPayment: false,
+      recoveryInvoiceUrl: null,
     };
   }
 
-  const isPastDue = billingSub?.status === 'past_due';
+  const isPastDue = billingSub?.status === 'past_due' || options?.appBillingStatus === 'past_due';
+  const isAttention = Boolean(options?.financialAttentionRequired);
+
+  const canRecoverPayment = isPastDue && !isAttention;
+
   return {
     state: isPastDue ? 'past_due' : 'current',
     graceEndsAt: isPastDue ? (gracePeriodExpiresAt || null) : null,
+    canRecoverPayment,
+    recoveryInvoiceUrl: canRecoverPayment ? (options?.recoveryInvoiceUrl || null) : null,
   };
 }
 
