@@ -59,9 +59,10 @@ Funções musicais como Ministro, Vocalista, Violão e Bateria são classificaç
 ### Smart Chords
 
 - edição de cifras por marcação entre colchetes;
-- transposição;
-- edição visual;
-- tentativa de associação/criação de música;
+- transposição e campo harmônico;
+- edição visual e inline;
+- associação persistida com músicas do repertório e criação automática;
+- persistência completa no Firestore com isolamento por usuário (user_id);
 - exportação PDF no browser.
 
 ### PWA
@@ -102,11 +103,10 @@ Consulte a especificação detalhada em [Estrutura Comercial e Planos](plans-and
 
 - Avisos do dashboard são dados mock locais.
 - Liturgias acessíveis via rota canônica /liturgias, sidebar desktop e cartão Ministério no mobile.
-- Persistência Smart Chords não está alinhada ponta a ponta.
 - Não há gateway de pagamento integrado nesta etapa inicial (apenas modelagem de limites).
 - Não há mobile nativo no checkout.
 - Não há notificações, mensageria ou jobs.
-- O backend não possui testes automatizados; o web possui cobertura focal com Vitest/Testing Library e jornadas Playwright mockadas.
+- O backend e o web possuem cobertura de testes automatizados com Vitest/Testing Library e jornadas Playwright mockadas.
 
 Detalhes e riscos: [System status](../system-status.md).
 

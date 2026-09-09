@@ -4,9 +4,25 @@ import { AppError } from '../middleware/error-handler';
 export class SmartChordRepository {
   private readonly smartChordsCol = db.collection('smart_chords');
 
+  private toDomain(id: string, raw: any) {
+    return {
+      id,
+      user_id: raw.user_id,
+      title: raw.title || '',
+      artist_id: raw.artist_id ?? null,
+      song_id: raw.song_id ?? null,
+      original_key: raw.original_key || 'C',
+      content: raw.content || '',
+      created_at: raw.created_at || '',
+      updated_at: raw.updated_at || '',
+      artist: raw.artist ?? null,
+      song: raw.song ?? null,
+    };
+  }
+
   async getSmartChords(userId: string, search?: string) {
     const snap = await this.smartChordsCol.where('user_id', '==', userId).get();
-    let list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
+    let list = snap.docs.map((d) => this.toDomain(d.id, d.data()));
 
     if (search) {
       const q = search.toLowerCase();
@@ -16,16 +32,25 @@ export class SmartChordRepository {
     return list.sort((a, b) => (b.updated_at || b.created_at || '').localeCompare(a.updated_at || a.created_at || ''));
   }
 
+  async getSmartChordsBySongId(songId: string, userId: string) {
+    const snap = await this.smartChordsCol
+      .where('user_id', '==', userId)
+      .where('song_id', '==', songId)
+      .get();
+    const list = snap.docs.map((d) => this.toDomain(d.id, d.data()));
+    return list.sort((a, b) => (b.updated_at || b.created_at || '').localeCompare(a.updated_at || a.created_at || ''));
+  }
+
   async getSmartChordById(id: string, userId: string) {
     const doc = await this.smartChordsCol.doc(id).get();
     if (!doc.exists) {
       throw new AppError(404, 'Cifra inteligente não encontrada.');
     }
-    const data = { id: doc.id, ...doc.data() } as any;
-    if (data.user_id !== userId) {
+    const raw = doc.data() || {};
+    if (raw.user_id !== userId) {
       throw new AppError(404, 'Cifra inteligente não encontrada.');
     }
-    return data;
+    return this.toDomain(doc.id, raw);
   }
 
   async createSmartChord(userId: string, data: any) {

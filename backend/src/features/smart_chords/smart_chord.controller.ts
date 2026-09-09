@@ -47,6 +47,18 @@ export class SmartChordController extends BaseController {
     }
   };
 
+  getSmartChordsBySong = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = getUserId(req);
+      const songId = req.params.songId as string;
+
+      const result = await smartChordService.getSmartChordsBySong(songId, userId);
+      this.handleSuccess(res, { data: result });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
   createSmartChord = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const userId = getUserId(req);
@@ -88,6 +100,7 @@ export class SmartChordController extends BaseController {
 const scInstance = new SmartChordController();
 export const listSmartChords = scInstance.listSmartChords;
 export const getSmartChord = scInstance.getSmartChord;
+export const getSmartChordsBySong = scInstance.getSmartChordsBySong;
 export const createSmartChord = scInstance.createSmartChord;
 export const updateSmartChord = scInstance.updateSmartChord;
 export const deleteSmartChord = scInstance.deleteSmartChord;

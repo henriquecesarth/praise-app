@@ -202,7 +202,7 @@ O backend usa Vitest para testes unitários e de integração cobrindo motor de 
 Itens duráveis e priorizados catalogados em docs/system-status.md:
 - Asaas Customer Reuse (GAP-011): CLOSED — SANDBOX REVALIDATED (1 Ministry + provider vincula-se a 1 customer canônico em `billing_customers` com reutilização estrita em checkouts subsequentes, lock atômico de criação, fallback por externalReference e preservação de customers históricos).
 - Same-Plan Interval Change (GAP-012): UI / interval recognition validado em Sandbox; execução financeira segue a Política V1 de agendamento em `current_period_end` (APPROVED DOMAIN POLICY REVISED — IMPLEMENTATION PENDING).
-- Aliases de rota legados (`features/groups`) e rota de cifra por música (`/smart-chords/song/:songId`).
+- Aliases de rota legados (`features/groups`). Divergência de rotas e persistência de cifras inteligentes resolvidas na Fase 5B.
 
 ## Current State
 
@@ -222,6 +222,7 @@ Itens duráveis e priorizados catalogados em docs/system-status.md:
 - Hardening de Segurança em Autenticação, Autorização, RBAC e Anti-IDOR.
 - Integração de SaaS Billing, Checkout Hospedado, Webhooks Idempotentes, Future Payment Cleanup, Worker de Reconciliação, Early Activation Proration/Settlement e Cancel-to-Free com Asaas (fluxos 3A, 3B, 3C e 3D homologados em Sandbox; gaps de customer reuse e troca de ciclo no mesmo plano permanecem catalogados).
 - Fase 5A: Acessibilidade e Navegação de Liturgias (GAP-004 resolvido; rota canônica /liturgias, sidebar desktop e cartão Ministério no mobile; preservação estrita de 5 itens no BottomNav; isolamento de tenant; RBAC admin/member; suite web com 156 testes passando e zero alterações de backend/billing).
+- Fase 5B: Conclusão Ponta a Ponta de Cifras Inteligentes (GAP-003 e INC-005 resolvidos; rotas canônicas unificadas em /api/v1/smart-chords com precedência estrita de GET /song/:songId sobre /:id; persistência real no Firestore com mapeamento bidirecional snake_case/camelCase; isolamento estrito por usuário autenticado [user_id]; proteção anti-IDOR [404 rejection]; validação de vínculo tenant cruzado com repertório [música/artista]; preservação do Modelo N [múltiplas cifras por música]; desacoplamento de empty/error state no workspace frontend; 1.413 testes backend e 169 testes web passando; zero impacto em billing ou liturgias).
 
 ## Current Work
 

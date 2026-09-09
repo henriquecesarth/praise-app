@@ -8,6 +8,7 @@ const router = Router();
 router.use(authenticate);
 
 router.get('/', smartChordController.listSmartChords);
+router.get('/song/:songId', smartChordController.getSmartChordsBySong);
 router.get('/:id', smartChordController.getSmartChord);
 router.post('/', smartChordController.createSmartChord);
 router.put('/:id', smartChordController.updateSmartChord);

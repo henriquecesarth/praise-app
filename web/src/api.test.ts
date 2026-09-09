@@ -144,4 +144,216 @@ describe('API Client & Structured Error Handling', () => {
     const res = await api.reactivateBillingSubscription('min-123');
     expect(res).toEqual(mockReactivation);
   });
+
+  describe('Smart Chords API Client', () => {
+    it('getSmartChords consulta rota canônica /smart-chords e mapeia snake_case para camelCase', async () => {
+      const mockRawChords = {
+        data: [
+          {
+            id: 'sc-1',
+            user_id: 'usr-1',
+            title: 'Hosana',
+            artist_id: 'art-1',
+            song_id: 'sng-1',
+            original_key: 'E',
+            content: '[E]Hosana nas alturas',
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-02T00:00:00Z',
+            artist: { id: 'art-1', name: 'Gabriela Rocha' },
+            song: { id: 'sng-1', title: 'Hosana' },
+          },
+        ],
+      };
+
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify(mockRawChords)),
+      } as any);
+      global.fetch = fetchSpy;
+
+      const result = await api.getSmartChords('min-1', 'Hosana');
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const [calledUrl] = fetchSpy.mock.calls[0];
+      expect(calledUrl).toMatch(/\/smart-chords\?search=Hosana$/);
+      expect(result).toHaveLength(1);
+      expect(result[0]).toEqual({
+        id: 'sc-1',
+        userId: 'usr-1',
+        title: 'Hosana',
+        artistId: 'art-1',
+        songId: 'sng-1',
+        originalKey: 'E',
+        content: '[E]Hosana nas alturas',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-02T00:00:00Z',
+        artist: { id: 'art-1', name: 'Gabriela Rocha' },
+        song: { id: 'sng-1', title: 'Hosana' },
+      });
+    });
+
+    it('getSmartChordById consulta /smart-chords/:id', async () => {
+      const mockRaw = {
+        id: 'sc-42',
+        user_id: 'usr-42',
+        title: 'Cifra Específica',
+        original_key: 'A',
+        content: '[A]Aleluia',
+      };
+
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify(mockRaw)),
+      } as any);
+      global.fetch = fetchSpy;
+
+      const result = await api.getSmartChordById('sc-42');
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/\/smart-chords\/sc-42$/),
+        expect.any(Object)
+      );
+      expect(result.id).toBe('sc-42');
+      expect(result.userId).toBe('usr-42');
+      expect(result.originalKey).toBe('A');
+    });
+
+    it('getSmartChordsBySongId consulta /smart-chords/song/:songId e retorna array mapeado', async () => {
+      const mockRaw = {
+        data: [
+          { id: 'sc-10', user_id: 'u-1', song_id: 'song-77', title: 'Versão 1', original_key: 'C', content: '[C]' },
+          { id: 'sc-11', user_id: 'u-1', song_id: 'song-77', title: 'Versão 2', original_key: 'D', content: '[D]' },
+        ],
+      };
+
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify(mockRaw)),
+      } as any);
+      global.fetch = fetchSpy;
+
+      const result = await api.getSmartChordsBySongId('song-77');
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/\/smart-chords\/song\/song-77$/),
+        expect.any(Object)
+      );
+      expect(result).toHaveLength(2);
+      expect(result[0].id).toBe('sc-10');
+      expect(result[1].id).toBe('sc-11');
+    });
+
+    it('getSmartChordBySongId retorna a primeira cifra ou null se lista estiver vazia', async () => {
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify({ data: [] })),
+      } as any);
+      global.fetch = fetchSpy;
+
+      const emptyResult = await api.getSmartChordBySongId('song-vazia');
+      expect(emptyResult).toBeNull();
+
+      fetchSpy.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify({
+          data: [{ id: 'sc-solo', user_id: 'u-1', title: 'Solo', original_key: 'G', content: '[G]' }]
+        })),
+      } as any);
+
+      const singleResult = await api.getSmartChordBySongId('song-com-cifra');
+      expect(singleResult).not.toBeNull();
+      expect(singleResult?.id).toBe('sc-solo');
+    });
+
+    it('createSmartChord envia POST para rota canônica /smart-chords com campos mapeados', async () => {
+      const mockCreated = {
+        id: 'sc-created',
+        user_id: 'usr-1',
+        title: 'Nova',
+        artist_id: 'art-99',
+        song_id: 'sng-99',
+        original_key: 'F',
+        content: '[F]Nova melodia',
+      };
+
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        text: vi.fn().mockResolvedValue(JSON.stringify(mockCreated)),
+      } as any);
+      global.fetch = fetchSpy;
+
+      const result = await api.createSmartChord({
+        title: 'Nova',
+        artistId: 'art-99',
+        songId: 'sng-99',
+        originalKey: 'F',
+        content: '[F]Nova melodia',
+      });
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const [url, options] = fetchSpy.mock.calls[0];
+      expect(url).toMatch(/\/smart-chords$/);
+      expect(options.method).toBe('POST');
+      const body = JSON.parse(options.body);
+      expect(body).toEqual({
+        title: 'Nova',
+        original_key: 'F',
+        content: '[F]Nova melodia',
+        artist_id: 'art-99',
+        song_id: 'sng-99',
+      });
+      expect(result.id).toBe('sc-created');
+    });
+
+    it('updateSmartChord envia PUT para /smart-chords/:id', async () => {
+      const mockUpdated = {
+        id: 'sc-123',
+        user_id: 'usr-1',
+        title: 'Atualizada',
+        original_key: 'Am',
+        content: '[Am]Atualizada',
+      };
+
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify(mockUpdated)),
+      } as any);
+      global.fetch = fetchSpy;
+
+      const result = await api.updateSmartChord('sc-123', {
+        title: 'Atualizada',
+        originalKey: 'Am',
+      });
+
+      const [url, options] = fetchSpy.mock.calls[0];
+      expect(url).toMatch(/\/smart-chords\/sc-123$/);
+      expect(options.method).toBe('PUT');
+      const body = JSON.parse(options.body);
+      expect(body.title).toBe('Atualizada');
+      expect(body.original_key).toBe('Am');
+      expect(result.title).toBe('Atualizada');
+    });
+
+    it('deleteSmartChord envia DELETE para /smart-chords/:id', async () => {
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 204,
+        text: vi.fn().mockResolvedValue(''),
+      } as any);
+      global.fetch = fetchSpy;
+
+      await api.deleteSmartChord('sc-to-delete');
+
+      const [url, options] = fetchSpy.mock.calls[0];
+      expect(url).toMatch(/\/smart-chords\/sc-to-delete$/);
+      expect(options.method).toBe('DELETE');
+    });
+  });
 });

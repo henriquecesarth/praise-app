@@ -15,10 +15,26 @@ import {
   CheckoutPreviewResult,
   CheckoutCreationResult,
   BillingTransactionRecord,
+  SmartChord,
 } from './types';
 
+export type { SmartChord };
 
-export type SmartChord = any;
+export function mapSmartChordFromApi(item: any): SmartChord {
+  return {
+    id: item?.id ?? '',
+    userId: item?.user_id ?? item?.userId ?? '',
+    title: item?.title ?? '',
+    artistId: item?.artist_id ?? item?.artistId ?? null,
+    songId: item?.song_id ?? item?.songId ?? null,
+    originalKey: item?.original_key ?? item?.originalKey ?? 'C',
+    content: item?.content ?? '',
+    createdAt: item?.created_at ?? item?.createdAt ?? '',
+    updatedAt: item?.updated_at ?? item?.updatedAt ?? '',
+    artist: item?.artist ? { id: item.artist.id, name: item.artist.name } : null,
+    song: item?.song ? { id: item.song.id, title: item.song.title } : null,
+  };
+}
 
 export interface BillingReactivationResponse {
   success: boolean;
@@ -990,44 +1006,97 @@ export const api = {
   },
 
   // Cifras Inteligentes
-  getSmartChordBySongId: async (songId: string): Promise<any> => {
+  getSmartChords: async (_ministryId?: string, searchQuery?: string, signal?: AbortSignal): Promise<SmartChord[]> => {
+    const params = new URLSearchParams();
+    if (searchQuery && searchQuery.trim()) {
+      params.append('search', searchQuery.trim());
+    }
+    const queryString = params.toString();
+    const url = `${API_URL}/smart-chords${queryString ? `?${queryString}` : ''}`;
+    const response = await fetch(url, {
+      headers: getHeaders(),
+      signal,
+    });
+    const result = await handleResponse<any>(response);
+    const list = Array.isArray(result) ? result : (result?.data || []);
+    return list.map(mapSmartChordFromApi);
+  },
+
+  getSmartChordById: async (id: string): Promise<SmartChord> => {
+    const response = await fetch(`${API_URL}/smart-chords/${id}`, {
+      headers: getHeaders(),
+    });
+    const result = await handleResponse<any>(response);
+    return mapSmartChordFromApi(result);
+  },
+
+  getSmartChordsBySongId: async (songId: string): Promise<SmartChord[]> => {
     const response = await fetch(`${API_URL}/smart-chords/song/${songId}`, {
       headers: getHeaders(),
     });
-    const result = await handleResponse<{ data: any }>(response);
-    return result.data;
+    const result = await handleResponse<any>(response);
+    const list = Array.isArray(result) ? result : (result?.data || []);
+    return list.map(mapSmartChordFromApi);
   },
 
-  getSmartChords: async (_ministryId: string, _searchQuery?: string, _signal?: AbortSignal): Promise<any[]> => {
-    return [];
+  getSmartChordBySongId: async (songId: string): Promise<SmartChord | null> => {
+    const list = await api.getSmartChordsBySongId(songId);
+    return list.length > 0 ? list[0] : null;
   },
 
-  upsertSmartChord: async (songId: string, originalKey: string, content: string): Promise<any> => {
-    const response = await fetch(`${API_URL}/smart-chords/song/${songId}`, {
+  createSmartChord: async (payload: Partial<SmartChord>): Promise<SmartChord> => {
+    const body: Record<string, any> = {
+      title: payload.title,
+      original_key: payload.originalKey || 'C',
+      content: payload.content || '',
+    };
+    if (payload.artistId !== undefined) {
+      body.artist_id = payload.artistId || null;
+    }
+    if (payload.songId !== undefined) {
+      body.song_id = payload.songId || null;
+    }
+
+    const response = await fetch(`${API_URL}/smart-chords`, {
       method: 'POST',
       headers: getHeaders(),
-      body: JSON.stringify({ original_key: originalKey, content }),
+      body: JSON.stringify(body),
     });
-    const result = await handleResponse<{ data: any }>(response);
-    return result.data;
+    const result = await handleResponse<any>(response);
+    return mapSmartChordFromApi(result);
   },
 
-  updateSmartChord: async (id: string, payload: any): Promise<any> => {
-    const songId = payload?.songId || id;
-    return api.upsertSmartChord(songId, payload?.originalKey || 'C', payload?.content || '');
+  updateSmartChord: async (id: string, payload: Partial<SmartChord>): Promise<SmartChord> => {
+    const body: Record<string, any> = {};
+    if (payload.title !== undefined) body.title = payload.title;
+    if (payload.originalKey !== undefined) body.original_key = payload.originalKey;
+    if (payload.content !== undefined) body.content = payload.content;
+    if (payload.artistId !== undefined) body.artist_id = payload.artistId || null;
+    if (payload.songId !== undefined) body.song_id = payload.songId || null;
+
+    const response = await fetch(`${API_URL}/smart-chords/${id}`, {
+      method: 'PUT',
+      headers: getHeaders(),
+      body: JSON.stringify(body),
+    });
+    const result = await handleResponse<any>(response);
+    return mapSmartChordFromApi(result);
   },
 
-  createSmartChord: async (payload: any): Promise<any> => {
-    const songId = payload?.songId || 'standalone';
-    return api.upsertSmartChord(songId, payload?.originalKey || 'C', payload?.content || '');
-  },
-
-  deleteSmartChord: async (songId: string): Promise<void> => {
-    const response = await fetch(`${API_URL}/smart-chords/song/${songId}`, {
+  deleteSmartChord: async (id: string): Promise<void> => {
+    const response = await fetch(`${API_URL}/smart-chords/${id}`, {
       method: 'DELETE',
       headers: getHeaders(),
     });
     return handleResponse<void>(response);
+  },
+
+  upsertSmartChord: async (songId: string, originalKey: string, content: string): Promise<SmartChord> => {
+    const existing = await api.getSmartChordBySongId(songId);
+    if (existing) {
+      return api.updateSmartChord(existing.id, { originalKey, content, songId });
+    }
+    return api.createSmartChord({ title: 'Cifra Inteligente', originalKey, content, songId });
   },
 
   // Comentários da Escala

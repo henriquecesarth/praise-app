@@ -111,9 +111,7 @@ LiturgiesView implementa list/create/delete, mas não está ligado à navegaçã
 
 ## 8. Smart Chords and PDF
 
-web/src/utils/smart_chord.ts transforma texto com acordes entre colchetes, transpõe semitons e gera representação visual. SmartChordsWorkspace edita e tenta persistir cifras, podendo criar uma música relacionada. Exportação PDF usa html2pdf.js carregado globalmente por CDN.
-
-O fluxo persistente não fecha ponta a ponta porque os endpoints web/backend divergem e a lista web retorna vazia. Veja INC-005, INC-006 e GAP-003.
+web/src/utils/smart_chord.ts transforma texto com acordes entre colchetes, transpõe semitons e gera representação visual. SmartChordsWorkspace edita e persiste cifras no Firestore via rotas canônicas `/api/v1/smart-chords` e `/api/v1/smart-chords/song/:songId`, com isolamento estrito de proprietário (`user_id`), proteção anti-IDOR e validação de vínculo com músicas e artistas do repertório. Exportação PDF usa html2pdf.js carregado globalmente por CDN.
 
 ## 9. PWA
 

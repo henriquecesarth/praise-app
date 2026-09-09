@@ -303,6 +303,18 @@ export class RepertoireRepository {
     return data;
   }
 
+  async findSongById(songId: string): Promise<any | null> {
+    const doc = await this.songsCol.doc(songId).get();
+    if (!doc.exists) return null;
+    return { id: doc.id, ...doc.data() };
+  }
+
+  async findArtistById(artistId: string): Promise<any | null> {
+    const doc = await this.artistsCol.doc(artistId).get();
+    if (!doc.exists) return null;
+    return { id: doc.id, ...doc.data() };
+  }
+
   async createSong(ministryId: string, userId: string, data: any) {
     ministryId = this.validateMinistryId(ministryId);
     const now = new Date().toISOString();

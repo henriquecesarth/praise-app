@@ -511,7 +511,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
         <div aria-busy={isLoading || relationsLoading} style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {(isLoading || relationsLoading) && smartChords.length === 0 ? (
             <p style={{ textAlign: 'center', opacity: 0.5 }}>Carregando...</p>
-          ) : smartChords.length === 0 ? (
+          ) : relationsError ? null : smartChords.length === 0 ? (
             <p style={{ textAlign: 'center', opacity: 0.5 }}>Nenhuma cifra encontrada.</p>
           ) : (
             smartChords.map(sc => {

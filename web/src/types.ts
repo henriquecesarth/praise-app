@@ -110,6 +110,26 @@ export interface Song {
   };
 }
 
+export interface SmartChord {
+  id: string;
+  userId: string;
+  title: string;
+  artistId: string | null;
+  songId: string | null;
+  originalKey: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+  artist?: {
+    id: string;
+    name: string;
+  } | null;
+  song?: {
+    id: string;
+    title: string;
+  } | null;
+}
+
 export interface Artist {
   id: string;
   ministryId: string;

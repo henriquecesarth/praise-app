@@ -2,8 +2,8 @@ import { z } from 'zod';
 
 export const createSmartChordSchema = z.object({
   title: z.string().min(1, 'Título é obrigatório.').max(255),
-  artist_id: z.string().uuid().nullable().optional(),
-  song_id: z.string().uuid().nullable().optional(),
+  artist_id: z.string().nullable().optional(),
+  song_id: z.string().nullable().optional(),
   original_key: z.string().min(1, 'Tom original é obrigatório.').max(10),
   content: z.string().min(1, 'O conteúdo da cifra é obrigatório.'),
 });
