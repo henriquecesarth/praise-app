@@ -43,6 +43,7 @@ vi.mock('../api', () => ({
     getClassifications: vi.fn(),
     getSchedules: vi.fn(),
     getMinistryMembers: vi.fn(),
+    getAnnouncements: vi.fn(),
   },
 }));
 
@@ -65,6 +66,7 @@ describe('Liturgies Direct Route & App Integration', () => {
     vi.mocked(api.getClassifications).mockResolvedValue([]);
     vi.mocked(api.getSchedules).mockResolvedValue([]);
     vi.mocked(api.getMinistryMembers).mockResolvedValue([]);
+    vi.mocked(api.getAnnouncements).mockResolvedValue([]);
   });
 
   it('directly renders LiturgiesView when accessing /liturgias deep link without redirecting to dashboard', async () => {

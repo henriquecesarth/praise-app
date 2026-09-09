@@ -16,9 +16,24 @@ import {
   CheckoutCreationResult,
   BillingTransactionRecord,
   SmartChord,
+  Announcement,
 } from './types';
 
-export type { SmartChord };
+export type { SmartChord, Announcement };
+
+export function mapAnnouncementFromApi(item: any): Announcement {
+  return {
+    id: item?.id ?? '',
+    ministryId: item?.ministry_id ?? item?.ministryId ?? '',
+    title: item?.title ?? '',
+    content: item?.content ?? '',
+    author: item?.author ?? item?.author_name ?? item?.authorName ?? 'Liderança',
+    important: Boolean(item?.important),
+    createdBy: item?.created_by ?? item?.createdBy ?? '',
+    createdAt: item?.created_at ?? item?.createdAt ?? '',
+    updatedAt: item?.updated_at ?? item?.updatedAt ?? '',
+  };
+}
 
 export function mapSmartChordFromApi(item: any): SmartChord {
   return {
@@ -1115,6 +1130,69 @@ export const api = {
       body: JSON.stringify({ content }),
     });
     return handleResponse<any>(response);
+  },
+
+  // Avisos do Ministério (Announcements)
+  getAnnouncements: async (ministryId: string, limit?: number): Promise<Announcement[]> => {
+    const url = limit
+      ? `${API_URL}/ministries/${ministryId}/announcements?limit=${limit}`
+      : `${API_URL}/ministries/${ministryId}/announcements`;
+    const response = await fetch(url, { headers: getHeaders() });
+    const result = await handleResponse<any[]>(response);
+    return (result || []).map(mapAnnouncementFromApi);
+  },
+
+  getAnnouncementById: async (ministryId: string, id: string): Promise<Announcement> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/announcements/${id}`, {
+      headers: getHeaders(),
+    });
+    const result = await handleResponse<any>(response);
+    return mapAnnouncementFromApi(result);
+  },
+
+  createAnnouncement: async (
+    ministryId: string,
+    data: { title: string; content: string; author?: string; important?: boolean }
+  ): Promise<Announcement> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/announcements`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({
+        title: data.title,
+        content: data.content,
+        author: data.author,
+        important: data.important ?? false,
+      }),
+    });
+    const result = await handleResponse<any>(response);
+    return mapAnnouncementFromApi(result);
+  },
+
+  updateAnnouncement: async (
+    ministryId: string,
+    id: string,
+    data: { title?: string; content?: string; author?: string; important?: boolean }
+  ): Promise<Announcement> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/announcements/${id}`, {
+      method: 'PUT',
+      headers: getHeaders(),
+      body: JSON.stringify({
+        title: data.title,
+        content: data.content,
+        author: data.author,
+        important: data.important,
+      }),
+    });
+    const result = await handleResponse<any>(response);
+    return mapAnnouncementFromApi(result);
+  },
+
+  deleteAnnouncement: async (ministryId: string, id: string): Promise<void> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/announcements/${id}`, {
+      method: 'DELETE',
+      headers: getHeaders(),
+    });
+    return handleResponse<void>(response);
   },
 
   // Planos e Assinaturas

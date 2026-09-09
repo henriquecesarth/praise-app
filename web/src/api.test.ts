@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { api, ApiError, getFriendlyErrorMessage } from './api';
+import { api, ApiError, getFriendlyErrorMessage, mapAnnouncementFromApi } from './api';
 
 describe('API Client & Structured Error Handling', () => {
   beforeEach(() => {
@@ -353,6 +353,162 @@ describe('API Client & Structured Error Handling', () => {
 
       const [url, options] = fetchSpy.mock.calls[0];
       expect(url).toMatch(/\/smart-chords\/sc-to-delete$/);
+      expect(options.method).toBe('DELETE');
+    });
+  });
+
+  describe('Announcements API Client', () => {
+    it('mapAnnouncementFromApi mapeia propriedades snake_case para camelCase com fallbacks seguros', () => {
+      const raw = {
+        id: 'ann-1',
+        ministry_id: 'min-1',
+        title: 'Ensaio Geral',
+        content: 'Detalhes do ensaio',
+        author: 'Liderança de Louvor',
+        important: true,
+        created_by: 'usr-admin',
+        created_at: '2026-09-09T14:00:00.000Z',
+        updated_at: '2026-09-09T14:30:00.000Z',
+      };
+
+      const mapped = mapAnnouncementFromApi(raw);
+      expect(mapped.id).toBe('ann-1');
+      expect(mapped.ministryId).toBe('min-1');
+      expect(mapped.title).toBe('Ensaio Geral');
+      expect(mapped.content).toBe('Detalhes do ensaio');
+      expect(mapped.author).toBe('Liderança de Louvor');
+      expect(mapped.important).toBe(true);
+      expect(mapped.createdBy).toBe('usr-admin');
+      expect(mapped.createdAt).toBe('2026-09-09T14:00:00.000Z');
+      expect(mapped.updatedAt).toBe('2026-09-09T14:30:00.000Z');
+    });
+
+    it('mapAnnouncementFromApi preenche fallbacks para campos ausentes', () => {
+      const mapped = mapAnnouncementFromApi({});
+      expect(mapped.id).toBe('');
+      expect(mapped.ministryId).toBe('');
+      expect(mapped.title).toBe('');
+      expect(mapped.content).toBe('');
+      expect(mapped.author).toBe('Liderança');
+      expect(mapped.important).toBe(false);
+    });
+
+    it('getAnnouncements envia GET para /ministries/:ministryId/announcements', async () => {
+      const mockList = [
+        {
+          id: 'ann-1',
+          ministry_id: 'min-1',
+          title: 'Aviso 1',
+          content: 'Mensagem 1',
+          author: 'Coordenação',
+          important: false,
+          created_by: 'usr-1',
+          created_at: '2026-09-09T10:00:00.000Z',
+          updated_at: '2026-09-09T10:00:00.000Z',
+        },
+      ];
+
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify(mockList)),
+      } as any);
+      global.fetch = fetchSpy;
+
+      const result = await api.getAnnouncements('min-1');
+      expect(fetchSpy).toHaveBeenCalled();
+      const [url] = fetchSpy.mock.calls[0];
+      expect(url).toMatch(/\/ministries\/min-1\/announcements$/);
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe('ann-1');
+      expect(result[0].title).toBe('Aviso 1');
+      expect(result[0].ministryId).toBe('min-1');
+    });
+
+    it('createAnnouncement envia POST com payload serializado e mapeia retorno', async () => {
+      const mockCreated = {
+        id: 'ann-new',
+        ministry_id: 'min-1',
+        title: 'Novo Aviso',
+        content: 'Conteúdo do aviso',
+        author: 'Pastor',
+        important: true,
+        created_by: 'usr-1',
+        created_at: '2026-09-09T11:00:00.000Z',
+        updated_at: '2026-09-09T11:00:00.000Z',
+      };
+
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        text: vi.fn().mockResolvedValue(JSON.stringify(mockCreated)),
+      } as any);
+      global.fetch = fetchSpy;
+
+      const result = await api.createAnnouncement('min-1', {
+        title: 'Novo Aviso',
+        content: 'Conteúdo do aviso',
+        author: 'Pastor',
+        important: true,
+      });
+
+      const [url, options] = fetchSpy.mock.calls[0];
+      expect(url).toMatch(/\/ministries\/min-1\/announcements$/);
+      expect(options.method).toBe('POST');
+      const parsedBody = JSON.parse(options.body);
+      expect(parsedBody).toEqual({
+        title: 'Novo Aviso',
+        content: 'Conteúdo do aviso',
+        author: 'Pastor',
+        important: true,
+      });
+      expect(result.id).toBe('ann-new');
+      expect(result.important).toBe(true);
+    });
+
+    it('updateAnnouncement envia PUT com payload e mapeia retorno', async () => {
+      const mockUpdated = {
+        id: 'ann-1',
+        ministry_id: 'min-1',
+        title: 'Título Editado',
+        content: 'Conteúdo Editado',
+        author: 'Liderança',
+        important: false,
+        created_by: 'usr-1',
+        created_at: '2026-09-09T10:00:00.000Z',
+        updated_at: '2026-09-09T12:00:00.000Z',
+      };
+
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify(mockUpdated)),
+      } as any);
+      global.fetch = fetchSpy;
+
+      const result = await api.updateAnnouncement('min-1', 'ann-1', {
+        title: 'Título Editado',
+        content: 'Conteúdo Editado',
+      });
+
+      const [url, options] = fetchSpy.mock.calls[0];
+      expect(url).toMatch(/\/ministries\/min-1\/announcements\/ann-1$/);
+      expect(options.method).toBe('PUT');
+      expect(result.title).toBe('Título Editado');
+    });
+
+    it('deleteAnnouncement envia DELETE para /ministries/:ministryId/announcements/:id', async () => {
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify({ message: 'Aviso excluído com sucesso.' })),
+      } as any);
+      global.fetch = fetchSpy;
+
+      await api.deleteAnnouncement('min-1', 'ann-1');
+
+      const [url, options] = fetchSpy.mock.calls[0];
+      expect(url).toMatch(/\/ministries\/min-1\/announcements\/ann-1$/);
       expect(options.method).toBe('DELETE');
     });
   });

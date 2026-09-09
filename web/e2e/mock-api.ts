@@ -122,6 +122,7 @@ export async function installMockApi(page: Page, options: MockApiOptions = {}) {
     if (path.endsWith('/schedules')) return json(route, method === 'GET' ? [mockSchedule] : mockSchedule);
     if (path.endsWith('/liturgies')) return json(route, []);
     if (path.includes('/smart-chords')) return json(route, { data: [] });
+    if (path.includes('/announcements')) return json(route, []);
     if (path === '/plans') return json(route, {
       plans: [
         { id: 'free', name: 'Free', baseMembers: 10, baseSongs: 50, allowMemberAddons: false, maxMemberAddonBlocks: 0 },

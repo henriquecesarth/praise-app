@@ -2,10 +2,11 @@ import React, { useState } from 'react';
 import {
   Building2, Plus, Calendar, Cake, ArrowRight, CheckCircle2, Clock,
   Sparkles, Megaphone, ChevronRight, Users, XCircle, Music, Palette, CalendarDays,
+  AlertCircle, RefreshCw, X, Check, Pencil, Trash2, Loader2,
 } from 'lucide-react';
-import { Ministry } from '../types';
+import { Ministry, Announcement } from '../types';
 import { ScheduleItem } from './CreateScheduleModal';
-import { formatScheduleDateTimePtBR } from '../utils/locale';
+import { formatScheduleDateTimePtBR, formatTimestampPtBR } from '../utils/locale';
 
 interface UserState {
   id: string;
@@ -32,25 +33,32 @@ interface DashboardViewProps {
   onSelectSchedule: (schedule: ScheduleItem) => void;
 }
 
-// Sample announcements for worship team
-const MOCK_ANNOUNCEMENTS = [
-  {
-    id: '1',
-    title: 'Ensaio Geral para o Culto de Celebração',
-    content: 'Atenção equipe! O ensaio desta semana será antecipado para Quinta-feira às 19:30. Favor passarem as cifras antes.',
-    date: 'Hoje, 14:00',
-    author: 'Liderança de Louvor',
-    important: true,
-  },
-  {
-    id: '2',
-    title: 'Alinhamento sobre a vestimenta de Domingo',
-    content: 'Neste domingo usaremos a paleta de tons neutros/pretos para o culto da noite.',
-    date: 'Ontem',
-    author: 'Coordenação',
-    important: false,
-  },
-];
+const formatAnnouncementDate = (isoString?: string) => {
+  if (!isoString) return '';
+  try {
+    const d = new Date(isoString);
+    if (Number.isNaN(d.getTime())) return isoString;
+    const now = new Date();
+    const isSameDay =
+      d.getDate() === now.getDate() &&
+      d.getMonth() === now.getMonth() &&
+      d.getFullYear() === now.getFullYear();
+    const timeStr = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    if (isSameDay) return `Hoje, ${timeStr}`;
+
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const isYesterday =
+      d.getDate() === yesterday.getDate() &&
+      d.getMonth() === yesterday.getMonth() &&
+      d.getFullYear() === yesterday.getFullYear();
+    if (isYesterday) return `Ontem, ${timeStr}`;
+
+    return formatTimestampPtBR(isoString);
+  } catch {
+    return formatTimestampPtBR(isoString);
+  }
+};
 
 const formatScheduleDate = (dateStr: string, timeStr: string) => {
   return formatScheduleDateTimePtBR(dateStr, timeStr);
@@ -110,6 +118,188 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const handleSelect = onSelectMinistry || onSelectGroup || (() => {});
   const handleCreate = onCreateMinistry || onCreateGroup || (() => {});
   const handleJoin = onJoinMinistry || onJoinGroup || (() => {});
+
+  const isAdmin = userRole === 'admin' || currentActive?.role === 'admin';
+
+  // Real announcements state
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [loadingAnnouncements, setLoadingAnnouncements] = useState(false);
+  const [announcementsError, setAnnouncementsError] = useState<string | null>(null);
+
+  // Modal states for Admin CRUD
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [editingAnnouncement, setEditingAnnouncement] = useState<Announcement | null>(null);
+  const [deletingAnnouncement, setDeletingAnnouncement] = useState<Announcement | null>(null);
+  const [formSubmitting, setFormSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // Form fields
+  const [formTitle, setFormTitle] = useState('');
+  const [formContent, setFormContent] = useState('');
+  const [formAuthor, setFormAuthor] = useState('');
+  const [formImportant, setFormImportant] = useState(false);
+
+  // Load real announcements with tenant-switch safety
+  const loadAnnouncements = React.useCallback(async () => {
+    if (!currentActive?.id) {
+      setAnnouncements([]);
+      setLoadingAnnouncements(false);
+      return;
+    }
+
+    setLoadingAnnouncements(true);
+    setAnnouncementsError(null);
+
+    try {
+      const { api } = await import('../api');
+      if (typeof api.getAnnouncements !== 'function') return;
+      const data = await api.getAnnouncements(currentActive.id);
+      setAnnouncements(data);
+    } catch (err: any) {
+      setAnnouncementsError(err?.message || 'Não foi possível carregar os avisos da equipe.');
+    } finally {
+      setLoadingAnnouncements(false);
+    }
+  }, [currentActive?.id]);
+
+  React.useEffect(() => {
+    let active = true;
+    if (!currentActive?.id) {
+      setAnnouncements([]);
+      setLoadingAnnouncements(false);
+      return;
+    }
+
+    setLoadingAnnouncements(true);
+    setAnnouncementsError(null);
+
+    import('../api').then(({ api }) => {
+      if (typeof api.getAnnouncements !== 'function') {
+        if (active) setLoadingAnnouncements(false);
+        return;
+      }
+      api.getAnnouncements(currentActive.id)
+        .then((data) => {
+          if (active) {
+            setAnnouncements(data);
+            setLoadingAnnouncements(false);
+          }
+        })
+        .catch((err) => {
+          if (active) {
+            setAnnouncementsError(err?.message || 'Não foi possível carregar os avisos da equipe.');
+            setLoadingAnnouncements(false);
+          }
+        });
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [currentActive?.id]);
+
+  // Modal action handlers
+  const handleOpenCreateModal = () => {
+    setFormTitle('');
+    setFormContent('');
+    setFormAuthor(currentUser.name || '');
+    setFormImportant(false);
+    setFormError(null);
+    setEditingAnnouncement(null);
+    setIsCreateModalOpen(true);
+  };
+
+  const handleOpenEditModal = (ann: Announcement) => {
+    setFormTitle(ann.title);
+    setFormContent(ann.content);
+    setFormAuthor(ann.author);
+    setFormImportant(ann.important);
+    setFormError(null);
+    setEditingAnnouncement(ann);
+    setIsCreateModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    if (formSubmitting) return;
+    setIsCreateModalOpen(false);
+    setEditingAnnouncement(null);
+    setFormError(null);
+  };
+
+  const handleSaveAnnouncement = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentActive?.id) return;
+    if (!formTitle.trim()) {
+      setFormError('O título do aviso é obrigatório.');
+      return;
+    }
+    if (!formContent.trim()) {
+      setFormError('O conteúdo do aviso é obrigatório.');
+      return;
+    }
+
+    setFormSubmitting(true);
+    setFormError(null);
+
+    try {
+      const { api } = await import('../api');
+      if (editingAnnouncement) {
+        const updated = await api.updateAnnouncement(currentActive.id, editingAnnouncement.id, {
+          title: formTitle.trim(),
+          content: formContent.trim(),
+          author: formAuthor.trim() || undefined,
+          important: formImportant,
+        });
+        setAnnouncements((prev) =>
+          prev.map((item) => (item.id === updated.id ? updated : item))
+        );
+      } else {
+        const created = await api.createAnnouncement(currentActive.id, {
+          title: formTitle.trim(),
+          content: formContent.trim(),
+          author: formAuthor.trim() || undefined,
+          important: formImportant,
+        });
+        setAnnouncements((prev) => [created, ...prev]);
+      }
+      setIsCreateModalOpen(false);
+      setEditingAnnouncement(null);
+    } catch (err: any) {
+      setFormError(err?.message || 'Erro ao salvar o aviso.');
+    } finally {
+      setFormSubmitting(false);
+    }
+  };
+
+  const handleDeleteAnnouncement = async () => {
+    if (!currentActive?.id || !deletingAnnouncement) return;
+    setFormSubmitting(true);
+    try {
+      const { api } = await import('../api');
+      await api.deleteAnnouncement(currentActive.id, deletingAnnouncement.id);
+      setAnnouncements((prev) => prev.filter((item) => item.id !== deletingAnnouncement.id));
+      setDeletingAnnouncement(null);
+    } catch (err: any) {
+      setAnnouncementsError(err?.message || 'Erro ao excluir o aviso.');
+    } finally {
+      setFormSubmitting(false);
+    }
+  };
+
+  // Keyboard accessibility: close modals with Escape
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (isCreateModalOpen && !formSubmitting) {
+          handleCloseModal();
+        } else if (deletingAnnouncement && !formSubmitting) {
+          setDeletingAnnouncement(null);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isCreateModalOpen, deletingAnnouncement, formSubmitting]);
 
   // Real birthdays state
   interface BirthdayItem {
@@ -305,30 +495,124 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <span className="dashboard-card-subtitle text-xs text-[var(--text-secondary)] truncate block">Recados e orientações da equipe</span>
               </div>
             </div>
-            <button
-              className="btn btn-secondary min-h-[44px] px-3.5 py-2 text-xs font-semibold rounded-xl shrink-0"
-              onClick={() => setShowAllAnnouncements(!showAllAnnouncements)}
-            >
-              {showAllAnnouncements ? 'Ocultar' : 'Ver todos'}
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              {isAdmin && (
+                <button
+                  type="button"
+                  className="btn btn-primary min-h-[44px] px-3 py-2 text-xs font-semibold inline-flex items-center justify-center gap-1.5 rounded-xl shrink-0"
+                  onClick={handleOpenCreateModal}
+                  aria-label="Criar novo aviso"
+                >
+                  <Plus size={16} />
+                  <span className="hidden sm:inline">Novo Aviso</span>
+                  <span className="sm:hidden">Novo</span>
+                </button>
+              )}
+              {announcements.length > 2 && (
+                <button
+                  type="button"
+                  className="btn btn-secondary min-h-[44px] px-3.5 py-2 text-xs font-semibold rounded-xl shrink-0"
+                  onClick={() => setShowAllAnnouncements(!showAllAnnouncements)}
+                >
+                  {showAllAnnouncements ? 'Ocultar' : 'Ver todos'}
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="dashboard-card-body flex-1 w-full max-w-full min-w-0">
-            <div className="dashboard-list flex flex-col gap-3 w-full max-w-full min-w-0">
-              {(showAllAnnouncements ? MOCK_ANNOUNCEMENTS : MOCK_ANNOUNCEMENTS.slice(0, 2)).map((ann) => (
-                <div key={ann.id} className="dashboard-notice-card p-3.5 rounded-xl border border-[var(--border-color)] bg-[var(--surface-color)] min-w-0 w-full max-w-full box-border">
-                  <div className="dashboard-notice-header flex items-center justify-between gap-2 mb-2 min-w-0 w-full">
-                    <span className="dashboard-notice-title font-bold text-sm truncate flex-1 min-w-0">{ann.title}</span>
-                    {ann.important && <span className="dashboard-badge-important text-[0.7rem] px-1.5 py-0.5 rounded font-bold shrink-0">Importante</span>}
+            {loadingAnnouncements ? (
+              <div className="empty-state py-6 text-center w-full flex flex-col items-center justify-center gap-2">
+                <Loader2 size={24} className="animate-spin text-amber-500" />
+                <p className="empty-desc text-sm text-[var(--text-secondary)]">Carregando avisos...</p>
+              </div>
+            ) : announcementsError ? (
+              <div className="empty-state py-6 text-center w-full flex flex-col items-center justify-center gap-2">
+                <AlertCircle size={24} className="text-red-400" />
+                <p className="empty-desc text-sm text-[var(--text-secondary)]">{announcementsError}</p>
+                <button
+                  type="button"
+                  className="btn btn-secondary min-h-[44px] px-4 py-2 text-xs font-semibold rounded-xl inline-flex items-center gap-1.5 mt-2"
+                  onClick={loadAnnouncements}
+                >
+                  <RefreshCw size={14} />
+                  <span>Tentar novamente</span>
+                </button>
+              </div>
+            ) : announcements.length > 0 ? (
+              <div className="dashboard-list flex flex-col gap-3 w-full max-w-full min-w-0">
+                {(showAllAnnouncements ? announcements : announcements.slice(0, 2)).map((ann) => (
+                  <div
+                    key={ann.id}
+                    className="dashboard-notice-card p-3.5 rounded-xl border border-[var(--border-color)] bg-[var(--surface-color)] min-w-0 w-full max-w-full box-border"
+                  >
+                    <div className="dashboard-notice-header flex items-center justify-between gap-2 mb-2 min-w-0 w-full">
+                      <span className="dashboard-notice-title font-bold text-sm truncate flex-1 min-w-0">{ann.title}</span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {ann.important && (
+                          <span className="dashboard-badge-important text-[0.7rem] px-1.5 py-0.5 rounded font-bold shrink-0">
+                            Importante
+                          </span>
+                        )}
+                        {isAdmin && (
+                          <div className="flex items-center gap-1 ml-1">
+                            <button
+                              type="button"
+                              className="action-icon-btn p-1.5 rounded-lg text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-variant)] transition-colors"
+                              style={{ width: '36px', height: '36px', minWidth: '36px', minHeight: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                              onClick={() => handleOpenEditModal(ann)}
+                              title="Editar aviso"
+                              aria-label={`Editar aviso ${ann.title}`}
+                            >
+                              <Pencil size={15} />
+                            </button>
+                            <button
+                              type="button"
+                              className="action-icon-btn p-1.5 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors"
+                              style={{ width: '36px', height: '36px', minWidth: '36px', minHeight: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                              onClick={() => setDeletingAnnouncement(ann)}
+                              title="Excluir aviso"
+                              aria-label={`Excluir aviso ${ann.title}`}
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <p className="dashboard-notice-content text-xs sm:text-sm text-[var(--text-secondary)] leading-relaxed mb-2.5 break-words whitespace-pre-line">
+                      {ann.content}
+                    </p>
+                    <div className="dashboard-notice-footer flex justify-between text-xs text-[var(--text-tertiary)]">
+                      <span>{ann.author}</span>
+                      <span>{formatAnnouncementDate(ann.createdAt)}</span>
+                    </div>
                   </div>
-                  <p className="dashboard-notice-content text-xs sm:text-sm text-[var(--text-secondary)] leading-relaxed mb-2.5 break-words">{ann.content}</p>
-                  <div className="dashboard-notice-footer flex justify-between text-xs text-[var(--text-tertiary)]">
-                    <span>{ann.author}</span>
-                    <span>{ann.date}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-state py-6 text-center w-full">
+                <div className="text-3xl mb-3">📢</div>
+                <p className="empty-desc text-sm text-[var(--text-secondary)] mb-2">
+                  Nenhum aviso no momento.
+                </p>
+                <span className="text-xs text-[var(--text-tertiary)] block mb-4">
+                  {isAdmin
+                    ? 'Compartilhe recados, lembretes de ensaio e orientações com a equipe.'
+                    : 'Fique atento para novidades e recados da equipe.'}
+                </span>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    className="btn btn-primary min-h-[44px] px-4 py-2.5 text-xs sm:text-sm rounded-xl inline-flex items-center gap-1.5"
+                    onClick={handleOpenCreateModal}
+                  >
+                    <Plus size={16} />
+                    <span>Criar Primeiro Aviso</span>
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -481,6 +765,195 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Modal de Criação / Edição de Aviso */}
+      {isCreateModalOpen && (
+        <div
+          className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={handleCloseModal}
+        >
+          <div
+            className="modal-content rounded-2xl shadow-2xl relative w-full max-w-md p-5 sm:p-6"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'var(--surface-color)',
+              border: '1px solid var(--border-color)',
+            }}
+          >
+            <div className="modal-header flex items-center justify-between pb-3 mb-4 border-b border-[var(--divider-color)]">
+              <div className="flex items-center gap-2">
+                <Megaphone size={20} className="text-amber-500" />
+                <h3 className="text-base sm:text-lg font-bold text-[var(--text-primary)]">
+                  {editingAnnouncement ? 'Editar Aviso' : 'Novo Aviso'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                className="action-icon-btn rounded-lg p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                style={{ width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                onClick={handleCloseModal}
+                disabled={formSubmitting}
+                aria-label="Fechar modal"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveAnnouncement} className="flex flex-col gap-4">
+              {formError && (
+                <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
+                  <AlertCircle size={16} className="shrink-0" />
+                  <span>{formError}</span>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs uppercase tracking-wider font-semibold mb-1.5 text-[var(--text-secondary)]">
+                  Título do Aviso *
+                </label>
+                <input
+                  type="text"
+                  value={formTitle}
+                  onChange={(e) => setFormTitle(e.target.value)}
+                  placeholder="Ex: Ensaio Geral de Quinta-feira"
+                  maxLength={150}
+                  className="input-field w-full px-3.5 py-2.5 rounded-xl text-sm border border-[var(--border-color)] bg-[var(--surface-variant)] text-[var(--text-primary)]"
+                  style={{ minHeight: '44px' }}
+                  required
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs uppercase tracking-wider font-semibold mb-1.5 text-[var(--text-secondary)]">
+                  Conteúdo / Mensagem *
+                </label>
+                <textarea
+                  value={formContent}
+                  onChange={(e) => setFormContent(e.target.value)}
+                  placeholder="Escreva o recado para a equipe..."
+                  rows={4}
+                  maxLength={5000}
+                  className="input-field w-full px-3.5 py-2.5 rounded-xl text-sm border border-[var(--border-color)] bg-[var(--surface-variant)] text-[var(--text-primary)] resize-y"
+                  style={{ minHeight: '88px' }}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs uppercase tracking-wider font-semibold mb-1.5 text-[var(--text-secondary)]">
+                  Autor / Assinatura (Opcional)
+                </label>
+                <input
+                  type="text"
+                  value={formAuthor}
+                  onChange={(e) => setFormAuthor(e.target.value)}
+                  placeholder="Ex: Liderança de Louvor"
+                  maxLength={100}
+                  className="input-field w-full px-3.5 py-2.5 rounded-xl text-sm border border-[var(--border-color)] bg-[var(--surface-variant)] text-[var(--text-primary)]"
+                  style={{ minHeight: '44px' }}
+                />
+              </div>
+
+              <div className="flex items-center gap-2.5 pt-1">
+                <input
+                  type="checkbox"
+                  id="important-checkbox"
+                  checked={formImportant}
+                  onChange={(e) => setFormImportant(e.target.checked)}
+                  className="w-4 h-4 rounded text-amber-500 accent-amber-500 cursor-pointer"
+                />
+                <label htmlFor="important-checkbox" className="text-xs sm:text-sm font-medium text-[var(--text-primary)] cursor-pointer select-none">
+                  Marcar como aviso importante
+                </label>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[var(--divider-color)] mt-2">
+                <button
+                  type="button"
+                  className="btn btn-secondary min-h-[44px] px-4 py-2 text-xs sm:text-sm font-semibold rounded-xl"
+                  onClick={handleCloseModal}
+                  disabled={formSubmitting}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary min-h-[44px] px-5 py-2 text-xs sm:text-sm font-semibold rounded-xl inline-flex items-center justify-center gap-2"
+                  disabled={formSubmitting || !formTitle.trim() || !formContent.trim()}
+                >
+                  {formSubmitting ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      <span>Salvando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check size={16} />
+                      <span>{editingAnnouncement ? 'Salvar Alterações' : 'Publicar Aviso'}</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Confirmação de Exclusão */}
+      {deletingAnnouncement && (
+        <div
+          className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={() => !formSubmitting && setDeletingAnnouncement(null)}
+        >
+          <div
+            className="modal-content rounded-2xl shadow-2xl relative w-full max-w-sm p-5 sm:p-6"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'var(--surface-color)',
+              border: '1px solid var(--border-color)',
+            }}
+          >
+            <div className="flex flex-col items-center text-center gap-3">
+              <div className="w-12 h-12 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center shrink-0">
+                <Trash2 size={24} />
+              </div>
+              <h3 className="text-base sm:text-lg font-bold text-[var(--text-primary)]">
+                Excluir Aviso
+              </h3>
+              <p className="text-xs sm:text-sm text-[var(--text-secondary)] leading-relaxed">
+                Tem certeza que deseja excluir o aviso <strong>"{deletingAnnouncement.title}"</strong>? Esta ação não pode ser desfeita.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-5 mt-2 border-t border-[var(--divider-color)]">
+              <button
+                type="button"
+                className="btn btn-secondary min-h-[44px] px-4 py-2 text-xs sm:text-sm font-semibold rounded-xl"
+                onClick={() => setDeletingAnnouncement(null)}
+                disabled={formSubmitting}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn min-h-[44px] px-4 py-2 text-xs sm:text-sm font-semibold rounded-xl bg-red-600 hover:bg-red-700 text-white inline-flex items-center justify-center gap-2"
+                onClick={handleDeleteAnnouncement}
+                disabled={formSubmitting}
+              >
+                {formSubmitting ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    <span>Excluindo...</span>
+                  </>
+                ) : (
+                  <span>Excluir</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

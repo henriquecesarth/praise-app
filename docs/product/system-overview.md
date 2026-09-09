@@ -65,6 +65,14 @@ Funções musicais como Ministro, Vocalista, Violão e Bateria são classificaç
 - persistência completa no Firestore com isolamento por usuário (user_id);
 - exportação PDF no browser.
 
+### Dashboard announcements
+
+- avisos com título, conteúdo, autor e indicador de importância;
+- persistência no Firestore (`ministry_announcements`) com escopo estrito por ministério (`ministry_id`);
+- RBAC integrado: integrantes com papel `member` possuem acesso somente leitura; administradores (`admin`) possuem CRUD completo;
+- interface com carregamento, erro com retry sem colisão com empty state e modais acessíveis com proteção contra duplo envio;
+- ordenação decrescente por data e limites de consulta seguros.
+
 ### PWA
 
 - manifest instalável;
@@ -92,6 +100,7 @@ Funções musicais como Ministro, Vocalista, Violão e Bateria são classificaç
 - **Folder**: agrupamento de músicas.
 - **Liturgy**: ordem de culto separada do modelo de escala.
 - **Smart Chord**: cifra editável e transponível.
+- **Announcement**: aviso ou comunicado interno da equipe vinculado a um ministério.
 
 ## Commercial Structure and Plans
 
@@ -101,7 +110,7 @@ Consulte a especificação detalhada em [Estrutura Comercial e Planos](plans-and
 
 ## Current Limits
 
-- Avisos do dashboard são dados mock locais.
+- Avisos do dashboard são persistidos por ministério no Firestore sob `ministry_announcements`.
 - Liturgias acessíveis via rota canônica /liturgias, sidebar desktop e cartão Ministério no mobile.
 - Não há gateway de pagamento integrado nesta etapa inicial (apenas modelagem de limites).
 - Não há mobile nativo no checkout.

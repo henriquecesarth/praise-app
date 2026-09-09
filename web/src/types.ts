@@ -60,6 +60,18 @@ export interface Liturgy {
   updatedAt: string;
 }
 
+export interface Announcement {
+  id: string;
+  ministryId: string;
+  title: string;
+  content: string;
+  author: string;
+  important: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SongLink {
   id?: string;
   label: string; // Ex: 'Letra', 'Cifra', 'Áudio', 'Vídeo' ou rótulo customizado
