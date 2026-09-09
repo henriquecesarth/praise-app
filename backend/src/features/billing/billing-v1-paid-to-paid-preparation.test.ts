@@ -2082,4 +2082,187 @@ describe('Phase 3B.1 — Billing Transition V1 Paid -> Paid Target Recurrence Pr
       expect((mockProvider as any).getPayment).toHaveBeenCalledWith('pay_exact_webhook');
     });
   });
+
+  // ===========================================================================
+  // Phase 4A.6A — Server-Side Delinquency Gate Hardening (Finding 2)
+  // ===========================================================================
+  describe('Phase 4A.6A — Server-Side Delinquency Gate Hardening', () => {
+    it('Seção 25 & 39: deve rejeitar createCheckout com 409 DELINQUENT_SUBSCRIPTION_ACTIVE quando assinatura paga está past_due e slot está vazio', async () => {
+      const ministryId = `min_delinq_gate_${Math.random().toString(36).substring(2, 7)}`;
+      setupActivePaidContract({
+        ministryId,
+        planId: 'essential',
+        interval: 'monthly',
+        amountCents: 3490,
+        currentPeriodStart: '2026-08-01',
+        currentPeriodEnd: '2026-09-01',
+      });
+
+      // Simula assinatura past_due e slot nulo
+      const appSub = appSubscriptionsStore.get(ministryId);
+      appSub.billing_status = 'past_due';
+      appSub.status = 'past_due';
+      const billingSub = subscriptionsStore.get(ministryId)!;
+      billingSub.status = 'past_due';
+
+      // Confirma que slot ativo está vazio
+      expect(activeSlotsStore.size).toBe(0);
+
+      // Chamada a createCheckout tentando migrar para Pro
+      await expect(
+        billingService.createCheckout(ministryId, 'usr_admin', {
+          planId: 'pro',
+          interval: 'monthly',
+        })
+      ).rejects.toThrow(
+        expect.objectContaining({
+          statusCode: 409,
+          details: expect.objectContaining({ code: 'DELINQUENT_SUBSCRIPTION_ACTIVE' }),
+        })
+      );
+
+      // Invariante de Efeito Colateral Zero:
+      expect(mockProvider.createCheckout).not.toHaveBeenCalled();
+      expect(planChangesStore.size).toBe(0);
+      expect(activeSlotsStore.size).toBe(0);
+    });
+
+    it('Seção 26 & 41: deve rejeitar tentativa de alteração de adicionais durante inadimplência', async () => {
+      const ministryId = `min_delinq_addon_${Math.random().toString(36).substring(2, 7)}`;
+      setupActivePaidContract({
+        ministryId,
+        planId: 'essential',
+        interval: 'monthly',
+        addonBlocks: 0,
+        amountCents: 3490,
+        currentPeriodStart: '2026-08-01',
+        currentPeriodEnd: '2026-09-01',
+      });
+
+      const appSub = appSubscriptionsStore.get(ministryId);
+      appSub.billing_status = 'past_due';
+
+      await expect(
+        billingService.createCheckout(ministryId, 'usr_admin', {
+          planId: 'essential',
+          interval: 'monthly',
+          addonBlocks: 2,
+        })
+      ).rejects.toThrow(
+        expect.objectContaining({
+          statusCode: 409,
+          details: expect.objectContaining({ code: 'DELINQUENT_SUBSCRIPTION_ACTIVE' }),
+        })
+      );
+
+      expect(mockProvider.createCheckout).not.toHaveBeenCalled();
+      expect(planChangesStore.size).toBe(0);
+    });
+
+    it('Seção 28: deve rejeitar alteração de plano mesmo durante a carência de 7 dias (accessMode: grace)', async () => {
+      const ministryId = `min_delinq_grace_${Math.random().toString(36).substring(2, 7)}`;
+      setupActivePaidContract({
+        ministryId,
+        planId: 'essential',
+        interval: 'monthly',
+        amountCents: 3490,
+        currentPeriodStart: '2026-08-01',
+        currentPeriodEnd: '2026-09-01',
+      });
+
+      const appSub = appSubscriptionsStore.get(ministryId);
+      appSub.billing_status = 'past_due';
+      appSub.access_mode = 'grace';
+      appSub.grace_period_expires_at = '2026-09-08T00:00:00.000Z';
+
+      await expect(
+        billingService.createCheckout(ministryId, 'usr_admin', {
+          planId: 'pro',
+          interval: 'monthly',
+        })
+      ).rejects.toThrow(
+        expect.objectContaining({
+          statusCode: 409,
+          details: expect.objectContaining({ code: 'DELINQUENT_SUBSCRIPTION_ACTIVE' }),
+        })
+      );
+
+      expect(mockProvider.createCheckout).not.toHaveBeenCalled();
+    });
+
+    it('Seção 29: deve rejeitar alteração de plano em modo restricted_over_limit por inadimplência expirada', async () => {
+      const ministryId = `min_delinq_rest_${Math.random().toString(36).substring(2, 7)}`;
+      setupActivePaidContract({
+        ministryId,
+        planId: 'essential',
+        interval: 'monthly',
+        amountCents: 3490,
+        currentPeriodStart: '2026-08-01',
+        currentPeriodEnd: '2026-09-01',
+      });
+
+      const appSub = appSubscriptionsStore.get(ministryId);
+      appSub.billing_status = 'past_due';
+      appSub.access_mode = 'restricted_over_limit';
+
+      await expect(
+        billingService.createCheckout(ministryId, 'usr_admin', {
+          planId: 'pro',
+          interval: 'monthly',
+        })
+      ).rejects.toThrow(
+        expect.objectContaining({
+          statusCode: 409,
+          details: expect.objectContaining({ code: 'DELINQUENT_SUBSCRIPTION_ACTIVE' }),
+        })
+      );
+
+      expect(mockProvider.createCheckout).not.toHaveBeenCalled();
+    });
+
+    it('Seção 40: assinatura saudável (active) com slot livre cria checkout normalmente', async () => {
+      const ministryId = `min_healthy_${Math.random().toString(36).substring(2, 7)}`;
+      setupActivePaidContract({
+        ministryId,
+        planId: 'essential',
+        interval: 'monthly',
+        amountCents: 3490,
+        currentPeriodStart: '2026-08-01',
+        currentPeriodEnd: '2026-09-01',
+      });
+
+      const res = await billingService.createCheckout(ministryId, 'usr_admin', {
+        planId: 'pro',
+        interval: 'monthly',
+      });
+
+      expect(res.checkoutUrl).toBeDefined();
+      expect(mockProvider.createCheckout).toHaveBeenCalledTimes(1);
+      expect(planChangesStore.size).toBe(1);
+    });
+
+    it('Seção 21: compra inicial Free -> Paid legítima não é bloqueada pelo gate de inadimplência', async () => {
+      const ministryId = `min_free_initial_${Math.random().toString(36).substring(2, 7)}`;
+      appSubscriptionsStore.set(ministryId, {
+        id: ministryId,
+        ministry_id: ministryId,
+        subscription_mode: 'free',
+        plan_id: 'free',
+        status: 'active',
+      });
+
+      mockProvider.createCustomer = vi.fn().mockResolvedValue({ id: `cus_${ministryId}` });
+      mockMinistryRepo = {
+        getMinistry: vi.fn().mockResolvedValue({ id: ministryId, name: 'Free Ministry' }),
+      };
+
+      const res = await billingService.createCheckout(ministryId, 'usr_admin', {
+        planId: 'essential',
+        interval: 'monthly',
+      });
+
+      expect(res.checkoutUrl).toBeDefined();
+      expect(mockProvider.createCheckout).toHaveBeenCalledTimes(1);
+    });
+  });
 });

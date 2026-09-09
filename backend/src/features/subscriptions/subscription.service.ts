@@ -30,6 +30,148 @@ import {
   resolveCustomerGraceReason,
 } from '../billing/customer-transition-summary.mapper';
 import { AppError } from '../../middleware/error-handler';
+import { getBillingDate } from '../../utils/billing-date';
+import { config } from '../../config/unifiedConfig';
+
+/**
+ * Correlaciona deterministicamente a fatura exata da obrigação de renovação corrente inadimplente (Phase 4A.6A).
+ * Retorna null em caso de ambiguidade, ausência de evidência ou obrigações não correlatas (fail-closed).
+ */
+export function resolveCurrentRenewalRecoveryInvoice(
+  transactions: any[],
+  context: {
+    ministryId: string;
+    billingSub: BillingSubscriptionRecord | null;
+    subscription: MinistrySubscriptionRecord;
+    activeTransitionResult: any;
+    timeZone?: string;
+  }
+): string | null {
+  const { ministryId, billingSub, subscription, activeTransitionResult, timeZone = config.billingTimezone || 'America/Sao_Paulo' } = context;
+
+  // 1. Filtrar candidatos estritamente elegíveis
+  const targetProviderSubId = billingSub?.provider_subscription_id;
+
+  const eligibleCandidates = (transactions || []).filter((tx: any) => {
+    // 1.1 Tenant e provedor
+    if (tx.ministry_id && tx.ministry_id !== ministryId) return false;
+    if (billingSub?.provider && tx.provider && tx.provider !== billingSub.provider) return false;
+
+    // 1.2 Assinatura corrente do provedor (se conhecida)
+    if (targetProviderSubId) {
+      if (!tx.provider_subscription_id || tx.provider_subscription_id !== targetProviderSubId) {
+        return false;
+      }
+    }
+
+    // 1.3 Excluir categoricamente obrigações de ajuste e pontuais (early activation, setup, etc.)
+    if (
+      tx.transaction_type === 'prorated_early_activation_adjustment' ||
+      tx.quote_id ||
+      tx.attempt_id
+    ) {
+      return false;
+    }
+
+    // Se transaction_type estiver preenchido, deve ser recorrente
+    if (tx.transaction_type && tx.transaction_type !== 'recurring_payment') {
+      return false;
+    }
+
+    // 1.4 Status financeiramente vivo/recuperável
+    if (tx.status !== 'overdue' && tx.status !== 'pending') {
+      return false;
+    }
+
+    // 1.5 Deve possuir URL de fatura não vazia
+    if (!tx.invoice_url || typeof tx.invoice_url !== 'string') {
+      return false;
+    }
+
+    return true;
+  });
+
+  if (eligibleCandidates.length === 0) {
+    return null;
+  }
+
+  // 2. Se há correspondência direta com o ID do pagamento de renovação alvo da transição ativa
+  const targetPaymentId =
+    activeTransitionResult?.transition?.future_provider_payment_id ||
+    activeTransitionResult?.transition?.target_provider_payment_id;
+
+  if (targetPaymentId) {
+    const directMatch = eligibleCandidates.find(
+      (tx: any) => tx.provider_payment_id === targetPaymentId || tx.id?.endsWith(`_${targetPaymentId}`)
+    );
+    if (directMatch?.invoice_url) {
+      return directMatch.invoice_url;
+    }
+  }
+
+  // 3. Montar conjunto de datas de referência do ciclo comercial vigente
+  const validCycleDates = new Set<string>();
+
+  const addDateVariants = (rawDate: string | null | undefined) => {
+    if (!rawDate) return;
+    const str = String(rawDate).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+      validCycleDates.add(str);
+    } else {
+      try {
+        const bd = getBillingDate(str, timeZone);
+        validCycleDates.add(bd);
+      } catch (_e) {}
+      const datePart = str.split('T')[0];
+      if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+        validCycleDates.add(datePart);
+      }
+    }
+  };
+
+  addDateVariants(activeTransitionResult?.transition?.effective_billing_date);
+  addDateVariants(billingSub?.effective_billing_date);
+  addDateVariants(billingSub?.current_period_end_billing_date);
+  addDateVariants(billingSub?.current_period_start_billing_date);
+  addDateVariants(subscription.current_period_end);
+  addDateVariants(subscription.current_period_start);
+  addDateVariants(subscription.grace_period_expires_billing_date);
+
+  // 4. Se temos datas de ciclo válidas:
+  if (validCycleDates.size > 0) {
+    if (eligibleCandidates.length === 1) {
+      const singleCandidate = eligibleCandidates[0];
+      const txDueDate = singleCandidate.due_date ? String(singleCandidate.due_date).trim().split('T')[0] : null;
+      // Se possui due_date, deve corresponder ao ciclo. Se não possui due_date (legado/mock sem campo), aceita.
+      if (!txDueDate || validCycleDates.has(txDueDate)) {
+        return singleCandidate.invoice_url;
+      }
+      return null;
+    }
+
+    const cycleMatchedCandidates = eligibleCandidates.filter((tx: any) => {
+      const txDueDate = tx.due_date ? String(tx.due_date).trim().split('T')[0] : null;
+      return txDueDate && validCycleDates.has(txDueDate);
+    });
+
+    // 4.1 Se exatamente um candidato corresponde ao ciclo corrente:
+    if (cycleMatchedCandidates.length === 1) {
+      return cycleMatchedCandidates[0].invoice_url;
+    }
+
+    // 4.2 Se nenhum ou mais de um candidato correspondeu: ambiguidade / ausência de correlação -> Fail closed
+    return null;
+  }
+
+  // 5. Se não temos datas de ciclo válidas:
+  // Se houver exatamente 1 candidato elegível e sem ambiguidade:
+  if (eligibleCandidates.length === 1) {
+    return eligibleCandidates[0].invoice_url;
+  }
+
+  // Múltiplos candidatos sem metadados suficientes para distinguir o ciclo -> Fail closed
+  return null;
+}
 
 export class SubscriptionService {
   constructor(
@@ -142,13 +284,14 @@ export class SubscriptionService {
     if (isPastDue && !hasFinancialAttention) {
       try {
         if (this.billingRepo && typeof this.billingRepo.getTransactions === 'function') {
-          const txs = await this.billingRepo.getTransactions(ministryId, 5);
-          const overdueTx = (txs || []).find(
-            (t: any) => (t.status === 'overdue' || t.status === 'pending') && t.invoice_url
-          );
-          if (overdueTx?.invoice_url) {
-            recoveryInvoiceUrl = overdueTx.invoice_url;
-          }
+          const txs = await this.billingRepo.getTransactions(ministryId, 20);
+          recoveryInvoiceUrl = resolveCurrentRenewalRecoveryInvoice(txs, {
+            ministryId,
+            billingSub,
+            subscription,
+            activeTransitionResult,
+            timeZone: config.billingTimezone,
+          });
         }
       } catch (_err) {
         recoveryInvoiceUrl = null;

@@ -536,6 +536,26 @@ export class BillingService {
     const currentBillingSub = await this.billingRepo.getSubscription(ministryId, this.provider.name);
     const currentAppSub = await this.subscriptionRepo.getSubscription(ministryId);
 
+    // Gate de Segurança Financeira (Phase 4A.6A): Impedir novas mutações (planos/adicionais) durante inadimplência
+    const isCurrentPaid =
+      currentAppSub?.subscription_mode === 'paid' ||
+      (currentAppSub?.plan_id && currentAppSub.plan_id !== 'free' && currentAppSub.subscription_mode !== 'complimentary') ||
+      (currentBillingSub && currentBillingSub.plan_id !== 'free' && currentBillingSub.status !== 'canceled');
+
+    if (isCurrentPaid && currentAppSub?.subscription_mode !== 'complimentary') {
+      const isDelinquent =
+        currentAppSub?.billing_status === 'past_due' ||
+        currentBillingSub?.status === 'past_due';
+
+      if (isDelinquent) {
+        throw new AppError(
+          409,
+          'Não é possível iniciar alteração de plano ou adicionais enquanto houver inadimplência pendente de regularização na assinatura atual.',
+          { code: 'DELINQUENT_SUBSCRIPTION_ACTIVE' }
+        );
+      }
+    }
+
     const isSourceFree =
       (!currentBillingSub || currentBillingSub.status !== 'active' || currentBillingSub.plan_id === 'free') &&
       (!currentAppSub || currentAppSub.subscription_mode !== 'paid' || currentAppSub.plan_id === 'free');

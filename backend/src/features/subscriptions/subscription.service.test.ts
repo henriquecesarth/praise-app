@@ -1078,5 +1078,325 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
       expect(summary.paymentStatus.canRecoverPayment).toBe(false);
       expect(summary.paymentStatus.recoveryInvoiceUrl).toBeNull();
     });
+
+    describe('Phase 4A.6A: Renewal Recovery Obligation Correlation Hardening', () => {
+      it('Seção 12: deve priorizar a fatura da assinatura corrente e ignorar checkout de ativação antecipada pendente e renovação antiga', async () => {
+        const mockSubRepo = {
+          getSubscription: vi.fn().mockResolvedValue({
+            id: 'min-corr-1',
+            ministry_id: 'min-corr-1',
+            plan_id: 'essential',
+            member_addon_blocks: 0,
+            billing_status: 'past_due',
+            subscription_mode: 'paid',
+            cancel_at_period_end: false,
+            current_period_start: '2026-08-01T00:00:00.000Z',
+            current_period_end: '2026-09-01T00:00:00.000Z',
+          }),
+          getUsage: vi.fn().mockResolvedValue({
+            id: 'min-corr-1',
+            ministry_id: 'min-corr-1',
+            members_count: 20,
+            songs_count: 50,
+          }),
+        };
+        const mockBillingRepo = {
+          getActiveTransitionForMinistry: vi.fn().mockResolvedValue(null),
+          getSubscription: vi.fn().mockResolvedValue({
+            id: 'min-corr-1_asaas',
+            ministry_id: 'min-corr-1',
+            provider: 'asaas',
+            provider_subscription_id: 'sub_current_123',
+            status: 'past_due',
+            current_period_start_billing_date: '2026-08-01',
+            current_period_end_billing_date: '2026-09-01',
+          }),
+          getTransactions: vi.fn().mockResolvedValue([
+            // A) Tentativa recente de ajuste de ativação antecipada pendente
+            {
+              id: 'asaas_early_adj_999',
+              ministry_id: 'min-corr-1',
+              provider: 'asaas',
+              provider_payment_id: 'pay_early_999',
+              status: 'pending',
+              transaction_type: 'prorated_early_activation_adjustment',
+              amount_cents: 1250,
+              invoice_url: 'https://sandbox.asaas.com/i/wrong_early_activation',
+              created_at: '2026-09-05T12:00:00.000Z',
+            },
+            // B) Fatura de renovação legítima do ciclo corrente
+            {
+              id: 'asaas_renewal_current_456',
+              ministry_id: 'min-corr-1',
+              provider: 'asaas',
+              provider_payment_id: 'pay_renewal_456',
+              provider_subscription_id: 'sub_current_123',
+              status: 'overdue',
+              transaction_type: 'recurring_payment',
+              due_date: '2026-09-01',
+              amount_cents: 3490,
+              invoice_url: 'https://sandbox.asaas.com/i/correct_renewal_invoice',
+              created_at: '2026-09-01T00:00:00.000Z',
+            },
+            // C) Fatura vencida de ciclo antigo ou assinatura anterior
+            {
+              id: 'asaas_renewal_old_111',
+              ministry_id: 'min-corr-1',
+              provider: 'asaas',
+              provider_payment_id: 'pay_renewal_111',
+              provider_subscription_id: 'sub_old_prior',
+              status: 'overdue',
+              transaction_type: 'recurring_payment',
+              due_date: '2026-07-01',
+              amount_cents: 3490,
+              invoice_url: 'https://sandbox.asaas.com/i/wrong_old_invoice',
+              created_at: '2026-07-01T00:00:00.000Z',
+            },
+          ]),
+        };
+
+        const service = new SubscriptionService(mockSubRepo as any, mockBillingRepo as any);
+        const summary = await service.getSubscriptionSummary('min-corr-1');
+
+        expect(summary.paymentStatus.state).toBe('past_due');
+        expect(summary.paymentStatus.canRecoverPayment).toBe(true);
+        expect(summary.paymentStatus.recoveryInvoiceUrl).toBe('https://sandbox.asaas.com/i/correct_renewal_invoice');
+      });
+
+      it('Seção 13: deve ignorar faturas de outra assinatura do provedor (sub_old)', async () => {
+        const mockSubRepo = {
+          getSubscription: vi.fn().mockResolvedValue({
+            id: 'min-corr-2',
+            ministry_id: 'min-corr-2',
+            plan_id: 'essential',
+            billing_status: 'past_due',
+            subscription_mode: 'paid',
+            current_period_end: '2026-09-01T00:00:00.000Z',
+          }),
+          getUsage: vi.fn().mockResolvedValue({ members_count: 5, songs_count: 10 }),
+        };
+        const mockBillingRepo = {
+          getActiveTransitionForMinistry: vi.fn().mockResolvedValue(null),
+          getSubscription: vi.fn().mockResolvedValue({
+            id: 'min-corr-2_asaas',
+            ministry_id: 'min-corr-2',
+            provider: 'asaas',
+            provider_subscription_id: 'sub_current_active',
+            status: 'past_due',
+          }),
+          getTransactions: vi.fn().mockResolvedValue([
+            {
+              id: 'tx_sub_old',
+              ministry_id: 'min-corr-2',
+              provider: 'asaas',
+              provider_subscription_id: 'sub_old_cancelled',
+              status: 'overdue',
+              due_date: '2026-09-01',
+              invoice_url: 'https://sandbox.asaas.com/i/wrong_sub_old',
+            },
+            {
+              id: 'tx_sub_current',
+              ministry_id: 'min-corr-2',
+              provider: 'asaas',
+              provider_subscription_id: 'sub_current_active',
+              status: 'overdue',
+              due_date: '2026-09-01',
+              invoice_url: 'https://sandbox.asaas.com/i/correct_sub_current',
+            },
+          ]),
+        };
+
+        const service = new SubscriptionService(mockSubRepo as any, mockBillingRepo as any);
+        const summary = await service.getSubscriptionSummary('min-corr-2');
+
+        expect(summary.paymentStatus.recoveryInvoiceUrl).toBe('https://sandbox.asaas.com/i/correct_sub_current');
+      });
+
+      it('Seção 14: deve distinguir ciclo corrente de ciclo antigo da mesma assinatura via due_date', async () => {
+        const mockSubRepo = {
+          getSubscription: vi.fn().mockResolvedValue({
+            id: 'min-corr-3',
+            ministry_id: 'min-corr-3',
+            plan_id: 'essential',
+            billing_status: 'past_due',
+            subscription_mode: 'paid',
+            current_period_end: '2026-09-01T00:00:00.000Z',
+          }),
+          getUsage: vi.fn().mockResolvedValue({ members_count: 5, songs_count: 10 }),
+        };
+        const mockBillingRepo = {
+          getActiveTransitionForMinistry: vi.fn().mockResolvedValue(null),
+          getSubscription: vi.fn().mockResolvedValue({
+            id: 'min-corr-3_asaas',
+            ministry_id: 'min-corr-3',
+            provider: 'asaas',
+            provider_subscription_id: 'sub_same_123',
+            status: 'past_due',
+            current_period_end_billing_date: '2026-09-01',
+          }),
+          getTransactions: vi.fn().mockResolvedValue([
+            {
+              id: 'tx_same_sub_current_cycle',
+              ministry_id: 'min-corr-3',
+              provider: 'asaas',
+              provider_subscription_id: 'sub_same_123',
+              status: 'overdue',
+              due_date: '2026-09-01',
+              invoice_url: 'https://sandbox.asaas.com/i/rec_current_cycle',
+            },
+            {
+              id: 'tx_same_sub_old_cycle',
+              ministry_id: 'min-corr-3',
+              provider: 'asaas',
+              provider_subscription_id: 'sub_same_123',
+              status: 'overdue',
+              due_date: '2026-08-01',
+              invoice_url: 'https://sandbox.asaas.com/i/rec_old_cycle',
+            },
+          ]),
+        };
+
+        const service = new SubscriptionService(mockSubRepo as any, mockBillingRepo as any);
+        const summary = await service.getSubscriptionSummary('min-corr-3');
+
+        expect(summary.paymentStatus.recoveryInvoiceUrl).toBe('https://sandbox.asaas.com/i/rec_current_cycle');
+      });
+
+      it('Seção 9 e 37: deve falhar fechado com recoveryInvoiceUrl = null quando candidatos são ambíguos ou não correspondem ao ciclo', async () => {
+        const mockSubRepo = {
+          getSubscription: vi.fn().mockResolvedValue({
+            id: 'min-corr-4',
+            ministry_id: 'min-corr-4',
+            plan_id: 'essential',
+            billing_status: 'past_due',
+            subscription_mode: 'paid',
+            current_period_end: '2026-09-01T00:00:00.000Z',
+          }),
+          getUsage: vi.fn().mockResolvedValue({ members_count: 5, songs_count: 10 }),
+        };
+        const mockBillingRepo = {
+          getActiveTransitionForMinistry: vi.fn().mockResolvedValue(null),
+          getSubscription: vi.fn().mockResolvedValue({
+            id: 'min-corr-4_asaas',
+            ministry_id: 'min-corr-4',
+            provider: 'asaas',
+            provider_subscription_id: 'sub_curr',
+            status: 'past_due',
+            current_period_end_billing_date: '2026-09-01',
+          }),
+          getTransactions: vi.fn().mockResolvedValue([
+            // Transação antiga que não corresponde ao ciclo corrente
+            {
+              id: 'tx_old_cycle_only',
+              ministry_id: 'min-corr-4',
+              provider: 'asaas',
+              provider_subscription_id: 'sub_curr',
+              status: 'overdue',
+              due_date: '2026-06-01',
+              invoice_url: 'https://sandbox.asaas.com/i/rec_ancient',
+            },
+          ]),
+        };
+
+        const service = new SubscriptionService(mockSubRepo as any, mockBillingRepo as any);
+        const summary = await service.getSubscriptionSummary('min-corr-4');
+
+        expect(summary.paymentStatus.state).toBe('past_due');
+        expect(summary.paymentStatus.canRecoverPayment).toBe(true);
+        expect(summary.paymentStatus.recoveryInvoiceUrl).toBeNull();
+      });
+
+      it('Seção 15: transação de ativação antecipada isolada NUNCA vira recoveryInvoiceUrl', async () => {
+        const mockSubRepo = {
+          getSubscription: vi.fn().mockResolvedValue({
+            id: 'min-corr-5',
+            ministry_id: 'min-corr-5',
+            plan_id: 'essential',
+            billing_status: 'past_due',
+            subscription_mode: 'paid',
+            current_period_end: '2026-09-01T00:00:00.000Z',
+          }),
+          getUsage: vi.fn().mockResolvedValue({ members_count: 5, songs_count: 10 }),
+        };
+        const mockBillingRepo = {
+          getActiveTransitionForMinistry: vi.fn().mockResolvedValue(null),
+          getSubscription: vi.fn().mockResolvedValue({
+            id: 'min-corr-5_asaas',
+            ministry_id: 'min-corr-5',
+            provider: 'asaas',
+            provider_subscription_id: 'sub_curr',
+            status: 'past_due',
+            current_period_end_billing_date: '2026-09-01',
+          }),
+          getTransactions: vi.fn().mockResolvedValue([
+            {
+              id: 'tx_early_activation_only',
+              ministry_id: 'min-corr-5',
+              provider: 'asaas',
+              provider_payment_id: 'pay_early_123',
+              transaction_type: 'prorated_early_activation_adjustment',
+              quote_id: 'quote_123',
+              attempt_id: 'att_123',
+              status: 'pending',
+              due_date: '2026-09-01',
+              invoice_url: 'https://sandbox.asaas.com/i/rec_early_only',
+            },
+          ]),
+        };
+
+        const service = new SubscriptionService(mockSubRepo as any, mockBillingRepo as any);
+        const summary = await service.getSubscriptionSummary('min-corr-5');
+
+        expect(summary.paymentStatus.state).toBe('past_due');
+        expect(summary.paymentStatus.canRecoverPayment).toBe(true);
+        expect(summary.paymentStatus.recoveryInvoiceUrl).toBeNull();
+      });
+
+      it('deve correlacionar diretamente via future_provider_payment_id da transição ativa quando presente', async () => {
+        const mockSubRepo = {
+          getSubscription: vi.fn().mockResolvedValue({
+            id: 'min-corr-6',
+            ministry_id: 'min-corr-6',
+            plan_id: 'essential',
+            billing_status: 'past_due',
+            subscription_mode: 'paid',
+            current_period_end: '2026-09-01T00:00:00.000Z',
+          }),
+          getUsage: vi.fn().mockResolvedValue({ members_count: 5, songs_count: 10 }),
+        };
+        const mockBillingRepo = {
+          getActiveTransitionForMinistry: vi.fn().mockResolvedValue({
+            transition: {
+              id: 'tr_scheduled_1',
+              future_provider_payment_id: 'pay_exact_target_777',
+              effective_billing_date: '2026-09-01',
+            },
+          }),
+          getSubscription: vi.fn().mockResolvedValue({
+            id: 'min-corr-6_asaas',
+            ministry_id: 'min-corr-6',
+            provider: 'asaas',
+            provider_subscription_id: 'sub_curr',
+            status: 'past_due',
+          }),
+          getTransactions: vi.fn().mockResolvedValue([
+            {
+              id: 'asaas_pay_exact_target_777',
+              ministry_id: 'min-corr-6',
+              provider: 'asaas',
+              provider_payment_id: 'pay_exact_target_777',
+              provider_subscription_id: 'sub_curr',
+              status: 'overdue',
+              invoice_url: 'https://sandbox.asaas.com/i/target_payment_url',
+            },
+          ]),
+        };
+
+        const service = new SubscriptionService(mockSubRepo as any, mockBillingRepo as any);
+        const summary = await service.getSubscriptionSummary('min-corr-6');
+
+        expect(summary.paymentStatus.recoveryInvoiceUrl).toBe('https://sandbox.asaas.com/i/target_payment_url');
+      });
+    });
   });
 });
