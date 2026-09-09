@@ -76,6 +76,32 @@ describe('Phase 4A.6C: Recurring Renewal Ingestion & Recovery Runtime Hardening'
       getCustomer: vi.fn().mockResolvedValue(null),
       setCustomer: vi.fn().mockResolvedValue(undefined),
       updateCustomer: vi.fn().mockResolvedValue(undefined),
+      settleOrdinaryRecurringRenewalAtomic: vi.fn().mockImplementation(async (params: any) => {
+        await mockSubRepo.setSubscription({
+          ...currentAppSub,
+          billing_status: 'active',
+          grace_period_expires_at: null,
+          current_period_start: '2026-10-09T00:00:00.000Z',
+          current_period_end: '2026-11-09T00:00:00.000Z',
+        });
+        await mockBillingRepo.saveTransaction({
+          id: `asaas_${params.providerPaymentId}`,
+          ministry_id: params.ministryId,
+          provider: 'asaas',
+          provider_payment_id: params.providerPaymentId,
+          provider_subscription_id: params.providerSubscriptionId,
+          transaction_type: 'recurring_payment',
+          status: 'paid',
+          due_date: params.renewalBillingDate,
+          paid_billing_date: params.paidBillingDate || params.renewalBillingDate,
+          invoice_url: params.invoiceUrl,
+        });
+        return {
+          success: true,
+          outcome: 'settled',
+          transactionId: `asaas_${params.providerPaymentId}`,
+        };
+      }),
     };
 
     mockSubRepo = {
@@ -201,6 +227,26 @@ describe('Phase 4A.6C: Recurring Renewal Ingestion & Recovery Runtime Hardening'
       getCustomer: vi.fn().mockResolvedValue(null),
       setCustomer: vi.fn().mockResolvedValue(undefined),
       updateCustomer: vi.fn().mockResolvedValue(undefined),
+      settleOrdinaryRecurringRenewalAtomic: vi.fn()
+        .mockImplementationOnce(async (params: any) => {
+          await mockSubRepo.setSubscription({
+            ...currentAppSub,
+            billing_status: 'active',
+            grace_period_expires_at: null,
+            current_period_start: '2026-10-09T00:00:00.000Z',
+            current_period_end: '2026-11-09T00:00:00.000Z',
+          });
+          return {
+            success: true,
+            outcome: 'settled',
+            transactionId: `asaas_${params.providerPaymentId}`,
+          };
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          outcome: 'already_settled',
+          transactionId: `asaas_${renewalPaymentId}`,
+        }),
     };
 
     mockSubRepo = {
@@ -584,5 +630,371 @@ describe('Phase 4A.6C: Recurring Renewal Ingestion & Recovery Runtime Hardening'
       'ignored',
       expect.any(String)
     );
+  });
+
+  it('7. Future-cycle overdue regression: PAYMENT_OVERDUE for future cycle boundary does NOT mark current cycle past_due', async () => {
+    const currentAppSub: any = {
+      id: ministryId,
+      ministry_id: ministryId,
+      plan_id: 'lite',
+      subscription_mode: 'paid',
+      billing_status: 'active',
+      current_period_start: '2026-09-09T00:00:00.000Z',
+      current_period_end: '2026-10-09T00:00:00.000Z',
+    };
+
+    const currentBillingSub: any = {
+      id: `${ministryId}_asaas`,
+      ministry_id: ministryId,
+      provider: 'asaas',
+      provider_subscription_id: providerSubId,
+      current_period_end_billing_date: '2026-10-09',
+      status: 'active',
+    };
+
+    mockBillingRepo = {
+      registerWebhookEvent: vi.fn().mockResolvedValue({ isDuplicate: false }),
+      markWebhookEventProcessed: vi.fn().mockResolvedValue(undefined),
+      getSubscriptionByProviderSubscriptionId: vi.fn().mockResolvedValue(currentBillingSub),
+      getSubscription: vi.fn().mockResolvedValue(currentBillingSub),
+      getActiveTransitionSlot: vi.fn().mockResolvedValue(null),
+      saveTransaction: vi.fn().mockResolvedValue(undefined),
+    };
+
+    mockSubRepo = {
+      getSubscription: vi.fn().mockResolvedValue(currentAppSub),
+      setSubscription: vi.fn().mockResolvedValue(undefined),
+    };
+
+    mockProvider = {
+      name: 'asaas',
+      validateWebhookRequest: vi.fn().mockReturnValue(true),
+      parseWebhookEvent: vi.fn().mockReturnValue({
+        providerEventId: 'evt_future_overdue',
+        eventType: 'payment_overdue',
+        rawEventType: 'PAYMENT_OVERDUE',
+        providerPaymentId: 'pay_future_overdue',
+        providerSubscriptionId: providerSubId,
+        amountCents: 1490,
+        dueDate: '2026-11-09',
+        originalDueDate: '2026-11-09', // Future cycle boundary!
+        status: 'OVERDUE',
+      }),
+    };
+
+    const service = new BillingService(
+      mockBillingRepo as any,
+      {} as any,
+      mockSubRepo as any,
+      {} as any,
+      mockProvider as any,
+      {} as any
+    );
+
+    const result = await service.handleWebhook({ 'asaas-access-token': 'token' }, {});
+    expect(result.processed).toBe(false);
+    expect(result.reason).toBe('future_cycle_overdue_ignored');
+    expect(mockBillingRepo.markWebhookEventProcessed).toHaveBeenCalledWith(
+      'asaas',
+      'evt_future_overdue',
+      'ignored',
+      expect.stringContaining('ciclo futuro')
+    );
+    expect(mockSubRepo.setSubscription).not.toHaveBeenCalled();
+    expect(mockBillingRepo.saveTransaction).not.toHaveBeenCalled();
+  });
+
+  it('8. Detached adjustment overdue regression: PAYMENT_OVERDUE without providerSubscriptionId does NOT mark recurring sub past_due', async () => {
+    const currentAppSub: any = {
+      id: ministryId,
+      ministry_id: ministryId,
+      plan_id: 'lite',
+      subscription_mode: 'paid',
+      billing_status: 'active',
+      current_period_start: '2026-09-09T00:00:00.000Z',
+      current_period_end: '2026-10-09T00:00:00.000Z',
+    };
+
+    const currentBillingSub: any = {
+      id: `${ministryId}_asaas`,
+      ministry_id: ministryId,
+      provider: 'asaas',
+      provider_subscription_id: providerSubId,
+      current_period_end_billing_date: '2026-10-09',
+      status: 'active',
+    };
+
+    mockBillingRepo = {
+      registerWebhookEvent: vi.fn().mockResolvedValue({ isDuplicate: false }),
+      markWebhookEventProcessed: vi.fn().mockResolvedValue(undefined),
+      getCustomerByProviderId: vi.fn().mockResolvedValue({ ministry_id: ministryId }),
+      getSubscriptionByProviderSubscriptionId: vi.fn().mockResolvedValue(currentBillingSub),
+      getSubscription: vi.fn().mockResolvedValue(currentBillingSub),
+      getActiveTransitionSlot: vi.fn().mockResolvedValue(null),
+      saveTransaction: vi.fn().mockResolvedValue(undefined),
+    };
+
+    mockSubRepo = {
+      getSubscription: vi.fn().mockResolvedValue(currentAppSub),
+      setSubscription: vi.fn().mockResolvedValue(undefined),
+    };
+
+    mockProvider = {
+      name: 'asaas',
+      validateWebhookRequest: vi.fn().mockReturnValue(true),
+      parseWebhookEvent: vi.fn().mockReturnValue({
+        providerEventId: 'evt_detached_overdue',
+        eventType: 'payment_overdue',
+        rawEventType: 'PAYMENT_OVERDUE',
+        providerPaymentId: 'pay_detached_early_adj',
+        providerCustomerId: 'cus_test_123',
+        providerSubscriptionId: null, // Detached adjustment!
+        amountCents: 500,
+        dueDate: '2026-10-09',
+        originalDueDate: '2026-10-09',
+        status: 'OVERDUE',
+      }),
+    };
+
+    const service = new BillingService(
+      mockBillingRepo as any,
+      {} as any,
+      mockSubRepo as any,
+      {} as any,
+      mockProvider as any,
+      {} as any
+    );
+
+    const result = await service.handleWebhook({ 'asaas-access-token': 'token' }, {});
+    expect(result.processed).toBe(false);
+    expect(result.reason).toBe('unmatched_or_detached_overdue_ignored');
+    expect(mockSubRepo.setSubscription).not.toHaveBeenCalled();
+  });
+
+  it('9. Customer reconciliation with settled payment: reconcileBillingSubscription calls settleOrdinaryRecurringRenewalAtomic', async () => {
+    const currentBillingSub: any = {
+      id: `${ministryId}_asaas`,
+      ministry_id: ministryId,
+      provider: 'asaas',
+      provider_subscription_id: providerSubId,
+      plan_id: 'lite',
+      interval: 'monthly',
+      amount_cents: 1490,
+      status: 'past_due',
+      current_period_end_billing_date: '2026-10-09',
+    };
+
+    const currentAppSub: any = {
+      id: ministryId,
+      ministry_id: ministryId,
+      billing_status: 'past_due',
+      current_period_end: '2026-10-09T00:00:00.000Z',
+    };
+
+    mockBillingRepo = {
+      getFailedSupersedes: vi.fn().mockResolvedValue([]),
+      getSubscription: vi.fn().mockResolvedValue(currentBillingSub),
+      settleOrdinaryRecurringRenewalAtomic: vi.fn().mockResolvedValue({
+        success: true,
+        outcome: 'settled',
+        transactionId: `asaas_${renewalPaymentId}`,
+      }),
+    };
+
+    mockSubRepo = {
+      getSubscription: vi.fn().mockResolvedValue(currentAppSub),
+    };
+
+    mockProvider = {
+      name: 'asaas',
+      getSubscription: vi.fn().mockResolvedValue({ status: 'ACTIVE' }),
+      listSubscriptionPayments: vi.fn().mockResolvedValue([
+        {
+          id: renewalPaymentId,
+          subscriptionId: providerSubId,
+          status: 'RECEIVED',
+          amountCents: 1490,
+          originalDueDate: '2026-10-09',
+          dueDate: '2026-10-09',
+        },
+      ]),
+    };
+
+    const service = new BillingService(
+      mockBillingRepo as any,
+      {} as any,
+      mockSubRepo as any,
+      {} as any,
+      mockProvider as any,
+      {} as any
+    );
+
+    const result = await service.reconcileBillingSubscription(ministryId);
+    expect(result.reconciled).toBe(true);
+    expect(result.internalStatus).toBe('active');
+    expect(mockBillingRepo.settleOrdinaryRecurringRenewalAtomic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ministryId,
+        provider: 'asaas',
+        providerPaymentId: renewalPaymentId,
+        providerSubscriptionId: providerSubId,
+        renewalBillingDate: '2026-10-09',
+      })
+    );
+  });
+
+  it('10. Customer reconciliation with unpaid payment: reconcileBillingSubscription preserves past_due when payment is OVERDUE', async () => {
+    const currentBillingSub: any = {
+      id: `${ministryId}_asaas`,
+      ministry_id: ministryId,
+      provider: 'asaas',
+      provider_subscription_id: providerSubId,
+      plan_id: 'lite',
+      interval: 'monthly',
+      amount_cents: 1490,
+      status: 'past_due',
+      current_period_end_billing_date: '2026-10-09',
+    };
+
+    const currentAppSub: any = {
+      id: ministryId,
+      ministry_id: ministryId,
+      billing_status: 'past_due',
+      current_period_end: '2026-10-09T00:00:00.000Z',
+    };
+
+    mockBillingRepo = {
+      getFailedSupersedes: vi.fn().mockResolvedValue([]),
+      getSubscription: vi.fn().mockResolvedValue(currentBillingSub),
+      settleOrdinaryRecurringRenewalAtomic: vi.fn(),
+    };
+
+    mockSubRepo = {
+      getSubscription: vi.fn().mockResolvedValue(currentAppSub),
+    };
+
+    mockProvider = {
+      name: 'asaas',
+      getSubscription: vi.fn().mockResolvedValue({ status: 'ACTIVE' }),
+      listSubscriptionPayments: vi.fn().mockResolvedValue([
+        {
+          id: renewalPaymentId,
+          subscriptionId: providerSubId,
+          status: 'OVERDUE',
+          amountCents: 1490,
+          originalDueDate: '2026-10-09',
+          dueDate: '2026-10-09',
+        },
+      ]),
+    };
+
+    const service = new BillingService(
+      mockBillingRepo as any,
+      {} as any,
+      mockSubRepo as any,
+      {} as any,
+      mockProvider as any,
+      {} as any
+    );
+
+    const result = await service.reconcileBillingSubscription(ministryId);
+    expect(result.reconciled).toBe(false);
+    expect(result.internalStatus).toBe('past_due');
+    expect(mockBillingRepo.settleOrdinaryRecurringRenewalAtomic).not.toHaveBeenCalled();
+  });
+
+  it('11. Webhook and Reconciler convergence: both routes invoke the exact same atomic settlement engine', async () => {
+    const currentBillingSub: any = {
+      id: `${ministryId}_asaas`,
+      ministry_id: ministryId,
+      provider: 'asaas',
+      provider_subscription_id: providerSubId,
+      plan_id: 'lite',
+      interval: 'monthly',
+      amount_cents: 1490,
+      status: 'past_due',
+      current_period_end_billing_date: '2026-10-09',
+    };
+
+    const currentAppSub: any = {
+      id: ministryId,
+      ministry_id: ministryId,
+      plan_id: 'lite',
+      subscription_mode: 'paid',
+      billing_status: 'past_due',
+      member_addon_blocks: 0,
+      current_period_end: '2026-10-09T00:00:00.000Z',
+    };
+
+    const atomicSettleMock = vi.fn().mockResolvedValue({
+      success: true,
+      outcome: 'settled',
+      transactionId: `asaas_${renewalPaymentId}`,
+    });
+
+    mockBillingRepo = {
+      registerWebhookEvent: vi.fn().mockResolvedValue({ isDuplicate: false }),
+      markWebhookEventProcessed: vi.fn().mockResolvedValue(undefined),
+      getFailedSupersedes: vi.fn().mockResolvedValue([]),
+      getSubscriptionByProviderSubscriptionId: vi.fn().mockResolvedValue(currentBillingSub),
+      getSubscription: vi.fn().mockResolvedValue(currentBillingSub),
+      getActiveTransitionSlot: vi.fn().mockResolvedValue(null),
+      settleOrdinaryRecurringRenewalAtomic: atomicSettleMock,
+    };
+
+    mockSubRepo = {
+      getSubscription: vi.fn().mockResolvedValue(currentAppSub),
+    };
+
+    mockProvider = {
+      name: 'asaas',
+      validateWebhookRequest: vi.fn().mockReturnValue(true),
+      getSubscription: vi.fn().mockResolvedValue({ status: 'ACTIVE' }),
+      parseWebhookEvent: vi.fn().mockReturnValue({
+        providerEventId: 'evt_webhook_conv',
+        eventType: 'payment_confirmed',
+        rawEventType: 'PAYMENT_CONFIRMED',
+        providerPaymentId: renewalPaymentId,
+        providerSubscriptionId: providerSubId,
+        amountCents: 1490,
+        currency: 'BRL',
+        paymentMethod: 'CREDIT_CARD',
+        dueDate: '2026-10-09',
+        originalDueDate: '2026-10-09',
+        status: 'CONFIRMED',
+      }),
+      listSubscriptionPayments: vi.fn().mockResolvedValue([
+        {
+          id: renewalPaymentId,
+          subscriptionId: providerSubId,
+          status: 'CONFIRMED',
+          amountCents: 1490,
+          originalDueDate: '2026-10-09',
+          dueDate: '2026-10-09',
+        },
+      ]),
+    };
+
+    const service = new BillingService(
+      mockBillingRepo as any,
+      {} as any,
+      mockSubRepo as any,
+      {} as any,
+      mockProvider as any,
+      {} as any
+    );
+
+    // Route 1: Webhook delivery
+    const webhookRes = await service.handleWebhook({ 'asaas-access-token': 'token' }, {});
+    expect(webhookRes.processed).toBe(true);
+
+    // Route 2: On-demand reconciliation
+    const reconRes = await service.reconcileBillingSubscription(ministryId);
+    expect(reconRes.reconciled).toBe(true);
+
+    // Both converged on the single canonical atomic method
+    expect(atomicSettleMock).toHaveBeenCalledTimes(2);
+    expect(atomicSettleMock.mock.calls[0][0].providerPaymentId).toBe(renewalPaymentId);
+    expect(atomicSettleMock.mock.calls[1][0].providerPaymentId).toBe(renewalPaymentId);
   });
 });

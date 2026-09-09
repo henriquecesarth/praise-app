@@ -22,7 +22,16 @@ import {
   BillingCheckoutAttemptFailureClassification,
   BillingEarlyActivationQuote,
   V1_RECONCILABLE_TRANSITION_STATUSES,
+  SettleOrdinaryRecurringRenewalInput,
+  SettleOrdinaryRecurringRenewalResult,
+  SettleOrdinaryRecurringRenewalOutcome,
 } from '../features/billing/billing.types';
+import { MinistrySubscriptionRecord } from '../features/subscriptions/subscription.types';
+import {
+  addCommercialInterval,
+  getBillingDate,
+  normalizeToBillingDate,
+} from '../utils/billing-date';
 import {
   isEarlyAdjustmentObligationFinanciallyLive,
   canCreateEarlyActivationCheckout,
@@ -3854,12 +3863,331 @@ export class BillingRepository {
     return snapshot.docs.map((doc: any) => doc.data() as BillingTransactionRecord);
   }
 
-  async getTransaction(id: string): Promise<BillingTransactionRecord | null> {
-    const doc = await this.transactionsCollection.doc(id).get();
-    if (doc.exists) {
-      return doc.data() as BillingTransactionRecord;
-    }
-    return null;
+  /**
+   * Executa a liquidação atômica de renovação recorrente ordinária (Phase 4A.6D).
+   *
+   * Invariantes atômicos garantidos em UMA única transação Firestore:
+   * 1. Validações pré-commit:
+   *    - Assinatura do ministério existe e está em modo pago ('paid').
+   *    - Assinatura de faturamento existe e provider_subscription_id coincide estritamente.
+   *    - Se a transação já existe: valida imutabilidade da identidade e idempotência terminal se status === 'paid'.
+   *    - Fronteira de renovação corrente é determinada exclusivamente de fontes autorizadas.
+   * 2. Avaliação de ciclo comercial (CAS estrito):
+   *    - Pagamento de ciclo futuro (> boundary): fail closed (future_cycle_mismatch), sem mutações.
+   *    - Pagamento de ciclo anterior (< boundary):
+   *      - Se coincide com current_period_start: cycle já foi avançado (ex: recuperação de Crash Window B),
+   *        grava a transação e converge status sem estender o período novamente.
+   *      - Se ciclo histórico antigo: grava pagamento no ledger sem alterar período ou delinquency corrente.
+   *    - Pagamento da renovação corrente (=== boundary):
+   *      - Avança current_period_start e current_period_end via addCommercialInterval exatamente uma vez.
+   *      - Limpa past_due e carência civil (grace_period_expires_at = null, grace_period_expires_billing_date = null).
+   *      - Persiste BillingTransaction com status: 'paid', transaction_type: 'recurring_payment', due_date: boundary.
+   * 3. Retorna resultado estruturado para convergência compartilhada por webhooks e reconciliador.
+   */
+  async settleOrdinaryRecurringRenewalAtomic(
+    input: SettleOrdinaryRecurringRenewalInput
+  ): Promise<SettleOrdinaryRecurringRenewalResult> {
+    const {
+      ministryId,
+      provider,
+      providerPaymentId,
+      providerSubscriptionId,
+      renewalBillingDate,
+      amountCents,
+      currency = 'BRL' as const,
+      interval,
+      invoiceUrl = null,
+      paymentMethod = null,
+      paidAt,
+      paidBillingDate,
+      now = new Date(),
+      timeZone = 'America/Sao_Paulo',
+    } = input;
+
+    const nowIso = now instanceof Date ? now.toISOString() : new Date(now).toISOString();
+    const appSubRef = this.ministrySubscriptionsCollection.doc(ministryId);
+    const billingSubId = `${ministryId}_${provider}`;
+    const billingSubRef = this.subscriptionsCollection.doc(billingSubId);
+    const txId = `${provider}_${providerPaymentId}`;
+    const txRef = this.transactionsCollection.doc(txId);
+
+    return await db.runTransaction(async (t: any) => {
+      // 1. Reads
+      const [appSubSnap, billingSubSnap, txSnap] = await Promise.all([
+        t.get(appSubRef),
+        t.get(billingSubRef),
+        t.get(txRef),
+      ]);
+
+      if (!appSubSnap.exists) {
+        return { success: false, outcome: 'subscription_not_found', error: 'Subscription not found' };
+      }
+      if (!billingSubSnap.exists) {
+        return { success: false, outcome: 'billing_subscription_not_found', error: 'Billing subscription not found' };
+      }
+
+      const appSub = appSubSnap.data() as MinistrySubscriptionRecord;
+      const billingSub = billingSubSnap.data() as BillingSubscriptionRecord;
+
+      // 2. Assinatura deve ser em modo pago e não ter transição ativa de cancelamento
+      if (appSub.subscription_mode !== 'paid') {
+        return { success: false, outcome: 'not_paid_subscription', error: 'Subscription is not paid' };
+      }
+
+      if (appSub.active_cancellation_transition_id) {
+        return {
+          success: false,
+          outcome: 'financial_conflict',
+          error: 'Active cancellation transition exists for this subscription',
+        };
+      }
+
+      // 3. Provider subscription ID deve coincidir exatamente
+      if (
+        !billingSub.provider_subscription_id ||
+        billingSub.provider_subscription_id !== providerSubscriptionId
+      ) {
+        return {
+          success: false,
+          outcome: 'provider_subscription_mismatch',
+          error: `Provider subscription mismatch: expected ${billingSub.provider_subscription_id}, got ${providerSubscriptionId}`,
+        };
+      }
+
+      // 4. Determinar a fronteira de renovação corrente e a data normalizada do pagamento
+      const currentRenewalBoundary =
+        normalizeToBillingDate(billingSub.current_period_end_billing_date, timeZone) ||
+        normalizeToBillingDate(billingSub.current_period_end, timeZone) ||
+        normalizeToBillingDate(appSub.current_period_end, timeZone);
+
+      if (!currentRenewalBoundary) {
+        return {
+          success: false,
+          outcome: 'cycle_boundary_mismatch',
+          error: 'Current renewal boundary cannot be determined',
+        };
+      }
+
+      if (input.expectedCurrentPeriodEnd) {
+        const expectedBoundary = normalizeToBillingDate(input.expectedCurrentPeriodEnd, timeZone);
+        if (expectedBoundary && expectedBoundary !== currentRenewalBoundary) {
+          return {
+            success: false,
+            outcome: 'cycle_boundary_mismatch',
+            error: `Expected current period end (${expectedBoundary}) diverges from stored boundary (${currentRenewalBoundary})`,
+          };
+        }
+      }
+
+      const normPaymentRenewalDate = normalizeToBillingDate(renewalBillingDate, timeZone);
+      if (!normPaymentRenewalDate) {
+        return {
+          success: false,
+          outcome: 'cycle_boundary_mismatch',
+          error: 'Payment renewal date is invalid',
+        };
+      }
+
+      // 5. Verificar se a transação determinística já existe
+      const existingTx = txSnap.exists ? (txSnap.data() as BillingTransactionRecord) : null;
+      if (existingTx) {
+        // Validação de conflito de identidade
+        if (
+          existingTx.ministry_id !== ministryId ||
+          existingTx.provider !== provider ||
+          (existingTx.provider_subscription_id && existingTx.provider_subscription_id !== providerSubscriptionId) ||
+          (existingTx.due_date && existingTx.due_date !== normPaymentRenewalDate) ||
+          (existingTx.amount_cents !== undefined && amountCents !== undefined && amountCents !== 0 && existingTx.amount_cents !== amountCents)
+        ) {
+          return {
+            success: false,
+            outcome: 'financial_conflict',
+            error: `Financial transaction identity conflict for transaction ${txId}`,
+          };
+        }
+
+        // Se a transação já estiver como paid: idempotência absoluta e autocura de status
+        if (existingTx.status === 'paid') {
+          if (appSub.billing_status === 'past_due' || appSub.grace_period_expires_at) {
+            t.set(
+              appSubRef,
+              {
+                billing_status: 'active',
+                grace_period_expires_at: null,
+                grace_period_expires_billing_date: null,
+                updated_at: nowIso,
+              },
+              { merge: true }
+            );
+          }
+          if (billingSub.status === 'past_due') {
+            t.set(billingSubRef, { status: 'active', updated_at: nowIso }, { merge: true });
+          }
+
+          return {
+            success: true,
+            outcome: 'already_settled',
+            transaction: existingTx,
+          };
+        }
+      }
+
+      // 6. Avaliação de Ciclo:
+      // Caso 6.1: Pagamento de ciclo futuro (> currentRenewalBoundary)
+      if (normPaymentRenewalDate > currentRenewalBoundary) {
+        return {
+          success: false,
+          outcome: 'future_cycle_mismatch',
+          error: `Payment renewal date (${normPaymentRenewalDate}) is after current renewal boundary (${currentRenewalBoundary})`,
+        };
+      }
+
+      // Caso 6.2: Pagamento de ciclo anterior (< currentRenewalBoundary)
+      if (normPaymentRenewalDate < currentRenewalBoundary) {
+        const appPeriodStart = normalizeToBillingDate(appSub.current_period_start, timeZone);
+        const billingPeriodStart = normalizeToBillingDate(billingSub.current_period_start, timeZone);
+
+        // Se o current_period_start já é a data do pagamento, o ciclo já foi avançado anteriormente por esta cobrança
+        // (ex: Crash Window B recovery onde o subscription avançou mas o transaction write falhou)
+        if (
+          (appPeriodStart && normPaymentRenewalDate === appPeriodStart) ||
+          (billingPeriodStart && normPaymentRenewalDate === billingPeriodStart)
+        ) {
+          const transactionRecord: BillingTransactionRecord = {
+            id: txId,
+            ministry_id: ministryId,
+            provider,
+            provider_payment_id: providerPaymentId,
+            provider_subscription_id: providerSubscriptionId,
+            transaction_type: 'recurring_payment',
+            amount_cents: amountCents || billingSub.amount_cents || 0,
+            currency,
+            status: 'paid',
+            due_date: normPaymentRenewalDate,
+            paid_at: paidAt || nowIso,
+            paid_billing_date: paidBillingDate || getBillingDate(paidAt || nowIso, timeZone),
+            payment_method: paymentMethod,
+            invoice_url: invoiceUrl || existingTx?.invoice_url || null,
+            created_at: existingTx?.created_at || nowIso,
+            updated_at: nowIso,
+          };
+
+          t.set(txRef, transactionRecord, { merge: true });
+
+          // Se porventura billing_status ainda estava past_due ou com grace residual, limpa atomicamente
+          if (appSub.billing_status === 'past_due' || appSub.grace_period_expires_at) {
+            t.set(
+              appSubRef,
+              {
+                billing_status: 'active',
+                grace_period_expires_at: null,
+                grace_period_expires_billing_date: null,
+                updated_at: nowIso,
+              },
+              { merge: true }
+            );
+          }
+          if (billingSub.status === 'past_due') {
+            t.set(billingSubRef, { status: 'active', updated_at: nowIso }, { merge: true });
+          }
+
+          return {
+            success: true,
+            outcome: 'already_advanced_converged',
+            transaction: transactionRecord,
+          };
+        }
+
+        // Se não corresponde ao current_period_start, é uma cobrança histórica antiga.
+        // Registra o pagamento no ledger contábil sem alterar o período ou status corrente.
+        const historicalTx: BillingTransactionRecord = {
+          id: txId,
+          ministry_id: ministryId,
+          provider,
+          provider_payment_id: providerPaymentId,
+          provider_subscription_id: providerSubscriptionId,
+          transaction_type: 'recurring_payment',
+          amount_cents: amountCents || 0,
+          currency,
+          status: 'paid',
+          due_date: normPaymentRenewalDate,
+          paid_at: paidAt || nowIso,
+          paid_billing_date: paidBillingDate || getBillingDate(paidAt || nowIso, timeZone),
+          payment_method: paymentMethod,
+          invoice_url: invoiceUrl || existingTx?.invoice_url || null,
+          created_at: existingTx?.created_at || nowIso,
+          updated_at: nowIso,
+        };
+        t.set(txRef, historicalTx, { merge: true });
+
+        return {
+          success: true,
+          outcome: 'historical_payment_recorded',
+          transaction: historicalTx,
+        };
+      }
+
+      // Caso 6.3: Pagamento exato da renovação corrente (normPaymentRenewalDate === currentRenewalBoundary)
+      // Avanço atômico do ciclo exatamente uma vez!
+      const newPeriodStartIso = new Date(`${currentRenewalBoundary}T00:00:00.000Z`).toISOString();
+      const newPeriodEndBillingDate = addCommercialInterval(currentRenewalBoundary, interval, timeZone);
+      const newPeriodEndIso = new Date(`${newPeriodEndBillingDate}T00:00:00.000Z`).toISOString();
+
+      const transactionRecord: BillingTransactionRecord = {
+        id: txId,
+        ministry_id: ministryId,
+        provider,
+        provider_payment_id: providerPaymentId,
+        provider_subscription_id: providerSubscriptionId,
+        transaction_type: 'recurring_payment',
+        amount_cents: amountCents || billingSub.amount_cents || 0,
+        currency,
+        status: 'paid',
+        due_date: currentRenewalBoundary,
+        paid_at: paidAt || nowIso,
+        paid_billing_date: paidBillingDate || getBillingDate(paidAt || nowIso, timeZone),
+        payment_method: paymentMethod,
+        invoice_url: invoiceUrl || existingTx?.invoice_url || null,
+        created_at: existingTx?.created_at || nowIso,
+        updated_at: nowIso,
+      };
+
+      t.set(
+        appSubRef,
+        {
+          ...appSub,
+          billing_status: 'active',
+          grace_period_expires_at: null,
+          grace_period_expires_billing_date: null,
+          current_period_start: newPeriodStartIso,
+          current_period_end: newPeriodEndIso,
+          cancel_at_period_end: false,
+          updated_at: nowIso,
+        },
+        { merge: true }
+      );
+
+      t.set(
+        billingSubRef,
+        {
+          ...billingSub,
+          status: 'active',
+          current_period_start: newPeriodStartIso,
+          current_period_end: newPeriodEndIso,
+          current_period_end_billing_date: newPeriodEndBillingDate,
+          updated_at: nowIso,
+        },
+        { merge: true }
+      );
+
+      t.set(txRef, transactionRecord, { merge: true });
+
+      return {
+        success: true,
+        outcome: 'settled',
+        transaction: transactionRecord,
+      };
+    });
   }
 
   // --------------------------------------------------------------------------

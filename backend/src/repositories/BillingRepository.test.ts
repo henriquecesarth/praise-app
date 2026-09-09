@@ -34,6 +34,7 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
   const activeSlotsStore = new Map<string, BillingActiveTransitionSlotRecord>();
   const subscriptionsStore = new Map<string, any>();
   const ministrySubscriptionsStore = new Map<string, any>();
+  const transactionsStore = new Map<string, any>();
 
   const createQueryMock = (filters: Array<{ field: string; op: string; value: any }> = []) => ({
     where: vi.fn().mockImplementation((field: string, op: string, value: any) => {
@@ -69,7 +70,27 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
     activeSlotsStore.clear();
     subscriptionsStore.clear();
     ministrySubscriptionsStore.clear();
+    transactionsStore.clear();
     repo = new BillingRepository();
+
+    // Mock Firestore collections
+    (repo as any).transactionsCollection = {
+      doc: (id: string) => ({
+        id,
+        collectionName: 'billing_transactions',
+        get: vi.fn().mockImplementation(async () => {
+          const data = transactionsStore.get(id);
+          return { exists: Boolean(data), data: () => data };
+        }),
+        set: vi.fn().mockImplementation(async (data: any, options?: any) => {
+          if (options?.merge && transactionsStore.has(id)) {
+            transactionsStore.set(id, { ...transactionsStore.get(id)!, ...data });
+          } else {
+            transactionsStore.set(id, data);
+          }
+        }),
+      }),
+    };
 
     // Mock Firestore collections
     (repo as any).ministrySubscriptionsCollection = {
@@ -166,83 +187,98 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
       }),
     };
 
-    // Mock db.runTransaction with accurate in-memory execution
-    db.runTransaction = vi.fn().mockImplementation(async (callback: any) => {
-      const transaction = {
-        get: vi.fn().mockImplementation(async (docRef: any) => {
-          if (docRef.collectionName === 'billing_active_transition_slots' || docRef.id.startsWith('slot_')) {
-            const data = activeSlotsStore.get(docRef.id);
-            return { exists: Boolean(data), data: () => data };
-          } else if (docRef.collectionName === 'billing_subscriptions') {
-            const data = subscriptionsStore.get(docRef.id);
-            return { exists: Boolean(data), data: () => data };
-          } else if (docRef.collectionName === 'ministry_subscriptions' || docRef.id.startsWith('min_')) {
-            const data = ministrySubscriptionsStore.get(docRef.id);
-            return { exists: Boolean(data), data: () => data };
-          } else {
-            const data = planChangesStore.get(docRef.id);
-            return { exists: Boolean(data), data: () => data };
-          }
-        }),
-        set: vi.fn().mockImplementation((docRef: any, data: any, options?: any) => {
-          if (docRef.collectionName === 'billing_active_transition_slots' || docRef.id.startsWith('slot_')) {
-            if (options?.merge && activeSlotsStore.has(docRef.id)) {
-              activeSlotsStore.set(docRef.id, { ...activeSlotsStore.get(docRef.id)!, ...data });
+    // Mock db.runTransaction with accurate in-memory execution and concurrency serialization
+    let transactionQueue = Promise.resolve();
+    db.runTransaction = vi.fn().mockImplementation((callback: any) => {
+      const run = async () => {
+        const transaction = {
+          get: vi.fn().mockImplementation(async (docRef: any) => {
+            if (docRef.collectionName === 'billing_active_transition_slots' || docRef.id.startsWith('slot_')) {
+              const data = activeSlotsStore.get(docRef.id);
+              return { exists: Boolean(data), data: () => data };
+            } else if (docRef.collectionName === 'billing_transactions' || docRef.id.startsWith('asaas_')) {
+              const data = transactionsStore.get(docRef.id);
+              return { exists: Boolean(data), data: () => data };
+            } else if (docRef.collectionName === 'billing_subscriptions') {
+              const data = subscriptionsStore.get(docRef.id);
+              return { exists: Boolean(data), data: () => data };
+            } else if (docRef.collectionName === 'ministry_subscriptions' || docRef.id.startsWith('min_')) {
+              const data = ministrySubscriptionsStore.get(docRef.id);
+              return { exists: Boolean(data), data: () => data };
             } else {
-              activeSlotsStore.set(docRef.id, data);
+              const data = planChangesStore.get(docRef.id);
+              return { exists: Boolean(data), data: () => data };
             }
-          } else if (docRef.collectionName === 'billing_subscriptions') {
-            if (options?.merge && subscriptionsStore.has(docRef.id)) {
-              subscriptionsStore.set(docRef.id, { ...subscriptionsStore.get(docRef.id)!, ...data });
+          }),
+          set: vi.fn().mockImplementation((docRef: any, data: any, options?: any) => {
+            if (docRef.collectionName === 'billing_active_transition_slots' || docRef.id.startsWith('slot_')) {
+              if (options?.merge && activeSlotsStore.has(docRef.id)) {
+                activeSlotsStore.set(docRef.id, { ...activeSlotsStore.get(docRef.id)!, ...data });
+              } else {
+                activeSlotsStore.set(docRef.id, data);
+              }
+            } else if (docRef.collectionName === 'billing_transactions' || docRef.id.startsWith('asaas_')) {
+              if (options?.merge && transactionsStore.has(docRef.id)) {
+                transactionsStore.set(docRef.id, { ...transactionsStore.get(docRef.id)!, ...data });
+              } else {
+                transactionsStore.set(docRef.id, data);
+              }
+            } else if (docRef.collectionName === 'billing_subscriptions') {
+              if (options?.merge && subscriptionsStore.has(docRef.id)) {
+                subscriptionsStore.set(docRef.id, { ...subscriptionsStore.get(docRef.id)!, ...data });
+              } else {
+                subscriptionsStore.set(docRef.id, data);
+              }
+            } else if (docRef.collectionName === 'ministry_subscriptions' || docRef.id.startsWith('min_')) {
+              if (options?.merge && ministrySubscriptionsStore.has(docRef.id)) {
+                ministrySubscriptionsStore.set(docRef.id, { ...ministrySubscriptionsStore.get(docRef.id)!, ...data });
+              } else {
+                ministrySubscriptionsStore.set(docRef.id, data);
+              }
             } else {
-              subscriptionsStore.set(docRef.id, data);
+              if (options?.merge && planChangesStore.has(docRef.id)) {
+                planChangesStore.set(docRef.id, { ...planChangesStore.get(docRef.id)!, ...data });
+              } else {
+                planChangesStore.set(docRef.id, data);
+              }
             }
-          } else if (docRef.collectionName === 'ministry_subscriptions' || docRef.id.startsWith('min_')) {
-            if (options?.merge && ministrySubscriptionsStore.has(docRef.id)) {
-              ministrySubscriptionsStore.set(docRef.id, { ...ministrySubscriptionsStore.get(docRef.id)!, ...data });
+          }),
+          update: vi.fn().mockImplementation((docRef: any, data: any) => {
+            if (docRef.collectionName === 'billing_subscriptions') {
+              if (subscriptionsStore.has(docRef.id)) {
+                subscriptionsStore.set(docRef.id, { ...subscriptionsStore.get(docRef.id)!, ...data });
+              }
+            } else if (docRef.collectionName === 'ministry_subscriptions' || docRef.id.startsWith('min_')) {
+              if (ministrySubscriptionsStore.has(docRef.id)) {
+                ministrySubscriptionsStore.set(docRef.id, { ...ministrySubscriptionsStore.get(docRef.id)!, ...data });
+              }
+            } else if (docRef.collectionName === 'billing_active_transition_slots' || docRef.id.startsWith('slot_')) {
+              if (activeSlotsStore.has(docRef.id)) {
+                activeSlotsStore.set(docRef.id, { ...activeSlotsStore.get(docRef.id)!, ...data });
+              }
             } else {
-              ministrySubscriptionsStore.set(docRef.id, data);
+              if (planChangesStore.has(docRef.id)) {
+                planChangesStore.set(docRef.id, { ...planChangesStore.get(docRef.id)!, ...data });
+              }
             }
-          } else {
-            if (options?.merge && planChangesStore.has(docRef.id)) {
-              planChangesStore.set(docRef.id, { ...planChangesStore.get(docRef.id)!, ...data });
+          }),
+          delete: vi.fn().mockImplementation((docRef: any) => {
+            if (docRef.collectionName === 'billing_active_transition_slots' || docRef.id.startsWith('slot_')) {
+              activeSlotsStore.delete(docRef.id);
+            } else if (docRef.collectionName === 'billing_subscriptions') {
+              subscriptionsStore.delete(docRef.id);
+            } else if (docRef.collectionName === 'ministry_subscriptions' || docRef.id.startsWith('min_')) {
+              ministrySubscriptionsStore.delete(docRef.id);
             } else {
-              planChangesStore.set(docRef.id, data);
+              planChangesStore.delete(docRef.id);
             }
-          }
-        }),
-        update: vi.fn().mockImplementation((docRef: any, data: any) => {
-          if (docRef.collectionName === 'billing_subscriptions') {
-            if (subscriptionsStore.has(docRef.id)) {
-              subscriptionsStore.set(docRef.id, { ...subscriptionsStore.get(docRef.id)!, ...data });
-            }
-          } else if (docRef.collectionName === 'ministry_subscriptions' || docRef.id.startsWith('min_')) {
-            if (ministrySubscriptionsStore.has(docRef.id)) {
-              ministrySubscriptionsStore.set(docRef.id, { ...ministrySubscriptionsStore.get(docRef.id)!, ...data });
-            }
-          } else if (docRef.collectionName === 'billing_active_transition_slots' || docRef.id.startsWith('slot_')) {
-            if (activeSlotsStore.has(docRef.id)) {
-              activeSlotsStore.set(docRef.id, { ...activeSlotsStore.get(docRef.id)!, ...data });
-            }
-          } else {
-            if (planChangesStore.has(docRef.id)) {
-              planChangesStore.set(docRef.id, { ...planChangesStore.get(docRef.id)!, ...data });
-            }
-          }
-        }),
-        delete: vi.fn().mockImplementation((docRef: any) => {
-          if (docRef.collectionName === 'billing_active_transition_slots' || docRef.id.startsWith('slot_')) {
-            activeSlotsStore.delete(docRef.id);
-          } else if (docRef.collectionName === 'billing_subscriptions') {
-            subscriptionsStore.delete(docRef.id);
-          } else if (docRef.collectionName === 'ministry_subscriptions' || docRef.id.startsWith('min_')) {
-            ministrySubscriptionsStore.delete(docRef.id);
-          } else {
-            planChangesStore.delete(docRef.id);
-          }
-        }),
+          }),
+        };
+        return await callback(transaction);
       };
-      return await callback(transaction);
+      const next = transactionQueue.then(run, run);
+      transactionQueue = next.then(() => {}, () => {});
+      return next;
     });
   });
 
@@ -3556,6 +3592,362 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
       expect(found).toBeDefined();
       expect(found?.financial_attention_required).toBe(true);
       expect((found as BillingTransitionV1Record)?.cancellation_reversal_status).toBe('attention_required');
+    });
+  });
+
+  describe('settleOrdinaryRecurringRenewalAtomic — Phase 4A.6D Core Atomicity, CAS, Concurrency & Fault-Injection', () => {
+    const ministryId = 'min_atom_test_01';
+    const provider = 'asaas';
+    const providerSubId = 'sub_asaas_current_001';
+    const providerPaymentId = 'pay_asaas_ren_001';
+    const renewalBillingDate = '2026-10-09';
+    const amountCents = 1490;
+
+    beforeEach(() => {
+      ministrySubscriptionsStore.set(ministryId, {
+        id: ministryId,
+        ministry_id: ministryId,
+        plan_id: 'lite',
+        subscription_mode: 'paid',
+        billing_status: 'past_due',
+        billing_interval: 'monthly',
+        member_addon_blocks: 0,
+        current_period_start: '2026-09-09T00:00:00.000Z',
+        current_period_end: '2026-10-09T00:00:00.000Z',
+        grace_period_expires_at: '2026-10-16T00:00:00.000Z',
+        grace_period_expires_billing_date: '2026-10-16',
+        created_at: '2026-09-09T00:00:00.000Z',
+        updated_at: '2026-10-09T00:00:00.000Z',
+      });
+
+      subscriptionsStore.set(`${ministryId}_${provider}`, {
+        id: `${ministryId}_${provider}`,
+        ministry_id: ministryId,
+        provider,
+        provider_subscription_id: providerSubId,
+        provider_customer_id: 'cus_test_001',
+        plan_id: 'lite',
+        interval: 'monthly',
+        amount_cents: amountCents,
+        status: 'past_due',
+        started_at: '2026-09-09T00:00:00.000Z',
+        current_period_start: '2026-09-09T00:00:00.000Z',
+        current_period_end: '2026-10-09T00:00:00.000Z',
+        current_period_end_billing_date: renewalBillingDate,
+        cancel_at_period_end: false,
+        created_at: '2026-09-09T00:00:00.000Z',
+        updated_at: '2026-10-09T00:00:00.000Z',
+      });
+    });
+
+    it('1. Fresh settlement: advances period exactly once, clears past_due and grace, and commits ledger atomically', async () => {
+      const result = await repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider,
+        providerPaymentId,
+        providerSubscriptionId: providerSubId,
+        renewalBillingDate,
+        amountCents,
+        interval: 'monthly',
+        expectedCurrentPeriodEnd: renewalBillingDate,
+        invoiceUrl: 'https://sandbox.example.invalid/i/001',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.outcome).toBe('settled');
+      expect(result.transaction).toBeDefined();
+      expect(result.transaction?.status).toBe('paid');
+      expect(result.transaction?.due_date).toBe(renewalBillingDate);
+
+      // Verify app subscription: billing_status active, grace cleared, period advanced 1 month
+      const appSub = ministrySubscriptionsStore.get(ministryId);
+      expect(appSub.billing_status).toBe('active');
+      expect(appSub.grace_period_expires_at).toBeNull();
+      expect(appSub.grace_period_expires_billing_date).toBeNull();
+      expect(appSub.current_period_start).toBe('2026-10-09T00:00:00.000Z');
+      expect(appSub.current_period_end).toBe('2026-11-09T00:00:00.000Z');
+
+      // Verify billing subscription: status active, period advanced 1 month
+      const billingSub = subscriptionsStore.get(`${ministryId}_${provider}`);
+      expect(billingSub.status).toBe('active');
+      expect(billingSub.current_period_start).toBe('2026-10-09T00:00:00.000Z');
+      expect(billingSub.current_period_end).toBe('2026-11-09T00:00:00.000Z');
+      expect(billingSub.current_period_end_billing_date).toBe('2026-11-09');
+
+      // Verify deterministic transaction recorded
+      const tx = transactionsStore.get(`${provider}_${providerPaymentId}`);
+      expect(tx).toBeDefined();
+      expect(tx.status).toBe('paid');
+      expect(tx.amount_cents).toBe(amountCents);
+      expect(tx.transaction_type).toBe('recurring_payment');
+    });
+
+    it('2. Idempotency / Already settled: subsequent call with same payment returns already_settled without second period advance', async () => {
+      // First settlement
+      await repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider,
+        providerPaymentId,
+        providerSubscriptionId: providerSubId,
+        renewalBillingDate,
+        amountCents,
+        interval: 'monthly',
+      });
+
+      // Second call (e.g. duplicate webhook or CONFIRMED then RECEIVED)
+      const secondResult = await repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider,
+        providerPaymentId,
+        providerSubscriptionId: providerSubId,
+        renewalBillingDate,
+        amountCents,
+        interval: 'monthly',
+      });
+
+      expect(secondResult.success).toBe(true);
+      expect(secondResult.outcome).toBe('already_settled');
+
+      // Period must NOT advance to December: remains 2026-11-09
+      const appSub = ministrySubscriptionsStore.get(ministryId);
+      expect(appSub.current_period_end).toBe('2026-11-09T00:00:00.000Z');
+      const billingSub = subscriptionsStore.get(`${ministryId}_${provider}`);
+      expect(billingSub.current_period_end_billing_date).toBe('2026-11-09');
+    });
+
+    it('3. Future cycle mismatch (> current boundary): fails closed, zero state changes', async () => {
+      const result = await repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider,
+        providerPaymentId: 'pay_future_001',
+        providerSubscriptionId: providerSubId,
+        renewalBillingDate: '2026-11-09', // Future cycle relative to stored boundary 2026-10-09
+        amountCents,
+        interval: 'monthly',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.outcome).toBe('future_cycle_mismatch');
+
+      // Subscription remains past_due, period unchanged
+      const appSub = ministrySubscriptionsStore.get(ministryId);
+      expect(appSub.billing_status).toBe('past_due');
+      expect(appSub.current_period_end).toBe('2026-10-09T00:00:00.000Z');
+      expect(transactionsStore.has('asaas_pay_future_001')).toBe(false);
+    });
+
+    it('4. Old cycle (< current boundary): records historical ledger fact, does NOT advance period or clear delinquency', async () => {
+      const result = await repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider,
+        providerPaymentId: 'pay_old_001',
+        providerSubscriptionId: providerSubId,
+        renewalBillingDate: '2026-08-09', // Stale August payment
+        amountCents,
+        interval: 'monthly',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.outcome).toBe('historical_payment_recorded');
+
+      // Current delinquency must NOT be cleared because current October renewal is still unpaid
+      const appSub = ministrySubscriptionsStore.get(ministryId);
+      expect(appSub.billing_status).toBe('past_due');
+      expect(appSub.current_period_end).toBe('2026-10-09T00:00:00.000Z');
+
+      // Historical transaction is safely recorded in ledger
+      const oldTx = transactionsStore.get('asaas_pay_old_001');
+      expect(oldTx).toBeDefined();
+      expect(oldTx.status).toBe('paid');
+      expect(oldTx.due_date).toBe('2026-08-09');
+    });
+
+    it('5. Crash Window B recovery (current_period_start === payment renewal date): converges status and writes ledger without second advancement', async () => {
+      // Simulate intermediate crash state where subscription already advanced to 2026-10-09 -> 2026-11-09,
+      // but crash occurred before transaction write.
+      ministrySubscriptionsStore.set(ministryId, {
+        ...ministrySubscriptionsStore.get(ministryId),
+        billing_status: 'past_due', // lingering status
+        current_period_start: '2026-10-09T00:00:00.000Z',
+        current_period_end: '2026-11-09T00:00:00.000Z',
+      });
+      subscriptionsStore.set(`${ministryId}_${provider}`, {
+        ...subscriptionsStore.get(`${ministryId}_${provider}`),
+        status: 'past_due',
+        current_period_start: '2026-10-09T00:00:00.000Z',
+        current_period_end: '2026-11-09T00:00:00.000Z',
+        current_period_end_billing_date: '2026-11-09',
+      });
+
+      const result = await repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider,
+        providerPaymentId,
+        providerSubscriptionId: providerSubId,
+        renewalBillingDate: '2026-10-09',
+        amountCents,
+        interval: 'monthly',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.outcome).toBe('already_advanced_converged');
+
+      // Status cleared to active
+      const appSub = ministrySubscriptionsStore.get(ministryId);
+      expect(appSub.billing_status).toBe('active');
+      // Period NOT extended again: remains 2026-11-09
+      expect(appSub.current_period_end).toBe('2026-11-09T00:00:00.000Z');
+
+      // Transaction recorded
+      expect(transactionsStore.get(`${provider}_${providerPaymentId}`)).toBeDefined();
+    });
+
+    it('6. Identity conflict on existing transaction: fails closed with financial_conflict', async () => {
+      // Existing transaction with same ID but different amount or ministry
+      transactionsStore.set(`${provider}_${providerPaymentId}`, {
+        id: `${provider}_${providerPaymentId}`,
+        ministry_id: 'min_other_conflict',
+        provider,
+        provider_payment_id: providerPaymentId,
+        provider_subscription_id: providerSubId,
+        amount_cents: 9999,
+        currency: 'BRL',
+        status: 'overdue',
+        due_date: renewalBillingDate,
+      });
+
+      const result = await repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider,
+        providerPaymentId,
+        providerSubscriptionId: providerSubId,
+        renewalBillingDate,
+        amountCents,
+        interval: 'monthly',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.outcome).toBe('financial_conflict');
+
+      // No mutation
+      const appSub = ministrySubscriptionsStore.get(ministryId);
+      expect(appSub.billing_status).toBe('past_due');
+    });
+
+    it('7. Provider subscription mismatch: fails closed with provider_subscription_mismatch', async () => {
+      const result = await repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider,
+        providerPaymentId,
+        providerSubscriptionId: 'sub_unrelated_target_999',
+        renewalBillingDate,
+        amountCents,
+        interval: 'monthly',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.outcome).toBe('provider_subscription_mismatch');
+      expect(ministrySubscriptionsStore.get(ministryId).billing_status).toBe('past_due');
+    });
+
+    it('8. Cancellation protection: rejects renewal if active cancellation transition exists', async () => {
+      ministrySubscriptionsStore.set(ministryId, {
+        ...ministrySubscriptionsStore.get(ministryId),
+        active_cancellation_transition_id: 'tr_cancel_active_001',
+      });
+
+      const result = await repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider,
+        providerPaymentId,
+        providerSubscriptionId: providerSubId,
+        renewalBillingDate,
+        amountCents,
+        interval: 'monthly',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.outcome).toBe('financial_conflict');
+      expect(result.error).toContain('cancellation transition');
+    });
+
+    it('9. Concurrency test (MANDATORY): overlapping settlements for same payment advance period exactly once', async () => {
+      // Simulate real transactional concurrency where two attempts overlap
+      const p1 = repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider,
+        providerPaymentId,
+        providerSubscriptionId: providerSubId,
+        renewalBillingDate,
+        amountCents,
+        interval: 'monthly',
+      });
+
+      const p2 = repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider,
+        providerPaymentId,
+        providerSubscriptionId: providerSubId,
+        renewalBillingDate,
+        amountCents,
+        interval: 'monthly',
+      });
+
+      const [res1, res2] = await Promise.all([p1, p2]);
+
+      // Exactly one succeeds with 'settled', the other with 'already_settled'
+      const outcomes = [res1.outcome, res2.outcome].sort();
+      expect(outcomes).toEqual(['already_settled', 'settled']);
+
+      // Final period advanced EXACTLY ONCE to 2026-11-09, NEVER 2026-12-09
+      const appSub = ministrySubscriptionsStore.get(ministryId);
+      expect(appSub.current_period_end).toBe('2026-11-09T00:00:00.000Z');
+      const billingSub = subscriptionsStore.get(`${ministryId}_${provider}`);
+      expect(billingSub.current_period_end_billing_date).toBe('2026-11-09');
+
+      // Exactly one ledger transaction
+      expect(transactionsStore.get(`${provider}_${providerPaymentId}`)?.status).toBe('paid');
+    });
+
+    it('10. Fault injection test (MANDATORY): error before commit leaves zero durable state; subsequent retry succeeds once', async () => {
+      // Force failure during transaction execution
+      const originalRunTransaction = db.runTransaction;
+      db.runTransaction = vi.fn().mockImplementationOnce(async (_callback: any) => {
+        throw new Error('INJECTED_TRANSACTION_FAILURE_BEFORE_COMMIT');
+      });
+
+      await expect(
+        repo.settleOrdinaryRecurringRenewalAtomic({
+          ministryId,
+          provider,
+          providerPaymentId,
+          providerSubscriptionId: providerSubId,
+          renewalBillingDate,
+          amountCents,
+          interval: 'monthly',
+        })
+      ).rejects.toThrow('INJECTED_TRANSACTION_FAILURE_BEFORE_COMMIT');
+
+      // Verify ZERO durable partial state
+      expect(ministrySubscriptionsStore.get(ministryId).current_period_end).toBe('2026-10-09T00:00:00.000Z');
+      expect(ministrySubscriptionsStore.get(ministryId).billing_status).toBe('past_due');
+      expect(transactionsStore.has(`${provider}_${providerPaymentId}`)).toBe(false);
+
+      // Restore and retry: succeeds cleanly
+      db.runTransaction = originalRunTransaction;
+      const retryResult = await repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider,
+        providerPaymentId,
+        providerSubscriptionId: providerSubId,
+        renewalBillingDate,
+        amountCents,
+        interval: 'monthly',
+      });
+
+      expect(retryResult.success).toBe(true);
+      expect(retryResult.outcome).toBe('settled');
+      expect(ministrySubscriptionsStore.get(ministryId).current_period_end).toBe('2026-11-09T00:00:00.000Z');
     });
   });
 });

@@ -979,3 +979,41 @@ export interface CustomerPaymentStatusDto {
 }
 
 export type CustomerGraceReason = 'payment_failure' | 'usage_over_limit' | 'none';
+
+export interface SettleOrdinaryRecurringRenewalInput {
+  ministryId: string;
+  provider: BillingProviderName;
+  providerPaymentId: string;
+  providerSubscriptionId: string;
+  renewalBillingDate: string; // YYYY-MM-DD
+  amountCents: number;
+  currency?: 'BRL';
+  interval: BillingInterval;
+  expectedCurrentPeriodEnd?: string | null;
+  invoiceUrl?: string | null;
+  paymentMethod?: string | null;
+  paidAt?: string | null;
+  paidBillingDate?: string | null;
+  now?: Date | string;
+  timeZone?: string;
+}
+
+export type SettleOrdinaryRecurringRenewalOutcome =
+  | 'settled'
+  | 'already_settled'
+  | 'already_advanced_converged'
+  | 'historical_payment_recorded'
+  | 'cycle_boundary_mismatch'
+  | 'future_cycle_mismatch'
+  | 'subscription_not_found'
+  | 'billing_subscription_not_found'
+  | 'not_paid_subscription'
+  | 'provider_subscription_mismatch'
+  | 'financial_conflict';
+
+export interface SettleOrdinaryRecurringRenewalResult {
+  success: boolean;
+  outcome: SettleOrdinaryRecurringRenewalOutcome;
+  transaction?: BillingTransactionRecord;
+  error?: string;
+}

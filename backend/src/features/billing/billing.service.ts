@@ -1549,65 +1549,62 @@ export class BillingService {
             ? billingSub.provider_subscription_id
             : null);
 
+        // Provider subscription ID can come from parsedEvent, or via enrichment if missing
+        let resolvedProviderSubId = parsedEvent.providerSubscriptionId || null;
+        let resolvedOriginalDueDate = parsedEvent.originalDueDate || null;
+        let resolvedInvoiceUrl = parsedEvent.invoiceUrl || null;
+
+        if (
+          (!resolvedProviderSubId || !resolvedOriginalDueDate || !resolvedInvoiceUrl) &&
+          parsedEvent.providerPaymentId &&
+          typeof (this.provider as any).getPayment === 'function'
+        ) {
+          try {
+            const enriched = await (this.provider as any).getPayment(parsedEvent.providerPaymentId);
+            if (enriched) {
+              resolvedProviderSubId = resolvedProviderSubId || enriched.subscriptionId || null;
+              resolvedOriginalDueDate = resolvedOriginalDueDate || enriched.originalDueDate || null;
+              resolvedInvoiceUrl = resolvedInvoiceUrl || enriched.invoiceUrl || null;
+            }
+          } catch (_e) {
+            // best-effort enrichment
+          }
+        }
+
+        const currentRenewalBoundary =
+          normalizeToBillingDate(billingSub?.current_period_end_billing_date, config.billingTimezone) ||
+          normalizeToBillingDate(billingSub?.current_period_end, config.billingTimezone) ||
+          normalizeToBillingDate(currentAppSub?.current_period_end, config.billingTimezone);
+
+        const paymentRenewalDate =
+          (resolvedOriginalDueDate ? normalizeToBillingDate(resolvedOriginalDueDate, config.billingTimezone) : null) ||
+          (parsedEvent.dueDate && normalizeToBillingDate(parsedEvent.dueDate, config.billingTimezone) === currentRenewalBoundary
+            ? currentRenewalBoundary
+            : (parsedEvent.dueDate ? normalizeToBillingDate(parsedEvent.dueDate, config.billingTimezone) : null));
+
         // 5.3 Se não houver transição de plano (planChange == null) e a assinatura já estiver vigente (não pendente),
         // trata-se de renovação recorrente ordinária da assinatura já contratada (ou regularização de ciclo inadimplente).
+        // Exige identidade positiva: modo pago, mesma provider subscription, ciclo corrente válido.
         const isOrdinaryRecurringRenewal =
           !planChange &&
           billingSub?.status !== 'pending' &&
+          Boolean(billingSub?.provider_subscription_id) &&
+          resolvedProviderSubId === billingSub?.provider_subscription_id &&
           currentAppSub?.subscription_mode === 'paid' &&
           currentAppSub?.plan_id === targetPlan &&
           (currentAppSub?.member_addon_blocks || 0) === targetAddons;
 
+        if (!planChange && resolvedProviderSubId && billingSub?.provider_subscription_id && resolvedProviderSubId !== billingSub.provider_subscription_id) {
+          await this.billingRepo.markWebhookEventProcessed(
+            this.provider.name,
+            parsedEvent.providerEventId,
+            'ignored',
+            'Cobrança recebida pertence a outra assinatura do provedor'
+          );
+          return { status: 'ok', processed: false, reason: 'provider_subscription_mismatch' };
+        }
+
         if (isOrdinaryRecurringRenewal) {
-          if (parsedEvent.providerPaymentId && typeof (this.billingRepo as any).getTransaction === 'function') {
-            const txId = `${this.provider.name}_${parsedEvent.providerPaymentId}`;
-            const existingTx = await this.billingRepo.getTransaction(txId);
-            if (existingTx && existingTx.status === 'paid') {
-              await this.billingRepo.markWebhookEventProcessed(
-                this.provider.name,
-                parsedEvent.providerEventId,
-                'processed'
-              );
-              return { status: 'ok', processed: true, reason: 'already_settled' };
-            }
-          }
-
-          const currentRenewalBoundary =
-            normalizeToBillingDate(billingSub?.current_period_end_billing_date, config.billingTimezone) ||
-            normalizeToBillingDate(billingSub?.current_period_end, config.billingTimezone) ||
-            normalizeToBillingDate(currentAppSub?.current_period_end, config.billingTimezone);
-
-          const startBillingDate = currentRenewalBoundary || getCurrentBillingDate(now, config.billingTimezone);
-          const newPeriodEndBillingDate = addCommercialInterval(startBillingDate, targetInterval, config.billingTimezone);
-          const newPeriodStartIso = currentRenewalBoundary
-            ? new Date(`${currentRenewalBoundary}T00:00:00.000Z`).toISOString()
-            : now.toISOString();
-          const newPeriodEndIso = new Date(`${newPeriodEndBillingDate}T00:00:00.000Z`).toISOString();
-
-          if (currentAppSub) {
-            await this.subscriptionRepo.setSubscription({
-              ...currentAppSub,
-              billing_status: 'active',
-              grace_period_expires_at: null,
-              grace_period_expires_billing_date: null,
-              current_period_start: newPeriodStartIso,
-              current_period_end: newPeriodEndIso,
-              cancel_at_period_end: false,
-              updated_at: now.toISOString(),
-            });
-          }
-
-          if (billingSub) {
-            await this.billingRepo.setSubscription({
-              ...billingSub,
-              status: 'active',
-              current_period_start: newPeriodStartIso,
-              current_period_end: newPeriodEndIso,
-              current_period_end_billing_date: newPeriodEndBillingDate,
-              updated_at: now.toISOString(),
-            });
-          }
-
           if (parsedEvent.providerCustomerId) {
             await this.safeUpdateWebhookCustomer(ministryId, parsedEvent.providerCustomerId, {
               isCurrentTransitionOrActiveSub: true,
@@ -1615,27 +1612,62 @@ export class BillingService {
             });
           }
 
-          if (parsedEvent.providerPaymentId) {
-            const transaction: BillingTransactionRecord = {
-              id: `${this.provider.name}_${parsedEvent.providerPaymentId}`,
-              ministry_id: ministryId,
-              provider: this.provider.name,
-              provider_payment_id: parsedEvent.providerPaymentId,
-              provider_subscription_id: newProviderSubId,
-              transaction_type: 'recurring_payment',
-              amount_cents: parsedEvent.amountCents || expectedPrice.totalPriceCents,
-              currency: 'BRL',
-              status: 'paid',
-              due_date: currentRenewalBoundary || parsedEvent.dueDate || getCurrentBillingDate(now, config.billingTimezone),
-              paid_at: parsedEvent.paymentDate || now.toISOString(),
-              paid_billing_date: getBillingDate(parsedEvent.paymentDate || now, config.billingTimezone),
-              payment_method: parsedEvent.paymentMethod,
-              invoice_url: parsedEvent.invoiceUrl || null,
-              created_at: now.toISOString(),
-              updated_at: now.toISOString(),
-            };
+          if (!paymentRenewalDate || !parsedEvent.providerPaymentId) {
+            await this.billingRepo.markWebhookEventProcessed(
+              this.provider.name,
+              parsedEvent.providerEventId,
+              'ignored',
+              'Data de renovação ou providerPaymentId ausente'
+            );
+            return { status: 'ok', processed: false, reason: 'unresolvable_renewal_identity' };
+          }
 
-            await this.billingRepo.saveTransaction(transaction);
+          const settleResult = await this.billingRepo.settleOrdinaryRecurringRenewalAtomic({
+            ministryId,
+            provider: this.provider.name,
+            providerPaymentId: parsedEvent.providerPaymentId,
+            providerSubscriptionId: resolvedProviderSubId!,
+            renewalBillingDate: paymentRenewalDate,
+            amountCents: parsedEvent.amountCents || expectedPrice.totalPriceCents,
+            currency: 'BRL',
+            interval: targetInterval,
+            expectedCurrentPeriodEnd: currentRenewalBoundary,
+            invoiceUrl: resolvedInvoiceUrl,
+            paymentMethod: parsedEvent.paymentMethod,
+            paidAt: parsedEvent.paymentDate || now.toISOString(),
+            paidBillingDate: getBillingDate(parsedEvent.paymentDate || now, config.billingTimezone),
+            now,
+            timeZone: config.billingTimezone,
+          });
+
+          if (!settleResult.success) {
+            if (settleResult.outcome === 'future_cycle_mismatch') {
+              await this.billingRepo.markWebhookEventProcessed(
+                this.provider.name,
+                parsedEvent.providerEventId,
+                'ignored',
+                settleResult.error || 'Future cycle payment mismatch'
+              );
+              return { status: 'ok', processed: false, reason: 'future_cycle_mismatch' };
+            }
+
+            if (settleResult.outcome === 'financial_conflict') {
+              await this.billingRepo.markWebhookEventProcessed(
+                this.provider.name,
+                parsedEvent.providerEventId,
+                'failed',
+                settleResult.error || 'Financial conflict'
+              );
+              return { status: 'ok', processed: false, reason: 'financial_conflict' };
+            }
+
+            await this.billingRepo.markWebhookEventProcessed(
+              this.provider.name,
+              parsedEvent.providerEventId,
+              'failed',
+              settleResult.error || settleResult.outcome
+            );
+            return { status: 'ok', processed: false, reason: settleResult.outcome };
           }
 
           await this.billingRepo.markWebhookEventProcessed(
@@ -1644,7 +1676,11 @@ export class BillingService {
             'processed'
           );
 
-          return { status: 'ok', processed: true };
+          return {
+            status: 'ok',
+            processed: true,
+            ...(settleResult.outcome !== 'settled' ? { reason: settleResult.outcome } : {}),
+          };
         }
 
         // Se a transição já foi concluída anteriormente (ex: reconciliador automático venceu a corrida), trata como idempotente
@@ -1860,11 +1896,32 @@ export class BillingService {
 
         return { status: 'ok', processed: true };
       } else if (parsedEvent.eventType === 'payment_overdue') {
-        // Proteção contra eventos de assinaturas antigas / supersedidas
+        let resolvedProviderSubId = parsedEvent.providerSubscriptionId || null;
+        let resolvedOriginalDueDate = parsedEvent.originalDueDate || null;
+        let resolvedInvoiceUrl = parsedEvent.invoiceUrl || null;
+
         if (
-          parsedEvent.providerSubscriptionId &&
+          (!resolvedProviderSubId || !resolvedOriginalDueDate || !resolvedInvoiceUrl) &&
+          parsedEvent.providerPaymentId &&
+          typeof (this.provider as any).getPayment === 'function'
+        ) {
+          try {
+            const enriched = await (this.provider as any).getPayment(parsedEvent.providerPaymentId);
+            if (enriched) {
+              resolvedProviderSubId = resolvedProviderSubId || enriched.subscriptionId || null;
+              resolvedOriginalDueDate = resolvedOriginalDueDate || enriched.originalDueDate || null;
+              resolvedInvoiceUrl = resolvedInvoiceUrl || enriched.invoiceUrl || null;
+            }
+          } catch (_e) {
+            // best-effort enrichment
+          }
+        }
+
+        // Proteção estrita: providerSubscriptionId DEVE existir e coincidir exatamente com a assinatura corrente
+        if (
+          resolvedProviderSubId &&
           billingSub?.provider_subscription_id &&
-          parsedEvent.providerSubscriptionId !== billingSub.provider_subscription_id
+          resolvedProviderSubId !== billingSub.provider_subscription_id
         ) {
           await this.billingRepo.markWebhookEventProcessed(
             this.provider.name,
@@ -1875,6 +1932,16 @@ export class BillingService {
           return { status: 'ok', processed: false, reason: 'superseded_subscription_event_ignored' };
         }
 
+        if (!resolvedProviderSubId || !billingSub?.provider_subscription_id || resolvedProviderSubId !== billingSub.provider_subscription_id) {
+          await this.billingRepo.markWebhookEventProcessed(
+            this.provider.name,
+            parsedEvent.providerEventId,
+            'ignored',
+            'Evento PAYMENT_OVERDUE sem providerSubscriptionId ou não pertencente à assinatura corrente ignorado'
+          );
+          return { status: 'ok', processed: false, reason: 'unmatched_or_detached_overdue_ignored' };
+        }
+
         // Determinar a data exata da fronteira de renovação corrente (current renewal boundary)
         const currentRenewalBoundary =
           normalizeToBillingDate(billingSub?.current_period_end_billing_date, config.billingTimezone) ||
@@ -1883,31 +1950,46 @@ export class BillingService {
 
         // Data de renovação da cobrança (preferência estrita pela data comercial original originalDueDate)
         const paymentRenewalDate =
-          (parsedEvent.originalDueDate ? normalizeToBillingDate(parsedEvent.originalDueDate, config.billingTimezone) : null) ||
-          (parsedEvent.dueDate ? normalizeToBillingDate(parsedEvent.dueDate, config.billingTimezone) : null);
+          (resolvedOriginalDueDate ? normalizeToBillingDate(resolvedOriginalDueDate, config.billingTimezone) : null) ||
+          (parsedEvent.dueDate && normalizeToBillingDate(parsedEvent.dueDate, config.billingTimezone) === currentRenewalBoundary
+            ? currentRenewalBoundary
+            : (parsedEvent.dueDate ? normalizeToBillingDate(parsedEvent.dueDate, config.billingTimezone) : null));
 
-        // Proteção contra eventos fora de ordem (stale overdue de ciclos anteriores):
-        if (currentAppSub && currentAppSub.billing_status === 'active' && paymentRenewalDate) {
-          const isOutOfOrder =
-            (currentRenewalBoundary && paymentRenewalDate < currentRenewalBoundary) ||
-            (!currentRenewalBoundary &&
-              currentAppSub.current_period_start &&
-              paymentRenewalDate < normalizeToBillingDate(currentAppSub.current_period_start, config.billingTimezone)!);
+        if (!currentRenewalBoundary || !paymentRenewalDate) {
+          await this.billingRepo.markWebhookEventProcessed(
+            this.provider.name,
+            parsedEvent.providerEventId,
+            'ignored',
+            'Fronteira de renovação ou data do pagamento indeterminada'
+          );
+          return { status: 'ok', processed: false, reason: 'cycle_boundary_mismatch' };
+        }
 
-          if (isOutOfOrder) {
-            await this.billingRepo.markWebhookEventProcessed(
-              this.provider.name,
-              parsedEvent.providerEventId,
-              'ignored',
-              'Evento PAYMENT_OVERDUE antigo ignorado por out-of-order sequence guard'
-            );
-            return { status: 'ok', processed: false, reason: 'out_of_order_overdue_ignored' };
-          }
+        // Proteção contra eventos de ciclos anteriores (out-of-order)
+        if (paymentRenewalDate < currentRenewalBoundary) {
+          await this.billingRepo.markWebhookEventProcessed(
+            this.provider.name,
+            parsedEvent.providerEventId,
+            'ignored',
+            'Evento PAYMENT_OVERDUE antigo ignorado por out-of-order sequence guard'
+          );
+          return { status: 'ok', processed: false, reason: 'out_of_order_overdue_ignored' };
+        }
+
+        // Proteção contra eventos de ciclos futuros: NUNCA delinquentar ciclo corrente por cobrança futura
+        if (paymentRenewalDate > currentRenewalBoundary) {
+          await this.billingRepo.markWebhookEventProcessed(
+            this.provider.name,
+            parsedEvent.providerEventId,
+            'ignored',
+            'Evento PAYMENT_OVERDUE de ciclo futuro ignorado'
+          );
+          return { status: 'ok', processed: false, reason: 'future_cycle_overdue_ignored' };
         }
 
         // Entrar em past_due e abrir carência civil de 7 dias ancorada na fronteira de renovação
         const graceEndBillingDate = addCommercialDays(
-          currentRenewalBoundary || paymentRenewalDate || getCurrentBillingDate(now, config.billingTimezone),
+          currentRenewalBoundary,
           7,
           config.billingTimezone
         );
@@ -1932,41 +2014,31 @@ export class BillingService {
         }
 
         if (parsedEvent.providerPaymentId) {
-          const renewalDueDate =
-            currentRenewalBoundary ||
-            paymentRenewalDate ||
-            parsedEvent.dueDate ||
-            getCurrentBillingDate(now, config.billingTimezone);
-
-          let invoiceUrl = parsedEvent.invoiceUrl || null;
-          if (!invoiceUrl && typeof (this.provider as any).getPayment === 'function') {
-            try {
-              const paymentRecord = await (this.provider as any).getPayment(parsedEvent.providerPaymentId);
-              if (paymentRecord?.invoiceUrl) {
-                invoiceUrl = paymentRecord.invoiceUrl;
-              }
-            } catch (_e) {
-              // Enriquecimento best-effort
-            }
-          }
-
           await this.billingRepo.saveTransaction({
             id: `${this.provider.name}_${parsedEvent.providerPaymentId}`,
             ministry_id: ministryId,
             provider: this.provider.name,
             provider_payment_id: parsedEvent.providerPaymentId,
-            provider_subscription_id: billingSub?.provider_subscription_id || parsedEvent.providerSubscriptionId || null,
+            provider_subscription_id: billingSub.provider_subscription_id,
             transaction_type: 'recurring_payment',
-            amount_cents: parsedEvent.amountCents || billingSub?.amount_cents || 0,
+            amount_cents: parsedEvent.amountCents || billingSub.amount_cents || 0,
             currency: 'BRL',
             status: 'overdue',
-            due_date: renewalDueDate,
+            due_date: currentRenewalBoundary,
             paid_at: null,
-            invoice_url: invoiceUrl,
+            invoice_url: resolvedInvoiceUrl,
             created_at: now.toISOString(),
             updated_at: now.toISOString(),
           });
         }
+
+        await this.billingRepo.markWebhookEventProcessed(
+          this.provider.name,
+          parsedEvent.providerEventId,
+          'processed'
+        );
+
+        return { status: 'ok', processed: true };
       } else if (
         parsedEvent.eventType === 'subscription_inactivated' ||
         parsedEvent.eventType === 'subscription_canceled'
@@ -4574,18 +4646,123 @@ export class BillingService {
     let reconciled = true;
     let message = 'Assinatura sincronizada com sucesso.';
 
-    // Se o Asaas estiver ACTIVE mas o Firestore estiver past_due: recuperar
-    if (providerData.status === 'ACTIVE' && billingSub.status !== 'active') {
-      await this.billingRepo.setSubscription({ ...billingSub, status: 'active', updated_at: now });
-      if (appSub) {
-        await this.subscriptionRepo.setSubscription({
-          ...appSub,
-          billing_status: 'active',
-          grace_period_expires_at: null,
-          updated_at: now,
-        });
+    // Determinar a fronteira de renovação corrente
+    const currentRenewalBoundary =
+      normalizeToBillingDate(billingSub.current_period_end_billing_date, config.billingTimezone) ||
+      normalizeToBillingDate(billingSub.current_period_end, config.billingTimezone) ||
+      normalizeToBillingDate(appSub?.current_period_end, config.billingTimezone);
+
+    // Se o estado local estiver past_due (ou appSub past_due), NÃO podemos usar providerData.status === 'ACTIVE'
+    // como autoridade de liquidação. No Asaas, assinaturas com faturas OVERDUE permanecem com status ACTIVE!
+    if (billingSub.status === 'past_due' || appSub?.billing_status === 'past_due') {
+      if (!currentRenewalBoundary) {
+        return {
+          ministryId,
+          internalStatus: billingSub.status,
+          providerStatus: providerData.status,
+          reconciled: false,
+          message: 'Fronteira de renovação corrente não pôde ser determinada.',
+        };
       }
-      message = 'Assinatura recuperada para ativa após sincronização.';
+
+      if (!this.provider.listSubscriptionPayments) {
+        return {
+          ministryId,
+          internalStatus: billingSub.status,
+          providerStatus: providerData.status,
+          reconciled: false,
+          message: 'Provedor não suporta listagem de pagamentos da assinatura para reconciliação.',
+        };
+      }
+
+      const payments = await this.provider.listSubscriptionPayments(billingSub.provider_subscription_id);
+      const matchingPayments = (payments || []).filter((p) => {
+        if (p.subscriptionId && p.subscriptionId !== billingSub.provider_subscription_id) {
+          return false;
+        }
+        const pRenewalDate =
+          (p.originalDueDate ? normalizeToBillingDate(p.originalDueDate, config.billingTimezone) : null) ||
+          (p.dueDate ? normalizeToBillingDate(p.dueDate, config.billingTimezone) : null);
+        return pRenewalDate === currentRenewalBoundary;
+      });
+
+      if (matchingPayments.length === 0) {
+        return {
+          ministryId,
+          internalStatus: billingSub.status,
+          providerStatus: providerData.status,
+          reconciled: false,
+          message: 'Nenhum pagamento correspondente ao ciclo de renovação corrente foi localizado.',
+        };
+      }
+
+      if (matchingPayments.length > 1) {
+        return {
+          ministryId,
+          internalStatus: billingSub.status,
+          providerStatus: providerData.status,
+          reconciled: false,
+          message: 'Ambiguidade: múltiplos pagamentos encontrados para a mesma fronteira de renovação.',
+        };
+      }
+
+      const matchedPayment = matchingPayments[0];
+      const isSettled =
+        matchedPayment.status === 'CONFIRMED' ||
+        matchedPayment.status === 'RECEIVED' ||
+        matchedPayment.status === 'RECEIVED_IN_CASH';
+
+      if (!isSettled) {
+        // Cobrança corrente não está quitada (está OVERDUE, PENDING, etc.)
+        // Falha fechada: mantém past_due/grace intactos, não avança período
+        return {
+          ministryId,
+          internalStatus: billingSub.status,
+          providerStatus: providerData.status,
+          reconciled: false,
+          message: `Cobrança de renovação corrente no provedor está com status ${matchedPayment.status}. Pagamento pendente.`,
+        };
+      }
+
+      // Cobrança corrente está liquidada no provedor!
+      // Rota unificada: executa a liquidação pelo MESMO core canônico atômico
+      const targetInterval = billingSub.interval || 'monthly';
+      const settleResult = await this.billingRepo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider: this.provider.name,
+        providerPaymentId: matchedPayment.id,
+        providerSubscriptionId: billingSub.provider_subscription_id,
+        renewalBillingDate: currentRenewalBoundary,
+        amountCents: matchedPayment.amountCents || billingSub.amount_cents || 0,
+        currency: 'BRL',
+        interval: targetInterval,
+        expectedCurrentPeriodEnd: currentRenewalBoundary,
+        invoiceUrl: matchedPayment.invoiceUrl || null,
+        paymentMethod: matchedPayment.billingType || null,
+        paidAt: matchedPayment.paymentDate || matchedPayment.clientPaymentDate || new Date().toISOString(),
+        paidBillingDate: matchedPayment.paymentDate
+          ? getBillingDate(matchedPayment.paymentDate, config.billingTimezone)
+          : null,
+        timeZone: config.billingTimezone,
+      });
+
+      if (!settleResult.success) {
+        return {
+          ministryId,
+          internalStatus: billingSub.status,
+          providerStatus: providerData.status,
+          reconciled: false,
+          message: `Falha na liquidação atômica de reconciliação: ${settleResult.error || settleResult.outcome}`,
+        };
+      }
+
+      return {
+        ministryId,
+        internalStatus: 'active',
+        providerStatus: providerData.status,
+        reconciled: true,
+        message: 'Pagamento de renovação confirmado e assinatura regularizada com sucesso.',
+      };
     } else if (
       (providerData.status === 'INACTIVE' || providerData.status === 'CANCELED') &&
       billingSub.status === 'active'

@@ -267,6 +267,32 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
         return updated;
       }),
       getTransactions: vi.fn().mockResolvedValue([]),
+      settleOrdinaryRecurringRenewalAtomic: vi.fn().mockImplementation(async (params: any) => {
+        const { ministryId, provider, providerPaymentId, amountCents } = params;
+        const appSub = mockAppSubscriptionsStore.get(ministryId);
+        if (appSub) {
+          appSub.billing_status = 'active';
+          appSub.grace_period_expires_at = null;
+          appSub.current_period_end = new Date(Date.now() + 30 * 86400000).toISOString();
+          mockAppSubscriptionsStore.set(ministryId, appSub);
+        }
+        const billingSub = mockSubscriptionsStore.get(ministryId);
+        if (billingSub) {
+          billingSub.status = 'active';
+          billingSub.current_period_end = new Date(Date.now() + 30 * 86400000).toISOString();
+          mockSubscriptionsStore.set(ministryId, billingSub);
+        }
+        mockTransactionsStore.set(`${provider}_${providerPaymentId}`, {
+          id: `${provider}_${providerPaymentId}`,
+          ministry_id: ministryId,
+          provider,
+          provider_payment_id: providerPaymentId,
+          amount_cents: amountCents,
+          status: 'paid',
+          transaction_type: 'recurring_payment',
+        });
+        return { success: true, outcome: 'settled', transactionId: `${provider}_${providerPaymentId}` };
+      }),
     };
 
     mockSubscriptionRepo = {
@@ -555,7 +581,9 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
   });
 
   describe('Reconciliation with Gateway', () => {
-    it('reconciles status from Asaas recovering past_due subscription if gateway is active', async () => {
+    it('reconciles status from Asaas recovering past_due subscription if gateway is active and renewal payment is settled', async () => {
+      const nowIso = new Date().toISOString();
+      const nowBillingDate = nowIso.slice(0, 10);
       mockSubscriptionsStore.set('min_test', {
         id: 'min_test_asaas',
         ministry_id: 'min_test',
@@ -567,12 +595,13 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
         member_addon_blocks: 0,
         amount_cents: 8990,
         status: 'past_due',
-        started_at: new Date().toISOString(),
-        current_period_start: new Date().toISOString(),
-        current_period_end: new Date().toISOString(),
+        started_at: nowIso,
+        current_period_start: nowIso,
+        current_period_end: nowIso,
+        current_period_end_billing_date: nowBillingDate,
         cancel_at_period_end: false,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        created_at: nowIso,
+        updated_at: nowIso,
       });
 
       mockAppSubscriptionsStore.set('min_test', {
@@ -585,11 +614,11 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
         suspended_at: null,
         suspension_reason: null,
         grace_period_expires_at: new Date(Date.now() + 86400000).toISOString(),
-        current_period_start: new Date().toISOString(),
-        current_period_end: new Date().toISOString(),
+        current_period_start: nowIso,
+        current_period_end: nowIso,
         cancel_at_period_end: false,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        created_at: nowIso,
+        updated_at: nowIso,
       });
 
       vi.spyOn(mockProvider, 'getSubscription').mockResolvedValue({
@@ -597,6 +626,17 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
         value: 89.9,
         cycle: 'MONTHLY',
       });
+
+      vi.spyOn(mockProvider, 'listSubscriptionPayments').mockResolvedValue([
+        {
+          id: 'pay_rec_001',
+          subscriptionId: 'sub_asaas_1',
+          status: 'RECEIVED',
+          amountCents: 8990,
+          originalDueDate: nowBillingDate,
+          dueDate: nowBillingDate,
+        },
+      ]);
 
       const reconciliation = await billingService.reconcileBillingSubscription('min_test');
 
@@ -609,6 +649,78 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
       const updatedAppSub = mockAppSubscriptionsStore.get('min_test');
       expect(updatedAppSub?.billing_status).toBe('active');
       expect(updatedAppSub?.grace_period_expires_at).toBeNull();
+    });
+
+    it('PROVIDER SUBSCRIPTION ACTIVE TRAP: past_due is NOT cleared when provider subscription is ACTIVE but current payment is OVERDUE', async () => {
+      const nowIso = new Date().toISOString();
+      const nowBillingDate = nowIso.slice(0, 10);
+      mockSubscriptionsStore.set('min_test', {
+        id: 'min_test_asaas',
+        ministry_id: 'min_test',
+        provider: 'asaas',
+        provider_subscription_id: 'sub_asaas_1',
+        provider_customer_id: 'cus_123',
+        plan_id: 'pro',
+        interval: 'monthly',
+        member_addon_blocks: 0,
+        amount_cents: 8990,
+        status: 'past_due',
+        started_at: nowIso,
+        current_period_start: nowIso,
+        current_period_end: nowIso,
+        current_period_end_billing_date: nowBillingDate,
+        cancel_at_period_end: false,
+        created_at: nowIso,
+        updated_at: nowIso,
+      });
+
+      mockAppSubscriptionsStore.set('min_test', {
+        id: 'min_test',
+        ministry_id: 'min_test',
+        plan_id: 'pro',
+        member_addon_blocks: 0,
+        billing_status: 'past_due',
+        administratively_suspended: false,
+        suspended_at: null,
+        suspension_reason: null,
+        grace_period_expires_at: new Date(Date.now() + 86400000).toISOString(),
+        current_period_start: nowIso,
+        current_period_end: nowIso,
+        cancel_at_period_end: false,
+        created_at: nowIso,
+        updated_at: nowIso,
+      });
+
+      vi.spyOn(mockProvider, 'getSubscription').mockResolvedValue({
+        status: 'ACTIVE',
+        value: 89.9,
+        cycle: 'MONTHLY',
+      });
+
+      vi.spyOn(mockProvider, 'listSubscriptionPayments').mockResolvedValue([
+        {
+          id: 'pay_rec_002',
+          subscriptionId: 'sub_asaas_1',
+          status: 'OVERDUE',
+          amountCents: 8990,
+          originalDueDate: nowBillingDate,
+          dueDate: nowBillingDate,
+        },
+      ]);
+
+      const reconciliation = await billingService.reconcileBillingSubscription('min_test');
+
+      // Reconciler MUST NOT clear delinquency based solely on provider subscription ACTIVE status
+      expect(reconciliation.reconciled).toBe(false);
+      expect(reconciliation.providerStatus).toBe('ACTIVE');
+
+      // Local past_due must remain intact
+      const updatedSub = mockSubscriptionsStore.get('min_test');
+      expect(updatedSub?.status).toBe('past_due');
+
+      const updatedAppSub = mockAppSubscriptionsStore.get('min_test');
+      expect(updatedAppSub?.billing_status).toBe('past_due');
+      expect(updatedAppSub?.grace_period_expires_at).not.toBeNull();
     });
 
     it('skips external gateway query if subscription is complimentary', async () => {
