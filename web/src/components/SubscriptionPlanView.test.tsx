@@ -2840,7 +2840,7 @@ describe('SubscriptionPlanView Component', () => {
       financialAttentionRequired: false,
       earlyActivation: {
         eligible: true,
-        status: 'eligible' as const,
+        status: 'available' as const,
         quote: null,
         checkoutUrl: null,
       },
@@ -2984,7 +2984,7 @@ describe('SubscriptionPlanView Component', () => {
           kind: 'addon_increase' as const,
           earlyActivation: {
             eligible: true,
-            status: 'eligible' as const,
+            status: 'available' as const,
             quote: null,
             checkoutUrl: null,
           },
@@ -3486,6 +3486,150 @@ describe('SubscriptionPlanView Component', () => {
 
         expect(mockShowToast).toHaveBeenCalledWith('O link de pagamento expirou. Você pode tentar novamente.', 'error');
         expect(sessionStorage.getItem('louvaio_checkout_intent')).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('44.4) boundary cutover false-positive regression: natural period boundary cutover without early activation settlement does NOT declare early activation success', async () => {
+      vi.useFakeTimers();
+      try {
+        sessionStorage.setItem(
+          'louvaio_checkout_intent',
+          JSON.stringify({
+            type: 'early_activation',
+            ministryId: 'min-polling-boundary-cutover',
+            expectedPlanId: 'essential',
+            expectedInterval: 'monthly',
+            expectedAddonBlocks: 0,
+            timestamp: Date.now(),
+            transitionId: 'tr_upgrade_123',
+          })
+        );
+
+        const getSubSpy = vi.spyOn(api, 'getMinistrySubscription');
+        // Initial mount: still payment_pending under source plan
+        getSubSpy.mockResolvedValueOnce({
+          ...mockSummaryLitePaid,
+          pendingTransition: {
+            ...mockPendingUpgradeEligible,
+            earlyActivation: {
+              eligible: true,
+              status: 'payment_pending' as const,
+              quote: null,
+              checkoutUrl: 'https://asaas.com/checkoutSession/show?id=chk_early_001',
+            },
+          },
+        } as any);
+
+        // Subsequent ticks: period boundary cutover arrived naturally!
+        // target plan is now active, memberAddonBlocks: 0, billingStatus: 'active',
+        // but pendingTransition is null (completed and released), backend NEVER settled early activation.
+        getSubSpy.mockResolvedValue({
+          ...mockSummaryEssential,
+          subscription: {
+            ...mockSummaryEssential.subscription,
+            memberAddonBlocks: 0,
+          },
+          pendingTransition: null,
+        } as any);
+
+        vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+        render(
+          <SubscriptionPlanView
+            ministryId="min-polling-boundary-cutover"
+            onBack={mockOnBack}
+            showToast={mockShowToast}
+          />
+        );
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(100);
+        });
+        expect(screen.getByText('Pagamento em processamento')).toBeInTheDocument();
+
+        // Advance timer for polling tick
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2500);
+        });
+
+        // CRITICAL REGRESSION ASSERTION:
+        // Must NOT declare early activation success toast
+        expect(mockShowToast).not.toHaveBeenCalledWith('Upgrade ativado com sucesso!', 'success');
+        // Intent must be cleaned up from sessionStorage
+        expect(sessionStorage.getItem('louvaio_checkout_intent')).toBeNull();
+
+        // Verify polling terminated and does not continue polling
+        const callCountAfterConvergence = getSubSpy.mock.calls.length;
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(10000);
+        });
+        expect(getSubSpy.mock.calls.length).toBe(callCountAfterConvergence);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('44.5) stale target match regression: stale early activation intent when target already active does NOT declare early activation success', async () => {
+      vi.useFakeTimers();
+      try {
+        sessionStorage.setItem(
+          'louvaio_checkout_intent',
+          JSON.stringify({
+            type: 'early_activation',
+            ministryId: 'min-polling-stale-match',
+            expectedPlanId: 'essential',
+            expectedInterval: 'monthly',
+            expectedAddonBlocks: 0,
+            timestamp: Date.now(),
+            transitionId: 'tr_upgrade_old',
+          })
+        );
+
+        const getSubSpy = vi.spyOn(api, 'getMinistrySubscription');
+        // Initial authoritative load already has target plan and addons active, no pending transition
+        getSubSpy.mockResolvedValue({
+          ...mockSummaryEssential,
+          subscription: {
+            ...mockSummaryEssential.subscription,
+            memberAddonBlocks: 0,
+          },
+          pendingTransition: null,
+        } as any);
+
+        const createCheckoutSpy = vi.spyOn(api, 'createEarlyActivationCheckout');
+        vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+        render(
+          <SubscriptionPlanView
+            ministryId="min-polling-stale-match"
+            onBack={mockOnBack}
+            showToast={mockShowToast}
+          />
+        );
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(100);
+        });
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2500);
+        });
+
+        // CRITICAL: NO early activation success toast
+        expect(mockShowToast).not.toHaveBeenCalledWith('Upgrade ativado com sucesso!', 'success');
+        // No second checkout initiated
+        expect(createCheckoutSpy).not.toHaveBeenCalled();
+        // Intent cleared safely
+        expect(sessionStorage.getItem('louvaio_checkout_intent')).toBeNull();
+
+        // Verify polling terminated
+        const callCount = getSubSpy.mock.calls.length;
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(10000);
+        });
+        expect(getSubSpy.mock.calls.length).toBe(callCount);
       } finally {
         vi.useRealTimers();
       }

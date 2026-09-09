@@ -270,19 +270,10 @@ export const SubscriptionPlanView: React.FC<Props> = ({
             return;
           }
 
-          // 2. Fluxo de Ativação Antecipada (Early Activation) (Phase 4A.5)
+          // 2. Fluxo de Ativação Antecipada (Early Activation) (Phase 4A.5 / Phase 4A.5A)
           if (savedIntent && savedIntent.type === 'early_activation') {
-            const matchesPlan = updated.plan.id === savedIntent.expectedPlanId;
-            const matchesAddons =
-              savedIntent.expectedAddonBlocks !== undefined
-                ? updated.subscription.memberAddonBlocks === savedIntent.expectedAddonBlocks
-                : true;
-
             const isEarlyActivationSettled =
-              updated.pendingTransition?.earlyActivation?.status === 'activated' ||
-              (matchesPlan &&
-                matchesAddons &&
-                updated.subscription.billingStatus === 'active');
+              updated.pendingTransition?.earlyActivation?.status === 'activated';
 
             if (isEarlyActivationSettled) {
               if (pollingRef.current) window.clearInterval(pollingRef.current);
@@ -297,6 +288,15 @@ export const SubscriptionPlanView: React.FC<Props> = ({
               sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
               setPostCheckoutProcessing(false);
               showToast?.('O link de pagamento expirou. Você pode tentar novamente.', 'error');
+              return;
+            }
+
+            // Se a transição pendente não existe mais (ex.: cutover de fronteira natural concluiu o agendamento)
+            // sem que tenhamos observado earlyActivation.status === 'activated', encerra o polling sem inferir falso sucesso.
+            if (!updated.pendingTransition) {
+              if (pollingRef.current) window.clearInterval(pollingRef.current);
+              sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
+              setPostCheckoutProcessing(false);
               return;
             }
           } else {
