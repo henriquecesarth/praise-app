@@ -66,7 +66,7 @@ import {
   EarlyActivationCheckoutResponseDto,
 } from './billing.types';
 import { AppError } from '../../middleware/error-handler';
-import { getCurrentBillingDate, getBillingDate, addCommercialInterval, addCommercialDays } from '../../utils/billing-date';
+import { getCurrentBillingDate, getBillingDate, addCommercialInterval, addCommercialDays, normalizeToBillingDate } from '../../utils/billing-date';
 import { providerBrlDecimalToCents } from './billing-money.utils';
 
 export class BillingService {
@@ -1549,6 +1549,104 @@ export class BillingService {
             ? billingSub.provider_subscription_id
             : null);
 
+        // 5.3 Se não houver transição de plano (planChange == null) e a assinatura já estiver vigente (não pendente),
+        // trata-se de renovação recorrente ordinária da assinatura já contratada (ou regularização de ciclo inadimplente).
+        const isOrdinaryRecurringRenewal =
+          !planChange &&
+          billingSub?.status !== 'pending' &&
+          currentAppSub?.subscription_mode === 'paid' &&
+          currentAppSub?.plan_id === targetPlan &&
+          (currentAppSub?.member_addon_blocks || 0) === targetAddons;
+
+        if (isOrdinaryRecurringRenewal) {
+          if (parsedEvent.providerPaymentId && typeof (this.billingRepo as any).getTransaction === 'function') {
+            const txId = `${this.provider.name}_${parsedEvent.providerPaymentId}`;
+            const existingTx = await this.billingRepo.getTransaction(txId);
+            if (existingTx && existingTx.status === 'paid') {
+              await this.billingRepo.markWebhookEventProcessed(
+                this.provider.name,
+                parsedEvent.providerEventId,
+                'processed'
+              );
+              return { status: 'ok', processed: true, reason: 'already_settled' };
+            }
+          }
+
+          const currentRenewalBoundary =
+            normalizeToBillingDate(billingSub?.current_period_end_billing_date, config.billingTimezone) ||
+            normalizeToBillingDate(billingSub?.current_period_end, config.billingTimezone) ||
+            normalizeToBillingDate(currentAppSub?.current_period_end, config.billingTimezone);
+
+          const startBillingDate = currentRenewalBoundary || getCurrentBillingDate(now, config.billingTimezone);
+          const newPeriodEndBillingDate = addCommercialInterval(startBillingDate, targetInterval, config.billingTimezone);
+          const newPeriodStartIso = currentRenewalBoundary
+            ? new Date(`${currentRenewalBoundary}T00:00:00.000Z`).toISOString()
+            : now.toISOString();
+          const newPeriodEndIso = new Date(`${newPeriodEndBillingDate}T00:00:00.000Z`).toISOString();
+
+          if (currentAppSub) {
+            await this.subscriptionRepo.setSubscription({
+              ...currentAppSub,
+              billing_status: 'active',
+              grace_period_expires_at: null,
+              grace_period_expires_billing_date: null,
+              current_period_start: newPeriodStartIso,
+              current_period_end: newPeriodEndIso,
+              cancel_at_period_end: false,
+              updated_at: now.toISOString(),
+            });
+          }
+
+          if (billingSub) {
+            await this.billingRepo.setSubscription({
+              ...billingSub,
+              status: 'active',
+              current_period_start: newPeriodStartIso,
+              current_period_end: newPeriodEndIso,
+              current_period_end_billing_date: newPeriodEndBillingDate,
+              updated_at: now.toISOString(),
+            });
+          }
+
+          if (parsedEvent.providerCustomerId) {
+            await this.safeUpdateWebhookCustomer(ministryId, parsedEvent.providerCustomerId, {
+              isCurrentTransitionOrActiveSub: true,
+              nowIso: now.toISOString(),
+            });
+          }
+
+          if (parsedEvent.providerPaymentId) {
+            const transaction: BillingTransactionRecord = {
+              id: `${this.provider.name}_${parsedEvent.providerPaymentId}`,
+              ministry_id: ministryId,
+              provider: this.provider.name,
+              provider_payment_id: parsedEvent.providerPaymentId,
+              provider_subscription_id: newProviderSubId,
+              transaction_type: 'recurring_payment',
+              amount_cents: parsedEvent.amountCents || expectedPrice.totalPriceCents,
+              currency: 'BRL',
+              status: 'paid',
+              due_date: currentRenewalBoundary || parsedEvent.dueDate || getCurrentBillingDate(now, config.billingTimezone),
+              paid_at: parsedEvent.paymentDate || now.toISOString(),
+              paid_billing_date: getBillingDate(parsedEvent.paymentDate || now, config.billingTimezone),
+              payment_method: parsedEvent.paymentMethod,
+              invoice_url: parsedEvent.invoiceUrl || null,
+              created_at: now.toISOString(),
+              updated_at: now.toISOString(),
+            };
+
+            await this.billingRepo.saveTransaction(transaction);
+          }
+
+          await this.billingRepo.markWebhookEventProcessed(
+            this.provider.name,
+            parsedEvent.providerEventId,
+            'processed'
+          );
+
+          return { status: 'ok', processed: true };
+        }
+
         // Se a transição já foi concluída anteriormente (ex: reconciliador automático venceu a corrida), trata como idempotente
         if (planChange && planChange.status === 'completed' && planChange.supersede_status === 'completed') {
           if (parsedEvent.providerPaymentId) {
@@ -1777,11 +1875,26 @@ export class BillingService {
           return { status: 'ok', processed: false, reason: 'superseded_subscription_event_ignored' };
         }
 
-        // Proteção contra eventos fora de ordem:
-        if (currentAppSub && currentAppSub.billing_status === 'active' && parsedEvent.dueDate) {
-          const periodStartTime = new Date(currentAppSub.current_period_start).getTime();
-          const eventDueTime = new Date(parsedEvent.dueDate).getTime();
-          if (periodStartTime > eventDueTime) {
+        // Determinar a data exata da fronteira de renovação corrente (current renewal boundary)
+        const currentRenewalBoundary =
+          normalizeToBillingDate(billingSub?.current_period_end_billing_date, config.billingTimezone) ||
+          normalizeToBillingDate(billingSub?.current_period_end, config.billingTimezone) ||
+          normalizeToBillingDate(currentAppSub?.current_period_end, config.billingTimezone);
+
+        // Data de renovação da cobrança (preferência estrita pela data comercial original originalDueDate)
+        const paymentRenewalDate =
+          (parsedEvent.originalDueDate ? normalizeToBillingDate(parsedEvent.originalDueDate, config.billingTimezone) : null) ||
+          (parsedEvent.dueDate ? normalizeToBillingDate(parsedEvent.dueDate, config.billingTimezone) : null);
+
+        // Proteção contra eventos fora de ordem (stale overdue de ciclos anteriores):
+        if (currentAppSub && currentAppSub.billing_status === 'active' && paymentRenewalDate) {
+          const isOutOfOrder =
+            (currentRenewalBoundary && paymentRenewalDate < currentRenewalBoundary) ||
+            (!currentRenewalBoundary &&
+              currentAppSub.current_period_start &&
+              paymentRenewalDate < normalizeToBillingDate(currentAppSub.current_period_start, config.billingTimezone)!);
+
+          if (isOutOfOrder) {
             await this.billingRepo.markWebhookEventProcessed(
               this.provider.name,
               parsedEvent.providerEventId,
@@ -1792,16 +1905,20 @@ export class BillingService {
           }
         }
 
-        // Entrar em past_due e abrir carência de 7 dias se ainda não tiver
-        if (currentAppSub && currentAppSub.billing_status === 'active') {
-          const graceExpires = new Date(
-            now.getTime() + DEFAULT_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000
-          ).toISOString();
+        // Entrar em past_due e abrir carência civil de 7 dias ancorada na fronteira de renovação
+        const graceEndBillingDate = addCommercialDays(
+          currentRenewalBoundary || paymentRenewalDate || getCurrentBillingDate(now, config.billingTimezone),
+          7,
+          config.billingTimezone
+        );
+        const graceExpiresIso = new Date(`${graceEndBillingDate}T00:00:00.000Z`).toISOString();
 
+        if (currentAppSub && currentAppSub.billing_status === 'active') {
           await this.subscriptionRepo.setSubscription({
             ...currentAppSub,
             billing_status: 'past_due',
-            grace_period_expires_at: currentAppSub.grace_period_expires_at || graceExpires,
+            grace_period_expires_at: currentAppSub.grace_period_expires_at || graceExpiresIso,
+            grace_period_expires_billing_date: currentAppSub.grace_period_expires_billing_date || graceEndBillingDate,
             updated_at: now.toISOString(),
           });
         }
@@ -1815,16 +1932,37 @@ export class BillingService {
         }
 
         if (parsedEvent.providerPaymentId) {
+          const renewalDueDate =
+            currentRenewalBoundary ||
+            paymentRenewalDate ||
+            parsedEvent.dueDate ||
+            getCurrentBillingDate(now, config.billingTimezone);
+
+          let invoiceUrl = parsedEvent.invoiceUrl || null;
+          if (!invoiceUrl && typeof (this.provider as any).getPayment === 'function') {
+            try {
+              const paymentRecord = await (this.provider as any).getPayment(parsedEvent.providerPaymentId);
+              if (paymentRecord?.invoiceUrl) {
+                invoiceUrl = paymentRecord.invoiceUrl;
+              }
+            } catch (_e) {
+              // Enriquecimento best-effort
+            }
+          }
+
           await this.billingRepo.saveTransaction({
             id: `${this.provider.name}_${parsedEvent.providerPaymentId}`,
             ministry_id: ministryId,
             provider: this.provider.name,
             provider_payment_id: parsedEvent.providerPaymentId,
+            provider_subscription_id: billingSub?.provider_subscription_id || parsedEvent.providerSubscriptionId || null,
+            transaction_type: 'recurring_payment',
             amount_cents: parsedEvent.amountCents || billingSub?.amount_cents || 0,
             currency: 'BRL',
             status: 'overdue',
-            due_date: parsedEvent.dueDate || getCurrentBillingDate(now),
+            due_date: renewalDueDate,
             paid_at: null,
+            invoice_url: invoiceUrl,
             created_at: now.toISOString(),
             updated_at: now.toISOString(),
           });

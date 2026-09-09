@@ -30,28 +30,8 @@ import {
   resolveCustomerGraceReason,
 } from '../billing/customer-transition-summary.mapper';
 import { AppError } from '../../middleware/error-handler';
-import { getBillingDate } from '../../utils/billing-date';
+import { getBillingDate, normalizeToBillingDate } from '../../utils/billing-date';
 import { config } from '../../config/unifiedConfig';
-
-/**
- * Normaliza uma string de data (ISO ou YYYY-MM-DD) para a data civil 'YYYY-MM-DD' no timezone de billing.
- */
-function normalizeToBillingDate(rawDate: string | null | undefined, timeZone: string): string | null {
-  if (!rawDate) return null;
-  const str = String(rawDate).trim();
-  if (!str) return null;
-  const datePart = str.split('T')[0];
-  if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
-    return datePart;
-  }
-  try {
-    const bd = getBillingDate(str, timeZone);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(bd)) {
-      return bd;
-    }
-  } catch (_e) {}
-  return null;
-}
 
 /**
  * Correlaciona deterministicamente a fatura exata da obrigação de renovação corrente inadimplente (Phase 4A.6B).

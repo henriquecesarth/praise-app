@@ -3854,6 +3854,14 @@ export class BillingRepository {
     return snapshot.docs.map((doc: any) => doc.data() as BillingTransactionRecord);
   }
 
+  async getTransaction(id: string): Promise<BillingTransactionRecord | null> {
+    const doc = await this.transactionsCollection.doc(id).get();
+    if (doc.exists) {
+      return doc.data() as BillingTransactionRecord;
+    }
+    return null;
+  }
+
   // --------------------------------------------------------------------------
   // Webhook Events & Idempotency
   // --------------------------------------------------------------------------

@@ -101,3 +101,26 @@ export function addCommercialDays(
   const targetDay = String(utcDate.getUTCDate()).padStart(2, '0');
   return `${targetYear}-${targetMonth}-${targetDay}`;
 }
+
+/**
+ * Normaliza uma string de data (ISO ou YYYY-MM-DD) para a data civil 'YYYY-MM-DD' no timezone de billing.
+ */
+export function normalizeToBillingDate(
+  rawDate: string | null | undefined,
+  timeZone: string = config.billingTimezone || 'America/Sao_Paulo'
+): string | null {
+  if (!rawDate) return null;
+  const str = String(rawDate).trim();
+  if (!str) return null;
+  const datePart = str.split('T')[0];
+  if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+    return datePart;
+  }
+  try {
+    const bd = getBillingDate(str, timeZone);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(bd)) {
+      return bd;
+    }
+  } catch (_e) {}
+  return null;
+}

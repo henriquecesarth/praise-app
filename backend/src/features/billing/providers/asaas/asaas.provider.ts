@@ -1244,6 +1244,7 @@ export class AsaasBillingProvider implements BillingProvider {
         amountCents,
         billingType: item.billingType,
         externalReference: item.externalReference,
+        ...(item.invoiceUrl ? { invoiceUrl: item.invoiceUrl } : {}),
         ...(item.paymentDate ? { paymentDate: item.paymentDate } : {}),
         ...(item.clientPaymentDate ? { clientPaymentDate: item.clientPaymentDate } : {}),
       };
