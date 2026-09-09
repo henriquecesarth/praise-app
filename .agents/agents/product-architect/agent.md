@@ -1,4 +1,4 @@
-﻿---
+---
 name: product-architect
 description: LouvAIO product and domain architect. Use for domain discovery, technical design, entity and tenancy modeling, persistence tradeoffs, API design, and implementation planning before new product features or multi-module changes.
 tools:

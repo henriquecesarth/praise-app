@@ -1,4 +1,4 @@
-﻿---
+---
 name: feature-engineer
 description: LouvAIO product feature implementation specialist. Use for normal product feature development, backend routes/services/repositories, frontend UI in React/Vite, multi-tenant isolation, RBAC, API integration, and full-stack automated tests outside of billing.
 tools:

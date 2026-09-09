@@ -1,4 +1,4 @@
-﻿---
+---
 name: feature-reviewer
 description: Independent LouvAIO product feature reviewer. Use after feature implementations to audit multi-tenant isolation, RBAC, anti-IDOR, forged identity, API contract alignment, query boundedness, frontend race conditions, and regression test coverage outside of billing. Review-only by default.
 tools:
