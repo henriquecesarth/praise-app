@@ -3009,4 +3009,166 @@ describe('Phase 3C.4 — Early Activation Adjustment Settlement & Entitlement Co
       expect(slot.plan_change_id).toBe('tr_scheduled_early_001');
     });
   });
+
+  describe('Synthetic Reconciler vs Real Webhook Event Acknowledgment (Phase 4A.5B)', () => {
+    it('real webhook delivery invokes markWebhookEventProcessed on success', async () => {
+      mockBillingRepo.markWebhookEventProcessed.mockClear();
+
+      const webhookEvent = {
+        providerEventId: 'evt_adj_conf_real_001',
+        eventType: 'payment_confirmed' as const,
+        eventOrigin: 'webhook' as const,
+        providerPaymentId: 'pay_adj_settled_real_001',
+        providerCheckoutId: 'chk_adj_001',
+        externalReference: 'intent_adj_001',
+        amountCents: 1333,
+        status: 'CONFIRMED',
+        confirmedDate: '2026-09-12T10:15:00.000Z',
+      };
+
+      const res = await (billingService as any).handleV1PaidToPaidWebhook(
+        webhookEvent,
+        getBaseScheduledTransition(),
+        new Date('2026-09-12T10:15:00.000Z')
+      );
+
+      expect(res.status).toBe('ok');
+      expect(res.processed).toBe(true);
+      expect(res.reason).toBe('early_activation_settled_and_promoted');
+      expect(mockBillingRepo.markWebhookEventProcessed).toHaveBeenCalledWith(
+        'asaas',
+        'evt_adj_conf_real_001',
+        'processed',
+        undefined
+      );
+    });
+
+    it('synthetic reconciler event does NOT invoke markWebhookEventProcessed and survives 5 NOT_FOUND', async () => {
+      mockBillingRepo.markWebhookEventProcessed = vi.fn().mockImplementation(async () => {
+        throw new Error('5 NOT_FOUND: Document not found in billing_webhook_events');
+      });
+
+      const reconcilerEvent = {
+        providerEventId: 'reconciler_pay_adj_settled_synth_001_CONFIRMED',
+        eventType: 'payment_confirmed' as const,
+        eventOrigin: 'reconciler' as const,
+        providerPaymentId: 'pay_adj_settled_synth_001',
+        providerCheckoutId: 'chk_adj_001',
+        amountCents: 1333,
+        status: 'CONFIRMED',
+        confirmedDate: '2026-09-12T10:15:00.000Z',
+      };
+
+      const res = await (billingService as any).handleV1PaidToPaidWebhook(
+        reconcilerEvent,
+        getBaseScheduledTransition(),
+        new Date('2026-09-12T10:15:00.000Z')
+      );
+
+      expect(res.status).toBe('ok');
+      expect(res.processed).toBe(true);
+      expect(res.reason).toBe('early_activation_settled_and_promoted');
+      expect(mockBillingRepo.markWebhookEventProcessed).not.toHaveBeenCalled();
+    });
+
+    it('synthetic reconciler event does NOT invoke markWebhookEventProcessed on mismatch/failure paths', async () => {
+      mockBillingRepo.markWebhookEventProcessed = vi.fn().mockImplementation(async () => {
+        throw new Error('5 NOT_FOUND: Document not found in billing_webhook_events');
+      });
+
+      mockProvider.getPayment.mockResolvedValueOnce({
+        id: 'pay_mismatch_001',
+        status: 'CONFIRMED',
+        amountCents: 500,
+        dueDate: '2026-09-12',
+        confirmedDate: '2026-09-12T10:15:00.000Z',
+        checkoutSession: 'chk_adj_001',
+        billingType: 'CREDIT_CARD',
+      });
+
+      // Amount mismatch (e.g. 500 instead of 1333)
+      const reconcilerEvent = {
+        providerEventId: 'reconciler_pay_mismatch_001_CONFIRMED',
+        eventType: 'payment_confirmed' as const,
+        eventOrigin: 'reconciler' as const,
+        providerPaymentId: 'pay_mismatch_001',
+        providerCheckoutId: 'chk_adj_001',
+        amountCents: 500,
+        status: 'CONFIRMED',
+        confirmedDate: '2026-09-12T10:15:00.000Z',
+      };
+
+      const res = await (billingService as any).handleV1PaidToPaidWebhook(
+        reconcilerEvent,
+        getBaseScheduledTransition(),
+        new Date('2026-09-12T10:15:00.000Z')
+      );
+
+      expect(res.status).toBe('ok');
+      expect(res.processed).toBe(false);
+      expect(res.reason).toBe('EARLY_ADJUSTMENT_AMOUNT_MISMATCH');
+      expect(mockBillingRepo.markWebhookEventProcessed).not.toHaveBeenCalled();
+    });
+
+    it('synthetic reconciler event does NOT invoke markWebhookEventProcessed in stale attempt payment ledger', async () => {
+      mockBillingRepo.markWebhookEventProcessed = vi.fn().mockImplementation(async () => {
+        throw new Error('5 NOT_FOUND: Document not found in billing_webhook_events');
+      });
+
+      const trWithStale: BillingTransitionV1Record = {
+        ...getBaseScheduledTransition(),
+        checkout_attempts: [
+          {
+            attempt_id: 'att_adj_old_001',
+            transition_id: 'tr_scheduled_early_001',
+            attempt_type: 'early_activation',
+            internal_checkout_intent_id: 'intent_adj_old_001',
+            provider_checkout_id: 'chk_old_001',
+            status: 'expired',
+            amount_cents: 1333,
+            currency: 'BRL',
+            provider_create_state: 'created',
+            provider_session_terminal: true,
+            created_at: '2026-09-12T09:00:00.000Z',
+          },
+          {
+            attempt_id: 'att_adj_current_002',
+            transition_id: 'tr_scheduled_early_001',
+            attempt_type: 'early_activation',
+            internal_checkout_intent_id: 'intent_adj_current_002',
+            provider_checkout_id: 'chk_current_002',
+            status: 'pending',
+            amount_cents: 1333,
+            currency: 'BRL',
+            provider_create_state: 'created',
+            provider_session_terminal: false,
+            created_at: '2026-09-12T10:00:00.000Z',
+          },
+        ],
+      };
+      planChangesStore.set(trWithStale.id, trWithStale);
+
+      const reconcilerStaleEvent = {
+        providerEventId: 'reconciler_stale_pay_old_001_CONFIRMED',
+        eventType: 'payment_confirmed' as const,
+        eventOrigin: 'reconciler' as const,
+        providerPaymentId: 'pay_old_001',
+        providerCheckoutId: 'chk_old_001',
+        amountCents: 1333,
+        status: 'CONFIRMED',
+        confirmedDate: '2026-09-12T09:10:00.000Z',
+      };
+
+      const res = await (billingService as any).handleV1PaidToPaidWebhook(
+        reconcilerStaleEvent,
+        trWithStale,
+        new Date('2026-09-12T10:05:00.000Z')
+      );
+
+      expect(res.status).toBe('ok');
+      expect(res.processed).toBe(false);
+      expect(res.reason).toBe('STALE_ATTEMPT_EARLY_ADJUSTMENT_SETTLED');
+      expect(mockBillingRepo.markWebhookEventProcessed).not.toHaveBeenCalled();
+    });
+  });
 });

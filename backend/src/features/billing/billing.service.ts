@@ -1204,6 +1204,7 @@ export class BillingService {
     if (!parsedEvent) {
       return { status: 'ok', processed: false, reason: 'unsupported_payload' };
     }
+    parsedEvent.eventOrigin = 'webhook';
 
     const payloadHash = crypto
       .createHash('sha256')
@@ -7211,6 +7212,7 @@ export class BillingService {
                 providerEventId: `reconciler_stale_${p.id}_${p.status}`,
                 eventType: p.status === 'RECEIVED' ? 'payment_received' : 'payment_confirmed',
                 rawEventType: p.status === 'RECEIVED' ? 'PAYMENT_RECEIVED' : 'PAYMENT_CONFIRMED',
+                eventOrigin: 'reconciler',
                 providerPaymentId: p.id,
                 providerCheckoutId: staleAtt.provider_checkout_id ?? undefined,
                 amountCents: p.amountCents,
@@ -7471,6 +7473,7 @@ export class BillingService {
           providerEventId: `reconciler_${singlePayment.id}_${singlePayment.status}`,
           eventType: singlePayment.status === 'RECEIVED' ? 'payment_received' : 'payment_confirmed',
           rawEventType: singlePayment.status === 'RECEIVED' ? 'PAYMENT_RECEIVED' : 'PAYMENT_CONFIRMED',
+          eventOrigin: 'reconciler',
           providerPaymentId: singlePayment.id,
           providerCheckoutId: knownCheckoutId ?? undefined,
           amountCents: singlePayment.amountCents,
@@ -7823,6 +7826,7 @@ export class BillingService {
         providerEventId: `reconciler_post_cancel_${singlePostPayment.id}_${singlePostPayment.status}`,
         eventType: singlePostPayment.status === 'RECEIVED' ? 'payment_received' : 'payment_confirmed',
         rawEventType: singlePostPayment.status === 'RECEIVED' ? 'PAYMENT_RECEIVED' : 'PAYMENT_CONFIRMED',
+        eventOrigin: 'reconciler',
         providerPaymentId: singlePostPayment.id,
         providerCheckoutId: knownCheckoutId,
         amountCents: singlePostPayment.amountCents,
@@ -8014,6 +8018,20 @@ export class BillingService {
     const currentCommercialDate =
       options?.nowCommercialDate || getBillingDate(now, config.billingTimezone);
 
+    const acknowledgeWebhookIfApplicable = async (
+      status: 'processed' | 'failed' | 'ignored',
+      errorMessage?: string | null
+    ) => {
+      if (parsedEvent?.providerEventId && parsedEvent.eventOrigin !== 'reconciler') {
+        await this.billingRepo.markWebhookEventProcessed(
+          this.provider.name,
+          parsedEvent.providerEventId,
+          status,
+          errorMessage
+        );
+      }
+    };
+
     // Reler a transição mais fresca para garantir idempotência em caso de concorrência
     const freshStart = await this.billingRepo.getTransitionById(planChange.id, planChange.ministry_id);
     if (freshStart && isBillingTransitionV1(freshStart)) {
@@ -8022,16 +8040,12 @@ export class BillingService {
 
     // 0. Se a transição já estiver completed, idempotência terminal
     if (planChange.transition_status === 'completed') {
-      if (parsedEvent?.providerEventId) {
-        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-      }
+      await acknowledgeWebhookIfApplicable('processed');
       return { status: 'ok', processed: true, reason: 'already_completed' };
     }
 
     if (planChange.execution_strategy !== 'scheduled_paid_transition') {
-      if (parsedEvent?.providerEventId) {
-        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-      }
+      await acknowledgeWebhookIfApplicable('processed');
       return { status: 'ok', processed: false, reason: 'strategy_mismatch' };
     }
 
@@ -8057,9 +8071,7 @@ export class BillingService {
             targetAttempt.provider_checkout_id &&
             targetAttempt.provider_checkout_id === parsedEvent.providerCheckoutId
           ) {
-            if (parsedEvent?.providerEventId) {
-              await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-            }
+            await acknowledgeWebhookIfApplicable('processed');
             return { status: 'ok', processed: true, reason: 'already_activated' };
           }
 
@@ -8080,14 +8092,7 @@ export class BillingService {
             financial_safety_status: 'attention_required',
           });
 
-          if (parsedEvent?.providerEventId) {
-            await this.billingRepo.markWebhookEventProcessed(
-              this.provider.name,
-              parsedEvent.providerEventId,
-              'processed',
-              'STALE_PROVIDER_CHECKOUT_MATERIALIZED'
-            );
-          }
+          await acknowledgeWebhookIfApplicable('processed', 'STALE_PROVIDER_CHECKOUT_MATERIALIZED');
 
           // Entitlement continua 'activated' (NÃO regride)! Slot permanece HELD!
           return { status: 'ok', processed: false, reason: 'STALE_PROVIDER_CHECKOUT_MATERIALIZED' };
@@ -8113,9 +8118,7 @@ export class BillingService {
         });
       }
 
-      if (parsedEvent?.providerEventId) {
-        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-      }
+      await acknowledgeWebhookIfApplicable('processed');
       return { status: 'ok', processed: true, reason: 'already_activated' };
     }
 
@@ -8140,14 +8143,7 @@ export class BillingService {
     }
 
     if (!matchedAttempt) {
-      if (parsedEvent?.providerEventId) {
-        await this.billingRepo.markWebhookEventProcessed(
-          this.provider.name,
-          parsedEvent.providerEventId,
-          'ignored',
-          'EARLY_ADJUSTMENT_ATTEMPT_NOT_FOUND'
-        );
-      }
+      await acknowledgeWebhookIfApplicable('ignored', 'EARLY_ADJUSTMENT_ATTEMPT_NOT_FOUND');
       return { status: 'ok', processed: false, reason: 'EARLY_ADJUSTMENT_ATTEMPT_NOT_FOUND' };
     }
 
@@ -8170,14 +8166,7 @@ export class BillingService {
             financial_attention_reason: 'CHECKOUT_ID_WRITE_ONCE_CONFLICT',
             financial_safety_status: 'attention_required',
           });
-          if (parsedEvent.providerEventId) {
-            await this.billingRepo.markWebhookEventProcessed(
-              this.provider.name,
-              parsedEvent.providerEventId,
-              'failed',
-              'CHECKOUT_ID_WRITE_ONCE_CONFLICT'
-            );
-          }
+          await acknowledgeWebhookIfApplicable('failed', 'CHECKOUT_ID_WRITE_ONCE_CONFLICT');
           return { status: 'ok', processed: false, reason: 'CHECKOUT_ID_WRITE_ONCE_CONFLICT' };
         }
 
@@ -8186,9 +8175,7 @@ export class BillingService {
           parsedEvent.providerCheckoutId &&
           matchedAttempt.provider_checkout_id === parsedEvent.providerCheckoutId
         ) {
-          if (parsedEvent.providerEventId) {
-            await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-          }
+          await acknowledgeWebhookIfApplicable('processed');
           return { status: 'ok', processed: true, reason: 'stale_checkout_created_already_acknowledged' };
         }
 
@@ -8211,14 +8198,7 @@ export class BillingService {
           financial_safety_status: 'attention_required',
         });
 
-        if (parsedEvent?.providerEventId) {
-          await this.billingRepo.markWebhookEventProcessed(
-            this.provider.name,
-            parsedEvent.providerEventId,
-            'processed',
-            'STALE_PROVIDER_CHECKOUT_MATERIALIZED'
-          );
-        }
+        await acknowledgeWebhookIfApplicable('processed', 'STALE_PROVIDER_CHECKOUT_MATERIALIZED');
 
         return { status: 'ok', processed: false, reason: 'STALE_PROVIDER_CHECKOUT_MATERIALIZED' };
       }
@@ -8237,9 +8217,7 @@ export class BillingService {
         });
       }
 
-      if (parsedEvent?.providerEventId) {
-        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-      }
+      await acknowledgeWebhookIfApplicable('processed');
       return { status: 'ok', processed: true, reason: 'stale_attempt_event_ignored' };
     }
 
@@ -8249,23 +8227,17 @@ export class BillingService {
       planChange.supersede_status !== 'completed' ||
       planChange.payment_cleanup_status !== 'completed'
     ) {
-      if (parsedEvent?.providerEventId) {
-        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-      }
+      await acknowledgeWebhookIfApplicable('processed');
       return { status: 'ok', processed: false, reason: 'SOURCE_CUTOVER_NOT_COMPLETED' };
     }
 
     if (planChange.financial_attention_required === true) {
-      if (parsedEvent?.providerEventId) {
-        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-      }
+      await acknowledgeWebhookIfApplicable('processed');
       return { status: 'ok', processed: false, reason: 'financial_attention_required' };
     }
 
     if (planChange.financial_safety_status !== 'live') {
-      if (parsedEvent?.providerEventId) {
-        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-      }
+      await acknowledgeWebhookIfApplicable('processed');
       return { status: 'ok', processed: false, reason: 'FINANCIAL_SAFETY_STATUS_NOT_LIVE' };
     }
 
@@ -8290,20 +8262,11 @@ export class BillingService {
         console.warn(
           `[CANCELED ATTEMPT CHECKOUT_PAID] CHECKOUT_PAID recebido em tentativa cancelada/expirada ${matchedAttempt.attempt_id}. CHECKOUT_PAID sozinho não é autoridade de liquidação.`
         );
-        if (parsedEvent?.providerEventId) {
-          await this.billingRepo.markWebhookEventProcessed(
-            this.provider.name,
-            parsedEvent.providerEventId,
-            'processed',
-            'checkout_paid_on_canceled_attempt_ignored'
-          );
-        }
+        await acknowledgeWebhookIfApplicable('processed', 'checkout_paid_on_canceled_attempt_ignored');
         return { status: 'ok', processed: false, reason: 'checkout_paid_on_canceled_attempt_ignored' };
       }
 
-      if (parsedEvent?.providerEventId) {
-        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-      }
+      await acknowledgeWebhookIfApplicable('processed');
       return { status: 'ok', processed: true, reason: `attempt_already_${matchedAttempt.status}` };
     }
 
@@ -8311,9 +8274,7 @@ export class BillingService {
     if (parsedEvent?.eventType === 'checkout_created') {
       // 3.1 Se o attempt já está concluído ('completed'), evento atrasado é no-op monotônico
       if (matchedAttempt.status === 'completed') {
-        if (parsedEvent.providerEventId) {
-          await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-        }
+        await acknowledgeWebhookIfApplicable('processed');
         return { status: 'ok', processed: true, reason: 'attempt_already_completed' };
       }
 
@@ -8331,14 +8292,7 @@ export class BillingService {
           financial_attention_reason: 'CHECKOUT_ID_WRITE_ONCE_CONFLICT',
           financial_safety_status: 'attention_required',
         });
-        if (parsedEvent.providerEventId) {
-          await this.billingRepo.markWebhookEventProcessed(
-            this.provider.name,
-            parsedEvent.providerEventId,
-            'failed',
-            'CHECKOUT_ID_WRITE_ONCE_CONFLICT'
-          );
-        }
+        await acknowledgeWebhookIfApplicable('failed', 'CHECKOUT_ID_WRITE_ONCE_CONFLICT');
         return { status: 'ok', processed: false, reason: 'CHECKOUT_ID_WRITE_ONCE_CONFLICT' };
       }
 
@@ -8347,9 +8301,7 @@ export class BillingService {
         parsedEvent.providerCheckoutId &&
         matchedAttempt.provider_checkout_id === parsedEvent.providerCheckoutId
       ) {
-        if (parsedEvent.providerEventId) {
-          await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-        }
+        await acknowledgeWebhookIfApplicable('processed');
         return { status: 'ok', processed: true, reason: 'checkout_created_already_acknowledged' };
       }
 
@@ -8368,14 +8320,7 @@ export class BillingService {
             financial_attention_reason: 'CHECKOUT_ID_WRITE_ONCE_CONFLICT',
             financial_safety_status: 'attention_required',
           });
-          if (parsedEvent.providerEventId) {
-            await this.billingRepo.markWebhookEventProcessed(
-              this.provider.name,
-              parsedEvent.providerEventId,
-              'failed',
-              'CHECKOUT_ID_WRITE_ONCE_CONFLICT'
-            );
-          }
+          await acknowledgeWebhookIfApplicable('failed', 'CHECKOUT_ID_WRITE_ONCE_CONFLICT');
           return { status: 'ok', processed: false, reason: 'CHECKOUT_ID_WRITE_ONCE_CONFLICT' };
         }
 
@@ -8390,18 +8335,14 @@ export class BillingService {
           checkout_attempts: planChange.checkout_attempts,
         });
       }
-      if (parsedEvent.providerEventId) {
-        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-      }
+      await acknowledgeWebhookIfApplicable('processed');
       return { status: 'ok', processed: true, reason: 'checkout_created_acknowledged' };
     }
 
     if (parsedEvent?.eventType === 'checkout_expired') {
       // Monotonicidade: Se o attempt já está 'completed', eventos tardios não regridem o status!
       if (matchedAttempt.status === 'completed') {
-        if (parsedEvent.providerEventId) {
-          await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-        }
+        await acknowledgeWebhookIfApplicable('processed');
         return { status: 'ok', processed: true, reason: 'attempt_already_completed' };
       }
 
@@ -8420,14 +8361,7 @@ export class BillingService {
             reason: 'webhook_expired_postflight_read_failed',
             nowIso,
           });
-          if (parsedEvent.providerEventId) {
-            await this.billingRepo.markWebhookEventProcessed(
-              this.provider.name,
-              parsedEvent.providerEventId,
-              'failed',
-              'webhook_expired_postflight_read_failed'
-            );
-          }
+          await acknowledgeWebhookIfApplicable('failed', 'webhook_expired_postflight_read_failed');
           return { status: 'ok', processed: false, reason: 'checkout_expired_verification_pending' };
         }
 
@@ -8448,6 +8382,7 @@ export class BillingService {
             providerEventId: `webhook_expired_race_${sp.id}_${sp.status}`,
             eventType: sp.status === 'RECEIVED' ? 'payment_received' : 'payment_confirmed',
             rawEventType: sp.status === 'RECEIVED' ? 'PAYMENT_RECEIVED' : 'PAYMENT_CONFIRMED',
+            eventOrigin: 'reconciler',
             providerPaymentId: sp.id,
             providerCheckoutId: chkId,
             amountCents: sp.amountCents,
@@ -8463,14 +8398,7 @@ export class BillingService {
             now,
             { nowCommercialDate: currentCommercialDate }
           );
-          if (parsedEvent.providerEventId) {
-            await this.billingRepo.markWebhookEventProcessed(
-              this.provider.name,
-              parsedEvent.providerEventId,
-              'processed',
-              'routed_to_settlement_race'
-            );
-          }
+          await acknowledgeWebhookIfApplicable('processed', 'routed_to_settlement_race');
           return settlementResult;
         }
 
@@ -8480,14 +8408,7 @@ export class BillingService {
             financial_attention_reason: 'EARLY_ADJUSTMENT_MULTIPLE_PROVIDER_PAYMENTS',
             financial_safety_status: 'attention_required',
           });
-          if (parsedEvent.providerEventId) {
-            await this.billingRepo.markWebhookEventProcessed(
-              this.provider.name,
-              parsedEvent.providerEventId,
-              'failed',
-              'EARLY_ADJUSTMENT_MULTIPLE_PROVIDER_PAYMENTS'
-            );
-          }
+          await acknowledgeWebhookIfApplicable('failed', 'EARLY_ADJUSTMENT_MULTIPLE_PROVIDER_PAYMENTS');
           return { status: 'ok', processed: false, reason: 'EARLY_ADJUSTMENT_MULTIPLE_PROVIDER_PAYMENTS' };
         }
 
@@ -8497,14 +8418,7 @@ export class BillingService {
             financial_attention_reason: 'materialized_payment_blocks_checkout_cleanup',
             financial_safety_status: 'attention_required',
           });
-          if (parsedEvent.providerEventId) {
-            await this.billingRepo.markWebhookEventProcessed(
-              this.provider.name,
-              parsedEvent.providerEventId,
-              'processed',
-              'materialized_payment_blocks_checkout_cleanup'
-            );
-          }
+          await acknowledgeWebhookIfApplicable('processed', 'materialized_payment_blocks_checkout_cleanup');
           return { status: 'ok', processed: false, reason: 'materialized_payment_blocks_checkout_cleanup' };
         }
 
@@ -8517,9 +8431,7 @@ export class BillingService {
           nowCommercialDate: currentCommercialDate,
         });
 
-        if (parsedEvent.providerEventId) {
-          await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-        }
+        await acknowledgeWebhookIfApplicable('processed');
         return { status: 'ok', processed: true, reason: 'safe_expired' };
       }
 
@@ -8532,18 +8444,14 @@ export class BillingService {
       await this.billingRepo.updateTransition(planChange.id, ministryId, {
         checkout_attempts: planChange.checkout_attempts,
       });
-      if (parsedEvent.providerEventId) {
-        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-      }
+      await acknowledgeWebhookIfApplicable('processed');
       return { status: 'ok', processed: true, reason: 'attempt_expired' };
     }
 
     if (parsedEvent?.eventType === 'checkout_canceled') {
       // Monotonicidade: Se o attempt já está 'completed'
       if (matchedAttempt.status === 'completed') {
-        if (parsedEvent.providerEventId) {
-          await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-        }
+        await acknowledgeWebhookIfApplicable('processed');
         return { status: 'ok', processed: true, reason: 'attempt_already_completed' };
       }
 
@@ -8562,14 +8470,7 @@ export class BillingService {
             reason: 'webhook_cancel_postflight_read_failed',
             nowIso,
           });
-          if (parsedEvent.providerEventId) {
-            await this.billingRepo.markWebhookEventProcessed(
-              this.provider.name,
-              parsedEvent.providerEventId,
-              'failed',
-              'webhook_cancel_postflight_read_failed'
-            );
-          }
+          await acknowledgeWebhookIfApplicable('failed', 'webhook_cancel_postflight_read_failed');
           return { status: 'ok', processed: false, reason: 'webhook_cancel_verification_pending' };
         }
 
@@ -8589,6 +8490,7 @@ export class BillingService {
             providerEventId: `webhook_cancel_race_${sp.id}_${sp.status}`,
             eventType: sp.status === 'RECEIVED' ? 'payment_received' : 'payment_confirmed',
             rawEventType: sp.status === 'RECEIVED' ? 'PAYMENT_RECEIVED' : 'PAYMENT_CONFIRMED',
+            eventOrigin: 'reconciler',
             providerPaymentId: sp.id,
             providerCheckoutId: chkId,
             amountCents: sp.amountCents,
@@ -8604,14 +8506,7 @@ export class BillingService {
             now,
             { nowCommercialDate: currentCommercialDate }
           );
-          if (parsedEvent.providerEventId) {
-            await this.billingRepo.markWebhookEventProcessed(
-              this.provider.name,
-              parsedEvent.providerEventId,
-              'processed',
-              'routed_to_settlement_race'
-            );
-          }
+          await acknowledgeWebhookIfApplicable('processed', 'routed_to_settlement_race');
           return settlementResult;
         }
 
@@ -8621,14 +8516,7 @@ export class BillingService {
             financial_attention_reason: 'EARLY_ADJUSTMENT_MULTIPLE_PROVIDER_PAYMENTS',
             financial_safety_status: 'attention_required',
           });
-          if (parsedEvent.providerEventId) {
-            await this.billingRepo.markWebhookEventProcessed(
-              this.provider.name,
-              parsedEvent.providerEventId,
-              'failed',
-              'EARLY_ADJUSTMENT_MULTIPLE_PROVIDER_PAYMENTS'
-            );
-          }
+          await acknowledgeWebhookIfApplicable('failed', 'EARLY_ADJUSTMENT_MULTIPLE_PROVIDER_PAYMENTS');
           return { status: 'ok', processed: false, reason: 'EARLY_ADJUSTMENT_MULTIPLE_PROVIDER_PAYMENTS' };
         }
 
@@ -8638,14 +8526,7 @@ export class BillingService {
             financial_attention_reason: 'materialized_payment_blocks_checkout_cleanup',
             financial_safety_status: 'attention_required',
           });
-          if (parsedEvent.providerEventId) {
-            await this.billingRepo.markWebhookEventProcessed(
-              this.provider.name,
-              parsedEvent.providerEventId,
-              'processed',
-              'materialized_payment_blocks_checkout_cleanup'
-            );
-          }
+          await acknowledgeWebhookIfApplicable('processed', 'materialized_payment_blocks_checkout_cleanup');
           return { status: 'ok', processed: false, reason: 'materialized_payment_blocks_checkout_cleanup' };
         }
 
@@ -8658,9 +8539,7 @@ export class BillingService {
           nowCommercialDate: currentCommercialDate,
         });
 
-        if (parsedEvent.providerEventId) {
-          await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-        }
+        await acknowledgeWebhookIfApplicable('processed');
         return { status: 'ok', processed: true, reason: 'safe_canceled' };
       }
 
@@ -8674,9 +8553,7 @@ export class BillingService {
       await this.billingRepo.updateTransition(planChange.id, ministryId, {
         checkout_attempts: planChange.checkout_attempts,
       });
-      if (parsedEvent.providerEventId) {
-        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-      }
+      await acknowledgeWebhookIfApplicable('processed');
       return { status: 'ok', processed: true, reason: 'attempt_canceled' };
     }
 
@@ -8716,17 +8593,13 @@ export class BillingService {
       });
 
       if (!exactPaymentId) {
-        if (parsedEvent.providerEventId) {
-          await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-        }
+        await acknowledgeWebhookIfApplicable('processed');
         return { status: 'ok', processed: true, reason: 'checkout_paid_awaiting_payment_confirmation' };
       }
     }
 
     if (!exactPaymentId) {
-      if (parsedEvent?.providerEventId) {
-        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-      }
+      await acknowledgeWebhookIfApplicable('processed');
       return { status: 'ok', processed: false, reason: 'PAYMENT_NOT_FOUND' };
     }
 
@@ -8764,23 +8637,14 @@ export class BillingService {
         financial_attention_reason: `EARLY_ADJUSTMENT_PAYMENT_REVERSED_${paymentStatus}`,
         financial_safety_status: 'attention_required',
       });
-      if (parsedEvent?.providerEventId) {
-        await this.billingRepo.markWebhookEventProcessed(
-          this.provider.name,
-          parsedEvent.providerEventId,
-          'failed',
-          `EARLY_ADJUSTMENT_PAYMENT_REVERSED_${paymentStatus}`
-        );
-      }
+      await acknowledgeWebhookIfApplicable('failed', `EARLY_ADJUSTMENT_PAYMENT_REVERSED_${paymentStatus}`);
       return { status: 'ok', processed: false, reason: `ADJUSTMENT_PAYMENT_REVERSED_${paymentStatus}` };
     }
 
     // Apenas CONFIRMED ou RECEIVED abrem o settlement gate (Seção 7)
     if (paymentStatus !== 'CONFIRMED' && paymentStatus !== 'RECEIVED') {
       console.log(`[EARLY ACTIVATION NOT SETTLED] Pagamento ${exactPaymentId} em status ${paymentStatus}. Entitlement mantido na source.`);
-      if (parsedEvent?.providerEventId) {
-        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-      }
+      await acknowledgeWebhookIfApplicable('processed');
       return { status: 'ok', processed: false, reason: 'payment_not_settled' };
     }
 
@@ -8796,14 +8660,7 @@ export class BillingService {
         financial_attention_reason: 'EARLY_ADJUSTMENT_CHECKOUT_SESSION_MISMATCH',
         financial_safety_status: 'attention_required',
       });
-      if (parsedEvent?.providerEventId) {
-        await this.billingRepo.markWebhookEventProcessed(
-          this.provider.name,
-          parsedEvent.providerEventId,
-          'failed',
-          'EARLY_ADJUSTMENT_CHECKOUT_SESSION_MISMATCH'
-        );
-      }
+      await acknowledgeWebhookIfApplicable('failed', 'EARLY_ADJUSTMENT_CHECKOUT_SESSION_MISMATCH');
       return { status: 'ok', processed: false, reason: 'EARLY_ADJUSTMENT_CHECKOUT_SESSION_MISMATCH' };
     }
 
@@ -8829,14 +8686,7 @@ export class BillingService {
         financial_attention_reason: 'EARLY_ADJUSTMENT_AMOUNT_MISMATCH',
         financial_safety_status: 'attention_required',
       });
-      if (parsedEvent?.providerEventId) {
-        await this.billingRepo.markWebhookEventProcessed(
-          this.provider.name,
-          parsedEvent.providerEventId,
-          'failed',
-          'EARLY_ADJUSTMENT_AMOUNT_MISMATCH'
-        );
-      }
+      await acknowledgeWebhookIfApplicable('failed', 'EARLY_ADJUSTMENT_AMOUNT_MISMATCH');
       return { status: 'ok', processed: false, reason: 'EARLY_ADJUSTMENT_AMOUNT_MISMATCH' };
     }
 
@@ -8900,9 +8750,7 @@ export class BillingService {
         financial_safety_status: 'attention_required',
       });
 
-      if (parsedEvent?.providerEventId) {
-        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-      }
+      await acknowledgeWebhookIfApplicable('processed');
       return { status: 'ok', processed: false, reason: 'LATE_EARLY_ADJUSTMENT_SETTLEMENT' };
     }
 
@@ -8925,14 +8773,7 @@ export class BillingService {
           financial_attention_reason: 'EARLY_ADJUSTMENT_PAYMENT_ID_CONFLICT',
           financial_safety_status: 'attention_required',
         });
-        if (parsedEvent?.providerEventId) {
-          await this.billingRepo.markWebhookEventProcessed(
-            this.provider.name,
-            parsedEvent.providerEventId,
-            'failed',
-            'EARLY_ADJUSTMENT_PAYMENT_ID_CONFLICT'
-          );
-        }
+        await acknowledgeWebhookIfApplicable('failed', 'EARLY_ADJUSTMENT_PAYMENT_ID_CONFLICT');
         return { status: 'ok', processed: false, reason: 'EARLY_ADJUSTMENT_PAYMENT_ID_CONFLICT' };
       }
       throw settleErr;
@@ -8969,14 +8810,7 @@ export class BillingService {
           financial_attention_reason: 'FINANCIAL_TRANSACTION_CONFLICT',
           financial_safety_status: 'attention_required',
         });
-        if (parsedEvent?.providerEventId) {
-          await this.billingRepo.markWebhookEventProcessed(
-            this.provider.name,
-            parsedEvent.providerEventId,
-            'failed',
-            'FINANCIAL_TRANSACTION_CONFLICT'
-          );
-        }
+        await acknowledgeWebhookIfApplicable('failed', 'FINANCIAL_TRANSACTION_CONFLICT');
         return { status: 'ok', processed: false, reason: 'FINANCIAL_TRANSACTION_CONFLICT' };
       }
       throw txErr;
@@ -8988,9 +8822,7 @@ export class BillingService {
       throw new AppError(404, 'Transição não encontrada após registro de liquidação.');
     }
     if (freshTr.early_activation_status === 'activated') {
-      if (parsedEvent?.providerEventId) {
-        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-      }
+      await acknowledgeWebhookIfApplicable('processed');
       return { status: 'ok', processed: true, reason: 'already_activated' };
     }
 
@@ -9092,9 +8924,7 @@ export class BillingService {
           transitionStateValid
         )}. Slot remains HELD.`
       );
-      if (parsedEvent?.providerEventId) {
-        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-      }
+      await acknowledgeWebhookIfApplicable('processed');
       return { status: 'ok', processed: false, reason: 'LOCAL_EARLY_ACTIVATION_COMPLETION_GATE_FAILED' };
     }
 
@@ -9111,9 +8941,7 @@ export class BillingService {
       nowIso,
     });
 
-    if (parsedEvent?.providerEventId) {
-      await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
-    }
+    await acknowledgeWebhookIfApplicable('processed');
 
     return { status: 'ok', processed: true, reason: 'early_activation_settled_and_promoted' };
   }
@@ -9163,7 +8991,7 @@ export class BillingService {
         financial_attention_reason: 'EARLY_ADJUSTMENT_PAYMENT_ID_CONFLICT',
         financial_safety_status: 'attention_required',
       });
-      if (parsedEvent?.providerEventId) {
+      if (parsedEvent?.providerEventId && parsedEvent.eventOrigin !== 'reconciler') {
         await this.billingRepo.markWebhookEventProcessed(
           this.provider.name,
           parsedEvent.providerEventId,
@@ -9261,7 +9089,7 @@ export class BillingService {
       financial_safety_status: 'attention_required',
     });
 
-    if (parsedEvent?.providerEventId) {
+    if (parsedEvent?.providerEventId && parsedEvent.eventOrigin !== 'reconciler') {
       await this.billingRepo.markWebhookEventProcessed(
         this.provider.name,
         parsedEvent.providerEventId,

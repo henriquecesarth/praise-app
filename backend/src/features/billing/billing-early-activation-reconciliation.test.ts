@@ -3993,5 +3993,39 @@ describe('Phase 3C.5A — Early Activation Known-Checkout Reconciliation Worker'
       const normalizedDoc = planChangesStore.get(ipId);
       expect(normalizedDoc?.last_reconciled_at).toBeNull();
     });
+
+    // 61. Synthetic Reconciler Event Contract: markWebhookEventProcessed is NOT invoked (Phase 4A.5B)
+    it('61. Synthetic Reconciler Event Contract: does not invoke markWebhookEventProcessed and survives 5 NOT_FOUND', async () => {
+      mockProvider.listPaymentsByCheckoutSession.mockResolvedValueOnce([
+        {
+          id: 'pay_conf_recon_001',
+          status: 'CONFIRMED',
+          amountCents: 1333,
+          billingType: 'CREDIT_CARD',
+          confirmedDate: '2026-09-12',
+        },
+      ]);
+      mockProvider.getPayment.mockResolvedValueOnce({
+        id: 'pay_conf_recon_001',
+        status: 'CONFIRMED',
+        amountCents: 1333,
+        billingType: 'CREDIT_CARD',
+        confirmedDate: '2026-09-12',
+      });
+
+      mockBillingRepo.markWebhookEventProcessed = vi.fn().mockImplementation(async () => {
+        throw new Error('5 NOT_FOUND: Document not found in billing_webhook_events');
+      });
+
+      const res = await billingService.reconcilePaidToPaidEarlyActivationAdjustment('tr_scheduled_early_001');
+
+      expect(res.success).toBe(true);
+      expect(res.reason).toBe('early_activation_settled_and_promoted');
+      expect(mockBillingRepo.markWebhookEventProcessed).not.toHaveBeenCalled();
+
+      const postTr = planChangesStore.get('tr_scheduled_early_001')!;
+      expect(postTr.early_activation_status).toBe('activated');
+      expect(postTr.early_activation_provider_payment_id).toBe('pay_conf_recon_001');
+    });
   });
 });

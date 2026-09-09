@@ -22,6 +22,7 @@ export interface ParsedWebhookEvent {
   providerEventId: string;
   eventType: NormalizedWebhookEventType;
   rawEventType: string;
+  eventOrigin?: 'webhook' | 'reconciler';
   providerCheckoutId?: string;
   providerSubscriptionId?: string;
   providerCustomerId?: string;

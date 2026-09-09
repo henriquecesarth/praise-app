@@ -633,6 +633,7 @@ export function buildBillingTransitionV1Record(
     target_interval: commercialSnapshot.target_interval,
     target_addon_blocks: commercialSnapshot.target_addon_blocks,
     target_future_recurring_price_cents: commercialSnapshot.target_future_recurring_price_cents,
+    target_current_cycle_total_cents: commercialSnapshot.target_current_cycle_total_cents,
     target_entitlement_snapshot: commercialSnapshot.target_entitlement_snapshot || null,
     early_activation_target_entitlement_snapshot: commercialSnapshot.early_activation_target_entitlement_snapshot,
 

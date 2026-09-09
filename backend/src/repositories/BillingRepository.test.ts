@@ -660,6 +660,8 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
       expect(record.current_period_start).toBeNull();
       expect(record.current_period_end).toBeNull();
       expect(record.early_activation_status).toBe('not_applicable');
+      expect(record.target_current_cycle_total_cents).toBe(snapshot.target_current_cycle_total_cents);
+      expect(record.target_current_cycle_total_cents).toBe(1490);
     });
 
     it('deve mapear Essential -> Pro em um BillingTransitionV1Record válido com scheduled_paid_transition', () => {
@@ -688,6 +690,8 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
       expect(record.early_activation_status).toBe('available');
       expect(record.current_period_start).toBeDefined();
       expect(record.current_period_end).toBeDefined();
+      expect(record.target_current_cycle_total_cents).toBe(snapshot.target_current_cycle_total_cents);
+      expect(record.target_current_cycle_total_cents).toBe(8990);
     });
 
     it('deve mapear Pro -> Free em um BillingTransitionV1Record válido com scheduled_cancel_to_free', () => {
@@ -714,6 +718,8 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
       expect(record.execution_strategy).toBe('scheduled_cancel_to_free');
       expect(record.transition_status).toBe('awaiting_old_inactivation');
       expect(record.early_activation_status).toBe('not_applicable');
+      expect(record.target_current_cycle_total_cents).toBe(snapshot.target_current_cycle_total_cents);
+      expect(record.target_current_cycle_total_cents).toBe(0);
     });
   });
 
