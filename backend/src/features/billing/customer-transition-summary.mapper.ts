@@ -7,12 +7,16 @@ import {
   CustomerFacingTransitionStatus,
   CustomerFacingTransitionContractSnapshot,
   CustomerFacingPendingTransitionDto,
+  CustomerFacingEarlyActivationDto,
+  CustomerFacingEarlyActivationStatus,
   CustomerPaymentHealthState,
   CustomerPaymentStatusDto,
   CustomerGraceReason,
   isBillingTransitionV1,
 } from './billing.types';
 import { SubscriptionMode } from '../subscriptions/subscription.types';
+import { getBillingDate } from '../../utils/billing-date';
+import { BILLING_TIMEZONE_DEFAULT } from './billing-transition-domain.service';
 
 export const PLAN_TIER_ORDER: Record<PlanId, number> = {
   free: 0,
@@ -128,12 +132,112 @@ export function mapCustomerFacingTransitionStatus(
 }
 
 /**
+ * Mapeia o estado de early activation da transição V1 para o DTO customer-facing.
+ * Preserva autoridade estrita do backend:
+ * - Downgrade, addon decrease, cancel_to_free ou atenção financeira nunca são elegíveis.
+ * - Transições fora de 'scheduled' nunca são elegíveis.
+ * - Data comercial na/após a renovação nunca é elegível.
+ * - Não expõe identificadores internos ou do provedor.
+ */
+export function mapEarlyActivationSummary(
+  transition: BillingTransitionV1Record,
+  kind: CustomerFacingTransitionKind,
+  options?: { currentCommercialDate?: string; timeZone?: string }
+): CustomerFacingEarlyActivationDto {
+  const isAttention =
+    transition.financial_attention_required === true ||
+    transition.financial_safety_status === 'attention_required' ||
+    transition.transition_status === 'financial_attention_required';
+
+  if (
+    isAttention ||
+    transition.transition_status !== 'scheduled' ||
+    transition.execution_strategy !== 'scheduled_paid_transition'
+  ) {
+    let fallbackStatus: CustomerFacingEarlyActivationStatus = 'not_applicable';
+    if (transition.early_activation_status === 'payment_pending') {
+      fallbackStatus = 'payment_pending';
+    } else if (
+      transition.early_activation_status === 'confirmed' ||
+      transition.early_activation_status === 'activated'
+    ) {
+      fallbackStatus = 'activated';
+    } else if (transition.early_activation_status === 'expired') {
+      fallbackStatus = 'expired';
+    }
+    return {
+      eligible: false,
+      status: fallbackStatus,
+      checkoutUrl: null,
+    };
+  }
+
+  // Downgrades, reduções de add-on e cancelamentos para Free são categoricamente inelegíveis
+  if (kind === 'plan_downgrade' || kind === 'addon_decrease' || kind === 'cancel_to_free') {
+    return {
+      eligible: false,
+      status: 'not_applicable',
+      checkoutUrl: null,
+    };
+  }
+
+  // Se atingiu ou ultrapassou a fronteira periódica
+  const timeZone = options?.timeZone || BILLING_TIMEZONE_DEFAULT;
+  const currentCommercialDate = options?.currentCommercialDate || getBillingDate(new Date(), timeZone);
+  if (transition.effective_billing_date && currentCommercialDate >= transition.effective_billing_date) {
+    return {
+      eligible: false,
+      status: 'not_applicable',
+      checkoutUrl: null,
+    };
+  }
+
+  switch (transition.early_activation_status) {
+    case 'available':
+      return {
+        eligible: true,
+        status: 'available',
+        checkoutUrl: null,
+      };
+    case 'payment_pending':
+      return {
+        eligible: false,
+        status: 'payment_pending',
+        checkoutUrl: transition.checkout_url || null,
+      };
+    case 'confirmed':
+    case 'activated':
+      return {
+        eligible: false,
+        status: 'activated',
+        checkoutUrl: null,
+      };
+    case 'expired':
+      return {
+        eligible: true,
+        status: 'expired',
+        checkoutUrl: null,
+      };
+    case 'not_applicable':
+    case 'pending_checkout':
+    case 'declined':
+    default:
+      return {
+        eligible: false,
+        status: 'not_applicable',
+        checkoutUrl: null,
+      };
+  }
+}
+
+/**
  * Mapeia uma transição de faturamento (BillingPlanChangeRecord) para o DTO customer-facing.
  * Aplica isolamento de tenant estrito, validação de integridade e sanitização de dados.
  */
 export function mapToCustomerFacingTransition(
   transition: BillingPlanChangeRecord | null | undefined,
-  expectedMinistryId: string
+  expectedMinistryId: string,
+  options?: { currentCommercialDate?: string; timeZone?: string }
 ): CustomerFacingPendingTransitionDto | null {
   if (!transition || typeof transition !== 'object') {
     return null;
@@ -177,6 +281,7 @@ export function mapToCustomerFacingTransition(
 
   const requestedAt = v1.requested_at || v1.created_at || new Date().toISOString();
   const effectiveAt = v1.effective_at || v1.current_period_end || null;
+  const earlyActivation = mapEarlyActivationSummary(v1, kind, options);
 
   return {
     transitionId: v1.transition_id || v1.id,
@@ -186,6 +291,7 @@ export function mapToCustomerFacingTransition(
     effectiveAt,
     source,
     target,
+    earlyActivation,
   };
 }
 

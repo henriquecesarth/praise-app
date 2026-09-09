@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { api } from '../api';
+import { api, EarlyActivationQuoteResponse } from '../api';
 import {
   MinistrySubscriptionSummary,
   PlansResponse,
@@ -30,6 +30,7 @@ import {
   Minus,
   ExternalLink,
   ShieldCheck,
+  Zap,
 } from 'lucide-react';
 
 interface Props {
@@ -40,12 +41,15 @@ interface Props {
 }
 
 interface CheckoutIntent {
+  type?: 'plan_change' | 'early_activation';
   ministryId: string;
   expectedPlanId: string;
   expectedInterval: BillingInterval;
   expectedAddonBlocks: number;
   timestamp: number;
   expiresAt?: string | null;
+  transitionId?: string;
+  quoteId?: string;
 }
 
 const CHECKOUT_INTENT_KEY = 'louvaio_checkout_intent';
@@ -89,6 +93,14 @@ export const SubscriptionPlanView: React.FC<Props> = ({
   // Cancellation Reversal (Uncancel) State (Phase 4A.4.3)
   const [showUncancelModal, setShowUncancelModal] = useState<boolean>(false);
   const [uncancelLoading, setUncancelLoading] = useState<boolean>(false);
+
+  // Early Activation State (Phase 4A.5)
+  const [showEarlyActivationModal, setShowEarlyActivationModal] = useState<boolean>(false);
+  const [earlyActivationQuote, setEarlyActivationQuote] = useState<EarlyActivationQuoteResponse | null>(null);
+  const [earlyActivationQuoteLoading, setEarlyActivationQuoteLoading] = useState<boolean>(false);
+  const [earlyActivationQuoteError, setEarlyActivationQuoteError] = useState<string | null>(null);
+  const [earlyActivationCheckoutLoading, setEarlyActivationCheckoutLoading] = useState<boolean>(false);
+
   const currentMinistryIdRef = useRef<string>(ministryId);
 
   useEffect(() => {
@@ -131,6 +143,7 @@ export const SubscriptionPlanView: React.FC<Props> = ({
       setShowCancelModal(false);
       setShowAddonModal(false);
       setShowUncancelModal(false);
+      setShowEarlyActivationModal(false);
       setPreviewPlan(null);
       setPreviewData(null);
     }
@@ -148,6 +161,11 @@ export const SubscriptionPlanView: React.FC<Props> = ({
     setShowAddonModal(false);
     setShowUncancelModal(false);
     setUncancelLoading(false);
+    setShowEarlyActivationModal(false);
+    setEarlyActivationQuote(null);
+    setEarlyActivationQuoteLoading(false);
+    setEarlyActivationQuoteError(null);
+    setEarlyActivationCheckoutLoading(false);
     setAddonTargetBlocks(0);
     setAddonPreviewData(null);
     setAddonPreviewLoading(false);
@@ -224,10 +242,22 @@ export const SubscriptionPlanView: React.FC<Props> = ({
       const maxAttempts = 18; // ~45s (18 * 2.5s)
 
       pollingRef.current = window.setInterval(async () => {
+        // Tenant switch guard
+        if (currentMinistryIdRef.current !== ministryId) {
+          if (pollingRef.current) window.clearInterval(pollingRef.current);
+          return;
+        }
+
         attempts += 1;
         const updated = await loadData(true);
 
         if (updated) {
+          // Tenant switch guard
+          if (currentMinistryIdRef.current !== ministryId) {
+            if (pollingRef.current) window.clearInterval(pollingRef.current);
+            return;
+          }
+
           // 1. Atenção financeira ou revisão necessária detectada na transição pendente
           if (updated.pendingTransition?.status === 'attention_required') {
             if (pollingRef.current) window.clearInterval(pollingRef.current);
@@ -240,51 +270,82 @@ export const SubscriptionPlanView: React.FC<Props> = ({
             return;
           }
 
-          // 2. Validação de ativação imediata (convergência de planId ativo)
-          const matchesPlan = savedIntent
-            ? updated.plan.id === savedIntent.expectedPlanId
-            : updated.plan.id !== 'free';
+          // 2. Fluxo de Ativação Antecipada (Early Activation) (Phase 4A.5)
+          if (savedIntent && savedIntent.type === 'early_activation') {
+            const matchesPlan = updated.plan.id === savedIntent.expectedPlanId;
+            const matchesAddons =
+              savedIntent.expectedAddonBlocks !== undefined
+                ? updated.subscription.memberAddonBlocks === savedIntent.expectedAddonBlocks
+                : true;
 
-          const matchesInterval =
-            savedIntent && savedIntent.expectedInterval
-              ? (updated.subscription.billingInterval ?? 'monthly') === savedIntent.expectedInterval
-              : true;
+            const isEarlyActivationSettled =
+              updated.pendingTransition?.earlyActivation?.status === 'activated' ||
+              (matchesPlan &&
+                matchesAddons &&
+                updated.subscription.billingStatus === 'active');
 
-          const matchesAddons =
-            savedIntent && savedIntent.expectedAddonBlocks !== undefined
-              ? updated.subscription.memberAddonBlocks === savedIntent.expectedAddonBlocks
-              : true;
-
-          const isImmediateActiveConfirmed =
-            updated.subscription.billingStatus === 'active' &&
-            matchesPlan &&
-            matchesInterval &&
-            matchesAddons &&
-            (updated.subscription.subscriptionMode === 'paid' || (savedIntent && savedIntent.expectedPlanId === 'free'));
-
-          if (isImmediateActiveConfirmed) {
-            if (pollingRef.current) window.clearInterval(pollingRef.current);
-            sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
-            setPostCheckoutProcessing(false);
-            showToast?.('Assinatura confirmada com sucesso!', 'success');
-            return;
-          }
-
-          // 3. Validação de transição agendada (paid-to-paid, downgrade, troca de ciclo)
-          const pending = updated.pendingTransition;
-          if (pending && pending.status === 'scheduled') {
-            const matchesPendingTarget = savedIntent
-              ? pending.target.planId === savedIntent.expectedPlanId &&
-                pending.target.interval === savedIntent.expectedInterval &&
-                pending.target.addonBlocks === (savedIntent.expectedAddonBlocks || 0)
-              : true;
-
-            if (matchesPendingTarget) {
+            if (isEarlyActivationSettled) {
               if (pollingRef.current) window.clearInterval(pollingRef.current);
               sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
               setPostCheckoutProcessing(false);
-              showToast?.('Alteração agendada com sucesso!', 'success');
+              showToast?.('Upgrade ativado com sucesso!', 'success');
               return;
+            }
+
+            if (updated.pendingTransition?.earlyActivation?.status === 'expired') {
+              if (pollingRef.current) window.clearInterval(pollingRef.current);
+              sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
+              setPostCheckoutProcessing(false);
+              showToast?.('O link de pagamento expirou. Você pode tentar novamente.', 'error');
+              return;
+            }
+          } else {
+            // 3. Validação de ativação imediata (convergência de planId ativo)
+            const matchesPlan = savedIntent
+              ? updated.plan.id === savedIntent.expectedPlanId
+              : updated.plan.id !== 'free';
+
+            const matchesInterval =
+              savedIntent && savedIntent.expectedInterval
+                ? (updated.subscription.billingInterval ?? 'monthly') === savedIntent.expectedInterval
+                : true;
+
+            const matchesAddons =
+              savedIntent && savedIntent.expectedAddonBlocks !== undefined
+                ? updated.subscription.memberAddonBlocks === savedIntent.expectedAddonBlocks
+                : true;
+
+            const isImmediateActiveConfirmed =
+              updated.subscription.billingStatus === 'active' &&
+              matchesPlan &&
+              matchesInterval &&
+              matchesAddons &&
+              (updated.subscription.subscriptionMode === 'paid' || (savedIntent && savedIntent.expectedPlanId === 'free'));
+
+            if (isImmediateActiveConfirmed) {
+              if (pollingRef.current) window.clearInterval(pollingRef.current);
+              sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
+              setPostCheckoutProcessing(false);
+              showToast?.('Assinatura confirmada com sucesso!', 'success');
+              return;
+            }
+
+            // 4. Validação de transição agendada (paid-to-paid, downgrade, troca de ciclo)
+            const pending = updated.pendingTransition;
+            if (pending && pending.status === 'scheduled') {
+              const matchesPendingTarget = savedIntent
+                ? pending.target.planId === savedIntent.expectedPlanId &&
+                  pending.target.interval === savedIntent.expectedInterval &&
+                  pending.target.addonBlocks === (savedIntent.expectedAddonBlocks || 0)
+                : true;
+
+              if (matchesPendingTarget) {
+                if (pollingRef.current) window.clearInterval(pollingRef.current);
+                sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
+                setPostCheckoutProcessing(false);
+                showToast?.('Alteração agendada com sucesso!', 'success');
+                return;
+              }
             }
           }
         }
@@ -293,10 +354,16 @@ export const SubscriptionPlanView: React.FC<Props> = ({
           if (pollingRef.current) window.clearInterval(pollingRef.current);
           sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
           setPostCheckoutProcessing(false);
-          showToast?.(
-            'Seu pagamento ainda pode estar sendo processado pelo gateway. Você pode consultar esta página novamente em alguns instantes.',
-            'success'
-          );
+          if (savedIntent?.type === 'early_activation') {
+            showToast?.(
+              'Pagamento aguardando confirmação. O novo plano será ativado assim que confirmado.'
+            );
+          } else {
+            showToast?.(
+              'Seu pagamento ainda pode estar sendo processado pelo gateway. Você pode consultar esta página novamente em alguns instantes.',
+              'success'
+            );
+          }
         }
       }, 2500);
     }
@@ -328,12 +395,15 @@ export const SubscriptionPlanView: React.FC<Props> = ({
         if (showUncancelModal && !uncancelLoading) {
           setShowUncancelModal(false);
         }
+        if (showEarlyActivationModal && !earlyActivationCheckoutLoading) {
+          setShowEarlyActivationModal(false);
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [previewPlan, showCancelModal, showHistoryModal, showAddonModal, showUncancelModal, uncancelLoading]);
+  }, [previewPlan, showCancelModal, showHistoryModal, showAddonModal, showUncancelModal, uncancelLoading, showEarlyActivationModal, earlyActivationCheckoutLoading]);
 
   // Formatação monetária BRL oficial
   const formatCents = (cents?: number) => {
@@ -699,6 +769,89 @@ export const SubscriptionPlanView: React.FC<Props> = ({
             'Cancelamento desfeito com sucesso. Recarregue a página para atualizar o status.'
           );
         }
+      }
+    }
+  };
+
+  // Ativação Antecipada (Early Activation) V1 (Phase 4A.5)
+  const handleOpenEarlyActivationModal = async (transitionId: string) => {
+    if (!canManageBilling || !transitionId) return;
+    const targetMinistryId = ministryId;
+    setShowEarlyActivationModal(true);
+    setEarlyActivationQuote(null);
+    setEarlyActivationQuoteError(null);
+    setEarlyActivationQuoteLoading(true);
+
+    try {
+      const quote = await api.getEarlyActivationQuote(targetMinistryId, transitionId);
+      if (targetMinistryId !== currentMinistryIdRef.current) return;
+      setEarlyActivationQuote(quote);
+    } catch (err: any) {
+      if (targetMinistryId !== currentMinistryIdRef.current) return;
+      const message = err?.message || 'Não foi possível calcular o valor proporcional para ativação antecipada.';
+      setEarlyActivationQuoteError(message);
+    } finally {
+      if (targetMinistryId === currentMinistryIdRef.current) {
+        setEarlyActivationQuoteLoading(false);
+      }
+    }
+  };
+
+  const handleConfirmEarlyActivationCheckout = async () => {
+    if (!canManageBilling || !earlyActivationQuote || earlyActivationCheckoutLoading || actionLoading) return;
+    const targetMinistryId = ministryId;
+    const currentQuote = earlyActivationQuote;
+    const targetTransitionId = currentQuote.transitionId;
+    const targetQuoteId = currentQuote.quoteId;
+
+    setEarlyActivationCheckoutLoading(true);
+    try {
+      const result = await api.createEarlyActivationCheckout(
+        targetMinistryId,
+        targetTransitionId,
+        targetQuoteId
+      );
+
+      if (targetMinistryId !== currentMinistryIdRef.current) return;
+
+      if (result.status === 'creation_verification_pending') {
+        setShowEarlyActivationModal(false);
+        showToast?.(
+          result.message || 'Estamos verificando a criação do pagamento junto ao gateway. Por favor, aguarde a confirmação sem tentar novamente.'
+        );
+        loadData(true);
+        return;
+      }
+
+      if (result.checkoutUrl) {
+        const pending = summary?.pendingTransition;
+        const intent: CheckoutIntent = {
+          type: 'early_activation',
+          ministryId: targetMinistryId,
+          expectedPlanId: currentQuote.targetPlanId,
+          expectedInterval: pending?.target.interval ?? 'monthly',
+          expectedAddonBlocks: pending?.target.addonBlocks ?? 0,
+          timestamp: Date.now(),
+          expiresAt: result.expiresAt || currentQuote.expiresAt,
+          transitionId: targetTransitionId,
+          quoteId: targetQuoteId,
+        };
+        try {
+          sessionStorage.setItem(CHECKOUT_INTENT_KEY, JSON.stringify(intent));
+        } catch (e) {
+          console.warn('Não foi possível gravar intenção de checkout no sessionStorage:', e);
+        }
+
+        window.location.href = result.checkoutUrl;
+      }
+    } catch (err: any) {
+      if (targetMinistryId !== currentMinistryIdRef.current) return;
+      sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
+      const message = err?.message || 'Falha ao iniciar o pagamento da ativação antecipada.';
+      showToast?.(message, 'error');
+    } finally {
+      if (targetMinistryId === currentMinistryIdRef.current) {
+        setEarlyActivationCheckoutLoading(false);
       }
     }
   };
@@ -1406,6 +1559,131 @@ export const SubscriptionPlanView: React.FC<Props> = ({
                   </button>
                 </div>
               )}
+
+            {/* Ação de Ativação Antecipada (Early Activation) (Phase 4A.5) */}
+            {pending.kind !== 'cancel_to_free' &&
+              pending.kind !== 'plan_downgrade' &&
+              pending.kind !== 'addon_decrease' &&
+              pending.status !== 'attention_required' &&
+              (() => {
+                const ea = pending.earlyActivation;
+                if (!ea) return null;
+
+                if (ea.status === 'activated') {
+                  return (
+                    <div
+                      style={{
+                        marginTop: '16px',
+                        paddingTop: '16px',
+                        borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        color: '#10B981',
+                        fontSize: '0.85rem',
+                        fontWeight: 600,
+                      }}
+                    >
+                      <CheckCircle2 size={16} aria-hidden="true" />
+                      <span>Upgrade ativado. Os recursos já estão liberados para o seu ministério.</span>
+                    </div>
+                  );
+                }
+
+                if (ea.status === 'payment_pending') {
+                  return (
+                    <div
+                      style={{
+                        marginTop: '16px',
+                        paddingTop: '16px',
+                        borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        flexWrap: 'wrap',
+                        gap: '12px',
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          color: '#F59E0B',
+                          fontSize: '0.85rem',
+                        }}
+                      >
+                        <Clock size={16} aria-hidden="true" />
+                        <span>Pagamento aguardando confirmação.</span>
+                      </div>
+                      {ea.checkoutUrl && canManageBilling && (
+                        <a
+                          href={ea.checkoutUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn btn-secondary"
+                          style={{
+                            fontSize: '0.85rem',
+                            padding: '6px 14px',
+                            textDecoration: 'none',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                          }}
+                        >
+                          <span>Abrir link de pagamento</span>
+                          <ExternalLink size={14} aria-hidden="true" />
+                        </a>
+                      )}
+                    </div>
+                  );
+                }
+
+                if (ea.eligible && canManageBilling) {
+                  return (
+                    <div
+                      style={{
+                        marginTop: '16px',
+                        paddingTop: '16px',
+                        borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        flexWrap: 'wrap',
+                        gap: '12px',
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: '0.85rem',
+                          color: 'var(--text-secondary, #A0AAB0)',
+                          maxWidth: '520px',
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        {ea.status === 'expired'
+                          ? 'O link de pagamento anterior expirou. Você pode calcular um novo ajuste proporcional para ativar agora.'
+                          : 'Deseja utilizar os recursos antes da renovação? Ative agora pagando apenas a diferença proporcional do período restante.'}
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => handleOpenEarlyActivationModal(pending.transitionId)}
+                        disabled={earlyActivationQuoteLoading || earlyActivationCheckoutLoading || actionLoading}
+                        style={{
+                          fontSize: '0.85rem',
+                          padding: '8px 16px',
+                          fontWeight: 700,
+                        }}
+                      >
+                        {earlyActivationQuoteLoading ? 'Calculando...' : 'Ativar agora'}
+                      </button>
+                    </div>
+                  );
+                }
+
+                return null;
+              })()}
           </section>
         );
       })()}
@@ -2894,6 +3172,231 @@ export const SubscriptionPlanView: React.FC<Props> = ({
                 )}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Ativação Antecipada (Early Activation) (Phase 4A.5) */}
+      {showEarlyActivationModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="early-activation-modal-title"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.75)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px',
+            zIndex: 1000,
+            backdropFilter: 'blur(4px)',
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !earlyActivationCheckoutLoading) {
+              setShowEarlyActivationModal(false);
+            }
+          }}
+        >
+          <div
+            style={{
+              background: 'var(--surface-color, #1A2421)',
+              borderRadius: '20px',
+              maxWidth: '520px',
+              width: '100%',
+              padding: '24px',
+              border: '1px solid var(--border-color, #2D3A34)',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+              <Zap size={24} color="#10B981" />
+              <h3
+                id="early-activation-modal-title"
+                style={{
+                  margin: 0,
+                  fontSize: '1.25rem',
+                  fontWeight: 800,
+                  color: 'var(--text-primary, #F5EFE6)',
+                }}
+              >
+                Ativar upgrade agora?
+              </h3>
+            </div>
+
+            {earlyActivationQuoteLoading && (
+              <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-secondary, #A0AAB0)' }}>
+                <RefreshCw size={28} className="animate-spin" style={{ margin: '0 auto 12px' }} />
+                <p style={{ margin: 0, fontSize: '0.95rem' }}>Calculando valor proporcional...</p>
+              </div>
+            )}
+
+            {!earlyActivationQuoteLoading && earlyActivationQuoteError && (
+              <div>
+                <div
+                  style={{
+                    background: 'rgba(239, 68, 68, 0.1)',
+                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                    borderRadius: '10px',
+                    padding: '14px',
+                    color: '#F87171',
+                    fontSize: '0.9rem',
+                    lineHeight: 1.5,
+                    marginBottom: '20px',
+                  }}
+                >
+                  {earlyActivationQuoteError}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowEarlyActivationModal(false)}
+                    style={{
+                      padding: '10px 20px',
+                      borderRadius: '10px',
+                      background: 'transparent',
+                      border: '1px solid var(--border-color, #2D3A34)',
+                      color: 'var(--text-secondary, #A0AAB0)',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Voltar
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {!earlyActivationQuoteLoading && !earlyActivationQuoteError && earlyActivationQuote && (
+              <div>
+                <p
+                  style={{
+                    fontSize: '0.9rem',
+                    color: 'var(--text-secondary, #A0AAB0)',
+                    lineHeight: 1.5,
+                    marginBottom: '16px',
+                  }}
+                >
+                  O valor proporcional restante do período atual será cobrado. O novo plano/limite será ativado após a confirmação do pagamento.
+                </p>
+
+                <div
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.03)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    marginBottom: '20px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #A0AAB0)' }}>Transição</span>
+                    <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary, #F5EFE6)' }}>
+                      {getPlanDisplayName(earlyActivationQuote.sourcePlanId)} &rarr;{' '}
+                      {getPlanDisplayName(earlyActivationQuote.targetPlanId)}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #A0AAB0)' }}>Período restante</span>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-primary, #F5EFE6)' }}>
+                      {earlyActivationQuote.remainingDays} de {earlyActivationQuote.totalDays} dias
+                    </span>
+                  </div>
+
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'baseline',
+                      paddingTop: '10px',
+                      borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+                    }}
+                  >
+                    <span style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary, #F5EFE6)' }}>
+                      Valor proporcional
+                    </span>
+                    <span style={{ fontSize: '1.25rem', fontWeight: 800, color: '#10B981' }}>
+                      {formatCents(earlyActivationQuote.proratedAdjustmentCents)}
+                    </span>
+                  </div>
+
+                  {earlyActivationQuote.nextRenewalBillingDate && (
+                    <div
+                      style={{
+                        paddingTop: '10px',
+                        borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+                        fontSize: '0.8rem',
+                        color: 'var(--text-secondary, #A0AAB0)',
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      A renovação regular no valor de{' '}
+                      <strong style={{ color: 'var(--text-primary, #F5EFE6)' }}>
+                        {formatCents(earlyActivationQuote.nextRecurringAmountCents)}
+                      </strong>{' '}
+                      ocorrerá em{' '}
+                      <strong style={{ color: 'var(--text-primary, #F5EFE6)' }}>
+                        {formatDateLocal(earlyActivationQuote.nextRenewalBillingDate)}
+                      </strong>.
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowEarlyActivationModal(false)}
+                    disabled={earlyActivationCheckoutLoading}
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      borderRadius: '10px',
+                      background: 'transparent',
+                      border: '1px solid var(--border-color, #2D3A34)',
+                      color: 'var(--text-secondary, #A0AAB0)',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Voltar
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleConfirmEarlyActivationCheckout}
+                    disabled={earlyActivationCheckoutLoading || actionLoading}
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      borderRadius: '10px',
+                      background: '#10B981',
+                      border: 'none',
+                      color: '#FFFFFF',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px',
+                    }}
+                  >
+                    {earlyActivationCheckoutLoading ? (
+                      <>
+                        <RefreshCw size={16} className="animate-spin" />
+                        <span>Iniciando pagamento...</span>
+                      </>
+                    ) : (
+                      <span>Continuar para pagamento</span>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

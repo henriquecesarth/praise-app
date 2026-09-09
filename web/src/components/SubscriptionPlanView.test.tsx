@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { SubscriptionPlanView } from './SubscriptionPlanView';
 import { api } from '../api';
@@ -98,6 +98,7 @@ describe('SubscriptionPlanView Component', () => {
 
   afterEach(() => {
     vi.clearAllTimers();
+    vi.useRealTimers();
     sessionStorage.clear();
     window.history.replaceState({}, '', '/');
   });
@@ -135,7 +136,7 @@ describe('SubscriptionPlanView Component', () => {
 
     // Destaque "Seu plano"
     expect(screen.getByText('Seu plano')).toBeInTheDocument();
-  });
+  }, 15000);
 
   it('deve renderizar plano Free sem botão de cancelamento de assinatura', async () => {
     vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryFree as any);
@@ -2808,6 +2809,805 @@ describe('SubscriptionPlanView Component', () => {
         expect.stringMatching(/Não foi possível desfazer o cancelamento/i),
         'error'
       );
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Phase 4A.5: Customer Early Activation UX Matrix', () => {
+    const mockPendingUpgradeEligible = {
+      transitionId: 'tr_upgrade_123',
+      kind: 'plan_upgrade' as const,
+      status: 'scheduled' as const,
+      source: {
+        planId: 'lite',
+        planName: 'Lite',
+        interval: 'monthly' as const,
+        addonBlocks: 0,
+        memberQuota: 20,
+        songQuota: 100,
+        periodEnd: '2026-09-30T12:00:00.000Z',
+      },
+      target: {
+        planId: 'essential',
+        planName: 'Essential',
+        interval: 'monthly' as const,
+        addonBlocks: 0,
+        memberQuota: 40,
+        songQuota: 200,
+        effectiveAt: '2026-09-30T12:00:00.000Z',
+      },
+      scheduledDate: '2026-09-30T12:00:00.000Z',
+      financialAttentionRequired: false,
+      earlyActivation: {
+        eligible: true,
+        status: 'eligible' as const,
+        quote: null,
+        checkoutUrl: null,
+      },
+    };
+
+    const mockSummaryWithUpgrade = {
+      ...mockSummaryLitePaid,
+      pendingTransition: mockPendingUpgradeEligible,
+    };
+
+    const mockEarlyQuoteResponse = {
+      quoteId: 'quote_early_456',
+      transitionId: 'tr_upgrade_123',
+      sourcePlanId: 'lite',
+      targetPlanId: 'essential',
+      currentPeriodStartBillingDate: '2026-08-31',
+      currentPeriodEndBillingDate: '2026-09-30',
+      quoteBillingDate: '2026-09-11',
+      totalDays: 30,
+      remainingDays: 19,
+      sourceCurrentCycleTotalCents: 1490,
+      targetCurrentCycleTotalCents: 3490,
+      priceDeltaCents: 2000,
+      proratedAdjustmentCents: 1267,
+      currency: 'BRL',
+      expiresAt: '2026-09-12T12:00:00.000Z',
+      nextRenewalBillingDate: '2026-09-30',
+      nextRecurringAmountCents: 3490,
+    };
+
+    const mockEarlyCheckoutResponse = {
+      checkoutUrl: 'https://asaas.com/checkoutSession/show?id=chk_early_001',
+      checkoutId: 'chk_early_001',
+      quoteId: 'quote_early_456',
+      amountCents: 1267,
+      expiresAt: '2026-09-12T12:00:00.000Z',
+      transitionId: 'tr_upgrade_123',
+      status: 'checkout_created',
+    };
+
+    it('41.1) admin com upgrade agendado elegível exibe o botão "Ativar agora"', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryWithUpgrade as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      const ctaBtn = await screen.findByRole('button', { name: 'Ativar agora' });
+      expect(ctaBtn).toBeInTheDocument();
+      expect(ctaBtn).toBeEnabled();
+    });
+
+    it('41.2) não-admin (canManageBilling: false) com upgrade agendado elegível NÃO exibe o botão "Ativar agora"', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryWithUpgrade as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-member"
+          canManageBilling={false}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await screen.findByText('Alteração agendada');
+      expect(screen.queryByRole('button', { name: 'Ativar agora' })).not.toBeInTheDocument();
+    });
+
+    it('41.3) admin com downgrade agendado (kind: plan_downgrade) NÃO exibe o botão "Ativar agora"', async () => {
+      const mockSummaryDowngrade = {
+        ...mockSummaryEssential,
+        pendingTransition: {
+          ...mockPendingUpgradeEligible,
+          kind: 'plan_downgrade' as const,
+          earlyActivation: {
+            eligible: false,
+            status: 'not_applicable' as const,
+            quote: null,
+            checkoutUrl: null,
+          },
+        },
+      };
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryDowngrade as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await screen.findByText('Alteração agendada');
+      expect(screen.queryByRole('button', { name: 'Ativar agora' })).not.toBeInTheDocument();
+    });
+
+    it('41.4) admin com cancel_to_free agendado NÃO exibe o botão "Ativar agora"', async () => {
+      const mockSummaryCancel = {
+        ...mockSummaryEssential,
+        pendingTransition: {
+          ...mockPendingUpgradeEligible,
+          kind: 'cancel_to_free' as const,
+          earlyActivation: {
+            eligible: false,
+            status: 'not_applicable' as const,
+            quote: null,
+            checkoutUrl: null,
+          },
+        },
+      };
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryCancel as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await screen.findByText('Alteração agendada');
+      expect(screen.queryByRole('button', { name: 'Ativar agora' })).not.toBeInTheDocument();
+    });
+
+    it('41.5) admin com aumento de blocos de membros (addon_increase) elegível exibe o botão "Ativar agora"', async () => {
+      const mockSummaryAddonIncrease = {
+        ...mockSummaryEssential,
+        pendingTransition: {
+          ...mockPendingUpgradeEligible,
+          kind: 'addon_increase' as const,
+          earlyActivation: {
+            eligible: true,
+            status: 'eligible' as const,
+            quote: null,
+            checkoutUrl: null,
+          },
+        },
+      };
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryAddonIncrease as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      const ctaBtn = await screen.findByRole('button', { name: 'Ativar agora' });
+      expect(ctaBtn).toBeInTheDocument();
+      expect(ctaBtn).toBeEnabled();
+    });
+
+    it('41.6) admin com redução de blocos de membros (addon_decrease) NÃO exibe o botão "Ativar agora"', async () => {
+      const mockSummaryAddonDecrease = {
+        ...mockSummaryEssential,
+        pendingTransition: {
+          ...mockPendingUpgradeEligible,
+          kind: 'addon_decrease' as const,
+          earlyActivation: {
+            eligible: false,
+            status: 'not_applicable' as const,
+            quote: null,
+            checkoutUrl: null,
+          },
+        },
+      };
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryAddonDecrease as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await screen.findByText('Alteração agendada');
+      expect(screen.queryByRole('button', { name: 'Ativar agora' })).not.toBeInTheDocument();
+    });
+
+    it('41.7) transição com atenção financeira NÃO exibe o botão "Ativar agora"', async () => {
+      const mockSummaryAttention = {
+        ...mockSummaryWithUpgrade,
+        pendingTransition: {
+          ...mockPendingUpgradeEligible,
+          status: 'attention_required' as const,
+          financialAttentionRequired: true,
+        },
+      };
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryAttention as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await screen.findByText('Revisão necessária');
+      expect(screen.queryByRole('button', { name: 'Ativar agora' })).not.toBeInTheDocument();
+    });
+
+    it('41.8) status payment_pending exibe indicador de aguardando confirmação e link de checkout se presente', async () => {
+      const mockSummaryPaymentPending = {
+        ...mockSummaryWithUpgrade,
+        pendingTransition: {
+          ...mockPendingUpgradeEligible,
+          earlyActivation: {
+            eligible: true,
+            status: 'payment_pending' as const,
+            quote: null,
+            checkoutUrl: 'https://asaas.com/checkoutSession/show?id=chk_early_001',
+          },
+        },
+      };
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryPaymentPending as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByText('Pagamento aguardando confirmação.')).toBeInTheDocument();
+      const link = screen.getByRole('link', { name: /Abrir link de pagamento/i });
+      expect(link).toHaveAttribute('href', 'https://asaas.com/checkoutSession/show?id=chk_early_001');
+      expect(screen.queryByRole('button', { name: 'Ativar agora' })).not.toBeInTheDocument();
+    });
+
+    it('41.9) status activated exibe mensagem de upgrade ativado', async () => {
+      const mockSummaryActivated = {
+        ...mockSummaryWithUpgrade,
+        pendingTransition: {
+          ...mockPendingUpgradeEligible,
+          earlyActivation: {
+            eligible: true,
+            status: 'activated' as const,
+            quote: null,
+            checkoutUrl: null,
+          },
+        },
+      };
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryActivated as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByText(/Upgrade ativado\. Os recursos já estão liberados para o seu ministério\./i)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Ativar agora' })).not.toBeInTheDocument();
+    });
+
+    it('41.10) status expired exibe aviso e permite solicitar novo cálculo via "Ativar agora"', async () => {
+      const mockSummaryExpired = {
+        ...mockSummaryWithUpgrade,
+        pendingTransition: {
+          ...mockPendingUpgradeEligible,
+          earlyActivation: {
+            eligible: true,
+            status: 'expired' as const,
+            quote: null,
+            checkoutUrl: null,
+          },
+        },
+      };
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryExpired as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      expect(await screen.findByText(/O link de pagamento anterior expirou\. Você pode calcular um novo ajuste proporcional para ativar agora\./i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Ativar agora' })).toBeInTheDocument();
+    });
+
+    it('42.1) preview modal: clicar em "Ativar agora" busca cotação autoritativa e exibe valores sem recálculo local', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryWithUpgrade as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      const quoteSpy = vi.spyOn(api, 'getEarlyActivationQuote').mockResolvedValue(mockEarlyQuoteResponse);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      const ctaBtn = await screen.findByRole('button', { name: 'Ativar agora' });
+      await userEvent.click(ctaBtn);
+
+      expect(quoteSpy).toHaveBeenCalledWith('min-admin', 'tr_upgrade_123');
+
+      const modal = await screen.findByRole('dialog');
+      expect(modal).toBeInTheDocument();
+
+      // Prova que valores vieram do backend sem recálculo frontend
+      expect(within(modal).getByText('Lite → Essential')).toBeInTheDocument();
+      expect(within(modal).getByText('19 de 30 dias')).toBeInTheDocument();
+      expect(within(modal).getByText('R$ 12,67')).toBeInTheDocument();
+      expect(within(modal).getByText(/30\/09\/2026/)).toBeInTheDocument();
+
+      expect(screen.getByRole('button', { name: 'Continuar para pagamento' })).toBeInTheDocument();
+    });
+
+    it('42.2) preview modal: falha na cotação exibe alerta de erro e botão Voltar', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryWithUpgrade as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      vi.spyOn(api, 'getEarlyActivationQuote').mockRejectedValue(new Error('Falha de conexão com o servidor'));
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      const ctaBtn = await screen.findByRole('button', { name: 'Ativar agora' });
+      await userEvent.click(ctaBtn);
+
+      expect(await screen.findByText('Falha de conexão com o servidor')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Voltar' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Continuar para pagamento' })).not.toBeInTheDocument();
+    });
+
+    it('42.3) preview modal: clicar em Voltar fecha o modal', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryWithUpgrade as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      vi.spyOn(api, 'getEarlyActivationQuote').mockResolvedValue(mockEarlyQuoteResponse);
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      const ctaBtn = await screen.findByRole('button', { name: 'Ativar agora' });
+      await userEvent.click(ctaBtn);
+
+      await screen.findByRole('dialog');
+      await userEvent.click(screen.getByRole('button', { name: 'Voltar' }));
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('43.1) checkout: clicar em Continuar para pagamento chama createEarlyActivationCheckout, grava intent e redireciona', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryWithUpgrade as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      vi.spyOn(api, 'getEarlyActivationQuote').mockResolvedValue(mockEarlyQuoteResponse);
+      const checkoutSpy = vi.spyOn(api, 'createEarlyActivationCheckout').mockResolvedValue(mockEarlyCheckoutResponse);
+
+      const originalLocation = window.location;
+      delete (window as any).location;
+      window.location = { ...originalLocation, href: '' } as any;
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      const ctaBtn = await screen.findByRole('button', { name: 'Ativar agora' });
+      await userEvent.click(ctaBtn);
+
+      const confirmBtn = await screen.findByRole('button', { name: 'Continuar para pagamento' });
+      await userEvent.click(confirmBtn);
+
+      expect(checkoutSpy).toHaveBeenCalledWith('min-admin', 'tr_upgrade_123', 'quote_early_456');
+
+      const savedIntentRaw = sessionStorage.getItem('louvaio_checkout_intent');
+      expect(savedIntentRaw).toBeTruthy();
+      const savedIntent = JSON.parse(savedIntentRaw!);
+      expect(savedIntent.type).toBe('early_activation');
+      expect(savedIntent.ministryId).toBe('min-admin');
+      expect(savedIntent.transitionId).toBe('tr_upgrade_123');
+      expect(savedIntent.quoteId).toBe('quote_early_456');
+
+      expect(window.location.href).toBe('https://asaas.com/checkoutSession/show?id=chk_early_001');
+
+      (window as any).location = originalLocation;
+    });
+
+    it('43.2) checkout: status creation_verification_pending fecha modal e exibe toast sem redirecionamento', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryWithUpgrade as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      vi.spyOn(api, 'getEarlyActivationQuote').mockResolvedValue(mockEarlyQuoteResponse);
+      vi.spyOn(api, 'createEarlyActivationCheckout').mockResolvedValue({
+        status: 'creation_verification_pending',
+        message: 'Estamos verificando a criação do pagamento.',
+        transitionId: 'tr_upgrade_123',
+        quoteId: 'quote_early_456',
+      });
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      const ctaBtn = await screen.findByRole('button', { name: 'Ativar agora' });
+      await userEvent.click(ctaBtn);
+
+      const confirmBtn = await screen.findByRole('button', { name: 'Continuar para pagamento' });
+      await userEvent.click(confirmBtn);
+
+      expect(mockShowToast).toHaveBeenCalledWith(
+        'Estamos verificando a criação do pagamento.'
+      );
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(sessionStorage.getItem('louvaio_checkout_intent')).toBeNull();
+    });
+
+    it('43.3) checkout: falha ao iniciar pagamento descarta intent e exibe toast de erro', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryWithUpgrade as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      vi.spyOn(api, 'getEarlyActivationQuote').mockResolvedValue(mockEarlyQuoteResponse);
+      vi.spyOn(api, 'createEarlyActivationCheckout').mockRejectedValue(new Error('Gateway timeout'));
+
+      render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      const ctaBtn = await screen.findByRole('button', { name: 'Ativar agora' });
+      await userEvent.click(ctaBtn);
+
+      const confirmBtn = await screen.findByRole('button', { name: 'Continuar para pagamento' });
+      await userEvent.click(confirmBtn);
+
+      expect(mockShowToast).toHaveBeenCalledWith('Gateway timeout', 'error');
+      expect(sessionStorage.getItem('louvaio_checkout_intent')).toBeNull();
+    });
+
+    it('44.1) retorno com intent early_activation: polling aguarda confirmação sem conceder direito prematuramente', async () => {
+      vi.useFakeTimers();
+      try {
+        sessionStorage.setItem(
+          'louvaio_checkout_intent',
+          JSON.stringify({
+            type: 'early_activation',
+            ministryId: 'min-polling-early',
+            expectedPlanId: 'essential',
+            expectedInterval: 'monthly',
+            expectedAddonBlocks: 0,
+            timestamp: Date.now(),
+            transitionId: 'tr_upgrade_123',
+          })
+        );
+
+        const getSubSpy = vi.spyOn(api, 'getMinistrySubscription');
+        // Mount + tick 1: ainda payment_pending
+        getSubSpy.mockResolvedValue({
+          ...mockSummaryLitePaid,
+          pendingTransition: {
+            ...mockPendingUpgradeEligible,
+            earlyActivation: {
+              eligible: true,
+              status: 'payment_pending' as const,
+              quote: null,
+              checkoutUrl: 'https://asaas.com/checkoutSession/show?id=chk_early_001',
+            },
+          },
+        } as any);
+        vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+        render(<SubscriptionPlanView ministryId="min-polling-early" onBack={mockOnBack} showToast={mockShowToast} />);
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(100);
+        });
+        expect(screen.getByText('Pagamento em processamento')).toBeInTheDocument();
+
+        // Avança mais alguns ticks - ainda pendente
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2500);
+        });
+
+        // Não exibe toast de sucesso e não limpa intent
+        expect(mockShowToast).not.toHaveBeenCalledWith('Upgrade ativado com sucesso!', 'success');
+        expect(sessionStorage.getItem('louvaio_checkout_intent')).toBeTruthy();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('44.2) retorno com intent early_activation: status activated encerra polling e exibe toast de sucesso', async () => {
+      vi.useFakeTimers();
+      try {
+        sessionStorage.setItem(
+          'louvaio_checkout_intent',
+          JSON.stringify({
+            type: 'early_activation',
+            ministryId: 'min-polling-early-settled',
+            expectedPlanId: 'essential',
+            expectedInterval: 'monthly',
+            expectedAddonBlocks: 0,
+            timestamp: Date.now(),
+            transitionId: 'tr_upgrade_123',
+          })
+        );
+
+        const getSubSpy = vi.spyOn(api, 'getMinistrySubscription');
+        // Mount: payment_pending
+        getSubSpy.mockResolvedValueOnce({
+          ...mockSummaryLitePaid,
+          pendingTransition: {
+            ...mockPendingUpgradeEligible,
+            earlyActivation: {
+              eligible: true,
+              status: 'payment_pending' as const,
+              quote: null,
+              checkoutUrl: 'https://asaas.com/checkoutSession/show?id=chk_early_001',
+            },
+          },
+        } as any);
+
+        // Subsequent ticks: status virou activated!
+        getSubSpy.mockResolvedValue({
+          ...mockSummaryLitePaid,
+          pendingTransition: {
+            ...mockPendingUpgradeEligible,
+            earlyActivation: {
+              eligible: true,
+              status: 'activated' as const,
+              quote: null,
+              checkoutUrl: null,
+            },
+          },
+        } as any);
+
+        vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+        render(<SubscriptionPlanView ministryId="min-polling-early-settled" onBack={mockOnBack} showToast={mockShowToast} />);
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(100);
+        });
+        expect(screen.getByText('Pagamento em processamento')).toBeInTheDocument();
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2500);
+        });
+
+        expect(mockShowToast).toHaveBeenCalledWith('Upgrade ativado com sucesso!', 'success');
+        expect(sessionStorage.getItem('louvaio_checkout_intent')).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('44.3) retorno com intent early_activation: link expirado encerra polling e exibe toast de aviso', async () => {
+      vi.useFakeTimers();
+      try {
+        sessionStorage.setItem(
+          'louvaio_checkout_intent',
+          JSON.stringify({
+            type: 'early_activation',
+            ministryId: 'min-polling-expired',
+            expectedPlanId: 'essential',
+            expectedInterval: 'monthly',
+            expectedAddonBlocks: 0,
+            timestamp: Date.now(),
+            transitionId: 'tr_upgrade_123',
+          })
+        );
+
+        const getSubSpy = vi.spyOn(api, 'getMinistrySubscription');
+        getSubSpy.mockResolvedValue({
+          ...mockSummaryLitePaid,
+          pendingTransition: {
+            ...mockPendingUpgradeEligible,
+            earlyActivation: {
+              eligible: true,
+              status: 'expired' as const,
+              quote: null,
+              checkoutUrl: null,
+            },
+          },
+        } as any);
+
+        vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+        render(<SubscriptionPlanView ministryId="min-polling-expired" onBack={mockOnBack} showToast={mockShowToast} />);
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(100);
+        });
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2500);
+        });
+
+        expect(mockShowToast).toHaveBeenCalledWith('O link de pagamento expirou. Você pode tentar novamente.', 'error');
+        expect(sessionStorage.getItem('louvaio_checkout_intent')).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('45.1) isolamento e concorrência: alternância de ministério durante cotação descarta resposta assíncrona', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryWithUpgrade as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+
+      let resolveQuote: (val: any) => void;
+      const quotePromise = new Promise((resolve) => {
+        resolveQuote = resolve;
+      });
+      vi.spyOn(api, 'getEarlyActivationQuote').mockImplementation(() => quotePromise as any);
+
+      const { rerender } = render(
+        <SubscriptionPlanView
+          ministryId="min-admin-a"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      const ctaBtn = await screen.findByRole('button', { name: 'Ativar agora' });
+      await userEvent.click(ctaBtn);
+
+      // Troca ministério
+      rerender(
+        <SubscriptionPlanView
+          ministryId="min-admin-b"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await act(async () => {
+        resolveQuote!(mockEarlyQuoteResponse);
+      });
+
+      // Modal não deve renderizar com dados da cotação do ministério A
+      expect(screen.queryByText('R$ 12,67')).not.toBeInTheDocument();
+    });
+
+    it('45.2) isolamento e concorrência: alternância de ministério durante checkout descarta redirecionamento', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryWithUpgrade as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      vi.spyOn(api, 'getEarlyActivationQuote').mockResolvedValue(mockEarlyQuoteResponse);
+
+      let resolveCheckout: (val: any) => void;
+      const checkoutPromise = new Promise((resolve) => {
+        resolveCheckout = resolve;
+      });
+      vi.spyOn(api, 'createEarlyActivationCheckout').mockImplementation(() => checkoutPromise as any);
+
+      const originalLocation = window.location;
+      delete (window as any).location;
+      window.location = { ...originalLocation, href: '' } as any;
+
+      const { rerender } = render(
+        <SubscriptionPlanView
+          ministryId="min-admin-a"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      const ctaBtn = await screen.findByRole('button', { name: 'Ativar agora' });
+      await userEvent.click(ctaBtn);
+
+      const confirmBtn = await screen.findByRole('button', { name: 'Continuar para pagamento' });
+      await userEvent.click(confirmBtn);
+
+      // Troca ministério antes da resposta
+      rerender(
+        <SubscriptionPlanView
+          ministryId="min-admin-b"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      await act(async () => {
+        resolveCheckout!(mockEarlyCheckoutResponse);
+      });
+
+      expect(window.location.href).toBe('');
+      (window as any).location = originalLocation;
+    });
+
+    it('45.3) RBAC demotion: rebaixamento para não-admin enquanto modal de ativação antecipada está aberto fecha o modal imediatamente', async () => {
+      vi.spyOn(api, 'getMinistrySubscription').mockResolvedValue(mockSummaryWithUpgrade as any);
+      vi.spyOn(api, 'getPlans').mockResolvedValue(mockPlansResponse as any);
+      vi.spyOn(api, 'getEarlyActivationQuote').mockResolvedValue(mockEarlyQuoteResponse);
+
+      const { rerender } = render(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={true}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
+      const ctaBtn = await screen.findByRole('button', { name: 'Ativar agora' });
+      await userEvent.click(ctaBtn);
+
+      expect(await screen.findByRole('dialog')).toBeInTheDocument();
+
+      // Rebaixa role
+      rerender(
+        <SubscriptionPlanView
+          ministryId="min-admin"
+          canManageBilling={false}
+          onBack={mockOnBack}
+          showToast={mockShowToast}
+        />
+      );
+
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
   });

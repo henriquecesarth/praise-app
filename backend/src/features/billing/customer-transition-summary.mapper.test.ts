@@ -439,6 +439,191 @@ describe('Phase 4A.1: Customer Billing Summary Normalization', () => {
       expect(serialized).not.toContain('retry_count');
       expect(serialized).not.toContain('provider');
     });
+  });
 
+  describe('Phase 4A.5: Customer-Facing Early Activation Summary Mapping', () => {
+    it('1. plan upgrade with available early activation is marked eligible', () => {
+      const transition = createMockTransitionV1({
+        source_plan_id: 'lite',
+        target_plan_id: 'essential',
+        early_activation_status: 'available',
+        effective_billing_date: '2099-12-31',
+      });
+
+      const dto = mapToCustomerFacingTransition(transition, 'min_test_1');
+      expect(dto).not.toBeNull();
+      expect(dto?.earlyActivation).toEqual({
+        eligible: true,
+        status: 'available',
+        checkoutUrl: null,
+      });
+    });
+
+    it('2. addon increase with available early activation is marked eligible', () => {
+      const transition = createMockTransitionV1({
+        source_plan_id: 'essential',
+        target_plan_id: 'essential',
+        source_addon_blocks: 0,
+        target_addon_blocks: 2,
+        early_activation_status: 'available',
+        effective_billing_date: '2099-12-31',
+      });
+
+      const dto = mapToCustomerFacingTransition(transition, 'min_test_1');
+      expect(dto).not.toBeNull();
+      expect(dto?.kind).toBe('addon_increase');
+      expect(dto?.earlyActivation).toEqual({
+        eligible: true,
+        status: 'available',
+        checkoutUrl: null,
+      });
+    });
+
+    it('3. plan downgrade is NEVER eligible for early activation', () => {
+      const transition = createMockTransitionV1({
+        source_plan_id: 'pro',
+        target_plan_id: 'essential',
+        early_activation_status: 'not_applicable',
+        effective_billing_date: '2099-12-31',
+      });
+
+      const dto = mapToCustomerFacingTransition(transition, 'min_test_1');
+      expect(dto).not.toBeNull();
+      expect(dto?.kind).toBe('plan_downgrade');
+      expect(dto?.earlyActivation).toEqual({
+        eligible: false,
+        status: 'not_applicable',
+        checkoutUrl: null,
+      });
+    });
+
+    it('4. addon decrease is NEVER eligible for early activation', () => {
+      const transition = createMockTransitionV1({
+        source_plan_id: 'essential',
+        target_plan_id: 'essential',
+        source_addon_blocks: 2,
+        target_addon_blocks: 1,
+        early_activation_status: 'not_applicable',
+        effective_billing_date: '2099-12-31',
+      });
+
+      const dto = mapToCustomerFacingTransition(transition, 'min_test_1');
+      expect(dto).not.toBeNull();
+      expect(dto?.kind).toBe('addon_decrease');
+      expect(dto?.earlyActivation).toEqual({
+        eligible: false,
+        status: 'not_applicable',
+        checkoutUrl: null,
+      });
+    });
+
+    it('5. cancel to free is NEVER eligible for early activation', () => {
+      const transition = createMockTransitionV1({
+        source_plan_id: 'essential',
+        target_plan_id: 'free',
+        execution_strategy: 'scheduled_cancel_to_free',
+        early_activation_status: 'not_applicable',
+        effective_billing_date: '2099-12-31',
+      });
+
+      const dto = mapToCustomerFacingTransition(transition, 'min_test_1');
+      expect(dto).not.toBeNull();
+      expect(dto?.kind).toBe('cancel_to_free');
+      expect(dto?.earlyActivation).toEqual({
+        eligible: false,
+        status: 'not_applicable',
+        checkoutUrl: null,
+      });
+    });
+
+    it('6. attention_required disables early activation eligibility', () => {
+      const transition = createMockTransitionV1({
+        source_plan_id: 'lite',
+        target_plan_id: 'essential',
+        early_activation_status: 'available',
+        financial_attention_required: true,
+        effective_billing_date: '2099-12-31',
+      });
+
+      const dto = mapToCustomerFacingTransition(transition, 'min_test_1');
+      expect(dto).not.toBeNull();
+      expect(dto?.status).toBe('attention_required');
+      expect(dto?.earlyActivation).toEqual({
+        eligible: false,
+        status: 'not_applicable',
+        checkoutUrl: null,
+      });
+    });
+
+    it('7. payment_pending exposes checkoutUrl and eligible=false', () => {
+      const transition = createMockTransitionV1({
+        source_plan_id: 'lite',
+        target_plan_id: 'essential',
+        early_activation_status: 'payment_pending',
+        checkout_url: 'https://sandbox.asaas.com/c/checkout_test_123',
+        effective_billing_date: '2099-12-31',
+      });
+
+      const dto = mapToCustomerFacingTransition(transition, 'min_test_1');
+      expect(dto).not.toBeNull();
+      expect(dto?.earlyActivation).toEqual({
+        eligible: false,
+        status: 'payment_pending',
+        checkoutUrl: 'https://sandbox.asaas.com/c/checkout_test_123',
+      });
+    });
+
+    it('8. activated early activation is marked not eligible and status activated', () => {
+      const transition = createMockTransitionV1({
+        source_plan_id: 'lite',
+        target_plan_id: 'essential',
+        early_activation_status: 'activated',
+        effective_billing_date: '2099-12-31',
+      });
+
+      const dto = mapToCustomerFacingTransition(transition, 'min_test_1');
+      expect(dto).not.toBeNull();
+      expect(dto?.earlyActivation).toEqual({
+        eligible: false,
+        status: 'activated',
+        checkoutUrl: null,
+      });
+    });
+
+    it('9. boundary reached (currentCommercialDate >= effective_billing_date) disables early activation', () => {
+      const transition = createMockTransitionV1({
+        source_plan_id: 'lite',
+        target_plan_id: 'essential',
+        early_activation_status: 'available',
+        effective_billing_date: '2026-09-08',
+      });
+
+      const dto = mapToCustomerFacingTransition(transition, 'min_test_1', {
+        currentCommercialDate: '2026-09-08',
+      });
+      expect(dto).not.toBeNull();
+      expect(dto?.earlyActivation).toEqual({
+        eligible: false,
+        status: 'not_applicable',
+        checkoutUrl: null,
+      });
+    });
+
+    it('10. expired early activation checkout before boundary is eligible for re-quote', () => {
+      const transition = createMockTransitionV1({
+        source_plan_id: 'lite',
+        target_plan_id: 'essential',
+        early_activation_status: 'expired',
+        effective_billing_date: '2099-12-31',
+      });
+
+      const dto = mapToCustomerFacingTransition(transition, 'min_test_1');
+      expect(dto).not.toBeNull();
+      expect(dto?.earlyActivation).toEqual({
+        eligible: true,
+        status: 'expired',
+        checkoutUrl: null,
+      });
+    });
   });
 });

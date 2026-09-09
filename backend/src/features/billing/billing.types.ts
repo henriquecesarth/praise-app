@@ -945,6 +945,19 @@ export interface CustomerFacingTransitionContractSnapshot {
   addonBlocks: number;
 }
 
+export type CustomerFacingEarlyActivationStatus =
+  | 'available'
+  | 'payment_pending'
+  | 'activated'
+  | 'expired'
+  | 'not_applicable';
+
+export interface CustomerFacingEarlyActivationDto {
+  eligible: boolean;
+  status: CustomerFacingEarlyActivationStatus;
+  checkoutUrl?: string | null;
+}
+
 export interface CustomerFacingPendingTransitionDto {
   transitionId: string;
   kind: CustomerFacingTransitionKind;
@@ -953,6 +966,7 @@ export interface CustomerFacingPendingTransitionDto {
   effectiveAt: string | null;
   source: CustomerFacingTransitionContractSnapshot;
   target: CustomerFacingTransitionContractSnapshot;
+  earlyActivation?: CustomerFacingEarlyActivationDto;
 }
 
 export type CustomerPaymentHealthState = 'current' | 'past_due';

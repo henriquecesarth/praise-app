@@ -26,6 +26,38 @@ export interface BillingReactivationResponse {
   outcome: 'cancellation_reversed' | 'legacy_reactivated';
 }
 
+export interface EarlyActivationQuoteResponse {
+  quoteId: string;
+  transitionId: string;
+  sourcePlanId: string;
+  targetPlanId: string;
+  currentPeriodStartBillingDate: string;
+  currentPeriodEndBillingDate: string;
+  quoteBillingDate: string;
+  totalDays: number;
+  remainingDays: number;
+  sourceCurrentCycleTotalCents: number;
+  targetCurrentCycleTotalCents: number;
+  priceDeltaCents: number;
+  proratedAdjustmentCents: number;
+  currency: string;
+  expiresAt: string;
+  nextRenewalBillingDate: string;
+  nextRecurringAmountCents: number;
+}
+
+export interface EarlyActivationCheckoutResponse {
+  checkoutUrl?: string;
+  checkoutId?: string;
+  quoteId: string;
+  amountCents?: number;
+  expiresAt?: string | null;
+  transitionId: string;
+  status: string;
+  code?: string;
+  message?: string;
+}
+
 export class ApiError extends Error {
   statusCode: number;
   code?: string;
@@ -1104,6 +1136,36 @@ export const api = {
       headers: getHeaders(),
     });
     return handleResponse<{ message: string; reconciled: boolean; subscription: any }>(response);
+  },
+
+  getEarlyActivationQuote: async (
+    ministryId: string,
+    transitionId: string
+  ): Promise<EarlyActivationQuoteResponse> => {
+    const response = await fetch(
+      `${API_URL}/ministries/${ministryId}/billing/transitions/${transitionId}/early-activation/quote`,
+      {
+        method: 'POST',
+        headers: getHeaders(),
+      }
+    );
+    return handleResponse<EarlyActivationQuoteResponse>(response);
+  },
+
+  createEarlyActivationCheckout: async (
+    ministryId: string,
+    transitionId: string,
+    quoteId: string
+  ): Promise<EarlyActivationCheckoutResponse> => {
+    const response = await fetch(
+      `${API_URL}/ministries/${ministryId}/billing/transitions/${transitionId}/early-activation/checkout`,
+      {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ quoteId }),
+      }
+    );
+    return handleResponse<EarlyActivationCheckoutResponse>(response);
   },
 };
 
