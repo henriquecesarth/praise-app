@@ -34,7 +34,27 @@ import { getBillingDate } from '../../utils/billing-date';
 import { config } from '../../config/unifiedConfig';
 
 /**
- * Correlaciona deterministicamente a fatura exata da obrigação de renovação corrente inadimplente (Phase 4A.6A).
+ * Normaliza uma string de data (ISO ou YYYY-MM-DD) para a data civil 'YYYY-MM-DD' no timezone de billing.
+ */
+function normalizeToBillingDate(rawDate: string | null | undefined, timeZone: string): string | null {
+  if (!rawDate) return null;
+  const str = String(rawDate).trim();
+  if (!str) return null;
+  const datePart = str.split('T')[0];
+  if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+    return datePart;
+  }
+  try {
+    const bd = getBillingDate(str, timeZone);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(bd)) {
+      return bd;
+    }
+  } catch (_e) {}
+  return null;
+}
+
+/**
+ * Correlaciona deterministicamente a fatura exata da obrigação de renovação corrente inadimplente (Phase 4A.6B).
  * Retorna null em caso de ambiguidade, ausência de evidência ou obrigações não correlatas (fail-closed).
  */
 export function resolveCurrentRenewalRecoveryInvoice(
@@ -43,133 +63,98 @@ export function resolveCurrentRenewalRecoveryInvoice(
     ministryId: string;
     billingSub: BillingSubscriptionRecord | null;
     subscription: MinistrySubscriptionRecord;
-    activeTransitionResult: any;
+    activeTransitionResult?: any;
     timeZone?: string;
   }
 ): string | null {
-  const { ministryId, billingSub, subscription, activeTransitionResult, timeZone = config.billingTimezone || 'America/Sao_Paulo' } = context;
+  const { ministryId, billingSub, subscription, timeZone = config.billingTimezone || 'America/Sao_Paulo' } = context;
 
-  // 1. Filtrar candidatos estritamente elegíveis
-  const targetProviderSubId = billingSub?.provider_subscription_id;
+  // 1. Assinatura de faturamento corrente é obrigatória com identificador canônico no provedor
+  if (!billingSub || !billingSub.provider_subscription_id || typeof billingSub.provider_subscription_id !== 'string') {
+    return null;
+  }
+  const targetProviderSubId = billingSub.provider_subscription_id.trim();
+  if (!targetProviderSubId) {
+    return null;
+  }
 
+  // 2. Determinar a data exata da fronteira de renovação corrente (current renewal boundary)
+  // Fontes autorizadas: billingSub.current_period_end_billing_date, billingSub.effective_billing_date,
+  // billingSub.current_period_end, subscription.current_period_end.
+  // PROIBIDO: grace_period_expires_billing_date, grace_period_expires_at, current_period_start,
+  // current_period_start_billing_date, created_at, requested_at, etc.
+  const boundaryDates = new Set<string>();
+
+  const addBoundaryDate = (raw: string | null | undefined) => {
+    const norm = normalizeToBillingDate(raw, timeZone);
+    if (norm) {
+      boundaryDates.add(norm);
+    }
+  };
+
+  addBoundaryDate(billingSub.current_period_end_billing_date);
+  addBoundaryDate(billingSub.effective_billing_date);
+  addBoundaryDate(billingSub.current_period_end);
+  addBoundaryDate(subscription.current_period_end);
+
+  // Se nenhuma fronteira pode ser identificada ou se há divergência material entre fontes canônicas -> Fail closed
+  if (boundaryDates.size !== 1) {
+    return null;
+  }
+  const expectedRenewalBillingDate = Array.from(boundaryDates)[0];
+
+  // 3. Filtrar candidatos positivamente comprovados como a obrigação de renovação corrente
   const eligibleCandidates = (transactions || []).filter((tx: any) => {
-    // 1.1 Tenant e provedor
+    // 3.1 Tenant e provedor
     if (tx.ministry_id && tx.ministry_id !== ministryId) return false;
-    if (billingSub?.provider && tx.provider && tx.provider !== billingSub.provider) return false;
+    if (billingSub.provider && tx.provider && tx.provider !== billingSub.provider) return false;
 
-    // 1.2 Assinatura corrente do provedor (se conhecida)
-    if (targetProviderSubId) {
-      if (!tx.provider_subscription_id || tx.provider_subscription_id !== targetProviderSubId) {
-        return false;
-      }
+    // 3.2 Assinatura corrente do provedor (identidade exata obrigatória)
+    if (!tx.provider_subscription_id || tx.provider_subscription_id !== targetProviderSubId) {
+      return false;
     }
 
-    // 1.3 Excluir categoricamente obrigações de ajuste e pontuais (early activation, setup, etc.)
+    // 3.3 Propósito financeiro POSITIVO: deve ser obrigatoriamente 'recurring_payment'
+    if (tx.transaction_type !== 'recurring_payment') {
+      return false;
+    }
+
+    // 3.4 Defesa em profundidade contra ajustes e pontuais
     if (
-      tx.transaction_type === 'prorated_early_activation_adjustment' ||
       tx.quote_id ||
       tx.attempt_id
     ) {
       return false;
     }
 
-    // Se transaction_type estiver preenchido, deve ser recorrente
-    if (tx.transaction_type && tx.transaction_type !== 'recurring_payment') {
-      return false;
-    }
-
-    // 1.4 Status financeiramente vivo/recuperável
+    // 3.5 Status financeiramente recuperável
     if (tx.status !== 'overdue' && tx.status !== 'pending') {
       return false;
     }
 
-    // 1.5 Deve possuir URL de fatura não vazia
-    if (!tx.invoice_url || typeof tx.invoice_url !== 'string') {
+    // 3.6 Deve possuir URL de fatura não-vazia
+    if (!tx.invoice_url || typeof tx.invoice_url !== 'string' || !tx.invoice_url.trim()) {
+      return false;
+    }
+
+    // 3.7 Data de vencimento (due_date) obrigatória e correspondência exata com o renewal boundary
+    if (!tx.due_date) {
+      return false;
+    }
+    const txDueDate = normalizeToBillingDate(tx.due_date, timeZone);
+    if (!txDueDate || txDueDate !== expectedRenewalBillingDate) {
       return false;
     }
 
     return true;
   });
 
-  if (eligibleCandidates.length === 0) {
-    return null;
-  }
-
-  // 2. Se há correspondência direta com o ID do pagamento de renovação alvo da transição ativa
-  const targetPaymentId =
-    activeTransitionResult?.transition?.future_provider_payment_id ||
-    activeTransitionResult?.transition?.target_provider_payment_id;
-
-  if (targetPaymentId) {
-    const directMatch = eligibleCandidates.find(
-      (tx: any) => tx.provider_payment_id === targetPaymentId || tx.id?.endsWith(`_${targetPaymentId}`)
-    );
-    if (directMatch?.invoice_url) {
-      return directMatch.invoice_url;
-    }
-  }
-
-  // 3. Montar conjunto de datas de referência do ciclo comercial vigente
-  const validCycleDates = new Set<string>();
-
-  const addDateVariants = (rawDate: string | null | undefined) => {
-    if (!rawDate) return;
-    const str = String(rawDate).trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
-      validCycleDates.add(str);
-    } else {
-      try {
-        const bd = getBillingDate(str, timeZone);
-        validCycleDates.add(bd);
-      } catch (_e) {}
-      const datePart = str.split('T')[0];
-      if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
-        validCycleDates.add(datePart);
-      }
-    }
-  };
-
-  addDateVariants(activeTransitionResult?.transition?.effective_billing_date);
-  addDateVariants(billingSub?.effective_billing_date);
-  addDateVariants(billingSub?.current_period_end_billing_date);
-  addDateVariants(billingSub?.current_period_start_billing_date);
-  addDateVariants(subscription.current_period_end);
-  addDateVariants(subscription.current_period_start);
-  addDateVariants(subscription.grace_period_expires_billing_date);
-
-  // 4. Se temos datas de ciclo válidas:
-  if (validCycleDates.size > 0) {
-    if (eligibleCandidates.length === 1) {
-      const singleCandidate = eligibleCandidates[0];
-      const txDueDate = singleCandidate.due_date ? String(singleCandidate.due_date).trim().split('T')[0] : null;
-      // Se possui due_date, deve corresponder ao ciclo. Se não possui due_date (legado/mock sem campo), aceita.
-      if (!txDueDate || validCycleDates.has(txDueDate)) {
-        return singleCandidate.invoice_url;
-      }
-      return null;
-    }
-
-    const cycleMatchedCandidates = eligibleCandidates.filter((tx: any) => {
-      const txDueDate = tx.due_date ? String(tx.due_date).trim().split('T')[0] : null;
-      return txDueDate && validCycleDates.has(txDueDate);
-    });
-
-    // 4.1 Se exatamente um candidato corresponde ao ciclo corrente:
-    if (cycleMatchedCandidates.length === 1) {
-      return cycleMatchedCandidates[0].invoice_url;
-    }
-
-    // 4.2 Se nenhum ou mais de um candidato correspondeu: ambiguidade / ausência de correlação -> Fail closed
-    return null;
-  }
-
-  // 5. Se não temos datas de ciclo válidas:
-  // Se houver exatamente 1 candidato elegível e sem ambiguidade:
+  // 4. Exatamente um candidato deve satisfazer todos os predicados
   if (eligibleCandidates.length === 1) {
     return eligibleCandidates[0].invoice_url;
   }
 
-  // Múltiplos candidatos sem metadados suficientes para distinguir o ciclo -> Fail closed
+  // 0 candidatos ou múltiplos candidatos para o mesmo ciclo -> Fail closed
   return null;
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { SubscriptionService } from './subscription.service';
+import { SubscriptionService, resolveCurrentRenewalRecoveryInvoice } from './subscription.service';
 import { SubscriptionRepository } from '../../repositories/SubscriptionRepository';
 import {
   PLANS_CATALOG,
@@ -945,12 +945,18 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
           id: 'min-recovery-1_asaas',
           ministry_id: 'min-recovery-1',
           provider: 'asaas',
+          provider_subscription_id: 'sub_rec_123',
+          current_period_end_billing_date: '2026-09-01',
           status: 'past_due',
         }),
         getTransactions: vi.fn().mockResolvedValue([
           {
             id: 'asaas_pay_overdue_123',
             ministry_id: 'min-recovery-1',
+            provider: 'asaas',
+            provider_subscription_id: 'sub_rec_123',
+            transaction_type: 'recurring_payment',
+            due_date: '2026-09-01',
             status: 'overdue',
             amount_cents: 3490,
             invoice_url: 'https://sandbox.asaas.com/i/rec_invoice_123',
@@ -1191,6 +1197,7 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
               provider: 'asaas',
               provider_subscription_id: 'sub_old_cancelled',
               status: 'overdue',
+              transaction_type: 'recurring_payment',
               due_date: '2026-09-01',
               invoice_url: 'https://sandbox.asaas.com/i/wrong_sub_old',
             },
@@ -1200,6 +1207,7 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
               provider: 'asaas',
               provider_subscription_id: 'sub_current_active',
               status: 'overdue',
+              transaction_type: 'recurring_payment',
               due_date: '2026-09-01',
               invoice_url: 'https://sandbox.asaas.com/i/correct_sub_current',
             },
@@ -1241,6 +1249,7 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
               provider: 'asaas',
               provider_subscription_id: 'sub_same_123',
               status: 'overdue',
+              transaction_type: 'recurring_payment',
               due_date: '2026-09-01',
               invoice_url: 'https://sandbox.asaas.com/i/rec_current_cycle',
             },
@@ -1250,6 +1259,7 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
               provider: 'asaas',
               provider_subscription_id: 'sub_same_123',
               status: 'overdue',
+              transaction_type: 'recurring_payment',
               due_date: '2026-08-01',
               invoice_url: 'https://sandbox.asaas.com/i/rec_old_cycle',
             },
@@ -1292,6 +1302,7 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
               provider: 'asaas',
               provider_subscription_id: 'sub_curr',
               status: 'overdue',
+              transaction_type: 'recurring_payment',
               due_date: '2026-06-01',
               invoice_url: 'https://sandbox.asaas.com/i/rec_ancient',
             },
@@ -1352,50 +1363,315 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
         expect(summary.paymentStatus.recoveryInvoiceUrl).toBeNull();
       });
 
-      it('deve correlacionar diretamente via future_provider_payment_id da transição ativa quando presente', async () => {
-        const mockSubRepo = {
-          getSubscription: vi.fn().mockResolvedValue({
-            id: 'min-corr-6',
-            ministry_id: 'min-corr-6',
-            plan_id: 'essential',
-            billing_status: 'past_due',
-            subscription_mode: 'paid',
+      describe('Phase 4A.6B: Exact Current Renewal Identity Hardening (Sections 3-37)', () => {
+        const defaultContext = {
+          ministryId: 'min-exact-1',
+          billingSub: {
+            id: 'min-exact-1_asaas',
+            ministry_id: 'min-exact-1',
+            provider: 'asaas' as const,
+            provider_subscription_id: 'sub_exact_curr',
+            plan_id: 'essential' as const,
+            interval: 'monthly' as const,
+            member_addon_blocks: 0,
+            amount_cents: 3490,
+            status: 'past_due' as const,
+            started_at: '2026-08-01T00:00:00.000Z',
+            current_period_start: '2026-08-01T00:00:00.000Z',
             current_period_end: '2026-09-01T00:00:00.000Z',
-          }),
-          getUsage: vi.fn().mockResolvedValue({ members_count: 5, songs_count: 10 }),
+            current_period_end_billing_date: '2026-09-01',
+            cancel_at_period_end: false,
+            created_at: '2026-08-01T00:00:00.000Z',
+            updated_at: '2026-09-01T00:00:00.000Z',
+          },
+          subscription: {
+            id: 'min-exact-1',
+            ministry_id: 'min-exact-1',
+            plan_id: 'essential' as const,
+            member_addon_blocks: 0,
+            billing_status: 'past_due' as const,
+            subscription_mode: 'paid' as const,
+            current_period_start: '2026-08-01T00:00:00.000Z',
+            current_period_end: '2026-09-01T00:00:00.000Z',
+            grace_period_expires_at: '2026-09-08T00:00:00.000Z',
+            grace_period_expires_billing_date: '2026-09-08',
+            administratively_suspended: false,
+            suspended_at: null,
+            suspension_reason: null,
+            cancel_at_period_end: false,
+            created_at: '2026-08-01T00:00:00.000Z',
+            updated_at: '2026-09-01T00:00:00.000Z',
+          },
         };
-        const mockBillingRepo = {
-          getActiveTransitionForMinistry: vi.fn().mockResolvedValue({
-            transition: {
-              id: 'tr_scheduled_1',
-              future_provider_payment_id: 'pay_exact_target_777',
-              effective_billing_date: '2026-09-01',
-            },
-          }),
-          getSubscription: vi.fn().mockResolvedValue({
-            id: 'min-corr-6_asaas',
-            ministry_id: 'min-corr-6',
-            provider: 'asaas',
-            provider_subscription_id: 'sub_curr',
-            status: 'past_due',
-          }),
-          getTransactions: vi.fn().mockResolvedValue([
+
+        const canonicalRenewalTx = {
+          id: 'tx_canonical_renewal',
+          ministry_id: 'min-exact-1',
+          provider: 'asaas',
+          provider_subscription_id: 'sub_exact_curr',
+          provider_payment_id: 'pay_renewal_exact_1',
+          transaction_type: 'recurring_payment',
+          status: 'overdue',
+          due_date: '2026-09-01',
+          invoice_url: 'https://sandbox.asaas.com/i/canonical_renewal_url',
+        };
+
+        it('1. exact current recurring renewal -> selected', () => {
+          const res = resolveCurrentRenewalRecoveryInvoice([canonicalRenewalTx], defaultContext);
+          expect(res).toBe('https://sandbox.asaas.com/i/canonical_renewal_url');
+        });
+
+        it('2. pending early activation adjustment -> rejected', () => {
+          const res = resolveCurrentRenewalRecoveryInvoice([
             {
-              id: 'asaas_pay_exact_target_777',
-              ministry_id: 'min-corr-6',
-              provider: 'asaas',
-              provider_payment_id: 'pay_exact_target_777',
-              provider_subscription_id: 'sub_curr',
-              status: 'overdue',
-              invoice_url: 'https://sandbox.asaas.com/i/target_payment_url',
+              ...canonicalRenewalTx,
+              transaction_type: 'prorated_early_activation_adjustment',
+              quote_id: 'quote_123',
+              attempt_id: 'att_123',
             },
-          ]),
-        };
+          ], defaultContext);
+          expect(res).toBeNull();
+        });
 
-        const service = new SubscriptionService(mockSubRepo as any, mockBillingRepo as any);
-        const summary = await service.getSubscriptionSummary('min-corr-6');
+        it('3. wrong provider subscription -> rejected', () => {
+          const res = resolveCurrentRenewalRecoveryInvoice([
+            {
+              ...canonicalRenewalTx,
+              provider_subscription_id: 'sub_wrong_another',
+            },
+          ], defaultContext);
+          expect(res).toBeNull();
+        });
 
-        expect(summary.paymentStatus.recoveryInvoiceUrl).toBe('https://sandbox.asaas.com/i/target_payment_url');
+        it('4. old same-sub renewal cycle -> rejected', () => {
+          const res = resolveCurrentRenewalRecoveryInvoice([
+            {
+              ...canonicalRenewalTx,
+              due_date: '2026-08-01',
+            },
+          ], defaultContext);
+          expect(res).toBeNull();
+        });
+
+        it('5. grace expiry due date -> rejected (deadline is NOT renewal date)', () => {
+          const res = resolveCurrentRenewalRecoveryInvoice([
+            {
+              ...canonicalRenewalTx,
+              due_date: '2026-09-08',
+            },
+          ], defaultContext);
+          expect(res).toBeNull();
+        });
+
+        it('6. current period start due date -> rejected (start is NOT renewal boundary)', () => {
+          const res = resolveCurrentRenewalRecoveryInvoice([
+            {
+              ...canonicalRenewalTx,
+              due_date: '2026-08-01',
+            },
+          ], defaultContext);
+          expect(res).toBeNull();
+        });
+
+        it('7. future transition target payment -> rejected (target recurrence != source renewal debt)', () => {
+          const res = resolveCurrentRenewalRecoveryInvoice([
+            {
+              id: 'tx_future_target',
+              ministry_id: 'min-exact-1',
+              provider: 'asaas',
+              provider_subscription_id: 'sub_target_future',
+              provider_payment_id: 'pay_target_future_777',
+              transaction_type: 'recurring_payment',
+              status: 'pending',
+              due_date: '2026-09-01',
+              invoice_url: 'https://sandbox.asaas.com/i/wrong_target_url',
+            },
+          ], {
+            ...defaultContext,
+            activeTransitionResult: {
+              transition: {
+                id: 'tr_scheduled_pro',
+                future_provider_payment_id: 'pay_target_future_777',
+                effective_billing_date: '2026-09-01',
+              },
+            },
+          });
+          expect(res).toBeNull();
+        });
+
+        it('8. billingSub missing -> null (cannot verify current provider subscription)', () => {
+          const res = resolveCurrentRenewalRecoveryInvoice([canonicalRenewalTx], {
+            ...defaultContext,
+            billingSub: null,
+          });
+          expect(res).toBeNull();
+        });
+
+        it('9. provider_subscription_id missing or empty -> null', () => {
+          const res = resolveCurrentRenewalRecoveryInvoice([canonicalRenewalTx], {
+            ...defaultContext,
+            billingSub: {
+              ...defaultContext.billingSub,
+              provider_subscription_id: '',
+            },
+          });
+          expect(res).toBeNull();
+        });
+
+        it('10. missing due_date -> rejected', () => {
+          const res = resolveCurrentRenewalRecoveryInvoice([
+            {
+              ...canonicalRenewalTx,
+              due_date: undefined,
+            },
+          ], defaultContext);
+          expect(res).toBeNull();
+        });
+
+        it('11. unknown/missing transaction_type -> rejected (positive recurring purpose required)', () => {
+          const res = resolveCurrentRenewalRecoveryInvoice([
+            {
+              ...canonicalRenewalTx,
+              transaction_type: undefined,
+            },
+          ], defaultContext);
+          expect(res).toBeNull();
+
+          const resUnknown = resolveCurrentRenewalRecoveryInvoice([
+            {
+              ...canonicalRenewalTx,
+              transaction_type: 'one_off_charge',
+            },
+          ], defaultContext);
+          expect(resUnknown).toBeNull();
+        });
+
+        it('12. settled/canceled invoice -> rejected (only overdue/pending recoverable)', () => {
+          const resConfirmed = resolveCurrentRenewalRecoveryInvoice([
+            { ...canonicalRenewalTx, status: 'confirmed' },
+          ], defaultContext);
+          expect(resConfirmed).toBeNull();
+
+          const resReceived = resolveCurrentRenewalRecoveryInvoice([
+            { ...canonicalRenewalTx, status: 'received' },
+          ], defaultContext);
+          expect(resReceived).toBeNull();
+
+          const resCanceled = resolveCurrentRenewalRecoveryInvoice([
+            { ...canonicalRenewalTx, status: 'canceled' },
+          ], defaultContext);
+          expect(resCanceled).toBeNull();
+        });
+
+        it('13. two exact candidates for same cycle -> null (fail closed on ambiguity)', () => {
+          const res = resolveCurrentRenewalRecoveryInvoice([
+            canonicalRenewalTx,
+            {
+              ...canonicalRenewalTx,
+              id: 'tx_canonical_duplicate',
+              provider_payment_id: 'pay_renewal_exact_2',
+              invoice_url: 'https://sandbox.asaas.com/i/canonical_duplicate_url',
+            },
+          ], defaultContext);
+          expect(res).toBeNull();
+        });
+
+        it('14. canonical boundary fields divergence -> null (fail closed on conflicting cycle dates)', () => {
+          const res = resolveCurrentRenewalRecoveryInvoice([canonicalRenewalTx], {
+            ...defaultContext,
+            billingSub: {
+              ...defaultContext.billingSub,
+              current_period_end_billing_date: '2026-09-01',
+              effective_billing_date: '2026-09-02', // divergência material!
+            },
+          });
+          expect(res).toBeNull();
+        });
+
+        it('15. mixed history realistic test: exactly ONE current source renewal selected among noise', async () => {
+          const mockSubRepo = {
+            getSubscription: vi.fn().mockResolvedValue(defaultContext.subscription),
+            getUsage: vi.fn().mockResolvedValue({ members_count: 5, songs_count: 10 }),
+          };
+          const mockBillingRepo = {
+            getActiveTransitionForMinistry: vi.fn().mockResolvedValue({
+              transition: {
+                id: 'tr_scheduled_pro',
+                future_provider_payment_id: 'pay_target_future_777',
+                effective_billing_date: '2026-09-01',
+              },
+            }),
+            getSubscription: vi.fn().mockResolvedValue(defaultContext.billingSub),
+            getTransactions: vi.fn().mockResolvedValue([
+              // 1. Ajuste de ativação antecipada recente
+              {
+                id: 'tx_early_adj',
+                ministry_id: 'min-exact-1',
+                provider: 'asaas',
+                transaction_type: 'prorated_early_activation_adjustment',
+                quote_id: 'quote_99',
+                attempt_id: 'att_99',
+                status: 'pending',
+                due_date: '2026-09-01',
+                invoice_url: 'https://sandbox.asaas.com/i/noise_early_adj',
+              },
+              // 2. Cobrança da target transition
+              {
+                id: 'tx_target_tr',
+                ministry_id: 'min-exact-1',
+                provider: 'asaas',
+                provider_subscription_id: 'sub_target_future',
+                provider_payment_id: 'pay_target_future_777',
+                transaction_type: 'recurring_payment',
+                status: 'pending',
+                due_date: '2026-09-01',
+                invoice_url: 'https://sandbox.asaas.com/i/noise_target_tr',
+              },
+              // 3. Fatura de ciclo antigo da mesma assinatura
+              {
+                id: 'tx_old_cycle',
+                ministry_id: 'min-exact-1',
+                provider: 'asaas',
+                provider_subscription_id: 'sub_exact_curr',
+                transaction_type: 'recurring_payment',
+                status: 'overdue',
+                due_date: '2026-08-01',
+                invoice_url: 'https://sandbox.asaas.com/i/noise_old_cycle',
+              },
+              // 4. Fatura liquidada anterior da mesma assinatura
+              {
+                id: 'tx_settled',
+                ministry_id: 'min-exact-1',
+                provider: 'asaas',
+                provider_subscription_id: 'sub_exact_curr',
+                transaction_type: 'recurring_payment',
+                status: 'confirmed',
+                due_date: '2026-09-01',
+                invoice_url: 'https://sandbox.asaas.com/i/noise_settled',
+              },
+              // 5. Fatura de outra assinatura do provedor
+              {
+                id: 'tx_other_sub',
+                ministry_id: 'min-exact-1',
+                provider: 'asaas',
+                provider_subscription_id: 'sub_prior_legacy',
+                transaction_type: 'recurring_payment',
+                status: 'overdue',
+                due_date: '2026-09-01',
+                invoice_url: 'https://sandbox.asaas.com/i/noise_other_sub',
+              },
+              // 6. Fatura legítima de renovação do ciclo corrente
+              canonicalRenewalTx,
+            ]),
+          };
+
+          const service = new SubscriptionService(mockSubRepo as any, mockBillingRepo as any);
+          const summary = await service.getSubscriptionSummary('min-exact-1');
+
+          expect(summary.paymentStatus.state).toBe('past_due');
+          expect(summary.paymentStatus.canRecoverPayment).toBe(true);
+          expect(summary.paymentStatus.recoveryInvoiceUrl).toBe('https://sandbox.asaas.com/i/canonical_renewal_url');
+        });
       });
     });
   });
