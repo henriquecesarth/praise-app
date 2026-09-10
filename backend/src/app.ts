@@ -12,6 +12,7 @@ import classificationRoutes from './features/classifications/classification.rout
 import templateRoutes from './features/templates/template.routes';
 import subscriptionRoutes from './features/subscriptions/subscription.routes';
 import announcementRoutes from './features/announcements/announcement.routes';
+import availabilityRoutes from './features/availability/availability.routes';
 import billingRoutes, { webhookRouter, platformAdminRouter, billingPublicRouter } from './features/billing/billing.routes';
 import { errorHandler } from './middleware/error-handler';
 import { config } from './config/unifiedConfig';
@@ -93,6 +94,8 @@ app.use('/api/v1/ministries/:ministryId/schedule-templates', templateRoutes);
 app.use('/api/v1/groups/:groupId/schedule-templates', templateRoutes);
 app.use('/api/v1/ministries/:ministryId/announcements', announcementRoutes);
 app.use('/api/v1/groups/:groupId/announcements', announcementRoutes);
+app.use('/api/v1/ministries/:ministryId/availability', availabilityRoutes);
+app.use('/api/v1/groups/:groupId/availability', availabilityRoutes);
 app.use('/api/v1/ministries/:ministryId', repertoireRoutes);
 app.use('/api/v1/groups/:groupId', repertoireRoutes);
 app.use('/api/v1/smart-chords', smartChordRoutes);

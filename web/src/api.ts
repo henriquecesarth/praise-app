@@ -17,9 +17,31 @@ import {
   BillingTransactionRecord,
   SmartChord,
   Announcement,
+  MemberUnavailability,
+  CreateUnavailabilityPayload,
+  UpdateUnavailabilityPayload,
+  UnavailabilitiesResponse,
 } from './types';
 
-export type { SmartChord, Announcement };
+export type { SmartChord, Announcement, MemberUnavailability, CreateUnavailabilityPayload, UpdateUnavailabilityPayload, UnavailabilitiesResponse };
+
+export function mapUnavailabilityFromApi(item: any): MemberUnavailability {
+  return {
+    id: item?.id ?? '',
+    ministryId: item?.ministryId ?? item?.ministry_id ?? '',
+    memberId: item?.memberId ?? item?.member_id ?? '',
+    startDate: item?.startDate ?? item?.start_date ?? '',
+    endDate: item?.endDate ?? item?.end_date ?? '',
+    startTime: item?.startTime ?? item?.start_time ?? null,
+    endTime: item?.endTime ?? item?.end_time ?? null,
+    allDay: Boolean(item?.allDay ?? item?.all_day),
+    startsAt: item?.startsAt ?? item?.starts_at ?? '',
+    endsAt: item?.endsAt ?? item?.ends_at ?? '',
+    reason: item?.reason ?? null,
+    createdAt: item?.createdAt ?? item?.created_at ?? '',
+    updatedAt: item?.updatedAt ?? item?.updated_at ?? '',
+  };
+}
 
 export function mapAnnouncementFromApi(item: any): Announcement {
   return {
@@ -1189,6 +1211,78 @@ export const api = {
 
   deleteAnnouncement: async (ministryId: string, id: string): Promise<void> => {
     const response = await fetch(`${API_URL}/ministries/${ministryId}/announcements/${id}`, {
+      method: 'DELETE',
+      headers: getHeaders(),
+    });
+    return handleResponse<void>(response);
+  },
+
+  // Indisponibilidade de Membros (Availability)
+  getMyUnavailabilities: async (
+    ministryId: string,
+    limit?: number,
+    cursor?: string
+  ): Promise<UnavailabilitiesResponse> => {
+    const params = new URLSearchParams();
+    if (limit) params.append('limit', String(limit));
+    if (cursor) params.append('cursor', cursor);
+    const queryString = params.toString();
+    const url = queryString
+      ? `${API_URL}/ministries/${ministryId}/availability/my?${queryString}`
+      : `${API_URL}/ministries/${ministryId}/availability/my`;
+
+    const response = await fetch(url, { headers: getHeaders() });
+    const result = await handleResponse<any>(response);
+    return {
+      data: (result?.data || []).map(mapUnavailabilityFromApi),
+      nextCursor: result?.nextCursor ?? null,
+    };
+  },
+
+  createMyUnavailability: async (
+    ministryId: string,
+    data: CreateUnavailabilityPayload
+  ): Promise<MemberUnavailability> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/availability/my`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({
+        startDate: data.startDate,
+        endDate: data.endDate,
+        startTime: data.startTime ?? null,
+        endTime: data.endTime ?? null,
+        allDay: data.allDay,
+        reason: data.reason ?? null,
+      }),
+    });
+    const result = await handleResponse<any>(response);
+    return mapUnavailabilityFromApi(result);
+  },
+
+  updateMyUnavailability: async (
+    ministryId: string,
+    id: string,
+    data: UpdateUnavailabilityPayload
+  ): Promise<MemberUnavailability> => {
+    const payload: any = {};
+    if (data.startDate !== undefined) payload.startDate = data.startDate;
+    if (data.endDate !== undefined) payload.endDate = data.endDate;
+    if (data.startTime !== undefined) payload.startTime = data.startTime;
+    if (data.endTime !== undefined) payload.endTime = data.endTime;
+    if (data.allDay !== undefined) payload.allDay = data.allDay;
+    if (data.reason !== undefined) payload.reason = data.reason;
+
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/availability/my/${id}`, {
+      method: 'PATCH',
+      headers: getHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const result = await handleResponse<any>(response);
+    return mapUnavailabilityFromApi(result);
+  },
+
+  deleteMyUnavailability: async (ministryId: string, id: string): Promise<void> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/availability/my/${id}`, {
       method: 'DELETE',
       headers: getHeaders(),
     });

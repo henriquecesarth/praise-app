@@ -30,6 +30,7 @@ Snapshot do estado operacional e técnico do LouvAIO. Este documento separa fato
 | Smart Chords Security | Rotas de cifras inteligentes exigem autenticação obrigatória e filtram/validam estritamente por user_id. | smart_chord.routes.ts, smart_chord.controller.ts, SmartChordRepository.ts |
 | Authentication & Tokens | Login exige verificação criptográfica estrita via Identity Toolkit (sem bypass). Tokens suportam validação dual assíncrona (JWT + Firebase ID Token). | UserRepository.ts, auth.ts |
 | Diagnostic Sanitization | /api/diag é sanitizado em produção para não expor Project ID ou identificadores internos. Headers de segurança HTTP e CORS configurável ativos. | backend/src/app.ts |
+| Member Unavailability Self-Service | Gestão de indisponibilidade self-service (Phase 6B) com persistência Firestore (`member_unavailabilities`), derivação autoritativa de identidade (`user_id`/`member_id`), modelo civil wall-clock sem Z [starts_at, ends_at), anti-IDOR fail-closed (404), RBAC (member), paginação estável por cursor e UI responsiva. | backend/src/features/availability/, backend/src/repositories/AvailabilityRepository.ts, web/src/components/MemberAvailabilityView.tsx |
 
 ## Confirmed Inconsistencies
 

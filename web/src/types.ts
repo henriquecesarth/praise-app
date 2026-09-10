@@ -72,6 +72,45 @@ export interface Announcement {
   updatedAt: string;
 }
 
+export interface MemberUnavailability {
+  id: string;
+  ministryId: string;
+  memberId: string;
+  startDate: string;
+  endDate: string;
+  startTime: string | null;
+  endTime: string | null;
+  allDay: boolean;
+  startsAt: string;
+  endsAt: string;
+  reason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateUnavailabilityPayload {
+  startDate: string;
+  endDate: string;
+  startTime?: string | null;
+  endTime?: string | null;
+  allDay: boolean;
+  reason?: string | null;
+}
+
+export interface UpdateUnavailabilityPayload {
+  startDate?: string;
+  endDate?: string;
+  startTime?: string | null;
+  endTime?: string | null;
+  allDay?: boolean;
+  reason?: string | null;
+}
+
+export interface UnavailabilitiesResponse {
+  data: MemberUnavailability[];
+  nextCursor: string | null;
+}
+
 export interface SongLink {
   id?: string;
   label: string; // Ex: 'Letra', 'Cifra', 'Áudio', 'Vídeo' ou rótulo customizado

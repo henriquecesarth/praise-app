@@ -73,6 +73,13 @@ Funções musicais como Ministro, Vocalista, Violão e Bateria são classificaç
 - interface com carregamento, erro com retry sem colisão com empty state e modais acessíveis com proteção contra duplo envio;
 - ordenação decrescente por data e limites de consulta seguros.
 
+### Member Unavailability Self-Service
+
+- gestão self-service de períodos de indisponibilidade (bloqueios) do próprio integrante logado;
+- persistência no Firestore (`member_unavailabilities`) com isolamento multi-tenant (`ministry_id`), derivação autoritativa de identidade (`user_id` e `member_id`) e anti-IDOR fail-closed com HTTP 404;
+- modelo temporal civil wall-clock (`YYYY-MM-DDTHH:mm:ss`, sem conversão UTC ou sufixo Z) com intervalos semi-abertos `[starts_at, ends_at)` e limite contínuo máximo de 90 dias;
+- interface com listagem paginada estável, modais acessíveis para dia inteiro e horários parciais, proteção contra duplo clique e imunidade a race conditions na alternância de ministério.
+
 ### PWA
 
 - manifest instalável;
@@ -101,6 +108,7 @@ Funções musicais como Ministro, Vocalista, Violão e Bateria são classificaç
 - **Liturgy**: ordem de culto separada do modelo de escala.
 - **Smart Chord**: cifra editável e transponível.
 - **Announcement**: aviso ou comunicado interno da equipe vinculado a um ministério.
+- **Member Unavailability**: registro de indisponibilidade (bloqueio) autodeclarado do integrante no ministério.
 
 ## Commercial Structure and Plans
 

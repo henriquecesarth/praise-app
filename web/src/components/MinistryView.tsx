@@ -9,6 +9,7 @@ import { ClassificationsView } from './ClassificationsView';
 import { AdminsView } from './AdminsView';
 import { TemplatesView } from './TemplatesView';
 import { SubscriptionPlanView } from './SubscriptionPlanView';
+import { MemberAvailabilityView } from './MemberAvailabilityView';
 import {
   Edit2, Check, X, UserPlus, Users, Info, Link, Shield, Tag,
   Layers, Trash2, LogOut, ChevronRight, MoreVertical, Plus, User,
@@ -84,6 +85,7 @@ export function MinistryView({
   const [showAdmins, setShowAdmins] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showSubscriptionPlan, setShowSubscriptionPlan] = useState(false);
+  const [showAvailability, setShowAvailability] = useState(false);
 
   // Info tab state
   const [editingName, setEditingName] = useState(false);
@@ -140,6 +142,7 @@ export function MinistryView({
     setShowAdmins(section === 'administradores');
     setShowTemplates(section === 'modelos');
     setShowSubscriptionPlan(section === 'plano' || section === 'assinatura');
+    setShowAvailability(section === 'disponibilidade' || section === 'indisponibilidade');
   }, [section, activeMinistry.id]);
 
   const navigateSection = (nextSection?: string) => {
@@ -152,6 +155,7 @@ export function MinistryView({
       setShowAdmins(nextSection === 'administradores');
       setShowTemplates(nextSection === 'modelos');
       setShowSubscriptionPlan(nextSection === 'plano' || nextSection === 'assinatura');
+      setShowAvailability(nextSection === 'disponibilidade' || nextSection === 'indisponibilidade');
     }
   };
 
@@ -389,6 +393,17 @@ export function MinistryView({
     );
   }
 
+  // Show Member Availability sub-page
+  if (showAvailability) {
+    return (
+      <MemberAvailabilityView
+        ministryId={activeMinistry.id}
+        onBack={() => navigateSection()}
+        showToast={showToast}
+      />
+    );
+  }
+
   return (
     <div className="ministry-page" style={{ paddingTop: 'max(16px, var(--safe-area-top))', paddingBottom: 'max(24px, var(--safe-area-bottom))' }}>
       {/* Page header with tab bar (Touch Targets 44px) */}
@@ -494,6 +509,30 @@ export function MinistryView({
               </button>
             </div>
           )}
+
+          {/* Minha Participação / Disponibilidade — DISPONÍVEL PARA TODOS OS INTEGRANTES */}
+          <div className="ministry-section-card">
+            <div className="ministry-section-label">
+              <CalendarDays size={14} />
+              Minha Participação
+            </div>
+            <button
+              className="ministry-action-row-btn"
+              onClick={() => navigateSection('disponibilidade')}
+              data-testid="navigate-availability-btn"
+            >
+              <div className="ministry-action-row-left">
+                <div className="ministry-action-icon primary">
+                  <CalendarDays size={18} />
+                </div>
+                <div>
+                  <div className="ministry-action-title">Minha Disponibilidade</div>
+                  <div className="ministry-action-desc">Cadastre períodos em que não poderá participar das escalas</div>
+                </div>
+              </div>
+              <ChevronRight size={16} className="ministry-chevron" />
+            </button>
+          </div>
 
           {/* Configurações: Equipes (active) + future buttons (disabled) */}
           <div className="ministry-section-card">
