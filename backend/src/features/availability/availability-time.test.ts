@@ -7,6 +7,7 @@ import {
   addCivilDays,
   normalizeCivilInterval,
   formatCivilDateTime,
+  parseAndValidatePlanningWindow,
   MAX_UNAVAILABILITY_SPAN_MS,
 } from './availability-time';
 import { AppError } from '../../middleware/error-handler';
@@ -220,6 +221,73 @@ describe('availability-time (Civil Wall-Clock Semantics)', () => {
           allDay: false,
         })
       ).toThrow('O período de indisponibilidade não pode exceder 90 dias contínuos');
+    });
+  });
+
+  describe('Civil Planning Window Validation (Phase 6D-1)', () => {
+    it('aceita consulta para um único dia civil (inclusiveDays = 1)', () => {
+      const window = parseAndValidatePlanningWindow('2026-09-10', '2026-09-10');
+      expect(window.from).toBe('2026-09-10');
+      expect(window.to).toBe('2026-09-10');
+      expect(window.inclusiveDays).toBe(1);
+      expect(window.windowStart).toBe('2026-09-10T00:00:00');
+      expect(window.windowEndExclusive).toBe('2026-09-11T00:00:00');
+      expect(window.lookbackStart).toBe('2026-06-12T00:00:00');
+      expect(window.windowStart.endsWith('Z')).toBe(false);
+      expect(window.windowEndExclusive.endsWith('Z')).toBe(false);
+      expect(window.lookbackStart.endsWith('Z')).toBe(false);
+    });
+
+    it('aceita período de 7 dias civis', () => {
+      const window = parseAndValidatePlanningWindow('2026-09-10', '2026-09-16');
+      expect(window.inclusiveDays).toBe(7);
+      expect(window.windowStart).toBe('2026-09-10T00:00:00');
+      expect(window.windowEndExclusive).toBe('2026-09-17T00:00:00');
+    });
+
+    it('aceita período de 30 dias civis', () => {
+      const window = parseAndValidatePlanningWindow('2026-09-01', '2026-09-30');
+      expect(window.inclusiveDays).toBe(30);
+      expect(window.windowStart).toBe('2026-09-01T00:00:00');
+      expect(window.windowEndExclusive).toBe('2026-10-01T00:00:00');
+    });
+
+    it('aceita exatamente 90 dias civis inclusivos (limite máximo permitido)', () => {
+      // 2026-01-01 até 2026-03-31: 31 (jan) + 28 (fev) + 31 (mar) = 90 dias
+      const window = parseAndValidatePlanningWindow('2026-01-01', '2026-03-31');
+      expect(window.inclusiveDays).toBe(90);
+      expect(window.windowStart).toBe('2026-01-01T00:00:00');
+      expect(window.windowEndExclusive).toBe('2026-04-01T00:00:00');
+      expect(window.lookbackStart).toBe('2025-10-03T00:00:00');
+    });
+
+    it('rejeita período superior a 90 dias civis (91 dias) com MAX_PLANNING_WINDOW_EXCEEDED', () => {
+      // 2026-01-01 até 2026-04-01: 91 dias
+      expect(() => parseAndValidatePlanningWindow('2026-01-01', '2026-04-01')).toThrow(
+        expect.objectContaining({
+          statusCode: 400,
+          details: expect.objectContaining({ code: 'MAX_PLANNING_WINDOW_EXCEEDED' }),
+        })
+      );
+    });
+
+    it('rejeita to anterior a from com INVALID_DATE_RANGE', () => {
+      expect(() => parseAndValidatePlanningWindow('2026-09-15', '2026-09-10')).toThrow(
+        expect.objectContaining({
+          statusCode: 400,
+          details: expect.objectContaining({ code: 'INVALID_DATE_RANGE' }),
+        })
+      );
+    });
+
+    it('rejeita datas não-gregorianas inexistentes (2026-02-30)', () => {
+      expect(() => parseAndValidatePlanningWindow('2026-02-30', '2026-03-15')).toThrow(AppError);
+      expect(() => parseAndValidatePlanningWindow('2026-01-01', '2026-04-31')).toThrow(AppError);
+    });
+
+    it('rejeita strings em formato inválido', () => {
+      expect(() => parseAndValidatePlanningWindow('invalid', '2026-09-15')).toThrow(AppError);
+      expect(() => parseAndValidatePlanningWindow('2026-09-10', '15/09/2026')).toThrow(AppError);
     });
   });
 });

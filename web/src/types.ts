@@ -145,6 +145,30 @@ export interface ScheduleConflictCheckResponse {
   unresolvedParticipantIds: string[];
 }
 
+export interface ConsolidatedAvailabilityItem {
+  id: string;
+  ministryId: string;
+  memberId: string;
+  memberName: string;
+  startDate: string;
+  endDate: string;
+  startTime: string | null;
+  endTime: string | null;
+  allDay: boolean;
+  startsAt: string;
+  endsAt: string;
+}
+
+export interface ConsolidatedAvailabilityResponse {
+  window: {
+    from: string;
+    to: string;
+  };
+  data: ConsolidatedAvailabilityItem[];
+  nextCursor: string | null;
+}
+
+
 export interface SongLink {
   id?: string;
   label: string; // Ex: 'Letra', 'Cifra', 'Áudio', 'Vídeo' ou rótulo customizado

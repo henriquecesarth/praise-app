@@ -10,6 +10,7 @@ import { AdminsView } from './AdminsView';
 import { TemplatesView } from './TemplatesView';
 import { SubscriptionPlanView } from './SubscriptionPlanView';
 import { MemberAvailabilityView } from './MemberAvailabilityView';
+import { AdminAvailabilityView } from './AdminAvailabilityView';
 import {
   Edit2, Check, X, UserPlus, Users, Info, Link, Shield, Tag,
   Layers, Trash2, LogOut, ChevronRight, MoreVertical, Plus, User,
@@ -86,6 +87,7 @@ export function MinistryView({
   const [showTemplates, setShowTemplates] = useState(false);
   const [showSubscriptionPlan, setShowSubscriptionPlan] = useState(false);
   const [showAvailability, setShowAvailability] = useState(false);
+  const [showAdminAvailability, setShowAdminAvailability] = useState(false);
 
   // Info tab state
   const [editingName, setEditingName] = useState(false);
@@ -143,6 +145,7 @@ export function MinistryView({
     setShowTemplates(section === 'modelos');
     setShowSubscriptionPlan(section === 'plano' || section === 'assinatura');
     setShowAvailability(section === 'disponibilidade' || section === 'indisponibilidade');
+    setShowAdminAvailability(section === 'disponibilidade-equipe' || section === 'disponibilidade-admin');
   }, [section, activeMinistry.id]);
 
   const navigateSection = (nextSection?: string) => {
@@ -156,6 +159,7 @@ export function MinistryView({
       setShowTemplates(nextSection === 'modelos');
       setShowSubscriptionPlan(nextSection === 'plano' || nextSection === 'assinatura');
       setShowAvailability(nextSection === 'disponibilidade' || nextSection === 'indisponibilidade');
+      setShowAdminAvailability(nextSection === 'disponibilidade-equipe' || nextSection === 'disponibilidade-admin');
     }
   };
 
@@ -404,6 +408,17 @@ export function MinistryView({
     );
   }
 
+  // Show Admin Consolidated Availability sub-page (Phase 6D-1)
+  if (showAdminAvailability) {
+    return (
+      <AdminAvailabilityView
+        ministryId={activeMinistry.id}
+        onBack={() => navigateSection()}
+        showToast={showToast}
+      />
+    );
+  }
+
   return (
     <div className="ministry-page" style={{ paddingTop: 'max(16px, var(--safe-area-top))', paddingBottom: 'max(24px, var(--safe-area-bottom))' }}>
       {/* Page header with tab bar (Touch Targets 44px) */}
@@ -533,6 +548,32 @@ export function MinistryView({
               <ChevronRight size={16} className="ministry-chevron" />
             </button>
           </div>
+
+          {/* Disponibilidade da Equipe — EXCLUSIVO PARA ADMINISTRADORES (Phase 6D-1) */}
+          {userRole === 'admin' && (
+            <div className="ministry-section-card">
+              <div className="ministry-section-label">
+                <CalendarDays size={14} />
+                Planejamento de Escalas
+              </div>
+              <button
+                className="ministry-action-row-btn"
+                onClick={() => navigateSection('disponibilidade-equipe')}
+                data-testid="navigate-admin-availability-btn"
+              >
+                <div className="ministry-action-row-left">
+                  <div className="ministry-action-icon primary">
+                    <CalendarDays size={18} />
+                  </div>
+                  <div>
+                    <div className="ministry-action-title">Disponibilidade da Equipe</div>
+                    <div className="ministry-action-desc">Consulte períodos de ausência dos integrantes para planejamento de escalas</div>
+                  </div>
+                </div>
+                <ChevronRight size={16} className="ministry-chevron" />
+              </button>
+            </div>
+          )}
 
           {/* Configurações: Equipes (active) + future buttons (disabled) */}
           <div className="ministry-section-card">

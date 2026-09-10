@@ -4,7 +4,7 @@ import {
   AvailabilityRepository,
   MemberUnavailabilityRecord,
 } from '../../repositories/AvailabilityRepository';
-import { normalizeCivilInterval } from './availability-time';
+import { normalizeCivilInterval, parseAndValidatePlanningWindow } from './availability-time';
 import {
   calculateScheduleCivilWindow,
   checkIntervalOverlap,
@@ -17,6 +17,10 @@ import {
   CheckAvailabilityConflictsInput,
   ScheduleConflictCheckResponse,
   ParticipantConflictResult,
+  ListConsolidatedAvailabilityQueryInput,
+  ListConsolidatedAvailabilityParams,
+  ConsolidatedAvailabilityResponseDto,
+  mapToConsolidatedItemDto,
 } from './availability.types';
 
 export class AvailabilityService {
@@ -355,6 +359,119 @@ export class AvailabilityService {
       },
       conflicts,
       unresolvedParticipantIds,
+    };
+  }
+
+  /**
+   * Lista de forma consolidada as indisponibilidades dos integrantes de um ministério (Phase 6D-1).
+   *
+   * Invariantes garantidos:
+   * 1. Acesso restrito a administradores (enforced via RBAC na rota).
+   * 2. Janela de consulta civil normalizada e limitada a no máximo 90 dias civis inclusivos.
+   * 3. Se memberId for informado, validação de que o integrante pertence estritamente ao ministério ativo (anti-IDOR 404).
+   * 4. Lookback de 90 dias no repositório com paginação contínua e filtro residual de sobreposição.
+   * 5. Enriquecimento em lote dos nomes dos integrantes via ministry_members e users com guarda estrita de tenant.
+   * 6. Omissão absoluta do campo 'reason' (motivo pessoal) e de metadados internos de usuário.
+   */
+  async listConsolidatedAvailability(
+    ministryId: string,
+    query: ListConsolidatedAvailabilityParams
+  ): Promise<ConsolidatedAvailabilityResponseDto> {
+    if (!ministryId) {
+      throw new AppError(400, 'Identificador do ministério é obrigatório.');
+    }
+
+    // 1. Valida janela de planejamento (from, to, gregoriano, inclusiveDays <= 90)
+    const planningWindow = parseAndValidatePlanningWindow(query.from, query.to);
+
+    // 2. Se memberId fornecido, validar tenant ownership do integrante
+    if (query.memberId) {
+      const memberDoc = await this.membersCol.doc(query.memberId).get();
+      if (!memberDoc.exists) {
+        throw new AppError(404, 'Integrante não encontrado neste ministério.', {
+          code: 'MEMBER_NOT_FOUND',
+        });
+      }
+      const memberData = memberDoc.data();
+      if (!memberData || memberData.ministry_id !== ministryId) {
+        // Fail-closed anti-IDOR para não divulgar existência em outro ministério
+        throw new AppError(404, 'Integrante não encontrado neste ministério.', {
+          code: 'MEMBER_NOT_FOUND',
+        });
+      }
+    }
+
+    // 3. Executa consulta paginada e com filtro residual no repositório
+    const result = await this.repository.listConsolidated({
+      ministryId,
+      windowStart: planningWindow.windowStart,
+      windowEndExclusive: planningWindow.windowEndExclusive,
+      lookbackStart: planningWindow.lookbackStart,
+      memberId: query.memberId,
+      limitCount: query.limit ?? 50,
+      cursor: query.cursor,
+    });
+
+    // 4. Enriquecimento em lote de nomes dos integrantes
+    const uniqueMemberIds = Array.from(new Set(result.data.map((r) => r.member_id)));
+    const memberNameMap = new Map<string, string>();
+
+    if (uniqueMemberIds.length > 0) {
+      const memberRefs = uniqueMemberIds.map((id) => this.membersCol.doc(id));
+      const memberSnaps = await db.getAll(...memberRefs);
+
+      const userIdsToFetch: { userId: string; memberId: string }[] = [];
+
+      for (const snap of memberSnaps) {
+        if (snap.exists) {
+          const mData = snap.data();
+          // GUARDA MULTI-TENANT: aceita apenas se pertencer ao ministério ativo
+          if (mData && mData.ministry_id === ministryId) {
+            if (mData.name && typeof mData.name === 'string' && mData.name.trim().length > 0) {
+              memberNameMap.set(snap.id, mData.name.trim());
+            } else if (mData.user_id) {
+              userIdsToFetch.push({ userId: mData.user_id, memberId: snap.id });
+            } else {
+              memberNameMap.set(snap.id, 'Integrante');
+            }
+          }
+        }
+      }
+
+      if (userIdsToFetch.length > 0) {
+        const uniqueUserIds = Array.from(new Set(userIdsToFetch.map((u) => u.userId)));
+        const usersCol = db.collection('users');
+        const userRefs = uniqueUserIds.map((uid) => usersCol.doc(uid));
+        const userSnaps = await db.getAll(...userRefs);
+        const userMap = new Map<string, any>();
+        for (const uSnap of userSnaps) {
+          if (uSnap.exists) {
+            userMap.set(uSnap.id, uSnap.data());
+          }
+        }
+        for (const item of userIdsToFetch) {
+          if (!memberNameMap.has(item.memberId)) {
+            const uData = userMap.get(item.userId);
+            const resolvedName = uData?.name || uData?.displayName || 'Integrante';
+            memberNameMap.set(item.memberId, resolvedName);
+          }
+        }
+      }
+    }
+
+    // 5. Mapeia para DTO garantindo omissão estrita do motivo e metadados internos
+    const enrichedData = result.data.map((record) => {
+      const memberName = memberNameMap.get(record.member_id) || 'Integrante';
+      return mapToConsolidatedItemDto(record, memberName);
+    });
+
+    return {
+      window: {
+        from: planningWindow.from,
+        to: planningWindow.to,
+      },
+      data: enrichedData,
+      nextCursor: result.nextCursor,
     };
   }
 }

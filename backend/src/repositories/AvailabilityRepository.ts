@@ -1,7 +1,7 @@
 import { FieldPath } from 'firebase-admin/firestore';
 import { db } from '../lib/firebase';
 import { AppError } from '../middleware/error-handler';
-import { calculateLookbackStart } from '../features/availability/conflict-engine';
+import { calculateLookbackStart, checkIntervalOverlap } from '../features/availability/conflict-engine';
 
 export interface MemberUnavailabilityRecord {
   id: string;
@@ -52,6 +52,79 @@ export function decodeAvailabilityCursor(
     if (err instanceof AppError) throw err;
     throw new AppError(400, 'Token de cursor inválido.');
   }
+}
+
+export interface AdminAvailabilityCursorData {
+  id: string; // doc ID
+  s: string;  // starts_at
+  m: string;  // ministry_id
+  wStart: string; // windowStart
+  wEnd: string;   // windowEndExclusive
+  mem?: string | null; // member_id se filtrado
+}
+
+export function encodeAdminAvailabilityCursor(data: AdminAvailabilityCursorData): string {
+  return Buffer.from(JSON.stringify(data), 'utf8').toString('base64url');
+}
+
+export function decodeAdminAvailabilityCursor(
+  token: string,
+  expectedMinistryId: string,
+  expectedWindowStart: string,
+  expectedWindowEnd: string,
+  expectedMemberId?: string
+): AdminAvailabilityCursorData {
+  try {
+    const raw = Buffer.from(token, 'base64url').toString('utf8');
+    const parsed = JSON.parse(raw);
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      typeof parsed.id !== 'string' ||
+      typeof parsed.s !== 'string' ||
+      typeof parsed.m !== 'string' ||
+      typeof parsed.wStart !== 'string' ||
+      typeof parsed.wEnd !== 'string' ||
+      (parsed.mem !== undefined && parsed.mem !== null && typeof parsed.mem !== 'string')
+    ) {
+      throw new AppError(400, 'Token de cursor inválido.', { code: 'INVALID_CURSOR' });
+    }
+
+    const expectedMemNormalized = expectedMemberId || null;
+    const parsedMemNormalized = parsed.mem || null;
+
+    if (
+      parsed.m !== expectedMinistryId ||
+      parsed.wStart !== expectedWindowStart ||
+      parsed.wEnd !== expectedWindowEnd ||
+      parsedMemNormalized !== expectedMemNormalized
+    ) {
+      throw new AppError(400, 'Cursor inválido para os parâmetros de consulta atuais.', {
+        code: 'CROSS_CONTEXT_CURSOR_REJECTED',
+      });
+    }
+
+    return parsed as AdminAvailabilityCursorData;
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    throw new AppError(400, 'Token de cursor inválido.', { code: 'INVALID_CURSOR' });
+  }
+}
+
+export interface ListConsolidatedParams {
+  ministryId: string;
+  windowStart: string;
+  windowEndExclusive: string;
+  lookbackStart: string;
+  memberId?: string;
+  limitCount?: number;
+  cursor?: string;
+}
+
+export interface ListConsolidatedResult {
+  data: MemberUnavailabilityRecord[];
+  nextCursor: string | null;
+  scannedCandidatesCount: number;
 }
 
 export class AvailabilityRepository {
@@ -276,5 +349,148 @@ export class AvailabilityRepository {
     }
 
     return Array.from(recordsMap.values());
+  }
+
+  /**
+   * Lista as indisponibilidades consolidadas do ministério para uma janela de planejamento civil (Phase 6D-1).
+   *
+   * Invariantes garantidos:
+   * 1. Escopo estrito por ministry_id e ordenação determinística (starts_at ASC, __name__ ASC).
+   * 2. Bounded lookback de 90 dias civis (starts_at >= lookbackStart && starts_at < windowEndExclusive).
+   * 3. Paginação contínua através do filtro residual de overlap (elimina páginas falsamente vazias).
+   * 4. Teto de segurança rígido de 1000 candidatos por requisição (falha fechada com AVAILABILITY_QUERY_TOO_LARGE).
+   * 5. O cursor de continuação preserva a posição do ÚLTIMO CANDIDATO VARRIDO no Firestore.
+   */
+  async listConsolidated(
+    params: ListConsolidatedParams
+  ): Promise<ListConsolidatedResult> {
+    const {
+      ministryId,
+      windowStart,
+      windowEndExclusive,
+      lookbackStart,
+      memberId,
+      limitCount = 50,
+      cursor,
+    } = params;
+
+    const rawLimit = Number.isFinite(limitCount) ? limitCount : 50;
+    const boundedLimit = Math.min(Math.max(1, rawLimit), 100);
+    const MAX_SCANNED_CANDIDATES = 1000;
+
+    let scanCursor: AdminAvailabilityCursorData | null = null;
+    if (cursor) {
+      scanCursor = decodeAdminAvailabilityCursor(
+        cursor,
+        ministryId,
+        windowStart,
+        windowEndExclusive,
+        memberId
+      );
+    }
+
+    const results: MemberUnavailabilityRecord[] = [];
+    let scannedCandidatesCount = 0;
+    let lastScannedCandidate: { id: string; starts_at: string } | null = null;
+    let queryExhausted = false;
+    let currentStartAfter = scanCursor ? { s: scanCursor.s, id: scanCursor.id } : null;
+
+    while (results.length < boundedLimit && !queryExhausted) {
+      const fetchBatchSize = Math.min(100, Math.max(boundedLimit, 50));
+
+      let q: any = this.unavailabilitiesCol.where('ministry_id', '==', ministryId);
+
+      if (memberId) {
+        q = q.where('member_id', '==', memberId);
+      }
+
+      q = q
+        .where('starts_at', '>=', lookbackStart)
+        .where('starts_at', '<', windowEndExclusive)
+        .orderBy('starts_at', 'asc')
+        .orderBy(FieldPath.documentId(), 'asc')
+        .limit(fetchBatchSize);
+
+      if (currentStartAfter) {
+        q = q.startAfter(currentStartAfter.s, currentStartAfter.id);
+      }
+
+      const snap = await q.get();
+      const docs = snap.docs;
+
+      if (docs.length === 0) {
+        queryExhausted = true;
+        break;
+      }
+
+      for (let i = 0; i < docs.length; i++) {
+        const doc = docs[i];
+        scannedCandidatesCount++;
+
+        if (scannedCandidatesCount > MAX_SCANNED_CANDIDATES) {
+          throw new AppError(
+            400,
+            'A consulta de disponibilidade excedeu o limite máximo de registros avaliados. Por favor, restrinja o período ou filtre por integrante.',
+            { code: 'AVAILABILITY_QUERY_TOO_LARGE' }
+          );
+        }
+
+        const raw = doc.data();
+        const record: MemberUnavailabilityRecord = {
+          id: doc.id,
+          ministry_id: raw.ministry_id,
+          member_id: raw.member_id,
+          user_id: raw.user_id,
+          start_date: raw.start_date,
+          end_date: raw.end_date,
+          start_time: raw.start_time ?? null,
+          end_time: raw.end_time ?? null,
+          all_day: Boolean(raw.all_day),
+          starts_at: raw.starts_at,
+          ends_at: raw.ends_at,
+          reason: raw.reason ?? null,
+          created_at: raw.created_at || new Date().toISOString(),
+          updated_at: raw.updated_at || raw.created_at || new Date().toISOString(),
+        };
+
+        lastScannedCandidate = { id: record.id, starts_at: record.starts_at };
+
+        // Predicado de sobreposição canônica:
+        // record.starts_at < windowEndExclusive && record.ends_at > windowStart
+        if (checkIntervalOverlap(record.starts_at, record.ends_at, windowStart, windowEndExclusive)) {
+          results.push(record);
+          if (results.length === boundedLimit) {
+            if (docs.length < fetchBatchSize && i === docs.length - 1) {
+              queryExhausted = true;
+            }
+            break;
+          }
+        }
+      }
+
+      if (docs.length < fetchBatchSize) {
+        queryExhausted = true;
+      } else if (lastScannedCandidate) {
+        currentStartAfter = { s: lastScannedCandidate.starts_at, id: lastScannedCandidate.id };
+      }
+    }
+
+    let nextCursor: string | null = null;
+    if (!queryExhausted && lastScannedCandidate) {
+      nextCursor = encodeAdminAvailabilityCursor({
+        id: lastScannedCandidate.id,
+        s: lastScannedCandidate.starts_at,
+        m: ministryId,
+        wStart: windowStart,
+        wEnd: windowEndExclusive,
+        mem: memberId || null,
+      });
+    }
+
+    return {
+      data: results,
+      nextCursor,
+      scannedCandidatesCount,
+    };
   }
 }

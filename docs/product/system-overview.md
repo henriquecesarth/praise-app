@@ -92,6 +92,18 @@ Funções musicais como Ministro, Vocalista, Violão e Bateria são classificaç
 - integração na interface de criação e edição de escalas como avisos informativos não-bloqueantes: o salvamento da escala nunca é bloqueado por conflito ou erro de verificação;
 - proteção de concorrência com token de geração descartando respostas defasadas na alternância de entradas ou ministérios.
 
+### Administrative Consolidated Availability View
+
+- visualização consolidada administrativa de períodos de indisponibilidade de integrantes do ministério (Phase 6D-1);
+- escopo estritamente de leitura para planejamento de escalas com RBAC exclusivo para administradores (`admin`);
+- validação temporal rigorosa para janelas de planejamento civil de até 90 dias inclusivos (`from` e `to` em `YYYY-MM-DD`);
+- busca no Firestore bounded por lookback de 90 dias e algoritmo de varredura contínua contra páginas falsamente vazias geradas pelo filtro residual de overlap;
+- teto de segurança contra custos abusivos e DoS de 1000 candidatos por requisição (`AVAILABILITY_QUERY_TOO_LARGE`);
+- token de continuação (cursor) bound ao contexto da requisição (`ministry_id`, `windowStart`, `windowEndExclusive`, `memberId`);
+- enriquecimento em lote de nomes de integrantes via `db.getAll` com guarda multi-tenant;
+- privacidade absoluta: o motivo (`reason`) e metadados internos de usuário são omitidos das respostas da API e da interface administrativa;
+- interface `AdminAvailabilityView` integrada à área de ministério sob "Planejamento de Escalas" com presets rápidos (7d, 15d, 30d, mês atual), seletor customizado, dropdown de integrante, touch targets >= 44px e proteção contra race conditions.
+
 ### PWA
 
 - manifest instalável;

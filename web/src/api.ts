@@ -26,6 +26,8 @@ import {
   ParticipantConflictResult,
   ParticipantConflictDetail,
   ScheduleCivilWindow,
+  ConsolidatedAvailabilityItem,
+  ConsolidatedAvailabilityResponse,
 } from './types';
 
 export type {
@@ -40,7 +42,25 @@ export type {
   ParticipantConflictResult,
   ParticipantConflictDetail,
   ScheduleCivilWindow,
+  ConsolidatedAvailabilityItem,
+  ConsolidatedAvailabilityResponse,
 };
+
+export function mapConsolidatedAvailabilityItemFromApi(item: any): ConsolidatedAvailabilityItem {
+  return {
+    id: item?.id ?? '',
+    ministryId: item?.ministryId ?? item?.ministry_id ?? '',
+    memberId: item?.memberId ?? item?.member_id ?? '',
+    memberName: item?.memberName ?? item?.member_name ?? 'Integrante',
+    startDate: item?.startDate ?? item?.start_date ?? '',
+    endDate: item?.endDate ?? item?.end_date ?? '',
+    startTime: item?.startTime ?? item?.start_time ?? null,
+    endTime: item?.endTime ?? item?.end_time ?? null,
+    allDay: Boolean(item?.allDay ?? item?.all_day),
+    startsAt: item?.startsAt ?? item?.starts_at ?? '',
+    endsAt: item?.endsAt ?? item?.ends_at ?? '',
+  };
+}
 
 export function mapUnavailabilityFromApi(item: any): MemberUnavailability {
   return {
@@ -1355,6 +1375,41 @@ export const api = {
     });
     const result = await handleResponse<any>(response);
     return mapScheduleConflictResponseFromApi(result);
+  },
+
+  getConsolidatedAvailability: async (
+    ministryId: string,
+    params: {
+      from: string;
+      to: string;
+      memberId?: string;
+      limit?: number;
+      cursor?: string;
+    }
+  ): Promise<ConsolidatedAvailabilityResponse> => {
+    const searchParams = new URLSearchParams();
+    searchParams.set('from', params.from);
+    searchParams.set('to', params.to);
+    if (params.memberId) searchParams.set('memberId', params.memberId);
+    if (params.limit !== undefined) searchParams.set('limit', String(params.limit));
+    if (params.cursor) searchParams.set('cursor', params.cursor);
+
+    const queryString = searchParams.toString();
+    const url = `${API_URL}/ministries/${ministryId}/availability?${queryString}`;
+
+    const response = await fetch(url, {
+      headers: getHeaders(),
+    });
+
+    const result = await handleResponse<any>(response);
+    return {
+      window: {
+        from: result?.window?.from || params.from,
+        to: result?.window?.to || params.to,
+      },
+      data: (result?.data || []).map(mapConsolidatedAvailabilityItemFromApi),
+      nextCursor: result?.nextCursor || result?.next_cursor || null,
+    };
   },
 
   // Planos e Assinaturas

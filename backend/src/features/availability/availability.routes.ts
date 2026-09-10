@@ -8,11 +8,19 @@ import {
   updateUnavailabilitySchema,
   listUnavailabilityQuerySchema,
   checkAvailabilityConflictsSchema,
+  listConsolidatedAvailabilityQuerySchema,
 } from './availability.types';
 
 const router = Router({ mergeParams: true });
 
 router.use(authenticate);
+
+router.get(
+  '/',
+  requireMinistryRole('admin'),
+  validate(listConsolidatedAvailabilityQuerySchema, 'query'),
+  controller.listConsolidatedAvailability
+);
 
 router.post(
   '/check-conflicts',

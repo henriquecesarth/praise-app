@@ -153,3 +153,88 @@ export interface ScheduleConflictCheckResponse {
   conflicts: ParticipantConflictResult[];
   unresolvedParticipantIds: string[];
 }
+
+export const listConsolidatedAvailabilityQuerySchema = z.object({
+  from: z
+    .string()
+    .trim()
+    .min(1, 'A data inicial (from) é obrigatória.')
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de data inicial inválido (esperado: YYYY-MM-DD).'),
+  to: z
+    .string()
+    .trim()
+    .min(1, 'A data final (to) é obrigatória.')
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de data final inválido (esperado: YYYY-MM-DD).'),
+  memberId: z
+    .string()
+    .trim()
+    .min(1, 'O ID do integrante não pode ser vazio se informado.')
+    .optional(),
+  limit: z
+    .string()
+    .regex(/^\d+$/, 'O parâmetro limit deve ser um número inteiro entre 1 e 100.')
+    .optional()
+    .default('50')
+    .transform((val) => parseInt(val, 10))
+    .pipe(
+      z
+        .number()
+        .int('O parâmetro limit deve ser um número inteiro.')
+        .min(1, 'O parâmetro limit deve ser no mínimo 1.')
+        .max(100, 'O parâmetro limit não pode ser superior a 100.')
+    ),
+  cursor: z.string().trim().optional(),
+});
+
+export type ListConsolidatedAvailabilityQueryInput = z.infer<typeof listConsolidatedAvailabilityQuerySchema>;
+
+export interface ListConsolidatedAvailabilityParams {
+  from: string;
+  to: string;
+  limit?: number;
+  memberId?: string;
+  cursor?: string;
+}
+
+export interface ConsolidatedAvailabilityItemDto {
+  id: string;
+  ministryId: string;
+  memberId: string;
+  memberName: string;
+  startDate: string;
+  endDate: string;
+  startTime: string | null;
+  endTime: string | null;
+  allDay: boolean;
+  startsAt: string;
+  endsAt: string;
+}
+
+export interface ConsolidatedAvailabilityResponseDto {
+  window: {
+    from: string;
+    to: string;
+  };
+  data: ConsolidatedAvailabilityItemDto[];
+  nextCursor: string | null;
+}
+
+export function mapToConsolidatedItemDto(
+  record: MemberUnavailabilityRecord,
+  memberName: string
+): ConsolidatedAvailabilityItemDto {
+  return {
+    id: record.id,
+    ministryId: record.ministry_id,
+    memberId: record.member_id,
+    memberName,
+    startDate: record.start_date,
+    endDate: record.end_date,
+    startTime: record.start_time,
+    endTime: record.end_time,
+    allDay: record.all_day,
+    startsAt: record.starts_at,
+    endsAt: record.ends_at,
+    // NOTA DE PRIVACIDADE: 'reason', 'user_id' e metadados internos são estritamente omitidos
+  };
+}

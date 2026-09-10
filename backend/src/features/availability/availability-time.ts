@@ -239,3 +239,61 @@ export function normalizeCivilInterval(input: UnavailabilityTemporalInput): Norm
     spanDays,
   };
 }
+
+export interface CivilPlanningWindow {
+  from: string; // YYYY-MM-DD
+  to: string;   // YYYY-MM-DD
+  windowStart: string; // YYYY-MM-DDTHH:mm:ss (from + T00:00:00)
+  windowEndExclusive: string; // YYYY-MM-DDTHH:mm:ss (to + 1 civil day + T00:00:00)
+  lookbackStart: string; // YYYY-MM-DDTHH:mm:ss (from - 90 civil days + T00:00:00)
+  inclusiveDays: number;
+}
+
+/**
+ * Valida a janela de consulta para a visão consolidada administrativa (Phase 6D-1).
+ *
+ * Invariantes garantidos:
+ * 1. Formatos estritos YYYY-MM-DD no calendário gregoriano civil real.
+ * 2. to >= from (rejeita to anterior a from).
+ * 3. Quantidade de dias civis inclusivos <= 90 dias (rejeita >= 91 dias).
+ * 4. windowStart = fromT00:00:00 (inclusivo).
+ * 5. windowEndExclusive = (to + 1 dia)T00:00:00 (exclusivo, cobrindo todo o dia final até 23:59:59).
+ * 6. lookbackStart = (from - 90 dias)T00:00:00 (limite inferior seguro no Firestore).
+ */
+export function parseAndValidatePlanningWindow(from: string, to: string): CivilPlanningWindow {
+  const fromParts = parseAndValidateCivilDate(from, 'from');
+  const toParts = parseAndValidateCivilDate(to, 'to');
+
+  const fromScalar = toCivilScalar(fromParts, { hour: 0, minute: 0 });
+  const toScalar = toCivilScalar(toParts, { hour: 0, minute: 0 });
+
+  if (toScalar < fromScalar) {
+    throw new AppError(400, 'A data final (to) não pode ser anterior à data inicial (from).', {
+      code: 'INVALID_DATE_RANGE',
+    });
+  }
+
+  const inclusiveDays = Math.round((toScalar - fromScalar) / (24 * 60 * 60 * 1000)) + 1;
+  if (inclusiveDays > 90) {
+    throw new AppError(
+      400,
+      `O período de consulta não pode exceder 90 dias civis (recebido: ${inclusiveDays} dias).`,
+      { code: 'MAX_PLANNING_WINDOW_EXCEEDED' }
+    );
+  }
+
+  const windowStart = formatCivilDateTime(from, '00:00', '00');
+  const toPlusOne = addCivilDays(to, 1);
+  const windowEndExclusive = formatCivilDateTime(toPlusOne, '00:00', '00');
+  const fromMinus90 = addCivilDays(from, -90);
+  const lookbackStart = formatCivilDateTime(fromMinus90, '00:00', '00');
+
+  return {
+    from,
+    to,
+    windowStart,
+    windowEndExclusive,
+    lookbackStart,
+    inclusiveDays,
+  };
+}
