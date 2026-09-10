@@ -423,6 +423,7 @@ export class AvailabilityRepository {
         break;
       }
 
+      let reachedLimitMidBatch = false;
       for (let i = 0; i < docs.length; i++) {
         const doc = docs[i];
         scannedCandidatesCount++;
@@ -460,15 +461,15 @@ export class AvailabilityRepository {
         if (checkIntervalOverlap(record.starts_at, record.ends_at, windowStart, windowEndExclusive)) {
           results.push(record);
           if (results.length === boundedLimit) {
-            if (docs.length < fetchBatchSize && i === docs.length - 1) {
-              queryExhausted = true;
+            if (i < docs.length - 1) {
+              reachedLimitMidBatch = true;
             }
             break;
           }
         }
       }
 
-      if (docs.length < fetchBatchSize) {
+      if (docs.length < fetchBatchSize && !reachedLimitMidBatch) {
         queryExhausted = true;
       } else if (lastScannedCandidate) {
         currentStartAfter = { s: lastScannedCandidate.starts_at, id: lastScannedCandidate.id };

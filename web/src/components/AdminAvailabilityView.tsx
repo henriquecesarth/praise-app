@@ -90,6 +90,19 @@ export function AdminAvailabilityView({ ministryId, onBack, showToast: _showToas
   // Race condition protection token
   const requestIdRef = useRef(0);
 
+  // Synchronously reset tenant-scoped state during render on ministry switch (FINDING-6D1-002)
+  const [prevMinistryId, setPrevMinistryId] = useState(ministryId);
+  if (ministryId !== prevMinistryId) {
+    setPrevMinistryId(ministryId);
+    setSelectedMemberId('');
+    setMembers([]);
+    setItems([]);
+    setNextCursor(null);
+    setError(null);
+    setIsQueryTooLarge(false);
+    setLoading(true);
+  }
+
   // Load ministry members for dropdown filter
   useEffect(() => {
     let active = true;

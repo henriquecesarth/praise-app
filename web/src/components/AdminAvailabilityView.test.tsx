@@ -1,4 +1,4 @@
-﻿import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdminAvailabilityView } from './AdminAvailabilityView';
@@ -335,5 +335,79 @@ describe('AdminAvailabilityView Component', () => {
     for (const btn of presetButtons) {
       expect(btn).toHaveStyle({ minHeight: '44px' });
     }
+  });
+
+  it('14. tenant-switch: reseta selectedMemberId e não contamina requisição ao alternar de ministério (FINDING-6D1-002)', async () => {
+    getMinistryMembers.mockImplementation(async (mid: string) => {
+      if (mid === 'min-1') {
+        return [{ id: 'mem-1', name: 'Juliana Vocal' }];
+      }
+      if (mid === 'min-2') {
+        return [{ id: 'mem-2', name: 'Marcos Teclado' }];
+      }
+      return [];
+    });
+
+    getConsolidatedAvailability.mockImplementation(async (mid: string, params: any) => {
+      // Se min-2 receber mem-1, simula rejeição anti-IDOR do backend (404)
+      if (mid === 'min-2' && params.memberId === 'mem-1') {
+        const error: any = new Error('Integrante não encontrado neste ministério.');
+        error.code = 'MEMBER_NOT_FOUND';
+        throw error;
+      }
+      if (mid === 'min-1') {
+        return {
+          window: { from: '2026-09-01', to: '2026-09-30' },
+          data: [mockAllDayItem],
+          nextCursor: null,
+        };
+      }
+      return {
+        window: { from: '2026-09-01', to: '2026-09-30' },
+        data: [mockTimedItem],
+        nextCursor: null,
+      };
+    });
+
+    const { rerender } = render(
+      <AdminAvailabilityView ministryId="min-1" onBack={onBack} showToast={showToast} />
+    );
+
+    // Espera carregar min-1
+    await waitFor(() => {
+      expect(getMinistryMembers).toHaveBeenCalledWith('min-1');
+    });
+
+    // Seleciona mem-1 no dropdown de min-1
+    const memberSelect = screen.getByLabelText('Filtrar por Integrante');
+    await userEvent.selectOptions(memberSelect, 'mem-1');
+
+    await waitFor(() => {
+      const callsForMin1 = getConsolidatedAvailability.mock.calls.filter((c) => c[0] === 'min-1');
+      const lastCall = callsForMin1[callsForMin1.length - 1];
+      expect(lastCall[1].memberId).toBe('mem-1');
+    });
+
+    // Alterna para min-2
+    rerender(
+      <AdminAvailabilityView ministryId="min-2" onBack={onBack} showToast={showToast} />
+    );
+
+    // Espera dados de min-2 carregarem com sucesso
+    await waitFor(() => {
+      const list = screen.getByTestId('availability-list');
+      expect(within(list).getByText('Marcos Teclado')).toBeInTheDocument();
+    });
+
+    // Garante que NENHUMA chamada para min-2 enviou memberId 'mem-1'
+    const callsForMin2 = getConsolidatedAvailability.mock.calls.filter((c) => c[0] === 'min-2');
+    expect(callsForMin2.length).toBeGreaterThan(0);
+    for (const call of callsForMin2) {
+      expect(call[1].memberId).toBeUndefined();
+    }
+
+    // Não deve haver mensagem de erro exibida
+    expect(screen.queryByText(/Integrante não encontrado neste ministério/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Erro ao carregar disponibilidades da equipe/i)).not.toBeInTheDocument();
   });
 });

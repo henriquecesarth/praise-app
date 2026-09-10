@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   AvailabilityRepository,
   MemberUnavailabilityRecord,
@@ -539,6 +539,122 @@ describe('Admin Consolidated Availability Feature Test Suite (Phase 6D-1)', () =
           details: expect.objectContaining({ code: 'AVAILABILITY_QUERY_TOO_LARGE' }),
         })
       );
+    });
+
+    it('preserva continuidade da paginação e emite nextCursor ao atingir limitCount no meio de um lote com docs.length < fetchBatchSize (FINDING-6D1-001/003)', async () => {
+      // 5 candidatos ordenados: C1 não sobrepõe a janela, C2, C3, C4 e C5 sobrepõem.
+      const candidateDocs = [
+        {
+          id: 'doc-c1',
+          data: () => ({
+            ministry_id: mockMinistryId,
+            member_id: 'mem-c1',
+            user_id: 'u-c1',
+            start_date: '2026-08-01',
+            end_date: '2026-08-10',
+            starts_at: '2026-08-01T00:00:00',
+            ends_at: '2026-08-11T00:00:00',
+            all_day: true,
+          }),
+        },
+        {
+          id: 'doc-c2',
+          data: () => ({
+            ministry_id: mockMinistryId,
+            member_id: 'mem-c2',
+            user_id: 'u-c2',
+            start_date: '2026-09-02',
+            end_date: '2026-09-03',
+            starts_at: '2026-09-02T00:00:00',
+            ends_at: '2026-09-04T00:00:00',
+            all_day: true,
+          }),
+        },
+        {
+          id: 'doc-c3',
+          data: () => ({
+            ministry_id: mockMinistryId,
+            member_id: 'mem-c3',
+            user_id: 'u-c3',
+            start_date: '2026-09-04',
+            end_date: '2026-09-05',
+            starts_at: '2026-09-04T00:00:00',
+            ends_at: '2026-09-06T00:00:00',
+            all_day: true,
+          }),
+        },
+        {
+          id: 'doc-c4',
+          data: () => ({
+            ministry_id: mockMinistryId,
+            member_id: 'mem-c4',
+            user_id: 'u-c4',
+            start_date: '2026-09-06',
+            end_date: '2026-09-07',
+            starts_at: '2026-09-06T00:00:00',
+            ends_at: '2026-09-08T00:00:00',
+            all_day: true,
+          }),
+        },
+        {
+          id: 'doc-c5',
+          data: () => ({
+            ministry_id: mockMinistryId,
+            member_id: 'mem-c5',
+            user_id: 'u-c5',
+            start_date: '2026-09-08',
+            end_date: '2026-09-09',
+            starts_at: '2026-09-08T00:00:00',
+            ends_at: '2026-09-10T00:00:00',
+            all_day: true,
+          }),
+        },
+      ];
+
+      const queryMock = {
+        where: vi.fn().mockReturnThis(),
+        orderBy: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockReturnThis(),
+        startAfter: vi.fn().mockReturnThis(),
+        get: vi.fn().mockImplementation(async () => {
+          if (queryMock.startAfter.mock.calls.length > 0) {
+            return { docs: [candidateDocs[3], candidateDocs[4]] };
+          }
+          return { docs: candidateDocs };
+        }),
+      };
+
+      vi.spyOn((repo as any).unavailabilitiesCol, 'where').mockReturnValue(queryMock as any);
+
+      // Página 1: limitCount = 2
+      const page1 = await repo.listConsolidated({
+        ministryId: mockMinistryId,
+        windowStart,
+        windowEndExclusive,
+        lookbackStart,
+        limitCount: 2,
+      });
+
+      expect(page1.data.map((d) => d.id)).toEqual(['doc-c2', 'doc-c3']);
+      expect(page1.nextCursor).not.toBeNull();
+      expect(typeof page1.nextCursor).toBe('string');
+
+      // Página 2: usando nextCursor
+      const page2 = await repo.listConsolidated({
+        ministryId: mockMinistryId,
+        windowStart,
+        windowEndExclusive,
+        lookbackStart,
+        limitCount: 2,
+        cursor: page1.nextCursor!,
+      });
+
+      expect(page2.data.map((d) => d.id)).toEqual(['doc-c4', 'doc-c5']);
+      expect(page2.nextCursor).toBeNull();
+
+      const cumulativeIds = [...page1.data, ...page2.data].map((d) => d.id);
+      expect(cumulativeIds).toEqual(['doc-c2', 'doc-c3', 'doc-c4', 'doc-c5']);
+      expect(cumulativeIds).not.toContain('doc-c1');
     });
   });
 
