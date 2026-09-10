@@ -80,6 +80,18 @@ Funções musicais como Ministro, Vocalista, Violão e Bateria são classificaç
 - modelo temporal civil wall-clock (`YYYY-MM-DDTHH:mm:ss`, sem conversão UTC ou sufixo Z) com intervalos semi-abertos `[starts_at, ends_at)` e limite contínuo máximo de 90 dias;
 - interface com listagem paginada estável, modais acessíveis para dia inteiro e horários parciais, proteção contra duplo clique e imunidade a race conditions na alternância de ministério.
 
+### Schedule Availability Conflicts
+
+- detecção de conflitos entre escalas e períodos de indisponibilidade declarados pelos integrantes;
+- suporte a duração de escalas (`duration_minutes` / `durationMinutes`) de 15 a 1440 minutos com padrão de 120 minutos (2 horas) e fallback retrocompatível não-mutante para escalas legadas;
+- motor de cálculo temporal puramente civil em intervalos semi-abertos `[starts_at, ends_at)`;
+- endpoint administrativo (`POST /api/v1/ministries/:ministryId/availability/check-conflicts`) com RBAC estrito (`admin`);
+- normalização autoritativa de identidades de participantes (document ID e `user_id` do Firebase Auth) no escopo do ministério ativo;
+- consulta otimizada e paginada no Firestore com lookback de 90 dias prevenindo falso-negativos por limites de página;
+- regra estrita de privacidade: motivo pessoal (`reason`) é categoricamente omitido das respostas de conferência coletiva;
+- integração na interface de criação e edição de escalas como avisos informativos não-bloqueantes: o salvamento da escala nunca é bloqueado por conflito ou erro de verificação;
+- proteção de concorrência com token de geração descartando respostas defasadas na alternância de entradas ou ministérios.
+
 ### PWA
 
 - manifest instalável;

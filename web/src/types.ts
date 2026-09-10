@@ -111,6 +111,40 @@ export interface UnavailabilitiesResponse {
   nextCursor: string | null;
 }
 
+export interface CheckAvailabilityConflictsPayload {
+  date: string;
+  time: string;
+  durationMinutes?: number;
+  participantIds: string[];
+}
+
+export interface ParticipantConflictDetail {
+  id: string;
+  startsAt: string;
+  endsAt: string;
+  allDay: boolean;
+}
+
+export interface ParticipantConflictResult {
+  participantId: string;
+  memberId: string | null;
+  hasConflict: boolean;
+  unavailabilities: ParticipantConflictDetail[];
+}
+
+export interface ScheduleCivilWindow {
+  startsAt: string;
+  endsAt: string;
+  durationMinutes: number;
+  durationSource: 'explicit' | 'legacy_fallback';
+}
+
+export interface ScheduleConflictCheckResponse {
+  scheduleWindow: ScheduleCivilWindow;
+  conflicts: ParticipantConflictResult[];
+  unresolvedParticipantIds: string[];
+}
+
 export interface SongLink {
   id?: string;
   label: string; // Ex: 'Letra', 'Cifra', 'Áudio', 'Vídeo' ou rótulo customizado

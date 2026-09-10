@@ -115,6 +115,16 @@
         { "fieldPath": "starts_at", "order": "DESCENDING" },
         { "fieldPath": "__name__", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "member_unavailabilities",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ministry_id", "order": "ASCENDING" },
+        { "fieldPath": "member_id", "order": "ASCENDING" },
+        { "fieldPath": "starts_at", "order": "ASCENDING" },
+        { "fieldPath": "__name__", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

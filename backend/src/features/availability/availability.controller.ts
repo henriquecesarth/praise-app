@@ -98,6 +98,23 @@ export class AvailabilityController extends BaseController {
       this.handleError(err, res, next);
     }
   };
+
+  checkScheduleConflicts = async (
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      if (!req.user?.id) {
+        throw new AppError(401, 'Usuário não autenticado.');
+      }
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
+      const result = await this.service.checkScheduleConflicts(ministryId, req.body);
+      this.handleSuccess(res, result);
+    } catch (err) {
+      this.handleError(err, res, next);
+    }
+  };
 }
 
 const instance = new AvailabilityController();
@@ -105,3 +122,4 @@ export const listMyUnavailabilities = instance.listMyUnavailabilities;
 export const createMyUnavailability = instance.createMyUnavailability;
 export const updateMyUnavailability = instance.updateMyUnavailability;
 export const deleteMyUnavailability = instance.deleteMyUnavailability;
+export const checkScheduleConflicts = instance.checkScheduleConflicts;

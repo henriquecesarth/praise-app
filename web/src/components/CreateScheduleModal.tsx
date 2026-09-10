@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { X, ListOrdered, Plus, Users, Eye, EyeOff, CheckSquare, ArrowLeft, Check, LayoutTemplate, Trash2, ChevronRight, Layers, Music, Clock, AlertTriangle, GripVertical } from 'lucide-react';
-import { Song } from '../types';
+import { Song, ParticipantConflictResult } from '../types';
 import { FloatingInput } from './ui/FloatingInput';
 import { FloatingTextarea } from './ui/FloatingTextarea';
 
@@ -16,6 +16,7 @@ export interface ScheduleItem {
   title: string;
   date: string;
   time: string;
+  durationMinutes?: number;
   notes?: string;
   isVisible: boolean;
   colorPalette: string;
@@ -132,11 +133,26 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
   const [title, setTitle] = useState(initialSchedule?.title || 'Culto de Domingo');
   const [date, setDate] = useState(initialSchedule?.date || new Date().toISOString().split('T')[0]);
   const [time, setTime] = useState(initialSchedule?.time || '19:00');
+  const [durationMinutes, setDurationMinutes] = useState<number>(
+    initialSchedule?.durationMinutes || 120
+  );
+  const [isCustomDuration, setIsCustomDuration] = useState<boolean>(
+    Boolean(
+      initialSchedule?.durationMinutes &&
+      ![60, 90, 120, 150, 180].includes(initialSchedule.durationMinutes)
+    )
+  );
   const [notes, setNotes] = useState(initialSchedule?.notes || '');
   const [isVisible, setIsVisible] = useState(initialSchedule?.isVisible !== undefined ? initialSchedule.isVisible : true);
   const [requireConfirmation, setRequireConfirmation] = useState(
     initialSchedule?.requireConfirmation !== undefined ? initialSchedule.requireConfirmation : true
   );
+
+  // Availability Conflicts State
+  const [conflictLoading, setConflictLoading] = useState(false);
+  const [conflictError, setConflictError] = useState<string | null>(null);
+  const [conflictsMap, setConflictsMap] = useState<Map<string, ParticipantConflictResult>>(new Map());
+  const conflictGenRef = useRef(0);
 
   // Lists - Inicialização limpa conforme solicitado
   const [selectedParticipants, setSelectedParticipants] = useState<Array<{ id: string; name: string; role: string }>>(
@@ -210,6 +226,79 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
         .finally(() => setLoadingMembers(false));
     });
   }, [groupId]);
+
+  // Debounced Availability Conflict Check (300ms) with Generation Token Race Safety
+  useEffect(() => {
+    if (!groupId || selectedParticipants.length === 0 || !date || !time) {
+      setConflictsMap(new Map());
+      setConflictLoading(false);
+      setConflictError(null);
+      return;
+    }
+
+    const currentGen = ++conflictGenRef.current;
+    setConflictLoading(true);
+    setConflictError(null);
+
+    const timer = setTimeout(() => {
+      import('../api')
+        .then(({ api }) => {
+          const participantIds = Array.from(
+            new Set(selectedParticipants.map((p) => p.id).filter(Boolean))
+          ).slice(0, 50);
+
+          return api.checkAvailabilityConflicts(groupId, {
+            date,
+            time,
+            durationMinutes: durationMinutes || 120,
+            participantIds,
+          });
+        })
+        .then((res) => {
+          if (conflictGenRef.current === currentGen) {
+            const map = new Map<string, ParticipantConflictResult>();
+            (res.conflicts || []).forEach((c) => {
+              if (c.participantId) map.set(c.participantId, c);
+              if (c.memberId) map.set(c.memberId, c);
+            });
+            setConflictsMap(map);
+            setConflictLoading(false);
+            setConflictError(null);
+          }
+        })
+        .catch(() => {
+          if (conflictGenRef.current === currentGen) {
+            setConflictLoading(false);
+            setConflictError('Não foi possível verificar a disponibilidade dos integrantes.');
+          }
+        });
+    }, 300);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [groupId, date, time, durationMinutes, selectedParticipants]);
+
+  // Reset modal state if ministry changes
+  useEffect(() => {
+    setShowColorPalettePage(false);
+    setShowMemberSelectPage(false);
+    setShowSongSelectPage(false);
+    setShowTemplateModal(false);
+    setShowTeamSelectModal(false);
+    setConflictsMap(new Map());
+    setConflictError(null);
+  }, [groupId]);
+
+  const conflictsCount = useMemo(() => {
+    let count = 0;
+    for (const p of selectedParticipants) {
+      if (conflictsMap.get(p.id)?.hasConflict) {
+        count++;
+      }
+    }
+    return count;
+  }, [selectedParticipants, conflictsMap]);
 
   // Carregar modelos de roteiro do backend
   React.useEffect(() => {
@@ -488,12 +577,14 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
   const handleSaveSchedule = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const finalTitle = title.trim() || 'Culto de Louvor';
+    const resolvedDuration = Math.max(15, Math.min(1440, durationMinutes || 120));
 
     onSave({
-      id: Date.now().toString(),
+      id: initialSchedule?.id || Date.now().toString(),
       title: finalTitle,
       date,
       time,
+      durationMinutes: resolvedDuration,
       notes,
       isVisible,
       colorPalette: clothingPieces.length > 0 ? clothingPieces[0].colors[0] || 'var(--primary-brand)' : 'var(--primary-brand)',
@@ -651,6 +742,26 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                   onClick={() => setActiveTab('participantes')}
                 >
                   Participantes ({selectedParticipants.length})
+                  {conflictsCount > 0 && (
+                    <span
+                      data-testid="tab-conflict-badge"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: '#EF4444',
+                        color: '#FFFFFF',
+                        borderRadius: '10px',
+                        padding: '1px 6px',
+                        fontSize: '0.7rem',
+                        fontWeight: 700,
+                        marginLeft: '6px',
+                      }}
+                      title={`${conflictsCount} participante(s) com indisponibilidade registrada`}
+                    >
+                      {conflictsCount}
+                    </span>
+                  )}
                 </button>
                 <button
                   type="button"
@@ -701,6 +812,72 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                       onChange={(e) => setTime(e.target.value)}
                       required
                     />
+                  </div>
+
+                  {/* Duração Estimada da Escala */}
+                  <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Clock size={16} /> Duração Estimada da Escala
+                    </label>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+                      {[
+                        { label: '1h', minutes: 60 },
+                        { label: '1h30', minutes: 90 },
+                        { label: '2h', minutes: 120 },
+                        { label: '2h30', minutes: 150 },
+                        { label: '3h', minutes: 180 },
+                      ].map((preset) => (
+                        <button
+                          key={preset.minutes}
+                          type="button"
+                          className={`btn ${durationMinutes === preset.minutes && !isCustomDuration ? 'btn-primary' : 'btn-secondary'}`}
+                          style={{ minHeight: '44px', minWidth: '54px', padding: '8px 12px', fontSize: '0.875rem' }}
+                          onClick={() => {
+                            setDurationMinutes(preset.minutes);
+                            setIsCustomDuration(false);
+                          }}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        className={`btn ${isCustomDuration ? 'btn-primary' : 'btn-secondary'}`}
+                        style={{ minHeight: '44px', padding: '8px 12px', fontSize: '0.875rem' }}
+                        onClick={() => setIsCustomDuration(true)}
+                      >
+                        Personalizado
+                      </button>
+                      {isCustomDuration && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <input
+                            type="number"
+                            min={15}
+                            max={1440}
+                            step={5}
+                            value={durationMinutes === 0 ? '' : durationMinutes}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              if (raw === '') {
+                                setDurationMinutes(0);
+                                return;
+                              }
+                              const val = parseInt(raw, 10);
+                              if (!isNaN(val)) {
+                                setDurationMinutes(val);
+                              }
+                            }}
+                            onBlur={() => {
+                              setDurationMinutes((prev) => Math.max(15, Math.min(1440, prev || 120)));
+                            }}
+                            className="input-field"
+                            style={{ width: '90px', minHeight: '44px', textAlign: 'center' }}
+                            aria-label="Duração em minutos"
+                          />
+                          <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>min (15 a 1440)</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <FloatingTextarea
@@ -934,26 +1111,117 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                     </button>
                   </div>
 
+                  {/* Availability Conflict Banners */}
+                  {conflictLoading && (
+                    <div
+                      data-testid="conflict-loading-indicator"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '8px 12px',
+                        borderRadius: '8px',
+                        backgroundColor: 'var(--surface-variant)',
+                        fontSize: '0.8125rem',
+                        color: 'var(--text-secondary)',
+                        margin: '10px 0',
+                      }}
+                    >
+                      <Clock size={14} className="animate-spin" /> Verificando disponibilidade dos integrantes...
+                    </div>
+                  )}
+
+                  {conflictError && (
+                    <div
+                      data-testid="conflict-error-banner"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '10px 14px',
+                        borderRadius: '8px',
+                        backgroundColor: 'rgba(234, 179, 8, 0.1)',
+                        color: 'var(--warning-color, #EAB308)',
+                        fontSize: '0.8125rem',
+                        margin: '10px 0',
+                        border: '1px solid rgba(234, 179, 8, 0.25)',
+                      }}
+                    >
+                      <AlertTriangle size={16} style={{ flexShrink: 0 }} />
+                      <span>{conflictError} O salvamento da escala continua disponível normalmente.</span>
+                    </div>
+                  )}
+
+                  {!conflictError && conflictsCount > 0 && (
+                    <div
+                      data-testid="conflict-warning-banner"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '10px 14px',
+                        borderRadius: '8px',
+                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                        color: '#EF4444',
+                        fontSize: '0.8125rem',
+                        margin: '10px 0',
+                        border: '1px solid rgba(239, 68, 68, 0.25)',
+                      }}
+                    >
+                      <AlertTriangle size={16} style={{ flexShrink: 0 }} />
+                      <span>
+                        <strong>Aviso de Disponibilidade:</strong> {conflictsCount} integrante(s) possui(em) indisponibilidade declarada para o horário desta escala. Esta indicação é apenas um alerta e não impede o salvamento.
+                      </span>
+                    </div>
+                  )}
+
                   {selectedParticipants.length > 0 ? (
                     <div className="schedule-items-list">
-                      {selectedParticipants.map((member) => (
-                        <div key={member.id} className="schedule-member-item">
-                          <div className="dashboard-item-avatar">{member.name.charAt(0).toUpperCase()}</div>
-                          <div className="dashboard-item-info">
-                            <div className="dashboard-item-title">{member.name}</div>
-                            <div className="dashboard-item-desc">{member.role}</div>
+                      {selectedParticipants.map((member) => {
+                        const conflict = conflictsMap.get(member.id);
+                        const hasConflict = Boolean(conflict?.hasConflict);
+                        return (
+                          <div key={member.id} className="schedule-member-item">
+                            <div className="dashboard-item-avatar">{member.name.charAt(0).toUpperCase()}</div>
+                            <div className="dashboard-item-info">
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                <span className="dashboard-item-title">{member.name}</span>
+                                {hasConflict && (
+                                  <span
+                                    data-testid={`conflict-badge-${member.id}`}
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      padding: '2px 8px',
+                                      borderRadius: '6px',
+                                      fontSize: '0.75rem',
+                                      fontWeight: 600,
+                                      backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                                      color: '#EF4444',
+                                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                                    }}
+                                    title="Integrante possui indisponibilidade registrada para este horário"
+                                  >
+                                    <AlertTriangle size={12} />
+                                    Indisponível
+                                  </span>
+                                )}
+                              </div>
+                              <div className="dashboard-item-desc">{member.role}</div>
+                            </div>
+                            <button
+                              type="button"
+                              className="action-icon-btn danger"
+                              aria-label={`Remover participante ${member.name}`}
+                              style={{ width: '44px', height: '44px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+                              onClick={() => setSelectedParticipants(selectedParticipants.filter((p) => p.id !== member.id))}
+                            >
+                              <Trash2 size={16} />
+                            </button>
                           </div>
-                          <button
-                            type="button"
-                            className="action-icon-btn danger"
-                            aria-label={`Remover participante ${member.name}`}
-                            style={{ width: '44px', height: '44px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
-                            onClick={() => setSelectedParticipants(selectedParticipants.filter((p) => p.id !== member.id))}
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : (
                     <div className="empty-state">
@@ -1225,6 +1493,8 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                 <div className="schedule-items-list" style={{ maxHeight: '320px', overflowY: 'auto' }}>
                   {(memberTab === 'todos' ? groupMembers : selectedParticipants).map((member) => {
                     const isSelected = selectedParticipants.some((p) => p.id === member.id);
+                    const conflict = conflictsMap.get(member.id);
+                    const hasConflict = Boolean(conflict?.hasConflict);
                     return (
                       <div
                         key={member.id}
@@ -1233,7 +1503,30 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                       >
                         <div className="dashboard-item-avatar">{member.name.charAt(0).toUpperCase()}</div>
                         <div className="dashboard-item-info">
-                          <div className="dashboard-item-title">{member.name}</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <span className="dashboard-item-title">{member.name}</span>
+                            {hasConflict && (
+                              <span
+                                data-testid={`select-conflict-badge-${member.id}`}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '2px 8px',
+                                  borderRadius: '6px',
+                                  fontSize: '0.75rem',
+                                  fontWeight: 600,
+                                  backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                                  color: '#EF4444',
+                                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                                }}
+                                title="Integrante possui indisponibilidade registrada para este horário"
+                              >
+                                <AlertTriangle size={12} />
+                                Indisponível
+                              </span>
+                            )}
+                          </div>
                           <div className="dashboard-item-desc">{member.role}</div>
                         </div>
                         <div className={`checkbox-circle ${isSelected ? 'checked' : ''}`}>

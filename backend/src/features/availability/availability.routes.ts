@@ -7,11 +7,19 @@ import {
   createUnavailabilitySchema,
   updateUnavailabilitySchema,
   listUnavailabilityQuerySchema,
+  checkAvailabilityConflictsSchema,
 } from './availability.types';
 
 const router = Router({ mergeParams: true });
 
 router.use(authenticate);
+
+router.post(
+  '/check-conflicts',
+  requireMinistryRole('admin'),
+  validate(checkAvailabilityConflictsSchema),
+  controller.checkScheduleConflicts
+);
 
 router.get('/my', requireMinistryRole('member'), validate(listUnavailabilityQuerySchema, 'query'), controller.listMyUnavailabilities);
 router.post('/my', requireMinistryRole('member'), validate(createUnavailabilitySchema), controller.createMyUnavailability);

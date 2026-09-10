@@ -111,3 +111,45 @@ export function mapToUnavailabilityDto(record: MemberUnavailabilityRecord): Memb
     updatedAt: record.updated_at,
   };
 }
+
+export const checkAvailabilityConflictsSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de data inválido (esperado: YYYY-MM-DD).'),
+  time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Formato de hora inválido (esperado: HH:mm entre 00:00 e 23:59).'),
+  durationMinutes: z
+    .number()
+    .int('A duração deve ser um número inteiro de minutos.')
+    .min(15, 'A duração mínima da escala é de 15 minutos.')
+    .max(1440, 'A duração máxima da escala é de 1440 minutos.')
+    .optional(),
+  participantIds: z
+    .array(z.string().trim().min(1, 'ID do participante não pode ser vazio.'))
+    .min(1, 'Pelo menos um participante deve ser informado.')
+    .max(50, 'O limite máximo para verificação de conflitos é de 50 participantes.'),
+});
+
+export type CheckAvailabilityConflictsInput = z.infer<typeof checkAvailabilityConflictsSchema>;
+
+export interface ParticipantConflictDetail {
+  id: string;
+  startsAt: string;
+  endsAt: string;
+  allDay: boolean;
+}
+
+export interface ParticipantConflictResult {
+  participantId: string;
+  memberId: string | null;
+  hasConflict: boolean;
+  unavailabilities: ParticipantConflictDetail[];
+}
+
+export interface ScheduleConflictCheckResponse {
+  scheduleWindow: {
+    startsAt: string;
+    endsAt: string;
+    durationMinutes: number;
+    durationSource: 'explicit' | 'legacy_fallback';
+  };
+  conflicts: ParticipantConflictResult[];
+  unresolvedParticipantIds: string[];
+}

@@ -1,6 +1,7 @@
 import { FieldPath } from 'firebase-admin/firestore';
 import { db } from '../lib/firebase';
 import { AppError } from '../middleware/error-handler';
+import { calculateLookbackStart } from '../features/availability/conflict-engine';
 
 export interface MemberUnavailabilityRecord {
   id: string;
@@ -182,5 +183,98 @@ export class AvailabilityRepository {
   async deleteUnavailability(id: string, ministryId: string): Promise<void> {
     await this.getById(id, ministryId);
     await this.unavailabilitiesCol.doc(id).delete();
+  }
+
+  /**
+   * Busca candidatos a conflito no Firestore para uma lista de membros canônicos e uma janela temporal de escala.
+   *
+   * Estratégia de consulta:
+   * 1. Limite inferior temporal seguro: starts_at >= (scheduleStartsAt - 90 dias civis).
+   * 2. Limite superior temporal estrito: starts_at < scheduleEndsAt.
+   * 3. Chunking de IDs de membros em blocos de até 30 (limite do operador 'in' do Firestore).
+   * 4. Paginação determinística (starts_at ASC, __name__ ASC) até exaustão da query, garantindo ZERO falsos-negativos.
+   * 5. Filtro em memória pós-busca: ends_at > scheduleStartsAt.
+   * 6. Trava de segurança contra DoS (MAX_TOTAL_CANDIDATES = 1000) falhando explicitamente em vez de truncar silenciosamente.
+   */
+  async findConflictCandidates(
+    ministryId: string,
+    canonicalMemberIds: string[],
+    scheduleStartsAt: string,
+    scheduleEndsAt: string
+  ): Promise<MemberUnavailabilityRecord[]> {
+    if (!canonicalMemberIds || canonicalMemberIds.length === 0) {
+      return [];
+    }
+
+    const lookbackStart = calculateLookbackStart(scheduleStartsAt);
+    const CHUNK_SIZE = 30;
+    const PAGE_SIZE = 100;
+    const MAX_TOTAL_CANDIDATES = 1000;
+    const recordsMap = new Map<string, MemberUnavailabilityRecord>();
+
+    for (let i = 0; i < canonicalMemberIds.length; i += CHUNK_SIZE) {
+      const chunk = canonicalMemberIds.slice(i, i + CHUNK_SIZE);
+      let hasMore = true;
+      let lastDoc: any = null;
+      let chunkCandidatesCount = 0;
+
+      while (hasMore) {
+        let q = this.unavailabilitiesCol
+          .where('ministry_id', '==', ministryId)
+          .where('member_id', 'in', chunk)
+          .where('starts_at', '>=', lookbackStart)
+          .where('starts_at', '<', scheduleEndsAt)
+          .orderBy('starts_at', 'asc')
+          .orderBy(FieldPath.documentId(), 'asc')
+          .limit(PAGE_SIZE);
+
+        if (lastDoc) {
+          q = q.startAfter(lastDoc);
+        }
+
+        const snap = await q.get();
+        const docs = snap.docs;
+
+        for (const doc of docs) {
+          const raw = doc.data();
+          // Filtro em memória: indisponibilidade deve terminar após o início da escala
+          if (raw.ends_at && raw.ends_at > scheduleStartsAt) {
+            recordsMap.set(doc.id, {
+              id: doc.id,
+              ministry_id: raw.ministry_id,
+              member_id: raw.member_id,
+              user_id: raw.user_id,
+              start_date: raw.start_date,
+              end_date: raw.end_date,
+              start_time: raw.start_time ?? null,
+              end_time: raw.end_time ?? null,
+              all_day: Boolean(raw.all_day),
+              starts_at: raw.starts_at,
+              ends_at: raw.ends_at,
+              reason: raw.reason ?? null,
+              created_at: raw.created_at || new Date().toISOString(),
+              updated_at: raw.updated_at || raw.created_at || new Date().toISOString(),
+            });
+          }
+        }
+
+        chunkCandidatesCount += docs.length;
+        if (chunkCandidatesCount > MAX_TOTAL_CANDIDATES) {
+          throw new AppError(
+            400,
+            'A quantidade de registros de indisponibilidade para os participantes selecionados excedeu o limite máximo para verificação.',
+            { code: 'AVAILABILITY_CONFLICT_CHECK_TOO_LARGE' }
+          );
+        }
+
+        if (docs.length < PAGE_SIZE) {
+          hasMore = false;
+        } else {
+          lastDoc = docs[docs.length - 1];
+        }
+      }
+    }
+
+    return Array.from(recordsMap.values());
   }
 }

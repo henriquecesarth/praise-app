@@ -11,6 +11,7 @@ import {
   createUnavailabilitySchema,
   updateUnavailabilitySchema,
   listUnavailabilityQuerySchema,
+  checkAvailabilityConflictsSchema,
 } from './availability.types';
 import { AppError } from '../../middleware/error-handler';
 
@@ -679,6 +680,441 @@ describe('Member Availability Feature Test Suite (Phase 6B)', () => {
         expect(validCustom.data.limit).toBe(20);
         expect(validCustom.data.cursor).toBe('tok-123');
       }
+    });
+
+    it('valida checkAvailabilityConflictsSchema com sucesso', () => {
+      const validWithDuration = checkAvailabilityConflictsSchema.safeParse({
+        date: '2026-09-20',
+        time: '19:00',
+        durationMinutes: 90,
+        participantIds: ['mem-1', 'mem-2'],
+      });
+      expect(validWithDuration.success).toBe(true);
+
+      const validWithoutDuration = checkAvailabilityConflictsSchema.safeParse({
+        date: '2026-09-20',
+        time: '19:00',
+        participantIds: ['mem-1'],
+      });
+      expect(validWithoutDuration.success).toBe(true);
+    });
+
+    it('rejeita checkAvailabilityConflictsSchema com inputs inválidos', () => {
+      // Data inválida
+      expect(
+        checkAvailabilityConflictsSchema.safeParse({
+          date: '20-09-2026',
+          time: '19:00',
+          participantIds: ['mem-1'],
+        }).success
+      ).toBe(false);
+
+      // Hora inválida
+      expect(
+        checkAvailabilityConflictsSchema.safeParse({
+          date: '2026-09-20',
+          time: '25:00',
+          participantIds: ['mem-1'],
+        }).success
+      ).toBe(false);
+
+      // Duração abaixo de 15 min
+      expect(
+        checkAvailabilityConflictsSchema.safeParse({
+          date: '2026-09-20',
+          time: '19:00',
+          durationMinutes: 14,
+          participantIds: ['mem-1'],
+        }).success
+      ).toBe(false);
+
+      // Duração acima de 1440 min
+      expect(
+        checkAvailabilityConflictsSchema.safeParse({
+          date: '2026-09-20',
+          time: '19:00',
+          durationMinutes: 1441,
+          participantIds: ['mem-1'],
+        }).success
+      ).toBe(false);
+
+      // Mais de 50 participantes
+      const tooMany = Array.from({ length: 51 }, (_, i) => `mem-${i}`);
+      expect(
+        checkAvailabilityConflictsSchema.safeParse({
+          date: '2026-09-20',
+          time: '19:00',
+          participantIds: tooMany,
+        }).success
+      ).toBe(false);
+    });
+  });
+
+  describe('9. resolveMinistryMemberIds (Canonical Normalization & Tenant Boundary)', () => {
+    it('retorna vazio se a lista de participantes for vazia', async () => {
+      const res = await service.resolveMinistryMemberIds(mockMinistryId, []);
+      expect(res.canonicalMemberIds).toEqual([]);
+      expect(res.unresolvedParticipantIds).toEqual([]);
+      expect(res.resolutionMap.size).toBe(0);
+    });
+
+    it('rejeita mais de 50 participantes com AppError 400', async () => {
+      const ids = Array.from({ length: 51 }, (_, i) => `id-${i}`);
+      await expect(service.resolveMinistryMemberIds(mockMinistryId, ids)).rejects.toThrow(
+        expect.objectContaining({ statusCode: 400 })
+      );
+    });
+
+    it('resolve documentos de membros diretamente via doc ID quando pertencem ao ministério', async () => {
+      const { db } = await import('../../lib/firebase');
+      const spyGetAll = vi.spyOn(db, 'getAll').mockResolvedValue([
+        {
+          id: 'mem-1',
+          exists: true,
+          data: () => ({ ministry_id: mockMinistryId, name: 'Alice' }),
+        },
+      ] as any);
+
+      const res = await service.resolveMinistryMemberIds(mockMinistryId, ['mem-1']);
+      expect(res.canonicalMemberIds).toContain('mem-1');
+      expect(res.resolutionMap.get('mem-1')).toBe('mem-1');
+      expect(res.unresolvedParticipantIds).toEqual([]);
+      spyGetAll.mockRestore();
+    });
+
+    it('NÃO resolve doc ID que pertence a outro ministério (Anti-IDOR Cross-Tenant)', async () => {
+      const { db } = await import('../../lib/firebase');
+      const spyGetAll = vi.spyOn(db, 'getAll').mockResolvedValue([
+        {
+          id: 'mem-foreign',
+          exists: true,
+          data: () => ({ ministry_id: 'other-ministry', name: 'Bob' }),
+        },
+      ] as any);
+
+      // E a busca por user_id também não encontra nada
+      vi.spyOn((service as any).membersCol, 'where').mockReturnValue({
+        where: vi.fn().mockReturnValue({
+          get: vi.fn().mockResolvedValue({ docs: [] }),
+        }),
+      } as any);
+
+      const res = await service.resolveMinistryMemberIds(mockMinistryId, ['mem-foreign']);
+      expect(res.canonicalMemberIds).not.toContain('mem-foreign');
+      expect(res.unresolvedParticipantIds).toContain('mem-foreign');
+      spyGetAll.mockRestore();
+    });
+
+    it('resolve user_id do Firebase Auth para o member_id correspondente no ministério', async () => {
+      const { db } = await import('../../lib/firebase');
+      // doc snap não existe para 'auth-uid-123'
+      const spyGetAll = vi.spyOn(db, 'getAll').mockResolvedValue([
+        {
+          id: 'auth-uid-123',
+          exists: false,
+        },
+      ] as any);
+
+      // Query por user_id encontra o membro
+      vi.spyOn((service as any).membersCol, 'where').mockReturnValue({
+        where: vi.fn().mockReturnValue({
+          get: vi.fn().mockResolvedValue({
+            docs: [
+              {
+                id: 'mem-resolved-123',
+                data: () => ({
+                  ministry_id: mockMinistryId,
+                  user_id: 'auth-uid-123',
+                  name: 'Carol',
+                }),
+              },
+            ],
+          }),
+        }),
+      } as any);
+
+      const res = await service.resolveMinistryMemberIds(mockMinistryId, ['auth-uid-123']);
+      expect(res.canonicalMemberIds).toContain('mem-resolved-123');
+      expect(res.resolutionMap.get('auth-uid-123')).toBe('mem-resolved-123');
+      expect(res.unresolvedParticipantIds).toEqual([]);
+      spyGetAll.mockRestore();
+    });
+  });
+
+  describe('10. checkScheduleConflicts (Pure Overlap, Fallbacks, Privacy & Pagination)', () => {
+    it('detecta conflitos e OMITI RIGOROSAMENTE o campo reason da resposta', async () => {
+      vi.spyOn(service, 'resolveMinistryMemberIds').mockResolvedValue({
+        canonicalMemberIds: ['mem-1'],
+        resolutionMap: new Map([['mem-1', 'mem-1']]),
+        unresolvedParticipantIds: [],
+      });
+
+      const mockCandidate: MemberUnavailabilityRecord = {
+        id: 'unavail-1',
+        ministry_id: mockMinistryId,
+        member_id: 'mem-1',
+        user_id: 'user-1',
+        start_date: '2026-09-20',
+        end_date: '2026-09-20',
+        start_time: '18:00',
+        end_time: '20:00',
+        all_day: false,
+        starts_at: '2026-09-20T18:00:00',
+        ends_at: '2026-09-20T20:00:00',
+        reason: 'CONFIDENTIAL MEDICAL REASON',
+        created_at: '2026-09-01T00:00:00Z',
+        updated_at: '2026-09-01T00:00:00Z',
+      };
+
+      vi.spyOn(repo, 'findConflictCandidates').mockResolvedValue([mockCandidate]);
+
+      const result = await service.checkScheduleConflicts(mockMinistryId, {
+        date: '2026-09-20',
+        time: '19:00',
+        durationMinutes: 120,
+        participantIds: ['mem-1'],
+      });
+
+      expect(result.scheduleWindow.startsAt).toBe('2026-09-20T19:00:00');
+      expect(result.scheduleWindow.endsAt).toBe('2026-09-20T21:00:00');
+      expect(result.scheduleWindow.durationMinutes).toBe(120);
+      expect(result.scheduleWindow.durationSource).toBe('explicit');
+
+      expect(result.conflicts.length).toBe(1);
+      const c = result.conflicts[0];
+      expect(c.participantId).toBe('mem-1');
+      expect(c.hasConflict).toBe(true);
+      expect(c.unavailabilities.length).toBe(1);
+
+      // PRIVACIDADE: O campo 'reason' NUNCA deve estar presente
+      expect((c.unavailabilities[0] as any).reason).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain('CONFIDENTIAL MEDICAL REASON');
+    });
+
+    it('aplica fallback de duração não-mutante (120 min) quando durationMinutes for omitido', async () => {
+      vi.spyOn(service, 'resolveMinistryMemberIds').mockResolvedValue({
+        canonicalMemberIds: ['mem-1'],
+        resolutionMap: new Map([['mem-1', 'mem-1']]),
+        unresolvedParticipantIds: [],
+      });
+      vi.spyOn(repo, 'findConflictCandidates').mockResolvedValue([]);
+
+      const result = await service.checkScheduleConflicts(mockMinistryId, {
+        date: '2026-09-20',
+        time: '10:00',
+        participantIds: ['mem-1'],
+      });
+
+      expect(result.scheduleWindow.startsAt).toBe('2026-09-20T10:00:00');
+      expect(result.scheduleWindow.endsAt).toBe('2026-09-20T12:00:00');
+      expect(result.scheduleWindow.durationMinutes).toBe(120);
+      expect(result.scheduleWindow.durationSource).toBe('legacy_fallback');
+    });
+
+    it('não reporta conflito para participante sem sobreposição (adjacência exata)', async () => {
+      vi.spyOn(service, 'resolveMinistryMemberIds').mockResolvedValue({
+        canonicalMemberIds: ['mem-1'],
+        resolutionMap: new Map([['mem-1', 'mem-1']]),
+        unresolvedParticipantIds: [],
+      });
+
+      // Indisponibilidade termina exatamente quando a escala começa (19:00)
+      const mockCandidate: MemberUnavailabilityRecord = {
+        id: 'unavail-adjacent',
+        ministry_id: mockMinistryId,
+        member_id: 'mem-1',
+        user_id: 'user-1',
+        start_date: '2026-09-20',
+        end_date: '2026-09-20',
+        start_time: '17:00',
+        end_time: '19:00',
+        all_day: false,
+        starts_at: '2026-09-20T17:00:00',
+        ends_at: '2026-09-20T19:00:00',
+        reason: null,
+        created_at: '2026-09-01T00:00:00Z',
+        updated_at: '2026-09-01T00:00:00Z',
+      };
+
+      vi.spyOn(repo, 'findConflictCandidates').mockResolvedValue([mockCandidate]);
+
+      const result = await service.checkScheduleConflicts(mockMinistryId, {
+        date: '2026-09-20',
+        time: '19:00',
+        durationMinutes: 120,
+        participantIds: ['mem-1'],
+      });
+
+      expect(result.conflicts[0].hasConflict).toBe(false);
+      expect(result.conflicts[0].unavailabilities).toHaveLength(0);
+    });
+
+    it('lida com participantes não resolvidos marcando hasConflict: false', async () => {
+      vi.spyOn(service, 'resolveMinistryMemberIds').mockResolvedValue({
+        canonicalMemberIds: [],
+        resolutionMap: new Map(),
+        unresolvedParticipantIds: ['unknown-id'],
+      });
+      vi.spyOn(repo, 'findConflictCandidates').mockResolvedValue([]);
+
+      const result = await service.checkScheduleConflicts(mockMinistryId, {
+        date: '2026-09-20',
+        time: '19:00',
+        participantIds: ['unknown-id'],
+      });
+
+      expect(result.conflicts[0].participantId).toBe('unknown-id');
+      expect(result.conflicts[0].memberId).toBeNull();
+      expect(result.conflicts[0].hasConflict).toBe(false);
+      expect(result.unresolvedParticipantIds).toContain('unknown-id');
+    });
+  });
+
+  describe('11. AvailabilityRepository.findConflictCandidates (Pagination & DoS Protection)', () => {
+    it('executa loop de paginação quando a primeira página atinge PAGE_SIZE para evitar falsos-negativos', async () => {
+      // Simula 100 itens na primeira página e 20 na segunda
+      const page1Docs = Array.from({ length: 100 }, (_, i) => ({
+        id: `doc-${i}`,
+        data: () => ({
+          ministry_id: mockMinistryId,
+          member_id: 'mem-1',
+          starts_at: '2026-09-20T18:00:00',
+          ends_at: '2026-09-20T20:00:00',
+        }),
+      }));
+      const page2Docs = Array.from({ length: 20 }, (_, i) => ({
+        id: `doc-${100 + i}`,
+        data: () => ({
+          ministry_id: mockMinistryId,
+          member_id: 'mem-1',
+          starts_at: '2026-09-20T18:30:00',
+          ends_at: '2026-09-20T20:30:00',
+        }),
+      }));
+
+      let queryCallCount = 0;
+      const mockQuery = {
+        where: vi.fn().mockReturnThis(),
+        orderBy: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockReturnThis(),
+        startAfter: vi.fn().mockReturnThis(),
+        get: vi.fn().mockImplementation(async () => {
+          queryCallCount++;
+          if (queryCallCount === 1) {
+            return { docs: page1Docs };
+          }
+          return { docs: page2Docs };
+        }),
+      };
+
+      (repo as any).unavailabilitiesCol = mockQuery;
+
+      const candidates = await repo.findConflictCandidates(
+        mockMinistryId,
+        ['mem-1'],
+        '2026-09-20T19:00:00',
+        '2026-09-20T21:00:00'
+      );
+
+      // Deve ter paginado 2 vezes e retornado todos os 120 candidatos
+      expect(queryCallCount).toBe(2);
+      expect(candidates.length).toBe(120);
+    });
+
+    it('dispara erro 400 AVAILABILITY_CONFLICT_CHECK_TOO_LARGE se ultrapassar 1000 candidatos', async () => {
+      const largeBatchDocs = Array.from({ length: 100 }, (_, i) => ({
+        id: `large-doc-${i}`,
+        data: () => ({
+          ministry_id: mockMinistryId,
+          member_id: 'mem-1',
+          starts_at: '2026-09-20T18:00:00',
+          ends_at: '2026-09-20T20:00:00',
+        }),
+      }));
+
+      const mockQuery = {
+        where: vi.fn().mockReturnThis(),
+        orderBy: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockReturnThis(),
+        startAfter: vi.fn().mockReturnThis(),
+        get: vi.fn().mockResolvedValue({ docs: largeBatchDocs }),
+      };
+
+      (repo as any).unavailabilitiesCol = mockQuery;
+
+      await expect(
+        repo.findConflictCandidates(
+          mockMinistryId,
+          ['mem-1'],
+          '2026-09-20T19:00:00',
+          '2026-09-20T21:00:00'
+        )
+      ).rejects.toThrow(
+        expect.objectContaining({
+          statusCode: 400,
+          details: expect.objectContaining({ code: 'AVAILABILITY_CONFLICT_CHECK_TOO_LARGE' }),
+        })
+      );
+    });
+  });
+
+  describe('12. AvailabilityController.checkScheduleConflicts Integration', () => {
+    it('responde 200 com resultado do serviço', async () => {
+      const checkSpy = vi.spyOn(service, 'checkScheduleConflicts').mockResolvedValue({
+        scheduleWindow: {
+          startsAt: '2026-09-20T19:00:00',
+          endsAt: '2026-09-20T21:00:00',
+          durationMinutes: 120,
+          durationSource: 'explicit',
+        },
+        conflicts: [],
+        unresolvedParticipantIds: [],
+      });
+
+      const req: any = {
+        user: { id: mockUserId },
+        params: { ministryId: mockMinistryId },
+        body: {
+          date: '2026-09-20',
+          time: '19:00',
+          durationMinutes: 120,
+          participantIds: ['mem-1'],
+        },
+      };
+      const res: any = {
+        status: vi.fn().mockReturnThis(),
+        json: vi.fn(),
+      };
+      const next = vi.fn();
+
+      await controller.checkScheduleConflicts(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scheduleWindow: expect.any(Object),
+          conflicts: [],
+        })
+      );
+      expect(checkSpy).toHaveBeenCalledWith(mockMinistryId, req.body);
+    });
+
+    it('propaga erro para o middleware de erro quando serviço falhar', async () => {
+      vi.spyOn(service, 'checkScheduleConflicts').mockRejectedValue(new AppError(400, 'Erro de validação'));
+
+      const req: any = {
+        user: { id: mockUserId },
+        params: { ministryId: mockMinistryId },
+        body: { date: '2026-09-20', time: '19:00', participantIds: [] },
+      };
+      const res: any = {
+        status: vi.fn().mockReturnThis(),
+        json: vi.fn(),
+      };
+      const next = vi.fn();
+
+      await controller.checkScheduleConflicts(req, res, next);
+      expect(next).toHaveBeenCalledWith(expect.any(AppError));
     });
   });
 });

@@ -21,9 +21,26 @@ import {
   CreateUnavailabilityPayload,
   UpdateUnavailabilityPayload,
   UnavailabilitiesResponse,
+  CheckAvailabilityConflictsPayload,
+  ScheduleConflictCheckResponse,
+  ParticipantConflictResult,
+  ParticipantConflictDetail,
+  ScheduleCivilWindow,
 } from './types';
 
-export type { SmartChord, Announcement, MemberUnavailability, CreateUnavailabilityPayload, UpdateUnavailabilityPayload, UnavailabilitiesResponse };
+export type {
+  SmartChord,
+  Announcement,
+  MemberUnavailability,
+  CreateUnavailabilityPayload,
+  UpdateUnavailabilityPayload,
+  UnavailabilitiesResponse,
+  CheckAvailabilityConflictsPayload,
+  ScheduleConflictCheckResponse,
+  ParticipantConflictResult,
+  ParticipantConflictDetail,
+  ScheduleCivilWindow,
+};
 
 export function mapUnavailabilityFromApi(item: any): MemberUnavailability {
   return {
@@ -40,6 +57,35 @@ export function mapUnavailabilityFromApi(item: any): MemberUnavailability {
     reason: item?.reason ?? null,
     createdAt: item?.createdAt ?? item?.created_at ?? '',
     updatedAt: item?.updatedAt ?? item?.updated_at ?? '',
+  };
+}
+
+export function mapScheduleConflictResponseFromApi(data: any): ScheduleConflictCheckResponse {
+  return {
+    scheduleWindow: {
+      startsAt: data?.scheduleWindow?.startsAt ?? '',
+      endsAt: data?.scheduleWindow?.endsAt ?? '',
+      durationMinutes: typeof data?.scheduleWindow?.durationMinutes === 'number' ? data.scheduleWindow.durationMinutes : 120,
+      durationSource: data?.scheduleWindow?.durationSource === 'explicit' ? 'explicit' : 'legacy_fallback',
+    },
+    conflicts: Array.isArray(data?.conflicts)
+      ? data.conflicts.map((c: any) => ({
+          participantId: c?.participantId ?? '',
+          memberId: c?.memberId ?? null,
+          hasConflict: Boolean(c?.hasConflict),
+          unavailabilities: Array.isArray(c?.unavailabilities)
+            ? c.unavailabilities.map((u: any) => ({
+                id: u?.id ?? '',
+                startsAt: u?.startsAt ?? '',
+                endsAt: u?.endsAt ?? '',
+                allDay: Boolean(u?.allDay),
+              }))
+            : [],
+        }))
+      : [],
+    unresolvedParticipantIds: Array.isArray(data?.unresolvedParticipantIds)
+      ? data.unresolvedParticipantIds
+      : [],
   };
 }
 
@@ -1287,6 +1333,28 @@ export const api = {
       headers: getHeaders(),
     });
     return handleResponse<void>(response);
+  },
+
+  checkAvailabilityConflicts: async (
+    ministryId: string,
+    payload: CheckAvailabilityConflictsPayload
+  ): Promise<ScheduleConflictCheckResponse> => {
+    const bodyPayload: any = {
+      date: payload.date,
+      time: payload.time,
+      participantIds: payload.participantIds,
+    };
+    if (typeof payload.durationMinutes === 'number') {
+      bodyPayload.durationMinutes = payload.durationMinutes;
+    }
+
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/availability/check-conflicts`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(bodyPayload),
+    });
+    const result = await handleResponse<any>(response);
+    return mapScheduleConflictResponseFromApi(result);
   },
 
   // Planos e Assinaturas

@@ -71,6 +71,128 @@ describe('ScheduleRepository Hardened Comments Pagination', () => {
       expect(comments[1].id).toBe('c2');
       expect(comments[2].id).toBe('c3');
     });
+  });
 
+  describe('Schedule Duration & Persistence (Phase 6C)', () => {
+    it('persiste duration_minutes: 120 por padrão quando omitido na criação', async () => {
+      let savedData: any = null;
+      const mockDocRef = {
+        id: 'sched-new-1',
+        set: vi.fn().mockImplementation(async (data) => {
+          savedData = data;
+        }),
+      };
+      (repo as any).schedulesCol = {
+        doc: vi.fn().mockReturnValue(mockDocRef),
+      };
+
+      const result = await repo.createSchedule('min-1', 'user-1', {
+        title: 'Culto Noturno',
+        date: '2026-09-20',
+        time: '19:00',
+      });
+
+      expect(result.duration_minutes).toBe(120);
+      expect(result.durationMinutes).toBe(120);
+      expect(savedData.duration_minutes).toBe(120);
+    });
+
+    it('persiste duration_minutes customizado quando fornecido', async () => {
+      let savedData: any = null;
+      const mockDocRef = {
+        id: 'sched-new-2',
+        set: vi.fn().mockImplementation(async (data) => {
+          savedData = data;
+        }),
+      };
+      (repo as any).schedulesCol = {
+        doc: vi.fn().mockReturnValue(mockDocRef),
+      };
+
+      const result = await repo.createSchedule('min-1', 'user-1', {
+        title: 'Vigília',
+        date: '2026-09-20',
+        time: '22:00',
+        durationMinutes: 240,
+      });
+
+      expect(result.duration_minutes).toBe(240);
+      expect(result.durationMinutes).toBe(240);
+      expect(savedData.duration_minutes).toBe(240);
+    });
+
+    it('retorna durationMinutes mapeado a partir de duration_minutes no getScheduleById', async () => {
+      (repo as any).schedulesCol = {
+        doc: vi.fn().mockReturnValue({
+          get: vi.fn().mockResolvedValue({
+            exists: true,
+            id: 'sched-existing',
+            data: () => ({
+              id: 'sched-existing',
+              ministry_id: 'min-1',
+              title: 'Culto',
+              duration_minutes: 90,
+            }),
+          }),
+        }),
+      };
+
+      const sched = await repo.getScheduleById('sched-existing', 'min-1');
+      expect(sched.duration_minutes).toBe(90);
+      expect(sched.durationMinutes).toBe(90);
+    });
+
+    it('lida com escalas legadas sem duration_minutes preservando integridade (fallback não-mutante)', async () => {
+      (repo as any).schedulesCol = {
+        doc: vi.fn().mockReturnValue({
+          get: vi.fn().mockResolvedValue({
+            exists: true,
+            id: 'sched-legacy',
+            data: () => ({
+              id: 'sched-legacy',
+              ministry_id: 'min-1',
+              title: 'Culto Antigo',
+              // duration_minutes ausente
+            }),
+          }),
+        }),
+      };
+
+      const sched = await repo.getScheduleById('sched-legacy', 'min-1');
+      expect(sched.duration_minutes).toBeUndefined();
+      expect(sched.durationMinutes).toBeUndefined();
+    });
+
+    it('atualiza duration_minutes corretamente no updateSchedule', async () => {
+      let updatePayload: any = null;
+      const mockDocRef = {
+        id: 'sched-edit-1',
+        get: vi.fn().mockResolvedValue({
+          exists: true,
+          id: 'sched-edit-1',
+          data: () => ({
+            id: 'sched-edit-1',
+            ministry_id: 'min-1',
+            title: 'Culto',
+            duration_minutes: 180,
+          }),
+        }),
+        update: vi.fn().mockImplementation(async (payload) => {
+          updatePayload = payload;
+        }),
+      };
+
+      (repo as any).schedulesCol = {
+        doc: vi.fn().mockReturnValue(mockDocRef),
+      };
+
+      const updated = await repo.updateSchedule('sched-edit-1', 'min-1', {
+        durationMinutes: 180,
+      });
+
+      expect(updatePayload.duration_minutes).toBe(180);
+      expect(updatePayload.durationMinutes).toBeUndefined();
+      expect(updated.duration_minutes).toBe(180);
+    });
   });
 });

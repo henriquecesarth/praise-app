@@ -38,6 +38,8 @@ export interface ScheduleRecord {
   title: string;
   date: string;
   time: string;
+  duration_minutes?: number;
+  durationMinutes?: number;
   notes?: string;
   isVisible: boolean;
   colorPalette?: string;
@@ -66,7 +68,15 @@ export class ScheduleRepository {
 
   async getSchedulesByMinistry(ministryId: string): Promise<ScheduleRecord[]> {
     const snap = await this.schedulesCol.where('ministry_id', '==', ministryId).get();
-    const list = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as ScheduleRecord));
+    const list = snap.docs.map((doc) => {
+      const d = doc.data() || {};
+      return {
+        id: doc.id,
+        ...d,
+        duration_minutes: d.duration_minutes,
+        durationMinutes: d.duration_minutes !== undefined ? d.duration_minutes : d.durationMinutes,
+      } as ScheduleRecord;
+    });
     list.sort((a, b) => ((b.date || '') > (a.date || '') ? 1 : -1));
     return list;
   }
@@ -76,7 +86,13 @@ export class ScheduleRepository {
     if (!doc.exists) {
       throw new AppError(404, 'Escala não encontrada.');
     }
-    const data = { id: doc.id, ...doc.data() } as ScheduleRecord;
+    const raw = doc.data() || {};
+    const data = {
+      id: doc.id,
+      ...raw,
+      duration_minutes: raw.duration_minutes,
+      durationMinutes: raw.duration_minutes !== undefined ? raw.duration_minutes : raw.durationMinutes,
+    } as ScheduleRecord;
     if (data.ministry_id !== ministryId) {
       throw new AppError(404, 'Escala não encontrada.');
     }
@@ -87,6 +103,13 @@ export class ScheduleRepository {
     const now = new Date().toISOString();
     const ref = this.schedulesCol.doc();
 
+    const resolvedDuration =
+      data.duration_minutes !== undefined
+        ? data.duration_minutes
+        : (data as any).durationMinutes !== undefined
+          ? (data as any).durationMinutes
+          : 120;
+
     const scheduleData: ScheduleRecord = {
       id: ref.id,
       ministry_id: ministryId,
@@ -94,6 +117,8 @@ export class ScheduleRepository {
       title: data.title || 'Novo Culto',
       date: data.date || now.split('T')[0],
       time: data.time || '19:00',
+      duration_minutes: resolvedDuration,
+      durationMinutes: resolvedDuration,
       notes: data.notes || '',
       isVisible: data.isVisible !== undefined ? data.isVisible : true,
       colorPalette: data.colorPalette || '#7C3AED',
@@ -120,6 +145,11 @@ export class ScheduleRepository {
       updated_at: now,
     };
 
+    if ((data as any).durationMinutes !== undefined && data.duration_minutes === undefined) {
+      updatePayload.duration_minutes = (data as any).durationMinutes;
+      delete updatePayload.durationMinutes;
+    }
+
     // Mass assignment guard
     delete updatePayload.id;
     delete updatePayload.ministry_id;
@@ -127,7 +157,13 @@ export class ScheduleRepository {
 
     await ref.update(updatePayload);
     const updatedDoc = await ref.get();
-    return { id: updatedDoc.id, ...updatedDoc.data() } as ScheduleRecord;
+    const raw = updatedDoc.data() || {};
+    return {
+      id: updatedDoc.id,
+      ...raw,
+      duration_minutes: raw.duration_minutes,
+      durationMinutes: raw.duration_minutes !== undefined ? raw.duration_minutes : raw.durationMinutes,
+    } as ScheduleRecord;
   }
 
   async deleteSchedule(scheduleId: string, ministryId: string): Promise<void> {

@@ -512,4 +512,65 @@ describe('API Client & Structured Error Handling', () => {
       expect(options.method).toBe('DELETE');
     });
   });
+
+  describe('Availability Conflict Detection API (Phase 6C)', () => {
+    it('checkAvailabilityConflicts envia POST com payload correto e mapeia resposta', async () => {
+      const mockApiResponse = {
+        scheduleWindow: {
+          startsAt: '2026-09-20T19:00:00',
+          endsAt: '2026-09-20T21:00:00',
+          durationMinutes: 120,
+          durationSource: 'explicit',
+        },
+        conflicts: [
+          {
+            participantId: 'p-1',
+            memberId: 'mem-1',
+            hasConflict: true,
+            unavailabilities: [
+              {
+                id: 'un-1',
+                startsAt: '2026-09-20T18:00:00',
+                endsAt: '2026-09-20T20:00:00',
+                allDay: false,
+              },
+            ],
+          },
+        ],
+        unresolvedParticipantIds: ['p-unresolved'],
+      };
+
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify(mockApiResponse)),
+      } as any);
+      global.fetch = fetchSpy;
+
+      const result = await api.checkAvailabilityConflicts('min-123', {
+        date: '2026-09-20',
+        time: '19:00',
+        durationMinutes: 120,
+        participantIds: ['p-1', 'p-unresolved'],
+      });
+
+      const [url, options] = fetchSpy.mock.calls[0];
+      expect(url).toMatch(/\/ministries\/min-123\/availability\/check-conflicts$/);
+      expect(options.method).toBe('POST');
+      expect(JSON.parse(options.body)).toEqual({
+        date: '2026-09-20',
+        time: '19:00',
+        durationMinutes: 120,
+        participantIds: ['p-1', 'p-unresolved'],
+      });
+
+      expect(result.scheduleWindow.startsAt).toBe('2026-09-20T19:00:00');
+      expect(result.scheduleWindow.endsAt).toBe('2026-09-20T21:00:00');
+      expect(result.scheduleWindow.durationMinutes).toBe(120);
+      expect(result.conflicts).toHaveLength(1);
+      expect(result.conflicts[0].hasConflict).toBe(true);
+      expect(result.conflicts[0].unavailabilities).toHaveLength(1);
+      expect(result.unresolvedParticipantIds).toEqual(['p-unresolved']);
+    });
+  });
 });

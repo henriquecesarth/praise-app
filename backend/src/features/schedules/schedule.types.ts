@@ -4,6 +4,13 @@ export const createScheduleSchema = z.object({
   title: z.string().min(1, 'O título da escala é obrigatório.'),
   date: z.string(),
   time: z.string(),
+  durationMinutes: z
+    .number()
+    .int('A duração deve ser um número inteiro de minutos.')
+    .min(15, 'A duração mínima da escala é de 15 minutos.')
+    .max(1440, 'A duração máxima da escala é de 1440 minutos (24 horas).')
+    .optional()
+    .default(120),
   notes: z.string().optional(),
   isVisible: z.boolean().default(true),
   colorPalette: z.string().optional(),
