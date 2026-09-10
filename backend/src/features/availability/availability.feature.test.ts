@@ -10,6 +10,7 @@ import { AvailabilityController } from './availability.controller';
 import {
   createUnavailabilitySchema,
   updateUnavailabilitySchema,
+  listUnavailabilityQuerySchema,
 } from './availability.types';
 import { AppError } from '../../middleware/error-handler';
 
@@ -319,6 +320,22 @@ describe('Member Availability Feature Test Suite (Phase 6B)', () => {
       await service.listMyUnavailabilities(mockMinistryId, mockUserId, 50, cursor);
       expect(listSpy).toHaveBeenCalledWith(mockMinistryId, mockMemberId, 50, cursor);
     });
+
+    it('sanitiza limitCount NaN no repositório caindo no limite padrão com segurança', async () => {
+      const limitFn = vi.fn().mockReturnValue({
+        get: vi.fn().mockResolvedValue({ docs: [] }),
+      });
+      const orderByDocIdFn = vi.fn().mockReturnValue({ limit: limitFn });
+      const orderByStartsAtFn = vi.fn().mockReturnValue({ orderBy: orderByDocIdFn });
+      const whereMemberFn = vi.fn().mockReturnValue({ orderBy: orderByStartsAtFn });
+      const whereMinFn = vi.fn().mockReturnValue({ where: whereMemberFn });
+
+      vi.spyOn((repo as any).unavailabilitiesCol, 'where').mockImplementation(whereMinFn);
+
+      const result = await repo.listByMember(mockMinistryId, mockMemberId, NaN);
+      expect(result.data).toEqual([]);
+      expect(limitFn).toHaveBeenCalledWith(51); // 50 default + 1
+    });
   });
 
   describe('5. PATCH Unavailability (Ownership, Anti-IDOR & Invariant Re-validation)', () => {
@@ -543,6 +560,66 @@ describe('Member Availability Feature Test Suite (Phase 6B)', () => {
       await controller.listMyUnavailabilities(req, res, next);
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 401 }));
     });
+
+    it('listMyUnavailabilities rejeita limit inválido ou não numérico com HTTP 400', async () => {
+      const invalidLimits = ['abc', 'NaN', '0', '-5', '101', ''];
+      for (const lim of invalidLimits) {
+        const req: any = {
+          params: { ministryId: mockMinistryId },
+          user: { id: mockUserId },
+          query: { limit: lim },
+        };
+        const res: any = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+        const next = vi.fn();
+
+        await controller.listMyUnavailabilities(req, res, next);
+        expect(next).toHaveBeenCalledWith(
+          expect.objectContaining({
+            statusCode: 400,
+            message: 'O parâmetro limit deve ser um número inteiro entre 1 e 100.',
+            details: expect.objectContaining({ code: 'LIMIT_INVALID' }),
+          })
+        );
+      }
+    });
+
+    it('listMyUnavailabilities aceita limit válido e repassa como inteiro ao serviço', async () => {
+      const listSpy = vi.spyOn(service, 'listMyUnavailabilities').mockResolvedValue({
+        data: [],
+        nextCursor: null,
+      });
+
+      const req: any = {
+        params: { ministryId: mockMinistryId },
+        user: { id: mockUserId },
+        query: { limit: '25' },
+      };
+      const res: any = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+      const next = vi.fn();
+
+      await controller.listMyUnavailabilities(req, res, next);
+      expect(listSpy).toHaveBeenCalledWith(mockMinistryId, mockUserId, 25, undefined);
+      expect(res.json).toHaveBeenCalledWith({ data: [], nextCursor: null });
+    });
+
+    it('listMyUnavailabilities usa limit padrão 50 quando omitido', async () => {
+      const listSpy = vi.spyOn(service, 'listMyUnavailabilities').mockResolvedValue({
+        data: [],
+        nextCursor: null,
+      });
+
+      const req: any = {
+        params: { ministryId: mockMinistryId },
+        user: { id: mockUserId },
+        query: {},
+      };
+      const res: any = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+      const next = vi.fn();
+
+      await controller.listMyUnavailabilities(req, res, next);
+      expect(listSpy).toHaveBeenCalledWith(mockMinistryId, mockUserId, 50, undefined);
+      expect(res.json).toHaveBeenCalledWith({ data: [], nextCursor: null });
+    });
   });
 
   describe('8. Zod Schema Validation', () => {
@@ -572,6 +649,36 @@ describe('Member Availability Feature Test Suite (Phase 6B)', () => {
         reason: 'a'.repeat(256),
       });
       expect(invalid.success).toBe(false);
+    });
+
+    it('valida query parameters de listagem com listUnavailabilityQuerySchema', () => {
+      // Casos inválidos
+      const invalidCases = [
+        { limit: 'abc' },
+        { limit: 'NaN' },
+        { limit: '0' },
+        { limit: '-1' },
+        { limit: '101' },
+        { limit: '1.5' },
+      ];
+      for (const query of invalidCases) {
+        const result = listUnavailabilityQuerySchema.safeParse(query);
+        expect(result.success).toBe(false);
+      }
+
+      // Casos válidos
+      const validEmpty = listUnavailabilityQuerySchema.safeParse({});
+      expect(validEmpty.success).toBe(true);
+      if (validEmpty.success) {
+        expect(validEmpty.data.limit).toBe(50);
+      }
+
+      const validCustom = listUnavailabilityQuerySchema.safeParse({ limit: '20', cursor: 'tok-123' });
+      expect(validCustom.success).toBe(true);
+      if (validCustom.success) {
+        expect(validCustom.data.limit).toBe(20);
+        expect(validCustom.data.cursor).toBe('tok-123');
+      }
     });
   });
 });

@@ -374,4 +374,162 @@ describe('MemberAvailabilityView Component', () => {
 
     expect(screen.queryByText('Viagem de trabalho')).not.toBeInTheDocument();
   });
+
+  it('13. descarta resposta de paginação se o ministério mudar durante Load More (F-01 remediation)', async () => {
+    const user = userEvent.setup();
+
+    let resolveLoadMoreA: any;
+    const loadMoreAPromise = new Promise((resolve) => {
+      resolveLoadMoreA = resolve;
+    });
+
+    getMyUnavailabilities.mockImplementation((minId: string, _limit?: number, cursor?: string) => {
+      // 1. Initial list for Ministry A
+      if (minId === 'min-A' && !cursor) {
+        return Promise.resolve({
+          data: [mockAllDayItem],
+          nextCursor: 'cursor-A-page2',
+        });
+      }
+      // 2. Load More for Ministry A (pending)
+      if (minId === 'min-A' && cursor === 'cursor-A-page2') {
+        return loadMoreAPromise;
+      }
+      // 3. Initial list for Ministry B
+      if (minId === 'min-B' && !cursor) {
+        return Promise.resolve({
+          data: [mockTimedItem],
+          nextCursor: 'cursor-B-page2',
+        });
+      }
+      // 4. Load More for Ministry B (immediate)
+      if (minId === 'min-B' && cursor === 'cursor-B-page2') {
+        return Promise.resolve({
+          data: [{
+            ...mockTimedItem,
+            id: 'avail-B-page2',
+            startDate: '2026-09-26',
+            endDate: '2026-09-26',
+            reason: 'Item B da Página 2',
+          }],
+          nextCursor: 'cursor-B-page3',
+        });
+      }
+      return Promise.resolve({ data: [], nextCursor: null });
+    });
+
+    // 1. Render Ministry A
+    const { rerender } = render(
+      <MemberAvailabilityView ministryId="min-A" onBack={onBack} showToast={showToast} />
+    );
+
+    // 2. Initial A list resolves
+    await waitFor(() => {
+      expect(screen.getByText('Viagem de trabalho')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Carregar períodos anteriores' })).toBeInTheDocument();
+    });
+
+    // 3. Trigger Load More for A and leave promise pending
+    await user.click(screen.getByRole('button', { name: 'Carregar períodos anteriores' }));
+    expect(getMyUnavailabilities).toHaveBeenCalledWith('min-A', 50, 'cursor-A-page2');
+
+    // 4. Switch to Ministry B
+    rerender(
+      <MemberAvailabilityView ministryId="min-B" onBack={onBack} showToast={showToast} />
+    );
+
+    // 5. Ministry B list resolves
+    await waitFor(() => {
+      expect(screen.getByText('Consulta médica')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Viagem de trabalho')).not.toBeInTheDocument();
+
+    // 6. Delayed Ministry A pagination promise resolves afterward
+    resolveLoadMoreA({
+      data: [{
+        ...mockAllDayItem,
+        id: 'avail-stale-A2',
+        startDate: '2026-09-19',
+        endDate: '2026-09-19',
+        reason: 'Item Fantasma do Ministério A',
+      }],
+      nextCursor: 'cursor-stale-A-page3',
+    });
+
+    // 7. Rendered records remain exclusively B; A pagination records are NOT appended
+    await waitFor(() => {
+      expect(screen.getByText('Consulta médica')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Item Fantasma do Ministério A')).not.toBeInTheDocument();
+    expect(screen.queryByText('Viagem de trabalho')).not.toBeInTheDocument();
+
+    // 8. Ministry B pagination button still works and uses Ministry B's cursor, NOT Ministry A's stale cursor
+    const loadMoreBBtn = screen.getByRole('button', { name: 'Carregar períodos anteriores' });
+    await user.click(loadMoreBBtn);
+
+    await waitFor(() => {
+      expect(getMyUnavailabilities).toHaveBeenCalledWith('min-B', 50, 'cursor-B-page2');
+      expect(screen.getByText('Item B da Página 2')).toBeInTheDocument();
+    });
+    expect(getMyUnavailabilities).not.toHaveBeenCalledWith('min-B', 50, 'cursor-stale-A-page3');
+  });
+
+  it('14. descarta erro de paginação se o ministério mudar durante Load More', async () => {
+    const user = userEvent.setup();
+
+    let rejectLoadMoreA: any;
+    const loadMoreAPromise = new Promise((_resolve, reject) => {
+      rejectLoadMoreA = reject;
+    });
+
+    getMyUnavailabilities.mockImplementation((minId: string, _limit?: number, cursor?: string) => {
+      if (minId === 'min-A' && !cursor) {
+        return Promise.resolve({
+          data: [mockAllDayItem],
+          nextCursor: 'cursor-A-page2',
+        });
+      }
+      if (minId === 'min-A' && cursor === 'cursor-A-page2') {
+        return loadMoreAPromise;
+      }
+      if (minId === 'min-B' && !cursor) {
+        return Promise.resolve({
+          data: [mockTimedItem],
+          nextCursor: null,
+        });
+      }
+      return Promise.resolve({ data: [], nextCursor: null });
+    });
+
+    const { rerender } = render(
+      <MemberAvailabilityView ministryId="min-A" onBack={onBack} showToast={showToast} />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Carregar períodos anteriores' })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Carregar períodos anteriores' }));
+
+    // Switch to Ministry B
+    rerender(
+      <MemberAvailabilityView ministryId="min-B" onBack={onBack} showToast={showToast} />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Consulta médica')).toBeInTheDocument();
+    });
+
+    // Stale Ministry A pagination fails with network error
+    rejectLoadMoreA(new Error('Erro de conexão do Ministério A'));
+
+    // Verify toast is NOT shown for the stale Ministry A error
+    await waitFor(() => {
+      expect(screen.getByText('Consulta médica')).toBeInTheDocument();
+    });
+    expect(showToast).not.toHaveBeenCalledWith(
+      expect.stringContaining('Ministério A'),
+      'error'
+    );
+  });
 });

@@ -19,7 +19,24 @@ export class AvailabilityController extends BaseController {
         throw new AppError(401, 'Usuário não autenticado.');
       }
       const ministryId = (req.params.ministryId || req.params.groupId) as string;
-      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
+
+      let limit = 50;
+      if (req.query.limit !== undefined) {
+        const rawLimitStr = String(req.query.limit).trim();
+        if (!/^\d+$/.test(rawLimitStr)) {
+          throw new AppError(400, 'O parâmetro limit deve ser um número inteiro entre 1 e 100.', {
+            code: 'LIMIT_INVALID',
+          });
+        }
+        const parsed = parseInt(rawLimitStr, 10);
+        if (!Number.isFinite(parsed) || parsed < 1 || parsed > 100) {
+          throw new AppError(400, 'O parâmetro limit deve ser um número inteiro entre 1 e 100.', {
+            code: 'LIMIT_INVALID',
+          });
+        }
+        limit = parsed;
+      }
+
       const cursor = req.query.cursor ? String(req.query.cursor) : undefined;
 
       const result = await this.service.listMyUnavailabilities(ministryId, req.user.id, limit, cursor);

@@ -57,8 +57,26 @@ export const updateUnavailabilitySchema = z.object({
     .optional(),
 });
 
+export const listUnavailabilityQuerySchema = z.object({
+  limit: z
+    .string()
+    .regex(/^\d+$/, 'O parâmetro limit deve ser um número inteiro entre 1 e 100.')
+    .optional()
+    .default('50')
+    .transform((val) => parseInt(val, 10))
+    .pipe(
+      z
+        .number()
+        .int('O parâmetro limit deve ser um número inteiro.')
+        .min(1, 'O parâmetro limit deve ser no mínimo 1.')
+        .max(100, 'O parâmetro limit não pode ser superior a 100.')
+    ),
+  cursor: z.string().optional(),
+});
+
 export type CreateUnavailabilityInput = z.infer<typeof createUnavailabilitySchema>;
 export type UpdateUnavailabilityInput = z.infer<typeof updateUnavailabilitySchema>;
+export type ListUnavailabilityQueryInput = z.infer<typeof listUnavailabilityQuerySchema>;
 
 export interface MemberUnavailabilityDto {
   id: string;

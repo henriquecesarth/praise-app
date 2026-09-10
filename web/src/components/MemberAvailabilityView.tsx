@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../api';
 import { MemberUnavailability } from '../types';
 import {
@@ -57,8 +57,13 @@ export function MemberAvailabilityView({ ministryId, onBack, showToast }: Props)
   const [deletingItem, setDeletingItem] = useState<MemberUnavailability | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  // Tenant-switch safety: reset modals if ministry changes
+  // Request-generation token to cancel in-flight pagination requests when switching ministries
+  const paginationGenRef = useRef(0);
+
+  // Tenant-switch safety: reset modals, cancel in-flight pagination, and reset loadingMore
   useEffect(() => {
+    paginationGenRef.current += 1;
+    setLoadingMore(false);
     setShowModal(false);
     setDeletingItem(null);
   }, [ministryId]);
@@ -94,18 +99,24 @@ export function MemberAvailabilityView({ ministryId, onBack, showToast }: Props)
     return cleanup;
   }, [loadItems]);
 
-  // Load more pagination
+  // Load more pagination with tenant-switch safety
   const handleLoadMore = async () => {
     if (!nextCursor || loadingMore) return;
+    const currentGen = paginationGenRef.current;
+    const requestMinistryId = ministryId;
     setLoadingMore(true);
     try {
-      const res = await api.getMyUnavailabilities(ministryId, 50, nextCursor);
+      const res = await api.getMyUnavailabilities(requestMinistryId, 50, nextCursor);
+      if (paginationGenRef.current !== currentGen) return;
       setItems((prev) => [...prev, ...(res.data || [])]);
       setNextCursor(res.nextCursor);
     } catch (err: any) {
+      if (paginationGenRef.current !== currentGen) return;
       showToast(err.message || 'Erro ao carregar mais períodos.', 'error');
     } finally {
-      setLoadingMore(false);
+      if (paginationGenRef.current === currentGen) {
+        setLoadingMore(false);
+      }
     }
   };
 

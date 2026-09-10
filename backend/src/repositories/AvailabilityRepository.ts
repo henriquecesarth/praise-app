@@ -102,7 +102,8 @@ export class AvailabilityRepository {
     limitCount = 50,
     cursor?: string
   ): Promise<{ data: MemberUnavailabilityRecord[]; nextCursor: string | null }> {
-    const boundedLimit = Math.min(Math.max(1, limitCount), 100);
+    const rawLimit = Number.isFinite(limitCount) ? limitCount : 50;
+    const boundedLimit = Math.min(Math.max(1, rawLimit), 100);
 
     let query: any = this.unavailabilitiesCol
       .where('ministry_id', '==', ministryId)
