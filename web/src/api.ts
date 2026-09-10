@@ -1355,6 +1355,85 @@ export const api = {
     return handleResponse<void>(response);
   },
 
+  // Manual Member Availability (Phase 6D-2)
+  getManualMemberUnavailabilities: async (
+    ministryId: string,
+    memberId: string,
+    limit?: number,
+    cursor?: string
+  ): Promise<UnavailabilitiesResponse> => {
+    const params = new URLSearchParams();
+    if (limit) params.append('limit', String(limit));
+    if (cursor) params.append('cursor', cursor);
+    const queryString = params.toString();
+    const url = queryString
+      ? `${API_URL}/ministries/${ministryId}/availability/members/${memberId}?${queryString}`
+      : `${API_URL}/ministries/${ministryId}/availability/members/${memberId}`;
+
+    const response = await fetch(url, { headers: getHeaders() });
+    const result = await handleResponse<any>(response);
+    return {
+      data: (result?.data || []).map(mapUnavailabilityFromApi),
+      nextCursor: result?.nextCursor ?? null,
+    };
+  },
+
+  createManualMemberUnavailability: async (
+    ministryId: string,
+    memberId: string,
+    data: CreateUnavailabilityPayload
+  ): Promise<MemberUnavailability> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/availability/members/${memberId}`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({
+        startDate: data.startDate,
+        endDate: data.endDate,
+        startTime: data.startTime ?? null,
+        endTime: data.endTime ?? null,
+        allDay: data.allDay,
+        reason: data.reason ?? null,
+      }),
+    });
+    const result = await handleResponse<any>(response);
+    return mapUnavailabilityFromApi(result);
+  },
+
+  updateManualMemberUnavailability: async (
+    ministryId: string,
+    memberId: string,
+    id: string,
+    data: UpdateUnavailabilityPayload
+  ): Promise<MemberUnavailability> => {
+    const payload: any = {};
+    if (data.startDate !== undefined) payload.startDate = data.startDate;
+    if (data.endDate !== undefined) payload.endDate = data.endDate;
+    if (data.startTime !== undefined) payload.startTime = data.startTime;
+    if (data.endTime !== undefined) payload.endTime = data.endTime;
+    if (data.allDay !== undefined) payload.allDay = data.allDay;
+    if (data.reason !== undefined) payload.reason = data.reason;
+
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/availability/members/${memberId}/${id}`, {
+      method: 'PATCH',
+      headers: getHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const result = await handleResponse<any>(response);
+    return mapUnavailabilityFromApi(result);
+  },
+
+  deleteManualMemberUnavailability: async (
+    ministryId: string,
+    memberId: string,
+    id: string
+  ): Promise<void> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/availability/members/${memberId}/${id}`, {
+      method: 'DELETE',
+      headers: getHeaders(),
+    });
+    return handleResponse<void>(response);
+  },
+
   checkAvailabilityConflicts: async (
     ministryId: string,
     payload: CheckAvailabilityConflictsPayload

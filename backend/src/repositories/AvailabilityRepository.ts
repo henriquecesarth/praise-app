@@ -7,7 +7,7 @@ export interface MemberUnavailabilityRecord {
   id: string;
   ministry_id: string;
   member_id: string;
-  user_id: string;
+  user_id: string | null;
   start_date: string;
   end_date: string;
   start_time: string | null;
@@ -16,6 +16,9 @@ export interface MemberUnavailabilityRecord {
   starts_at: string;
   ends_at: string;
   reason: string | null;
+  management_source?: 'self_service' | 'admin_manual';
+  created_by_user_id?: string;
+  updated_by_user_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -146,7 +149,7 @@ export class AvailabilityRepository {
       id: doc.id,
       ministry_id: data.ministry_id,
       member_id: data.member_id,
-      user_id: data.user_id,
+      user_id: data.user_id ?? null,
       start_date: data.start_date,
       end_date: data.end_date,
       start_time: data.start_time ?? null,
@@ -155,6 +158,9 @@ export class AvailabilityRepository {
       starts_at: data.starts_at,
       ends_at: data.ends_at,
       reason: data.reason ?? null,
+      management_source: data.management_source,
+      created_by_user_id: data.created_by_user_id,
+      updated_by_user_id: data.updated_by_user_id,
       created_at: data.created_at || new Date().toISOString(),
       updated_at: data.updated_at || data.created_at || new Date().toISOString(),
     };
@@ -201,7 +207,7 @@ export class AvailabilityRepository {
         id: doc.id,
         ministry_id: raw.ministry_id,
         member_id: raw.member_id,
-        user_id: raw.user_id,
+        user_id: raw.user_id ?? null,
         start_date: raw.start_date,
         end_date: raw.end_date,
         start_time: raw.start_time ?? null,
@@ -210,6 +216,9 @@ export class AvailabilityRepository {
         starts_at: raw.starts_at,
         ends_at: raw.ends_at,
         reason: raw.reason ?? null,
+        management_source: raw.management_source,
+        created_by_user_id: raw.created_by_user_id,
+        updated_by_user_id: raw.updated_by_user_id,
         created_at: raw.created_at || new Date().toISOString(),
         updated_at: raw.updated_at || raw.created_at || new Date().toISOString(),
       };
@@ -255,6 +264,102 @@ export class AvailabilityRepository {
 
   async deleteUnavailability(id: string, ministryId: string): Promise<void> {
     await this.getById(id, ministryId);
+    await this.unavailabilitiesCol.doc(id).delete();
+  }
+
+  // ─── Manual Member Management Methods (Phase 6D-2) ──────────────────────────
+
+  async getManualById(id: string, ministryId: string, memberId: string): Promise<MemberUnavailabilityRecord> {
+    const doc = await this.unavailabilitiesCol.doc(id).get();
+    if (!doc.exists) {
+      throw new AppError(404, 'Indisponibilidade não encontrada.');
+    }
+
+    const data = doc.data();
+    if (!data || data.ministry_id !== ministryId || data.member_id !== memberId) {
+      // Fail closed to prevent cross-tenant and cross-member IDOR existence disclosure
+      throw new AppError(404, 'Indisponibilidade não encontrada.');
+    }
+
+    // Anti-takeover check: Cannot mutate or access authenticated self-service records via manual route
+    if (data.user_id !== null && data.user_id !== undefined) {
+      throw new AppError(403, 'Acesso negado: este registro pertence a um integrante autenticado self-service.', {
+        code: 'AUTHENTICATED_MEMBER_MUTATION_PROHIBITED',
+      });
+    }
+
+    if (data.management_source && data.management_source !== 'admin_manual') {
+      throw new AppError(403, 'Acesso negado: este registro pertence a um integrante autenticado self-service.', {
+        code: 'AUTHENTICATED_MEMBER_MUTATION_PROHIBITED',
+      });
+    }
+
+    return {
+      id: doc.id,
+      ministry_id: data.ministry_id,
+      member_id: data.member_id,
+      user_id: null,
+      start_date: data.start_date,
+      end_date: data.end_date,
+      start_time: data.start_time ?? null,
+      end_time: data.end_time ?? null,
+      all_day: Boolean(data.all_day),
+      starts_at: data.starts_at,
+      ends_at: data.ends_at,
+      reason: data.reason ?? null,
+      management_source: 'admin_manual',
+      created_by_user_id: data.created_by_user_id,
+      updated_by_user_id: data.updated_by_user_id,
+      created_at: data.created_at || new Date().toISOString(),
+      updated_at: data.updated_at || data.created_at || new Date().toISOString(),
+    };
+  }
+
+  async createManualUnavailability(
+    record: Omit<MemberUnavailabilityRecord, 'id'> & { id?: string }
+  ): Promise<MemberUnavailabilityRecord> {
+    const ref = record.id ? this.unavailabilitiesCol.doc(record.id) : this.unavailabilitiesCol.doc();
+    const finalRecord: MemberUnavailabilityRecord = {
+      ...record,
+      id: ref.id,
+      user_id: null,
+      management_source: 'admin_manual',
+    };
+    await ref.set(finalRecord);
+    return finalRecord;
+  }
+
+  async updateManualUnavailability(
+    id: string,
+    ministryId: string,
+    memberId: string,
+    updates: Partial<MemberUnavailabilityRecord>,
+    updaterUserId: string
+  ): Promise<MemberUnavailabilityRecord> {
+    const existing = await this.getManualById(id, ministryId, memberId);
+    const now = new Date().toISOString();
+
+    const sanitizedUpdates: any = {
+      ...updates,
+      updated_at: now,
+      updated_by_user_id: updaterUserId,
+    };
+
+    // Immutability of identity, tenancy, creator and management source
+    delete sanitizedUpdates.id;
+    delete sanitizedUpdates.ministry_id;
+    delete sanitizedUpdates.member_id;
+    delete sanitizedUpdates.user_id;
+    delete sanitizedUpdates.created_at;
+    delete sanitizedUpdates.created_by_user_id;
+    delete sanitizedUpdates.management_source;
+
+    await this.unavailabilitiesCol.doc(id).update(sanitizedUpdates);
+    return { ...existing, ...sanitizedUpdates };
+  }
+
+  async deleteManualUnavailability(id: string, ministryId: string, memberId: string): Promise<void> {
+    await this.getManualById(id, ministryId, memberId);
     await this.unavailabilitiesCol.doc(id).delete();
   }
 
@@ -316,7 +421,7 @@ export class AvailabilityRepository {
               id: doc.id,
               ministry_id: raw.ministry_id,
               member_id: raw.member_id,
-              user_id: raw.user_id,
+              user_id: raw.user_id ?? null,
               start_date: raw.start_date,
               end_date: raw.end_date,
               start_time: raw.start_time ?? null,
@@ -325,6 +430,9 @@ export class AvailabilityRepository {
               starts_at: raw.starts_at,
               ends_at: raw.ends_at,
               reason: raw.reason ?? null,
+              management_source: raw.management_source,
+              created_by_user_id: raw.created_by_user_id,
+              updated_by_user_id: raw.updated_by_user_id,
               created_at: raw.created_at || new Date().toISOString(),
               updated_at: raw.updated_at || raw.created_at || new Date().toISOString(),
             });
@@ -441,7 +549,7 @@ export class AvailabilityRepository {
           id: doc.id,
           ministry_id: raw.ministry_id,
           member_id: raw.member_id,
-          user_id: raw.user_id,
+          user_id: raw.user_id ?? null,
           start_date: raw.start_date,
           end_date: raw.end_date,
           start_time: raw.start_time ?? null,
@@ -450,6 +558,9 @@ export class AvailabilityRepository {
           starts_at: raw.starts_at,
           ends_at: raw.ends_at,
           reason: raw.reason ?? null,
+          management_source: raw.management_source,
+          created_by_user_id: raw.created_by_user_id,
+          updated_by_user_id: raw.updated_by_user_id,
           created_at: raw.created_at || new Date().toISOString(),
           updated_at: raw.updated_at || raw.created_at || new Date().toISOString(),
         };

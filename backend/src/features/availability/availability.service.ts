@@ -474,4 +474,184 @@ export class AvailabilityService {
       nextCursor: result.nextCursor,
     };
   }
+
+  // ─── Manual Member Management (Phase 6D-2) ─────────────────────────────────
+
+  /**
+   * Valida e resolve a membership de um integrante manual elegível.
+   * Regras estritas:
+   * 1. targetMembership pertence ao ministério ativo (anti-IDOR 404).
+   * 2. targetMembership.is_manual === true (elegibilidade manual).
+   * 3. targetMembership.user_id == null (elegibilidade manual).
+   * Se for membro autenticado, rejeita categoricamente com 403 AUTHENTICATED_MEMBER_MUTATION_PROHIBITED.
+   */
+  async resolveEligibleManualMembership(
+    ministryId: string,
+    memberId: string
+  ): Promise<any> {
+    if (!ministryId || !memberId) {
+      throw new AppError(400, 'Identificadores inválidos.');
+    }
+
+    const memberDoc = await this.membersCol.doc(memberId).get();
+    if (!memberDoc.exists) {
+      throw new AppError(404, 'Integrante não encontrado neste ministério.', {
+        code: 'MEMBER_NOT_FOUND',
+      });
+    }
+
+    const data = memberDoc.data();
+    if (!data || data.ministry_id !== ministryId) {
+      // Fail closed para não divulgar existência em outro ministério (anti-IDOR)
+      throw new AppError(404, 'Integrante não encontrado neste ministério.', {
+        code: 'MEMBER_NOT_FOUND',
+      });
+    }
+
+    const isManual = data.is_manual === true;
+    const hasNoUserId = data.user_id === null || data.user_id === undefined;
+
+    if (!isManual || !hasNoUserId) {
+      throw new AppError(
+        403,
+        'Apenas integrantes cadastrados manualmente podem ter disponibilidades gerenciadas por administradores.',
+        { code: 'AUTHENTICATED_MEMBER_MUTATION_PROHIBITED' }
+      );
+    }
+
+    return { id: memberDoc.id, ...data };
+  }
+
+  /**
+   * Lista indisponibilidades de um integrante manual específico.
+   * Acesso restrito a administradores.
+   * Motivo pessoal (reason) É incluído no DTO de retorno para integrantes manuais.
+   */
+  async listManualMemberUnavailabilities(
+    ministryId: string,
+    memberId: string,
+    limitCount = 50,
+    cursor?: string
+  ): Promise<{ data: MemberUnavailabilityDto[]; nextCursor: string | null }> {
+    await this.resolveEligibleManualMembership(ministryId, memberId);
+    const result = await this.repository.listByMember(ministryId, memberId, limitCount, cursor);
+    return {
+      data: result.data.map(mapToUnavailabilityDto),
+      nextCursor: result.nextCursor,
+    };
+  }
+
+  /**
+   * Cria indisponibilidade delegada para um integrante manual.
+   * Derivação estrita no backend:
+   * - user_id = null
+   * - management_source = 'admin_manual'
+   * - created_by_user_id = actorUserId
+   * - updated_by_user_id = actorUserId
+   */
+  async createManualMemberUnavailability(
+    ministryId: string,
+    memberId: string,
+    actorUserId: string,
+    input: CreateUnavailabilityInput
+  ): Promise<MemberUnavailabilityDto> {
+    await this.resolveEligibleManualMembership(ministryId, memberId);
+
+    // Validação calendárica e normalização civil
+    const normalized = normalizeCivilInterval({
+      startDate: input.startDate,
+      endDate: input.endDate,
+      startTime: input.startTime,
+      endTime: input.endTime,
+      allDay: input.allDay,
+    });
+
+    const now = new Date().toISOString();
+    const record: MemberUnavailabilityRecord = {
+      id: '',
+      ministry_id: ministryId,
+      member_id: memberId,
+      user_id: null,
+      start_date: normalized.startDate,
+      end_date: normalized.endDate,
+      start_time: normalized.startTime,
+      end_time: normalized.endTime,
+      all_day: normalized.allDay,
+      starts_at: normalized.startsAt,
+      ends_at: normalized.endsAt,
+      reason: input.reason?.trim() || null,
+      management_source: 'admin_manual',
+      created_by_user_id: actorUserId,
+      updated_by_user_id: actorUserId,
+      created_at: now,
+      updated_at: now,
+    };
+
+    const created = await this.repository.createManualUnavailability(record);
+    return mapToUnavailabilityDto(created);
+  }
+
+  /**
+   * Atualiza indisponibilidade delegada de um integrante manual.
+   * Valida estado fundido (merged domain state) com normalização temporal completa.
+   * Preserva imutabilidade de criador, ministério, membro e titularidade.
+   */
+  async updateManualMemberUnavailability(
+    id: string,
+    ministryId: string,
+    memberId: string,
+    actorUserId: string,
+    input: UpdateUnavailabilityInput
+  ): Promise<MemberUnavailabilityDto> {
+    await this.resolveEligibleManualMembership(ministryId, memberId);
+    const existing = await this.repository.getManualById(id, ministryId, memberId);
+
+    const mergedStartDate = input.startDate !== undefined ? input.startDate : existing.start_date;
+    const mergedEndDate = input.endDate !== undefined ? input.endDate : existing.end_date;
+    const mergedAllDay = input.allDay !== undefined ? input.allDay : existing.all_day;
+    const mergedStartTime = input.startTime !== undefined ? input.startTime : existing.start_time;
+    const mergedEndTime = input.endTime !== undefined ? input.endTime : existing.end_time;
+
+    const normalized = normalizeCivilInterval({
+      startDate: mergedStartDate,
+      endDate: mergedEndDate,
+      startTime: mergedStartTime,
+      endTime: mergedEndTime,
+      allDay: mergedAllDay,
+    });
+
+    const updates: Partial<MemberUnavailabilityRecord> = {
+      start_date: normalized.startDate,
+      end_date: normalized.endDate,
+      start_time: normalized.startTime,
+      end_time: normalized.endTime,
+      all_day: normalized.allDay,
+      starts_at: normalized.startsAt,
+      ends_at: normalized.endsAt,
+      ...(input.reason !== undefined ? { reason: input.reason?.trim() || null } : {}),
+    };
+
+    const updated = await this.repository.updateManualUnavailability(
+      id,
+      ministryId,
+      memberId,
+      updates,
+      actorUserId
+    );
+    return mapToUnavailabilityDto(updated);
+  }
+
+  /**
+   * Exclui indisponibilidade delegada de um integrante manual.
+   * Valida posse cumulativa e proíbe exclusão de registros autenticados via rota manual.
+   */
+  async deleteManualMemberUnavailability(
+    id: string,
+    ministryId: string,
+    memberId: string,
+    _actorUserId: string
+  ): Promise<void> {
+    await this.resolveEligibleManualMembership(ministryId, memberId);
+    await this.repository.deleteManualUnavailability(id, ministryId, memberId);
+  }
 }

@@ -104,6 +104,16 @@ Funções musicais como Ministro, Vocalista, Violão e Bateria são classificaç
 - privacidade absoluta: o motivo (`reason`) e metadados internos de usuário são omitidos das respostas da API e da interface administrativa;
 - interface `AdminAvailabilityView` integrada à área de ministério sob "Planejamento de Escalas" com presets rápidos (7d, 15d, 30d, mês atual), seletor customizado, dropdown de integrante, touch targets >= 44px e proteção contra race conditions.
 
+### Manual Member Availability Management
+
+- gestão administrativa delegada de períodos de indisponibilidade exclusivamente para integrantes manuais (`is_manual === true` e `user_id == null`) do ministério (Phase 6D-2);
+- separação estrita de Actor (`req.user.id`) e Subject (`member_id`), impedindo a apropriação indevida ou forja de autoria;
+- bloqueio anti-takeover categórico: mutações administrativas sobre indisponibilidades de membros com conta vinculada ou registros autodeclarados são sumariamente rejeitadas com HTTP 403 `AUTHENTICATED_MEMBER_MUTATION_PROHIBITED`;
+- persistência em Firestore (`member_unavailabilities`) com `user_id: null`, fonte `management_source: 'admin_manual'` e campos de auditoria server-side (`created_by_user_id`, `updated_by_user_id`);
+- preservação e exibição de motivo pessoal (`reason`) exclusivamente dentro da gestão operacional do membro manual pelo administrador, mantendo a omissão rigorosa em conferências de escalas (6C) e visão consolidada (6D-1);
+- integração na interface através do modal acessível `ManualMemberAvailabilityModal.tsx` acionado pelo botão "Gerenciar indisponibilidade" no menu de ações do membro em `MinistryView.tsx`;
+- total retrocompatibilidade e interoperabilidade com os motores de detecção de conflitos e visualização consolidada sem necessidade de novos índices no banco de dados.
+
 ### PWA
 
 - manifest instalável;

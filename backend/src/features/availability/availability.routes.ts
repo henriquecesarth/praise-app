@@ -34,4 +34,29 @@ router.post('/my', requireMinistryRole('member'), validate(createUnavailabilityS
 router.patch('/my/:id', requireMinistryRole('member'), validate(updateUnavailabilitySchema), controller.updateMyUnavailability);
 router.delete('/my/:id', requireMinistryRole('member'), controller.deleteMyUnavailability);
 
+// ─── Manual Member Availability (Phase 6D-2) ──────────────────────────────
+router.get(
+  '/members/:memberId',
+  requireMinistryRole('admin'),
+  validate(listUnavailabilityQuerySchema, 'query'),
+  controller.listManualMemberUnavailabilities
+);
+router.post(
+  '/members/:memberId',
+  requireMinistryRole('admin'),
+  validate(createUnavailabilitySchema),
+  controller.createManualMemberUnavailability
+);
+router.patch(
+  '/members/:memberId/:id',
+  requireMinistryRole('admin'),
+  validate(updateUnavailabilitySchema),
+  controller.updateManualMemberUnavailability
+);
+router.delete(
+  '/members/:memberId/:id',
+  requireMinistryRole('admin'),
+  controller.deleteManualMemberUnavailability
+);
+
 export default router;

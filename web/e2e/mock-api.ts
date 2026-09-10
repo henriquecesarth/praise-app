@@ -79,7 +79,8 @@ export async function installMockApi(page: Page, options: MockApiOptions = {}) {
     const method = request.method();
     const path = new URL(request.url()).pathname.replace(/^.*\/api\/v1/, '');
 
-    if (method !== 'GET') writes.push({ method, path });
+    if (method !== 'GET' && !path.endsWith('/availability/check-conflicts')) writes.push({ method, path });
+    if (path.endsWith('/availability/check-conflicts') && method === 'POST') return json(route, { conflicts: [], metadata: { checkedCount: 0 } });
     if (path === '/auth/login' && method === 'POST') return json(route, { user: mockUser, token: 'isolated-e2e-token' });
     if (path === '/auth/signup' && method === 'POST') return json(route, { user: mockUser, token: 'isolated-e2e-token' });
     if (path === '/auth/me') return json(route, mockUser);

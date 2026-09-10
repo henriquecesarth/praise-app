@@ -11,6 +11,7 @@ import { TemplatesView } from './TemplatesView';
 import { SubscriptionPlanView } from './SubscriptionPlanView';
 import { MemberAvailabilityView } from './MemberAvailabilityView';
 import { AdminAvailabilityView } from './AdminAvailabilityView';
+import { ManualMemberAvailabilityModal } from './ManualMemberAvailabilityModal';
 import {
   Edit2, Check, X, UserPlus, Users, Info, Link, Shield, Tag,
   Layers, Trash2, LogOut, ChevronRight, MoreVertical, Plus, User,
@@ -130,10 +131,14 @@ export function MinistryView({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
+  // Manual member availability modal (Phase 6D-2)
+  const [manualAvailabilityMember, setManualAvailabilityMember] = useState<MinistryMemberItem | null>(null);
+
   const addBtnRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     setNameValue(activeMinistry.name);
+    setManualAvailabilityMember(null);
   }, [activeMinistry]);
 
   useEffect(() => {
@@ -858,6 +863,19 @@ export function MinistryView({
                         </button>
                         {openMenuId === member.id && (
                           <div className="member-menu-dropdown" style={{ right: 0, top: '100%', minWidth: '160px', zIndex: 20 }}>
+                            {member.isManual && (
+                              <button
+                                className="member-menu-item"
+                                onClick={() => {
+                                  setManualAvailabilityMember(member);
+                                  setOpenMenuId(null);
+                                }}
+                                style={{ minHeight: '44px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '8px' }}
+                              >
+                                <CalendarDays size={16} />
+                                <span>Gerenciar indisponibilidade</span>
+                              </button>
+                            )}
                             <button
                               className="member-menu-item"
                               onClick={() => handleOpenEditMember(member)}
@@ -1194,6 +1212,20 @@ export function MinistryView({
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── MODAL: Manual member availability (Phase 6D-2) ── */}
+      {manualAvailabilityMember && (
+        <ManualMemberAvailabilityModal
+          ministryId={activeMinistry.id}
+          member={{
+            id: manualAvailabilityMember.id,
+            name: manualAvailabilityMember.name,
+            isManual: manualAvailabilityMember.isManual,
+          }}
+          onClose={() => setManualAvailabilityMember(null)}
+          showToast={showToast}
+        />
       )}
 
       {/* Close menus on outside click */}
