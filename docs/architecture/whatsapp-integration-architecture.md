@@ -49,6 +49,7 @@ All WhatsApp-related persistence is strictly structured as **Root Collections**:
 | `organizations` | Root Collection | `id` (UUID / nanoid) | Institutional entity representing the Church. |
 | `organization_members` | Root Collection | `id` (`${organization_id}_${user_id}`) | Membership and administrative RBAC for the Organization. |
 | `whatsapp_connections` | Root Collection | `id` (`wac_*`), `organization_id` | Provisioned phone numbers and connection states (Phase 7C). |
+| `whatsapp_provider_identity_claims` | Root Collection | `id` (`claim_${provider}_${provider_phone_number_id}`) | Atomic platform-wide provider identity uniqueness claims (Phase 7C). |
 | `whatsapp_connection_secrets` | Restricted Root Collection | `id` (matches `connection_id`), `organization_id` | Encrypted access tokens and security metadata (Phase 7C). |
 | `whatsapp_messages` | Root Collection | `id` (`wamsg_*`), `organization_id`, `ministry_id` | Transactional notification audit log and dispatch state (Phase 7G). |
 | `whatsapp_webhook_events` | Root Collection | `id` (`wbh_*` or hash), `provider_event_id` | Sanitized webhook delivery log for deduplication (Phase 7E). |
@@ -363,6 +364,21 @@ When Ministry M requests message dispatch (Phase 7G):
    - If `connection.status === 'connected'`: **Dispatch via Organization Default Connection**.
    - If `connection.status !== 'connected'`: **Fail Closed with `CONNECTION_NOT_ACTIVE`**.
 
+### 6. Lifecycle Transitions: Default & Assignment Preservation Rules (DEC-7C-11)
+Across connection status transitions, pointers and assignments adhere to strict preservation vs cleanup invariants:
+
+| Transition | Organization Default Pointer (`default_whatsapp_connection_id`) | Exclusive Ministry Assignment (`assigned_ministry_id`) | Routing / Dispatch Outcome |
+| :--- | :--- | :--- | :--- |
+| **`connected → error`** | **PRESERVED** | **PRESERVED** | Resolver returns `CONNECTION_NOT_ACTIVE`; zero fallback to default; resumes automatically once error cleared. |
+| **`connected → disabled_by_user`** | **PRESERVED** | **PRESERVED** | Resolver returns `CONNECTION_NOT_ACTIVE`; zero fallback to default; resumes automatically once unpaused. |
+| **`connected → disconnected`** (terminal) | **CLEARED ATOMICALLY** (`null`) | **CLEARED ATOMICALLY** (`null`) | Organization retains NO dead default pointer; Ministry assignment is freed, returning Ministry to unassigned state. |
+| **`error → disconnected`** (terminal) | **CLEARED ATOMICALLY** (`null`) | **CLEARED ATOMICALLY** (`null`) | Organization retains NO dead default pointer; Ministry assignment is freed, returning Ministry to unassigned state. |
+| **`disabled_by_user → disconnected`** (terminal)| **CLEARED ATOMICALLY** (`null`) | **CLEARED ATOMICALLY** (`null`) | Organization retains NO dead default pointer; Ministry assignment is freed, returning Ministry to unassigned state. |
+| **`pending → disconnected`** (cancelled/expired)| **NO ACTION** (never set during pending) | **NO ACTION** (never set during pending) | Pending slot released; zero pointer/assignment mutations. |
+
+- **Invariant: No Stale Pointers:** An Organization must NEVER retain `default_whatsapp_connection_id` pointing to a connection with status `disconnected`.
+- **Invariant: No Dead Assignment Locks:** A Ministry must NEVER remain indefinitely locked to a `disconnected` connection. Clearing `assigned_ministry_id` on terminal disconnect releases the 1:1 constraint and permits immediate fallback to the Organization default or assignment to a newly provisioned connection.
+
 ---
 
 ## 12. Recipient Phone Normalization & Validation (DEC-7A-22-R1)
@@ -552,16 +568,18 @@ The following items are external dependencies on Meta's WhatsApp Cloud API platf
 | **DEC-7A-27-R1**| **Finalized** | Owner Derivation & Provisioning Authority | `INITIAL_ORG_OWNER_SOURCE: ministry.owner_user_id`; provisioning restricted strictly to Ministry Owner. |
 | **DEC-7A-28** | **New** | Billing Anchor Immutability in 7B | Public REST API does not mutate billing anchor in Phase 7B foundation. |
 | **DEC-7A-29** | **New** | Commercial Entitlement Phase Split | 7B evaluates commercial capacity; 7C evaluates connection usage/over-limit; 7H evaluates add-on checkout. |
-| **DEC-7C-01** | **Frozen** | Canonical Connection Schema & Nullability | Defines `WhatsAppConnectionRecord` with exact 6-status lifecycle nullability matrix; provider IDs nullable in `pending`. |
+| **DEC-7C-01** | **Frozen** | Canonical Connection Schema & Nullability | Defines `WhatsAppConnectionRecord` with exact 6-status lifecycle nullability matrix; provider IDs nullable in `pending` and unmaterialized `disconnected`. |
 | **DEC-7C-02** | **Frozen** | Default Connection Single Source of Truth | `organizations.default_whatsapp_connection_id` is sole canonical authority; `is_organization_default` removed from persistence, derived in DTO. |
 | **DEC-7C-03** | **Frozen** | Exclusive Unusable Fallback Prevention | Unusable exclusive connection fails with `CONNECTION_NOT_ACTIVE`; zero silent fallback to Organization default. |
-| **DEC-7C-04** | **Frozen** | Status Model & Over-Limit Reachability | 6 active lifecycle states; `disabled_over_limit` removed; over-limit represented via `connectionAccessMode = 'restricted_over_limit'`. |
-| **DEC-7C-05** | **Frozen** | Disconnect Responsibility & Boundaries | Internal domain disconnect in 7C; public disconnect and webhook unregistration activated in Phase 7D. |
+| **DEC-7C-04** | **Frozen** | Status Model & Transition Matrix | 6 states; `disabled_over_limit` eliminated; over-limit evaluated dynamically; complete 6x6 transition matrix frozen; `disconnected` is terminal. |
+| **DEC-7C-05** | **Frozen** | Atomic Terminal Disconnect Transaction | Disconnect runs in atomic transaction: clears default pointer, clears ministry assignment, deletes provider claim, purges secret; public endpoint deferred to 7D. |
 | **DEC-7C-06** | **Frozen** | Capacity-Consuming Status Set | Configured count evaluates `['pending', 'connecting', 'connected', 'error', 'disabled_by_user']`; `disconnected` is excluded. |
-| **DEC-7C-07** | **Frozen** | Provider Identity Uniqueness | Enforces platform uniqueness on `provider_phone_number_id` among non-disconnected connections. |
+| **DEC-7C-07** | **Superseded** | Atomic Provider Identity Claims | Replaces check-then-write query with deterministic transactional claim (`whatsapp_provider_identity_claims`) for race-safe global phone uniqueness. |
 | **DEC-7C-08** | **Frozen** | Crypto Storage Encoding & Config Loading | Base64 encoding for ciphertext, IV, auth tag; optional config at boot, fail-closed runtime validation upon crypto invocation. |
-| **DEC-7C-09** | **Frozen** | Composite Index & Query Contract | Declares 3 composite indexes for `whatsapp_connections` in `firestore.indexes.json`; deployment required before production release. |
+| **DEC-7C-09** | **Frozen** | Composite Index & Query Contract | Declares 3 composite indexes for `whatsapp_connections` in `firestore.indexes.json`; deterministic claim lookups require no composite indexes. |
 | **DEC-7C-10** | **Frozen** | Pending TTL Ownership | Schema includes `pending_expires_at` (24h); automated cleanup sweeper deferred to Phase 7D onboarding. |
+| **DEC-7C-11** | **New** | Terminal Disconnect Cleanup Invariants | Disconnect atomically clears `default_whatsapp_connection_id` and `assigned_ministry_id`; assignments strictly preserved across transient `error` and `disabled_by_user`. |
+| **DEC-7C-12** | **New** | Disconnected Nullability Reconciliation | Schema permits null provider identifiers in `disconnected` specifically for unmaterialized pending onboarding reservations cancelled or expired. |
 
 ---
 
@@ -665,7 +683,7 @@ The following technical specification defines the exact scope for **Phase 7C (Wh
 
 ### 1. Data Contracts & Persistence Schemas
 
-#### A. `WhatsAppConnectionStatus` (DEC-7C-04)
+#### A. `WhatsAppConnectionStatus` & Transition Matrix (DEC-7C-04)
 The lifecycle status is restricted to exactly 6 frozen states:
 ```typescript
 export type WhatsAppConnectionStatus =
@@ -678,19 +696,33 @@ export type WhatsAppConnectionStatus =
 ```
 *(Note: `disabled_over_limit` is explicitly eliminated per DEC-7C-04. Quota violations do not mutate individual connection statuses; they are evaluated dynamically as an aggregate Organization mode `connectionAccessMode = 'restricted_over_limit'`.)*
 
+##### Complete Allowed State Transition Matrix
+Every lifecycle transition is explicitly defined as **ALLOWED** or **FORBIDDEN**:
+
+| From \ To | `pending` | `connecting` | `connected` | `error` | `disabled_by_user` | `disconnected` |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **`pending`** | - | **ALLOWED** (Meta OAuth code received, exchanging token) | FORBIDDEN (Must pass connecting) | FORBIDDEN (Token errors route via connecting or expire) | FORBIDDEN (Cannot pause incomplete signup) | **ALLOWED** (Admin cancels onboarding or 24h TTL expires) |
+| **`connecting`** | FORBIDDEN | - | **ALLOWED** (Token verified, phone registered, webhook active) | **ALLOWED** (Token exchange failed, registration rejected, webhook failed) | FORBIDDEN (Cannot pause during handshake) | **ALLOWED** (Admin aborts onboarding attempt) |
+| **`connected`** | FORBIDDEN | FORBIDDEN | - | **ALLOWED** (Health check failure, token revoked, WABA banned) | **ALLOWED** (Org Admin manually pauses line) | **ALLOWED** (Org Admin disconnects line; triggers terminal cleanup) |
+| **`error`** | FORBIDDEN | **ALLOWED** (Re-auth / token refresh / reconnect initiated) | **ALLOWED** (Health check succeeds / transient error cleared) | - | **ALLOWED** (Admin pauses problematic line) | **ALLOWED** (Admin unlinks problematic line) |
+| **`disabled_by_user`**| FORBIDDEN | FORBIDDEN | **ALLOWED** (Org Admin resumes line) | FORBIDDEN (Paused line is not active/health checked) | - | **ALLOWED** (Org Admin disconnects line) |
+| **`disconnected`** | FORBIDDEN | FORBIDDEN | FORBIDDEN | FORBIDDEN | FORBIDDEN | - (TERMINAL: All outbound transitions FORBIDDEN) |
+
+- **Terminality Rule:** `disconnected` is strictly terminal. Re-onboarding the same phone number in Phase 7D initiates a brand new connection aggregate (`wac_*`) and acquires a fresh provider identity claim.
+
 #### B. `whatsapp_connections` (Root Collection Schema — DEC-7C-01, DEC-7C-02)
 ```typescript
 export interface WhatsAppConnectionRecord {
   id: string; // Document ID: `wac_${nanoid(20)}` or uuid
   organization_id: string; // Foreign key to organizations (tenant authority)
   display_name: string; // LouvAIO-local administrative label (1..100 chars)
-  phone_number: string | null; // Canonical E.164 string; null in pending
+  phone_number: string | null; // Canonical E.164 string; null in pending / expired pending
   provider: 'meta_cloud_api'; // Vendor platform identifier
-  provider_waba_id: string | null; // Meta WABA ID; null in pending
-  provider_phone_number_id: string | null; // Meta Phone Number ID; null in pending
+  provider_waba_id: string | null; // Meta WABA ID; null in pending / expired pending
+  provider_phone_number_id: string | null; // Meta Phone Number ID; null in pending / expired pending
   status: WhatsAppConnectionStatus; // Current lifecycle status
   status_reason: string | null; // Sanitized internal status reason code (max 255 chars)
-  assigned_ministry_id: string | null; // Foreign key to ministries (exclusive assignment); null if unassigned
+  assigned_ministry_id: string | null; // Foreign key to ministries (exclusive assignment); null if unassigned or disconnected
   created_by_user_id: string; // Firebase Auth UID of creating Org Admin
   pending_expires_at: string | null; // ISO 8601 UTC; 24h TTL for 'pending'; null for all other statuses
   last_connected_at: string | null; // ISO 8601 UTC timestamp of last active connection
@@ -706,13 +738,13 @@ export interface WhatsAppConnectionRecord {
 | `id` | `string` | No | Server | Creation (`wac_*`) | No |
 | `organization_id` | `string` | No | Server | Creation (derived from route) | No |
 | `display_name` | `string` | No | Org Admin / Server | Creation (user-supplied) | **Yes** (1..100 chars) |
-| `phone_number` | `string` | Yes (in `pending`) | Server (via Provider) | Populated on registration | No |
+| `phone_number` | `string` | Yes (in `pending`/expired) | Server (via Provider) | Populated on registration | No |
 | `provider` | `'meta_cloud_api'` | No | Server | Creation (`'meta_cloud_api'`) | No |
-| `provider_waba_id` | `string` | Yes (in `pending`) | Server (via Provider) | Populated on token exchange | No |
-| `provider_phone_number_id`| `string` | Yes (in `pending`) | Server (via Provider) | Populated on registration | No |
+| `provider_waba_id` | `string` | Yes (in `pending`/expired) | Server (via Provider) | Populated on token exchange | No |
+| `provider_phone_number_id`| `string` | Yes (in `pending`/expired) | Server (via Provider) | Populated on registration | No |
 | `status` | `WhatsAppConnectionStatus` | No | Server | Initial `'pending'` / transitions | No |
 | `status_reason` | `string` | Yes | Server | Populated on error/timeout | No |
-| `assigned_ministry_id` | `string` | Yes | Org Admin / Server | Assigned or null | **Yes** (via dedicated assign) |
+| `assigned_ministry_id` | `string` | Yes | Org Admin / Server | Assigned or null (cleared on disconnect) | **Yes** (via dedicated assign) |
 | `created_by_user_id` | `string` | No | Server | Creation (`req.user.id`) | No |
 | `pending_expires_at` | `string` | Yes | Server | Creation (now + 24h for pending)| No |
 | `last_connected_at` | `string` | Yes | Server | On entering `connected` | No |
@@ -720,7 +752,7 @@ export interface WhatsAppConnectionRecord {
 | `created_at` | `string` | No | Server | Creation (ISO 8601 UTC) | No |
 | `updated_at` | `string` | No | Server | Mutation (ISO 8601 UTC) | No |
 
-#### D. Pre-Connected Lifecycle State vs Nullability Matrix (DEC-7C-01)
+#### D. Pre-Connected Lifecycle State vs Nullability Matrix (DEC-7C-01, DEC-7C-12)
 | Field | `pending` | `connecting` | `connected` | `error` | `disabled_by_user` | `disconnected` |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
 | `id` | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
@@ -731,16 +763,16 @@ export interface WhatsAppConnectionRecord {
 | `created_by_user_id` | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
 | `created_at` | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
 | `updated_at` | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
-| `phone_number` | **NULL ALLOWED** | **REQUIRED** | **REQUIRED** | **REQUIRED** | **REQUIRED** | **REQUIRED** |
-| `provider_waba_id` | **NULL ALLOWED** | **REQUIRED** | **REQUIRED** | **REQUIRED** | **REQUIRED** | **REQUIRED** |
-| `provider_phone_number_id`| **NULL ALLOWED** | **REQUIRED** | **REQUIRED** | **REQUIRED** | **REQUIRED** | **REQUIRED** |
-| `pending_expires_at` | **REQUIRED** (24h) | **MUST BE NULL** | **MUST BE NULL** | **MUST BE NULL** | **MUST BE NULL** | **MUST BE NULL** |
-| `assigned_ministry_id` | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED |
+| `phone_number` | **NULL ALLOWED** | **REQUIRED** | **REQUIRED** | **REQUIRED** | **REQUIRED** | **NULL ALLOWED** (null if cancelled/expired from pending; required string if disconnected from active) |
+| `provider_waba_id` | **NULL ALLOWED** | **REQUIRED** | **REQUIRED** | **REQUIRED** | **REQUIRED** | **NULL ALLOWED** (null if cancelled/expired from pending; required string if disconnected from active) |
+| `provider_phone_number_id`| **NULL ALLOWED** | **REQUIRED** | **REQUIRED** | **REQUIRED** | **REQUIRED** | **NULL ALLOWED** (null if cancelled/expired from pending; required string if disconnected from active) |
+| `pending_expires_at` | **REQUIRED** (24h) | **MUST BE NULL** | **MUST BE NULL** | **MUST BE NULL** | **MUST BE NULL** | **MUST BE NULL** (cleared upon disconnect) |
+| `assigned_ministry_id` | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED | **MUST BE NULL** (cleared on terminal disconnect per DEC-7C-11) |
 | `status_reason` | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED |
-| `last_connected_at` | NULL ALLOWED | NULL ALLOWED | **REQUIRED** | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED |
+| `last_connected_at` | **MUST BE NULL** | NULL ALLOWED | **REQUIRED** | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED (retains timestamp if was previously connected) |
 | `last_health_check_at` | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED |
 
-*Timing Note:* The exact moment Meta SDK yields `phone_number` vs `provider_waba_id` in Phase 7D remains cataloged as `[EXTERNAL META VALIDATION REQUIRED]`. Phase 7C persistence strictly tolerates null provider identity fields in `pending` status without guessing Meta callback sequence.
+*Timing Note:* The exact moment Meta SDK yields `phone_number` vs `provider_waba_id` in Phase 7D remains cataloged as `[EXTERNAL META VALIDATION REQUIRED]`. Phase 7C persistence strictly tolerates null provider identity fields in `pending` and unmaterialized `disconnected` statuses without guessing Meta callback sequence.
 
 #### E. `whatsapp_connection_secrets` (Restricted Root Collection Schema — DEC-7C-08)
 ```typescript
@@ -759,6 +791,20 @@ export interface WhatsAppConnectionSecretRecord {
 }
 ```
 
+#### F. `whatsapp_provider_identity_claims` (Root Collection Schema — DEC-7C-07)
+```typescript
+export interface WhatsAppProviderIdentityClaimRecord {
+  id: string; // Deterministic claim ID: `claim_${provider}_${provider_phone_number_id}`
+  provider: 'meta_cloud_api'; // Provider identifier
+  provider_phone_number_id: string; // Meta Phone Number ID (foreign uniqueness key)
+  organization_id: string; // Tenant context
+  connection_id: string; // Foreign key to claiming whatsapp_connections record
+  created_at: string; // ISO 8601 UTC
+  updated_at: string; // ISO 8601 UTC
+}
+```
+*Purpose & Atomic Concurrency Guarantees:* Guarantees platform-wide uniqueness of `provider_phone_number_id` without check-then-write race conditions. The document ID is deterministically derived (`claim_meta_cloud_api_${phoneId}`). Concurrent registration attempts collide transactionally on this document. On terminal disconnect, the claim is deleted in the disconnect transaction, releasing the number for future re-onboarding.
+
 ---
 
 ### 2. Repositories to Implement in Phase 7C
@@ -768,16 +814,28 @@ export interface WhatsAppConnectionSecretRecord {
 - `listConnectionsByOrganization(orgId: string, limit?: number): Promise<WhatsAppConnectionRecord[]>`
 - `findAssignedConnectionForMinistry(orgId: string, ministryId: string): Promise<WhatsAppConnectionRecord | null>`
 - `countConfiguredConnections(orgId: string): Promise<number>` (counts statuses in `CONFIG_CONSUMING_STATUSES`)
-- `findByProviderPhoneNumberId(phoneId: string): Promise<WhatsAppConnectionRecord | null>`
+- `findByProviderPhoneNumberId(phoneId: string): Promise<WhatsAppConnectionRecord | null>` (diagnostic / webhook lookup; uniqueness enforced via claims)
 - `createConnection(data: CreateWhatsAppConnectionData): Promise<WhatsAppConnectionRecord>` (internal only)
 - `updateConnection(orgId: string, connectionId: string, data: Partial<WhatsAppConnectionRecord>): Promise<void>`
 - `setConnectionStatus(orgId: string, connectionId: string, status: WhatsAppConnectionStatus, reason?: string | null): Promise<void>`
-- `disconnectConnection(orgId: string, connectionId: string): Promise<void>` (internal atomic domain disconnect)
+- `disconnectConnection(orgId: string, connectionId: string): Promise<void>` (internal atomic domain disconnect transaction):
+  - In a single Firestore transaction:
+    1. Reads target connection and owning organization;
+    2. If `org.default_whatsapp_connection_id === connectionId`, sets `default_whatsapp_connection_id = null`;
+    3. Sets `connection.assigned_ministry_id = null`;
+    4. Sets `connection.status = 'disconnected'`, `connection.pending_expires_at = null`, `connection.updated_at = now`;
+    5. If `connection.provider_phone_number_id !== null`, deletes claim in `whatsapp_provider_identity_claims`;
+    6. Deletes secret document in `whatsapp_connection_secrets`.
 
 #### B. `backend/src/repositories/WhatsAppConnectionSecretRepository.ts`
 - `getSecret(orgId: string, connectionId: string): Promise<WhatsAppConnectionSecretRecord | null>` (enforces cumulative `organization_id` + `connection_id`)
 - `setSecret(secret: WhatsAppConnectionSecretRecord): Promise<void>`
 - `deleteSecret(orgId: string, connectionId: string): Promise<void>` (internal cleanup)
+
+#### C. `backend/src/repositories/WhatsAppProviderIdentityClaimRepository.ts`
+- `getClaim(claimId: string): Promise<WhatsAppProviderIdentityClaimRecord | null>`
+- `acquireClaimInTransaction(tx: FirebaseFirestore.Transaction, claim: WhatsAppProviderIdentityClaimRecord): Promise<void>` (rejects if held by another active connection)
+- `releaseClaimInTransaction(tx: FirebaseFirestore.Transaction, claimId: string): Promise<void>` (deletes claim document on terminal disconnect)
 
 ---
 
@@ -821,7 +879,7 @@ export interface WhatsAppConnectionSecretRecord {
 
 ### 5. Invariants & Business Logic Specifications
 
-#### A. Default Connection Authority (DEC-7C-02)
+#### A. Default Connection Authority (DEC-7C-02, DEC-7C-11)
 - Canonical pointer: `organizations.default_whatsapp_connection_id: string | null`.
 - `whatsapp_connections.is_organization_default` is **NOT** a persistent Firestore field.
 - Setting default (`PATCH ...` with `{ isOrganizationDefault: true }`):
@@ -831,8 +889,9 @@ export interface WhatsAppConnectionSecretRecord {
   4. Atomically update `organizations.doc(orgId)` with `{ default_whatsapp_connection_id: connectionId, updated_at: now }`.
 - Clearing default (`PATCH ...` with `{ isOrganizationDefault: false }`):
   1. If `org.default_whatsapp_connection_id === connectionId`, atomically set `default_whatsapp_connection_id = null`.
+- **Terminal Disconnect Invariant (DEC-7C-11):** When a connection is unlinked, `disconnectConnection` atomically clears `organizations.default_whatsapp_connection_id = null` if it matches the disconnected connection. An Organization NEVER retains a pointer to a `disconnected` connection.
 
-#### B. Exclusive Ministry Assignment Invariants (DEC-7C-03)
+#### B. Exclusive Ministry Assignment Invariants (DEC-7C-03, DEC-7C-11)
 - Setting exclusive assignment (`PATCH ...` with `{ assignedMinistryId: ministryId }`):
   1. Load target connection: verify `connection.organization_id === orgId`.
   2. Invariant: `org.default_whatsapp_connection_id !== connectionId` (cannot be current Organization default).
@@ -841,6 +900,8 @@ export interface WhatsAppConnectionSecretRecord {
   5. Atomically update `whatsapp_connections.doc(connectionId)` with `{ assigned_ministry_id: ministryId, updated_at: now }`.
 - Clearing assignment (`PATCH ...` with `{ assignedMinistryId: null }`):
   - Atomically update `whatsapp_connections.doc(connectionId)` with `{ assigned_ministry_id: null, updated_at: now }`.
+- **Terminal Disconnect Invariant (DEC-7C-11):** When a connection reaches `disconnected`, `disconnectConnection` atomically sets `assigned_ministry_id = null`, releasing the 1:1 assignment lock so the Ministry can fall back to the Organization default or receive a new assignment.
+- **Transient Preservation Invariant:** For non-terminal statuses (`error`, `disabled_by_user`), `assigned_ministry_id` is strictly PRESERVED, and resolver returns `CONNECTION_NOT_ACTIVE` (zero fallback).
 
 #### C. Unusable Exclusive Fallback Prevention (DEC-7C-03)
 - If Ministry M has an assigned connection, but `connection.status !== 'connected'`:
@@ -865,10 +926,23 @@ export interface WhatsAppConnectionSecretRecord {
   - Outbound dispatch blocked with `RESTRICTED_OVER_LIMIT`.
   - **Zero documents mutated or deleted.**
 
-#### E. Provider Identity Uniqueness (DEC-7C-07)
-- For any non-null `provider_phone_number_id`:
-  - Before saving a new or linked connection, the service queries `whatsapp_connections.where('provider_phone_number_id', '==', phoneId).limit(2)`.
-  - If any existing non-disconnected connection (`status !== 'disconnected'`) possesses the same `provider_phone_number_id`, creation/link is rejected with `409 PROVIDER_PHONE_ALREADY_REGISTERED`.
+#### E. Atomic Provider Identity Claims (DEC-7C-07)
+- **Elimination of Check-Then-Write Races:** Querying `where('provider_phone_number_id', '==', id)` before write does not guarantee uniqueness under concurrency. Platform-wide uniqueness of `provider_phone_number_id` is enforced exclusively via atomic transactions on deterministic claim documents in `whatsapp_provider_identity_claims`.
+- **Deterministic Claim ID:** `claim_${provider}_${provider_phone_number_id}` (e.g. `claim_meta_cloud_api_1092837465`).
+- **Transactional Claim Acquisition Algorithm:**
+  Inside a single Firestore transaction:
+  1. Read `whatsapp_provider_identity_claims.doc(claimId)`.
+  2. If claim document exists and `claim.connection_id !== targetConnectionId`:
+     Read connection referenced by claim: `whatsapp_connections.doc(claim.connection_id)`.
+     If referenced connection exists and `connection.status !== 'disconnected'`:
+       Reject transaction with `409 PROVIDER_PHONE_ALREADY_REGISTERED`.
+  3. Create/update claim document:
+     `tx.set(claimRef, { id: claimId, provider, provider_phone_number_id, organization_id, connection_id, created_at: now, updated_at: now })`.
+  4. Write connection provider fields atomically.
+- **Claim Release on Terminal Disconnect:**
+  When `disconnectConnection` executes, `tx.delete(claimRef)` is called in the same transaction, releasing the claim so the phone number can legitimately be re-onboarded in the future without stale blocking.
+- **Diagnostics vs Uniqueness Primitive:**
+  Any query `where('provider_phone_number_id', '==', phoneId)` is retained strictly as a diagnostic or inbound webhook lookup utility and is NEVER treated as the uniqueness concurrency primitive.
 
 ---
 
@@ -964,6 +1038,7 @@ export interface OrganizationWhatsAppCapacityUsageDto {
 - **`FIRESTORE_INDEX_DEPLOYMENT_DURING_7C_IMPLEMENTATION: NO`**: No deployment commands (`firebase deploy --only firestore:indexes`) are authorized during Phase 7C local execution.
 - **`PRODUCTION_ENV_CHANGE_REQUIRED_BEFORE_7C_RELEASE: YES`**: `WHATSAPP_TOKEN_ENCRYPTION_KEY` must be configured in Vercel Production before Phase 7C release.
 - **`FIRESTORE_RULES_CHANGE_REQUIRED: NO`**: Collections are consumed strictly by the backend Firebase Admin SDK; no direct client Firestore access exists.
+- **`CLAIMS_COLLECTION_COMPOSITE_INDEXES: NONE`**: `whatsapp_provider_identity_claims` uses deterministic primary keys (`.doc(id)`). Zero composite indexes required.
 
 ---
 
@@ -992,7 +1067,12 @@ export interface OrganizationWhatsAppCapacityUsageDto {
 21. **Non-Destructive Over-Limit Evaluation:** When configured > allowed, `connectionAccessMode` evaluates to `restricted_over_limit`; resolver fails with `RESTRICTED_OVER_LIMIT`; zero documents mutated.
 22. **Operational Grace Resolution:** Subscription in `grace` mode allows existing `connected` lines to send messages (`canSendMessages: true`), but blocks creation (`canCreateConnection: false`).
 23. **Suspended Resolution:** Subscription in `suspended` mode blocks dispatch (`canSendMessages: false`) with `WHATSAPP_SUSPENDED`.
-24. **Provider Identity Uniqueness:** Saving a connection with a `provider_phone_number_id` already registered on an active connection is rejected with `409 PROVIDER_PHONE_ALREADY_REGISTERED`.
+24. **Atomic Provider Identity Uniqueness (DEC-7C-07):** Attempting to claim a `provider_phone_number_id` already held by an active connection in `whatsapp_provider_identity_claims` fails transactionally with `409 PROVIDER_PHONE_ALREADY_REGISTERED`.
 25. **Org Admin vs Ministry Admin RBAC:** Org Admin can manage connections via PATCH; Ministry Admin is rejected with `403 Forbidden` on Organization endpoints.
 26. **Anti-IDOR Security:** Callers querying connections of an Organization they do not belong to receive indistinguishable `404 Not Found`.
 27. **Query Limit Bounding:** Connection listing enforces maximum limit of 50 and deterministic ordering (`created_at DESC, __name__ DESC`).
+28. **State Transition Validation (DEC-7C-04):** Prohibits invalid state transitions (e.g. `disconnected → connected`, `pending → connected`, `disabled_by_user → error`, `connecting → disabled_by_user`).
+29. **Terminal Disconnect Atomic Cleanup (DEC-7C-05, DEC-7C-11):** Disconnecting an active connection atomically clears `default_whatsapp_connection_id` if matched, sets `assigned_ministry_id = null`, deletes the provider claim in `whatsapp_provider_identity_claims`, and deletes secrets in `whatsapp_connection_secrets`.
+30. **Claim Release on Terminal Disconnect:** Once a connection is disconnected, its claim document in `whatsapp_provider_identity_claims` is deleted, allowing that phone number to be claimed by a future onboarding session.
+31. **Pending Cancellation/Expiry to Disconnected (DEC-7C-12):** Transitioning an unmaterialized reservation from `pending → disconnected` succeeds with null provider identifiers and clears `pending_expires_at = null`.
+32. **Transient Error/Pause Assignment Retention (DEC-7C-11):** Transitioning `connected → error` or `connected → disabled_by_user` strictly preserves `assigned_ministry_id`; resolver fails with `CONNECTION_NOT_ACTIVE` without silent fallback to default.
