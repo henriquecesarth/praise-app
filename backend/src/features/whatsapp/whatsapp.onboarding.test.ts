@@ -512,6 +512,38 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
       });
     });
 
+    it('Case 1B: Session expired by timestamp transitions session to expired, disconnects pending connection, and releases capacity', async () => {
+      const past = new Date(Date.now() - 3600 * 1000).toISOString();
+      const session = sessionsStore.get(activeSessionId);
+      session.expires_at = past;
+      sessionsStore.set(activeSessionId, session);
+
+      await expect(
+        connectionService.completeOnboarding(orgId, adminUserId, {
+          sessionId: activeSessionId,
+          stateNonce: activeRawNonce,
+          code: 'valid_code',
+          wabaId: 'waba-001',
+          phoneNumberId: 'phone-001',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 400,
+        details: { code: 'ONBOARDING_SESSION_EXPIRED' },
+      });
+
+      expect(sessionsStore.get(activeSessionId)?.status).toBe('expired');
+      expect(connectionsStore.get(activeConnectionId)?.status).toBe('disconnected');
+      expect(connectionsStore.get(activeConnectionId)?.status_reason).toBe('ONBOARDING_SESSION_EXPIRED');
+      expect(connectionsStore.get(activeConnectionId)?.pending_expires_at).toBeNull();
+
+      const configuredCount = await connectionRepo.countConfiguredConnections(orgId);
+      expect(configuredCount).toBe(0);
+
+      // Immediately start onboarding again -> SUCCESS!
+      const restarted = await connectionService.startOnboarding(orgId, adminUserId, {});
+      expect(restarted.connectionId).toBeDefined();
+    });
+
     it('Replay protection: Re-submitting already consumed session fails with 409 ONBOARDING_SESSION_ALREADY_CONSUMED', async () => {
       const session = sessionsStore.get(activeSessionId);
       session.status = 'consumed';
@@ -531,7 +563,7 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
       });
     });
 
-    it('Case 2: CSRF Nonce mismatch marks session failed and throws 403 INVALID_ONBOARDING_STATE', async () => {
+    it('Case 2: CSRF Nonce mismatch marks session failed, disconnects pending connection, and releases capacity', async () => {
       const wrongNonce = crypto.randomBytes(32).toString('hex');
 
       await expect(
@@ -548,9 +580,19 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
       });
 
       expect(sessionsStore.get(activeSessionId)?.status).toBe('failed');
+      expect(connectionsStore.get(activeConnectionId)?.status).toBe('disconnected');
+      expect(connectionsStore.get(activeConnectionId)?.status_reason).toBe('INVALID_ONBOARDING_STATE');
+      expect(connectionsStore.get(activeConnectionId)?.pending_expires_at).toBeNull();
+
+      const configuredCount = await connectionRepo.countConfiguredConnections(orgId);
+      expect(configuredCount).toBe(0);
+
+      // Immediately start onboarding again -> SUCCESS!
+      const restarted = await connectionService.startOnboarding(orgId, adminUserId, {});
+      expect(restarted.connectionId).toBeDefined();
     });
 
-    it('Case 3: Downgrade race (subscription suspended) transitions connection to error and aborts with 403', async () => {
+    it('Case 3: Downgrade race (subscription suspended) transitions connection to disconnected and aborts with 403', async () => {
       subscriptionsStore.set(anchorMinistryId, {
         id: anchorMinistryId,
         ministry_id: anchorMinistryId,
@@ -573,7 +615,7 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
         details: { code: 'WHATSAPP_SUBSCRIPTION_SUSPENDED' },
       });
 
-      expect(connectionsStore.get(activeConnectionId)?.status).toBe('error');
+      expect(connectionsStore.get(activeConnectionId)?.status).toBe('disconnected');
       expect(connectionsStore.get(activeConnectionId)?.status_reason).toBe('SUBSCRIPTION_RESTRICTED');
       expect(sessionsStore.get(activeSessionId)?.status).toBe('failed');
     });
@@ -602,7 +644,56 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
       expect(connectionsStore.get(activeConnectionId)?.status).toBe('connected');
     });
 
-    it('Case 4: OAuth code exchange failure marks session failed and connection stays pending', async () => {
+    it('Entitlement Race: downgrade between start and commit rejects completion with 403, acquires zero claims and purges secret', async () => {
+      // Pre-occupy 1 connection so configured total becomes 2, exceeding Pro capacity of 1
+      connectionsStore.set('wac_conn_1', {
+        id: 'wac_conn_1',
+        organization_id: orgId,
+        display_name: 'Existing Line 1',
+        status: 'connected',
+        phone_number: '+5511999990001',
+        provider: 'meta_cloud_api',
+        provider_waba_id: 'waba-001',
+        provider_phone_number_id: 'phone-existing-1',
+        created_by_user_id: ownerUserId,
+        assigned_ministry_id: null,
+        pending_expires_at: null,
+        last_connected_at: new Date().toISOString(),
+        last_health_check_at: null,
+        status_reason: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      await expect(
+        connectionService.completeOnboarding(orgId, adminUserId, {
+          sessionId: activeSessionId,
+          stateNonce: activeRawNonce,
+          code: 'valid_code',
+          wabaId: 'waba-001',
+          phoneNumberId: 'phone-001',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 403,
+        details: { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED' },
+      });
+
+      // Assert G: No claim was acquired
+      const claimId = getClaimId('meta_cloud_api', 'phone-001');
+      expect(claimsStore.get(claimId)).toBeUndefined();
+
+      // Assert H: No secret was persisted / staged secret was purged
+      expect(secretsStore.get(activeConnectionId)).toBeUndefined();
+
+      // Assert I: Connection did not become connected
+      expect(connectionsStore.get(activeConnectionId)?.status).toBe('error');
+      expect(connectionsStore.get(activeConnectionId)?.status_reason).toBe('SUBSCRIPTION_RESTRICTED');
+
+      // Assert J: Session did not become consumed
+      expect(sessionsStore.get(activeSessionId)?.status).toBe('failed');
+    });
+
+    it('Case 4: OAuth code exchange failure marks session failed, disconnects pending connection, and releases capacity', async () => {
       (mockProvider.exchangeOAuthCode as any).mockRejectedValueOnce(new Error('Invalid code'));
 
       await expect(
@@ -619,7 +710,16 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
       });
 
       expect(sessionsStore.get(activeSessionId)?.status).toBe('failed');
-      expect(connectionsStore.get(activeConnectionId)?.status).toBe('pending');
+      expect(connectionsStore.get(activeConnectionId)?.status).toBe('disconnected');
+      expect(connectionsStore.get(activeConnectionId)?.status_reason).toBe('OAUTH_EXCHANGE_FAILED');
+      expect(connectionsStore.get(activeConnectionId)?.pending_expires_at).toBeNull();
+
+      const configuredCount = await connectionRepo.countConfiguredConnections(orgId);
+      expect(configuredCount).toBe(0);
+
+      // Immediately start onboarding again -> SUCCESS!
+      const restarted = await connectionService.startOnboarding(orgId, adminUserId, {});
+      expect(restarted.connectionId).toBeDefined();
     });
 
     it('Case 5: WABA authority mismatch purges staged secret, marks connection error UNAUTHORIZED_WABA_ACCESS', async () => {

@@ -791,6 +791,39 @@ export class WhatsAppConnectionService {
     return result;
   }
 
+  private async releaseTerminalPendingReservation(
+    orgId: string,
+    sessionId: string,
+    connectionId: string,
+    terminalSessionStatus: 'failed' | 'expired',
+    reason: string
+  ): Promise<void> {
+    const nowIso = new Date().toISOString();
+    await db.runTransaction(async (tx) => {
+      const sessionRef = db.collection('whatsapp_onboarding_sessions').doc(sessionId);
+      const connRef = db.collection('whatsapp_connections').doc(connectionId);
+
+      const connDoc = await tx.get(connRef);
+      if (connDoc.exists) {
+        const conn = connDoc.data() as WhatsAppConnectionRecord;
+        if (conn.organization_id === orgId && (conn.status === 'pending' || conn.status === 'connecting')) {
+          tx.update(connRef, {
+            status: 'disconnected',
+            status_reason: reason,
+            pending_expires_at: null,
+            assigned_ministry_id: null,
+            updated_at: nowIso,
+          });
+        }
+      }
+
+      tx.update(sessionRef, {
+        status: terminalSessionStatus,
+        updated_at: nowIso,
+      });
+    });
+  }
+
   async completeOnboarding(
     orgId: string,
     actorUserId: string,
@@ -827,7 +860,13 @@ export class WhatsAppConnectionService {
 
     const now = new Date();
     if (new Date(session.expires_at) <= now) {
-      await this.onboardingSessionRepo.updateSession(session.id, { status: 'expired' });
+      await this.releaseTerminalPendingReservation(
+        orgId,
+        session.id,
+        session.connection_id,
+        'expired',
+        'ONBOARDING_SESSION_EXPIRED'
+      );
       throw new AppError(400, 'Sessão de onboarding expirada.', {
         code: 'ONBOARDING_SESSION_EXPIRED',
       });
@@ -841,7 +880,13 @@ export class WhatsAppConnectionService {
       incomingBuffer.length === storedBuffer.length && crypto.timingSafeEqual(incomingBuffer, storedBuffer);
 
     if (!isValidNonce) {
-      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      await this.releaseTerminalPendingReservation(
+        orgId,
+        session.id,
+        session.connection_id,
+        'failed',
+        'INVALID_ONBOARDING_STATE'
+      );
       throw new AppError(403, 'Estado de onboarding inválido (falha na validação CSRF).', {
         code: 'INVALID_ONBOARDING_STATE',
       });
@@ -850,11 +895,13 @@ export class WhatsAppConnectionService {
     // Step 3: Entitlement Downgrade Gate (DEC-7D-16)
     const capacity = await this.subService.getOrganizationWhatsAppCapacity(orgId);
     if (!capacity.enabled || capacity.billingAccessMode === 'suspended') {
-      await this.connectionRepo.updateConnection(orgId, session.connection_id, {
-        status: 'error',
-        status_reason: 'SUBSCRIPTION_RESTRICTED',
-      });
-      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      await this.releaseTerminalPendingReservation(
+        orgId,
+        session.id,
+        session.connection_id,
+        'failed',
+        'SUBSCRIPTION_RESTRICTED'
+      );
       throw new AppError(403, 'A assinatura da organização está suspensa ou sem capacidade WhatsApp.', {
         code: 'WHATSAPP_SUBSCRIPTION_SUSPENDED',
       });
@@ -867,7 +914,13 @@ export class WhatsAppConnectionService {
       try {
         oauthResult = await this.metaProvider.exchangeOAuthCode(input.code);
       } catch (err: any) {
-        await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+        await this.releaseTerminalPendingReservation(
+          orgId,
+          session.id,
+          session.connection_id,
+          'failed',
+          'OAUTH_EXCHANGE_FAILED'
+        );
         throw new AppError(400, `Falha na troca do código OAuth do WhatsApp: ${err.message || 'Erro do provedor'}`, {
           code: 'WHATSAPP_OAUTH_EXCHANGE_FAILED',
           cause: err,
@@ -996,7 +1049,20 @@ export class WhatsAppConnectionService {
 
     try {
       await db.runTransaction(async (tx) => {
-        // 10a. Read connection doc
+        // 10a. Read organization doc
+        const orgRef = db.collection('organizations').doc(orgId);
+        const orgDoc = await tx.get(orgRef);
+        if (!orgDoc.exists) {
+          throw new AppError(404, 'Organização não encontrada.');
+        }
+        const org = { id: orgDoc.id, ...orgDoc.data() } as OrganizationRecord;
+
+        // 10b. Read ministry_subscriptions doc
+        const subRef = db.collection('ministry_subscriptions').doc(org.billing_anchor_ministry_id);
+        const subDoc = await tx.get(subRef);
+        const sub = subDoc.exists ? ({ id: subDoc.id, ...subDoc.data() } as MinistrySubscriptionRecord) : null;
+
+        // 10c. Read connection doc
         const connRef = db.collection('whatsapp_connections').doc(session.connection_id);
         const connDoc = await tx.get(connRef);
         if (!connDoc.exists) {
@@ -1010,9 +1076,45 @@ export class WhatsAppConnectionService {
           throw new AppError(400, `Conexão em estado inválido para materialização: ${conn.status}`);
         }
 
-        // 10b. Read and claim provider identity
+        // 10d. Read claim doc
         const claimRef = db.collection('whatsapp_provider_identity_claims').doc(claimId);
         const claimDoc = await tx.get(claimRef);
+
+        // 10e. Read configured connections for orgId (bounded by CONFIG_CONSUMING_STATUSES)
+        const connectionsQuery = db
+          .collection('whatsapp_connections')
+          .where('organization_id', '==', orgId)
+          .where('status', 'in', ['pending', 'connecting', 'connected', 'error', 'disabled_by_user']);
+        const connectionsSnapshot = await tx.get(connectionsQuery);
+
+        // All reads complete. Evaluate transactional commercial capacity & access mode
+        const capacity = SubscriptionService.evaluateOrganizationWhatsAppCapacity(org, sub, new Date());
+        if (!capacity.enabled || capacity.billingAccessMode === 'suspended') {
+          throw new AppError(403, 'A assinatura da organização está suspensa ou sem capacidade WhatsApp.', {
+            code: 'WHATSAPP_SUBSCRIPTION_SUSPENDED',
+          });
+        }
+
+        let activeConfiguredCount = 0;
+        for (const doc of connectionsSnapshot.docs) {
+          const c = doc.data() as WhatsAppConnectionRecord;
+          if (c.status === 'pending') {
+            const isExpired = c.pending_expires_at && new Date(c.pending_expires_at) <= new Date();
+            if (isExpired && doc.id !== session.connection_id) {
+              continue;
+            }
+          }
+          activeConfiguredCount++;
+        }
+
+        if (activeConfiguredCount > capacity.totalAllowedConnections) {
+          throw new AppError(
+            403,
+            'Limite de capacidade comercial de conexões WhatsApp atingido para a organização.',
+            { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED' }
+          );
+        }
+
         if (claimDoc.exists) {
           const existingClaim = claimDoc.data();
           if (existingClaim?.connection_id !== session.connection_id) {
@@ -1032,7 +1134,7 @@ export class WhatsAppConnectionService {
           });
         }
 
-        // 10c. Update connection
+        // 10f. Update connection
         tx.update(connRef, {
           status: 'connected',
           phone_number: normalizedPhoneNumber,
@@ -1044,7 +1146,7 @@ export class WhatsAppConnectionService {
           updated_at: nowIso,
         });
 
-        // 10d. Update session to consumed
+        // 10g. Update session to consumed
         const sessionRef = db.collection('whatsapp_onboarding_sessions').doc(session.id);
         tx.update(sessionRef, {
           status: 'consumed',
@@ -1058,6 +1160,19 @@ export class WhatsAppConnectionService {
         await this.connectionRepo.updateConnection(orgId, session.connection_id, {
           status: 'error',
           status_reason: 'PHONE_ALREADY_REGISTERED',
+        });
+        await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+        throw err;
+      }
+      if (
+        err?.code === 'WHATSAPP_CAPACITY_LIMIT_REACHED' ||
+        err?.code === 'WHATSAPP_SUBSCRIPTION_SUSPENDED' ||
+        (err instanceof AppError && err.statusCode === 403)
+      ) {
+        await this.secretRepo.deleteSecret(orgId, session.connection_id);
+        await this.connectionRepo.updateConnection(orgId, session.connection_id, {
+          status: 'error',
+          status_reason: 'SUBSCRIPTION_RESTRICTED',
         });
         await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
         throw err;
