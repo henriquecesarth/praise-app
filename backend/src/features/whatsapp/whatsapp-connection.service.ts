@@ -685,7 +685,7 @@ export class WhatsAppConnectionService {
 
       // Evaluate capacity
       const capacity = SubscriptionService.evaluateOrganizationWhatsAppCapacity(org, sub, now);
-      if (!capacity.enabled || capacity.billingAccessMode === 'suspended') {
+      if (!capacity.enabled || capacity.billingAccessMode !== 'normal') {
         throw new AppError(
           403,
           'A organização não possui capacidade comercial disponível para WhatsApp no plano atual.',
@@ -708,8 +708,10 @@ export class WhatsAppConnectionService {
           const isExpired = conn.pending_expires_at && new Date(conn.pending_expires_at) <= now;
           if (isExpired) {
             tx.update(doc.ref, {
-              status: 'error',
+              status: 'disconnected',
               status_reason: 'PENDING_EXPIRED',
+              pending_expires_at: null,
+              assigned_ministry_id: null,
               updated_at: nowIso,
             });
             continue;

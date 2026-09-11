@@ -34,6 +34,7 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
 
   let mockProvider: WhatsAppProvider;
   let encryptionService: WhatsAppEncryptionService;
+  let connectionRepo: WhatsAppConnectionRepository;
   let connectionService: WhatsAppConnectionService;
   let controller: WhatsAppController;
 
@@ -278,8 +279,9 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
 
     encryptionService = new WhatsAppEncryptionService(validKey);
 
+    connectionRepo = new WhatsAppConnectionRepository();
     connectionService = new WhatsAppConnectionService(
-      new WhatsAppConnectionRepository(),
+      connectionRepo,
       new WhatsAppConnectionSecretRepository(),
       new WhatsAppProviderIdentityClaimRepository(),
       new OrganizationRepository(),
@@ -393,7 +395,7 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
       });
     });
 
-    it('lazy cleanup: expired pending connection is transitioned to error and does NOT block capacity', async () => {
+    it('lazy cleanup: expired pending connection is transitioned to disconnected and releases capacity', async () => {
       const past = new Date(Date.now() - 3600 * 1000).toISOString();
       connectionsStore.set('wac_expired_pending', {
         id: 'wac_expired_pending',
@@ -414,13 +416,70 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
         updated_at: past,
       });
 
-      // Should succeed because expired pending connection is lazily excluded
+      // Should succeed because expired pending connection is lazily disconnected
       const res = await connectionService.startOnboarding(orgId, adminUserId, {});
       expect(res.connectionId).toBeDefined();
 
       const oldConn = connectionsStore.get('wac_expired_pending');
-      expect(oldConn?.status).toBe('error');
+      expect(oldConn?.status).toBe('disconnected');
       expect(oldConn?.status_reason).toBe('PENDING_EXPIRED');
+      expect(oldConn?.pending_expires_at).toBeNull();
+
+      const newConn = connectionsStore.get(res.connectionId);
+      expect(newConn?.status).toBe('pending');
+
+      // Check capacity consistency (Section 8 & 9)
+      const configuredCount = await connectionRepo.countConfiguredConnections(orgId);
+      expect(configuredCount).toBe(1);
+
+      const capacityUsage = await connectionService.getOrganizationCapacityUsage(orgId);
+      expect(capacityUsage.configuredConnectionsCount).toBe(1);
+      expect(capacityUsage.totalAllowedConnections).toBe(1);
+      expect(capacityUsage.connectionAccessMode).toBe('normal');
+
+      // A second start attempt before the new pending expires must be rejected as full capacity
+      await expect(
+        connectionService.startOnboarding(orgId, adminUserId, {})
+      ).rejects.toMatchObject({
+        statusCode: 403,
+        details: { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED' },
+      });
+    });
+
+    it('Grace Start Matrix: rejects start with 403 when organization is in grace mode even with available slot', async () => {
+      subscriptionsStore.set(anchorMinistryId, {
+        id: anchorMinistryId,
+        ministry_id: anchorMinistryId,
+        plan_id: 'pro',
+        billing_status: 'past_due',
+        subscription_mode: 'paid',
+        grace_period_expires_billing_date: '2099-12-31',
+      });
+
+      await expect(
+        connectionService.startOnboarding(orgId, adminUserId, {})
+      ).rejects.toMatchObject({
+        statusCode: 403,
+        details: { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED' },
+      });
+    });
+
+    it('Grace Start Matrix: rejects start with 403 when subscription is suspended', async () => {
+      subscriptionsStore.set(anchorMinistryId, {
+        id: anchorMinistryId,
+        ministry_id: anchorMinistryId,
+        plan_id: 'pro',
+        billing_status: 'canceled',
+        subscription_mode: 'paid',
+        administratively_suspended: true,
+      });
+
+      await expect(
+        connectionService.startOnboarding(orgId, adminUserId, {})
+      ).rejects.toMatchObject({
+        statusCode: 403,
+        details: { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED' },
+      });
     });
   });
 
@@ -517,6 +576,30 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
       expect(connectionsStore.get(activeConnectionId)?.status).toBe('error');
       expect(connectionsStore.get(activeConnectionId)?.status_reason).toBe('SUBSCRIPTION_RESTRICTED');
       expect(sessionsStore.get(activeSessionId)?.status).toBe('failed');
+    });
+
+    it('Grace Completion: start in normal -> reservation exists -> subscription enters grace -> complete succeeds', async () => {
+      subscriptionsStore.set(anchorMinistryId, {
+        id: anchorMinistryId,
+        ministry_id: anchorMinistryId,
+        plan_id: 'pro',
+        billing_status: 'past_due',
+        subscription_mode: 'paid',
+        grace_period_expires_billing_date: '2099-12-31',
+      });
+
+      const res = await connectionService.completeOnboarding(orgId, adminUserId, {
+        sessionId: activeSessionId,
+        stateNonce: activeRawNonce,
+        code: 'valid_code',
+        wabaId: 'waba-001',
+        phoneNumberId: 'phone-001',
+      });
+
+      expect(res.id).toBe(activeConnectionId);
+      expect(res.status).toBe('connected');
+      expect(res.phoneNumber).toBe('+5511988887771');
+      expect(connectionsStore.get(activeConnectionId)?.status).toBe('connected');
     });
 
     it('Case 4: OAuth code exchange failure marks session failed and connection stays pending', async () => {
