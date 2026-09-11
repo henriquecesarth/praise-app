@@ -22,7 +22,7 @@ import {
   MinistrySubscriptionStatusSummary,
   SubscriptionMode,
 } from './subscription.types';
-import { OrganizationWhatsAppCapacity } from '../organizations/organization.types';
+import { OrganizationWhatsAppCapacity, BillingAccessMode } from '../organizations/organization.types';
 import {
   CustomerFacingPendingTransitionDto,
   BillingSubscriptionRecord,
@@ -596,13 +596,21 @@ export class SubscriptionService {
     const additionalConnections = 0; // Estritamente 0 no runtime da Phase 7B (extensão para Phase 7H)
     const totalAllowedConnections = includedConnections + additionalConnections;
 
-    let billingAccessMode: 'normal' | 'grace' | 'suspended' = 'normal';
-    if (summary.subscription.accessMode === 'suspended') {
-      billingAccessMode = 'suspended';
-    } else if (summary.subscription.accessMode === 'grace') {
-      billingAccessMode = 'grace';
-    } else {
-      billingAccessMode = 'normal';
+    let billingAccessMode: BillingAccessMode;
+    switch (summary.subscription.accessMode) {
+      case 'suspended':
+      case 'restricted_over_limit':
+        billingAccessMode = 'suspended';
+        break;
+      case 'grace':
+        billingAccessMode = 'grace';
+        break;
+      case 'normal':
+        billingAccessMode = 'normal';
+        break;
+      default:
+        billingAccessMode = 'suspended';
+        break;
     }
 
     const enabled = totalAllowedConnections > 0 && billingAccessMode !== 'suspended';

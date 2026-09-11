@@ -107,8 +107,12 @@ export class OrganizationController {
     next: NextFunction
   ): Promise<void> => {
     try {
-      const ministryId = getParam(req.params.ministryId);
+      const ministryId = getParam(req.params.ministryId || req.params.groupId);
       const actorUserId = req.user?.id;
+
+      if (!ministryId) {
+        throw new AppError(400, 'ministryId é obrigatório nos parâmetros da rota.');
+      }
 
       if (!actorUserId) {
         throw new AppError(401, 'Usuário não autenticado.');
@@ -127,7 +131,11 @@ export class OrganizationController {
     next: NextFunction
   ): Promise<void> => {
     try {
-      const ministryId = getParam(req.params.ministryId);
+      const ministryId = getParam(req.params.ministryId || req.params.groupId);
+      if (!ministryId) {
+        throw new AppError(400, 'ministryId é obrigatório nos parâmetros da rota.');
+      }
+
       const org = await this.orgService.getOrganizationByMinistryId(ministryId);
       if (!org) {
         res.json({ hasOrganization: false, organization: null });
@@ -146,8 +154,12 @@ export class OrganizationController {
   ): Promise<void> => {
     try {
       const organizationId = getParam(req.params.organizationId);
-      const ministryId = getParam(req.params.ministryId);
+      const ministryId = getParam(req.params.ministryId || req.params.groupId);
       const actorUserId = req.user?.id;
+
+      if (!ministryId) {
+        throw new AppError(400, 'ministryId é obrigatório nos parâmetros da rota.');
+      }
 
       if (!actorUserId) {
         throw new AppError(401, 'Usuário não autenticado.');
@@ -167,8 +179,12 @@ export class OrganizationController {
   ): Promise<void> => {
     try {
       const organizationId = getParam(req.params.organizationId);
-      const ministryId = getParam(req.params.ministryId);
+      const ministryId = getParam(req.params.ministryId || req.params.groupId);
       const actorUserId = req.user?.id;
+
+      if (!ministryId) {
+        throw new AppError(400, 'ministryId é obrigatório nos parâmetros da rota.');
+      }
 
       if (!actorUserId) {
         throw new AppError(401, 'Usuário não autenticado.');

@@ -22,6 +22,7 @@ describe('Organization & WhatsApp Entitlement Feature Suite (Phase 7B)', () => {
   let ministryMembersStore: Map<string, MinistryMemberRecord>;
   let usersStore: Map<string, any>;
   let subscriptionsStore: Map<string, MinistrySubscriptionRecord>;
+  let usageStore: Map<string, any>;
 
   let orgRepo: OrganizationRepository;
   let subService: SubscriptionService;
@@ -43,6 +44,7 @@ describe('Organization & WhatsApp Entitlement Feature Suite (Phase 7B)', () => {
     ministryMembersStore = new Map();
     usersStore = new Map();
     subscriptionsStore = new Map();
+    usageStore = new Map();
 
     // Populate default users
     usersStore.set(ownerUserId, { id: ownerUserId, name: 'Owner User', email: 'owner@test.com' });
@@ -105,6 +107,8 @@ describe('Organization & WhatsApp Entitlement Feature Suite (Phase 7B)', () => {
             return usersStore;
           case 'ministry_subscriptions':
             return subscriptionsStore;
+          case 'ministry_usage':
+            return usageStore;
           default:
             return new Map();
         }
@@ -334,6 +338,60 @@ describe('Organization & WhatsApp Entitlement Feature Suite (Phase 7B)', () => {
       expect(secondOrg.id).toBe(firstOrg.id);
       expect(organizationsStore.size).toBe(1);
       expect(orgMembersStore.size).toBe(1);
+    });
+
+    it('5b. Route Parameter Resolution (MED-7B-01): Supports both :ministryId and :groupId aliases, rejects missing with 400', async () => {
+      // 1. Works with canonical :ministryId
+      const { req: reqMin, res: resMin, next: nextMin } = createMockReqRes({ ministryId }, {}, ownerUserId);
+      await orgController.getMinistryOrganization(reqMin, resMin, nextMin);
+      expect(resMin.json).toHaveBeenCalledWith({ hasOrganization: false, organization: null });
+
+      // 2. Works with established :groupId alias
+      const { req: reqGrp, res: resGrp, next: nextGrp } = createMockReqRes({ groupId: ministryId }, {}, ownerUserId);
+      await orgController.getMinistryOrganization(reqGrp, resGrp, nextGrp);
+      expect(resGrp.json).toHaveBeenCalledWith({ hasOrganization: false, organization: null });
+
+      // 3. Works with :groupId alias in provisionForMinistry
+      const { req: reqProvGrp, res: resProvGrp, next: nextProvGrp } = createMockReqRes({ groupId: secondaryMinistryId }, {}, ownerUserId);
+      await orgController.provisionForMinistry(reqProvGrp, resProvGrp, nextProvGrp);
+      expect(resProvGrp.status).toHaveBeenCalledWith(201);
+
+      // 4. Rejects missing ministryId/groupId with 400 Bad Request
+      const { req: reqEmptyGet, res: resEmptyGet, next: nextEmptyGet } = createMockReqRes({}, {}, ownerUserId);
+      await orgController.getMinistryOrganization(reqEmptyGet, resEmptyGet, nextEmptyGet);
+      expect(nextEmptyGet).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusCode: 400,
+          message: 'ministryId é obrigatório nos parâmetros da rota.',
+        })
+      );
+
+      const { req: reqEmptyProv, res: resEmptyProv, next: nextEmptyProv } = createMockReqRes({}, {}, ownerUserId);
+      await orgController.provisionForMinistry(reqEmptyProv, resEmptyProv, nextEmptyProv);
+      expect(nextEmptyProv).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusCode: 400,
+          message: 'ministryId é obrigatório nos parâmetros da rota.',
+        })
+      );
+
+      const { req: reqEmptyAttach, res: resEmptyAttach, next: nextEmptyAttach } = createMockReqRes({ organizationId: 'org-1' }, {}, ownerUserId);
+      await orgController.attachMinistry(reqEmptyAttach, resEmptyAttach, nextEmptyAttach);
+      expect(nextEmptyAttach).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusCode: 400,
+          message: 'ministryId é obrigatório nos parâmetros da rota.',
+        })
+      );
+
+      const { req: reqEmptyDetach, res: resEmptyDetach, next: nextEmptyDetach } = createMockReqRes({ organizationId: 'org-1' }, {}, ownerUserId);
+      await orgController.detachMinistry(reqEmptyDetach, resEmptyDetach, nextEmptyDetach);
+      expect(nextEmptyDetach).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusCode: 400,
+          message: 'ministryId é obrigatório nos parâmetros da rota.',
+        })
+      );
     });
   });
 
@@ -703,6 +761,75 @@ describe('Organization & WhatsApp Entitlement Feature Suite (Phase 7B)', () => {
       const suspendedCapacity = await subService.getOrganizationWhatsAppCapacity(org.id);
       expect(suspendedCapacity.billingAccessMode).toBe('suspended');
       expect(suspendedCapacity.enabled).toBe(false);
+    });
+
+    it('22. Grace Billing-Access Mode (LOW-7B-01): Paid plan in grace period retains enabled: true with billingAccessMode: grace', async () => {
+      const org = await orgRepo.lazyProvisionForMinistry(ministryId, ownerUserId);
+
+      // Paid plan (Lite+) with active grace period and over limit usage
+      subscriptionsStore.set(ministryId, {
+        id: ministryId,
+        ministry_id: ministryId,
+        plan_id: 'lite_plus',
+        member_addon_blocks: 0,
+        billing_status: 'active',
+        subscription_mode: 'paid',
+        administratively_suspended: false,
+        suspended_at: null,
+        suspension_reason: null,
+        grace_period_expires_at: new Date(Date.now() + 5 * 86400000).toISOString(),
+        current_period_start: new Date().toISOString(),
+        current_period_end: new Date(Date.now() + 30 * 86400000).toISOString(),
+        cancel_at_period_end: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      // Usage exceeds Lite+ quota (members: 30, songs: 150) -> triggers resolveAccessMode => 'grace'
+      usageStore.set(ministryId, {
+        id: ministryId,
+        ministry_id: ministryId,
+        members_count: 50,
+        songs_count: 300,
+        updated_at: new Date().toISOString(),
+      });
+
+      const graceCapacity = await subService.getOrganizationWhatsAppCapacity(org.id);
+      expect(graceCapacity.includedConnections).toBe(1);
+      expect(graceCapacity.additionalConnections).toBe(0);
+      expect(graceCapacity.totalAllowedConnections).toBe(1);
+      expect(graceCapacity.enabled).toBe(true);
+      expect(graceCapacity.billingAccessMode).toBe('grace');
+    });
+
+    it('23. Restricted Over Limit Billing-Access Mode: Restricted plan past grace returns enabled: false with billingAccessMode: suspended', async () => {
+      const org = await orgRepo.lazyProvisionForMinistry(ministryId, ownerUserId);
+
+      // Paid plan with past_due status and expired grace
+      subscriptionsStore.set(ministryId, {
+        id: ministryId,
+        ministry_id: ministryId,
+        plan_id: 'lite_plus',
+        member_addon_blocks: 0,
+        billing_status: 'past_due',
+        subscription_mode: 'paid',
+        administratively_suspended: false,
+        suspended_at: null,
+        suspension_reason: null,
+        grace_period_expires_at: new Date(Date.now() - 2 * 86400000).toISOString(),
+        current_period_start: new Date().toISOString(),
+        current_period_end: new Date(Date.now() + 30 * 86400000).toISOString(),
+        cancel_at_period_end: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      const restrictedCapacity = await subService.getOrganizationWhatsAppCapacity(org.id);
+      expect(restrictedCapacity.includedConnections).toBe(1);
+      expect(restrictedCapacity.additionalConnections).toBe(0);
+      expect(restrictedCapacity.totalAllowedConnections).toBe(1);
+      expect(restrictedCapacity.enabled).toBe(false);
+      expect(restrictedCapacity.billingAccessMode).toBe('suspended');
     });
   });
 });
