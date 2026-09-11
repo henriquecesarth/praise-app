@@ -8,6 +8,8 @@ import { addOrganizationMemberSchema } from './organization.types';
 import {
   updateWhatsAppConnectionSchema,
   listWhatsAppConnectionsQuerySchema,
+  startWhatsAppOnboardingSchema,
+  completeWhatsAppOnboardingSchema,
 } from '../whatsapp/whatsapp.types';
 
 const router = Router();
@@ -52,6 +54,20 @@ router.patch(
   requireOrganizationRole('admin'),
   validate(updateWhatsAppConnectionSchema),
   whatsappController.updateConnection
+);
+
+// WhatsApp Onboarding (Phase 7D1)
+router.post(
+  '/:organizationId/whatsapp/onboarding/start',
+  requireOrganizationRole('admin'),
+  validate(startWhatsAppOnboardingSchema),
+  whatsappController.startOnboarding
+);
+router.post(
+  '/:organizationId/whatsapp/onboarding/complete',
+  requireOrganizationRole('admin'),
+  validate(completeWhatsAppOnboardingSchema),
+  whatsappController.completeOnboarding
 );
 
 // Ministry attach/detach

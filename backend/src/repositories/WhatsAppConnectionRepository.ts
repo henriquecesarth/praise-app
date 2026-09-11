@@ -112,7 +112,10 @@ export class WhatsAppConnectionRepository {
     return { id: doc.id, ...doc.data() } as WhatsAppConnectionRecord;
   }
 
-  async createConnection(data: CreateWhatsAppConnectionData): Promise<WhatsAppConnectionRecord> {
+  async createConnection(
+    data: CreateWhatsAppConnectionData,
+    tx?: FirebaseFirestore.Transaction
+  ): Promise<WhatsAppConnectionRecord> {
     const now = new Date().toISOString();
     const id = `wac_${crypto.randomBytes(12).toString('hex')}`;
     const status = data.status || 'pending';
@@ -141,7 +144,11 @@ export class WhatsAppConnectionRepository {
       updated_at: now,
     };
 
-    await this.connectionsCol.doc(id).set(record);
+    if (tx) {
+      tx.set(this.connectionsCol.doc(id), record);
+    } else {
+      await this.connectionsCol.doc(id).set(record);
+    }
     return record;
   }
 

@@ -1,4 +1,4 @@
-﻿import { Response, NextFunction } from 'express';
+import { Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../../middleware/auth';
 import { WhatsAppConnectionService } from './whatsapp-connection.service';
 
@@ -67,6 +67,48 @@ export class WhatsAppController {
     try {
       const ministryId = getParam(req.params.ministryId || req.params.groupId);
       const result = await this.whatsappService.getMinistryWhatsAppStatus(ministryId);
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  startOnboarding = async (
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const organizationId = getParam(req.params.organizationId);
+      const actorUserId = req.user!.id;
+
+      const result = await this.whatsappService.startOnboarding(
+        organizationId,
+        actorUserId,
+        req.body
+      );
+
+      res.status(201).json(result);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  completeOnboarding = async (
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const organizationId = getParam(req.params.organizationId);
+      const actorUserId = req.user!.id;
+
+      const result = await this.whatsappService.completeOnboarding(
+        organizationId,
+        actorUserId,
+        req.body
+      );
+
       res.json(result);
     } catch (err) {
       next(err);

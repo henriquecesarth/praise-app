@@ -31,6 +31,10 @@ const configSchema = z.object({
   webAppUrl: z.string().default('http://localhost:5173'),
   billingPublicApiUrl: z.string().optional(),
   whatsappTokenEncryptionKey: z.string().optional(),
+  metaAppId: z.string().optional(),
+  metaAppSecret: z.string().optional(),
+  metaConfigId: z.string().optional(),
+  metaGraphApiVersion: z.string().default('v26.0'),
   asaas: z.object({
     apiUrl: z.string().default('https://sandbox.asaas.com/api/v3'),
     apiKey: z.string().optional(),
@@ -67,6 +71,10 @@ const rawConfig = {
   webAppUrl: process.env.WEB_APP_URL || 'http://localhost:5173',
   billingPublicApiUrl: process.env.BILLING_PUBLIC_API_URL,
   whatsappTokenEncryptionKey: process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY,
+  metaAppId: process.env.META_APP_ID,
+  metaAppSecret: process.env.META_APP_SECRET,
+  metaConfigId: process.env.META_CONFIG_ID,
+  metaGraphApiVersion: process.env.META_GRAPH_API_VERSION || 'v26.0',
   asaas: {
     apiUrl: process.env.ASAAS_API_URL || (process.env.ASAAS_ENVIRONMENT === 'production' ? 'https://api.asaas.com/v3' : 'https://sandbox.asaas.com/api/v3'),
     apiKey: process.env.ASAAS_API_KEY,

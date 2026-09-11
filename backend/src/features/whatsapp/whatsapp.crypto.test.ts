@@ -309,4 +309,30 @@ describe('WhatsApp Connection Secret Repository Suite (Phase 7C / F5 remediation
   it('13. Deleting non-existent secret is safe and idempotent (returns without error)', async () => {
     await expect(secretRepo.deleteSecret('org-test', 'non-existent')).resolves.not.toThrow();
   });
+
+  it('14. Secret record with token_type business_token encrypts and decrypts correctly (Phase 7D1)', () => {
+    const rawToken = 'EAAGm0PX4ZB74BA_business_token_12345';
+    const orgId = 'org-test-biz';
+    const connId = 'wac-test-biz';
+
+    const encService = new WhatsAppEncryptionService(crypto.randomBytes(32).toString('base64'));
+    const encrypted = encService.encryptToken(rawToken, orgId, connId);
+    const secretRecord: WhatsAppConnectionSecretRecord = {
+      id: connId,
+      connection_id: connId,
+      organization_id: orgId,
+      key_version: encrypted.keyVersion,
+      encrypted_access_token: encrypted.encryptedAccessToken,
+      iv: encrypted.iv,
+      auth_tag: encrypted.authTag,
+      token_type: 'business_token',
+      expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const decrypted = encService.decryptToken(secretRecord, orgId, connId);
+    expect(decrypted).toBe(rawToken);
+    expect(secretRecord.token_type).toBe('business_token');
+  });
 });

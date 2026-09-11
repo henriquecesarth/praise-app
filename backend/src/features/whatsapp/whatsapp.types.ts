@@ -37,7 +37,7 @@ export interface WhatsAppConnectionSecretRecord {
   encrypted_access_token: string; // Base64 ciphertext
   iv: string; // Base64 IV (12 decoded bytes)
   auth_tag: string; // Base64 GCM Tag (16 decoded bytes)
-  token_type: 'system_user' | 'user_token';
+  token_type: 'business_token' | 'system_user' | 'user_token';
   expires_at: string | null; // ISO 8601 or null if permanent
   created_at: string; // ISO 8601 UTC
   updated_at: string; // ISO 8601 UTC
@@ -246,4 +246,101 @@ export interface CreateWhatsAppConnectionData {
   pending_expires_at?: string | null;
   last_connected_at?: string | null;
   last_health_check_at?: string | null;
+}
+
+export type WhatsAppOnboardingSessionStatus =
+  | 'active'
+  | 'credential_staged'
+  | 'consumed'
+  | 'expired'
+  | 'failed';
+
+export interface WhatsAppOnboardingSessionRecord {
+  id: string; // "wabs_" + random hex
+  organization_id: string;
+  connection_id: string; // FK to whatsapp_connections
+  actor_user_id: string;
+  state_nonce_hash: string; // SHA-256 hex
+  status: WhatsAppOnboardingSessionStatus;
+  expires_at: string; // ISO 8601 UTC
+  consumed_at: string | null;
+  created_at: string; // ISO 8601 UTC
+  updated_at: string; // ISO 8601 UTC
+}
+
+export const startWhatsAppOnboardingSchema = z.object({
+  displayName: z.string().trim().min(1).max(100).optional(),
+});
+
+export type StartWhatsAppOnboardingInput = z.infer<typeof startWhatsAppOnboardingSchema>;
+
+export interface StartWhatsAppOnboardingResponseDto {
+  sessionId: string;
+  connectionId: string;
+  stateNonce: string; // raw 32-byte hex entropy returned strictly once
+  fbAppId: string;
+  configId: string;
+  expiresAt: string;
+}
+
+export const completeWhatsAppOnboardingSchema = z.object({
+  sessionId: z.string().trim().min(1, 'sessionId é obrigatório.').max(100),
+  stateNonce: z.string().trim().min(1, 'stateNonce é obrigatório.').max(200),
+  code: z.string().trim().min(1, 'code de autorização é obrigatório.').max(1000),
+  wabaId: z.string().trim().min(1, 'wabaId é obrigatório.').max(100),
+  phoneNumberId: z.string().trim().min(1, 'phoneNumberId é obrigatório.').max(100),
+  pin: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/, 'PIN de registro deve conter exatamente 6 dígitos numéricos.')
+    .optional(),
+});
+
+export type CompleteWhatsAppOnboardingInput = z.infer<typeof completeWhatsAppOnboardingSchema>;
+
+export function normalizeToE164(raw: string): string {
+  if (!raw || typeof raw !== 'string') {
+    throw new AppError(400, 'Número de telefone deve estar no formato canônico E.164.', {
+      code: 'INVALID_PHONE_E164',
+    });
+  }
+
+  const trimmed = raw.trim();
+  const cleaned = trimmed.replace(/[\s\-\(\)]/g, '');
+
+  if (!/^\+[1-9]\d{1,14}$/.test(cleaned)) {
+    throw new AppError(400, 'Número de telefone deve estar no formato canônico E.164.', {
+      code: 'INVALID_PHONE_E164',
+    });
+  }
+
+  return cleaned;
+}
+
+export interface WhatsAppOAuthResult {
+  accessToken: string;
+  tokenType: 'business_token' | 'system_user' | 'user_token';
+  expiresAt: string | null;
+}
+
+export interface WhatsAppPhoneNumberDetails {
+  displayPhoneNumber: string;
+  verifiedName: string;
+  qualityRating: string;
+  messagingLimitTier?: string;
+}
+
+export interface WhatsAppAuthorizedPhoneNumber {
+  id: string;
+  displayPhoneNumber?: string;
+  verifiedName?: string;
+}
+
+export interface WhatsAppProvider {
+  exchangeOAuthCode(code: string): Promise<WhatsAppOAuthResult>;
+  verifyMessagingAccountAccess(accessToken: string, wabaId: string): Promise<boolean>;
+  listAuthorizedPhoneNumbers(accessToken: string, wabaId: string): Promise<WhatsAppAuthorizedPhoneNumber[]>;
+  getPhoneNumberDetails(accessToken: string, phoneNumberId: string): Promise<WhatsAppPhoneNumberDetails>;
+  registerPhoneNumber(accessToken: string, phoneNumberId: string, pin: string): Promise<void>;
+  subscribeMessagingAccountApps(accessToken: string, wabaId: string): Promise<void>;
 }

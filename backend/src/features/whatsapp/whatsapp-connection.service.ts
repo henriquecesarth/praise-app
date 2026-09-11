@@ -1,12 +1,19 @@
 import { db } from '../../lib/firebase';
+import crypto from 'crypto';
+import { FieldValue } from 'firebase-admin/firestore';
 import { AppError } from '../../middleware/error-handler';
+import { config } from '../../config/unifiedConfig';
 import { WhatsAppConnectionRepository } from '../../repositories/WhatsAppConnectionRepository';
 import { WhatsAppConnectionSecretRepository } from '../../repositories/WhatsAppConnectionSecretRepository';
 import { WhatsAppProviderIdentityClaimRepository } from '../../repositories/WhatsAppProviderIdentityClaimRepository';
 import { WhatsAppMinistryAssignmentClaimRepository } from '../../repositories/WhatsAppMinistryAssignmentClaimRepository';
+import { WhatsAppOnboardingSessionRepository } from '../../repositories/WhatsAppOnboardingSessionRepository';
+import { MetaWhatsAppProvider } from './meta-whatsapp.provider';
+import { WhatsAppEncryptionService } from './whatsapp-encryption.service';
 import { OrganizationRepository } from '../../repositories/OrganizationRepository';
 import { SubscriptionService } from '../subscriptions/subscription.service';
 import { MinistryRepository } from '../../repositories/MinistryRepository';
+import { MinistrySubscriptionRecord } from '../subscriptions/subscription.types';
 import { validateConnectionTransition } from './whatsapp-transition.validator';
 import {
   WhatsAppConnectionRecord,
@@ -17,6 +24,15 @@ import {
   OrganizationWhatsAppCapacityUsageDto,
   ResolvedWhatsAppConnectionResult,
   UpdateWhatsAppConnectionInput,
+  StartWhatsAppOnboardingInput,
+  StartWhatsAppOnboardingResponseDto,
+  CompleteWhatsAppOnboardingInput,
+  WhatsAppOnboardingSessionRecord,
+  WhatsAppConnectionSecretRecord,
+  WhatsAppAuthorizedPhoneNumber,
+  WhatsAppOAuthResult,
+  WhatsAppProvider,
+  normalizeToE164,
   isProviderIdentityMaterialized,
   getClaimId,
   getMinistryAssignmentClaimId,
@@ -32,7 +48,10 @@ export class WhatsAppConnectionService {
     private readonly orgRepo: OrganizationRepository = new OrganizationRepository(),
     private readonly subService: SubscriptionService = new SubscriptionService(),
     private readonly ministryRepo: MinistryRepository = new MinistryRepository(),
-    private readonly assignmentClaimRepo: WhatsAppMinistryAssignmentClaimRepository = new WhatsAppMinistryAssignmentClaimRepository()
+    private readonly assignmentClaimRepo: WhatsAppMinistryAssignmentClaimRepository = new WhatsAppMinistryAssignmentClaimRepository(),
+    private readonly onboardingSessionRepo: WhatsAppOnboardingSessionRepository = new WhatsAppOnboardingSessionRepository(),
+    private readonly metaProvider: WhatsAppProvider = new MetaWhatsAppProvider(),
+    private readonly encryptionService: WhatsAppEncryptionService = new WhatsAppEncryptionService()
   ) {}
 
   private mapToDto(conn: WhatsAppConnectionRecord, defaultConnectionId: string | null): WhatsAppConnectionDto {
@@ -620,5 +639,436 @@ export class WhatsAppConnectionService {
     }
 
     await this.connectionRepo.setConnectionStatus(orgId, connectionId, targetStatus, reason);
+  }
+
+  async startOnboarding(
+    orgId: string,
+    actorUserId: string,
+    input: StartWhatsAppOnboardingInput
+  ): Promise<StartWhatsAppOnboardingResponseDto> {
+    const member = await this.orgRepo.getOrganizationMember(orgId, actorUserId);
+    if (!member) {
+      throw new AppError(404, 'Organização não encontrada.');
+    }
+
+    if (member.role !== 'admin' && member.role !== 'owner') {
+      throw new AppError(403, 'Apenas administradores da organização podem iniciar o onboarding do WhatsApp.');
+    }
+
+    const fbAppId = config.metaAppId || process.env.META_APP_ID;
+    const configId = config.metaConfigId || process.env.META_CONFIG_ID || '';
+
+    if (!fbAppId) {
+      throw new AppError(
+        500,
+        'WHATSAPP_PROVIDER_CONFIG_INVALID_OR_MISSING: Meta App ID não configurado no servidor.',
+        { code: 'WHATSAPP_PROVIDER_CONFIG_INVALID_OR_MISSING' }
+      );
+    }
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+
+    const result = await db.runTransaction(async (tx) => {
+      // 1. Read organizations.doc(orgId)
+      const orgRef = db.collection('organizations').doc(orgId);
+      const orgDoc = await tx.get(orgRef);
+      if (!orgDoc.exists) {
+        throw new AppError(404, 'Organização não encontrada.');
+      }
+      const org = { id: orgDoc.id, ...orgDoc.data() } as OrganizationRecord;
+
+      // 2. Read ministry_subscriptions.doc(billingAnchorMinistryId)
+      const subRef = db.collection('ministry_subscriptions').doc(org.billing_anchor_ministry_id);
+      const subDoc = await tx.get(subRef);
+      const sub = subDoc.exists ? ({ id: subDoc.id, ...subDoc.data() } as MinistrySubscriptionRecord) : null;
+
+      // Evaluate capacity
+      const capacity = SubscriptionService.evaluateOrganizationWhatsAppCapacity(org, sub, now);
+      if (!capacity.enabled || capacity.billingAccessMode === 'suspended') {
+        throw new AppError(
+          403,
+          'A organização não possui capacidade comercial disponível para WhatsApp no plano atual.',
+          { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED' }
+        );
+      }
+
+      // 3. Query whatsapp_connections where organization_id == orgId
+      const query = db
+        .collection('whatsapp_connections')
+        .where('organization_id', '==', orgId)
+        .where('status', 'in', ['pending', 'connecting', 'connected', 'error', 'disabled_by_user']);
+
+      const snapshot = await tx.get(query);
+
+      let activeConfiguredCount = 0;
+      for (const doc of snapshot.docs) {
+        const conn = doc.data() as WhatsAppConnectionRecord;
+        if (conn.status === 'pending') {
+          const isExpired = conn.pending_expires_at && new Date(conn.pending_expires_at) <= now;
+          if (isExpired) {
+            tx.update(doc.ref, {
+              status: 'error',
+              status_reason: 'PENDING_EXPIRED',
+              updated_at: nowIso,
+            });
+            continue;
+          }
+        }
+        activeConfiguredCount++;
+      }
+
+      // 4. Capacity Gate
+      if (activeConfiguredCount >= capacity.totalAllowedConnections) {
+        throw new AppError(
+          403,
+          'Limite de capacidade comercial de conexões WhatsApp atingido para a organização.',
+          { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED' }
+        );
+      }
+
+      // 5. Shared Write Contention on organizations.doc(orgId) (DEC-7D-07)
+      tx.update(orgRef, {
+        whatsapp_reservation_sequence: FieldValue.increment(1),
+        updated_at: nowIso,
+      });
+
+      // 6. Create pending connection
+      const connectionId = `wac_${crypto.randomBytes(12).toString('hex')}`;
+      const sessionId = `wabs_${crypto.randomBytes(12).toString('hex')}`;
+      const rawNonce = crypto.randomBytes(32).toString('hex');
+      const stateNonceHash = crypto.createHash('sha256').update(rawNonce).digest('hex');
+      const pendingExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+      const sessionExpiresAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
+
+      const connectionRecord: WhatsAppConnectionRecord = {
+        id: connectionId,
+        organization_id: orgId,
+        display_name: input.displayName?.trim() || 'Linha WhatsApp',
+        phone_number: null,
+        provider: 'meta_cloud_api',
+        provider_waba_id: null,
+        provider_phone_number_id: null,
+        status: 'pending',
+        status_reason: null,
+        assigned_ministry_id: null,
+        created_by_user_id: actorUserId,
+        pending_expires_at: pendingExpiresAt,
+        last_connected_at: null,
+        last_health_check_at: null,
+        created_at: nowIso,
+        updated_at: nowIso,
+      };
+      tx.set(db.collection('whatsapp_connections').doc(connectionId), connectionRecord);
+
+      // 7. Create onboarding session document
+      const sessionRecord: WhatsAppOnboardingSessionRecord = {
+        id: sessionId,
+        organization_id: orgId,
+        connection_id: connectionId,
+        actor_user_id: actorUserId,
+        state_nonce_hash: stateNonceHash,
+        status: 'active',
+        expires_at: sessionExpiresAt,
+        consumed_at: null,
+        created_at: nowIso,
+        updated_at: nowIso,
+      };
+      tx.set(db.collection('whatsapp_onboarding_sessions').doc(sessionId), sessionRecord);
+
+      return {
+        sessionId,
+        connectionId,
+        stateNonce: rawNonce,
+        fbAppId,
+        configId,
+        expiresAt: sessionExpiresAt,
+      };
+    });
+
+    return result;
+  }
+
+  async completeOnboarding(
+    orgId: string,
+    actorUserId: string,
+    input: CompleteWhatsAppOnboardingInput
+  ): Promise<WhatsAppConnectionDto> {
+    const member = await this.orgRepo.getOrganizationMember(orgId, actorUserId);
+    if (!member) {
+      throw new AppError(404, 'Organização não encontrada.');
+    }
+
+    if (member.role !== 'admin' && member.role !== 'owner') {
+      throw new AppError(403, 'Apenas administradores da organização podem completar o onboarding.');
+    }
+
+    // Step 1: Session Lookup & Verification
+    const session = await this.onboardingSessionRepo.getSessionById(input.sessionId);
+    if (!session || session.organization_id !== orgId) {
+      throw new AppError(400, 'Sessão de onboarding não encontrada ou expirada.', {
+        code: 'ONBOARDING_SESSION_EXPIRED',
+      });
+    }
+
+    if (session.status === 'consumed') {
+      throw new AppError(409, 'Sessão de onboarding já consumida.', {
+        code: 'ONBOARDING_SESSION_ALREADY_CONSUMED',
+      });
+    }
+
+    if (session.status !== 'active' && session.status !== 'credential_staged') {
+      throw new AppError(400, 'Sessão de onboarding inválida ou expirada.', {
+        code: 'ONBOARDING_SESSION_EXPIRED',
+      });
+    }
+
+    const now = new Date();
+    if (new Date(session.expires_at) <= now) {
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'expired' });
+      throw new AppError(400, 'Sessão de onboarding expirada.', {
+        code: 'ONBOARDING_SESSION_EXPIRED',
+      });
+    }
+
+    // Step 2: Constant-Time Nonce Check (CSRF security)
+    const incomingNonceHash = crypto.createHash('sha256').update(input.stateNonce).digest('hex');
+    const incomingBuffer = Buffer.from(incomingNonceHash, 'hex');
+    const storedBuffer = Buffer.from(session.state_nonce_hash, 'hex');
+    const isValidNonce =
+      incomingBuffer.length === storedBuffer.length && crypto.timingSafeEqual(incomingBuffer, storedBuffer);
+
+    if (!isValidNonce) {
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      throw new AppError(403, 'Estado de onboarding inválido (falha na validação CSRF).', {
+        code: 'INVALID_ONBOARDING_STATE',
+      });
+    }
+
+    // Step 3: Entitlement Downgrade Gate (DEC-7D-16)
+    const capacity = await this.subService.getOrganizationWhatsAppCapacity(orgId);
+    if (!capacity.enabled || capacity.billingAccessMode === 'suspended') {
+      await this.connectionRepo.updateConnection(orgId, session.connection_id, {
+        status: 'error',
+        status_reason: 'SUBSCRIPTION_RESTRICTED',
+      });
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      throw new AppError(403, 'A assinatura da organização está suspensa ou sem capacidade WhatsApp.', {
+        code: 'WHATSAPP_SUBSCRIPTION_SUSPENDED',
+      });
+    }
+
+    // Step 4: Credential Staging / Reuse (DEC-7D-20)
+    let accessToken: string;
+    if (session.status === 'active') {
+      let oauthResult: WhatsAppOAuthResult;
+      try {
+        oauthResult = await this.metaProvider.exchangeOAuthCode(input.code);
+      } catch (err: any) {
+        await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+        throw new AppError(400, `Falha na troca do código OAuth do WhatsApp: ${err.message || 'Erro do provedor'}`, {
+          code: 'WHATSAPP_OAUTH_EXCHANGE_FAILED',
+          cause: err,
+        });
+      }
+      accessToken = oauthResult.accessToken;
+
+      const encrypted = this.encryptionService.encryptToken(accessToken, orgId, session.connection_id);
+      const secretRecord: WhatsAppConnectionSecretRecord = {
+        id: session.connection_id,
+        organization_id: orgId,
+        connection_id: session.connection_id,
+        encrypted_access_token: encrypted.encryptedAccessToken,
+        iv: encrypted.iv,
+        auth_tag: encrypted.authTag,
+        key_version: encrypted.keyVersion,
+        token_type: 'business_token',
+        expires_at: oauthResult.expiresAt,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      await this.secretRepo.setSecret(secretRecord);
+
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'credential_staged' });
+    } else {
+      const existingSecret = await this.secretRepo.getSecret(orgId, session.connection_id);
+      if (!existingSecret) {
+        await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+        throw new AppError(400, 'Credencial em estágio não encontrada.', {
+          code: 'ONBOARDING_SESSION_EXPIRED',
+        });
+      }
+      accessToken = this.encryptionService.decryptToken(existingSecret, orgId, session.connection_id);
+    }
+
+    // Step 5: Server-Side Messaging Account Authority Check (DEC-7D-18)
+    let isWabaAuthorized = false;
+    try {
+      isWabaAuthorized = await this.metaProvider.verifyMessagingAccountAccess(accessToken, input.wabaId);
+    } catch {
+      isWabaAuthorized = false;
+    }
+
+    if (!isWabaAuthorized) {
+      await this.secretRepo.deleteSecret(orgId, session.connection_id);
+      await this.connectionRepo.updateConnection(orgId, session.connection_id, {
+        status: 'error',
+        status_reason: 'UNAUTHORIZED_WABA_ACCESS',
+      });
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      throw new AppError(403, 'Acesso não autorizado à conta do WhatsApp fornecida.', {
+        code: 'UNAUTHORIZED_WABA_ACCESS',
+      });
+    }
+
+    // Step 6: Edge Operational Authorization Verification (DEC-7D-18)
+    let phoneNumbers: WhatsAppAuthorizedPhoneNumber[] = [];
+    try {
+      phoneNumbers = await this.metaProvider.listAuthorizedPhoneNumbers(accessToken, input.wabaId);
+    } catch {
+      await this.secretRepo.deleteSecret(orgId, session.connection_id);
+      await this.connectionRepo.updateConnection(orgId, session.connection_id, {
+        status: 'error',
+        status_reason: 'PHONE_NOT_IN_WABA',
+      });
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      throw new AppError(400, 'O número de telefone informado não pertence à conta WhatsApp.', {
+        code: 'PHONE_NOT_IN_WABA',
+      });
+    }
+
+    const matchingPhone = phoneNumbers.find((p) => p.id === input.phoneNumberId);
+    if (!matchingPhone) {
+      await this.secretRepo.deleteSecret(orgId, session.connection_id);
+      await this.connectionRepo.updateConnection(orgId, session.connection_id, {
+        status: 'error',
+        status_reason: 'PHONE_NOT_IN_WABA',
+      });
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      throw new AppError(400, 'O número de telefone informado não pertence à conta WhatsApp.', {
+        code: 'PHONE_NOT_IN_WABA',
+      });
+    }
+
+    // Step 7: Phone Normalization
+    let displayPhone = matchingPhone.displayPhoneNumber;
+    if (!displayPhone) {
+      const details = await this.metaProvider.getPhoneNumberDetails(accessToken, input.phoneNumberId);
+      displayPhone = details.displayPhoneNumber;
+    }
+    const normalizedPhoneNumber = normalizeToE164(displayPhone);
+
+    // Step 8: Ephemeral Two-Step PIN Registration (DEC-7D-15)
+    if (input.pin) {
+      try {
+        await this.metaProvider.registerPhoneNumber(accessToken, input.phoneNumberId, input.pin);
+      } catch (err: any) {
+        throw new AppError(
+          502,
+          `Falha no registro do número com PIN no provedor: ${err.message || 'Erro no provedor'}`,
+          {
+            code: 'PROVIDER_REGISTRATION_FAILED',
+            cause: err,
+          }
+        );
+      }
+    }
+
+    // Step 9: Messaging Account Webhook Subscription
+    try {
+      await this.metaProvider.subscribeMessagingAccountApps(accessToken, input.wabaId);
+    } catch (err: any) {
+      throw new AppError(
+        502,
+        `Falha na assinatura de webhooks da conta no provedor: ${err.message || 'Erro no provedor'}`,
+        {
+          code: 'PROVIDER_SUBSCRIPTION_FAILED',
+          cause: err,
+        }
+      );
+    }
+
+    // Step 10: Atomic Materialization Transaction (Inside Firestore Transaction) (DEC-7D-21)
+    const claimId = getClaimId('meta_cloud_api', input.phoneNumberId);
+    const nowIso = new Date().toISOString();
+
+    try {
+      await db.runTransaction(async (tx) => {
+        // 10a. Read connection doc
+        const connRef = db.collection('whatsapp_connections').doc(session.connection_id);
+        const connDoc = await tx.get(connRef);
+        if (!connDoc.exists) {
+          throw new AppError(404, 'Conexão não encontrada.');
+        }
+        const conn = connDoc.data() as WhatsAppConnectionRecord;
+        if (conn.organization_id !== orgId) {
+          throw new AppError(404, 'Conexão não encontrada nesta organização.');
+        }
+        if (conn.status !== 'pending' && conn.status !== 'connecting') {
+          throw new AppError(400, `Conexão em estado inválido para materialização: ${conn.status}`);
+        }
+
+        // 10b. Read and claim provider identity
+        const claimRef = db.collection('whatsapp_provider_identity_claims').doc(claimId);
+        const claimDoc = await tx.get(claimRef);
+        if (claimDoc.exists) {
+          const existingClaim = claimDoc.data();
+          if (existingClaim?.connection_id !== session.connection_id) {
+            throw new AppError(409, 'Este número de telefone já está registrado em outra conexão.', {
+              code: 'PROVIDER_PHONE_ALREADY_REGISTERED',
+            });
+          }
+        } else {
+          tx.set(claimRef, {
+            id: claimId,
+            provider: 'meta_cloud_api',
+            provider_phone_number_id: input.phoneNumberId,
+            organization_id: orgId,
+            connection_id: session.connection_id,
+            created_at: nowIso,
+            updated_at: nowIso,
+          });
+        }
+
+        // 10c. Update connection
+        tx.update(connRef, {
+          status: 'connected',
+          phone_number: normalizedPhoneNumber,
+          provider_waba_id: input.wabaId,
+          provider_phone_number_id: input.phoneNumberId,
+          last_connected_at: nowIso,
+          status_reason: null,
+          pending_expires_at: null,
+          updated_at: nowIso,
+        });
+
+        // 10d. Update session to consumed
+        const sessionRef = db.collection('whatsapp_onboarding_sessions').doc(session.id);
+        tx.update(sessionRef, {
+          status: 'consumed',
+          consumed_at: nowIso,
+          updated_at: nowIso,
+        });
+      });
+    } catch (err: any) {
+      if (err?.code === 'PROVIDER_PHONE_ALREADY_REGISTERED' || (err instanceof AppError && err.statusCode === 409)) {
+        await this.secretRepo.deleteSecret(orgId, session.connection_id);
+        await this.connectionRepo.updateConnection(orgId, session.connection_id, {
+          status: 'error',
+          status_reason: 'PHONE_ALREADY_REGISTERED',
+        });
+        await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+        throw err;
+      }
+      throw err;
+    }
+
+    const org = await this.orgRepo.getOrganizationById(orgId);
+    const updatedConn = await this.connectionRepo.getConnectionById(session.connection_id);
+    if (!updatedConn) {
+      throw new AppError(404, 'Conexão não encontrada após conclusão.');
+    }
+
+    return this.mapToDto(updatedConn, org?.default_whatsapp_connection_id ?? null);
   }
 }

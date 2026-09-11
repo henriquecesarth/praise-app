@@ -22,7 +22,7 @@ import {
   MinistrySubscriptionStatusSummary,
   SubscriptionMode,
 } from './subscription.types';
-import { OrganizationWhatsAppCapacity, BillingAccessMode } from '../organizations/organization.types';
+import { OrganizationRecord, OrganizationWhatsAppCapacity, BillingAccessMode } from '../organizations/organization.types';
 import {
   CustomerFacingPendingTransitionDto,
   BillingSubscriptionRecord,
@@ -581,36 +581,98 @@ export class SubscriptionService {
   }
 
   /**
-   * Avalia a capacidade comercial de conexões WhatsApp para a organização (Phase 7B).
-   * Deriva a capacidade da assinatura ativa do ministério âncora de faturamento.
-   * Não consulta ou gerencia conexões reais (responsabilidade da Phase 7C).
+   * Avalia a capacidade comercial de conexões WhatsApp para a organização (Phase 7B / 7D1).
+   * Função de avaliação pura que opera sobre OrganizationRecord e MinistrySubscriptionRecord ou MinistrySubscriptionStatusSummary.
    */
-  async getOrganizationWhatsAppCapacity(organizationId: string): Promise<OrganizationWhatsAppCapacity> {
-    const org = await this.orgRepo.getOrganizationById(organizationId);
-    if (!org) {
-      throw new AppError(404, 'Organização não encontrada.');
+  static evaluateOrganizationWhatsAppCapacity(
+    org: OrganizationRecord,
+    subscriptionOrSummary: MinistrySubscriptionRecord | MinistrySubscriptionStatusSummary | null,
+    now: Date = new Date()
+  ): OrganizationWhatsAppCapacity {
+    // 1. Se o sumário completo já foi resolvido:
+    if (subscriptionOrSummary && 'plan' in subscriptionOrSummary && 'subscription' in subscriptionOrSummary) {
+      const summary = subscriptionOrSummary;
+      const includedConnections = getIncludedWhatsAppConnections(summary.plan.id);
+      const additionalConnections = 0; // Estritamente 0 no runtime da Phase 7B (extensão para Phase 7H)
+      const totalAllowedConnections = includedConnections + additionalConnections;
+
+      let billingAccessMode: BillingAccessMode;
+      switch (summary.subscription.accessMode) {
+        case 'suspended':
+        case 'restricted_over_limit':
+          billingAccessMode = 'suspended';
+          break;
+        case 'grace':
+          billingAccessMode = 'grace';
+          break;
+        case 'normal':
+          billingAccessMode = 'normal';
+          break;
+        default:
+          billingAccessMode = 'suspended';
+          break;
+      }
+
+      const enabled = totalAllowedConnections > 0 && billingAccessMode !== 'suspended';
+
+      return {
+        organizationId: org.id,
+        billingAnchorMinistryId: org.billing_anchor_ministry_id,
+        enabled,
+        includedConnections,
+        additionalConnections,
+        totalAllowedConnections,
+        billingAccessMode,
+      };
     }
 
-    const summary = await this.getSubscriptionSummary(org.billing_anchor_ministry_id);
-    const includedConnections = getIncludedWhatsAppConnections(summary.plan.id);
-    const additionalConnections = 0; // Estritamente 0 no runtime da Phase 7B (extensão para Phase 7H)
+    // 2. Se o registro bruto MinistrySubscriptionRecord ou null foi passado:
+    const sub = subscriptionOrSummary as MinistrySubscriptionRecord | null;
+    let planId = sub ? sub.plan_id : DEFAULT_PLAN_ID;
+
+    if (sub) {
+      const isLegacyCancelExpired = Boolean(
+        sub.cancel_at_period_end &&
+        !sub.active_cancellation_transition_id &&
+        sub.current_period_end &&
+        !isNaN(new Date(sub.current_period_end).getTime()) &&
+        now > new Date(sub.current_period_end)
+      );
+      if (isLegacyCancelExpired) {
+        planId = DEFAULT_PLAN_ID;
+      } else if (sub.subscription_mode === 'complimentary' && sub.expires_at) {
+        const grantExpires = new Date(sub.expires_at);
+        if (!isNaN(grantExpires.getTime()) && now > grantExpires) {
+          planId = DEFAULT_PLAN_ID;
+        }
+      }
+    }
+
+    const includedConnections = getIncludedWhatsAppConnections(planId);
+    const additionalConnections = 0;
     const totalAllowedConnections = includedConnections + additionalConnections;
 
-    let billingAccessMode: BillingAccessMode;
-    switch (summary.subscription.accessMode) {
-      case 'suspended':
-      case 'restricted_over_limit':
+    let billingAccessMode: BillingAccessMode = 'normal';
+    if (sub) {
+      if (sub.administratively_suspended) {
         billingAccessMode = 'suspended';
-        break;
-      case 'grace':
-        billingAccessMode = 'grace';
-        break;
-      case 'normal':
-        billingAccessMode = 'normal';
-        break;
-      default:
+      } else if (sub.billing_status === 'past_due') {
+        const graceEndDate =
+          sub.grace_period_expires_billing_date ||
+          (sub.grace_period_expires_at ? getBillingDate(sub.grace_period_expires_at) : null);
+        if (graceEndDate) {
+          const currentCommercialDate = getBillingDate(now);
+          if (currentCommercialDate < graceEndDate) {
+            billingAccessMode = 'grace';
+          } else {
+            billingAccessMode = 'suspended';
+          }
+        } else {
+          billingAccessMode = 'suspended';
+        }
+      } else if (sub.billing_status !== 'active' && sub.billing_status !== 'trialing') {
         billingAccessMode = 'suspended';
-        break;
+      }
     }
 
     const enabled = totalAllowedConnections > 0 && billingAccessMode !== 'suspended';
@@ -624,5 +686,28 @@ export class SubscriptionService {
       totalAllowedConnections,
       billingAccessMode,
     };
+  }
+
+  evaluateOrganizationWhatsAppCapacity(
+    org: OrganizationRecord,
+    subscriptionOrSummary: MinistrySubscriptionRecord | MinistrySubscriptionStatusSummary | null,
+    now: Date = new Date()
+  ): OrganizationWhatsAppCapacity {
+    return SubscriptionService.evaluateOrganizationWhatsAppCapacity(org, subscriptionOrSummary, now);
+  }
+
+  /**
+   * Avalia a capacidade comercial de conexões WhatsApp para a organização (Phase 7B).
+   * Deriva a capacidade da assinatura ativa do ministério âncora de faturamento.
+   * Não consulta ou gerencia conexões reais (responsabilidade da Phase 7C).
+   */
+  async getOrganizationWhatsAppCapacity(organizationId: string): Promise<OrganizationWhatsAppCapacity> {
+    const org = await this.orgRepo.getOrganizationById(organizationId);
+    if (!org) {
+      throw new AppError(404, 'Organização não encontrada.');
+    }
+
+    const summary = await this.getSubscriptionSummary(org.billing_anchor_ministry_id);
+    return SubscriptionService.evaluateOrganizationWhatsAppCapacity(org, summary);
   }
 }
