@@ -1,4 +1,5 @@
-﻿import { db } from '../lib/firebase';
+import { db } from '../lib/firebase';
+import { FieldPath } from 'firebase-admin/firestore';
 import { AppError } from '../middleware/error-handler';
 import crypto from 'crypto';
 import {
@@ -7,6 +8,8 @@ import {
   CreateWhatsAppConnectionData,
   CONFIG_CONSUMING_STATUSES,
   getClaimId,
+  getMinistryAssignmentClaimId,
+  parseWhatsAppCursor,
 } from '../features/whatsapp/whatsapp.types';
 import { OrganizationRecord } from '../features/organizations/organization.types';
 
@@ -14,6 +17,7 @@ export class WhatsAppConnectionRepository {
   private readonly connectionsCol = db.collection('whatsapp_connections');
   private readonly organizationsCol = db.collection('organizations');
   private readonly claimsCol = db.collection('whatsapp_provider_identity_claims');
+  private readonly assignmentClaimsCol = db.collection('whatsapp_ministry_assignment_claims');
   private readonly secretsCol = db.collection('whatsapp_connection_secrets');
 
   async getConnectionById(connectionId: string): Promise<WhatsAppConnectionRecord | null> {
@@ -33,20 +37,10 @@ export class WhatsAppConnectionRepository {
     let query: FirebaseFirestore.Query = this.connectionsCol
       .where('organization_id', '==', orgId)
       .orderBy('created_at', 'desc')
-      .orderBy('__name__', 'desc');
+      .orderBy(FieldPath.documentId(), 'desc');
 
     if (options?.cursor) {
-      let parsed: { createdAt: string; id: string };
-      try {
-        const decodedStr = Buffer.from(options.cursor, 'base64url').toString('utf8');
-        parsed = JSON.parse(decodedStr);
-        if (!parsed || typeof parsed.createdAt !== 'string' || typeof parsed.id !== 'string') {
-          throw new Error('Invalid cursor shape');
-        }
-      } catch {
-        throw new AppError(400, 'Cursor de paginação inválido.', { code: 'INVALID_CURSOR' });
-      }
-
+      const parsed = parseWhatsAppCursor(options.cursor);
       query = query.startAfter(parsed.createdAt, parsed.id);
     }
 
@@ -61,9 +55,10 @@ export class WhatsAppConnectionRepository {
 
     let nextCursor: string | null = null;
     if (hasMore && items.length > 0) {
+      const lastDoc = docsToReturn[docsToReturn.length - 1];
       const lastItem = items[items.length - 1];
       nextCursor = Buffer.from(
-        JSON.stringify({ createdAt: lastItem.created_at, id: lastItem.id })
+        JSON.stringify({ createdAt: lastItem.created_at, id: lastDoc.id })
       ).toString('base64url');
     }
 
@@ -205,19 +200,47 @@ export class WhatsAppConnectionRepository {
         throw new AppError(404, 'Conexão não encontrada nesta organização.');
       }
 
+      // Idempotency: if already disconnected, no-op
+      if (conn.status === 'disconnected') {
+        return;
+      }
+
+      // Read phase first (strictly before writes)
       const orgRef = this.organizationsCol.doc(orgId);
       const orgDoc = await tx.get(orgRef);
+
+      let claimRef: FirebaseFirestore.DocumentReference | undefined;
+      let claimDoc: FirebaseFirestore.DocumentSnapshot | undefined;
+      if (conn.provider_phone_number_id) {
+        const claimId = getClaimId(conn.provider, conn.provider_phone_number_id);
+        claimRef = this.claimsCol.doc(claimId);
+        claimDoc = await tx.get(claimRef);
+      }
+
+      let assignmentClaimRef: FirebaseFirestore.DocumentReference | undefined;
+      let assignmentClaimDoc: FirebaseFirestore.DocumentSnapshot | undefined;
+      if (conn.assigned_ministry_id) {
+        const assignmentClaimId = getMinistryAssignmentClaimId(orgId, conn.assigned_ministry_id);
+        assignmentClaimRef = this.assignmentClaimsCol.doc(assignmentClaimId);
+        assignmentClaimDoc = await tx.get(assignmentClaimRef);
+      }
+
+      const secretRef = this.secretsCol.doc(connectionId);
+      const secretDoc = await tx.get(secretRef);
+
+      // Write phase
+      const now = new Date().toISOString();
+
       if (orgDoc.exists) {
         const orgData = orgDoc.data() as OrganizationRecord;
         if (orgData.default_whatsapp_connection_id === connectionId) {
           tx.update(orgRef, {
             default_whatsapp_connection_id: null,
-            updated_at: new Date().toISOString(),
+            updated_at: now,
           });
         }
       }
 
-      const now = new Date().toISOString();
       tx.update(connRef, {
         status: 'disconnected',
         assigned_ministry_id: null,
@@ -225,12 +248,36 @@ export class WhatsAppConnectionRepository {
         updated_at: now,
       });
 
-      if (conn.provider_phone_number_id) {
-        const claimId = getClaimId(conn.provider, conn.provider_phone_number_id);
-        tx.delete(this.claimsCol.doc(claimId));
+      // Release provider claim IF AND ONLY IF owned by this connection
+      if (
+        claimRef &&
+        claimDoc?.exists &&
+        claimDoc.data()?.connection_id === connectionId &&
+        claimDoc.data()?.organization_id === orgId &&
+        claimDoc.data()?.provider_phone_number_id === conn.provider_phone_number_id
+      ) {
+        tx.delete(claimRef);
       }
 
-      tx.delete(this.secretsCol.doc(connectionId));
+      // Release assignment claim IF AND ONLY IF owned by this connection
+      if (
+        assignmentClaimRef &&
+        assignmentClaimDoc?.exists &&
+        assignmentClaimDoc.data()?.connection_id === connectionId &&
+        assignmentClaimDoc.data()?.organization_id === orgId &&
+        assignmentClaimDoc.data()?.ministry_id === conn.assigned_ministry_id
+      ) {
+        tx.delete(assignmentClaimRef);
+      }
+
+      // Delete secret IF AND ONLY IF owned by this connection
+      if (
+        secretDoc.exists &&
+        secretDoc.data()?.organization_id === orgId &&
+        secretDoc.data()?.connection_id === connectionId
+      ) {
+        tx.delete(secretRef);
+      }
     });
   }
 }

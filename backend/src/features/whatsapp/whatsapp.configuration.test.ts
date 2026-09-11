@@ -14,6 +14,7 @@ describe('WhatsApp Configuration & Invariants Suite (Phase 7C)', () => {
   let ministriesStore: Map<string, any>;
   let connectionsStore: Map<string, WhatsAppConnectionRecord>;
   let claimsStore: Map<string, any>;
+  let assignmentClaimsStore: Map<string, any>;
   let secretsStore: Map<string, any>;
 
   let connectionRepo: WhatsAppConnectionRepository;
@@ -35,6 +36,7 @@ describe('WhatsApp Configuration & Invariants Suite (Phase 7C)', () => {
     ministriesStore = new Map();
     connectionsStore = new Map();
     claimsStore = new Map();
+    assignmentClaimsStore = new Map();
     secretsStore = new Map();
 
     // Populate org and member
@@ -87,6 +89,8 @@ describe('WhatsApp Configuration & Invariants Suite (Phase 7C)', () => {
             return connectionsStore;
           case 'whatsapp_provider_identity_claims':
             return claimsStore;
+          case 'whatsapp_ministry_assignment_claims':
+            return assignmentClaimsStore;
           case 'whatsapp_connection_secrets':
             return secretsStore;
           default:
@@ -147,22 +151,37 @@ describe('WhatsApp Configuration & Invariants Suite (Phase 7C)', () => {
       };
     });
 
+    let txLock = Promise.resolve();
     vi.spyOn(db, 'runTransaction').mockImplementation(async (updateFn: any) => {
-      const tx: any = {
-        get: async (docRef: any) => {
-          return await docRef.get();
-        },
-        set: (docRef: any, data: any) => {
-          docRef.set(data);
-        },
-        update: (docRef: any, data: any) => {
-          docRef.update(data);
-        },
-        delete: (docRef: any) => {
-          docRef.delete();
-        },
+      const run = async () => {
+        const tx: any = {
+          get: async (docRef: any) => {
+            return await docRef.get();
+          },
+          set: (docRef: any, data: any) => {
+            docRef.set(data);
+          },
+          update: (docRef: any, data: any) => {
+            docRef.update(data);
+          },
+          delete: (docRef: any) => {
+            docRef.delete();
+          },
+        };
+        return await updateFn(tx);
       };
-      return await updateFn(tx);
+
+      const currentLock = txLock;
+      let release: () => void;
+      txLock = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await currentLock;
+      try {
+        return await run();
+      } finally {
+        release!();
+      }
     });
 
     connectionRepo = new WhatsAppConnectionRepository();
@@ -336,5 +355,145 @@ describe('WhatsApp Configuration & Invariants Suite (Phase 7C)', () => {
     const connRecord = await connectionRepo.getConnectionById(conn.id);
     expect(connRecord?.status).toBe('disconnected');
     expect(connRecord?.assigned_ministry_id).toBeNull(); // CLEARED!
+  });
+
+  it('10. Parallel concurrent assignment race: exactly 1 winner, 1 rejected with 409 MINISTRY_ALREADY_HAS_EXCLUSIVE_CONNECTION (F1 remediation)', async () => {
+    const conn1 = await createConnectedLine('conn-race-1', 'phone-race-1');
+    const conn2 = await createConnectedLine('conn-race-2', 'phone-race-2');
+
+    const results = await Promise.allSettled([
+      service.assignMinistry(orgId, conn1.id, ministryId, ownerUserId),
+      service.assignMinistry(orgId, conn2.id, ministryId, ownerUserId),
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected');
+
+    expect(fulfilled.length).toBe(1);
+    expect(rejected.length).toBe(1);
+
+    const rejectionReason = (rejected[0] as PromiseRejectedResult).reason;
+    expect(rejectionReason.statusCode).toBe(409);
+    expect(rejectionReason.message).toMatch(/MINISTRY_ALREADY_HAS_EXCLUSIVE_CONNECTION/);
+
+    // Verify claim points to the winner
+    const claimDoc = assignmentClaimsStore.get(`assignment_claim_${orgId}_${ministryId}`);
+    expect(claimDoc).toBeDefined();
+    expect([conn1.id, conn2.id]).toContain(claimDoc.connection_id);
+  });
+
+  it('11. PATCH atomicity: mutual exclusivity reject (isOrganizationDefault + assignedMinistryId) leaves zero partial writes (F2 remediation)', async () => {
+    const conn = await createConnectedLine('conn-atomic-1', 'phone-atomic-1');
+
+    await expect(
+      service.updateConnection(
+        orgId,
+        conn.id,
+        {
+          isOrganizationDefault: true,
+          assignedMinistryId: secondMinistryId,
+        },
+        ownerUserId
+      )
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      message: expect.stringMatching(/CANNOT_COMBINE_DEFAULT_AND_EXCLUSIVE_ASSIGNMENT/),
+    });
+
+    // Zero writes
+    const org = await orgRepo.getOrganizationById(orgId);
+    expect(org?.default_whatsapp_connection_id).toBeNull();
+
+    const connRecord = await connectionRepo.getConnectionById(conn.id);
+    expect(connRecord?.assigned_ministry_id).toBeNull();
+    expect(assignmentClaimsStore.get(`assignment_claim_${orgId}_${secondMinistryId}`)).toBeUndefined();
+  });
+
+  it('12. PATCH atomicity: atomic transition from assigned to default in a single transaction (F2 remediation)', async () => {
+    const conn = await createConnectedLine('conn-atomic-2', 'phone-atomic-2');
+    await service.assignMinistry(orgId, conn.id, secondMinistryId, ownerUserId);
+
+    let connRecord = await connectionRepo.getConnectionById(conn.id);
+    expect(connRecord?.assigned_ministry_id).toBe(secondMinistryId);
+    expect(assignmentClaimsStore.get(`assignment_claim_${orgId}_${secondMinistryId}`)).toBeDefined();
+
+    // Atomic move to default
+    await service.updateConnection(
+      orgId,
+      conn.id,
+      {
+        isOrganizationDefault: true,
+        assignedMinistryId: null,
+      },
+      ownerUserId
+    );
+
+    const org = await orgRepo.getOrganizationById(orgId);
+    expect(org?.default_whatsapp_connection_id).toBe(conn.id);
+
+    connRecord = await connectionRepo.getConnectionById(conn.id);
+    expect(connRecord?.assigned_ministry_id).toBeNull();
+
+    // Previous claim released
+    expect(assignmentClaimsStore.get(`assignment_claim_${orgId}_${secondMinistryId}`)).toBeUndefined();
+  });
+
+  it('13. PATCH atomicity: atomic transition from default to assigned in a single transaction (F2 remediation)', async () => {
+    const conn = await createConnectedLine('conn-atomic-3', 'phone-atomic-3');
+    await service.setOrganizationDefault(orgId, conn.id, ownerUserId);
+
+    let org = await orgRepo.getOrganizationById(orgId);
+    expect(org?.default_whatsapp_connection_id).toBe(conn.id);
+
+    // Atomic move from default to assigned
+    await service.updateConnection(
+      orgId,
+      conn.id,
+      {
+        isOrganizationDefault: false,
+        assignedMinistryId: secondMinistryId,
+      },
+      ownerUserId
+    );
+
+    org = await orgRepo.getOrganizationById(orgId);
+    expect(org?.default_whatsapp_connection_id).toBeNull();
+
+    const connRecord = await connectionRepo.getConnectionById(conn.id);
+    expect(connRecord?.assigned_ministry_id).toBe(secondMinistryId);
+
+    const claim = assignmentClaimsStore.get(`assignment_claim_${orgId}_${secondMinistryId}`);
+    expect(claim).toBeDefined();
+    expect(claim.connection_id).toBe(conn.id);
+  });
+
+  it('14. PATCH atomicity: validation failure during read phase leaves zero partial writes (F2 remediation)', async () => {
+    const conn = await createConnectedLine('conn-atomic-4', 'phone-atomic-4');
+    ministriesStore.set('min-foreign-org', {
+      id: 'min-foreign-org',
+      name: 'Foreign Org Ministry',
+      organization_id: 'org-foreign',
+    });
+
+    // Attempt PATCH with displayName change AND invalid cross-org ministry
+    await expect(
+      service.updateConnection(
+        orgId,
+        conn.id,
+        {
+          displayName: 'Renamed Line',
+          assignedMinistryId: 'min-foreign-org',
+        },
+        ownerUserId
+      )
+    ).rejects.toMatchObject({
+      statusCode: 404,
+      message: expect.stringMatching(/Ministério não encontrado nesta organização/),
+    });
+
+    // Zero writes: displayName must NOT have changed!
+    const connRecord = await connectionRepo.getConnectionById(conn.id);
+    expect(connRecord?.display_name).toBe('Line conn-atomic-4');
+    expect(connRecord?.assigned_ministry_id).toBeNull();
   });
 });

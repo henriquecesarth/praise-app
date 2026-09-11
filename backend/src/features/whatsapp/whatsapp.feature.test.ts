@@ -30,6 +30,7 @@ describe('WhatsApp Connection Domain Feature & Security Suite (Phase 7C)', () =>
   let connectionsStore: Map<string, WhatsAppConnectionRecord>;
   let secretsStore: Map<string, any>;
   let claimsStore: Map<string, any>;
+  let assignmentClaimsStore: Map<string, any>;
   let subscriptionsStore: Map<string, any>;
   let usageStore: Map<string, any>;
 
@@ -70,6 +71,7 @@ describe('WhatsApp Connection Domain Feature & Security Suite (Phase 7C)', () =>
     connectionsStore = new Map();
     secretsStore = new Map();
     claimsStore = new Map();
+    assignmentClaimsStore = new Map();
     subscriptionsStore = new Map();
     usageStore = new Map();
 
@@ -335,6 +337,8 @@ describe('WhatsApp Connection Domain Feature & Security Suite (Phase 7C)', () =>
             return secretsStore;
           case 'whatsapp_provider_identity_claims':
             return claimsStore;
+          case 'whatsapp_ministry_assignment_claims':
+            return assignmentClaimsStore;
           case 'ministry_subscriptions':
             return subscriptionsStore;
           case 'ministry_usage':
@@ -1123,6 +1127,38 @@ describe('WhatsApp Connection Domain Feature & Security Suite (Phase 7C)', () =>
         })
       );
     });
+
+    it('3.11 Status resolution succeeds without WHATSAPP_TOKEN_ENCRYPTION_KEY configured (DEC-7C-08 boot safety)', async () => {
+      const originalKey = process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY;
+      try {
+        delete process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY;
+
+        // Ensure conn2 is disconnected so conn1 can serve as default within capacity
+        const conn2 = connectionsStore.get(conn2Id)!;
+        connectionsStore.set(conn2Id, { ...conn2, status: 'disconnected' });
+
+        const org = organizationsStore.get(orgId)!;
+        organizationsStore.set(orgId, { ...org, default_whatsapp_connection_id: conn1Id });
+
+        const { req, res, next } = createMockReqRes({ ministryId: anchorMinistryId }, {}, ownerUserId);
+
+        await controller.getMinistryWhatsAppStatus(req, res, next);
+
+        expect(next).not.toHaveBeenCalled();
+        expect(res.json).toHaveBeenCalledWith(
+          expect.objectContaining({
+            hasOrganization: true,
+            isConfigured: true,
+            isConnected: true,
+            connectionId: conn1Id,
+          })
+        );
+      } finally {
+        if (originalKey !== undefined) {
+          process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY = originalKey;
+        }
+      }
+    });
   });
 
   // =========================================================================
@@ -1159,6 +1195,36 @@ describe('WhatsApp Connection Domain Feature & Security Suite (Phase 7C)', () =>
       });
 
       expect(disconnectRoute).toBeUndefined();
+    });
+
+    it('4.3 POST /api/v1/organizations/:organizationId/whatsapp/connections/:connectionId/register-phone is NOT registered', () => {
+      const orgRoutesStack = (organizationRoutes as any).stack || [];
+      const routeLayers = orgRoutesStack.filter((layer: any) => layer.route);
+
+      const registerPhoneRoute = routeLayers.find((layer: any) => {
+        const path = layer.route.path;
+        const methods = layer.route.methods;
+        return methods.post && path.includes('register-phone');
+      });
+
+      expect(registerPhoneRoute).toBeUndefined();
+    });
+
+    it('4.4 GET /api/v1/organizations/:organizationId/whatsapp/connections/:connectionId is NOT registered', () => {
+      const orgRoutesStack = (organizationRoutes as any).stack || [];
+      const routeLayers = orgRoutesStack.filter((layer: any) => layer.route);
+
+      const getSingleConnRoute = routeLayers.find((layer: any) => {
+        const path = layer.route.path;
+        const methods = layer.route.methods;
+        return (
+          methods.get &&
+          (path === '/:organizationId/whatsapp/connections/:connectionId' ||
+            path === '/whatsapp/connections/:connectionId')
+        );
+      });
+
+      expect(getSingleConnRoute).toBeUndefined();
     });
   });
 });

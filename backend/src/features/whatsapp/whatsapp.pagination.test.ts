@@ -165,14 +165,52 @@ describe('WhatsApp Bounded Cursor Pagination Suite (Phase 7C / DEC-7C-14)', () =
     expect(clamped1.items.length).toBe(1);
   });
 
-  it('6. Malformed cursor string fails closed with 400 INVALID_CURSOR', async () => {
+  it('6. Malformed cursor string fails closed with 400 INVALID_CURSOR (F6 remediation)', async () => {
+    // 6a. Non-base64url characters
     await expect(
       repo.listConnectionsByOrganization(orgId, { cursor: 'not-valid-base64-json@@@' })
     ).rejects.toMatchObject({ statusCode: 400, details: { code: 'INVALID_CURSOR' } });
 
+    // 6b. Cursor exceeding 512 characters
+    const giantCursor = 'A'.repeat(513);
+    await expect(
+      repo.listConnectionsByOrganization(orgId, { cursor: giantCursor })
+    ).rejects.toMatchObject({ statusCode: 400, details: { code: 'INVALID_CURSOR' } });
+
+    // 6c. Missing required fields
     await expect(
       repo.listConnectionsByOrganization(orgId, {
         cursor: Buffer.from(JSON.stringify({ notCreatedAt: 'foo' })).toString('base64url'),
+      })
+    ).rejects.toMatchObject({ statusCode: 400, details: { code: 'INVALID_CURSOR' } });
+
+    // 6d. Non-ISO createdAt
+    await expect(
+      repo.listConnectionsByOrganization(orgId, {
+        cursor: Buffer.from(JSON.stringify({ createdAt: 'invalid-date', id: 'wac_1' })).toString('base64url'),
+      })
+    ).rejects.toMatchObject({ statusCode: 400, details: { code: 'INVALID_CURSOR' } });
+
+    // 6e. Empty or whitespace id
+    await expect(
+      repo.listConnectionsByOrganization(orgId, {
+        cursor: Buffer.from(JSON.stringify({ createdAt: new Date().toISOString(), id: '   ' })).toString('base64url'),
+      })
+    ).rejects.toMatchObject({ statusCode: 400, details: { code: 'INVALID_CURSOR' } });
+
+    // 6f. Extra disallowed keys (strict schema validation)
+    await expect(
+      repo.listConnectionsByOrganization(orgId, {
+        cursor: Buffer.from(
+          JSON.stringify({ createdAt: new Date().toISOString(), id: 'wac_1', extraField: 'exploit' })
+        ).toString('base64url'),
+      })
+    ).rejects.toMatchObject({ statusCode: 400, details: { code: 'INVALID_CURSOR' } });
+
+    // 6g. Non-object JSON payload (array, primitive)
+    await expect(
+      repo.listConnectionsByOrganization(orgId, {
+        cursor: Buffer.from(JSON.stringify(['createdAt', 'id'])).toString('base64url'),
       })
     ).rejects.toMatchObject({ statusCode: 400, details: { code: 'INVALID_CURSOR' } });
   });

@@ -3,6 +3,7 @@ import { AppError } from '../../middleware/error-handler';
 import { WhatsAppConnectionRepository } from '../../repositories/WhatsAppConnectionRepository';
 import { WhatsAppConnectionSecretRepository } from '../../repositories/WhatsAppConnectionSecretRepository';
 import { WhatsAppProviderIdentityClaimRepository } from '../../repositories/WhatsAppProviderIdentityClaimRepository';
+import { WhatsAppMinistryAssignmentClaimRepository } from '../../repositories/WhatsAppMinistryAssignmentClaimRepository';
 import { OrganizationRepository } from '../../repositories/OrganizationRepository';
 import { SubscriptionService } from '../subscriptions/subscription.service';
 import { MinistryRepository } from '../../repositories/MinistryRepository';
@@ -18,7 +19,10 @@ import {
   UpdateWhatsAppConnectionInput,
   isProviderIdentityMaterialized,
   getClaimId,
+  getMinistryAssignmentClaimId,
+  WhatsAppMinistryAssignmentClaimRecord,
 } from './whatsapp.types';
+import { OrganizationRecord } from '../organizations/organization.types';
 
 export class WhatsAppConnectionService {
   constructor(
@@ -27,7 +31,8 @@ export class WhatsAppConnectionService {
     private readonly claimRepo: WhatsAppProviderIdentityClaimRepository = new WhatsAppProviderIdentityClaimRepository(),
     private readonly orgRepo: OrganizationRepository = new OrganizationRepository(),
     private readonly subService: SubscriptionService = new SubscriptionService(),
-    private readonly ministryRepo: MinistryRepository = new MinistryRepository()
+    private readonly ministryRepo: MinistryRepository = new MinistryRepository(),
+    private readonly assignmentClaimRepo: WhatsAppMinistryAssignmentClaimRepository = new WhatsAppMinistryAssignmentClaimRepository()
   ) {}
 
   private mapToDto(conn: WhatsAppConnectionRecord, defaultConnectionId: string | null): WhatsAppConnectionDto {
@@ -87,101 +92,225 @@ export class WhatsAppConnectionService {
       throw new AppError(403, 'Apenas administradores da organização podem configurar conexões.');
     }
 
-    const conn = await this.connectionRepo.getConnectionById(connectionId);
-    if (!conn || conn.organization_id !== orgId) {
-      throw new AppError(404, 'Conexão não encontrada nesta organização.');
-    }
-
-    if (conn.status === 'disconnected') {
-      throw new AppError(400, 'Conexão desconectada não pode ser modificada.', {
-        code: 'CONNECTION_DISCONNECTED',
-      });
-    }
-
-    // 1. Update Display Name if provided
     if (input.displayName !== undefined) {
       const trimmed = input.displayName.trim();
       if (!trimmed || trimmed.length > 100) {
         throw new AppError(400, 'Nome de exibição deve ter entre 1 e 100 caracteres.');
       }
-      await this.connectionRepo.updateConnection(orgId, connectionId, {
-        display_name: trimmed,
-      });
     }
 
-    // 2. Update Default status if provided
-    if (input.isOrganizationDefault !== undefined) {
-      if (input.isOrganizationDefault) {
-        await this.setOrganizationDefault(orgId, connectionId, actorUserId);
-      } else {
-        await this.clearOrganizationDefault(orgId, connectionId, actorUserId);
-      }
-    }
-
-    // 3. Update Ministry Assignment if provided
-    if (input.assignedMinistryId !== undefined) {
-      if (input.assignedMinistryId === null) {
-        await this.unassignMinistry(orgId, connectionId, actorUserId);
-      } else {
-        await this.assignMinistry(orgId, connectionId, input.assignedMinistryId, actorUserId);
-      }
-    }
-
-    const updatedConn = await this.connectionRepo.getConnectionById(connectionId);
-    const org = await this.orgRepo.getOrganizationById(orgId);
-    return this.mapToDto(updatedConn!, org ? org.default_whatsapp_connection_id : null);
-  }
-
-  async setOrganizationDefault(orgId: string, connectionId: string, actorUserId: string): Promise<void> {
-    const member = await this.orgRepo.getOrganizationMember(orgId, actorUserId);
-    if (!member) {
-      throw new AppError(404, 'Organização não encontrada.');
-    }
-    if (member.role !== 'admin' && member.role !== 'owner') {
-      throw new AppError(403, 'Apenas administradores da organização podem definir a conexão padrão.');
-    }
-
-    const conn = await this.connectionRepo.getConnectionById(connectionId);
-    if (!conn || conn.organization_id !== orgId) {
+    const currentConn = await this.connectionRepo.getConnectionById(connectionId);
+    if (!currentConn || currentConn.organization_id !== orgId) {
       throw new AppError(404, 'Conexão não encontrada nesta organização.');
     }
 
-    // DEC-7C-15: Eligibility Gate: status === 'connected'
-    if (conn.status !== 'connected') {
-      throw new AppError(400, 'CONNECTION_NOT_ACTIVE_FOR_CONFIGURATION: Apenas conexões ativas e conectadas podem ser definidas como padrão da organização.', {
-        code: 'CONNECTION_NOT_ACTIVE_FOR_CONFIGURATION',
+    if (currentConn.status === 'disconnected') {
+      throw new AppError(400, 'Conexão desconectada não pode ser modificada.', {
+        code: 'CONNECTION_DISCONNECTED',
       });
     }
 
-    // Mutual Exclusivity: connection cannot be exclusively assigned
-    if (conn.assigned_ministry_id !== null) {
-      throw new AppError(400, 'CANNOT_SET_ASSIGNED_CONNECTION_AS_DEFAULT: Uma conexão atribuída exclusivamente a um ministério não pode ser definida como padrão da organização.', {
-        code: 'CANNOT_SET_ASSIGNED_CONNECTION_AS_DEFAULT',
-      });
+    const currentOrg = await this.orgRepo.getOrganizationById(orgId);
+    if (!currentOrg) {
+      throw new AppError(404, 'Organização não encontrada.');
     }
 
-    if (!isProviderIdentityMaterialized(conn)) {
-      throw new AppError(400, 'CONNECTION_NOT_MATERIALIZED: Conexão deve ter identidade de provedor materializada.', {
-        code: 'CONNECTION_NOT_MATERIALIZED',
-      });
+    // Compute desired final state before any mutation
+    const currentIsDefault = currentOrg.default_whatsapp_connection_id === connectionId;
+    const finalIsDefault =
+      input.isOrganizationDefault !== undefined ? input.isOrganizationDefault : currentIsDefault;
+    const finalAssignedMinistryId =
+      input.assignedMinistryId !== undefined ? input.assignedMinistryId : currentConn.assigned_ministry_id;
+
+    // Validate desired state mutual exclusivity BEFORE ANY WRITES
+    if (finalIsDefault === true && finalAssignedMinistryId !== null) {
+      if (
+        input.isOrganizationDefault === true &&
+        input.assignedMinistryId !== undefined &&
+        input.assignedMinistryId !== null
+      ) {
+        throw new AppError(
+          400,
+          'CANNOT_COMBINE_DEFAULT_AND_EXCLUSIVE_ASSIGNMENT: Uma conexão não pode ser simultaneamente padrão da organização e atribuída a um ministério.',
+          { code: 'CANNOT_COMBINE_DEFAULT_AND_EXCLUSIVE_ASSIGNMENT' }
+        );
+      } else if (input.isOrganizationDefault === true) {
+        throw new AppError(
+          400,
+          'CANNOT_SET_ASSIGNED_CONNECTION_AS_DEFAULT: Uma conexão atribuída exclusivamente a um ministério não pode ser definida como padrão da organização.',
+          { code: 'CANNOT_SET_ASSIGNED_CONNECTION_AS_DEFAULT' }
+        );
+      } else {
+        throw new AppError(
+          400,
+          'CANNOT_ASSIGN_DEFAULT_CONNECTION: A conexão padrão da organização não pode ser atribuída exclusivamente a um ministério.',
+          { code: 'CANNOT_ASSIGN_DEFAULT_CONNECTION' }
+        );
+      }
     }
 
-    // Validate provider identity claim ownership
-    const claimId = getClaimId(conn.provider, conn.provider_phone_number_id!);
-    const claim = await this.claimRepo.getClaim(claimId);
-    if (!claim || claim.connection_id !== conn.id || claim.organization_id !== orgId) {
-      throw new AppError(400, 'INVALID_PROVIDER_CLAIM: Claim de identidade do provedor inválido ou ausente.', {
-        code: 'INVALID_PROVIDER_CLAIM',
-      });
-    }
+    // Atomic transaction for all configuration mutations
+    await db.runTransaction(async (tx) => {
+      // 1. READS FIRST (Strict Firestore rule: all reads before any writes)
+      const orgRef = db.collection('organizations').doc(orgId);
+      const orgDoc = await tx.get(orgRef);
+      if (!orgDoc.exists) {
+        throw new AppError(404, 'Organização não encontrada.');
+      }
+      const orgData = orgDoc.data() as OrganizationRecord;
 
-    await db.collection('organizations').doc(orgId).update({
-      default_whatsapp_connection_id: connectionId,
-      updated_at: new Date().toISOString(),
+      const connRef = db.collection('whatsapp_connections').doc(connectionId);
+      const connDoc = await tx.get(connRef);
+      if (!connDoc.exists) {
+        throw new AppError(404, 'Conexão não encontrada nesta organização.');
+      }
+      const connData = connDoc.data() as WhatsAppConnectionRecord;
+      if (connData.organization_id !== orgId) {
+        throw new AppError(404, 'Conexão não encontrada nesta organização.');
+      }
+      if (connData.status === 'disconnected') {
+        throw new AppError(400, 'Conexão desconectada não pode ser modificada.', {
+          code: 'CONNECTION_DISCONNECTED',
+        });
+      }
+
+      // If configuration involves active role (becoming/remaining default or assigned), check connection status
+      if (finalIsDefault || finalAssignedMinistryId !== null) {
+        if (connData.status !== 'connected') {
+          throw new AppError(
+            400,
+            'CONNECTION_NOT_ACTIVE_FOR_CONFIGURATION: Apenas conexões ativas e conectadas podem ser configuradas como padrão ou atribuídas.',
+            { code: 'CONNECTION_NOT_ACTIVE_FOR_CONFIGURATION' }
+          );
+        }
+        if (!isProviderIdentityMaterialized(connData)) {
+          throw new AppError(
+            400,
+            'CONNECTION_NOT_MATERIALIZED: Conexão deve ter identidade de provedor materializada.',
+            { code: 'CONNECTION_NOT_MATERIALIZED' }
+          );
+        }
+
+        // Validate provider claim ownership
+        const providerClaimId = getClaimId(connData.provider, connData.provider_phone_number_id!);
+        const providerClaimRef = db.collection('whatsapp_provider_identity_claims').doc(providerClaimId);
+        const providerClaimDoc = await tx.get(providerClaimRef);
+        if (
+          !providerClaimDoc.exists ||
+          providerClaimDoc.data()?.connection_id !== connectionId ||
+          providerClaimDoc.data()?.organization_id !== orgId
+        ) {
+          throw new AppError(400, 'INVALID_PROVIDER_CLAIM: Claim de identidade do provedor inválido ou ausente.', {
+            code: 'INVALID_PROVIDER_CLAIM',
+          });
+        }
+      }
+
+      // If assigning to a ministry: read target ministry and assignment claim
+      let ministryDoc: FirebaseFirestore.DocumentSnapshot | undefined;
+      let assignmentClaimRef: FirebaseFirestore.DocumentReference | undefined;
+      let assignmentClaimDoc: FirebaseFirestore.DocumentSnapshot | undefined;
+
+      if (finalAssignedMinistryId !== null) {
+        const ministryRef = db.collection('ministries').doc(finalAssignedMinistryId);
+        ministryDoc = await tx.get(ministryRef);
+        if (!ministryDoc.exists || ministryDoc.data()?.organization_id !== orgId) {
+          throw new AppError(404, 'Ministério não encontrado nesta organização.');
+        }
+
+        const assignmentClaimId = getMinistryAssignmentClaimId(orgId, finalAssignedMinistryId);
+        assignmentClaimRef = db.collection('whatsapp_ministry_assignment_claims').doc(assignmentClaimId);
+        assignmentClaimDoc = await tx.get(assignmentClaimRef);
+
+        if (assignmentClaimDoc.exists) {
+          const existingClaim = assignmentClaimDoc.data() as WhatsAppMinistryAssignmentClaimRecord;
+          if (existingClaim.connection_id !== connectionId) {
+            throw new AppError(
+              409,
+              'MINISTRY_ALREADY_HAS_EXCLUSIVE_CONNECTION: Este ministério já possui uma conexão WhatsApp atribuída.',
+              { code: 'MINISTRY_ALREADY_HAS_EXCLUSIVE_CONNECTION' }
+            );
+          }
+        }
+      }
+
+      // If unassigning from previous ministry (e.g. finalAssignedMinistryId !== connData.assigned_ministry_id)
+      let prevAssignmentClaimRef: FirebaseFirestore.DocumentReference | undefined;
+      let prevAssignmentClaimDoc: FirebaseFirestore.DocumentSnapshot | undefined;
+
+      if (connData.assigned_ministry_id && connData.assigned_ministry_id !== finalAssignedMinistryId) {
+        const prevClaimId = getMinistryAssignmentClaimId(orgId, connData.assigned_ministry_id);
+        prevAssignmentClaimRef = db.collection('whatsapp_ministry_assignment_claims').doc(prevClaimId);
+        prevAssignmentClaimDoc = await tx.get(prevAssignmentClaimRef);
+      }
+
+      // 2. WRITE PHASE (Executed strictly if all reads passed)
+      const now = new Date().toISOString();
+      const connUpdates: Partial<WhatsAppConnectionRecord> = { updated_at: now };
+
+      if (input.displayName !== undefined) {
+        connUpdates.display_name = input.displayName.trim();
+      }
+
+      if (connData.assigned_ministry_id !== finalAssignedMinistryId) {
+        connUpdates.assigned_ministry_id = finalAssignedMinistryId;
+      }
+
+      tx.update(connRef, connUpdates);
+
+      // Default pointer on organization
+      if (finalIsDefault && orgData.default_whatsapp_connection_id !== connectionId) {
+        tx.update(orgRef, {
+          default_whatsapp_connection_id: connectionId,
+          updated_at: now,
+        });
+      } else if (!finalIsDefault && orgData.default_whatsapp_connection_id === connectionId) {
+        tx.update(orgRef, {
+          default_whatsapp_connection_id: null,
+          updated_at: now,
+        });
+      }
+
+      // Acquire or update assignment claim
+      if (finalAssignedMinistryId !== null && assignmentClaimRef) {
+        const claimRecord: WhatsAppMinistryAssignmentClaimRecord = {
+          id: assignmentClaimRef.id,
+          organization_id: orgId,
+          ministry_id: finalAssignedMinistryId,
+          connection_id: connectionId,
+          created_at: assignmentClaimDoc?.exists ? assignmentClaimDoc.data()?.created_at : now,
+          updated_at: now,
+        };
+        tx.set(assignmentClaimRef, claimRecord);
+      }
+
+      // Release previous assignment claim if owned
+      if (prevAssignmentClaimRef && prevAssignmentClaimDoc?.exists) {
+        if (
+          prevAssignmentClaimDoc.data()?.connection_id === connectionId &&
+          prevAssignmentClaimDoc.data()?.organization_id === orgId &&
+          prevAssignmentClaimDoc.data()?.ministry_id === connData.assigned_ministry_id
+        ) {
+          tx.delete(prevAssignmentClaimRef);
+        }
+      }
     });
+
+    const updatedConn = await this.connectionRepo.getConnectionById(connectionId);
+    const updatedOrg = await this.orgRepo.getOrganizationById(orgId);
+    return this.mapToDto(updatedConn!, updatedOrg ? updatedOrg.default_whatsapp_connection_id : null);
+  }
+
+  async setOrganizationDefault(orgId: string, connectionId: string, actorUserId: string): Promise<void> {
+    await this.updateConnection(orgId, connectionId, { isOrganizationDefault: true }, actorUserId);
   }
 
   async clearOrganizationDefault(orgId: string, connectionId?: string, actorUserId?: string): Promise<void> {
+    if (connectionId && actorUserId) {
+      await this.updateConnection(orgId, connectionId, { isOrganizationDefault: false }, actorUserId);
+      return;
+    }
+
     if (actorUserId) {
       const member = await this.orgRepo.getOrganizationMember(orgId, actorUserId);
       if (!member) {
@@ -211,88 +340,11 @@ export class WhatsAppConnectionService {
     ministryId: string,
     actorUserId: string
   ): Promise<void> {
-    const member = await this.orgRepo.getOrganizationMember(orgId, actorUserId);
-    if (!member) {
-      throw new AppError(404, 'Organização não encontrada.');
-    }
-    if (member.role !== 'admin' && member.role !== 'owner') {
-      throw new AppError(403, 'Apenas administradores da organização podem atribuir conexões.');
-    }
-
-    const conn = await this.connectionRepo.getConnectionById(connectionId);
-    if (!conn || conn.organization_id !== orgId) {
-      throw new AppError(404, 'Conexão não encontrada nesta organização.');
-    }
-
-    // DEC-7C-15: Eligibility Gate: status === 'connected'
-    if (conn.status !== 'connected') {
-      throw new AppError(400, 'CONNECTION_NOT_ACTIVE_FOR_CONFIGURATION: Apenas conexões ativas e conectadas podem ser atribuídas a ministérios.', {
-        code: 'CONNECTION_NOT_ACTIVE_FOR_CONFIGURATION',
-      });
-    }
-
-    // Mutual Exclusivity: cannot be current Organization default
-    const org = await this.orgRepo.getOrganizationById(orgId);
-    if (!org) {
-      throw new AppError(404, 'Organização não encontrada.');
-    }
-    if (org.default_whatsapp_connection_id === connectionId) {
-      throw new AppError(400, 'CANNOT_ASSIGN_DEFAULT_CONNECTION: A conexão padrão da organização não pode ser atribuída exclusivamente a um ministério.', {
-        code: 'CANNOT_ASSIGN_DEFAULT_CONNECTION',
-      });
-    }
-
-    // Tenant check on target ministry
-    const ministry = await this.ministryRepo.findById(ministryId);
-    if (!ministry || ministry.organization_id !== orgId) {
-      throw new AppError(404, 'Ministério não encontrado nesta organização.');
-    }
-
-    // 1:1 Cardinality: Ministry cannot already have another assigned connection
-    const existing = await this.connectionRepo.findAssignedConnectionForMinistry(orgId, ministryId);
-    if (existing && existing.id !== connectionId) {
-      throw new AppError(409, 'MINISTRY_ALREADY_HAS_EXCLUSIVE_CONNECTION: Este ministério já possui uma conexão WhatsApp atribuída.', {
-        code: 'MINISTRY_ALREADY_HAS_EXCLUSIVE_CONNECTION',
-      });
-    }
-
-    if (!isProviderIdentityMaterialized(conn)) {
-      throw new AppError(400, 'CONNECTION_NOT_MATERIALIZED: Conexão deve ter identidade de provedor materializada.', {
-        code: 'CONNECTION_NOT_MATERIALIZED',
-      });
-    }
-
-    // Validate provider identity claim ownership
-    const claimId = getClaimId(conn.provider, conn.provider_phone_number_id!);
-    const claim = await this.claimRepo.getClaim(claimId);
-    if (!claim || claim.connection_id !== conn.id || claim.organization_id !== orgId) {
-      throw new AppError(400, 'INVALID_PROVIDER_CLAIM: Claim de identidade do provedor inválido ou ausente.', {
-        code: 'INVALID_PROVIDER_CLAIM',
-      });
-    }
-
-    await this.connectionRepo.updateConnection(orgId, connectionId, {
-      assigned_ministry_id: ministryId,
-    });
+    await this.updateConnection(orgId, connectionId, { assignedMinistryId: ministryId }, actorUserId);
   }
 
   async unassignMinistry(orgId: string, connectionId: string, actorUserId: string): Promise<void> {
-    const member = await this.orgRepo.getOrganizationMember(orgId, actorUserId);
-    if (!member) {
-      throw new AppError(404, 'Organização não encontrada.');
-    }
-    if (member.role !== 'admin' && member.role !== 'owner') {
-      throw new AppError(403, 'Apenas administradores da organização podem desatribuir conexões.');
-    }
-
-    const conn = await this.connectionRepo.getConnectionById(connectionId);
-    if (!conn || conn.organization_id !== orgId) {
-      throw new AppError(404, 'Conexão não encontrada nesta organização.');
-    }
-
-    await this.connectionRepo.updateConnection(orgId, connectionId, {
-      assigned_ministry_id: null,
-    });
+    await this.updateConnection(orgId, connectionId, { assignedMinistryId: null }, actorUserId);
   }
 
   async getOrganizationCapacityUsage(orgId: string): Promise<OrganizationWhatsAppCapacityUsageDto> {

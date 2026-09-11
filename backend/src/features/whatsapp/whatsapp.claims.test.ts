@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { db } from '../../lib/firebase';
 import { WhatsAppProviderIdentityClaimRepository } from '../../repositories/WhatsAppProviderIdentityClaimRepository';
 import { WhatsAppConnectionRepository } from '../../repositories/WhatsAppConnectionRepository';
@@ -245,5 +245,59 @@ describe('WhatsApp Provider Identity Claims Suite (Phase 7C)', () => {
 
     const newClaim = await claimRepo.getClaim(claimId);
     expect(newClaim?.connection_id).toBe(newConn.id);
+  });
+
+  it('7. Disconnect replay does not delete reacquired provider claim owned by another connection (F3 remediation)', async () => {
+    // 1. Connection A claims phone-500
+    const connA = await connectionRepo.createConnection({
+      organization_id: 'org-1',
+      display_name: 'Line A',
+      created_by_user_id: 'user-1',
+      status: 'connecting',
+    });
+
+    await service.materializeProviderIdentity('org-1', connA.id, {
+      phoneNumber: '+5511999995550',
+      providerWabaId: 'waba-500',
+      providerPhoneNumberId: 'phone-500',
+    });
+    await service.transitionConnectionStatus('org-1', connA.id, 'connected');
+
+    const claimId = getClaimId('meta_cloud_api', 'phone-500');
+    expect(await claimRepo.getClaim(claimId)).not.toBeNull();
+
+    // 2. Disconnect Connection A
+    await connectionRepo.disconnectConnection('org-1', connA.id);
+    expect(await claimRepo.getClaim(claimId)).toBeNull();
+
+    const disconnectedA = await connectionRepo.getConnectionById(connA.id);
+    expect(disconnectedA?.status).toBe('disconnected');
+
+    // 3. Connection B claims phone-500
+    const connB = await connectionRepo.createConnection({
+      organization_id: 'org-1',
+      display_name: 'Line B',
+      created_by_user_id: 'user-2',
+      status: 'connecting',
+    });
+
+    await service.materializeProviderIdentity('org-1', connB.id, {
+      phoneNumber: '+5511999995550',
+      providerWabaId: 'waba-500',
+      providerPhoneNumberId: 'phone-500',
+    });
+    await service.transitionConnectionStatus('org-1', connB.id, 'connected');
+
+    const claimB = await claimRepo.getClaim(claimId);
+    expect(claimB?.connection_id).toBe(connB.id);
+
+    // 4. Replay disconnect of Connection A
+    await connectionRepo.disconnectConnection('org-1', connA.id);
+
+    // 5. Assert Connection B's claim remains INTACT
+    const claimAfterReplay = await claimRepo.getClaim(claimId);
+    expect(claimAfterReplay).not.toBeNull();
+    expect(claimAfterReplay?.connection_id).toBe(connB.id);
+    expect(claimAfterReplay?.provider_phone_number_id).toBe('phone-500');
   });
 });
