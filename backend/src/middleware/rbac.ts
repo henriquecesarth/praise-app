@@ -45,6 +45,52 @@ export function requireMinistryRole(requiredRole: MinistryRole = 'member') {
 
 export const requireGroupRole = requireMinistryRole;
 
+import { OrganizationRepository } from '../repositories/OrganizationRepository';
+
+const organizationRepository = new OrganizationRepository();
+
+export function requireOrganizationRole(
+  requiredRole: 'owner' | 'admin' = 'admin',
+  orgRepo?: OrganizationRepository
+) {
+  return async (
+    req: AuthenticatedRequest,
+    _res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const repo = orgRepo || new OrganizationRepository();
+      const userId = req.user?.id;
+      const rawOrgId = req.params.organizationId;
+
+      if (!userId) {
+        throw new AppError(401, 'Usuário não autenticado.');
+      }
+
+      if (!rawOrgId) {
+        throw new AppError(400, 'ID da organização não informado na requisição.');
+      }
+
+      const organizationId = Array.isArray(rawOrgId) ? rawOrgId[0] : String(rawOrgId);
+      const member = await repo.getOrganizationMember(organizationId, userId);
+
+      // Anti-IDOR: Se a organização não existir ou o usuário não for integrante, retorna 404 indistinguível
+      if (!member) {
+        throw new AppError(404, 'Organização não encontrada.');
+      }
+
+      // Se a rota exige 'owner', mas o integrante é apenas 'admin', retorna 403
+      if (requiredRole === 'owner' && member.role !== 'owner') {
+        throw new AppError(403, 'Ação restrita ao proprietário da organização.');
+      }
+
+      next();
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
 /**
  * @deprecated Middleware legado substituído por `enforceOperationalAccess` e transações atômicas de quota.
  * Mantido apenas por compatibilidade temporária sem qualquer uso nas rotas ativas.

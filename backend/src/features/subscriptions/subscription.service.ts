@@ -1,10 +1,12 @@
 import { SubscriptionRepository } from '../../repositories/SubscriptionRepository';
 import { BillingRepository } from '../../repositories/BillingRepository';
+import { OrganizationRepository } from '../../repositories/OrganizationRepository';
 import {
   PLANS_CATALOG,
   DEFAULT_PLAN_ID,
   DEFAULT_GRACE_PERIOD_DAYS,
   getPlanDefinition,
+  getIncludedWhatsAppConnections,
   getEffectiveMemberQuota,
   getEffectiveSongQuota,
   isUsageOverLimit,
@@ -20,6 +22,7 @@ import {
   MinistrySubscriptionStatusSummary,
   SubscriptionMode,
 } from './subscription.types';
+import { OrganizationWhatsAppCapacity } from '../organizations/organization.types';
 import {
   CustomerFacingPendingTransitionDto,
   BillingSubscriptionRecord,
@@ -141,7 +144,8 @@ export function resolveCurrentRenewalRecoveryInvoice(
 export class SubscriptionService {
   constructor(
     private readonly subscriptionRepo: SubscriptionRepository = new SubscriptionRepository(),
-    private readonly billingRepo: BillingRepository = new BillingRepository()
+    private readonly billingRepo: BillingRepository = new BillingRepository(),
+    private readonly orgRepo: OrganizationRepository = new OrganizationRepository()
   ) {}
 
 
@@ -574,5 +578,43 @@ export class SubscriptionService {
    */
   async reconcileUsage(ministryId: string): Promise<MinistryUsageRecord> {
     return await this.subscriptionRepo.reconcileMinistryUsage(ministryId);
+  }
+
+  /**
+   * Avalia a capacidade comercial de conexões WhatsApp para a organização (Phase 7B).
+   * Deriva a capacidade da assinatura ativa do ministério âncora de faturamento.
+   * Não consulta ou gerencia conexões reais (responsabilidade da Phase 7C).
+   */
+  async getOrganizationWhatsAppCapacity(organizationId: string): Promise<OrganizationWhatsAppCapacity> {
+    const org = await this.orgRepo.getOrganizationById(organizationId);
+    if (!org) {
+      throw new AppError(404, 'Organização não encontrada.');
+    }
+
+    const summary = await this.getSubscriptionSummary(org.billing_anchor_ministry_id);
+    const includedConnections = getIncludedWhatsAppConnections(summary.plan.id);
+    const additionalConnections = 0; // Estritamente 0 no runtime da Phase 7B (extensão para Phase 7H)
+    const totalAllowedConnections = includedConnections + additionalConnections;
+
+    let billingAccessMode: 'normal' | 'grace' | 'suspended' = 'normal';
+    if (summary.subscription.accessMode === 'suspended') {
+      billingAccessMode = 'suspended';
+    } else if (summary.subscription.accessMode === 'grace') {
+      billingAccessMode = 'grace';
+    } else {
+      billingAccessMode = 'normal';
+    }
+
+    const enabled = totalAllowedConnections > 0 && billingAccessMode !== 'suspended';
+
+    return {
+      organizationId: org.id,
+      billingAnchorMinistryId: org.billing_anchor_ministry_id,
+      enabled,
+      includedConnections,
+      additionalConnections,
+      totalAllowedConnections,
+      billingAccessMode,
+    };
   }
 }

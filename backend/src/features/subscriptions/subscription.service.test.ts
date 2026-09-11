@@ -33,6 +33,7 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
         annualPriceCents: 0,
         addonBlockMonthlyPriceCents: 0,
         addonBlockAnnualPriceCents: 0,
+        includedWhatsAppConnections: 0,
       });
 
       // Lite
@@ -47,6 +48,7 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
         annualPriceCents: 16092,
         addonBlockMonthlyPriceCents: 0,
         addonBlockAnnualPriceCents: 0,
+        includedWhatsAppConnections: 1,
       });
 
       // Lite+
@@ -61,6 +63,7 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
         annualPriceCents: 26892,
         addonBlockMonthlyPriceCents: 0,
         addonBlockAnnualPriceCents: 0,
+        includedWhatsAppConnections: 1,
       });
 
       // Essential
@@ -75,6 +78,7 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
         annualPriceCents: 37692,
         addonBlockMonthlyPriceCents: 990,
         addonBlockAnnualPriceCents: 10692,
+        includedWhatsAppConnections: 1,
       });
 
       // Pro
@@ -89,6 +93,7 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
         annualPriceCents: 97092,
         addonBlockMonthlyPriceCents: 690,
         addonBlockAnnualPriceCents: 7452,
+        includedWhatsAppConnections: 1,
       });
 
       // Premium
@@ -103,6 +108,7 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
         annualPriceCents: 232092,
         addonBlockMonthlyPriceCents: 0,
         addonBlockAnnualPriceCents: 0,
+        includedWhatsAppConnections: 1,
       });
     });
 

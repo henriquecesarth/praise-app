@@ -114,6 +114,16 @@ Funções musicais como Ministro, Vocalista, Violão e Bateria são classificaç
 - integração na interface através do modal acessível `ManualMemberAvailabilityModal.tsx` acionado pelo botão "Gerenciar indisponibilidade" no menu de ações do membro em `MinistryView.tsx`;
 - total retrocompatibilidade e interoperabilidade com os motores de detecção de conflitos e visualização consolidada sem necessidade de novos índices no banco de dados.
 
+### Organization Foundation & WhatsApp Commercial Entitlements
+
+- agrupador multi-ministério para igrejas com congregações ou ministérios múltiplos sob mesma autoridade institucional (Phase 7B);
+- agregado `organizations` e governança de permissões `organization_members` (`owner` e `admin`);
+- provisionamento transacional restrito exclusivamente ao proprietário do ministério (`ministry.owner_user_id`), garantindo imunidade a escalação de privilégios e concorrência;
+- vínculo estrito multi-ministério com exigência de ministério livre (`ministry.organization_id === null`), autorização dupla (Org Owner + Admin do ministério) e rejeição 409 em tentativas de sobreposição;
+- bloqueio de desassociação do ministério âncora de faturamento (`CANNOT_DETACH_BILLING_ANCHOR`);
+- proteção anti-IDOR fail-closed com HTTP 404 para usuários sem pertinência à organização;
+- motor de cálculo de capacidade comercial WhatsApp em `SubscriptionService` baseado no catálogo declarativo de planos (Free=0, Pagos=1 conexão) com modo de acesso comercial (`normal`, `grace`, `suspended`).
+
 ### PWA
 
 - manifest instalável;
@@ -132,6 +142,7 @@ Funções musicais como Ministro, Vocalista, Violão e Bateria são classificaç
 ## Important Concepts
 
 - **Ministry**: tenant principal e agrupador de dados.
+- **Organization**: agrupador multi-ministério institucional que centraliza faturamento e integrações compartilhadas como WhatsApp.
 - **Role admin/member**: permissão do tenant.
 - **Musical role**: função executada por um integrante.
 - **Team**: conjunto reutilizável de integrantes.

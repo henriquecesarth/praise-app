@@ -12,6 +12,7 @@ export interface MinistryRecord {
   created_at: string;
   updated_at: string;
   role?: 'admin' | 'member';
+  organization_id?: string | null;
 }
 
 export interface MinistryMemberRecord {

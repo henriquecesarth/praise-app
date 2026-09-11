@@ -12,8 +12,10 @@ import {
   updateMemberRoleSchema,
   addMemberManuallySchema,
 } from './ministry.types';
+import { OrganizationController } from '../organizations/organization.controller';
 
 const router = Router();
+const orgController = new OrganizationController();
 
 router.use(authenticate);
 
@@ -27,6 +29,10 @@ router.delete('/:ministryId', requireMinistryRole('admin'), enforceOperationalAc
 
 // Leave ministry (any member)
 router.delete('/:ministryId/leave', requireMinistryRole('member'), enforceOperationalAccess.remediation, controller.leaveMinistry);
+
+// Organization management (Phase 7B)
+router.get('/:ministryId/organization', requireMinistryRole('member'), orgController.getMinistryOrganization);
+router.post('/:ministryId/organization/provision', requireMinistryRole('admin'), orgController.provisionForMinistry);
 
 // Invites
 router.post(
