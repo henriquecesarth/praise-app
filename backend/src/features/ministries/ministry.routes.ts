@@ -13,9 +13,11 @@ import {
   addMemberManuallySchema,
 } from './ministry.types';
 import { OrganizationController } from '../organizations/organization.controller';
+import { WhatsAppController } from '../whatsapp/whatsapp.controller';
 
 const router = Router();
 const orgController = new OrganizationController();
+const whatsappController = new WhatsAppController();
 
 router.use(authenticate);
 
@@ -33,6 +35,9 @@ router.delete('/:ministryId/leave', requireMinistryRole('member'), enforceOperat
 // Organization management (Phase 7B)
 router.get('/:ministryId/organization', requireMinistryRole('member'), orgController.getMinistryOrganization);
 router.post('/:ministryId/organization/provision', requireMinistryRole('admin'), orgController.provisionForMinistry);
+
+// WhatsApp status (Phase 7C)
+router.get('/:ministryId/whatsapp/status', requireMinistryRole('member'), whatsappController.getMinistryWhatsAppStatus);
 
 // Invites
 router.post(

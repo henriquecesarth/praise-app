@@ -1,12 +1,18 @@
-﻿import { Router } from 'express';
+import { Router } from 'express';
 import { OrganizationController } from './organization.controller';
+import { WhatsAppController } from '../whatsapp/whatsapp.controller';
 import { authenticate } from '../../middleware/auth';
 import { requireOrganizationRole } from '../../middleware/rbac';
 import { validate } from '../../middleware/validate';
 import { addOrganizationMemberSchema } from './organization.types';
+import {
+  updateWhatsAppConnectionSchema,
+  listWhatsAppConnectionsQuerySchema,
+} from '../whatsapp/whatsapp.types';
 
 const router = Router();
 const controller = new OrganizationController();
+const whatsappController = new WhatsAppController();
 
 router.use(authenticate);
 
@@ -32,6 +38,20 @@ router.get(
   '/:organizationId/entitlements/whatsapp',
   requireOrganizationRole('admin'),
   controller.getWhatsAppCapacity
+);
+
+// WhatsApp Connections (Phase 7C)
+router.get(
+  '/:organizationId/whatsapp/connections',
+  requireOrganizationRole('admin'),
+  validate(listWhatsAppConnectionsQuerySchema, 'query'),
+  whatsappController.listConnections
+);
+router.patch(
+  '/:organizationId/whatsapp/connections/:connectionId',
+  requireOrganizationRole('admin'),
+  validate(updateWhatsAppConnectionSchema),
+  whatsappController.updateConnection
 );
 
 // Ministry attach/detach

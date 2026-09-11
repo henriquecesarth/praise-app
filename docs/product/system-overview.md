@@ -124,6 +124,20 @@ Funções musicais como Ministro, Vocalista, Violão e Bateria são classificaç
 - proteção anti-IDOR fail-closed com HTTP 404 para usuários sem pertinência à organização;
 - motor de cálculo de capacidade comercial WhatsApp em `SubscriptionService` baseado no catálogo declarativo de planos (Free=0, Pagos=1 conexão) com modo de acesso comercial (`normal`, `grace`, `suspended`).
 
+### WhatsApp Connection Domain & Secret Encryption
+
+- domínio completo de conexões WhatsApp e isolamento por Organização (Phase 7C);
+- persistência de conexões em `whatsapp_connections`, segredos em `whatsapp_connection_secrets` e claims de unicidade em `whatsapp_provider_identity_claims`;
+- ciclo de vida e máquina de estados com 6 status canônicos (`pending`, `connecting`, `connected`, `error`, `disabled_by_user`, `disconnected`) e matriz estrita de transições válidas;
+- criptografia de segredos e tokens de acesso em repouso com AES-256-GCM envelope encryption, bind de contexto criptográfico (AAD: `${organization_id}:${connection_id}`) e fail-closed para chave de criptografia ausente ou inválida (`WHATSAPP_TOKEN_ENCRYPTION_KEY`);
+- trava atômica transacional de claims de identidade do provedor por `provider_phone_number_id`, prevenindo o registro concorrente do mesmo número por múltiplas organizações;
+- regras de configuração: definição de conexão padrão da organização (`default_whatsapp_connection_id`) ou atribuição exclusiva para ministério (`assigned_ministry_id`) exigem conexão ativa (`status === 'connected'`), sendo preservadas durante falhas temporárias (`error`) ou pausas manuais (`disabled_by_user`);
+- desconexão terminal atômica: revogação/desconexão limpa simultaneamente ponteiros de default, atribuições de ministérios, segredos e claims de unicidade, preservando apenas o registro histórico da conexão em status `disconnected`;
+- motor de capacidade e limites: composição de direito de uso contratado e uso configurado, aplicando estado restrito (`restricted_over_limit`) sem efeitos colaterais de escrita;
+- resolvedor de conexões WhatsApp com precedência estrita: (1) atribuição direta exclusiva para o ministério, (2) conexão padrão da organização, (3) sem conexão;
+- endpoints da API com omissão estrita de segredos: `GET /api/v1/organizations/:organizationId/whatsapp/connections` (paginada por cursor determinístico `created_at DESC, __name__ DESC`), `PATCH /api/v1/organizations/:organizationId/whatsapp/connections/:connectionId` e `GET /api/v1/ministries/:ministryId/whatsapp/status` (e alias `/groups/:groupId/whatsapp/status`);
+- pré-requisitos de release declarados: implantação dos índices compostos de `backend/firestore.indexes.json` e configuração da variável `WHATSAPP_TOKEN_ENCRYPTION_KEY` nos ambientes de runtime remoto.
+
 ### PWA
 
 - manifest instalável;

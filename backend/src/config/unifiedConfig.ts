@@ -30,6 +30,7 @@ const configSchema = z.object({
   billingReconciliationIntervalMinutes: z.coerce.number().default(15),
   webAppUrl: z.string().default('http://localhost:5173'),
   billingPublicApiUrl: z.string().optional(),
+  whatsappTokenEncryptionKey: z.string().optional(),
   asaas: z.object({
     apiUrl: z.string().default('https://sandbox.asaas.com/api/v3'),
     apiKey: z.string().optional(),
@@ -65,6 +66,7 @@ const rawConfig = {
   billingReconciliationIntervalMinutes: process.env.BILLING_RECONCILIATION_INTERVAL_MINUTES || 15,
   webAppUrl: process.env.WEB_APP_URL || 'http://localhost:5173',
   billingPublicApiUrl: process.env.BILLING_PUBLIC_API_URL,
+  whatsappTokenEncryptionKey: process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY,
   asaas: {
     apiUrl: process.env.ASAAS_API_URL || (process.env.ASAAS_ENVIRONMENT === 'production' ? 'https://api.asaas.com/v3' : 'https://sandbox.asaas.com/api/v3'),
     apiKey: process.env.ASAAS_API_KEY,
