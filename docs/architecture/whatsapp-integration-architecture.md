@@ -269,17 +269,18 @@ When commercial capacity drops below configured connections (e.g., plan downgrad
 
 ## 9. Capacity Accounting & Loophole Elimination (Phase 7C Implementation)
 
-### Status Definitions & Capacity Consumption (Implemented in Phase 7C)
+### Status Definitions & Capacity Consumption (DEC-7C-04, DEC-7C-06)
 
 | Connection Status | Consumes Quota Slot? | Can Send Messages? | Definition |
 | :--- | :---: | :---: | :--- |
-| `pending` | **Yes** | No | Reserved onboarding slot during Embedded Signup (expires via 24h TTL). |
+| `pending` | **Yes** | No | Reserved onboarding slot during Embedded Signup (expires via `pending_expires_at` 24h TTL). |
 | `connecting` | **Yes** | No | Code exchanged, awaiting phone registration & webhook validation. |
 | `connected` | **Yes** | **Yes** | Verified, active, and authorized to send template messages. |
-| `error` | **Yes** | No | Transient technical fault, certificate mismatch, or health check failure. |
-| `disabled_by_user` | **Yes** | No | Manually paused by Org Admin. Still occupies an allocated slot. |
-| `disabled_over_limit` | **Yes** | No | Preserved record from a prior over-limit event. Still occupies a slot. |
-| `disconnected` | **No** | No | Soft-deleted / unlinked. Does NOT consume capacity. |
+| `error` | **Yes** | No | Transient technical fault, certificate mismatch, token expired, or health check failure. |
+| `disabled_by_user` | **Yes** | No | Manually paused by Org Admin. Still occupies an allocated capacity slot. |
+| `disconnected` | **No** | No | Soft-deleted / unlinked. Does NOT consume capacity. Permanent terminal state in V1. |
+
+*(Note on `disabled_over_limit`: Removed per DEC-7C-04. Non-destructive quota over-limit is evaluated dynamically as an aggregate Organization mode `connectionAccessMode = 'restricted_over_limit'` rather than mutating individual connection documents.)*
 
 ### Elimination of the Accumulation Loophole (Phase 7C Enforced)
 - In Phase 7C, new connection onboarding (`POST /whatsapp/onboarding/start`) strictly enforces:
@@ -287,47 +288,80 @@ When commercial capacity drops below configured connections (e.g., plan downgrad
   configuredConnectionsCount < totalAllowedConnections
   ```
   where `configuredConnectionsCount` counts **ALL non-disconnected connections** (`status !== 'disconnected'`).
+- The configured status set is strictly:
+  ```typescript
+  export const CONFIG_CONSUMING_STATUSES: WhatsAppConnectionStatus[] = [
+    'pending',
+    'connecting',
+    'connected',
+    'error',
+    'disabled_by_user',
+  ];
+  ```
 - To onboard a new connection when at quota, an administrator must explicitly **disconnect** an existing connection, moving it to `disconnected`.
 
 ---
 
-## 10. Re-Upgrade Behavior & Sender Stability (DEC-7A-20-R1)
+## 10. Re-Upgrade Behavior & Sender Stability (DEC-7A-20-R1, DEC-7C-04)
 
 When an Organization purchases additional add-on capacity or upgrades its plan:
-1. **Explicit Reactivation Required:** Connections in `disabled_over_limit` or `disabled_by_user` do **NOT** automatically resume sending messages.
+1. **Explicit Reactivation Required:** Connections paused in `disabled_by_user` do **NOT** automatically resume sending messages.
 2. **No Silent Sender Switching:** Automatic reactivation could cause recipients to unexpectedly receive messages from a different number than the one used during the restriction.
-3. **Administrative Flow:** The Org Admin dashboard indicates that newly purchased slots are available. The Admin explicitly clicks **"Reativar Conexão"**. The system validates that `capacityConsumingCount < totalAllowedConnections` and transitions the status to `connected`.
+3. **Aggregate Over-Limit Lift:** When commercial capacity increases so that `configuredConnectionsCount <= totalAllowedConnections`, `connectionAccessMode` returns to `'normal'`. Existing `connected` lines immediately resume operational sending without individual document mutations.
+4. **Administrative Flow:** The Org Admin dashboard indicates that newly purchased slots are available. If an Admin previously paused a line (`disabled_by_user`), the Admin explicitly clicks **"Reativar Conexão"**. The system validates that `configuredConnectionsCount <= totalAllowedConnections` and transitions the status to `connected`.
 
 ---
 
-## 11. Default vs Exclusive Connection Invariants (DEC-7A-21-R1)
+## 11. Default vs Exclusive Connection Invariants (DEC-7A-21-R1, DEC-7C-02, DEC-7C-03)
 
 To eliminate routing ambiguity and ensure predictable messaging:
-1. **Mutual Exclusivity:** A connection **CANNOT** simultaneously be an Organization Default and an Exclusive Ministry Assignment.
-   ```typescript
-   if (connection.is_organization_default === true) {
-     assert(connection.assigned_ministry_id === null);
-   }
-   if (connection.assigned_ministry_id !== null) {
-     assert(connection.is_organization_default === false);
-   }
-   ```
-2. **Single Default per Organization:** An Organization can have at most one connection with `is_organization_default: true`.
-3. **Assignment Cardinality (1:1):**
-   - One connection is assigned to at most **one** Ministry (`assigned_ministry_id`).
-   - Each Ministry has at most **one** exclusively assigned connection.
-   - Shared usage occurs **exclusively** through the Organization default fallback.
 
-### Connection Resolution Algorithm (`resolveWhatsAppConnection`)
+### 1. Default Connection Single Source of Truth (DEC-7C-02)
+- **Canonical Authority:** `organizations.default_whatsapp_connection_id: string | null` is the **sole source of truth** for the Organization's default connection.
+- **Elimination of Dual-Persistence Drift:** `whatsapp_connections.is_organization_default` is **REMOVED from the Firestore persistence schema**. It does NOT exist as a document field in `whatsapp_connections`.
+- **Derived in API DTOs:** In API responses and DTOs (`WhatsAppConnectionDto`), `isOrganizationDefault: boolean` is derived dynamically on the server:
+  ```typescript
+  isOrganizationDefault = organization.default_whatsapp_connection_id === connection.id;
+  ```
+- **Atomic Mutation:** Setting or changing the default connection is an atomic update on the `organizations` document (`default_whatsapp_connection_id = connectionId`). Clearing the default sets `default_whatsapp_connection_id = null`. There is zero boolean dual-write drift or multi-connection boolean race.
+
+### 2. Mutual Exclusivity Invariant
+A connection **CANNOT** simultaneously be an Organization Default and an Exclusive Ministry Assignment:
+- Setting a connection as the Organization default requires `connection.assigned_ministry_id === null`.
+- Assigning a connection exclusively to a Ministry requires `organization.default_whatsapp_connection_id !== connection.id` (must clear or switch default first).
+
+### 3. Assignment Cardinality (1:1)
+- One connection is assigned to at most **one** Ministry (`assigned_ministry_id`).
+- Each Ministry has at most **one** exclusively assigned connection.
+- Shared usage occurs **exclusively** through the Organization default fallback.
+
+### 4. Exclusive Unusable Fallback Prevention (DEC-7C-03)
+A critical routing safety invariant:
+- If Ministry M has an exclusive connection assigned, but that connection is currently **unusable** (`error`, `disabled_by_user`, `disconnected`):
+  → The resolver **STRICTLY REFUSES** to send and fails with `CONNECTION_NOT_ACTIVE`.
+  → The resolver **NEVER silently falls back** to the Organization default number.
+- **Rationale:** If a youth ministry (*Louvor Jovens*) configured a dedicated number, and that line experiences a transient fault, dispatching messages from the church's senior pastoral line (*Atendimento Geral*) would violate recipient expectations, context, and privacy. Fallback to Organization default occurs **ONLY** when Ministry M has **NO explicit exclusive assignment** (`assigned_ministry_id === null`).
+
+### 5. Connection Resolution Algorithm (`resolveWhatsAppConnection`)
 When Ministry M requests message dispatch (Phase 7G):
-1. Search for an exclusive connection:
-   `whatsapp_connections.where('organization_id', '==', orgId).where('assigned_ministry_id', '==', M.id).where('status', '==', 'connected')`
-   If found → **Dispatch via Exclusive Connection**.
-2. If none, search for the organization default:
-   `whatsapp_connections.where('organization_id', '==', orgId).where('is_organization_default', '==', true).where('status', '==', 'connected')`
-   If found → **Dispatch via Organization Default Connection**.
-3. If neither exists or the resolved connection is not in `connected` status:
-   → **Fail Closed** with `NO_USABLE_WHATSAPP_CONNECTION`.
+1. **Commercial / Access Verification:**
+   - Verify `ministry.organization_id !== null` (otherwise fail with `NO_ORGANIZATION`).
+   - Evaluate `SubscriptionService.getOrganizationWhatsAppCapacity(org.id)`.
+   - If `billingAccessMode === 'suspended'`, fail with `WHATSAPP_SUSPENDED`.
+   - If `configuredConnectionsCount > totalAllowedConnections`, fail with `RESTRICTED_OVER_LIMIT`.
+   - If `totalAllowedConnections === 0` (Free plan), fail with `RESTRICTED_OVER_LIMIT`.
+2. **Step 1: Check Exclusive Ministry Assignment:**
+   - Query: `whatsapp_connections.where('organization_id', '==', orgId).where('assigned_ministry_id', '==', M.id).limit(1)`.
+   - If an exclusive connection is found:
+     - If `status === 'connected'`: **Dispatch via Exclusive Connection**.
+     - If `status !== 'connected'`: **Fail Closed with `CONNECTION_NOT_ACTIVE`** (do NOT fall back per DEC-7C-03).
+3. **Step 2: Fallback to Organization Default (Only if No Exclusive Assignment):**
+   - Read `org.default_whatsapp_connection_id`.
+   - If `default_whatsapp_connection_id === null`: **Fail Closed with `NO_CONNECTION_AVAILABLE`**.
+   - Load connection: `whatsapp_connections.doc(default_whatsapp_connection_id)`.
+   - If not found or `connection.organization_id !== orgId`: **Fail Closed with `NO_CONNECTION_AVAILABLE`**.
+   - If `connection.status === 'connected'`: **Dispatch via Organization Default Connection**.
+   - If `connection.status !== 'connected'`: **Fail Closed with `CONNECTION_NOT_ACTIVE`**.
 
 ---
 
@@ -346,37 +380,53 @@ When Ministry M requests message dispatch (Phase 7G):
 
 ---
 
-## 13. Secret Storage & Envelope Encryption Hardening (DEC-7A-19-R1)
+## 13. Secret Storage & Envelope Encryption Hardening (DEC-7A-19-R1, DEC-7C-08)
 
 Meta Cloud API System User Tokens must be secured against data breaches and cross-tenant transplantation (implemented in Phase 7C).
 
 ### Cryptographic Specification
 - **Algorithm:** AES-256-GCM (Authenticated Encryption with Associated Data).
 - **Master Key:** `WHATSAPP_TOKEN_ENCRYPTION_KEY` configured in backend `unifiedConfig` (32-byte cryptographically random key, Base64-encoded). Server-only secret, never exposed to clients or build artifacts.
-- **Nonce / IV:** Cryptographically secure unique 12-byte initialization vector generated per encryption operation. IV reuse is strictly prohibited.
-- **Authentication Tag:** 16-byte GCM authentication tag verifying ciphertext integrity.
+- **Nonce / IV:** Cryptographically secure unique 12-byte initialization vector generated per encryption operation (`crypto.randomBytes(12)`). IV reuse is strictly prohibited.
+- **Authentication Tag:** 16-byte GCM authentication tag verifying ciphertext integrity (`cipher.getAuthTag()`).
 - **Associated Authenticated Data (AAD):** The AAD binds the ciphertext to the exact tenant context:
   ```text
   AAD = `${organization_id}:${connection_id}`
   ```
   This prevents ciphertext transplantation attacks between connections or organizations.
 - **Key Versioning:** Each secret record contains `key_version: number` (initial version: `1`) to enable zero-downtime key rotation in future phases.
-- **Fail-Closed Decryption:** Decryption failures throw `SECRET_DECRYPTION_FAILED` and halt execution immediately.
+- **Storage Encodings (DEC-7C-08):**
+  - `encrypted_access_token`: Base64 string
+  - `iv`: Base64 string (12 decoded bytes)
+  - `auth_tag`: Base64 string (16 decoded bytes)
+- **Fail-Closed Decryption:** Decryption failures throw `AppError(500, 'SECRET_DECRYPTION_FAILED')` and halt execution immediately.
 - **Zero Logging:** Decrypted tokens are strictly prohibited from application logs, error traces, and diagnostic payloads.
+
+### Boot-Safe Configuration Loading (DEC-7C-08)
+- In `backend/src/config/unifiedConfig.ts`, the encryption key is defined as optional:
+  ```typescript
+  whatsappTokenEncryptionKey: z.string().optional()
+  ```
+- **Application Boot Safety:** Absence of `WHATSAPP_TOKEN_ENCRYPTION_KEY` in development or staging environments does **NOT** cause application boot failure while WhatsApp crypto operations remain uninvoked.
+- **Runtime Fail-Closed Guard:** The crypto service (`WhatsAppEncryptionService`) evaluates the key upon construction or crypto invocation:
+  - If the key is absent, empty, not valid Base64, or decodes to length !== 32 bytes (`Buffer.from(key, 'base64').length !== 32`):
+    The service throws a typed internal configuration error `AppError(500, 'WHATSAPP_ENCRYPTION_KEY_INVALID_OR_MISSING')`.
+- **Production Release Requirement:** Provisioning `WHATSAPP_TOKEN_ENCRYPTION_KEY` in Vercel Production is a mandatory prerequisite prior to deploying Phase 7C backend code.
 
 #### `whatsapp_connection_secrets` Schema (Phase 7C)
 ```typescript
 export interface WhatsAppConnectionSecretRecord {
   id: string; // matches connection_id
-  organization_id: string; // tenant boundary
-  key_version: number; // encryption key version for rotation
-  encrypted_access_token: string; // Base64 or Hex ciphertext
+  connection_id: string; // foreign key to whatsapp_connections
+  organization_id: string; // tenant boundary for cumulative anti-IDOR
+  key_version: number; // encryption key version for rotation (1 initially)
+  encrypted_access_token: string; // Base64 ciphertext
   iv: string; // Base64 IV (12 bytes)
   auth_tag: string; // Base64 GCM Tag (16 bytes)
-  token_type: 'system_user' | 'user_token';
+  token_type: 'system_user' | 'user_token'; // [EXTERNAL META VALIDATION REQUIRED for token lifespan]
   expires_at: string | null; // ISO 8601 or null if permanent
-  created_at: string;
-  updated_at: string;
+  created_at: string; // ISO 8601 UTC
+  updated_at: string; // ISO 8601 UTC
 }
 ```
 
@@ -469,7 +519,7 @@ The following items are external dependencies on Meta's WhatsApp Cloud API platf
 
 ---
 
-## 18. Updated Decision Register (DEC-7A-01 .. DEC-7A-29)
+## 18. Updated Decision Register (DEC-7A-01 .. DEC-7A-29, DEC-7C-01 .. DEC-7C-10)
 
 | Decision ID | Status | Subject | Summary |
 | :--- | :--- | :--- | :--- |
@@ -502,6 +552,16 @@ The following items are external dependencies on Meta's WhatsApp Cloud API platf
 | **DEC-7A-27-R1**| **Finalized** | Owner Derivation & Provisioning Authority | `INITIAL_ORG_OWNER_SOURCE: ministry.owner_user_id`; provisioning restricted strictly to Ministry Owner. |
 | **DEC-7A-28** | **New** | Billing Anchor Immutability in 7B | Public REST API does not mutate billing anchor in Phase 7B foundation. |
 | **DEC-7A-29** | **New** | Commercial Entitlement Phase Split | 7B evaluates commercial capacity; 7C evaluates connection usage/over-limit; 7H evaluates add-on checkout. |
+| **DEC-7C-01** | **Frozen** | Canonical Connection Schema & Nullability | Defines `WhatsAppConnectionRecord` with exact 6-status lifecycle nullability matrix; provider IDs nullable in `pending`. |
+| **DEC-7C-02** | **Frozen** | Default Connection Single Source of Truth | `organizations.default_whatsapp_connection_id` is sole canonical authority; `is_organization_default` removed from persistence, derived in DTO. |
+| **DEC-7C-03** | **Frozen** | Exclusive Unusable Fallback Prevention | Unusable exclusive connection fails with `CONNECTION_NOT_ACTIVE`; zero silent fallback to Organization default. |
+| **DEC-7C-04** | **Frozen** | Status Model & Over-Limit Reachability | 6 active lifecycle states; `disabled_over_limit` removed; over-limit represented via `connectionAccessMode = 'restricted_over_limit'`. |
+| **DEC-7C-05** | **Frozen** | Disconnect Responsibility & Boundaries | Internal domain disconnect in 7C; public disconnect and webhook unregistration activated in Phase 7D. |
+| **DEC-7C-06** | **Frozen** | Capacity-Consuming Status Set | Configured count evaluates `['pending', 'connecting', 'connected', 'error', 'disabled_by_user']`; `disconnected` is excluded. |
+| **DEC-7C-07** | **Frozen** | Provider Identity Uniqueness | Enforces platform uniqueness on `provider_phone_number_id` among non-disconnected connections. |
+| **DEC-7C-08** | **Frozen** | Crypto Storage Encoding & Config Loading | Base64 encoding for ciphertext, IV, auth tag; optional config at boot, fail-closed runtime validation upon crypto invocation. |
+| **DEC-7C-09** | **Frozen** | Composite Index & Query Contract | Declares 3 composite indexes for `whatsapp_connections` in `firestore.indexes.json`; deployment required before production release. |
+| **DEC-7C-10** | **Frozen** | Pending TTL Ownership | Schema includes `pending_expires_at` (24h); automated cleanup sweeper deferred to Phase 7D onboarding. |
 
 ---
 
@@ -596,3 +656,343 @@ The following technical specification defines the exact scope for **Phase 7B (Or
 20. **Free Plan Quota:** Standalone free plan returns `includedConnections: 0, additionalConnections: 0, totalAllowedConnections: 0`.
 21. **Paid Plan Quota:** Paid plan (e.g. Pro) returns `includedConnections: 1, additionalConnections: 0, totalAllowedConnections: 1, billingAccessMode: 'normal'`.
 22. **Anti-IDOR & Fail-Closed Security:** Callers without organization membership querying organization endpoints receive indistinguishable `404 Not Found`.
+
+---
+
+## 20. Phase 7C Concrete Implementation Contract (WhatsApp Connection Domain & Secret Encryption)
+
+The following technical specification defines the exact scope for **Phase 7C (WhatsApp Connection Domain & Secret Encryption)**:
+
+### 1. Data Contracts & Persistence Schemas
+
+#### A. `WhatsAppConnectionStatus` (DEC-7C-04)
+The lifecycle status is restricted to exactly 6 frozen states:
+```typescript
+export type WhatsAppConnectionStatus =
+  | 'pending'
+  | 'connecting'
+  | 'connected'
+  | 'error'
+  | 'disabled_by_user'
+  | 'disconnected';
+```
+*(Note: `disabled_over_limit` is explicitly eliminated per DEC-7C-04. Quota violations do not mutate individual connection statuses; they are evaluated dynamically as an aggregate Organization mode `connectionAccessMode = 'restricted_over_limit'`.)*
+
+#### B. `whatsapp_connections` (Root Collection Schema — DEC-7C-01, DEC-7C-02)
+```typescript
+export interface WhatsAppConnectionRecord {
+  id: string; // Document ID: `wac_${nanoid(20)}` or uuid
+  organization_id: string; // Foreign key to organizations (tenant authority)
+  display_name: string; // LouvAIO-local administrative label (1..100 chars)
+  phone_number: string | null; // Canonical E.164 string; null in pending
+  provider: 'meta_cloud_api'; // Vendor platform identifier
+  provider_waba_id: string | null; // Meta WABA ID; null in pending
+  provider_phone_number_id: string | null; // Meta Phone Number ID; null in pending
+  status: WhatsAppConnectionStatus; // Current lifecycle status
+  status_reason: string | null; // Sanitized internal status reason code (max 255 chars)
+  assigned_ministry_id: string | null; // Foreign key to ministries (exclusive assignment); null if unassigned
+  created_by_user_id: string; // Firebase Auth UID of creating Org Admin
+  pending_expires_at: string | null; // ISO 8601 UTC; 24h TTL for 'pending'; null for all other statuses
+  last_connected_at: string | null; // ISO 8601 UTC timestamp of last active connection
+  last_health_check_at: string | null; // ISO 8601 UTC timestamp of last health evaluation
+  created_at: string; // ISO 8601 UTC timestamp
+  updated_at: string; // ISO 8601 UTC timestamp
+}
+```
+
+#### C. Field-by-Field Authority, Lifecycle & Mutability Matrix
+| Field Name | Type | Nullable? | Who Writes | When Known | Client Editable via PATCH? |
+| :--- | :--- | :---: | :--- | :--- | :---: |
+| `id` | `string` | No | Server | Creation (`wac_*`) | No |
+| `organization_id` | `string` | No | Server | Creation (derived from route) | No |
+| `display_name` | `string` | No | Org Admin / Server | Creation (user-supplied) | **Yes** (1..100 chars) |
+| `phone_number` | `string` | Yes (in `pending`) | Server (via Provider) | Populated on registration | No |
+| `provider` | `'meta_cloud_api'` | No | Server | Creation (`'meta_cloud_api'`) | No |
+| `provider_waba_id` | `string` | Yes (in `pending`) | Server (via Provider) | Populated on token exchange | No |
+| `provider_phone_number_id`| `string` | Yes (in `pending`) | Server (via Provider) | Populated on registration | No |
+| `status` | `WhatsAppConnectionStatus` | No | Server | Initial `'pending'` / transitions | No |
+| `status_reason` | `string` | Yes | Server | Populated on error/timeout | No |
+| `assigned_ministry_id` | `string` | Yes | Org Admin / Server | Assigned or null | **Yes** (via dedicated assign) |
+| `created_by_user_id` | `string` | No | Server | Creation (`req.user.id`) | No |
+| `pending_expires_at` | `string` | Yes | Server | Creation (now + 24h for pending)| No |
+| `last_connected_at` | `string` | Yes | Server | On entering `connected` | No |
+| `last_health_check_at` | `string` | Yes | Server | On health check run | No |
+| `created_at` | `string` | No | Server | Creation (ISO 8601 UTC) | No |
+| `updated_at` | `string` | No | Server | Mutation (ISO 8601 UTC) | No |
+
+#### D. Pre-Connected Lifecycle State vs Nullability Matrix (DEC-7C-01)
+| Field | `pending` | `connecting` | `connected` | `error` | `disabled_by_user` | `disconnected` |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| `id` | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
+| `organization_id` | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
+| `display_name` | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
+| `provider` | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
+| `status` | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
+| `created_by_user_id` | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
+| `created_at` | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
+| `updated_at` | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
+| `phone_number` | **NULL ALLOWED** | **REQUIRED** | **REQUIRED** | **REQUIRED** | **REQUIRED** | **REQUIRED** |
+| `provider_waba_id` | **NULL ALLOWED** | **REQUIRED** | **REQUIRED** | **REQUIRED** | **REQUIRED** | **REQUIRED** |
+| `provider_phone_number_id`| **NULL ALLOWED** | **REQUIRED** | **REQUIRED** | **REQUIRED** | **REQUIRED** | **REQUIRED** |
+| `pending_expires_at` | **REQUIRED** (24h) | **MUST BE NULL** | **MUST BE NULL** | **MUST BE NULL** | **MUST BE NULL** | **MUST BE NULL** |
+| `assigned_ministry_id` | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED |
+| `status_reason` | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED |
+| `last_connected_at` | NULL ALLOWED | NULL ALLOWED | **REQUIRED** | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED |
+| `last_health_check_at` | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED | NULL ALLOWED |
+
+*Timing Note:* The exact moment Meta SDK yields `phone_number` vs `provider_waba_id` in Phase 7D remains cataloged as `[EXTERNAL META VALIDATION REQUIRED]`. Phase 7C persistence strictly tolerates null provider identity fields in `pending` status without guessing Meta callback sequence.
+
+#### E. `whatsapp_connection_secrets` (Restricted Root Collection Schema — DEC-7C-08)
+```typescript
+export interface WhatsAppConnectionSecretRecord {
+  id: string; // matches connection_id
+  connection_id: string; // foreign key to whatsapp_connections
+  organization_id: string; // tenant boundary for cumulative anti-IDOR
+  key_version: number; // encryption key version for rotation (1 initially)
+  encrypted_access_token: string; // Base64 ciphertext
+  iv: string; // Base64 IV (12 decoded bytes)
+  auth_tag: string; // Base64 GCM Tag (16 decoded bytes)
+  token_type: 'system_user' | 'user_token'; // [EXTERNAL META VALIDATION REQUIRED for token lifespan]
+  expires_at: string | null; // ISO 8601 or null if permanent
+  created_at: string; // ISO 8601 UTC
+  updated_at: string; // ISO 8601 UTC
+}
+```
+
+---
+
+### 2. Repositories to Implement in Phase 7C
+
+#### A. `backend/src/repositories/WhatsAppConnectionRepository.ts`
+- `getConnectionById(connectionId: string): Promise<WhatsAppConnectionRecord | null>`
+- `listConnectionsByOrganization(orgId: string, limit?: number): Promise<WhatsAppConnectionRecord[]>`
+- `findAssignedConnectionForMinistry(orgId: string, ministryId: string): Promise<WhatsAppConnectionRecord | null>`
+- `countConfiguredConnections(orgId: string): Promise<number>` (counts statuses in `CONFIG_CONSUMING_STATUSES`)
+- `findByProviderPhoneNumberId(phoneId: string): Promise<WhatsAppConnectionRecord | null>`
+- `createConnection(data: CreateWhatsAppConnectionData): Promise<WhatsAppConnectionRecord>` (internal only)
+- `updateConnection(orgId: string, connectionId: string, data: Partial<WhatsAppConnectionRecord>): Promise<void>`
+- `setConnectionStatus(orgId: string, connectionId: string, status: WhatsAppConnectionStatus, reason?: string | null): Promise<void>`
+- `disconnectConnection(orgId: string, connectionId: string): Promise<void>` (internal atomic domain disconnect)
+
+#### B. `backend/src/repositories/WhatsAppConnectionSecretRepository.ts`
+- `getSecret(orgId: string, connectionId: string): Promise<WhatsAppConnectionSecretRecord | null>` (enforces cumulative `organization_id` + `connection_id`)
+- `setSecret(secret: WhatsAppConnectionSecretRecord): Promise<void>`
+- `deleteSecret(orgId: string, connectionId: string): Promise<void>` (internal cleanup)
+
+---
+
+### 3. Services to Implement in Phase 7C
+
+#### A. `backend/src/features/whatsapp/whatsapp-encryption.service.ts`
+- `encryptToken(token: string, orgId: string, connectionId: string): { encryptedAccessToken: string; iv: string; authTag: string; keyVersion: number }`
+- `decryptToken(record: WhatsAppConnectionSecretRecord): string`
+- Enforces:
+  - AES-256-GCM authenticated encryption.
+  - AAD: `${organization_id}:${connection_id}`.
+  - Storage encoding: Base64 for ciphertext, IV, auth tag.
+  - Fail-closed error: `AppError(500, 'SECRET_DECRYPTION_FAILED')` on tampered ciphertext, bad tag, or mismatched AAD.
+  - Boot-safe config loading: Throws `AppError(500, 'WHATSAPP_ENCRYPTION_KEY_INVALID_OR_MISSING')` at runtime if `WHATSAPP_TOKEN_ENCRYPTION_KEY` is missing, not valid Base64, or length !== 32 bytes.
+  - Decrypted token zero logging guarantee.
+
+#### B. `backend/src/features/whatsapp/whatsapp-connection.service.ts`
+- `listConnections(orgId: string, actorUserId: string): Promise<WhatsAppConnectionDto[]>`
+- `updateConnection(orgId: string, connectionId: string, input: UpdateWhatsAppConnectionInput, actorUserId: string): Promise<WhatsAppConnectionDto>`
+- `setOrganizationDefault(orgId: string, connectionId: string, actorUserId: string): Promise<void>`
+- `clearOrganizationDefault(orgId: string, actorUserId: string): Promise<void>`
+- `assignMinistry(orgId: string, connectionId: string, ministryId: string, actorUserId: string): Promise<void>`
+- `unassignMinistry(orgId: string, connectionId: string, actorUserId: string): Promise<void>`
+- `getOrganizationCapacityUsage(orgId: string): Promise<OrganizationWhatsAppCapacityUsageDto>`
+- `resolveWhatsAppConnection(ministryId: string): Promise<ResolvedWhatsAppConnectionResult>`
+
+---
+
+### 4. Canonical REST API Endpoints Matrix for Phase 7C
+
+| Method | Endpoint Path | Authority Required | Status in Phase 7C | Description & Preconditions |
+| :--- | :--- | :--- | :--- | :--- |
+| **GET** | `/api/v1/organizations/:organizationId/whatsapp/connections` | `ORG_OWNER` or `ORG_ADMIN` | **IMPLEMENT IN 7C** | List Organization connections with safe DTOs (`WhatsAppConnectionDto`). Enforces bounded limit (max 50). |
+| **PATCH** | `/api/v1/organizations/:organizationId/whatsapp/connections/:connectionId` | `ORG_OWNER` or `ORG_ADMIN` | **IMPLEMENT IN 7C** | Update connection configuration (`displayName`, `isOrganizationDefault`, `assignedMinistryId`). |
+| **GET** | `/api/v1/ministries/:ministryId/whatsapp/status` | `MINISTRY_ADMIN` or `MINISTRY_MEMBER` | **IMPLEMENT IN 7C** | Ministry resolved WhatsApp status DTO (`MinistryWhatsAppStatusDto`). Omit secrets and foreign org data. |
+| **POST** | `/api/v1/organizations/:organizationId/whatsapp/connections` | None | **PROHIBITED IN 7C** | **NO public connection creation.** Connection onboarding belongs strictly to Phase 7D (Meta Embedded Signup). |
+| **POST** | `/api/v1/organizations/:organizationId/whatsapp/connections/:connectionId/disconnect` | None | **DEFER TO 7D** | Public disconnect requires Meta webhook deregistration. Phase 7C implements internal domain method only. |
+| **DELETE** | `/api/v1/organizations/:organizationId/whatsapp/connections/:connectionId` | None | **PROHIBITED IN 7C** | No public hard-delete connection endpoint in Phase 7C. Data preservation strictly enforced. |
+
+---
+
+### 5. Invariants & Business Logic Specifications
+
+#### A. Default Connection Authority (DEC-7C-02)
+- Canonical pointer: `organizations.default_whatsapp_connection_id: string | null`.
+- `whatsapp_connections.is_organization_default` is **NOT** a persistent Firestore field.
+- Setting default (`PATCH ...` with `{ isOrganizationDefault: true }`):
+  1. Load target connection: verify `connection.organization_id === orgId`.
+  2. Invariant: `connection.assigned_ministry_id === null` (cannot be exclusively assigned).
+  3. Invariant: `connection.status !== 'disconnected' && connection.status !== 'pending'`.
+  4. Atomically update `organizations.doc(orgId)` with `{ default_whatsapp_connection_id: connectionId, updated_at: now }`.
+- Clearing default (`PATCH ...` with `{ isOrganizationDefault: false }`):
+  1. If `org.default_whatsapp_connection_id === connectionId`, atomically set `default_whatsapp_connection_id = null`.
+
+#### B. Exclusive Ministry Assignment Invariants (DEC-7C-03)
+- Setting exclusive assignment (`PATCH ...` with `{ assignedMinistryId: ministryId }`):
+  1. Load target connection: verify `connection.organization_id === orgId`.
+  2. Invariant: `org.default_whatsapp_connection_id !== connectionId` (cannot be current Organization default).
+  3. Load target ministry: verify `ministry.organization_id === orgId`.
+  4. Invariant: Target Ministry cannot already have another exclusive connection assigned (`findAssignedConnectionForMinistry` must return null or the same connection). Rejects with `409 MINISTRY_ALREADY_HAS_EXCLUSIVE_CONNECTION`.
+  5. Atomically update `whatsapp_connections.doc(connectionId)` with `{ assigned_ministry_id: ministryId, updated_at: now }`.
+- Clearing assignment (`PATCH ...` with `{ assignedMinistryId: null }`):
+  - Atomically update `whatsapp_connections.doc(connectionId)` with `{ assigned_ministry_id: null, updated_at: now }`.
+
+#### C. Unusable Exclusive Fallback Prevention (DEC-7C-03)
+- If Ministry M has an assigned connection, but `connection.status !== 'connected'`:
+  `resolveWhatsAppConnection(M.id)` returns `{ success: false, code: 'CONNECTION_NOT_ACTIVE' }`.
+- **Zero silent fallback:** The resolver NEVER falls back to the Organization default when an exclusive assignment is configured on the Ministry.
+
+#### D. Non-Destructive Over-Limit & Capacity Composition (DEC-7C-04, DEC-7C-06)
+- Evaluated dynamically:
+  ```typescript
+  const configured = await connectionRepo.countConfiguredConnections(orgId);
+  const capacity = await subscriptionService.getOrganizationWhatsAppCapacity(orgId);
+  const isOverLimit = configured > capacity.totalAllowedConnections;
+  const connectionAccessMode = capacity.billingAccessMode === 'suspended'
+    ? 'suspended'
+    : isOverLimit
+      ? 'restricted_over_limit'
+      : capacity.billingAccessMode; // 'normal' or 'grace'
+  ```
+- If `connectionAccessMode === 'restricted_over_limit'`:
+  - `canCreateConnection: false`
+  - `canSendMessages: false`
+  - Outbound dispatch blocked with `RESTRICTED_OVER_LIMIT`.
+  - **Zero documents mutated or deleted.**
+
+#### E. Provider Identity Uniqueness (DEC-7C-07)
+- For any non-null `provider_phone_number_id`:
+  - Before saving a new or linked connection, the service queries `whatsapp_connections.where('provider_phone_number_id', '==', phoneId).limit(2)`.
+  - If any existing non-disconnected connection (`status !== 'disconnected'`) possesses the same `provider_phone_number_id`, creation/link is rejected with `409 PROVIDER_PHONE_ALREADY_REGISTERED`.
+
+---
+
+### 6. Safe Public DTOs (DEC-7C-01, DEC-7C-02)
+
+#### A. `WhatsAppConnectionDto` (Organization Connection List / Detail)
+```typescript
+export interface WhatsAppConnectionDto {
+  id: string;
+  organizationId: string;
+  displayName: string;
+  phoneNumber: string | null;
+  provider: 'meta_cloud_api';
+  status: WhatsAppConnectionStatus;
+  statusReason: string | null;
+  isOrganizationDefault: boolean; // Derived from organization.default_whatsapp_connection_id === connection.id
+  assignedMinistryId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+```
+*(Category rule: `encrypted_access_token`, `iv`, `auth_tag`, `key_version`, and raw credentials are NEVER exposed in DTOs.)*
+
+#### B. `MinistryWhatsAppStatusDto` (Ministry-Facing Resolved Status)
+```typescript
+export interface MinistryWhatsAppStatusDto {
+  hasOrganization: boolean;
+  organizationId: string | null;
+  isConfigured: boolean; // True if exclusive or default connection is found
+  isConnected: boolean; // True if resolved connection has status === 'connected'
+  source: 'exclusive' | 'default' | 'none';
+  connectionId: string | null;
+  displayName: string | null;
+  phoneNumber: string | null;
+  connectionAccessMode: 'normal' | 'grace' | 'restricted_over_limit' | 'suspended';
+  canSendMessages: boolean;
+}
+```
+
+#### C. `OrganizationWhatsAppCapacityUsageDto` (Capacity & Usage Summary)
+```typescript
+export interface OrganizationWhatsAppCapacityUsageDto {
+  organizationId: string;
+  billingAnchorMinistryId: string;
+  totalAllowedConnections: number;
+  includedConnections: number;
+  additionalConnections: number;
+  configuredConnectionsCount: number;
+  remainingCapacity: number;
+  billingAccessMode: 'normal' | 'grace' | 'suspended';
+  connectionAccessMode: 'normal' | 'grace' | 'restricted_over_limit' | 'suspended';
+  canCreateConnection: boolean;
+  canSendMessages: boolean;
+}
+```
+
+---
+
+### 7. Firestore Composite Index Contract & Terminology (DEC-7C-09)
+
+#### Exact Index Declarations (`backend/firestore.indexes.json`)
+```json
+{
+  "collectionGroup": "whatsapp_connections",
+  "queryScope": "COLLECTION",
+  "fields": [
+    { "fieldPath": "organization_id", "order": "ASCENDING" },
+    { "fieldPath": "created_at", "order": "DESCENDING" },
+    { "fieldPath": "__name__", "order": "DESCENDING" }
+  ]
+},
+{
+  "collectionGroup": "whatsapp_connections",
+  "queryScope": "COLLECTION",
+  "fields": [
+    { "fieldPath": "organization_id", "order": "ASCENDING" },
+    { "fieldPath": "assigned_ministry_id", "order": "ASCENDING" }
+  ]
+},
+{
+  "collectionGroup": "whatsapp_connections",
+  "queryScope": "COLLECTION",
+  "fields": [
+    { "fieldPath": "organization_id", "order": "ASCENDING" },
+    { "fieldPath": "status", "order": "ASCENDING" }
+  ]
+}
+```
+
+#### Authoritative Deployment Terminology
+- **`FIRESTORE_INDEX_DECLARATION_REQUIRED: YES`**: The 3 composite indexes above MUST be declared in `backend/firestore.indexes.json` as part of Phase 7C implementation.
+- **`FIRESTORE_INDEX_DEPLOYMENT_REQUIRED_BEFORE_PRODUCTION_RELEASE: YES`**: These composite indexes MUST be deployed to Google Cloud Firestore before Phase 7C code runs in production.
+- **`FIRESTORE_INDEX_DEPLOYMENT_DURING_7C_IMPLEMENTATION: NO`**: No deployment commands (`firebase deploy --only firestore:indexes`) are authorized during Phase 7C local execution.
+- **`PRODUCTION_ENV_CHANGE_REQUIRED_BEFORE_7C_RELEASE: YES`**: `WHATSAPP_TOKEN_ENCRYPTION_KEY` must be configured in Vercel Production before Phase 7C release.
+- **`FIRESTORE_RULES_CHANGE_REQUIRED: NO`**: Collections are consumed strictly by the backend Firebase Admin SDK; no direct client Firestore access exists.
+
+---
+
+### 8. Phase 7C Concrete Test Matrix (Frozen Scenarios)
+
+1. **AES-256-GCM Crypto Round-Trip:** Encrypt and decrypt access token produces identical plaintext.
+2. **IV Uniqueness:** Encrypting identical plaintext twice produces distinct ciphertexts and IVs.
+3. **AAD Tenant Binding Security:** Decryption with incorrect `organization_id` fails with `SECRET_DECRYPTION_FAILED`.
+4. **AAD Connection Binding Security:** Decryption with incorrect `connection_id` fails with `SECRET_DECRYPTION_FAILED`.
+5. **Ciphertext Tamper Resistance:** Mutating ciphertext bytes causes decryption failure (fail-closed).
+6. **Auth Tag Tamper Resistance:** Mutating authentication tag causes decryption failure (fail-closed).
+7. **Key Validation Fail-Closed:** Missing, non-Base64, or length !== 32 byte master key throws `WHATSAPP_ENCRYPTION_KEY_INVALID_OR_MISSING`.
+8. **Secret Non-Exposure:** Decrypted tokens and secret records NEVER appear in `WhatsAppConnectionDto` or HTTP responses.
+9. **Single Default Authority:** Setting default updates `organizations.default_whatsapp_connection_id`; derived `isOrganizationDefault` is true for that connection only.
+10. **Default Replacement Atomicity:** Setting a second connection as default updates Organization pointer and reflects correctly in derived DTOs without boolean dual-write races.
+11. **Default Mutual Exclusivity:** Setting a connection with `assigned_ministry_id !== null` as default is rejected with `400 CANNOT_SET_ASSIGNED_CONNECTION_AS_DEFAULT`.
+12. **Exclusive Assignment Mutual Exclusivity:** Assigning the current Organization default connection to a Ministry is rejected with `400 CANNOT_ASSIGN_DEFAULT_CONNECTION`.
+13. **Exclusive Assignment Cross-Tenant Rejection:** Assigning a connection to a Ministry belonging to a different Organization is rejected with `404 Not Found`.
+14. **Single Exclusive Assignment per Ministry:** Attempting to assign a second connection to a Ministry that already has one is rejected with `409 MINISTRY_ALREADY_HAS_EXCLUSIVE_CONNECTION`.
+15. **Unusable Exclusive Fallback Prevention (DEC-7C-03):** When a Ministry has an exclusive connection in `error` status, `resolveWhatsAppConnection` returns `CONNECTION_NOT_ACTIVE`; does NOT fall back to default.
+16. **Usable Exclusive Resolution:** When a Ministry has an exclusive connection in `connected` status, resolver selects it over the Organization default.
+17. **Default Fallback Resolution:** When a Ministry has no exclusive assignment, resolver successfully selects the Organization default in `connected` status.
+18. **Unconfigured Ministry Resolution:** Ministry with no exclusive assignment and no Organization default returns `NO_CONNECTION_AVAILABLE`.
+19. **Unprovisioned Ministry Resolution:** Ministry with `organization_id === null` returns `NO_ORGANIZATION`.
+20. **Capacity Accounting Composition:** Configured count counts `['pending', 'connecting', 'connected', 'error', 'disabled_by_user']`; excludes `disconnected`.
+21. **Non-Destructive Over-Limit Evaluation:** When configured > allowed, `connectionAccessMode` evaluates to `restricted_over_limit`; resolver fails with `RESTRICTED_OVER_LIMIT`; zero documents mutated.
+22. **Operational Grace Resolution:** Subscription in `grace` mode allows existing `connected` lines to send messages (`canSendMessages: true`), but blocks creation (`canCreateConnection: false`).
+23. **Suspended Resolution:** Subscription in `suspended` mode blocks dispatch (`canSendMessages: false`) with `WHATSAPP_SUSPENDED`.
+24. **Provider Identity Uniqueness:** Saving a connection with a `provider_phone_number_id` already registered on an active connection is rejected with `409 PROVIDER_PHONE_ALREADY_REGISTERED`.
+25. **Org Admin vs Ministry Admin RBAC:** Org Admin can manage connections via PATCH; Ministry Admin is rejected with `403 Forbidden` on Organization endpoints.
+26. **Anti-IDOR Security:** Callers querying connections of an Organization they do not belong to receive indistinguishable `404 Not Found`.
+27. **Query Limit Bounding:** Connection listing enforces maximum limit of 50 and deterministic ordering (`created_at DESC, __name__ DESC`).
