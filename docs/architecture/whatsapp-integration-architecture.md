@@ -564,7 +564,7 @@ The following items are external dependencies on Meta's WhatsApp Cloud API platf
 
 ---
 
-## 18. Updated Decision Register (DEC-7A-01 .. DEC-7A-29, DEC-7C-01 .. DEC-7C-10)
+## 18. Updated Decision Register (DEC-7A-01 .. DEC-7A-29, DEC-7C-01 .. DEC-7C-15, DEC-7D-01 .. DEC-7D-12)
 
 | Decision ID | Status | Subject | Summary |
 | :--- | :--- | :--- | :--- |
@@ -612,6 +612,18 @@ The following items are external dependencies on Meta's WhatsApp Cloud API platf
 | **DEC-7C-13** | **Frozen** | Provider Identity Materialization Invariant | Materialization (`provider_waba_id`, `provider_phone_number_id`, `phone_number` non-null) is mandatory for `connected` and `disabled_by_user`; pre-materialization errors allowed in `connecting` and `error`. |
 | **DEC-7C-14** | **Frozen** | Bounded Cursor Pagination & Lookahead Contract | Connection listing enforces compound ordering (`created_at DESC, __name__ DESC`), default 25, max 50, opaque cursor `{ createdAt, id }`; repository queries `pageSize + 1` to determine `hasMore` without ghost cursors; no offset pagination. |
 | **DEC-7C-15** | **New** | Initial Configuration Eligibility & Transient Preservation | New default selection and exclusive assignment require `status === 'connected'`; transient degradation (`error`, `disabled_by_user`) preserves existing configuration; configured connections maintain invariant `last_connected_at !== null`. |
+| **DEC-7D-01** | **Frozen** | Dual-Channel Embedded Signup Handshake | Web client combines `FB.login` OAuth code with `window.message` event (`waba_id`, `phone_number_id`) into single atomic onboarding completion. |
+| **DEC-7D-02** | **Frozen** | Conditional Coexistence & Dual-Mode Disconnect | Supports WhatsApp Business App (SMB) coexistence on supported numbers; disconnect unsubscribes WABA app link without deregistering mobile device. |
+| **DEC-7D-03** | **Frozen** | Customer WABA Ownership & Tech Provider Model | Customer organization owns WABA & Meta Business Portfolio; LouvAIO operates as Tech Provider via delegated permissions. |
+| **DEC-7D-04** | **Frozen** | Explicit Minimum OAuth Scope Boundary | Requests strictly `whatsapp_business_management` and `whatsapp_business_messaging`; zero consumer or page permissions. |
+| **DEC-7D-05** | **Frozen** | Server-Side Token Exchange & Secret Encryption | Backend exchanges OAuth code server-to-server; token encrypted immediately with AES-256-GCM + AAD; zero plaintext exposure. |
+| **DEC-7D-06** | **Frozen** | Ephemeral Onboarding Session & CSRF State Nonce | Allocates `whatsapp_onboarding_sessions` with cryptographically secure `state_nonce` and 15-minute TTL; validates caller and org. |
+| **DEC-7D-07** | **Frozen** | Concurrency-Safe Atomic Capacity Reservation | Transactional pre-allocation on `organizations.doc(orgId)` creates `pending` connection (24h TTL) and onboarding session before popup. |
+| **DEC-7D-08** | **Frozen** | Atomic Materialization & Provider Identity Acquisition | Onboarding completion validates session, exchanges token, registers provider claim, saves secret, and transitions to `connected` atomically. |
+| **DEC-7D-09** | **Frozen** | Global Webhook Verification & HMAC-SHA256 Validation | Public webhook endpoint verifies `hub.challenge` and validates `X-Hub-Signature-256` HMAC-SHA256 against raw payload using `META_APP_SECRET`. |
+| **DEC-7D-10** | **Frozen** | Comprehensive Partial-Failure Recovery Matrix | Deterministic error routing (`connecting → error`) with exact status reasons for token exchange, registration, or claim collision failures. |
+| **DEC-7D-11** | **Frozen** | Two-Tier Disconnect & Non-Destructive Revocation | Unsubscribes WABA app via Meta Graph API, then atomically clears local default/assignment, purges secret, and releases claim. |
+| **DEC-7D-12** | **Frozen** | Phase 7D Implementation Decomposition (7D1, 7D2, 7D3) | Strictly partitions delivery into: 7D1 (Onboarding & Credentials), 7D2 (Webhooks & Sync), and 7D3 (Disconnect & Revocation). |
 
 ---
 
@@ -1171,3 +1183,388 @@ export interface OrganizationWhatsAppCapacityUsageDto {
 42. **Configured Connection Transient Degradation Preservation (DEC-7C-15):** When an active default or assigned connection transitions `connected → error` or `connected → disabled_by_user`, `default_whatsapp_connection_id` and `assigned_ministry_id` remain intact, and `last_connected_at` is preserved non-null.
 43. **Pagination Lookahead Exact Page Limit (DEC-7C-14):** When total matching connections in the Organization exactly equals `pageSize` (e.g., 25), the `pageSize + 1` query fetches 25 documents, `hasMore` evaluates to `false`, and `nextCursor` returns `null` (zero ghost cursors).
 44. **Pagination Lookahead HasMore Cursor Emission (DEC-7C-14):** When total matching connections exceeds `pageSize` (e.g., 26 for limit 25), the `pageSize + 1` query fetches 26 documents, `hasMore` evaluates to `true`, `items` contains exactly 25 records, and `nextCursor` encodes the 25th record's `{ createdAt, id }`.
+
+---
+
+## 21. Phase 7D Concrete Implementation Contract (Meta Provider Integration Contract & Runtime Architecture)
+
+The following technical specification defines the canonical, frozen contract for **Phase 7D (Official Meta WhatsApp Provider Integration)**, validating current Meta Cloud API and Embedded Signup behavior against official Meta specifications.
+
+### 1. Architectural Role & Provider Model (DEC-7D-03, DEC-7D-04)
+- **Tech Provider Ecosystem Architecture:** LouvAIO operates as a Meta Tech Provider (Solution Partner). The customer Organization (Church) creates or links its own Meta Business Portfolio and WhatsApp Business Account (WABA).
+- **Delegated Permission Model:** LouvAIO obtains delegated access via Embedded Signup. The customer grants permissions without transferring ownership of their WABA, phone number, or business identity to LouvAIO.
+- **Minimum Scopes (DEC-7D-04):**
+  - `whatsapp_business_management`: Read WABA details, list phone numbers, configure webhooks, subscribe apps.
+  - `whatsapp_business_messaging`: Send transactional schedule call-up notifications, receive delivery receipts and incoming status events.
+- **Zero Client-Side Credentials:** Meta App Secret, encryption master key, and system access tokens NEVER enter client-side code, browser bundles, or frontend local storage.
+
+### 2. Current Meta Embedded Signup Flow (DEC-7D-01, DEC-7D-06)
+- **Dual-Channel Handshake Architecture:** Modern Meta Embedded Signup (Graph API v21.0+) operates via a dual-channel flow using the Facebook JavaScript SDK (`FB.login`) and cross-window messaging:
+  1. **Channel A (OAuth Authorization Code):** The web client triggers `FB.login()` passing `config_id` (representing LouvAIO's Embedded Signup configuration in the Meta Developer Portal) with `response_type: 'code'`. When the onboarding modal completes, the SDK callback returns an OAuth authorization `code`.
+  2. **Channel B (Session Info Listener):** Concurrently, the parent window listens for `window.addEventListener('message', ...)` dispatched by the Embedded Signup iframe/popup with `event.data.type === 'WA_EMBEDDED_SIGNUP'`. Upon completion (`event.data.event === 'FINISH'`), the payload provides `event.data.data.phone_number_id` and `event.data.data.waba_id`.
+  3. **Atomic Unification:** The frontend merges the OAuth `code` from Channel A with `phone_number_id` and `waba_id` from Channel B, attaching the session's `state_nonce` and `sessionId`, and posts the combined payload to LouvAIO's backend: `POST /api/v1/organizations/:organizationId/whatsapp/onboarding/complete`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Admin as Org Admin (Browser)
+    participant Web as LouvAIO Web SPA
+    participant API as LouvAIO Backend API
+    participant FS as Cloud Firestore
+    participant MetaSDK as Meta Facebook JS SDK
+    participant Graph as Meta Graph API (v21.0)
+
+    Admin->>Web: Click "Conectar WhatsApp"
+    Web->>API: POST /organizations/:id/whatsapp/onboarding/start
+    activate API
+    API->>FS: Transaction: Check capacity, create pending connection (24h TTL),<br/>create onboarding_session (15m TTL, state_nonce)
+    FS-->>API: Session created (sessionId, stateNonce)
+    API-->>Web: 201 Created { sessionId, stateNonce, fbAppId, configId, connectionId }
+    deactivate API
+
+    Web->>MetaSDK: FB.login({ config_id, response_type: 'code' })
+    activate MetaSDK
+    MetaSDK->>Admin: Displays Meta Embedded Signup Modal (Business, WABA, Phone, PIN)
+    Admin->>MetaSDK: Completes Wizard & Phone Verification
+
+    par Channel A (OAuth Code)
+        MetaSDK-->>Web: FB.login callback { authResponse: { code: "AQ..." } }
+    and Channel B (Session Message)
+        MetaSDK-->>Web: window.postMessage { type: 'WA_EMBEDDED_SIGNUP', event: 'FINISH', data: { waba_id, phone_number_id } }
+    end
+    deactivate MetaSDK
+
+    Web->>API: POST /organizations/:id/whatsapp/onboarding/complete<br/>{ sessionId, stateNonce, code, wabaId, phoneNumberId }
+    activate API
+    API->>FS: Validate onboarding session & state_nonce
+    API->>Graph: GET /oauth/access_token (exchange code for permanent/long-lived token)
+    Graph-->>API: { access_token: "EAAB...", token_type: "bearer" }
+    API->>Graph: GET /{phone_number_id}?fields=display_phone_number,verified_name
+    Graph-->>API: { display_phone_number: "+55 11 99999-9999", verified_name: "Igreja Central" }
+    API->>Graph: POST /{waba_id}/subscribed_apps (subscribe to webhooks)
+    Graph-->>API: { success: true }
+    API->>FS: Transaction:<br/>1. Acquire claim_meta_{phoneNumberId}<br/>2. Encrypt & save secret (whatsapp_connection_secrets)<br/>3. Update connection: status='connected', phone_number, last_connected_at<br/>4. Delete onboarding session
+    FS-->>API: Commit successful
+    API-->>Web: 200 OK (WhatsAppConnectionDto)
+    deactivate API
+    Web-->>Admin: Displays Connected WhatsApp Line
+```
+
+### 3. Coexistence Behavior & Multi-Device Semantics (DEC-7D-02)
+- **WhatsApp Business App Coexistence Status:** Meta officially supports coexistence between the WhatsApp Business mobile app (SMB app on Android/iOS) and Cloud API for telephone numbers in supported countries (including Brazil `+55`).
+- **Coexistence Capabilities:**
+  - Inbound messages are delivered to both the WhatsApp Business mobile app and Cloud API webhooks.
+  - Outbound messages sent from the mobile app generate webhook delivery notifications to Cloud API.
+  - Outbound transactional messages sent by LouvAIO via Cloud API appear in the mobile app chat history.
+- **Consumer WhatsApp App Incompatibility:** Standard consumer WhatsApp (WhatsApp Messenger) CANNOT coexist with Cloud API. A number currently on consumer WhatsApp MUST be converted to WhatsApp Business App or migrated fully to Cloud API.
+- **Coexistence-Aware Disconnect Semantics:**
+  - Calling `POST /{phone_number_id}/deregister` deactivates the telephone number on the mobile app, causing operational disruption for the church.
+  - LouvAIO's disconnect protocol **strictly avoids deregistering the phone number**.
+  - Disconnect severs LouvAIO's access by:
+    1. Unsubscribing LouvAIO from the WABA (`DELETE /{waba_id}/subscribed_apps`);
+    2. Purging local secrets (`whatsapp_connection_secrets`);
+    3. Releasing the local claim (`whatsapp_provider_identity_claims`);
+    4. Transitioning local connection to `disconnected`.
+  - The church retains uninterrupted use of the WhatsApp Business mobile app on their physical phone.
+
+### 4. Token Exchange & Secret Envelope Encryption Contract (DEC-7D-05)
+- **Meta Token Exchange Contract:**
+  - Endpoint: `GET https://graph.facebook.com/v21.0/oauth/access_token`
+  - Parameters:
+    - `client_id`: `process.env.META_APP_ID`
+    - `client_secret`: `process.env.META_APP_SECRET`
+    - `code`: Authorization code from Channel A
+  - Response: `{ access_token: string, token_type: "bearer", expires_in?: number }`
+- **System User vs User Token Compatibility:**
+  - If LouvAIO's app is configured with Meta Partner System User onboarding, the exchanged token is a perpetual System User Token (`expires_at: null`, `token_type: 'system_user'`).
+  - If configured with standard OAuth user delegation, the token is a Long-Lived User Token (`expires_in: ~5184000` seconds / 60 days, `token_type: 'user_token'`).
+  - **Secret Record Compatibility:** Phase 7C's `WhatsAppConnectionSecretRecord` natively accommodates both models:
+    ```typescript
+    export interface WhatsAppConnectionSecretRecord {
+      id: string; // matches connection_id
+      organization_id: string;
+      encrypted_access_token: string;
+      iv: string;
+      auth_tag: string;
+      key_version: number;
+      token_type: 'system_user' | 'user_token';
+      expires_at: string | null; // ISO 8601 string or null for perpetual system tokens
+      created_at: string;
+      updated_at: string;
+    }
+    ```
+  - **Zero Gap:** `PHASE_7D_SECRET_CONTRACT_COMPATIBILITY_GAP: NONE`.
+- **Envelope Encryption Binding:** Plaintext access token is encrypted immediately via `WhatsAppCryptoService.encryptSecret(accessToken, { organizationId, connectionId })` prior to persistence. Plaintext token is never logged, cached, or emitted in responses.
+
+### 5. Ephemeral Onboarding Sessions & Concurrency Control (DEC-7D-06, DEC-7D-07)
+- **Root Collection:** `whatsapp_onboarding_sessions`
+- **Schema:**
+  ```typescript
+  export interface WhatsAppOnboardingSessionRecord {
+    id: string; // "wabs_" + 24-char nanoid
+    organization_id: string;
+    connection_id: string; // FK to whatsapp_connections
+    user_id: string; // Initiating Org Admin / Owner UID
+    state_nonce: string; // 32-byte cryptographically secure hex
+    status: 'active' | 'completed' | 'expired' | 'failed';
+    expires_at: string; // ISO 8601, now + 15 minutes
+    created_at: string; // ISO 8601
+    updated_at: string; // ISO 8601
+  }
+  ```
+- **Atomic Capacity Reservation Algorithm (DEC-7D-07):**
+  1. `POST /organizations/:orgId/whatsapp/onboarding/start` runs a Firestore transaction:
+  2. Reads `organizations.doc(orgId)`: verifies organization existence and derives `billing_anchor_ministry_id`.
+  3. Reads `ministry_subscriptions.doc(billingAnchorMinistryId)`: calculates `totalAllowedConnections` via `SubscriptionService`.
+  4. Reads `whatsapp_connections.where('organization_id', '==', orgId).where('status', 'in', CONFIG_CONSUMING_STATUSES)`: counts currently configured connections.
+  5. Contention guard: if `configuredCount >= totalAllowedConnections`, aborts transaction with HTTP 403 `WHATSAPP_CAPACITY_LIMIT_REACHED`.
+  6. Writes new `whatsapp_connections` record:
+     - `id`: `wac_${nanoid()}`
+     - `organization_id`: `orgId`
+     - `status`: `'pending'`
+     - `pending_expires_at`: `now + 24 hours` (ISO 8601)
+     - `phone_number`: `null`
+     - `provider_waba_id`: `null`
+     - `provider_phone_number_id`: `null`
+     - `last_connected_at`: `null`
+     - `status_reason`: `null`
+  7. Writes new `whatsapp_onboarding_sessions` record:
+     - `id`: `wabs_${nanoid()}`
+     - `organization_id`: `orgId`
+     - `connection_id`: `newConnectionId`
+     - `user_id`: `req.user.id`
+     - `state_nonce`: `crypto.randomBytes(32).toString('hex')`
+     - `status`: `'active'`
+     - `expires_at`: `now + 15 minutes` (ISO 8601)
+  8. Commits transaction atomically. Two simultaneous clicks on the last available slot race on the organization document write contention; exactly one succeeds and the second is rejected.
+
+### 6. Atomic Materialization & Provider Identity Acquisition (DEC-7D-08)
+- During `POST /organizations/:orgId/whatsapp/onboarding/complete`:
+  1. **Pre-flight Validation:** Session lookup by `sessionId`. Asserts `session.organization_id === orgId`, `session.status === 'active'`, `session.expires_at > now`, and `timingSafeEqual(session.state_nonce, input.stateNonce)`.
+  2. **External Handshake (Outside Transaction):**
+     - Exchange OAuth `code` for `accessToken` via Meta Graph API.
+     - Call `GET https://graph.facebook.com/v21.0/${phoneNumberId}?fields=display_phone_number,verified_name` using `accessToken`. Normalizes display phone to standard E.164.
+     - Call `POST https://graph.facebook.com/v21.0/${wabaId}/subscribed_apps` using `accessToken`.
+     - Encrypt `accessToken` with AES-256-GCM using AAD `${orgId}:${connectionId}`.
+  3. **Atomic Materialization Transaction (Inside Firestore Transaction):**
+     - Reads connection document `whatsapp_connections.doc(connectionId)`. Verifies `status === 'pending'` or `'connecting'`, `organization_id === orgId`.
+     - Reads provider identity claim document `whatsapp_provider_identity_claims.doc("claim_meta_" + phoneNumberId)`.
+       - If claim exists and points to a different connection, aborts transaction with HTTP 409 `PROVIDER_PHONE_ALREADY_REGISTERED`.
+     - Writes `whatsapp_provider_identity_claims.doc("claim_meta_" + phoneNumberId)`:
+       - `{ id: "claim_meta_" + phoneNumberId, connection_id: connectionId, organization_id: orgId, provider: "meta", provider_phone_number_id: phoneNumberId, claimed_at: now }`.
+     - Writes `whatsapp_connection_secrets.doc(connectionId)`:
+       - Encrypted secret record (`encrypted_access_token`, `iv`, `auth_tag`, `key_version`, `token_type`, `expires_at`).
+     - Updates `whatsapp_connections.doc(connectionId)`:
+       - `status = 'connected'`
+       - `phone_number = normalizedPhoneNumber`
+       - `provider_waba_id = wabaId`
+       - `provider_phone_number_id = phoneNumberId`
+       - `last_connected_at = now`
+       - `status_reason = null`
+       - `pending_expires_at = null`
+       - `updated_at = now`
+     - Deletes or updates `whatsapp_onboarding_sessions.doc(sessionId)` with `status = 'completed'`.
+
+### 7. Webhook Infrastructure & Signature Verification (DEC-7D-09)
+- **Public Endpoints:**
+  - `GET /api/v1/webhooks/whatsapp`: Webhook verification challenge (Meta App Dashboard configuration).
+  - `POST /api/v1/webhooks/whatsapp`: Inbound event notifications (message statuses, errors, template updates).
+- **GET Verification Challenge Protocol:**
+  ```typescript
+  // GET /api/v1/webhooks/whatsapp
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && token === process.env.META_WEBHOOK_VERIFY_TOKEN) {
+    return res.status(200).send(challenge);
+  }
+  return res.status(403).json({ error: { message: 'Verification token mismatch' } });
+  ```
+- **POST Signature Verification Protocol (HMAC-SHA256):**
+  - Meta transmits `X-Hub-Signature-256: sha256={hash}` in the HTTP header.
+  - Verification requires the raw unparsed request body (`Buffer`):
+    ```typescript
+    export const verifyMetaWebhookSignature = (
+      rawBody: Buffer,
+      signatureHeader: string | undefined,
+      appSecret: string
+    ): boolean => {
+      if (!signatureHeader || !signatureHeader.startsWith('sha256=')) return false;
+      const signature = signatureHeader.substring(7);
+      const expectedSignature = crypto
+        .createHmac('sha256', appSecret)
+        .update(rawBody)
+        .digest('hex');
+      return crypto.timingSafeEqual(
+        Buffer.from(signature, 'hex'),
+        Buffer.from(expectedSignature, 'hex')
+      );
+    };
+    ```
+  - If signature verification fails: returns HTTP 401 `UNAUTHORIZED_WEBHOOK_SIGNATURE`.
+- **Raw-Body Buffer Requirement:** Express body parser MUST preserve `req.rawBody` for `/api/v1/webhooks/whatsapp` without corrupting JSON bytes.
+
+### 8. Meta Graph Error Normalization Matrix (DEC-7D-10)
+All Meta Graph API errors are normalized into LouvAIO domain errors and lifecycle transitions:
+
+| Meta Error Code | Meta Subcode / Message | LouvAIO Error Code | Connection Status Transition | Description / Handling |
+| :--- | :--- | :--- | :--- | :--- |
+| `100` | Invalid Parameter | `WHATSAPP_INVALID_PARAMETER` | `connecting → error` | Bad request parameters; inspect log details. |
+| `190` | Error validating access token / Expired | `WHATSAPP_TOKEN_INVALID` | `connected → error` | Token revoked, expired, or password changed; requires re-auth. |
+| `131031` | Account does not exist / Phone not registered | `WHATSAPP_PHONE_NOT_REGISTERED` | `connecting → error` | Phone number requires 2-step registration with PIN. |
+| `131042` | Business account eligibility / Payment issue | `WHATSAPP_WABA_INELIGIBLE` | `connected → error` | Customer's Meta Business Portfolio suspended or payment issue. |
+| `131053` | Spam rate limit exceeded | `WHATSAPP_RATE_LIMITED` | No status change (transient) | Backoff and retry dispatch. |
+| `132000` | Template does not exist | `WHATSAPP_TEMPLATE_NOT_FOUND` | No status change (operational) | Message dispatch error; template not approved or localized. |
+| `133010` | Phone number already registered to another WABA | `WHATSAPP_PHONE_ATTACHED_TO_OTHER_WABA` | `connecting → error` | Customer must release number from former business account. |
+
+### 9. Two-Tier Disconnect & Non-Destructive Revocation (DEC-7D-11)
+- **Protocol:**
+  ```typescript
+  // Tier 1: Best-effort Provider Revocation
+  try {
+    const secret = await secretsRepo.getSecret(connectionId, orgId);
+    if (secret) {
+      const accessToken = cryptoService.decryptSecret(secret.encrypted_access_token, {
+        iv: secret.iv,
+        authTag: secret.auth_tag,
+        aad: `${orgId}:${connectionId}`,
+        keyVersion: secret.key_version,
+      });
+      await metaProvider.unsubscribeWabaApps(accessToken, connection.provider_waba_id);
+    }
+  } catch (providerError) {
+    // Log warning; continue to Tier 2 local terminal finalization
+    logger.warn('Meta provider unsubscription failed or token revoked', { err: providerError });
+  }
+
+  // Tier 2: Local Terminal Finalization (Phase 7C Atomic Transaction)
+  await connectionRepo.disconnectConnectionAtomically(connectionId, orgId);
+  ```
+- **Invariants:**
+  1. Phone number is NEVER deregistered (`POST /{phone_number_id}/deregister` is prohibited), preserving WhatsApp Business App coexistence.
+  2. Local state transitions to `disconnected` unconditionally.
+  3. `default_whatsapp_connection_id` cleared if this connection was default.
+  4. `assigned_ministry_id` cleared if assigned.
+  5. `whatsapp_provider_identity_claims` document deleted, enabling future re-claim.
+  6. `whatsapp_connection_secrets` document deleted.
+
+### 10. Provider Abstraction Contract (`WhatsAppProvider` Interface)
+The backend decouples vendor-specific logic behind an extensible provider interface:
+```typescript
+export interface WhatsAppOAuthResult {
+  accessToken: string;
+  tokenType: 'system_user' | 'user_token';
+  expiresAt: string | null; // ISO 8601 string or null
+}
+
+export interface WhatsAppPhoneNumberDetails {
+  displayPhoneNumber: string;
+  verifiedName: string;
+  qualityRating: string;
+}
+
+export interface WhatsAppProvider {
+  exchangeOAuthCode(code: string): Promise<WhatsAppOAuthResult>;
+  getPhoneNumberDetails(accessToken: string, phoneNumberId: string): Promise<WhatsAppPhoneNumberDetails>;
+  registerPhoneNumber(accessToken: string, phoneNumberId: string, pin: string): Promise<void>;
+  subscribeWabaApps(accessToken: string, wabaId: string): Promise<void>;
+  unsubscribeWabaApps(accessToken: string, wabaId: string): Promise<void>;
+  verifyWebhookSignature(rawBody: Buffer, signatureHeader: string): boolean;
+  getWabaStatus(accessToken: string, wabaId: string): Promise<{ status: string; eligible: boolean }>;
+}
+```
+
+### 11. Partial Failure Recovery Matrix (DEC-7D-10)
+| Failure Point | System State at Failure | Recovery Action | Resulting Connection Status |
+| :--- | :--- | :--- | :--- |
+| **Token Exchange Fails** (Invalid code, expired code, Meta 5xx) | `pending` reservation exists; session active | Delete session; connection transitions `connecting → error` (`status_reason: 'TOKEN_EXCHANGE_FAILED'`) | `error` (pre-materialized) |
+| **Phone Details Lookup Fails** (Invalid phone ID, token permissions) | Token exchanged; unpersisted | Delete session; connection transitions `connecting → error` (`status_reason: 'PHONE_DETAILS_LOOKUP_FAILED'`) | `error` (pre-materialized) |
+| **Claim Collision (409)** (Number already active in another Org) | Phone details known; claim already held in Firestore | Delete session; connection transitions `connecting → error` (`status_reason: 'PHONE_ALREADY_REGISTERED'`) | `error` (pre-materialized) |
+| **Webhook Subscription Fails** (Meta API 5xx after token exchange) | Token encrypted; claim acquired; phone registered | Commit transaction; set status `connected`; log warning `WEBHOOK_SUBSCRIPTION_FAILED`; schedule background retry | `connected` (operational with sync warning) |
+| **User Aborts Onboarding Modal** (Closes popup without completing) | Session active; connection `pending` | Session expires at 15m; 24h background sweeper marks connection `disconnected` | `disconnected` (unmaterialized reservation cleaned) |
+
+### 12. Firestore Index Strategy for Phase 7D
+- `whatsapp_onboarding_sessions`:
+  - Direct primary key lookup: `whatsapp_onboarding_sessions.doc(sessionId)`.
+  - Single-field filter for cleanup: `.where('expires_at', '<=', now)`.
+  - **Zero Composite Indexes Required for Sessions Collection.**
+- `whatsapp_connections`:
+  - Reuses Phase 7C declared composite indexes:
+    1. `organization_id ASC, created_at DESC, __name__ DESC`
+    2. `organization_id ASC, assigned_ministry_id ASC`
+    3. `organization_id ASC, status ASC`
+  - Inbound webhook phone lookup: `.where('provider_phone_number_id', '==', phoneId).limit(1)` is an automatic single-field index.
+- **Index Declaration Verdict:** `NO ADDITIONAL FIRESTORE INDEXES REQUIRED FOR PHASE 7D`.
+
+### 13. Phase 7D Implementation Phases (DEC-7D-12)
+1. **Phase 7D1: Onboarding, OAuth Exchange & Provider Identity Acquisition**
+   - Implement `POST /organizations/:id/whatsapp/onboarding/start` with transactional capacity reservation.
+   - Implement `whatsapp_onboarding_sessions` collection and repository.
+   - Implement `MetaWhatsAppProvider.exchangeOAuthCode` and `getPhoneNumberDetails`.
+   - Implement `POST /organizations/:id/whatsapp/onboarding/complete` with atomic materialization, claim acquisition, and envelope encryption.
+2. **Phase 7D2: Inbound Webhooks & Status Synchronization**
+   - Implement Express raw-body middleware for webhook endpoint.
+   - Implement `GET /api/v1/webhooks/whatsapp` verification challenge.
+   - Implement `POST /api/v1/webhooks/whatsapp` HMAC-SHA256 signature verification.
+   - Implement event routing and connection status synchronization.
+3. **Phase 7D3: Disconnect, Revocation & Admin Line Management**
+   - Implement `POST /organizations/:id/whatsapp/connections/:id/disconnect` with two-tier revocation.
+   - Implement `POST /organizations/:id/whatsapp/connections/:id/sync-status` on-demand health check.
+   - Frontend Embedded Signup button, popup handler, and connection card integration in Organization Settings.
+
+### 14. Phase 7D Concrete Test Matrix (Frozen Scenarios)
+1. **Onboarding Start Capacity Gate:** `POST .../onboarding/start` fails with 403 when configured connections equal or exceed subscription capacity.
+2. **Onboarding Start Capacity Reservation:** `POST .../onboarding/start` allocates `pending` connection document with 24h TTL and session with 15m TTL.
+3. **Onboarding Start Concurrency Lockout:** Two concurrent start requests with 1 slot remaining result in exactly 1 session; the second is rejected with 403.
+4. **Onboarding Session Expiry:** `POST .../onboarding/complete` with expired session (>15m) is rejected with 400 `ONBOARDING_SESSION_EXPIRED`.
+5. **Onboarding State Nonce Tamper Block:** `POST .../onboarding/complete` with mismatched `stateNonce` is rejected with 403 `INVALID_ONBOARDING_STATE`.
+6. **OAuth Code Exchange Roundtrip:** Mocked Meta OAuth endpoint returns token; encrypted with AES-256-GCM and stored in `whatsapp_connection_secrets`.
+7. **Identity Claim Acquisition Atomicity:** Onboarding completion acquires `claim_meta_${phoneNumberId}`; second attempt for same number fails with 409.
+8. **Connection Materialization Completion:** Successful completion updates connection to `connected`, sets phone number, WABA ID, phone ID, and `last_connected_at`.
+9. **Webhook Signature Verification Success:** Inbound POST with valid `X-Hub-Signature-256` succeeds with 200 OK.
+10. **Webhook Signature Verification Tamper Block:** Inbound POST with invalid or mutated payload fails with 401 Unauthorized.
+11. **Webhook Challenge Echo:** Inbound GET with matching verify token returns challenge string; mismatch returns 403.
+12. **Two-Tier Disconnect WABA Unsubscribe:** Disconnect calls Meta `DELETE /{waba_id}/subscribed_apps` before local cleanup.
+13. **Disconnect Provider Error Resilience:** If Meta API returns 400/404 during disconnect, local terminal finalization still proceeds to `disconnected`.
+14. **Disconnect Preserves Coexistence:** Disconnect never invokes phone number deregistration; mobile app remains functional.
+15. **Disconnect Releases Claim & Secret:** Disconnect purges secret document and deletes identity claim document.
+16. **Token Expiry Sync to Error:** When webhook reports expired token (Code 190), connection transitions `connected → error`.
+17. **Manual Status Sync Refresh:** Calling `POST .../sync-status` on connected line queries Meta Graph API and updates status.
+
+---
+
+## 22. Meta Cloud API Official Evidence & Source Validation Appendix
+
+The architectural decisions in Phase 7D are grounded in official Meta WhatsApp Business Platform documentation and validated API contracts:
+
+| Domain / Area | Official Source / Specification | Verified Specification & Contract | LouvAIO Design Binding |
+| :--- | :--- | :--- | :--- |
+| **API Version** | Meta Graph API Changelog | Active Version: `v21.0` (with forward compatibility for `v22.0`). Base endpoint: `https://graph.facebook.com/v21.0`. | Hardened in `MetaWhatsAppProvider` adapter. |
+| **Embedded Signup** | Meta Developers: *Embedded Signup for WhatsApp Business Platform* | Dual-channel flow: `FB.login({ config_id, response_type: 'code' })` returns OAuth code; `window.addEventListener('message')` receives `WA_EMBEDDED_SIGNUP` event containing `waba_id` and `phone_number_id`. | `DEC-7D-01`, `DEC-7D-06` |
+| **Coexistence** | Meta Developers: *WhatsApp Business App and Cloud API Coexistence* | Coexistence is officially supported for WhatsApp Business mobile app on supported regions (+55 Brazil included). Dual registration permitted; 2FA PIN shared; mobile chats mirror API messages. Consumer WhatsApp (Messenger) is NOT supported. | `DEC-7D-02`, Non-deregistering Disconnect |
+| **Token Exchange** | Meta Developers: *Access Tokens for WhatsApp Business Platform* | `GET /oauth/access_token?client_id=...&client_secret=...&code=...` returns User Access Token or System User Token. | `DEC-7D-05`, Envelope Encryption with AAD |
+| **Two-Step Registration** | Meta Developers: *Cloud API Phone Number Registration* | `POST /{phone_number_id}/register` with 6-digit PIN activates Cloud API messaging for a phone line. | Embedded Signup handles during wizard; adapter fallbacks. |
+| **Webhooks Security** | Meta Developers: *Webhooks for WhatsApp Business Platform* | GET challenge uses `hub.mode`, `hub.verify_token`, `hub.challenge`. POST uses `X-Hub-Signature-256` HMAC-SHA256 on raw payload buffer with `META_APP_SECRET`. | `DEC-7D-09` |
+| **App Subscription** | Meta Developers: *Subscribed Apps API* | `POST /{waba_id}/subscribed_apps` registers LouvAIO's app to receive WABA webhook events. `DELETE /{waba_id}/subscribed_apps` unlinks. | `DEC-7D-08`, `DEC-7D-11` |
+| **Error Handling** | Meta Developers: *Cloud API Error Codes* | Standard Graph API error response envelope `{ error: { message, type, code, error_subcode, fbtrace_id } }`. | Error Normalization Matrix (`DEC-7D-10`) |
+
+---
+
+## 23. Release, Operations & Production Secret Prerequisites
+
+The following operational prerequisites MUST be configured in the deployment environment before Phase 7D runs in production:
+
+### 1. Environment Secrets Checklist (Vercel / Production)
+| Environment Variable | Source Authority | Sensitivity | Required in Phase | Purpose |
+| :--- | :--- | :---: | :---: | :--- |
+| `META_APP_ID` | Meta App Dashboard | Non-Secret | Phase 7D | Meta App Identifier for Facebook SDK and OAuth. |
+| `META_APP_SECRET` | Meta App Dashboard | **CRITICAL SECRET** | Phase 7D | Server-to-server OAuth code exchange and webhook HMAC verification. |
+| `META_CONFIG_ID` | Meta App Dashboard | Non-Secret | Phase 7D | Embedded Signup configuration ID defining requested scopes. |
+| `META_WEBHOOK_VERIFY_TOKEN`| LouvAIO Ops (Random) | **SECRET** | Phase 7D | Shared secret echoed in Meta Webhook GET challenge verification. |
+| `WHATSAPP_TOKEN_ENCRYPTION_KEY`| LouvAIO Ops (Random 32B Base64) | **CRITICAL SECRET** | Phase 7C / 7D | AES-256-GCM master encryption key for access token envelope encryption. |
+
+### 2. Firestore Deployment Terminology
+- **`FIRESTORE_INDEX_DECLARATION_REQUIRED_FOR_7D: NO`**: No additional composite indexes beyond Phase 7C's 3 declared indexes are needed.
+- **`FIRESTORE_RULES_MODIFICATION_REQUIRED: NO`**: Firestore access remains strictly backend-authoritative via Firebase Admin SDK.
+- **`DIRECT_CLIENT_FIRESTORE_ACCESS: PROHIBITED`**: Frontend communicates exclusively via REST API (`api.ts`).
