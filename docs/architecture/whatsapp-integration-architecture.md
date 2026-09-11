@@ -1,16 +1,16 @@
 # LouvAIO WhatsApp Integration — Technical & Domain Architecture
 
-> **Authoritative Business Reference:** *"Integração com WhatsApp — Regras de Negócio"*  
-> **Target Release:** Phase 7 (WhatsApp Integration)  
-> **Document Status:** Architectural Specification & Authority Finalization (Phase 7A-R2 Finalized)  
-> **Author:** LouvAIO Product Architect  
-> **Authorities:** "Integração com WhatsApp — Regras de Negócio", AGENTS.md, MEMORY.md, docs/system-status.md, docs/product/system-overview.md  
+> **Authoritative Business Reference:** *"Integração com WhatsApp — Regras de Negócio"*
+> **Target Release:** Phase 7 (WhatsApp Integration)
+> **Document Status:** Architectural Specification & Implementation Boundary Finalization (Phase 7A-R3 Finalized)
+> **Author:** LouvAIO Product Architect
+> **Authorities:** "Integração com WhatsApp — Regras de Negócio", AGENTS.md, MEMORY.md, docs/system-status.md, docs/product/system-overview.md
 
 ---
 
 ## 1. Executive Summary & Principles
 
-This document establishes the canonical, reconciled technical and domain architecture for LouvAIO's WhatsApp integration. It resolves all topological, membership, governance, and boundary contracts identified during Phase 7A prior to any production implementation in Phase 7B.
+This document establishes the canonical, reconciled technical and domain architecture for LouvAIO's WhatsApp integration. It freezes all topological, membership, governance, boundary, and phase-split contracts prior to any production implementation in Phase 7B.
 
 ### Non-Negotiable Locked Business Rules (BR-7A-01 .. BR-7A-13)
 1. **Paid Plan Capacity:** Paid plans include 1 WhatsApp connection; additional connections are purchased as generic add-on blocks (`addons.additionalWhatsapps`).
@@ -48,16 +48,16 @@ All WhatsApp-related persistence is strictly structured as **Root Collections**:
 | :--- | :--- | :--- | :--- |
 | `organizations` | Root Collection | `id` (UUID / nanoid) | Institutional entity representing the Church. |
 | `organization_members` | Root Collection | `id` (`${organization_id}_${user_id}`) | Membership and administrative RBAC for the Organization. |
-| `whatsapp_connections` | Root Collection | `id` (`wac_*`), `organization_id` | Provisioned phone numbers and connection states. |
-| `whatsapp_connection_secrets` | Restricted Root Collection | `id` (matches `connection_id`), `organization_id` | Encrypted access tokens and security metadata. |
-| `whatsapp_messages` | Root Collection | `id` (`wamsg_*`), `organization_id`, `ministry_id` | Transactional notification audit log and dispatch state. |
-| `whatsapp_webhook_events` | Root Collection | `id` (`wbh_*` or hash), `provider_event_id` | Sanitized webhook delivery log for deduplication. |
+| `whatsapp_connections` | Root Collection | `id` (`wac_*`), `organization_id` | Provisioned phone numbers and connection states (Phase 7C). |
+| `whatsapp_connection_secrets` | Restricted Root Collection | `id` (matches `connection_id`), `organization_id` | Encrypted access tokens and security metadata (Phase 7C). |
+| `whatsapp_messages` | Root Collection | `id` (`wamsg_*`), `organization_id`, `ministry_id` | Transactional notification audit log and dispatch state (Phase 7G). |
+| `whatsapp_webhook_events` | Root Collection | `id` (`wbh_*` or hash), `provider_event_id` | Sanitized webhook delivery log for deduplication (Phase 7E). |
 
 *Subcollections are completely eliminated from the architecture.*
 
 ---
 
-## 3. Organization Membership Model & RBAC (DEC-7A-14-R2, DEC-7A-20-R2)
+## 3. Organization Membership Model & RBAC (DEC-7A-14-R3, DEC-7A-20-R2)
 
 ### The `organization_members` Aggregate
 To support multi-admin governance beyond a single `owner_user_id` without conflating institutional authority with ministry operations, LouvAIO introduces the `organization_members` root collection.
@@ -81,7 +81,7 @@ export interface OrganizationMemberRecord {
 1. **Compound Uniqueness:** A user can have at most one role document per Organization (`id = `${organization_id}_${user_id}``).
 2. **Owner Representation:** The user identified by `organizations.owner_user_id` MUST possess an `organization_members` record with `role: 'owner'`.
 3. **Owner Cardinality:** Exactly one user holds `role: 'owner'` per Organization at any time.
-4. **Owner Protection:** An owner membership can **never** be deleted through member management APIs (`DELETE /organizations/:id/members/:userId`). An owner cannot remove themselves.
+4. **Owner Protection:** An owner membership can **never** be deleted through member management APIs (`DELETE /organizations/:id/members/:userId`). An owner cannot remove themselves without transfer.
 5. **Ownership Transfer:** Transfer of institutional ownership is executed exclusively by `ORG_OWNER` and atomically:
    - Updates `organizations.owner_user_id = newOwnerUserId`;
    - Demotes the former owner in `organization_members` to `role: 'admin'`;
@@ -115,43 +115,62 @@ Authority is strictly compartmentalized across domain boundaries:
 
 ---
 
-## 4. Existing Ministries → Organization Association (DEC-7A-25-R1)
+## 4. Existing Ministries → Organization Association (DEC-7A-25-R2)
 
-LouvAIO churches may already operate multiple independent ministries in the system (e.g., *Louvor Geral*, *Louvor Jovens*, *Coral*). The association of these ministries into a unified Organization must be explicit, authorized, and non-destructive.
+LouvAIO churches may operate multiple independent ministries in the system (e.g., *Louvor Geral*, *Louvor Jovens*, *Coral*). The association of these ministries into a unified Organization must be explicit, authorized, and non-destructive.
 
 ### Association Invariants & Authority
 1. **Zero Heuristic Association:** The backend **NEVER** automatically groups ministries based on name similarity, email domain, shared members, or billing customer IDs. All associations must be explicitly authorized.
 2. **Single Organization Boundary:** A Ministry belongs to **exactly one** Organization (`ministries.organization_id`).
-3. **Attach Authority (Dual-Authorization Handshake):** Attaching an existing Ministry B to Organization X requires proof of authority in **both** contexts:
+3. **Strict Null-Organization Requirement (DEC-7A-25-R2):** Attaching a Ministry to Organization X succeeds **ONLY** if:
+   ```text
+   ministry.organization_id === null
+   ```
+   If the Ministry already belongs to ANY Organization (including an auto-provisioned standalone Organization), the request is strictly rejected with:
+   ```text
+   HTTP 409 Conflict (MINISTRY_ALREADY_HAS_ORGANIZATION)
+   ```
+4. **Organization Merge / Transfer Deferral:** LouvAIO does **NOT** support automatic or implicit merging of existing Organizations in Phase 7B. Merging a standalone Organization into another requires an explicit multi-tenant migration protocol (transferring members, resolving billing anchors, merging paid subscriptions, re-pointing WhatsApp connections, and archiving donor organizations). This capability is explicitly **DEFERRED**.
+5. **Attach Authority (Dual-Authorization Handshake):** Attaching a Ministry to Organization X requires proof of authority in **both** contexts:
    - The executing actor must be the **`ORG_OWNER`** of Organization X; **AND**
-   - The executing actor must be an **`owner`** or **`admin`** of Ministry B.
-4. **Standalone Eligibility:** A Ministry can only be attached to Organization X if its current `organization_id` is `null` or belongs to an empty, standalone auto-provisioned organization with zero active connections.
-5. **Preservation of Ministry Data:** Attaching a ministry to an Organization causes **zero** changes to its songs, schedules, members, roles, or unavailabilities.
-6. **Detach Authority:** A Ministry can be detached from an Organization **ONLY by the `ORG_OWNER`**, provided that the Ministry is **not** the `billing_anchor_ministry_id`.
+   - The executing actor must be the **`owner`** or **`admin`** of the target Ministry.
+6. **Preservation of Ministry Data:** Attaching a ministry causes **zero** changes to its songs, schedules, members, roles, unavailabilities, or subscriptions.
+7. **Detach Authority & Safeguards:** A Ministry can be detached from an Organization **ONLY by the `ORG_OWNER`**, provided that the Ministry is **not** the `billing_anchor_ministry_id`.
    - Detaching the billing anchor ministry is strictly prohibited with `400 CANNOT_DETACH_BILLING_ANCHOR`.
-   - Upon detachment, `ministry.organization_id` is reset to `null`, and any dedicated connection has its `assigned_ministry_id` cleared to `null`.
+   - Upon detachment:
+     - `ministry.organization_id` is reset to `null`;
+     - Any WhatsApp connection exclusively assigned to that ministry has its assignment cleared;
+     - The detached Ministry operates independently without an Organization until explicitly provisioned;
+     - Former Organization membership records are NOT copied to the ministry;
+     - Ministry operational data and independent subscriptions remain 100% untouched.
+8. **Empty-Organization Invariant:** An active Organization MUST always contain at least one Ministry (its billing anchor). Phase 7B operations can never produce an orphaned Organization with zero ministries.
 
 ---
 
-## 5. Organization Provisioning & Concurrency Invariants (DEC-7A-27)
+## 5. Organization Provisioning & Concurrency Invariants (DEC-7A-27-R1)
 
 ### Invariants
 1. **One-to-Many Cardinality:** An Organization contains 1 to N Ministries.
 2. **Anchor Invariant:** An Organization must always have exactly one `billing_anchor_ministry_id`, and that ministry must belong to the Organization (`ministry.organization_id === organization.id`).
 3. **Immutable Tenant ID:** The `organization.id` is immutable once created.
 
-### Initial Organization Owner Derivation (`INITIAL_ORG_OWNER_SOURCE`)
+### Initial Owner Derivation & No Implicit Escalation (DEC-7A-27-R1)
 In LouvAIO, every ministry document in Firestore maintains a canonical owner field: `ministries.owner_user_id: string`.
-- **Authoritative Owner Derivation:** When an Organization is provisioned for a Ministry, the initial institutional owner is strictly derived from the canonical owner of that Ministry:
+- **Authoritative Owner Source:**
   ```text
   INITIAL_ORG_OWNER_SOURCE: ministry.owner_user_id
   organizations.owner_user_id = ministry.owner_user_id
   ```
-- The initial `organization_members` owner record is deterministically created for `ministry.owner_user_id` with `role: 'owner'`.
-- If the authenticated actor executing the provisioning command is a Ministry Admin who is *not* the Ministry Owner, the transaction creates:
-  - `organization_members` for `ministry.owner_user_id` with `role: 'owner'`; **AND**
-  - `organization_members` for the caller (`actorUserId`) with `role: 'admin'`.
-- This ensures institutional ownership is grounded in legitimate church ministry ownership, completely eliminating arbitrary races or administrative takeovers.
+- **Strict Provisioning Authority:** Organization provisioning establishes institutional governance and is restricted strictly to the **Ministry Owner** (`ministry.owner_user_id`).
+  - If a non-owner Ministry Admin attempts to invoke provisioning, the request is rejected with:
+    ```text
+    HTTP 403 Forbidden (ONLY_MINISTRY_OWNER_CAN_PROVISION_ORGANIZATION)
+    ```
+- **Zero Implicit Privilege Escalation:** Executing provisioning creates **exactly one** initial membership record:
+  - `organization_members.doc(`${orgId}_${ministry.owner_user_id}`)` with `role: 'owner'`.
+  - It does **NOT** grant Organization Admin (`role: 'admin'`) to any other Ministry Admin or member.
+  - Any additional Organization Admins must be explicitly added post-creation by the `ORG_OWNER` via `POST /api/v1/organizations/:organizationId/members`.
+  - This strictly preserves the boundary: **Ministry Authority != Organization Authority**.
 
 ### Explicit Provisioning Trigger (Command Pattern)
 Creating an Organization establishes institutional tenant identity, legal owner authority, and billing anchors.
@@ -160,19 +179,17 @@ Creating an Organization establishes institutional tenant identity, legal owner 
   ```text
   POST /api/v1/ministries/:ministryId/organization/provision
   ```
-  Authorized strictly for authenticated users holding `owner` or `admin` roles in `ministryId`.
 
 ### Concurrency & Race Condition Resolution
-When two authorized administrators (e.g., Admin A and Admin B) simultaneously trigger provisioning for the same Ministry:
+When multiple provisioning requests are submitted concurrently:
 - The backend executes inside an atomic Firestore transaction (`db.runTransaction`):
   1. Transaction reads `ministries.doc(ministryId)`.
   2. If `ministry.organization_id != null` (set by a concurrent transaction), the transaction commits nothing, aborts creation, and returns the existing Organization.
   3. If `ministry.organization_id == null`, the first transaction to commit creates:
      - `organizations.doc(orgId)` with `owner_user_id = ministry.owner_user_id`;
      - `organization_members.doc(`${orgId}_${ministry.owner_user_id}`)` with `role: 'owner'`;
-     - `organization_members.doc(`${orgId}_${actorUserId}`)` with `role: 'admin'` (if actor != owner);
      - Updates `ministries.doc(ministryId)` with `{ organization_id: orgId }`.
-- **Resolution Invariant:** The first transaction to commit wins. Because `organizations.owner_user_id` is derived from `ministry.owner_user_id`, both requests agree on the owner. The losing transaction retries, reads the newly set `organization_id`, and returns the existing Organization without overwriting `owner_user_id`, `role`, or `billing_anchor_ministry_id`.
+- **Resolution Invariant:** The first transaction to commit wins. The losing transaction retries, reads the newly set `organization_id`, and returns the existing Organization without overwriting `owner_user_id`, `role`, or `billing_anchor_ministry_id`.
 
 ---
 
@@ -196,39 +213,35 @@ To avoid breaking live payment gateway webhooks, customer IDs, and the `BillingR
 
 ---
 
-## 7. Authoritative WhatsApp Entitlement Contract (DEC-7A-05, DEC-7A-06)
+## 7. Authoritative WhatsApp Entitlement Contract & Boundary Split (DEC-7A-29)
 
-The backend `SubscriptionService` is the sole authority for calculating connection capacity. No WhatsApp controller or repository may inspect `planId` or Asaas fields directly.
+To ensure clean implementation boundaries and avoid coupling subsystems prematurely:
+- **Phase 7B (Commercial Capacity Entitlement):** `SubscriptionService` evaluates commercial capacity derived exclusively from plan definitions and billing states.
+- **Phase 7C (Connection Usage Composition & Enforcement):** A connection facade service combines commercial capacity with actual Firestore connection usage (`configuredConnectionsCount`, `capacityConsumingCount`, `remainingCapacity`, `isOverLimit`).
+- **Phase 7H (Add-on Billing Integration):** Asaas recurring checkout and payment webhooks for additional WhatsApp connection blocks (`addons.additionalWhatsapps`).
 
-### Method Signature
+### Phase 7B Method Signature
 ```typescript
-SubscriptionService.getOrganizationWhatsAppEntitlement(organizationId: string): Promise<OrganizationWhatsAppEntitlement>
+SubscriptionService.getOrganizationWhatsAppCapacity(organizationId: string): Promise<OrganizationWhatsAppCapacity>
 ```
 
-### Schema
+### Phase 7B Schema
 ```typescript
-export interface OrganizationWhatsAppEntitlement {
+export interface OrganizationWhatsAppCapacity {
   organizationId: string;
   billingAnchorMinistryId: string;
   enabled: boolean; // True if subscription plan is active or in grace
-  includedConnections: number; // 1 for paid plans, 0 for free
-  additionalConnections: number; // Generic add-on blocks (addons.additionalWhatsapps)
+  includedConnections: number; // 1 for paid plans (lite, lite_plus, essential, pro, premium), 0 for free
+  additionalConnections: number; // Strictly 0 in Phase 7B runtime (extension seam for Phase 7H)
   totalAllowedConnections: number; // includedConnections + additionalConnections
-  configuredConnectionsCount: number; // Total non-disconnected connections in database
-  capacityConsumingCount: number; // Connections in PENDING, CONNECTING, CONNECTED, ERROR
-  remainingCapacity: number; // Math.max(0, totalAllowedConnections - configuredConnectionsCount)
-  accessMode: 'normal' | 'grace' | 'restricted_over_limit' | 'suspended';
-  restrictionReason: 'NONE' | 'GRACE_PERIOD' | 'OVER_ENTITLEMENT' | 'SUSPENDED';
-  canCreateConnection: boolean; // true if accessMode is normal and remainingCapacity > 0
-  canSendMessages: boolean; // true if accessMode is normal or grace, and not restricted_over_limit
+  billingAccessMode: 'normal' | 'grace' | 'suspended';
 }
 ```
 
-### Formula
-```text
-totalAllowedConnections = includedConnections + additionalConnections
-remainingCapacity = Math.max(0, totalAllowedConnections - configuredConnectionsCount)
-```
+### Additional Connection Policy for Phase 7B
+- An audit of the production subscription engine confirms that member add-ons (`member_addon_blocks`) exist, but **no WhatsApp add-on schema (`addons.additionalWhatsapps`) exists in production code**.
+- Phase 7B does **NOT** invent a premature add-on persistence schema.
+- In Phase 7B runtime, `additionalConnections` evaluates to `0`. Phase 7B provides the clean extension seam for Phase 7H where `billing-engineer` will introduce Asaas recurring add-on blocks.
 
 ---
 
@@ -236,30 +249,27 @@ remainingCapacity = Math.max(0, totalAllowedConnections - configuredConnectionsC
 
 LouvAIO strictly enforces non-destructive data preservation.
 
-### Operational Grace Period (`accessMode === 'grace'`)
+### Operational Grace Period (`billingAccessMode === 'grace'`)
 When a subscription payment is overdue but within the commercial grace window:
 - **Sending Messages:** **Permitted**. Existing active connections continue dispatching operational schedule notifications without interruption.
-- **New Onboarding:** **Blocked**. The system disallows starting new Embedded Signup sessions (`canCreateConnection: false`).
+- **New Onboarding:** **Blocked**. The system disallows starting new Embedded Signup sessions (`canCreateConnection: false` in 7C).
 - **Configuration Modifications:** **Blocked**. Assigning or switching connections is locked.
 
-### Restricted Over Limit (`accessMode === 'restricted_over_limit'`)
-When commercial capacity drops below configured connections (e.g., plan downgrade from *Pro* to *Free*, or cancellation of add-on blocks):
-1. **Zero Automatic Disabling / Zero Deletion:** The system **NEVER automatically picks a phone number to disable or disconnect.** Automatic selection risks shutting off the church's primary pastoral or administrative line.
-2. **Operational Status:** The Organization enters `restricted_over_limit`.
+### Restricted Over Limit (Phase 7C Operational Enforcement)
+When commercial capacity drops below configured connections (e.g., plan downgrade from *Pro* to *Free*):
+1. **Separation of Concerns:** Phase 7B establishes commercial capacity. Phase 7C introduces connection documents and evaluates whether `configuredConnectionsCount > totalAllowedConnections`.
+2. **Zero Automatic Disabling / Zero Deletion:** The system **NEVER automatically picks a phone number to disable or disconnect.** Automatic selection risks shutting off the church's primary pastoral or administrative line.
+3. **Operational Status:** In Phase 7C, when connections exceed capacity:
+   - The Organization enters `restricted_over_limit`;
    - Creation of new connections is **BLOCKED**;
    - Outbound dispatch through all connections is **BLOCKED** with error code `RESTRICTED_OVER_LIMIT`;
-   - Inbound webhook events are acknowledged but dispatch remains frozen.
-3. **Administrator Resolution Workflow:**
-   - Org Admin UI displays a persistent alert banner: *"Sua organização possui X conexões configuradas, mas seu plano atual permite apenas Y. Regularize sua assinatura ou desconecte conexões excedentes."*
-   - The Org Admin must resolve the over-limit state by either:
-     - **Option A:** Upgrading the plan or purchasing additional add-on blocks; OR
-     - **Option B:** Explicitly clicking **"Desconectar"** on specific connections until `configuredConnectionsCount <= totalAllowedConnections`.
+   - The Org Admin must resolve the over-limit state by purchasing capacity (Phase 7H) or explicitly clicking **"Desconectar"** on specific connections.
 
 ---
 
-## 9. Capacity Accounting & Loophole Elimination (DEC-7A-17-R1)
+## 9. Capacity Accounting & Loophole Elimination (Phase 7C Implementation)
 
-### Status Definitions & Capacity Consumption
+### Status Definitions & Capacity Consumption (Implemented in Phase 7C)
 
 | Connection Status | Consumes Quota Slot? | Can Send Messages? | Definition |
 | :--- | :---: | :---: | :--- |
@@ -271,9 +281,8 @@ When commercial capacity drops below configured connections (e.g., plan downgrad
 | `disabled_over_limit` | **Yes** | No | Preserved record from a prior over-limit event. Still occupies a slot. |
 | `disconnected` | **No** | No | Soft-deleted / unlinked. Does NOT consume capacity. |
 
-### Elimination of the Accumulation Loophole
-- **The Loophole:** In a naive model where disabled connections do not consume capacity, an organization with 1 allowed connection could onboard number A, disable it, onboard number B, disable it, and accumulate unlimited configured numbers, cycling between them.
-- **The Invariant:** New connection onboarding (`POST /whatsapp/onboarding/start`) strictly enforces:
+### Elimination of the Accumulation Loophole (Phase 7C Enforced)
+- In Phase 7C, new connection onboarding (`POST /whatsapp/onboarding/start`) strictly enforces:
   ```text
   configuredConnectionsCount < totalAllowedConnections
   ```
@@ -310,7 +319,7 @@ To eliminate routing ambiguity and ensure predictable messaging:
    - Shared usage occurs **exclusively** through the Organization default fallback.
 
 ### Connection Resolution Algorithm (`resolveWhatsAppConnection`)
-When Ministry M requests message dispatch:
+When Ministry M requests message dispatch (Phase 7G):
 1. Search for an exclusive connection:
    `whatsapp_connections.where('organization_id', '==', orgId).where('assigned_ministry_id', '==', M.id).where('status', '==', 'connected')`
    If found → **Dispatch via Exclusive Connection**.
@@ -339,7 +348,7 @@ When Ministry M requests message dispatch:
 
 ## 13. Secret Storage & Envelope Encryption Hardening (DEC-7A-19-R1)
 
-Meta Cloud API System User Tokens must be secured against data breaches and cross-tenant transplantation.
+Meta Cloud API System User Tokens must be secured against data breaches and cross-tenant transplantation (implemented in Phase 7C).
 
 ### Cryptographic Specification
 - **Algorithm:** AES-256-GCM (Authenticated Encryption with Associated Data).
@@ -355,7 +364,7 @@ Meta Cloud API System User Tokens must be secured against data breaches and cros
 - **Fail-Closed Decryption:** Decryption failures throw `SECRET_DECRYPTION_FAILED` and halt execution immediately.
 - **Zero Logging:** Decrypted tokens are strictly prohibited from application logs, error traces, and diagnostic payloads.
 
-#### `whatsapp_connection_secrets` Schema
+#### `whatsapp_connection_secrets` Schema (Phase 7C)
 ```typescript
 export interface WhatsAppConnectionSecretRecord {
   id: string; // matches connection_id
@@ -375,7 +384,7 @@ export interface WhatsAppConnectionSecretRecord {
 
 ## 14. Webhook Event Retention, Privacy & Sanitization (DEC-7A-23-R1)
 
-Inbound Meta webhook payloads may contain sensitive PII, participant phone numbers, and message bodies.
+Inbound Meta webhook payloads may contain sensitive PII, participant phone numbers, and message bodies (Phase 7E).
 
 ### Minimization & Sanitization Policy
 1. **No Indefinite Raw Payload Storage:** Storing unredacted raw webhook JSON payloads indefinitely violates data minimization principles.
@@ -404,7 +413,7 @@ Inbound Meta webhook payloads may contain sensitive PII, participant phone numbe
 
 ## 15. Disconnect vs Delete Semantics (DEC-7A-24-R1)
 
-To balance user control with auditability and relational integrity:
+To balance user control with auditability and relational integrity (Phase 7C):
 
 ### Disconnect (Operational Deactivation)
 - **Action:** `POST /api/v1/organizations/:organizationId/whatsapp/connections/:connectionId/disconnect`
@@ -426,7 +435,7 @@ To balance user control with auditability and relational integrity:
 
 ## 16. First Messaging Use Case: Schedule Call-Up Notifications (DEC-7A-26)
 
-### Functional Flow
+### Functional Flow (Phase 7G)
 1. **Explicit Admin Trigger:** Notifications are triggered **only** when a Ministry Admin explicitly clicks **"Notificar Escala via WhatsApp"** in `ScheduleDetailsView`. No automated background dispatch on schedule creation in V1.
 2. **Audience Filtering:**
    - Evaluates schedule participants;
@@ -460,7 +469,7 @@ The following items are external dependencies on Meta's WhatsApp Cloud API platf
 
 ---
 
-## 18. Updated Decision Register (DEC-7A-01 .. DEC-7A-28)
+## 18. Updated Decision Register (DEC-7A-01 .. DEC-7A-29)
 
 | Decision ID | Status | Subject | Summary |
 | :--- | :--- | :--- | :--- |
@@ -477,27 +486,28 @@ The following items are external dependencies on Meta's WhatsApp Cloud API platf
 | **DEC-7A-11** | Locked | Provider Abstraction | `WhatsAppProvider` isolates vendor details. |
 | **DEC-7A-12** | Locked | Official Strategy | Meta Cloud API + Embedded Signup; scraping prohibited. |
 | **DEC-7A-13** | Locked | Phone Ownership | Customer owns phone number; LouvAIO does not resell lines. |
-| **DEC-7A-14-R2**| **Finalized** | Organization Membership | Introduces `organization_members` root collection; owner-only admin management. |
+| **DEC-7A-14-R3**| **Finalized** | Organization Membership & No Escalation | Introduces `organization_members`; provisioning creates owner record only (no implicit Org Admin grant). |
 | **DEC-7A-15-R1**| **Remediated** | Billing Anchor Semantics | Subscriptions remain on `ministry_subscriptions`; zero auto-merging of multi-ministry subscriptions. |
 | **DEC-7A-16-R1**| **Remediated** | Canonical Root Topology | Rejects subcollections; mandates root collections for all 6 entities. |
-| **DEC-7A-17-R1**| **Remediated** | Capacity Accounting | Counts all non-disconnected connections; closes rotation loophole. |
-| **DEC-7A-18-R1**| **Remediated** | Non-Destructive Over-Limit | Replaces automatic phone disabling with `restricted_over_limit` mode & manual admin resolution. |
-| **DEC-7A-19-R1**| **Remediated** | Secret Storage Hardening | AES-256-GCM envelope encryption with key versioning and AAD tenant binding. |
+| **DEC-7A-17-R1**| **Remediated** | Capacity Accounting | Counts all non-disconnected connections; closes rotation loophole (Phase 7C). |
+| **DEC-7A-18-R1**| **Remediated** | Non-Destructive Over-Limit | Replaces automatic phone disabling with `restricted_over_limit` mode & manual admin resolution (Phase 7C). |
+| **DEC-7A-19-R1**| **Remediated** | Secret Storage Hardening | AES-256-GCM envelope encryption with key versioning and AAD tenant binding (Phase 7C). |
 | **DEC-7A-20-R2**| **Finalized** | Least-Privilege Org Governance | `ORG_OWNER` manages admins and ministries; `ORG_ADMIN` manages connections only. |
 | **DEC-7A-21-R1**| **Remediated** | Default vs Exclusive Invariant | Mutually exclusive; connection cannot be both default and assigned. 1:1 cardinality. |
 | **DEC-7A-22-R1**| **Remediated** | Strict E.164 Backend | Backend rejects non-E.164; regional +55 defaults isolated to frontend. |
-| **DEC-7A-23-R1**| **Remediated** | Webhook Privacy & Retention | Sanitized metadata persistence; 30-day retention TTL; no raw payload storage. |
-| **DEC-7A-24-R1**| **Remediated** | Disconnect vs Delete | Disconnect preserves audit; Delete purges record (restricted). |
-| **DEC-7A-25-R1**| **Finalized** | Ministry Association Handshake | Attaching requires `ORG_OWNER` + Ministry Admin/Owner; zero heuristic guessing. |
-| **DEC-7A-26** | **New** | First Messaging Use Case | Explicit manual schedule call-up with idempotency and audit trail. |
-| **DEC-7A-27** | **New** | Deterministic Owner Derivation | `INITIAL_ORG_OWNER_SOURCE: ministry.owner_user_id`; explicit POST provisioning command. |
+| **DEC-7A-23-R1**| **Remediated** | Webhook Privacy & Retention | Sanitized metadata persistence; 30-day retention TTL; no raw payload storage (Phase 7E). |
+| **DEC-7A-24-R1**| **Remediated** | Disconnect vs Delete | Disconnect preserves audit; Delete purges record (restricted; Phase 7C). |
+| **DEC-7A-25-R2**| **Finalized** | Strict Null-Org Attach & Merge Deferral | Attaching requires `ministry.organization_id === null`; already-provisioned ministries rejected (409); merge deferred. |
+| **DEC-7A-26** | **New** | First Messaging Use Case | Explicit manual schedule call-up with idempotency and audit trail (Phase 7G). |
+| **DEC-7A-27-R1**| **Finalized** | Owner Derivation & Provisioning Authority | `INITIAL_ORG_OWNER_SOURCE: ministry.owner_user_id`; provisioning restricted strictly to Ministry Owner. |
 | **DEC-7A-28** | **New** | Billing Anchor Immutability in 7B | Public REST API does not mutate billing anchor in Phase 7B foundation. |
+| **DEC-7A-29** | **New** | Commercial Entitlement Phase Split | 7B evaluates commercial capacity; 7C evaluates connection usage/over-limit; 7H evaluates add-on checkout. |
 
 ---
 
 ## 19. Phase 7B Concrete Implementation Contract
 
-The following technical specification defines the exact scope for **Phase 7B (Organization Foundation & Entitlements)**:
+The following technical specification defines the exact scope for **Phase 7B (Organization Foundation & Commercial Entitlements)**:
 
 ### 1. Data Contract & Collections
 - **`organizations` (Root Collection):**
@@ -529,14 +539,15 @@ The following technical specification defines the exact scope for **Phase 7B (Or
   - `listOrganizationMembers(orgId: string): Promise<OrganizationMemberRecord[]>`
   - `addOrganizationMember(orgId: string, userId: string, actorUserId: string): Promise<OrganizationMemberRecord>` (Org Owner only, role strictly 'admin')
   - `removeOrganizationMember(orgId: string, userId: string, actorUserId: string): Promise<void>` (Org Owner only, rejects deleting owner)
-  - `lazyProvisionForMinistry(ministryId: string, actorUserId: string): Promise<OrganizationRecord>` (atomic transaction, derives owner from `ministries.owner_user_id`)
-  - `linkMinistryToOrganization(orgId: string, ministryId: string, actorUserId: string): Promise<void>` (dual-authorized transaction)
+  - `lazyProvisionForMinistry(ministryId: string, actorUserId: string): Promise<OrganizationRecord>` (atomic transaction, restricted strictly to `ministries.owner_user_id`)
+  - `linkMinistryToOrganization(orgId: string, ministryId: string, actorUserId: string): Promise<void>` (dual-authorized transaction, requires `ministry.organization_id === null`)
   - `detachMinistryFromOrganization(orgId: string, ministryId: string, actorUserId: string): Promise<void>` (Org Owner only, rejects detaching billing anchor)
 
 ### 3. Services to Extend in Phase 7B
 - **`backend/src/features/subscriptions/subscription.service.ts`:**
-  - Add method `getOrganizationWhatsAppEntitlement(organizationId: string): Promise<OrganizationWhatsAppEntitlement>`.
-  - Resolves `organizations.billing_anchor_ministry_id`, reads commercial subscription, evaluates `includedConnections` and generic add-on blocks (`addons.additionalWhatsapps`), and returns effective quota.
+  - Add method `getOrganizationWhatsAppCapacity(organizationId: string): Promise<OrganizationWhatsAppCapacity>`.
+  - Resolves `organizations.billing_anchor_ministry_id`, evaluates commercial plan definition (0 for Free, 1 for Paid plans), sets `additionalConnections = 0` (extension seam for 7H), and returns `billingAccessMode` (`normal`, `grace`, `suspended`).
+  - *Does not reference connections or calculate over-limit states.*
 
 ### 4. Canonical REST API Endpoints Matrix for Phase 7B
 
@@ -546,10 +557,10 @@ The following technical specification defines the exact scope for **Phase 7B (Or
 | **GET** | `/api/v1/organizations/:organizationId/members` | `ORG_OWNER` or `ORG_ADMIN` | **IMPLEMENT IN 7B** | List Organization members and roles. |
 | **POST** | `/api/v1/organizations/:organizationId/members` | `ORG_OWNER` only | **IMPLEMENT IN 7B** | Add Organization Admin (`{ userId, role: 'admin' }`). Rejects `role: 'owner'`. |
 | **DELETE** | `/api/v1/organizations/:organizationId/members/:userId` | `ORG_OWNER` only | **IMPLEMENT IN 7B** | Remove Organization Admin. Rejects deleting current `owner_user_id`. |
-| **GET** | `/api/v1/organizations/:organizationId/entitlements/whatsapp` | `ORG_OWNER` or `ORG_ADMIN` | **IMPLEMENT IN 7B** | Return effective WhatsApp capacity via `SubscriptionService`. |
-| **POST** | `/api/v1/ministries/:ministryId/organization/provision` | Ministry Admin or Owner | **IMPLEMENT IN 7B** | Explicit command to lazy-provision Organization for standalone Ministry. |
-| **POST** | `/api/v1/organizations/:organizationId/ministries/:ministryId` | `ORG_OWNER` + Ministry Admin | **IMPLEMENT IN 7B** | Attach existing Ministry to Organization (dual-authorization). |
-| **DELETE** | `/api/v1/organizations/:organizationId/ministries/:ministryId` | `ORG_OWNER` only | **IMPLEMENT IN 7B** | Detach Ministry from Organization. Rejects detaching billing anchor. |
+| **GET** | `/api/v1/organizations/:organizationId/entitlements/whatsapp` | `ORG_OWNER` or `ORG_ADMIN` | **IMPLEMENT IN 7B** | Return commercial capacity via `SubscriptionService.getOrganizationWhatsAppCapacity`. |
+| **POST** | `/api/v1/ministries/:ministryId/organization/provision` | Ministry Owner only (`ministry.owner_user_id`) | **IMPLEMENT IN 7B** | Explicit command to provision Organization. Rejects non-owners with 403. |
+| **POST** | `/api/v1/organizations/:organizationId/ministries/:ministryId` | `ORG_OWNER` of Organization AND (owner OR admin) of target Ministry | **IMPLEMENT IN 7B** | Attach existing Ministry. Rejects already-attached ministries with 409. |
+| **DELETE** | `/api/v1/organizations/:organizationId/ministries/:ministryId` | `ORG_OWNER` only | **IMPLEMENT IN 7B** | Detach Ministry from Organization. Rejects detaching billing anchor with 400. |
 | **PATCH** | `/api/v1/organizations/:organizationId/billing-anchor` | `ORG_OWNER` only | **DEFER** | Defer to specialized billing phases to avoid unvalidated commercial transitions. |
 
 ### 5. Composite Index Contract
@@ -562,25 +573,26 @@ The following technical specification defines the exact scope for **Phase 7B (Or
   - `ministries.where('organization_id', '==', orgId)`: Single-field equality filter.
 - **Verdict:** **NO NEW COMPOSITE INDEXES REQUIRED FOR PHASE 7B.** Standard single-field automatic indexes fully satisfy all Phase 7B query patterns without extra index declarations.
 
-### 6. Phase 7B Concrete Test Matrix (21 Frozen Tests)
-1. **Explicit Provisioning Authority:** `POST /api/v1/ministries/:id/organization/provision` succeeds for authenticated Ministry Admin/Owner; rejects non-admin with `403 Forbidden`.
-2. **Non-Mutating GET Behavior:** Authenticated GET requests on unprovisioned ministries return `hasOrganization: false` without creating database records.
-3. **Provisioning Idempotency:** Invoking provision twice sequentially for the same ministry returns the identical Organization record without duplicating state.
-4. **Concurrency Safety:** Two concurrent provisioning requests for the same ministry result in exactly one Organization record created in Firestore.
-5. **Deterministic Initial Owner:** Initial `organizations.owner_user_id` strictly matches `ministry.owner_user_id`.
-6. **Concurrent Owner Stability:** A concurrent admin cannot overwrite or replace `organizations.owner_user_id` or `billing_anchor_ministry_id`.
-7. **Owner Membership Invariant:** An `organization_members` document exists with `role: 'owner'` matching `owner_user_id`.
-8. **Single Owner Invariant:** Exactly one member document holds `role: 'owner'` per Organization.
-9. **Least-Privilege Org Admin:** An `ORG_ADMIN` attempting to call member management or ministry attach/detach endpoints is rejected with `403 Forbidden`.
-10. **Attach Dual-Authorization:** Attaching a ministry requires caller to be `ORG_OWNER` of the organization AND `admin`/`owner` of the target ministry.
-11. **Cross-Link Prevention:** Attaching a ministry already linked to a different Organization is rejected with `400 / 409`.
-12. **Anchor Detachment Block:** Attempting to detach the `billing_anchor_ministry_id` is rejected with `400 CANNOT_DETACH_BILLING_ANCHOR`.
-13. **Generic Member Owner Prohibition:** `POST /organizations/:id/members` with `{ role: 'owner' }` is rejected with `400 Bad Request`.
-14. **Owner Deletion Prohibition:** `DELETE /organizations/:id/members/:ownerUserId` is rejected with `400 OWNER_CANNOT_BE_REMOVED`.
-15. **Billing Anchor Subscription Scope:** Entitlement calculation strictly inspects the subscription of `billing_anchor_ministry_id`.
-16. **Free Plan Quota:** Standalone free plan returns `includedConnections: 0, totalAllowedConnections: 0, canCreateConnection: false`.
-17. **Paid Plan Quota:** Paid plan (e.g. Pro) returns `includedConnections: 1, totalAllowedConnections: 1, canCreateConnection: true`.
-18. **Add-on Block Quota:** Paid plan with add-on blocks returns `includedConnections: 1, additionalConnections: N, totalAllowedConnections: 1 + N`.
-19. **Grace Access Mode:** Overdue subscription in grace returns `accessMode: 'grace', canCreateConnection: false, canSendMessages: true`.
-20. **Restricted Over Limit Mode:** Downgraded subscription over limit returns `accessMode: 'restricted_over_limit', canCreateConnection: false, canSendMessages: false`.
-21. **Anti-IDOR & Fail-Closed Security:** Callers without organization membership querying organization endpoints receive indistinguishable `404 Not Found`.
+### 6. Phase 7B Concrete Test Matrix (22 Frozen Tests)
+1. **Ministry Owner Provisioning Authority:** `POST /api/v1/ministries/:id/organization/provision` succeeds for authenticated Ministry Owner (`ministry.owner_user_id`).
+2. **Ministry Admin Provisioning Block:** `POST /api/v1/ministries/:id/organization/provision` invoked by a non-owner Ministry Admin is strictly rejected with `403 ONLY_MINISTRY_OWNER_CAN_PROVISION_ORGANIZATION`.
+3. **No Implicit Privilege Escalation:** Executing provisioning does not grant Org Admin to any other ministry members; creates exactly one owner record for `ministry.owner_user_id`.
+4. **Non-Mutating GET Behavior:** Authenticated GET requests on unprovisioned ministries return `hasOrganization: false` without creating database records.
+5. **Provisioning Idempotency:** Sequential provisioning calls for the same ministry return the identical Organization record without duplicating state.
+6. **Concurrency Safety:** Two concurrent provisioning requests for the same ministry produce exactly one Organization document in Firestore.
+7. **Deterministic Initial Owner:** Initial `organizations.owner_user_id` strictly matches `ministry.owner_user_id`.
+8. **Concurrent Owner Stability:** A concurrent request cannot overwrite or replace `organizations.owner_user_id` or `billing_anchor_ministry_id`.
+9. **Owner Membership Invariant:** An `organization_members` document exists with `role: 'owner'` matching `owner_user_id`.
+10. **Single Owner Invariant:** Exactly one member document holds `role: 'owner'` per Organization.
+11. **Least-Privilege Org Admin:** An `ORG_ADMIN` attempting member management or ministry attach/detach endpoints is rejected with `403 Forbidden`.
+12. **Attach Dual-Authorization:** Attaching a ministry requires caller to be `ORG_OWNER` of the organization AND `(owner OR admin)` of the target ministry.
+13. **Attach Requires Null Organization:** Attaching a ministry succeeds only when `ministry.organization_id == null`.
+14. **Already-Attached Ministry Rejection (409):** Attaching a ministry that already has `organization_id != null` (even a standalone organization) is rejected with `409 MINISTRY_ALREADY_HAS_ORGANIZATION`.
+15. **Anchor Detachment Block:** Attempting to detach the `billing_anchor_ministry_id` is rejected with `400 CANNOT_DETACH_BILLING_ANCHOR`.
+16. **Valid Detach Behavior:** Detaching a non-anchor ministry resets its `organization_id` to `null` while preserving ministry operational data.
+17. **Generic Member Owner Prohibition:** `POST /organizations/:id/members` with `{ role: 'owner' }` is rejected with `400 Bad Request`.
+18. **Owner Deletion Prohibition:** `DELETE /organizations/:id/members/:ownerUserId` is rejected with `400 OWNER_CANNOT_BE_REMOVED`.
+19. **Billing Anchor Subscription Scope:** Capacity calculation strictly inspects the subscription of `billing_anchor_ministry_id`.
+20. **Free Plan Quota:** Standalone free plan returns `includedConnections: 0, additionalConnections: 0, totalAllowedConnections: 0`.
+21. **Paid Plan Quota:** Paid plan (e.g. Pro) returns `includedConnections: 1, additionalConnections: 0, totalAllowedConnections: 1, billingAccessMode: 'normal'`.
+22. **Anti-IDOR & Fail-Closed Security:** Callers without organization membership querying organization endpoints receive indistinguishable `404 Not Found`.
