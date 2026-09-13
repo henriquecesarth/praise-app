@@ -640,10 +640,15 @@ The following items are external dependencies on Meta's WhatsApp Cloud API platf
 | **DEC-7D-26** | **New** | Provider Authorization Revocation Scope & Safety Boundary | `DELETE /me/permissions` operates at customer portfolio scope; `SAFE_PER_CONNECTION: NO`; strictly excluded from standard per-line disconnect to protect sibling lines. |
 | **DEC-7D-27** | **Hardened** | Onboarding Capacity Liveness Invariant & Zero-Stranded-Capacity Rule | A WhatsApp onboarding flow must NEVER enter a state where the onboarding session cannot be resumed/completed, no public/admin recovery operation exists, and the associated connection remains in a capacity-consuming state (`pending`, `connecting`, `error`). Governed by a strict 3-tier hierarchy: (1) Immediate terminal release to `disconnected` for unrecoverable pre-materialization failures; (2) Active supported retry/resume for transient provider errors, browser abandonment, and staged billing pauses; (3) Eventual 24-hour TTL lazy terminal cleanup as ultimate safety boundary. |
 | **DEC-7D-28** | **Hardened** | Terminal Pre-Materialization Release Semantics & Predicate Guard | Enforces canonical predicate `isTerminalPreMaterializationReservation(connection)` requiring null provider IDs, null phone number, absence of identity claims, absence of default/exclusive assignments, and staged secret purge. Qualified connections transition atomically to `disconnected` (`pending_expires_at: null`, `assigned_ministry_id: null`), immediately releasing configured capacity. |
-| **DEC-7D-29** | **Hardened** | Ephemeral Session Expiry, Browser Abandonment & Model B Dual-Branch Reservation Reuse | Selects Model B for abandoned or retried flows: `startOnboarding` evaluates existing `pending` reservations; if pre-materialization, branches into Clean Pending (`hasStagedSecret === false`: rotates fresh session, requires normal billing, user re-launches Embedded Signup) or Staged Pending (`hasStagedSecret === true`: rotates recovery session in `credential_staged` mode, permits normal or grace billing, carries forward `provider_progress`, skips OAuth exchange). Consumes zero additional capacity slots, eliminating capacity deadlocks for single-slot organizations. |
-| **DEC-7D-30** | **Hardened** | Late Subscription Restriction Non-Destructive Staged Retention & Billing Regularization Resume | Step 10 commercial capacity/suspension failure retains staged secret and connection in `pending` (`status_reason: 'SUBSCRIPTION_RESTRICTED'`), allowing completion retry upon billing regularization without burning single-use OAuth codes. If regularized after session expiry (>15m), `POST /start` rotates a fresh recovery session (`mode = 'resume_staged'`) allowing immediate completion. |
+| **DEC-7D-29** | **Hardened** | Ephemeral Session Expiry, Browser Abandonment & Model B Dual-Branch Reservation Reuse | Selects Model B for abandoned or retried flows: `startOnboarding` evaluates existing `pending` reservations via explicit `resumeConnectionId` target; if pre-materialization, branches into Clean Pending (`hasStagedSecret === false`: rotates fresh session, requires normal billing, user re-launches Embedded Signup) or Staged Pending (`hasStagedSecret === true`: rotates recovery session in `credential_staged` mode, permits normal or grace billing, carries forward `provider_progress`, skips OAuth exchange). Preserves original hard reservation deadline (`pending_expires_at`) without extension. Consumes zero additional capacity slots, eliminating capacity deadlocks for single-slot organizations. |
+| **DEC-7D-30** | **Hardened** | Late Subscription Restriction Non-Destructive Staged Retention & Billing Regularization Resume | Step 10 commercial capacity/suspension failure retains staged secret and connection in `pending` (`status_reason: 'SUBSCRIPTION_RESTRICTED'`), allowing completion retry upon billing regularization without burning single-use OAuth codes. If regularized after session expiry (>15m) but before the hard 24h deadline, `POST /start` with `resumeConnectionId` rotates a fresh recovery session (`mode = 'resume_staged'`) allowing immediate completion. |
 | **DEC-7D-31** | **Hardened** | Strict Error Status Ban for Unrecoverable Pre-Materialization States | `status === 'error'` is capacity-consuming and strictly prohibited for pre-materialization failures with no recovery path; permanent failures (`UNAUTHORIZED_WABA_ACCESS`, `PHONE_NOT_IN_WABA`, `PHONE_ALREADY_REGISTERED`, `STAGED_SECRET_LOST`) must transition to `disconnected`. |
-| **DEC-7D-32** | **New** | Ephemeral Session State Machine, Progressive Provider Progress Schema & Dual-Branch Recovery Handshake | Formalizes authoritative `WhatsAppOnboardingSessionStatus` (`'active' | 'credential_staged' | 'consumed' | 'expired' | 'failed'`) and server-derived `provider_progress` (`'none' | 'credential_staged' | 'assets_verified' | 'phone_registered' | 'waba_subscribed'`). Formally distinguishes 15-minute Session Instance TTL from 24-hour Connection Reservation TTL. Splits `startOnboarding` into Branch A (New Reservation: requires normal billing + configured < allowed, consumes 1 slot) vs Branch B (Resume Existing Reservation: operates on held slot, consumes 0 additional slots; B1 Clean vs B2 Staged). Formalizes that missing session document on `/complete` aborts with `400 ONBOARDING_SESSION_NOT_FOUND` without blind connection mutation. Restricts PIN registration retry to in-memory re-prompt without persistence. |
+| **DEC-7D-32** | **Hardened** | Ephemeral Session State Machine, Progressive Provider Progress Authority & Physical Retention Policy | Formalizes authoritative `WhatsAppOnboardingSessionStatus` (`'active' | 'credential_staged' | 'consumed' | 'expired' | 'failed'`) and server-derived `provider_progress` (`'none' | 'credential_staged' | 'assets_verified' | 'phone_registered' | 'waba_subscribed'`). The 15-minute TTL denotes logical expiry; automated physical Firestore TTL deletion at 15 minutes is strictly prohibited so that staged recovery can copy forward progress. On staged resume, the new session atomically copies forward `provider_progress` and verified IDs from the prior current session; if secret exists but prior progress is missing or inconsistent, rotation fails closed (`500 ONBOARDING_RECOVERY_STATE_CORRUPTED`). Single-use code exchange and secret staging commit atomically in one Firestore transaction. Restricts PIN registration retry to in-memory re-prompt without persistence. |
+| **DEC-7D-33** | **New** | Single-Current-Session Pointer, Compare-Current Clearing & Stale Completion Guard | A pending connection possesses 0 or 1 current onboarding session at any time (`connection.current_onboarding_session_id`). Rotating a session marks the prior session `expired` and atomically updates the pointer. `POST /onboarding/complete` MUST verify that `session.connection_id === connection.id` AND `connection.current_onboarding_session_id === session.id` before executing OAuth code exchange, secret access, Graph API calls, or claim acquisition; if mismatched, it aborts immediately with `409 ONBOARDING_SESSION_SUPERSEDED` with zero provider side-effects. Pointer clearing uses compare-current semantics: an old session never clears a newer session pointer. |
+| **DEC-7D-34** | **New** | Hard Reservation Deadline & Non-Sliding Connection TTL | `pending_expires_at` represents the non-sliding commercial capacity reservation deadline set strictly once at initial allocation (`createdAt + 24h`). Session rotation in Branch B1 or B2 MUST NOT extend this deadline. Lapsing of a 15-minute session does not reset commercial reservation age. If `now >= pending_expires_at`, resume is strictly prohibited and the connection enters terminal cleanup. |
+| **DEC-7D-35** | **New** | Deterministic Resume Target via Explicit `resumeConnectionId` Request Schema & Multi-Admin Tenancy | `POST /onboarding/start` request schema defines optional `resumeConnectionId?: string`. Omission deterministically requests a NEW reservation (Branch A). Presence deterministically requests RESUME of that exact connection (Branch B), failing closed with 404 if connection does not exist or does not belong to the route organization, 409 if already connected, or 410 if reservation deadline has passed. Multi-admin resume is organization-owned: any Org Owner or Admin may resume onboarding, recording the new admin's UID as `actor_user_id` while superseding previous sessions. |
+| **DEC-7D-36** | **New** | Staged 24-Hour Expiry, Provider-Safe Compensation & Dependent WABA Invariant | When the 24-hour hard reservation deadline expires on an unmaterialized pending connection: (1) if clean or staged credentials only, staged secrets are deleted and connection transitions to `disconnected` (`PENDING_EXPIRED`); (2) if `provider_progress === 'phone_registered'`, phone registration remains dormant with zero LouvAIO claims to clean; (3) if `provider_progress === 'waba_subscribed'`, webhook subscription is deleted via `DELETE /{waba_id}/subscribed_apps` ONLY IF no other connection across the entire platform depends on `provider_waba_id` (DEC-7D-19 platform-wide query); zero destructive phone deregistration; capacity is released deterministically. |
+| **DEC-7D-37** | **New** | Concurrency Serialization Boundaries (Start vs Complete vs Lazy Cleanup) & Replay Idempotency | Firestore OCC on `whatsapp_connections.doc(connId)` deterministically serializes concurrent resume vs lazy cleanup: resume wins before deadline, cleanup wins after deadline. `/complete` validates the current session pointer in pre-check and inside the Step 10 transaction, preventing split-brain execution against concurrent `/start` rotations. Replaying `/complete` on an already-consumed session and connected connection returns HTTP 200 with sanitized `WhatsAppConnectionDto` idempotently without duplicate provider calls. |
 
 ---
 
@@ -1422,7 +1427,7 @@ sequenceDiagram
 - **Envelope Encryption & Staging Binding (DEC-7D-05, DEC-7D-20):** Plaintext access token is encrypted immediately via `WhatsAppCryptoService.encryptSecret(accessToken, { organizationId, connectionId })` and staged into `whatsapp_connection_secrets.doc(connectionId)` upon code exchange (Stage 1). Plaintext token is never logged, cached, or emitted in responses. If downstream calls fail, subsequent retries load and decrypt the staged credential without attempting to re-exchange the single-use OAuth code.
 
 
-### 6. Ephemeral Onboarding Sessions & CSRF Security (DEC-7D-06, DEC-7D-20, DEC-7D-32)
+### 6. Ephemeral Onboarding Sessions, Single Current Session & CSRF Security (DEC-7D-06, DEC-7D-20, DEC-7D-32, DEC-7D-33)
 - **Root Collection:** `whatsapp_onboarding_sessions`
 - **Authoritative Types & Schema:**
   ```typescript
@@ -1451,127 +1456,109 @@ sequenceDiagram
     verified_waba_id: string | null;
     verified_phone_number_id: string | null;
     normalized_phone_number: string | null;
-    expires_at: string; // ISO 8601, now + 15 minutes
+    expires_at: string; // ISO 8601, now + 15 minutes (Logical TTL)
     consumed_at: string | null;
     created_at: string;
     updated_at: string;
   }
   ```
-- **Connection Record Session Pointer (DEC-7D-29, DEC-7D-32):**
+- **Connection Record Session Pointer (DEC-7D-29, DEC-7D-33):**
   On `WhatsAppConnectionRecord`:
   ```typescript
   current_onboarding_session_id: string | null;
+  pending_expires_at: string | null;
   ```
-- **State Nonce Hashing & Validation:**
-  - On `onboarding/start`, the server generates `rawNonce = crypto.randomBytes(32).toString('hex')`.
-  - The server stores `state_nonce_hash = crypto.createHash('sha256').update(rawNonce).digest('hex')` and returns `rawNonce` to the client.
-  - On `onboarding/complete`, the client submits `rawNonce`. The server hashes it and compares it in constant time via `crypto.timingSafeEqual` against `session.state_nonce_hash`.
-- **Session Instance TTL vs Connection Reservation TTL (DEC-7D-32):**
-  - **Session Instance TTL:** Strictly 15 minutes (`expires_at = now + 15m`). Protects against replay attacks, CSRF reuse, and orphaned browser sessions.
-  - **Connection Reservation TTL:** Strictly 24 hours (`pending_expires_at = now + 24h`). Protects the organization's reserved capacity slot during multi-step onboarding, transient failures, or payment regularization.
-  - **Independence Principle:** An onboarding session instance expiring after 15 minutes does **NOT** destroy a `pending` connection whose secret is staged. Instead, `POST /onboarding/start` evaluates the reservation and rotates a fresh session instance bound to the same connection, carrying forward provider progress.
-- **Progressive Staging State Machine Transitions (DEC-7D-20, DEC-7D-32):**
-  ```text
-  [startOnboarding] -> 'active' (provider_progress: 'none')
-        │
-        ▼ (Step 4: OAuth code exchange success)
-  'credential_staged' (provider_progress: 'credential_staged', secret staged)
-        │
-        ▼ (Step 6: WABA asset & phone edge verification success)
-  'credential_staged' (provider_progress: 'assets_verified', verified IDs saved)
-        │
-        ▼ (Step 8: Ephemeral PIN registration success, if required)
-  'credential_staged' (provider_progress: 'phone_registered')
-        │
-        ▼ (Step 9: Messaging Account Webhook subscription success)
-  'credential_staged' (provider_progress: 'waba_subscribed')
-        │
-        ▼ (Step 10: Atomic materialization commit)
-  'consumed' (consumed_at = now, connection = 'connected')
-  ```
-- **Definition & Invariants of `credential_staged`:**
-  - The customer's single-use OAuth `code` has been exchanged with Meta Graph API `GET /oauth/access_token`.
-  - The resulting `business_token` has been envelope-encrypted via `WhatsAppCryptoService` and persisted into `whatsapp_connection_secrets.doc(connectionId)`.
-  - The single-use OAuth `code` has been burned by Meta and **MUST NEVER** be re-sent or re-exchanged.
-  - All subsequent retry or resume requests load and decrypt the staged secret directly from `whatsapp_connection_secrets`.
+- **Logical 15-Minute Session TTL vs Physical Retention Policy (DEC-7D-32):**
+  - **Logical Expiry:** The 15-minute window (`expires_at <= now`) governs logical session validity. Once passed, direct completion of that session is prohibited.
+  - **Physical Retention:** Automated Firestore physical TTL deletion at 15 minutes is **strictly prohibited**. The session document is the sole source of recovery progress (`provider_progress`, `verified_waba_id`, `verified_phone_number_id`, `normalized_phone_number`).
+  - Session records remain physically retained while the connection is non-terminal. Physical deletion is deferred until terminal connection completion (`connected`), terminal disconnect (`disconnected`), or via a bounded 30-day compliance retention policy.
+- **Single-Current-Session Invariant (DEC-7D-33):**
+  - A pending connection possesses **at most one** current onboarding session at any time (`connection.current_onboarding_session_id`).
+  - Rotating a session marks the previously current session `status = 'expired'` and atomically updates `connection.current_onboarding_session_id = newSessionId`.
+  - Provider progress and verified assets are copied forward atomically into the new session.
+  - If a staged secret exists in `whatsapp_connection_secrets` but the previous session progress record is missing or corrupted, rotation fails closed (`500 ONBOARDING_RECOVERY_STATE_CORRUPTED`).
+- **Progress Monotonicity (DEC-7D-32):**
+  - Monotonic progression order: `none` -> `credential_staged` -> `assets_verified` -> `phone_registered` -> `waba_subscribed`.
+  - Progression is strictly one-way during a connection's onboarding lifecycle; zero backward transitions. Advancement is persisted only AFTER the relevant provider operation succeeds.
+- **Secret-Staging Atomicity (DEC-7D-20, DEC-7D-32):**
+  - When single-use OAuth code exchange succeeds (Step 4), persisting the encrypted Business Token in `whatsapp_connection_secrets.doc(connectionId)` AND advancing the session to `status = 'credential_staged'`, `provider_progress = 'credential_staged'` are committed in a **single atomic Firestore write batch / transaction**.
+  - Plaintext access tokens are cleared from memory immediately upon encryption; no partial crash can leave an orphaned secret without session tracking or a staged session without a secret.
 - **Registration PIN Lifecycle & Zero-Persistence Rule (DEC-7D-15, DEC-7D-32):**
-  - The two-step verification PIN is supplied in-memory by the user during registration (Step 8).
+  - The two-step verification PIN is supplied in-memory by the user during Step 8 (`POST /{phone_number_id}/register`).
   - The PIN is **NEVER** persisted to Firestore, session records, secret storage, or logs.
   - If Step 8 fails due to transient provider error, `provider_progress` remains `'assets_verified'`. When retrying (within 15m or after session resume), the user re-enters the 6-digit PIN in the UI.
-- **Replay Protection & Finality:**
-  - Upon successful materialization, the session is atomically marked `status = 'consumed'`, `consumed_at = now`.
-  - Replay attempts fail with HTTP 409 `ONBOARDING_SESSION_ALREADY_CONSUMED`.
 
-### 7. Concurrency-Safe Atomic Capacity Reservation & Dual-Branch Admission Algorithm (DEC-7D-07, DEC-7D-16, DEC-7D-27, DEC-7D-29, DEC-7D-32)
+### 7. Concurrency-Safe Atomic Capacity Reservation & Dual-Branch Admission Algorithm (DEC-7D-07, DEC-7D-16, DEC-7D-27, DEC-7D-29, DEC-7D-32 .. DEC-7D-35)
 - **SubscriptionService Commercial Authority & Zero Plan Duplication:**
   `SubscriptionService` is the sole domain authority for evaluating commercial capacity and plan quotas. The WhatsApp domain NEVER duplicates subscription rules, pricing tiers, or plan limits.
   To support transaction isolation, `SubscriptionService` provides transaction-aware helpers:
   - Pure evaluation helper `evaluateOrganizationWhatsAppCapacity(orgRecord, subscriptionSummary)`;
   - Transactional method `getOrganizationWhatsAppCapacityInTransaction(tx, organizationId)`.
   This ensures that all commercial rules remain strictly encapsulated within the billing domain boundary.
-- **Admission & Resume Algorithm for `POST /onboarding/start` (DEC-7D-07, DEC-7D-16, DEC-7D-27, DEC-7D-29, DEC-7D-32):**
+- **Request Schema for `POST /onboarding/start` (DEC-7D-35):**
+  ```typescript
+  export const startOnboardingSchema = z.object({
+    resumeConnectionId: z.string().optional(),
+  });
+  export type StartOnboardingRequest = z.infer<typeof startOnboardingSchema>;
+  ```
+- **Admission & Resume Algorithm for `POST /onboarding/start` (DEC-7D-07, DEC-7D-16, DEC-7D-27, DEC-7D-29, DEC-7D-32 .. DEC-7D-35):**
   Executed within a single Firestore transaction:
-  1. Read `organizations.doc(orgId)`: verifies organization existence, derives `billing_anchor_ministry_id`, and locks OCC sequence.
+  1. Read `organizations.doc(orgId)`: verifies organization existence, derives `billing_anchor_ministry_id`.
   2. Read `ministry_subscriptions.doc(billingAnchorMinistryId)`: resolves `totalAllowedConnections` and `billingAccessMode` via `SubscriptionService`.
-  3. Query `whatsapp_connections` where `organization_id == orgId` and `status in ['pending', 'connecting', 'connected', 'error', 'disabled_by_user']`.
-  4. **Reservation Reconciliation, Lazy Cleanup & Classification Scan:**
-     Iterate through existing connections:
-     - For each `conn.status === 'pending'`:
-       - If `conn.pending_expires_at && new Date(conn.pending_expires_at) <= now` (24h connection TTL expired):
-         Transition connection to `disconnected` (`status_reason = 'PENDING_EXPIRED'`, `pending_expires_at = null`, `assigned_ministry_id = null`, `current_onboarding_session_id = null`). Exclude from active configured count.
-       - Else (`pending_expires_at > now`):
-         Check if this connection is an unmaterialized reservation (`isTerminalPreMaterializationReservation(conn)` is true).
-         If so, inspect whether an encrypted credential is staged in `whatsapp_connection_secrets.doc(conn.id)`.
-         - If **NO staged secret exists** (`hasStagedSecret === false`):
-           Designate `reusableCleanPendingConnection = conn`.
-         - If **staged secret exists** (`hasStagedSecret === true`):
-           Designate `reusableStagedPendingConnection = conn`.
-     - Count active configured connections: each active non-expired connection increments `activeConfiguredCount` (excluding `reusableCleanPendingConnection` or `reusableStagedPendingConnection` from incremental quota check since their slot is already held).
-  5. **Branching Execution:**
-     - **Branch A: Allocate New Reservation (`mode: 'new'`)**
-       - **Trigger:** No reusable pending connection exists (`reusableCleanPendingConnection === null && reusableStagedPendingConnection === null`).
+  3. **Deterministic Branch Dispatch:**
+     - **Branch A: Allocate New Reservation (`resumeConnectionId` is omitted)**
        - **Commercial Gate:** Requires `capacity.enabled === true` AND `capacity.billingAccessMode === 'normal'`. Grace, suspended, canceled, or free modes are strictly rejected with HTTP 403 `WHATSAPP_CAPACITY_LIMIT_REACHED`.
-       - **Capacity Check:** Assert `activeConfiguredCount < totalAllowedConnections`. If false, abort with HTTP 403 `WHATSAPP_CAPACITY_LIMIT_REACHED`.
+       - **Capacity Check:** Query configured connections (`status in ['pending', 'connecting', 'connected', 'error', 'disabled_by_user']`). Assert `activeConfiguredCount < totalAllowedConnections`. If false, abort with HTTP 403 `WHATSAPP_CAPACITY_LIMIT_REACHED`.
+       - **Hard Reservation Deadline (DEC-7D-34):** Set strictly once at allocation: `pending_expires_at = now + 24h`.
        - **Allocation:**
          - Generate `connectionId = 'wac_' + randomBytes(12)`.
-         - Generate `sessionId = 'wabs_' + randomBytes(12)`, fresh `rawNonce = randomBytes(32)`, `stateNonceHash = sha256(rawNonce)`, `session_expires_at = now + 15m`, `pending_expires_at = now + 24h`.
-         - Create new `whatsapp_connections` document in `pending` status (`current_onboarding_session_id = sessionId`).
+         - Generate `sessionId = 'wabs_' + randomBytes(12)`, fresh `rawNonce = randomBytes(32)`, `stateNonceHash = sha256(rawNonce)`, `session_expires_at = now + 15m`.
+         - Create new `whatsapp_connections` document in `pending` status (`current_onboarding_session_id = sessionId`, `pending_expires_at`).
          - Create new `whatsapp_onboarding_sessions` document (`status = 'active'`, `provider_progress = 'none'`).
          - Increment `organizations.whatsapp_reservation_sequence`.
          - Return `{ connectionId, sessionId, stateNonce: rawNonce, mode: 'new' }`.
-         - **Capacity Impact:** Consumes exactly 1 capacity slot.
-     - **Branch B1: Resume Clean Reservation (`mode: 'resume_clean'`)**
-       - **Trigger:** `reusableCleanPendingConnection` exists (browser was closed or session expired before code exchange; no staged secret).
-       - **Commercial Gate:** Requires `capacity.enabled === true` AND `capacity.billingAccessMode === 'normal'` (new authorization attempt prohibited during grace or suspension).
-       - **Session Rotation:**
-         - Generate fresh `sessionId = 'wabs_' + randomBytes(12)`, fresh `rawNonce = randomBytes(32)`, `stateNonceHash = sha256(rawNonce)`, `session_expires_at = now + 15m`.
-         - If old session document was still active, mark it `status = 'expired'`.
-         - Create new `whatsapp_onboarding_sessions` document (`status = 'active'`, `provider_progress = 'none'`).
-         - Update `reusableCleanPendingConnection`: set `current_onboarding_session_id = sessionId`, refresh `pending_expires_at = now + 24h`, `updated_at = now`.
-         - Increment `organizations.whatsapp_reservation_sequence`.
-         - Return `{ connectionId: reusableCleanPendingConnection.id, sessionId, stateNonce: rawNonce, mode: 'resume_clean' }`.
-         - **Capacity Impact:** Consumes 0 additional capacity slots (already held by existing reservation).
-         - **Client Action:** Client re-launches Meta Embedded Signup popup to acquire a fresh OAuth code.
-     - **Branch B2: Resume Staged Reservation (`mode: 'resume_staged'`)**
-       - **Trigger:** `reusableStagedPendingConnection` exists (session expired >15m during staged retries or billing suspension; encrypted token exists in `whatsapp_connection_secrets`).
-       - **Commercial Gate:** Permits `normal` and `grace` access modes (slot is already held; token is already staged). Rejects `suspended` or `canceled` with HTTP 403 `WHATSAPP_SUBSCRIPTION_SUSPENDED`.
-       - **Progress Carryover & Session Rotation:**
-         - Read prior session document if available. Extract prior `provider_progress`, `verified_waba_id`, `verified_phone_number_id`, `normalized_phone_number`. If prior session document is missing or corrupted, default to `provider_progress = 'credential_staged'`.
-         - Generate fresh `sessionId = 'wabs_' + randomBytes(12)`, fresh `rawNonce = randomBytes(32)`, `stateNonceHash = sha256(rawNonce)`, `session_expires_at = now + 15m`.
-         - If old session document was still active, mark it `status = 'expired'`.
-         - Create new `whatsapp_onboarding_sessions` document (`status = 'credential_staged'`, copying `provider_progress`, `verified_waba_id`, `verified_phone_number_id`, `normalized_phone_number`).
-         - Update `reusableStagedPendingConnection`: set `current_onboarding_session_id = sessionId`, refresh `pending_expires_at = now + 24h`, `updated_at = now`.
-         - Increment `organizations.whatsapp_reservation_sequence`.
-         - Return `{ connectionId: reusableStagedPendingConnection.id, sessionId, stateNonce: rawNonce, mode: 'resume_staged', providerProgress: session.provider_progress, verifiedPhoneNumber: session.normalized_phone_number }`.
-         - **Capacity Impact:** Consumes 0 additional capacity slots.
-         - **Client Action:** Client **DOES NOT** re-launch Meta Embedded Signup (OAuth code is already burned). Client immediately proceeds to `POST /onboarding/complete`, prompting user for 6-digit registration PIN only if `provider_progress === 'assets_verified'`.
-- **Proof of Atomic Contention (OCC Boundary):** Any concurrent transaction attempting to reserve or resume a slot touches `organizations.doc(orgId)`. Firestore Optimistic Concurrency Control (OCC) serializes the writes, causing the losing transaction to retry, observe the new/reused `pending` connection, and evaluate capacity deterministically.
-- **Entitlement Grace Period & Downgrade Race (DEC-7D-16, DEC-7D-30, DEC-7D-32):** During `POST .../onboarding/complete`, before acquiring identity claims or persisting secrets, LouvAIO re-evaluates `SubscriptionService.getOrganizationWhatsAppCapacity(orgId)`:
-  - **Grace Mode Policy:** If the organization is in billing `grace` mode, completing an already-reserved connection is **PERMITTED** because the capacity slot was already allocated during `onboarding/start` and does not consume incremental quota.
-  - **Pre-Provider Suspended / Canceled Policy (Step 3):** If the subscription has transitioned to `suspended`, `canceled`, or restricted before provider calls, completion is rejected with HTTP 403 `WHATSAPP_SUBSCRIPTION_SUSPENDED`, and the pending reservation is terminally released to `disconnected` via `releaseTerminalPendingReservation`.
-  - **Late Restriction Policy (Step 10, DEC-7D-30, DEC-7D-32):** If commercial restriction occurs after token staging, the staged secret is non-destructively retained, the session remains `credential_staged`, and the connection remains `pending` (`status_reason: 'SUBSCRIPTION_RESTRICTED'`). If the customer regularizes billing within 15 minutes, calling `/complete` succeeds directly. If regularized after 15 minutes, calling `POST /start` activates Branch B2 (`resume_staged`) and issues a fresh recovery session to finish Step 10 materialization.
+         - **Capacity Impact:** Consumes exactly 1 capacity slot (+1).
+     - **Branch B: Resume Existing Reservation (`resumeConnectionId` is provided)**
+       - **Connection Verification & Anti-IDOR:**
+         - Read `whatsapp_connections.doc(resumeConnectionId)`.
+         - If connection does not exist or `conn.organization_id !== orgId`: abort with HTTP 404 `CONNECTION_NOT_FOUND`.
+         - Status Verification: If `conn.status === 'connected'`, abort with HTTP 409 `CONNECTION_ALREADY_CONNECTED`. If `conn.status === 'disconnected'`, abort with HTTP 410 `CONNECTION_RESERVATION_EXPIRED`.
+       - **Hard Reservation Deadline Evaluation (DEC-7D-34):**
+         - If `new Date(conn.pending_expires_at) <= now` (24h connection deadline passed):
+           Execute lazy cleanup (see Section 8.9), transition connection to `disconnected` (`PENDING_EXPIRED`), clear pointers, and abort with HTTP 410 `CONNECTION_RESERVATION_EXPIRED`.
+       - **Inspect Staged Secret in `whatsapp_connection_secrets.doc(conn.id)`:**
+         - **Sub-Branch B1: Resume Clean Reservation (`hasStagedSecret === false`)**
+           - **Commercial Gate:** Requires `capacity.enabled === true` AND `capacity.billingAccessMode === 'normal'` (new code exchange prohibited during grace or suspension).
+           - **Hard Deadline Invariant (DEC-7D-34):** **PRESERVES EXISTING `conn.pending_expires_at` (NO EXTENSION)**.
+           - **Session Rotation (DEC-7D-33):**
+             - If `conn.current_onboarding_session_id` is non-null, read prior session and mark it `status = 'expired'`.
+             - Generate fresh `sessionId = 'wabs_' + randomBytes(12)`, fresh `rawNonce = randomBytes(32)`, `stateNonceHash = sha256(rawNonce)`, `session_expires_at = now + 15m`.
+             - Create new `whatsapp_onboarding_sessions` document (`status = 'active'`, `provider_progress = 'none'`, `actor_user_id = req.user.id`).
+             - Update `conn.current_onboarding_session_id = sessionId`, `updated_at = now` (preserving `pending_expires_at`).
+             - Return `{ connectionId: conn.id, sessionId, stateNonce: rawNonce, mode: 'resume_clean' }`.
+             - **Capacity Impact:** Consumes 0 additional slots (+0). Client re-launches Meta Embedded Signup popup.
+         - **Sub-Branch B2: Resume Staged Reservation (`hasStagedSecret === true`)**
+           - **Commercial Gate:** Permits `normal` and `grace` access modes (slot is already held; token is already staged). Rejects `suspended` or `canceled` with HTTP 403 `WHATSAPP_SUBSCRIPTION_SUSPENDED`.
+           - **Hard Deadline Invariant (DEC-7D-34):** **PRESERVES EXISTING `conn.pending_expires_at` (NO EXTENSION)**.
+           - **Progress Carryover & Session Rotation (DEC-7D-32, DEC-7D-33):**
+             - Read prior session document via `conn.current_onboarding_session_id`.
+             - Assert prior session exists, belongs to `orgId`, and possesses a valid `provider_progress`. If missing or corrupted, fail closed with HTTP 500 `ONBOARDING_RECOVERY_STATE_CORRUPTED`.
+             - Mark prior session `status = 'expired'`.
+             - Generate fresh `sessionId = 'wabs_' + randomBytes(12)`, fresh `rawNonce = randomBytes(32)`, `stateNonceHash = sha256(rawNonce)`, `session_expires_at = now + 15m`.
+             - Create new `whatsapp_onboarding_sessions` document (`status = 'credential_staged'`, copying `provider_progress`, `verified_waba_id`, `verified_phone_number_id`, `normalized_phone_number`, `actor_user_id = req.user.id`).
+             - Update `conn.current_onboarding_session_id = sessionId`, `updated_at = now` (preserving `pending_expires_at`).
+             - Return `{ connectionId: conn.id, sessionId, stateNonce: rawNonce, mode: 'resume_staged', providerProgress: newSession.provider_progress, verifiedPhoneNumber: newSession.normalized_phone_number }`.
+             - **Capacity Impact:** Consumes 0 additional slots (+0). Client skips Meta Embedded Signup; proceeds directly to `POST /complete`.
+- **OCC Contention Boundaries:**
+  - Branch A contends on `organizations.doc(orgId)` via sequence increment.
+  - Branch B contends directly on `whatsapp_connections.doc(conn.id)`. Two concurrent resume requests serialize on the connection document; exactly one wins and becomes the authoritative current session.
+- **Multi-Admin Tenancy (DEC-7D-35):**
+  - An onboarding connection belongs to the Organization (`organization_id`), not the individual user.
+  - Any authenticated `ORG_OWNER` or `ORG_ADMIN` can execute resume on an uncompleted connection.
+  - The new session records the initiating admin's UID as `actor_user_id`. Prior sessions are superseded.
 
-### 8. Canonical 13-Step Credential Staging Saga & Recovery Handshake (DEC-7D-08, DEC-7D-15, DEC-7D-16, DEC-7D-18, DEC-7D-20, DEC-7D-21, DEC-7D-28, DEC-7D-30, DEC-7D-32)
+### 8. Canonical 13-Step Credential Staging Saga, Concurrency Guards & Staged Cleanup (DEC-7D-08, DEC-7D-15, DEC-7D-16, DEC-7D-18, DEC-7D-20, DEC-7D-21, DEC-7D-28, DEC-7D-30 .. DEC-7D-37)
 The onboarding completion endpoint (`POST /organizations/:orgId/whatsapp/onboarding/complete`) executes the following strictly ordered 13-step Credential Staging Saga:
 
 #### Request Contract & Mode Invariants (DEC-7D-32)
@@ -1587,23 +1574,30 @@ The onboarding completion endpoint (`POST /organizations/:orgId/whatsapp/onboard
     - If `provider_progress >= 'phone_registered'`: skips Step 8 (phone already registered).
     - If `provider_progress >= 'waba_subscribed'`: skips Step 9 (app already subscribed).
 
-#### Stage 1: Session Verification & Credential Staging (DEC-7D-20, DEC-7D-28, DEC-7D-32)
-1. **Session Lookup & Verification:** Retrieve `whatsapp_onboarding_sessions.doc(sessionId)`.
+#### Stage 1: Session Verification, Stale Session Guard & Credential Staging (DEC-7D-20, DEC-7D-28, DEC-7D-32, DEC-7D-33)
+1. **Session & Connection Verification & Stale Completion Guard (DEC-7D-33):**
    - **Case 1A — Session Document Not Found:**
+     - Retrieve `whatsapp_onboarding_sessions.doc(sessionId)`.
      - If the session document does not exist in Firestore:
-     - The server cannot safely correlate the request with an authoritative connection or staged secret. Blind mutation of an unverified connection poses an unshielded risk of corrupting concurrent reservations.
-     - The server aborts immediately with **HTTP 400 `ONBOARDING_SESSION_NOT_FOUND`** without mutating any database record.
-     - Any orphaned or stale pending connection is safely reconciled on the next `POST /onboarding/start` or lazily cleaned via the 24-hour TTL sweeper.
+       Abort immediately with **HTTP 400 `ONBOARDING_SESSION_NOT_FOUND`** without mutating any database record (zero blind mutations).
    - **Case 1B — Session Document Found:**
      - Assert `session.organization_id === orgId`. If mismatch, abort with HTTP 404.
-     - If session `status === 'consumed'`: abort with HTTP 409 `ONBOARDING_SESSION_ALREADY_CONSUMED`.
+     - Read connection `whatsapp_connections.doc(session.connection_id)`.
+     - Assert `connection.organization_id === orgId` and `session.connection_id === connection.id`.
+     - **Stale Session Completion Guard (DEC-7D-33):**
+       Assert `connection.current_onboarding_session_id === session.id`!
+       If mismatched, the session has been superseded by a newer session rotation. Abort immediately with **HTTP 409 `ONBOARDING_SESSION_SUPERSEDED`**. Zero Meta side-effects, zero secret access, zero Firestore mutations.
+     - **Replay / Idempotency Check (DEC-7D-37):**
+       If `session.status === 'consumed'` AND `connection.status === 'connected'`:
+       Return HTTP 200 with sanitized `WhatsAppConnectionDto` idempotently.
+       If `session.status === 'consumed'` but connection is not connected: abort with HTTP 409 `ONBOARDING_SESSION_ALREADY_CONSUMED`.
      - If session `status === 'failed'`: abort with HTTP 400 `ONBOARDING_SESSION_FAILED`.
      - **Session Expiry Evaluation:**
-       - If `new Date(session.expires_at) <= now` (session 15m instance TTL expired):
+       - If `new Date(session.expires_at) <= now` (session 15m logical TTL expired):
          - If `session.status === 'active'` (Clean session; no credential staged):
            Invoke `releaseTerminalPendingReservation(orgId, session.id, session.connection_id, 'expired', 'ONBOARDING_SESSION_EXPIRED')` and abort with HTTP 400 `ONBOARDING_SESSION_EXPIRED`. (Connection transitions to `disconnected`, capacity freed immediately).
          - If `session.status === 'credential_staged'` (Staged session; encrypted secret held):
-           Mark session `status = 'expired'`. Do **NOT** delete staged secret; do **NOT** terminally disconnect the connection. Abort with HTTP 400 `ONBOARDING_SESSION_EXPIRED` with recovery directive: client invokes `POST /onboarding/start`, which activates Branch B2 (`resume_staged`) to rotate a fresh recovery session.
+           Mark session `status = 'expired'`. Do **NOT** delete staged secret; do **NOT** terminally disconnect the connection. Abort with HTTP 400 `ONBOARDING_SESSION_EXPIRED` with recovery directive: client invokes `POST /onboarding/start` with `resumeConnectionId`, which activates Branch B2 (`resume_staged`) to rotate a fresh recovery session.
 2. **Constant-Time Nonce Check:** Compute SHA-256 of incoming `stateNonce` and compare against `session.state_nonce_hash` via `crypto.timingSafeEqual`.
    - If invalid: invoke `releaseTerminalPendingReservation(orgId, session.id, session.connection_id, 'failed', 'INVALID_ONBOARDING_STATE')` and abort with HTTP 403 `INVALID_ONBOARDING_STATE`.
 3. **Pre-Provider Entitlement Gate:** Re-evaluate `SubscriptionService.getOrganizationWhatsAppCapacity(orgId)`. Assert capacity access mode is active (`normal` or `grace`).
@@ -1612,8 +1606,11 @@ The onboarding completion endpoint (`POST /organizations/:orgId/whatsapp/onboard
    - **If session is `active`:**
      - Call Meta Graph API `GET /oauth/access_token` to exchange single-use OAuth `code` for customer `business_token`.
      - If OAuth exchange fails: invoke `releaseTerminalPendingReservation(orgId, session.id, session.connection_id, 'failed', 'OAUTH_EXCHANGE_FAILED')` and abort with HTTP 400 `WHATSAPP_OAUTH_EXCHANGE_FAILED`.
-     - If OAuth exchange succeeds: immediately encrypt via `WhatsAppCryptoService.encryptSecret` and persist in `whatsapp_connection_secrets.doc(connectionId)` with `token_type: 'business_token'`.
-     - Atomically update `whatsapp_onboarding_sessions.doc(sessionId)` with `status = 'credential_staged'`, `provider_progress = 'credential_staged'`.
+     - **Atomic Secret & Session Staging (DEC-7D-32):**
+       Encrypt `business_token` via `WhatsAppCryptoService.encryptSecret`.
+       In a single atomic write batch / transaction:
+       - Write encrypted secret to `whatsapp_connection_secrets.doc(connectionId)` (`token_type: 'business_token'`);
+       - Update session `whatsapp_onboarding_sessions.doc(sessionId)` with `status = 'credential_staged'`, `provider_progress = 'credential_staged'`.
    - **If session is `credential_staged`:**
      - Decrypt existing staged token from `whatsapp_connection_secrets.doc(connectionId)`.
      - If secret document is missing: invoke `releaseTerminalPendingReservation(orgId, session.id, session.connection_id, 'failed', 'STAGED_SECRET_LOST')` and abort with HTTP 400 `ONBOARDING_SESSION_EXPIRED`.
@@ -1635,7 +1632,7 @@ The onboarding completion endpoint (`POST /organizations/:orgId/whatsapp/onboard
    - If `session.provider_progress >= 'phone_registered'`: skip Step 8 (already registered).
    - Else if phone requires registration:
      - Require 6-digit PIN from client request body. Call `POST /{phone_number_id}/register` with PIN in-memory. Zero persistence, zero logging.
-     - If provider call fails: retain staged secret in `whatsapp_connection_secrets`, retain session in `credential_staged` (`provider_progress = 'assets_verified'`), retain connection in `pending` (capacity held), and abort with HTTP 502 `PROVIDER_REGISTRATION_FAILED`. Client retries `/complete` within 15m session TTL (or via `/start` Branch B2 if expired), supplying PIN again.
+     - If provider call fails: retain staged secret in `whatsapp_connection_secrets`, retain session in `credential_staged` (`provider_progress = 'assets_verified'`), retain connection in `pending` (capacity held), and abort with HTTP 502 `PROVIDER_REGISTRATION_FAILED`. Client retries `/complete` within 15m session TTL (or via `/start` Branch B2 with `resumeConnectionId` if expired), supplying PIN again.
      - If provider call succeeds: update session with `provider_progress = 'phone_registered'`.
 9. **Messaging Account Webhook Subscription (DEC-7D-20, DEC-7D-32):**
    - If `session.provider_progress >= 'waba_subscribed'`: skip Step 9 (already subscribed).
@@ -1643,12 +1640,15 @@ The onboarding completion endpoint (`POST /organizations/:orgId/whatsapp/onboard
    - If provider call fails: retain staged secret in `whatsapp_connection_secrets`, retain session in `credential_staged` (`provider_progress = 'phone_registered'`), retain connection in `pending` (capacity held), and abort with HTTP 502 `PROVIDER_SUBSCRIPTION_FAILED`. Client retries `/complete` within 15m session TTL (or via `/start` Branch B2).
    - If provider call succeeds: update session with `provider_progress = 'waba_subscribed'`.
 
-#### Stage 3: Atomic Materialization Finalization (DEC-7D-16, DEC-7D-21, DEC-7D-28, DEC-7D-30, DEC-7D-32)
+#### Stage 3: Atomic Materialization Finalization (DEC-7D-16, DEC-7D-21, DEC-7D-28, DEC-7D-30, DEC-7D-32, DEC-7D-33, DEC-7D-37)
 10. **Atomic Materialization Transaction (Inside Firestore Transaction):**
     - 10a. Read `organizations.doc(orgId)` and `ministry_subscriptions.doc(billingAnchorMinistryId)`.
     - 10b. Read connection `whatsapp_connections.doc(connectionId)`. Assert `status in ['pending', 'connecting']` and `organization_id === orgId`.
-    - 10c. Read configured connections for `organization_id` to evaluate transactional capacity.
-    - 10d. Evaluate transactional capacity via `SubscriptionService.evaluateOrganizationWhatsAppCapacity`.
+    - **10c. Concurrency Guard Verification (DEC-7D-33, DEC-7D-37):**
+      Assert `connection.current_onboarding_session_id === session.id`!
+      If mismatched, a concurrent `/start` rotation superseded this session while provider calls were in-flight. Roll back transaction and abort with HTTP 409 `ONBOARDING_SESSION_SUPERSEDED`.
+    - 10d. Read configured connections for `organization_id` to evaluate transactional capacity.
+    - 10e. Evaluate transactional capacity via `SubscriptionService.evaluateOrganizationWhatsAppCapacity`.
       - **Late Subscription Restriction Handling (DEC-7D-30, DEC-7D-32):** If access mode is `suspended` or `activeConfiguredCount > totalAllowedConnections`:
         - Do NOT destructively disconnect or delete staged secret.
         - Roll back Firestore transaction.
@@ -1656,15 +1656,15 @@ The onboarding completion endpoint (`POST /organizations/:orgId/whatsapp/onboard
         - Retain session in `credential_staged`.
         - Update connection to `pending` with `status_reason: 'SUBSCRIPTION_RESTRICTED'`.
         - Abort with HTTP 403 `WHATSAPP_SUBSCRIPTION_SUSPENDED` or `WHATSAPP_CAPACITY_LIMIT_REACHED`.
-        - Recovery: Admin regularizes subscription billing. If within 15m, retries `/complete` directly. If after 15m, invokes `POST /start` (Branch B2) which rotates a fresh recovery session in `credential_staged` mode, allowing immediate completion without re-authorizing in Meta.
-    - 10e. Read claim `whatsapp_provider_identity_claims.doc("claim_meta_" + phoneNumberId)`.
+        - Recovery: Admin regularizes subscription billing. If within 15m, retries `/complete` directly. If after 15m (and within hard 24h deadline), invokes `POST /start` with `resumeConnectionId` (Branch B2) which rotates a recovery session in `credential_staged` mode, allowing immediate completion without re-authorizing in Meta.
+    - 10f. Read claim `whatsapp_provider_identity_claims.doc("claim_meta_" + phoneNumberId)`.
       - **Claim Collision Handling (DEC-7D-21, DEC-7D-28, DEC-7D-31):** If claimed by another connection (`existingClaim.connection_id !== session.connection_id`):
         - Roll back transaction.
         - Purge staged secret via `secretRepo.deleteSecret`.
         - Invoke `releaseTerminalPendingReservation(orgId, session.id, session.connection_id, 'failed', 'PHONE_ALREADY_REGISTERED')`.
         - Abort with HTTP 409 `PROVIDER_PHONE_ALREADY_REGISTERED`. Winning claim remains untouched; connection transitions to `disconnected`; capacity is released immediately.
       - If unclaimed or owned by this connection: set claim document atomically.
-    - 10f. Update connection `whatsapp_connections.doc(connectionId)`:
+    - 10g. Update connection `whatsapp_connections.doc(connectionId)`:
       - `status = 'connected'`
       - `phone_number = normalizedPhoneNumber`
       - `provider_waba_id = wabaId`
@@ -1674,30 +1674,30 @@ The onboarding completion endpoint (`POST /organizations/:orgId/whatsapp/onboard
       - `pending_expires_at = null`
       - `current_onboarding_session_id = null`
       - `updated_at = now`
-    - 10g. Update session `whatsapp_onboarding_sessions.doc(sessionId)` with `status = 'consumed'`, `consumed_at = now`.
-11. **Firestore Transaction Commit:** Guarantee claim acquisition, connection status, and session consumption commit atomically.
+    - 10h. Update session `whatsapp_onboarding_sessions.doc(sessionId)` with `status = 'consumed'`, `consumed_at = now`.
+11. **Firestore Transaction Commit:** Guarantee claim acquisition, connection status, pointer clearing, and session consumption commit atomically.
 12. **Ephemeral Memory Wipe:** Clear plaintext tokens and PIN buffers from memory.
 13. **Audit Log & Return:** Return HTTP 200 with sanitized `WhatsAppConnectionDto`.
 
 #### Credential Staging Failure Lifecycle & Orphan Token Prevention (DEC-7D-20, DEC-7D-28, DEC-7D-31, DEC-7D-32)
 - **Permanent Terminal Pre-Materialization Failures (Zero Stranded Capacity):**
   When asset verification fails because the exchanged token has no authority over `wabaId` (Case 6), or the phone does not belong to the account container (Case 7), or the phone identity is already claimed by another LouvAIO connection (Case 10), or the staged secret document was lost (Case 5):
-  The server marks session `failed`, immediately purges any staged secret from `whatsapp_connection_secrets`, and **TERMINALLY RELEASES** the unmaterialized reservation to `disconnected` (`status_reason` recorded, `pending_expires_at: null`, `assigned_ministry_id: null`).
+  The server marks session `failed`, immediately purges any staged secret from `whatsapp_connection_secrets`, and **TERMINALLY RELEASES** the unmaterialized reservation to `disconnected` (`status_reason` recorded, `pending_expires_at: null`, `assigned_ministry_id: null`, `current_onboarding_session_id: null`).
   Under `DEC-7D-31`, using `status = 'error'` is **strictly prohibited** for unrecoverable pre-materialization states because `'error'` consumes capacity in `CONFIG_CONSUMING_STATUSES` without any administrative recovery path in Phase 7D1.
 - **Transient / Retryable Errors (Safe Credential Retention & Progressive Staging):**
   When failures are transient (e.g. registration PIN provider error in Case 8, or webhook subscription timeout in Case 9):
   The staged secret is **RETAINED** in `whatsapp_connection_secrets`, and session remains in `credential_staged` with its current `provider_progress`. The client retries completion within the 15-minute session TTL without re-exchanging the single-use OAuth code.
 - **Session Expiry on Staged Pending Connections (Branch B2 Resume):**
-  If a customer does not complete retry within the 15-minute session window, the session document marks `status = 'expired'`. However, the staged secret and connection reservation remain preserved within the 24-hour reservation window. The user simply returns to the UI and clicks "Connect WhatsApp" -> `POST /start` executes Branch B2 (`resume_staged`), issuing a fresh session instance and allowing completion without repeating Meta OAuth.
+  If a customer does not complete retry within the 15-minute session window, the session document marks `status = 'expired'`. However, the staged secret and connection reservation remain preserved within the hard 24-hour reservation window. The user clicks "Connect WhatsApp" -> `POST /start` with `resumeConnectionId` executes Branch B2 (`resume_staged`), issuing a fresh session instance and allowing completion without repeating Meta OAuth.
 - **Late Subscription Restriction (Non-Destructive Staged Retention & Regularization Resume):**
-  If subscription downgrades after code exchange and secret staging (Case 11), the staged credential is retained, session remains `credential_staged`, and connection remains `pending` (`status_reason: 'SUBSCRIPTION_RESTRICTED'`). This adheres to LouvAIO's core billing data preservation policy. When billing is regularized, if <=15m the client completes directly; if >15m, `POST /start` rotates a recovery session via Branch B2 and completes immediately.
+  If subscription downgrades after code exchange and secret staging (Case 11), the staged credential is retained, session remains `credential_staged`, and connection remains `pending` (`status_reason: 'SUBSCRIPTION_RESTRICTED'`). When billing is regularized, if <=15m the client completes directly; if >15m (and <=24h), `POST /start` with `resumeConnectionId` rotates a recovery session via Branch B2 and completes immediately.
 
-#### Authoritative Partial Failure Recovery Matrix (DEC-7D-20, DEC-7D-27 .. DEC-7D-32)
-| Scenario ID | Failure Point | Classification | Immediate Server Action | Local Persistence State | Capacity Consumed | Meta Platform State | Client Response & Operational Recovery Path |
+#### Authoritative Partial Failure Recovery Matrix (DEC-7D-20, DEC-7D-27 .. DEC-7D-37)
+| Scenario ID | Failure / Concurrency Point | Classification | Immediate Server Action | Local Persistence State | Capacity Consumed | Meta Platform State | Client Response & Operational Recovery Path |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Case 1A** | Session not found (Step 1) | **SESSION_NOT_FOUND** | Abort immediately before Meta calls; zero blind mutations | No mutation; connection and secret untouched | **0 incremental** (Reservation preserved) | Untouched | `400 ONBOARDING_SESSION_NOT_FOUND` (Safe reconciliation: next `/start` reclaims or rotates session; lazy 24h cleanup if orphaned) |
+| **Case 1A** | Session not found (Step 1) | **SESSION_NOT_FOUND** | Abort immediately before Meta calls; zero blind mutations | No mutation; connection and secret untouched | **0 incremental** (Reservation preserved) | Untouched | `400 ONBOARDING_SESSION_NOT_FOUND` (Safe reconciliation: next `/start` with `resumeConnectionId` rotates session; lazy 24h cleanup if orphaned) |
 | **Case 1B-Clean** | Session expired before code exchange (Step 1) | **TERMINAL_RELEASE** | Abort before Meta calls; release pending reservation | Session `expired`; connection `disconnected` (`ONBOARDING_SESSION_EXPIRED`); `pending_expires_at: null` | **0 (Released)** | Untouched | `400 ONBOARDING_SESSION_EXPIRED` (Clean restart via `POST /onboarding/start`) |
-| **Case 1B-Staged** | Session expired after credential staging (Step 1) | **STAGED_RETENTION_SESSION_ROTATION** | Abort before Meta calls; retain staged secret non-destructively | Secret STAGED in `whatsapp_connection_secrets`; session `expired`; connection `pending` (held within 24h) | **1 (Held for Resume)** | Token active in WABA | `400 ONBOARDING_SESSION_EXPIRED` (Client invokes `POST /onboarding/start`, which activates Branch B2 `resume_staged` to rotate fresh session and complete without re-OAuth) |
+| **Case 1B-Staged** | Session expired after credential staging (Step 1) | **STAGED_RETENTION_SESSION_ROTATION** | Abort before Meta calls; retain staged secret non-destructively | Secret STAGED in `whatsapp_connection_secrets`; session `expired`; connection `pending` (held within 24h) | **1 (Held for Resume)** | Token active in WABA | `400 ONBOARDING_SESSION_EXPIRED` (Client invokes `POST /onboarding/start` with `resumeConnectionId`, which activates Branch B2 `resume_staged` to rotate fresh session and complete without re-OAuth) |
 | **Case 2** | State nonce mismatch / CSRF (Step 2) | **TERMINAL_RELEASE** | Abort before Meta calls; release pending reservation | Session `failed`; connection `disconnected` (`INVALID_ONBOARDING_STATE`); `pending_expires_at: null` | **0 (Released)** | Untouched | `403 INVALID_ONBOARDING_STATE` (Clean restart via `POST /onboarding/start`) |
 | **Case 3** | Pre-provider subscription restricted (Step 3) | **TERMINAL_RELEASE** | Abort before Meta calls; release pending reservation | Session `failed`; connection `disconnected` (`SUBSCRIPTION_RESTRICTED`); `pending_expires_at: null` | **0 (Released)** | Untouched | `403 WHATSAPP_SUBSCRIPTION_SUSPENDED` (Upgrade/regularize plan, then `POST /onboarding/start`) |
 | **Case 4** | OAuth code exchange failure (Step 4) | **TERMINAL_RELEASE** | Abort after Meta call; release pending reservation | Session `failed`; connection `disconnected` (`OAUTH_EXCHANGE_FAILED`); `pending_expires_at: null` | **0 (Released)** | Token unissued | `400 WHATSAPP_OAUTH_EXCHANGE_FAILED` (Clean restart via `POST /onboarding/start`) |
@@ -1708,9 +1708,19 @@ The onboarding completion endpoint (`POST /organizations/:orgId/whatsapp/onboard
 | **Case 9** | Webhook app subscription failure (Step 9) | **RETRYABLE_SAME_RESERVATION** | Abort after Meta call; retain staged secret | Secret STAGED in `whatsapp_connection_secrets`; session is `credential_staged` (`provider_progress: 'phone_registered'`); connection `pending` | **1 (Held for Retry)** | Phone verified; app unsubscribed | `502 PROVIDER_SUBSCRIPTION_FAILED` (Safe retry: next `/complete` uses staged token to retry subscription without re-registering phone) |
 | **Case 10** | Identity claim collision in Tx (Step 10, DEC-7D-21) | **TERMINAL_RELEASE** | Tx rollback; purge staged secret; release reservation | Secret PURGED; claim NOT acquired; session `failed`; connection `disconnected` (`PHONE_ALREADY_REGISTERED`) | **0 (Released)** | WABA subscribed; phone claimed by other conn | `409 PROVIDER_PHONE_ALREADY_REGISTERED` (Clean restart with different line via `POST /onboarding/start`) |
 | **Case 11** | Late subscription restriction in Tx (Step 10, DEC-7D-30) | **RETRYABLE_STAGED_RETENTION** | Tx rollback; retain staged secret non-destructively | Secret STAGED; session `credential_staged`; connection `pending` (`SUBSCRIPTION_RESTRICTED`) | **1 (Held for Regularization)**| Subscribed & registered | `403 WHATSAPP_SUBSCRIPTION_SUSPENDED` (Regularize billing; if <=15m retry `/complete`; if >15m call `/start` Branch B2 `resume_staged` to finish materialization) |
-| **Case 12A** | Browser abandonment before code exchange (Clean) | **MODEL_B_CLEAN_REUSE** | Session expires after 15m; reservation preserved within 24h | Session `expired`; connection `pending` with `current_onboarding_session_id`; zero secrets | **1 (Held for Reuse)** | Popups closed; code unredeemed | User clicks "Connect WhatsApp" -> `POST /onboarding/start` activates Branch B1 (`resume_clean`), rotates fresh session, re-launches Embedded Signup |
-| **Case 12B** | Browser abandonment after credential staging (Staged) | **MODEL_B_STAGED_REUSE** | Session expires after 15m; staged secret & reservation preserved within 24h | Session `expired`; secret STAGED; connection `pending` with `current_onboarding_session_id` | **1 (Held for Reuse)** | Staged token intact in WABA | User clicks "Connect WhatsApp" -> `POST /onboarding/start` activates Branch B2 (`resume_staged`), rotates recovery session, completes without repeating Meta popup |
-| **Case 13** | Client network drop after commit | **SUCCESS** | Commit succeeded; state fully materialized | Connection `connected`; secret saved; claim active; session `consumed` | **1 (Configured)** | Fully configured & subscribed | Success; client rediscovers connection via `GET /connections`. Replay `/complete` yields 409 consumed. |
+| **Case 12A** | Browser abandonment before code exchange (Clean) | **MODEL_B_CLEAN_REUSE** | Session expires after 15m; reservation preserved within hard 24h deadline | Session `expired`; connection `pending` with `current_onboarding_session_id`; zero secrets | **1 (Held for Reuse)** | Popups closed; code unredeemed | User clicks "Connect WhatsApp" -> `POST /onboarding/start` with `resumeConnectionId` activates Branch B1 (`resume_clean`), rotates fresh session, preserves hard deadline, re-launches Embedded Signup |
+| **Case 12B** | Browser abandonment after credential staging (Staged) | **MODEL_B_STAGED_REUSE** | Session expires after 15m; staged secret & reservation preserved within hard 24h deadline | Session `expired`; secret STAGED; connection `pending` with `current_onboarding_session_id` | **1 (Held for Reuse)** | Staged token intact in WABA | User clicks "Connect WhatsApp" -> `POST /onboarding/start` with `resumeConnectionId` activates Branch B2 (`resume_staged`), rotates recovery session, preserves hard deadline, completes without repeating Meta popup |
+| **Case 13** | Client network drop after commit | **SUCCESS** | Commit succeeded; state fully materialized | Connection `connected`; secret saved; claim active; session `consumed` | **1 (Configured)** | Fully configured & subscribed | Success; client rediscovers connection via `GET /connections`. Replay `/complete` yields idempotent HTTP 200 with sanitized DTO. |
+| **Case 14** | Simultaneous `/start` resume calls on same connection | **CONCURRENCY_SERIALIZATION** | Firestore transaction on `whatsapp_connections.doc(connId)` serializes calls | Exactly one rotation commits first; second transaction reads updated `current_onboarding_session_id` and cleanly rotates or succeeds | **1 (Held)** | Untouched | Both clients receive valid nonces for sequential sessions; only the latest session can complete. |
+| **Case 15** | Stale Session A completion after Session B rotation | **STALE_SESSION_GUARD** | Step 1 compares `conn.current_onboarding_session_id === session.id`; detects mismatch | Session A aborts immediately; connection and Session B untouched | **1 (Held)** | Untouched | `409 ONBOARDING_SESSION_SUPERSEDED` (Zero Meta calls; Session B remains authoritative). |
+| **Case 16** | Old session expiry attempting to clear newer pointer | **COMPARE_CURRENT_GUARD** | Evaluates `conn.current_onboarding_session_id === expiringSession.id` | Mismatch detected; pointer clearing skipped; newer session pointer preserved | **1 (Held)** | Untouched | Safe no-op; Session B remains current. |
+| **Case 17** | Repeated resume requests near 24h deadline | **HARD_DEADLINE_ENFORCEMENT** | Session rotation preserves original `pending_expires_at` without extension | When `now >= pending_expires_at`, connection transitions to `disconnected` (`PENDING_EXPIRED`) | **0 (Released upon expiry)** | Cleaned or dormant | `410 CONNECTION_RESERVATION_EXPIRED` (Cannot slide deadline indefinitely; capacity cleanly released). |
+| **Case 18** | Clean reservation hard 24h expiry | **LAZY_CLEANUP_CLEAN** | Connection reaches `pending_expires_at <= now` with zero staged secrets | Status -> `disconnected` (`PENDING_EXPIRED`), pointers cleared | **0 (Released)** | Untouched | Capacity liberated; subsequent `/start` requires new Branch A reservation. |
+| **Case 19** | `credential_staged` hard 24h expiry | **LAZY_CLEANUP_STAGED_CREDENTIAL** | Purges staged secret from `whatsapp_connection_secrets`; sets `disconnected` | Secret PURGED; connection `disconnected` (`PENDING_EXPIRED`); pointers cleared | **0 (Released)** | Token remains dormant | Capacity liberated; zero orphaned secrets. |
+| **Case 20** | `phone_registered` hard 24h expiry | **LAZY_CLEANUP_REGISTERED_PHONE** | Purges staged secret; sets `disconnected`; zero claim deletion needed | Secret PURGED; connection `disconnected` (`PENDING_EXPIRED`); zero claims | **0 (Released)** | Registration dormant; unrouted | Capacity liberated; telephone number remains functional on WhatsApp Business App. |
+| **Case 21** | `waba_subscribed` hard 24h expiry | **LAZY_CLEANUP_SUBSCRIBED_WABA** | Query surviving platform connections sharing `provider_waba_id`. Delete webhook subscription ONLY IF surviving count === 0. Purge secret. | Secret PURGED; webhook cleaned conditionally; connection `disconnected` | **0 (Released)** | App unsubscribed if sole dependent | Zero disruption to sibling lines sharing WABA; capacity liberated. |
+| **Case 22** | `/complete` vs `/start` rotation race | **CROSS_SYSTEM_CONCURRENCY_GUARD** | Pre-check catches most; Step 10 Tx re-verifies `conn.current_onboarding_session_id === session.id` | Tx rolls back; superseded session fails with 409; newer session carries forward progress | **1 (Held)** | Provider operations idempotent | Newer session completes cleanly without duplicate registrations. |
+| **Case 23** | Missing prior progress record with secret present | **FAIL_CLOSED_CORRUPTED_STATE** | Staged resume detects missing/corrupted prior session record | Abort rotation; do NOT infer completed steps from secret | **1 (Held until 24h)** | Untouched | `500 ONBOARDING_RECOVERY_STATE_CORRUPTED` (Fail closed protects against corrupted state). |
 
 ---
 
@@ -1728,7 +1738,7 @@ Capacity lifecycle recovery is strictly governed by an authoritative 3-tier hier
    For all recoverable transient errors, paused flows, and abandoned sessions (e.g. registration PIN provider timeout, webhook subscription failure, late subscription restriction, browser abandonment):
    The staged secret is preserved, and configured capacity is intentionally held while supported operational recovery paths exist:
    - Within 15 minutes: client directly retries `POST /onboarding/complete`.
-   - After 15 minutes: client invokes `POST /onboarding/start`, which detects the held reservation and activates Model B (Branch B1 for Clean Pending, Branch B2 for Staged Pending) to rotate a fresh session and resume with 0 incremental capacity consumed.
+   - After 15 minutes: client invokes `POST /onboarding/start` with `resumeConnectionId`, which detects the held reservation and activates Model B (Branch B1 for Clean Pending, Branch B2 for Staged Pending) to rotate a fresh session and resume with 0 incremental capacity consumed.
 3. **Tier 3 — Eventual 24-Hour Lazy Terminal Cleanup:**
    If a client abandons an onboarding flow indefinitely and never returns to retry or resume, the connection reaches its 24-hour reservation boundary (`conn.pending_expires_at <= now`). On the next organization-scoped operation or background sweep, the connection transitions to `disconnected` and purges any staged secret, serving as the ultimate fail-safe against indefinitely stranded capacity.
 
@@ -1759,47 +1769,98 @@ export function isTerminalPreMaterializationReservation(
    - Transitions associated session to `failed` or `expired`.
 2. **Post-Materialization Safety:** If the connection has crossed the materialization boundary (e.g. `phone_number` is populated, or an identity claim exists in `whatsapp_provider_identity_claims`), lightweight release is **strictly forbidden**. The connection must undergo full Phase 7C atomic disconnect protocol (`transitionConnectionStatus(..., 'disconnected')`), ensuring provider claims and ministry assignments are safely reconciled.
 
-### 8.3 Browser Abandonment & Model B Clean vs Staged Reuse Contract (DEC-7D-29, DEC-7D-32)
+### 8.3 Browser Abandonment & Model B Clean vs Staged Reuse Contract (DEC-7D-29, DEC-7D-34, DEC-7D-35)
 When a user launches onboarding and closes the browser window or popup:
 1. The 15-minute onboarding session expires naturally (`expires_at <= now`).
-2. The pre-materialization pending connection remains within its 24-hour reservation window (`pending_expires_at = now + 24h`).
-3. When the user returns to the UI and clicks "Connect WhatsApp", `POST /onboarding/start` evaluates the existing reservation:
+2. The pre-materialization pending connection remains within its hard 24-hour reservation window (`pending_expires_at = createdAt + 24h`).
+3. When the user returns to the UI and clicks "Connect WhatsApp", the UI passes `resumeConnectionId` to `POST /onboarding/start`:
    - **Case 12A — Clean Pending (No staged secret):**
      - Discovers unmaterialized `pending` connection with no secret in `whatsapp_connection_secrets`.
-     - Executes Branch B1: marks old session `expired`, allocates fresh session instance, refreshes connection `pending_expires_at = now + 24h`.
+     - Executes Branch B1: marks old session `expired`, allocates fresh session instance, **preserves original `pending_expires_at` without extension**.
      - Returns `{ connectionId: conn.id, sessionId, stateNonce, mode: 'resume_clean' }`.
      - Client re-launches Meta Embedded Signup popup.
    - **Case 12B — Staged Pending (Encrypted secret staged):**
      - Discovers unmaterialized `pending` connection with secret in `whatsapp_connection_secrets`.
-     - Executes Branch B2: marks old session `expired`, allocates fresh recovery session copying `provider_progress` and verified IDs, refreshes connection `pending_expires_at = now + 24h`.
+     - Executes Branch B2: marks old session `expired`, allocates fresh recovery session copying `provider_progress` and verified IDs, **preserves original `pending_expires_at` without extension**.
      - Returns `{ connectionId: conn.id, sessionId, stateNonce, mode: 'resume_staged', providerProgress, verifiedPhoneNumber }`.
      - Client skips Embedded Signup and proceeds directly to `POST /complete`.
 4. In both branches, **zero additional capacity slots are consumed**, completely eliminating capacity deadlocks for single-slot organizations (`totalAllowedConnections = 1`).
 
-### 8.4 Late Subscription Restriction Non-Destructive Staged Retention & Billing Regularization Resume (DEC-7D-30, DEC-7D-32)
+### 8.4 Late Subscription Restriction Non-Destructive Staged Retention & Billing Regularization Resume (DEC-7D-30, DEC-7D-32, DEC-7D-34)
 In adherence to LouvAIO's core billing data preservation philosophy:
 - When a subscription downgrade or suspension is detected **after** token exchange and credential staging (Stage 3, Step 10):
   - The server does **not** destructively delete the staged credential or transition the connection to `disconnected`.
   - The staged token remains encrypted in `whatsapp_connection_secrets`.
   - The session remains in `credential_staged`.
-  - The connection remains in `pending` (`status_reason = 'SUBSCRIPTION_RESTRICTED'`).
+  - The connection remains in `pending` (`status_reason: 'SUBSCRIPTION_RESTRICTED'`).
 - **Operational Regularization Handshake:**
   - When the organization regularizes payment:
     - If within the 15-minute session TTL: the user clicks "Retry Connection", and `POST /onboarding/complete` finishes materialization immediately using the staged credential.
-    - If after the 15-minute session TTL: the user clicks "Connect WhatsApp", and `POST /onboarding/start` activates Branch B2 (`mode = 'resume_staged'`). It issues a fresh session instance carrying forward `provider_progress`, allowing immediate Step 10 completion without requiring the customer to repeat Meta Embedded Signup.
+    - If after the 15-minute session TTL (but within the hard 24h deadline): the user clicks "Connect WhatsApp", and `POST /onboarding/start` with `resumeConnectionId` activates Branch B2 (`mode = 'resume_staged'`). It issues a fresh session instance carrying forward `provider_progress`, allowing immediate Step 10 completion without requiring the customer to repeat Meta Embedded Signup.
 
 ### 8.5 Error Status Ban & Capacity Accounting Discipline (DEC-7D-31)
 - Under Phase 7C, `CONFIG_CONSUMING_STATUSES = ['pending', 'connecting', 'connected', 'error', 'disabled_by_user']`.
 - Placing an unmaterialized onboarding connection into `status === 'error'` without an operational recovery route permanently strands configured capacity.
 - Therefore, transitioning to `status === 'error'` during onboarding is **categorically prohibited** for all non-recoverable pre-materialization failure paths. Permanent mismatches (`UNAUTHORIZED_WABA_ACCESS`, `PHONE_NOT_IN_WABA`, `PHONE_ALREADY_REGISTERED`, `STAGED_SECRET_LOST`) must transition to `disconnected`.
 
-### 8.6 Firestore Query & Index Invariant Verification (DEC-7D-32)
-- **Index Declaration:** `FIRESTORE_INDEX_DECLARATION_REQUIRED_FOR_7D1_R4: NO`.
+### 8.6 Single-Current-Session Invariant, Stale Completion Guard & Compare-Current Pointer Clearing (DEC-7D-33)
+- **Single Current Session Invariant:** `connection.current_onboarding_session_id` guarantees that exactly 0 or 1 session instance is valid for completion at any given time.
+- **Stale Completion Guard:**
+  `POST /onboarding/complete` enforces:
+  ```typescript
+  if (conn.current_onboarding_session_id !== session.id) {
+    throw new AppError(409, 'ONBOARDING_SESSION_SUPERSEDED', 'This onboarding session has been superseded by a newer session.');
+  }
+  ```
+  This check executes BEFORE secret decryption, Graph API calls, or claim acquisition.
+- **Compare-Current Pointer Clearing:**
+  When clearing the session pointer on expiry:
+  ```typescript
+  if (conn.current_onboarding_session_id === expiringSession.id) {
+    conn.current_onboarding_session_id = null;
+  }
+  ```
+  An older expired session can **never** clear the pointer to a newer session instance.
+
+### 8.7 Hard Reservation Deadline & Non-Sliding Connection TTL (DEC-7D-34)
+- `pending_expires_at` is initialized strictly once at Branch A allocation as `created_at + 24h`.
+- Rotating a 15-minute session instance in Branch B1 or Branch B2 **MUST NOT** extend `pending_expires_at`.
+- If `now >= pending_expires_at`, the reservation is terminally expired: resume requests are rejected with HTTP 410 `CONNECTION_RESERVATION_EXPIRED`, and the connection transitions to `disconnected` via lazy cleanup.
+
+### 8.8 Deterministic Resume Target via `resumeConnectionId` & Multi-Admin Tenancy (DEC-7D-35)
+- The client explicitly indicates intent via `resumeConnectionId`:
+  - Omitted -> Branch A: Allocate New Reservation.
+  - Present -> Branch B: Resume Existing Reservation.
+- Server validates that the target connection exists, belongs to the route organization (404 fail-closed), is in `pending` status, and has not passed its 24-hour hard deadline.
+- Multi-Admin Resume: Any `ORG_OWNER` or `ORG_ADMIN` can resume an onboarding flow started by another admin. The new session records the caller's UID as `actor_user_id`.
+
+### 8.9 Staged 24-Hour Expiry, Provider-Safe Compensation & Dependent WABA Invariant (DEC-7D-36)
+When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
+1. **Clean Connections (`provider_progress === 'none'`):**
+   Transition connection to `disconnected` (`status_reason: 'PENDING_EXPIRED'`), clear pointers, release capacity.
+2. **Staged Credential Only (`provider_progress === 'credential_staged'`):**
+   Purge encrypted secret from `whatsapp_connection_secrets.doc(conn.id)`. Transition connection to `disconnected` (`PENDING_EXPIRED`), release capacity. Residual Meta token remains dormant.
+3. **Phone Registered (`provider_progress === 'phone_registered'`):**
+   Purge encrypted secret. Transition connection to `disconnected`. Because no LouvAIO claim was acquired in `whatsapp_provider_identity_claims`, zero claims require cleanup. Meta phone registration remains dormant without blocking telephone coexistence.
+4. **WABA Subscribed (`provider_progress === 'waba_subscribed'`):**
+   Execute platform-wide dependent query across `whatsapp_connections` for documents where `provider_waba_id == conn.provider_waba_id` and `status in ['pending', 'connecting', 'connected', 'error', 'disabled_by_user']` excluding `conn.id` (DEC-7D-19).
+   - If surviving count === 0: call `DELETE /{waba_id}/subscribed_apps` to unsubscribe LouvAIO from the Messaging Account.
+   - If surviving count > 0: **SKIP** webhook unsubscription to protect active sibling lines.
+   - Purge encrypted secret from `whatsapp_connection_secrets.doc(conn.id)`.
+   - Transition connection to `disconnected` (`status_reason: 'PENDING_EXPIRED'`).
+   - Capacity is deterministically liberated.
+
+### 8.10 Concurrency Serialization Boundaries & Replay Idempotency (DEC-7D-37)
+- **Start vs Complete Race:** Pre-check and Step 10 transaction re-verification on `conn.current_onboarding_session_id` guarantee that a superseded session cannot commit materialization.
+- **Resume vs Cleanup Race:** Both operations contend on `whatsapp_connections.doc(conn.id)`. The Firestore transaction evaluates `now < pending_expires_at`. If before deadline, resume commits; if after deadline, cleanup commits.
+- **Replay Idempotency:** Replaying `POST /onboarding/complete` for an already-consumed session and connected connection returns HTTP 200 with sanitized `WhatsAppConnectionDto` idempotently without duplicate provider calls or secret re-encryption.
+
+### 8.11 Firestore Query & Index Invariant Verification (DEC-7D-32)
+- **Index Declaration:** `FIRESTORE_INDEX_DECLARATION_REQUIRED_FOR_7D1_R5: NO`.
 - **Query Verification:**
-  - `startOnboarding` queries `whatsapp_connections` where `organization_id == orgId` and `status in ['pending', 'connecting', 'connected', 'error', 'disabled_by_user']`. This query is fully satisfied by the existing compound index `organization_id ASC, status ASC`.
-  - Model B session reconciliation performs direct document lookups via `whatsapp_onboarding_sessions.doc(conn.current_onboarding_session_id).get()`.
-  - Secret presence checks perform direct document lookups via `whatsapp_connection_secrets.doc(conn.id).get()`.
-  - Both lookups are primary-key point lookups, requiring zero new queries and zero new composite index declarations.
+  - `startOnboarding` queries `whatsapp_connections` where `organization_id == orgId` and `status in ['pending', 'connecting', 'connected', 'error', 'disabled_by_user']`. Fully satisfied by existing index `organization_id ASC, status ASC`.
+  - Point lookups on `whatsapp_connections.doc(resumeConnectionId)`, `whatsapp_onboarding_sessions.doc(sessionId)`, and `whatsapp_connection_secrets.doc(connectionId)` use primary keys.
+  - Zero new composite indexes required.
 
 ### 9. Webhook Infrastructure & Signature Verification (DEC-7D-09)
 - **Public Endpoints:**
@@ -1998,7 +2059,14 @@ export interface WhatsAppProvider {
 27. **Token Expiry Webhook Sync:** Meta error code 190 transitions connection `connected → error` (`TOKEN_EXPIRED`).
 28. **Configurable Graph API Version:** Graph calls use configured `META_GRAPH_API_VERSION` (default `v26.0`).
 29. **Credential Staging Permanent Mismatch Immediate Secret Purge (DEC-7D-20, DEC-7D-28, DEC-7D-31):** When asset verification fails with a non-retryable mismatch (unauthorized WABA, phone not in account, or claim conflict), the server immediately purges the staged secret from `whatsapp_connection_secrets`, marks session failed, and transitions connection to `disconnected` (zero orphan tokens, zero stranded capacity).
-30. **Credential Staging 24-Hour Lazy Expiration Purge (DEC-7D-20, DEC-7D-32):** When a session in `credential_staged` lapses beyond its 15-minute TTL, it transitions to `expired` while retaining the staged secret for Model B staged recovery within 24 hours; if the 24-hour connection reservation TTL lapses without completion (`pending_expires_at <= now`), the unmaterialized staged secret is purged by lazy evaluation and the connection is terminally released to `disconnected`.
+30. **Credential Staging 24-Hour Lazy Expiration Purge (DEC-7D-20, DEC-7D-32, DEC-7D-36):** When a session in `credential_staged` lapses beyond its 15-minute TTL, it transitions to `expired` while retaining the staged secret for Model B staged recovery within 24 hours; if the 24-hour connection reservation TTL lapses without completion (`pending_expires_at <= now`), the unmaterialized staged secret is purged by lazy evaluation and the connection is terminally released to `disconnected`.
+31. **Hard Reservation Deadline Non-Extension (DEC-7D-34):** `POST /onboarding/start` with `resumeConnectionId` rotates session but preserves original `pending_expires_at` without sliding extension.
+32. **Stale Session Superseded Block (DEC-7D-33):** `POST /onboarding/complete` on a superseded session (where connection pointer has rotated to a newer session) fails with 409 `ONBOARDING_SESSION_SUPERSEDED` before executing provider calls.
+33. **Deterministic Resume Tenancy Isolation (DEC-7D-35):** `POST /onboarding/start` with `resumeConnectionId` belonging to another organization fails with 404.
+34. **Single-Current-Session Pointer Rotation (DEC-7D-33):** Two concurrent resume requests contend on the connection document; exactly one becomes `current_onboarding_session_id`.
+35. **Staged 24-Hour Expiry Conditional Webhook Unsubscribe (DEC-7D-36):** Unmaterialized connection with `provider_progress === 'waba_subscribed'` at 24h expiration checks platform-wide surviving lines before unsubscribing webhooks.
+36. **Complete Idempotency on Replay (DEC-7D-37):** Replay of `complete` request on an already-consumed session and connected connection returns HTTP 200 with sanitized connection DTO without duplicate provider calls.
+37. **Corrupted Progress Fail-Closed Guard (DEC-7D-32):** Resume on a staged connection where the prior session progress record is missing or corrupted fails closed with 500 without guessing completed steps.
 
 ---
 
