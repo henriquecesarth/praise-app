@@ -400,4 +400,135 @@ export class MetaWhatsAppProvider implements WhatsAppProvider {
       clearTimeout(timeoutId);
     }
   }
+
+  async unsubscribeMessagingAccountApps(
+    accessToken: string,
+    wabaId: string
+  ): Promise<{ success: boolean; errorStatus?: number; errorCode?: number }> {
+    const url = new URL(`https://graph.facebook.com/${this.graphApiVersion}/${wabaId}/subscribed_apps`);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    try {
+      const res = await fetch(url.toString(), {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        signal: controller.signal,
+      });
+
+      if (res.ok) {
+        let body: any = null;
+        try {
+          body = (await res.json()) as any;
+        } catch {
+          // ignore
+        }
+        if (body?.success === true) {
+          return { success: true };
+        }
+      }
+
+      let metaError: any;
+      try {
+        const body = (await res.json()) as any;
+        metaError = body?.error;
+      } catch {
+        // ignore
+      }
+
+      return {
+        success: false,
+        errorStatus: res.status,
+        errorCode: metaError?.code,
+      };
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        throw new AppError(504, 'WHATSAPP_PROVIDER_TIMEOUT: Tempo limite esgotado ao desinscrever webhooks.', {
+          code: 'WHATSAPP_PROVIDER_TIMEOUT',
+        });
+      }
+      throw new AppError(502, `WHATSAPP_PROVIDER_ERROR: ${err.message || 'Falha ao desinscrever webhooks na Meta.'}`, {
+        code: 'WHATSAPP_PROVIDER_ERROR',
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  async checkMessagingAccountSubscribedApps(
+    accessToken: string,
+    wabaId: string
+  ): Promise<import('./whatsapp.types').WhatsAppSubscribedAppsProof> {
+    const targetAppId = this.appId;
+    if (!targetAppId) {
+      throw new AppError(500, 'WHATSAPP_PROVIDER_CONFIG_INVALID_OR_MISSING: Meta App ID não configurado.', {
+        code: 'WHATSAPP_PROVIDER_CONFIG_INVALID_OR_MISSING',
+      });
+    }
+
+    let nextUrl: string | null = `https://graph.facebook.com/${this.graphApiVersion}/${wabaId}/subscribed_apps`;
+    const MAX_PAGES = 3; // Operational defensive bound (DEC-7D-54, DEC-7D-61)
+    let pageCount = 0;
+
+    while (nextUrl && pageCount < MAX_PAGES) {
+      pageCount++;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      try {
+        const res = await fetch(nextUrl, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+          signal: controller.signal,
+        });
+
+        if (!res.ok) {
+          return { isSubscribed: false, proof: 'UNPROVEN', pageCount };
+        }
+
+        const data = (await res.json()) as any;
+        if (!data || !Array.isArray(data.data)) {
+          return { isSubscribed: false, proof: 'UNPROVEN', pageCount };
+        }
+
+        // Nested ID inspection (DEC-7D-54): entry.whatsapp_business_api_data.id === metaAppId
+        for (const entry of data.data) {
+          const entryAppId =
+            entry?.whatsapp_business_api_data?.id ??
+            entry?.id;
+          if (String(entryAppId) === String(targetAppId)) {
+            return { isSubscribed: true, proof: 'STILL_SUBSCRIBED', pageCount };
+          }
+        }
+
+        // Check pagination cursor (anti-SSRF cursor verification, DEC-7D-54)
+        const afterCursor = data.paging?.cursors?.after;
+        if (afterCursor && data.paging?.next) {
+          const parsedNext = new URL(data.paging.next);
+          if (parsedNext.hostname !== 'graph.facebook.com') {
+            return { isSubscribed: false, proof: 'UNPROVEN', pageCount };
+          }
+          nextUrl = parsedNext.toString();
+        } else {
+          nextUrl = null;
+        }
+      } catch {
+        return { isSubscribed: false, proof: 'UNPROVEN', pageCount };
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    }
+
+    if (nextUrl !== null) {
+      // Hit operational page limit before collection exhaustion -> UNPROVEN (DEC-7D-61)
+      return { isSubscribed: false, proof: 'UNPROVEN', pageCount };
+    }
+
+    return { isSubscribed: false, proof: 'PROVEN_CLEAN', pageCount };
+  }
 }

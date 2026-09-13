@@ -137,6 +137,7 @@ export class WhatsAppConnectionRepository {
       status_reason: data.status_reason || null,
       assigned_ministry_id: data.assigned_ministry_id || null,
       created_by_user_id: data.created_by_user_id,
+      current_onboarding_session_id: data.current_onboarding_session_id || null,
       pending_expires_at: pendingExpiresAt,
       last_connected_at: data.last_connected_at || null,
       last_health_check_at: data.last_health_check_at || null,
@@ -286,5 +287,33 @@ export class WhatsAppConnectionRepository {
         tx.delete(secretRef);
       }
     });
+  }
+
+  async findActivePlatformDependencies(
+    providerWabaId: string,
+    excludeConnectionId?: string
+  ): Promise<WhatsAppConnectionRecord[]> {
+    const snap = await this.connectionsCol
+      .where('provider_waba_id', '==', providerWabaId)
+      .where('status', 'in', ['pending', 'connecting', 'connected'])
+      .get();
+
+    const now = new Date();
+    const active: WhatsAppConnectionRecord[] = [];
+
+    for (const doc of snap.docs) {
+      if (excludeConnectionId && doc.id === excludeConnectionId) {
+        continue;
+      }
+      const conn = { id: doc.id, ...doc.data() } as WhatsAppConnectionRecord;
+      if (conn.status === 'pending') {
+        if (conn.pending_expires_at && new Date(conn.pending_expires_at) <= now) {
+          continue; // expired pending does not count as active dependency
+        }
+      }
+      active.push(conn);
+    }
+
+    return active;
   }
 }

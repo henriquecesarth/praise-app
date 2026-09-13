@@ -8,6 +8,9 @@ import { WhatsAppConnectionSecretRepository } from '../../repositories/WhatsAppC
 import { WhatsAppProviderIdentityClaimRepository } from '../../repositories/WhatsAppProviderIdentityClaimRepository';
 import { WhatsAppMinistryAssignmentClaimRepository } from '../../repositories/WhatsAppMinistryAssignmentClaimRepository';
 import { WhatsAppOnboardingSessionRepository } from '../../repositories/WhatsAppOnboardingSessionRepository';
+import { WhatsAppProviderCleanupJobRepository } from '../../repositories/WhatsAppProviderCleanupJobRepository';
+import { WhatsAppWabaLifecycleLockRepository } from '../../repositories/WhatsAppWabaLifecycleLockRepository';
+import { WhatsAppWabaCoordinatorService } from './whatsapp-waba-coordinator.service';
 import { MetaWhatsAppProvider } from './meta-whatsapp.provider';
 import { WhatsAppEncryptionService } from './whatsapp-encryption.service';
 import { OrganizationRepository } from '../../repositories/OrganizationRepository';
@@ -32,6 +35,7 @@ import {
   WhatsAppAuthorizedPhoneNumber,
   WhatsAppOAuthResult,
   WhatsAppProvider,
+  WhatsAppProviderProgress,
   normalizeToE164,
   isProviderIdentityMaterialized,
   getClaimId,
@@ -51,7 +55,10 @@ export class WhatsAppConnectionService {
     private readonly assignmentClaimRepo: WhatsAppMinistryAssignmentClaimRepository = new WhatsAppMinistryAssignmentClaimRepository(),
     private readonly onboardingSessionRepo: WhatsAppOnboardingSessionRepository = new WhatsAppOnboardingSessionRepository(),
     private readonly metaProvider: WhatsAppProvider = new MetaWhatsAppProvider(),
-    private readonly encryptionService: WhatsAppEncryptionService = new WhatsAppEncryptionService()
+    private readonly encryptionService: WhatsAppEncryptionService = new WhatsAppEncryptionService(),
+    private readonly wabaCoordinator: WhatsAppWabaCoordinatorService = new WhatsAppWabaCoordinatorService(),
+    private readonly cleanupJobRepo: WhatsAppProviderCleanupJobRepository = new WhatsAppProviderCleanupJobRepository(),
+    private readonly wabaLockRepo: WhatsAppWabaLifecycleLockRepository = new WhatsAppWabaLifecycleLockRepository()
   ) {}
 
   private mapToDto(conn: WhatsAppConnectionRecord, defaultConnectionId: string | null): WhatsAppConnectionDto {
@@ -669,6 +676,173 @@ export class WhatsAppConnectionService {
     const now = new Date();
     const nowIso = now.toISOString();
 
+    // Branch B: Resume Existing Reservation (DEC-7D-35)
+    if (input.resumeConnectionId) {
+      const resumeConnId = input.resumeConnectionId;
+      return await db.runTransaction(async (tx) => {
+        const connRef = db.collection('whatsapp_connections').doc(resumeConnId);
+        const connDoc = await tx.get(connRef);
+        if (!connDoc.exists) {
+          throw new AppError(404, 'CONNECTION_NOT_FOUND: Conexão não encontrada.', {
+            code: 'CONNECTION_NOT_FOUND',
+          });
+        }
+        const conn = connDoc.data() as WhatsAppConnectionRecord;
+        if (conn.organization_id !== orgId) {
+          throw new AppError(404, 'CONNECTION_NOT_FOUND: Conexão não encontrada nesta organização.', {
+            code: 'CONNECTION_NOT_FOUND',
+          });
+        }
+        if (conn.status === 'connected') {
+          throw new AppError(409, 'CONNECTION_ALREADY_CONNECTED: Conexão já conectada.', {
+            code: 'CONNECTION_ALREADY_CONNECTED',
+          });
+        }
+        if (conn.status === 'disconnected') {
+          throw new AppError(410, 'CONNECTION_RESERVATION_EXPIRED: Reserva de conexão expirada.', {
+            code: 'CONNECTION_RESERVATION_EXPIRED',
+          });
+        }
+        if (conn.pending_expires_at && new Date(conn.pending_expires_at) <= now) {
+          tx.update(connRef, {
+            status: 'disconnected',
+            status_reason: 'PENDING_EXPIRED',
+            pending_expires_at: null,
+            assigned_ministry_id: null,
+            updated_at: nowIso,
+          });
+          throw new AppError(410, 'CONNECTION_RESERVATION_EXPIRED: Prazo de 24 horas da reserva expirado.', {
+            code: 'CONNECTION_RESERVATION_EXPIRED',
+          });
+        }
+
+        const orgRef = db.collection('organizations').doc(orgId);
+        const orgDoc = await tx.get(orgRef);
+        const org = { id: orgDoc.id, ...orgDoc.data() } as OrganizationRecord;
+
+        const subRef = db.collection('ministry_subscriptions').doc(org.billing_anchor_ministry_id);
+        const subDoc = await tx.get(subRef);
+        const sub = subDoc.exists ? ({ id: subDoc.id, ...subDoc.data() } as MinistrySubscriptionRecord) : null;
+
+        const capacity = SubscriptionService.evaluateOrganizationWhatsAppCapacity(org, sub, now);
+
+        const secretRef = db.collection('whatsapp_connection_secrets').doc(conn.id);
+        const secretDoc = await tx.get(secretRef);
+        const hasStagedSecret = secretDoc.exists;
+
+        const sessionId = `wabs_${crypto.randomBytes(12).toString('hex')}`;
+        const rawNonce = crypto.randomBytes(32).toString('hex');
+        const stateNonceHash = crypto.createHash('sha256').update(rawNonce).digest('hex');
+        const sessionExpiresAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
+        const retentionExpiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+        if (!hasStagedSecret) {
+          // Sub-Branch B1: Resume Clean Reservation
+          if (!capacity.enabled || capacity.billingAccessMode !== 'normal') {
+            throw new AppError(403, 'A organização não possui capacidade comercial normal disponível.', {
+              code: 'WHATSAPP_CAPACITY_LIMIT_REACHED',
+            });
+          }
+
+          if (conn.current_onboarding_session_id) {
+            const priorSessionRef = db.collection('whatsapp_onboarding_sessions').doc(conn.current_onboarding_session_id);
+            tx.update(priorSessionRef, {
+              status: 'expired',
+              updated_at: nowIso,
+            });
+          }
+
+          const sessionRecord: WhatsAppOnboardingSessionRecord = {
+            id: sessionId,
+            organization_id: orgId,
+            connection_id: conn.id,
+            actor_user_id: actorUserId,
+            state_nonce_hash: stateNonceHash,
+            status: 'active',
+            provider_progress: 'none',
+            expires_at: sessionExpiresAt,
+            retention_expires_at: retentionExpiresAt,
+            consumed_at: null,
+            created_at: nowIso,
+            updated_at: nowIso,
+          };
+          tx.set(db.collection('whatsapp_onboarding_sessions').doc(sessionId), sessionRecord);
+
+          tx.update(connRef, {
+            current_onboarding_session_id: sessionId,
+            updated_at: nowIso,
+          });
+
+          return {
+            sessionId,
+            connectionId: conn.id,
+            stateNonce: rawNonce,
+            fbAppId,
+            configId,
+            expiresAt: sessionExpiresAt,
+            mode: 'resume_clean' as const,
+            providerProgress: 'none' as const,
+          };
+        } else {
+          // Sub-Branch B2: Resume Staged Reservation
+          if (!capacity.enabled || capacity.billingAccessMode === 'suspended') {
+            throw new AppError(403, 'A assinatura da organização está suspensa.', {
+              code: 'WHATSAPP_SUBSCRIPTION_SUSPENDED',
+            });
+          }
+
+          let priorProgress: WhatsAppProviderProgress = 'credential_staged';
+          if (conn.current_onboarding_session_id) {
+            const priorSessionRef = db.collection('whatsapp_onboarding_sessions').doc(conn.current_onboarding_session_id);
+            const priorSessionDoc = await tx.get(priorSessionRef);
+            if (priorSessionDoc.exists) {
+              const priorData = priorSessionDoc.data() as WhatsAppOnboardingSessionRecord;
+              if (priorData.provider_progress) {
+                priorProgress = priorData.provider_progress;
+              }
+              tx.update(priorSessionRef, {
+                status: 'expired',
+                updated_at: nowIso,
+              });
+            }
+          }
+
+          const sessionRecord: WhatsAppOnboardingSessionRecord = {
+            id: sessionId,
+            organization_id: orgId,
+            connection_id: conn.id,
+            actor_user_id: actorUserId,
+            state_nonce_hash: stateNonceHash,
+            status: 'active',
+            provider_progress: priorProgress,
+            expires_at: sessionExpiresAt,
+            retention_expires_at: retentionExpiresAt,
+            consumed_at: null,
+            created_at: nowIso,
+            updated_at: nowIso,
+          };
+          tx.set(db.collection('whatsapp_onboarding_sessions').doc(sessionId), sessionRecord);
+
+          tx.update(connRef, {
+            current_onboarding_session_id: sessionId,
+            updated_at: nowIso,
+          });
+
+          return {
+            sessionId,
+            connectionId: conn.id,
+            stateNonce: rawNonce,
+            fbAppId,
+            configId,
+            expiresAt: sessionExpiresAt,
+            mode: 'resume_staged' as const,
+            providerProgress: priorProgress,
+          };
+        }
+      });
+    }
+
+    // Branch A: Allocate New Reservation
     const result = await db.runTransaction(async (tx) => {
       // 1. Read organizations.doc(orgId)
       const orgRef = db.collection('organizations').doc(orgId);
@@ -742,6 +916,7 @@ export class WhatsAppConnectionService {
       const stateNonceHash = crypto.createHash('sha256').update(rawNonce).digest('hex');
       const pendingExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
       const sessionExpiresAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
+      const retentionExpiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
       const connectionRecord: WhatsAppConnectionRecord = {
         id: connectionId,
@@ -755,6 +930,7 @@ export class WhatsAppConnectionService {
         status_reason: null,
         assigned_ministry_id: null,
         created_by_user_id: actorUserId,
+        current_onboarding_session_id: sessionId,
         pending_expires_at: pendingExpiresAt,
         last_connected_at: null,
         last_health_check_at: null,
@@ -771,7 +947,9 @@ export class WhatsAppConnectionService {
         actor_user_id: actorUserId,
         state_nonce_hash: stateNonceHash,
         status: 'active',
+        provider_progress: 'none',
         expires_at: sessionExpiresAt,
+        retention_expires_at: retentionExpiresAt,
         consumed_at: null,
         created_at: nowIso,
         updated_at: nowIso,
@@ -785,6 +963,8 @@ export class WhatsAppConnectionService {
         fbAppId,
         configId,
         expiresAt: sessionExpiresAt,
+        mode: 'start' as const,
+        providerProgress: 'none' as const,
       };
     });
 
@@ -838,7 +1018,10 @@ export class WhatsAppConnectionService {
       throw new AppError(403, 'Apenas administradores da organização podem completar o onboarding.');
     }
 
-    // Step 1: Session Lookup & Verification
+    const now = new Date();
+    const nowIso = now.toISOString();
+
+    // Step 1: Session Lookup & Verification (DEC-7D-33, DEC-7D-45)
     const session = await this.onboardingSessionRepo.getSessionById(input.sessionId);
     if (!session || session.organization_id !== orgId) {
       throw new AppError(400, 'Sessão de onboarding não encontrada ou expirada.', {
@@ -846,27 +1029,54 @@ export class WhatsAppConnectionService {
       });
     }
 
+    // 30-Day Bounded Logical Retention Boundary (DEC-7D-45)
+    if (session.retention_expires_at && new Date(session.retention_expires_at) <= now) {
+      throw new AppError(400, 'Sessão de onboarding com retenção expirada.', {
+        code: 'ONBOARDING_SESSION_EXPIRED',
+      });
+    }
+
+    const conn = await this.connectionRepo.getConnectionById(session.connection_id);
+    if (!conn || conn.organization_id !== orgId) {
+      throw new AppError(404, 'Conexão não encontrada nesta organização.');
+    }
+
+    // Replay / Idempotency Check (DEC-7D-37)
     if (session.status === 'consumed') {
+      if (conn.status === 'connected') {
+        const org = await this.orgRepo.getOrganizationById(orgId);
+        return this.mapToDto(conn, org?.default_whatsapp_connection_id ?? null);
+      }
       throw new AppError(409, 'Sessão de onboarding já consumida.', {
         code: 'ONBOARDING_SESSION_ALREADY_CONSUMED',
       });
     }
 
-    if (session.status !== 'active' && session.status !== 'credential_staged') {
-      throw new AppError(400, 'Sessão de onboarding inválida ou expirada.', {
-        code: 'ONBOARDING_SESSION_EXPIRED',
+    // Stale Session Completion Guard (DEC-7D-33)
+    if (conn.current_onboarding_session_id && conn.current_onboarding_session_id !== session.id) {
+      throw new AppError(409, 'ONBOARDING_SESSION_SUPERSEDED: Sessão de onboarding foi substituída por uma nova sessão.', {
+        code: 'ONBOARDING_SESSION_SUPERSEDED',
       });
     }
 
-    const now = new Date();
+    if (session.status === 'failed') {
+      throw new AppError(400, 'ONBOARDING_SESSION_FAILED: Sessão de onboarding em estado de falha.', {
+        code: 'ONBOARDING_SESSION_FAILED',
+      });
+    }
+
     if (new Date(session.expires_at) <= now) {
-      await this.releaseTerminalPendingReservation(
-        orgId,
-        session.id,
-        session.connection_id,
-        'expired',
-        'ONBOARDING_SESSION_EXPIRED'
-      );
+      if (session.provider_progress && session.provider_progress !== 'none') {
+        await this.onboardingSessionRepo.updateSession(session.id, { status: 'expired' });
+      } else {
+        await this.releaseTerminalPendingReservation(
+          orgId,
+          session.id,
+          session.connection_id,
+          'expired',
+          'ONBOARDING_SESSION_EXPIRED'
+        );
+      }
       throw new AppError(400, 'Sessão de onboarding expirada.', {
         code: 'ONBOARDING_SESSION_EXPIRED',
       });
@@ -907,9 +1117,9 @@ export class WhatsAppConnectionService {
       });
     }
 
-    // Step 4: Credential Staging / Reuse (DEC-7D-20)
+    // Step 4: Credential Staging / Reuse (DEC-7D-20, DEC-7D-32)
     let accessToken: string;
-    if (session.status === 'active') {
+    if (!session.provider_progress || session.provider_progress === 'none') {
       let oauthResult: WhatsAppOAuthResult;
       try {
         oauthResult = await this.metaProvider.exchangeOAuthCode(input.code);
@@ -939,12 +1149,15 @@ export class WhatsAppConnectionService {
         key_version: encrypted.keyVersion,
         token_type: 'business_token',
         expires_at: oauthResult.expiresAt,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        created_at: nowIso,
+        updated_at: nowIso,
       };
       await this.secretRepo.setSecret(secretRecord);
 
-      await this.onboardingSessionRepo.updateSession(session.id, { status: 'credential_staged' });
+      await this.onboardingSessionRepo.updateSession(session.id, {
+        status: 'credential_staged',
+        provider_progress: 'credential_staged',
+      });
     } else {
       const existingSecret = await this.secretRepo.getSecret(orgId, session.connection_id);
       if (!existingSecret) {
@@ -956,7 +1169,7 @@ export class WhatsAppConnectionService {
       accessToken = this.encryptionService.decryptToken(existingSecret, orgId, session.connection_id);
     }
 
-    // Step 5: Server-Side Messaging Account Authority Check (DEC-7D-18)
+    // Step 5: Server-Side Messaging Account Authority Check (DEC-7D-18, DEC-7D-31)
     let isWabaAuthorized = false;
     try {
       isWabaAuthorized = await this.metaProvider.verifyMessagingAccountAccess(accessToken, input.wabaId);
@@ -965,7 +1178,7 @@ export class WhatsAppConnectionService {
     }
 
     if (!isWabaAuthorized) {
-      await this.secretRepo.deleteSecret(orgId, session.connection_id);
+      await this.secretRepo.deleteSecret(orgId, session.connection_id, { wabaId: input.wabaId });
       await this.connectionRepo.updateConnection(orgId, session.connection_id, {
         status: 'error',
         status_reason: 'UNAUTHORIZED_WABA_ACCESS',
@@ -976,12 +1189,12 @@ export class WhatsAppConnectionService {
       });
     }
 
-    // Step 6: Edge Operational Authorization Verification (DEC-7D-18)
+    // Step 6: Edge Operational Authorization Verification (DEC-7D-18, DEC-7D-31)
     let phoneNumbers: WhatsAppAuthorizedPhoneNumber[] = [];
     try {
       phoneNumbers = await this.metaProvider.listAuthorizedPhoneNumbers(accessToken, input.wabaId);
     } catch {
-      await this.secretRepo.deleteSecret(orgId, session.connection_id);
+      await this.secretRepo.deleteSecret(orgId, session.connection_id, { wabaId: input.wabaId });
       await this.connectionRepo.updateConnection(orgId, session.connection_id, {
         status: 'error',
         status_reason: 'PHONE_NOT_IN_WABA',
@@ -994,7 +1207,7 @@ export class WhatsAppConnectionService {
 
     const matchingPhone = phoneNumbers.find((p) => p.id === input.phoneNumberId);
     if (!matchingPhone) {
-      await this.secretRepo.deleteSecret(orgId, session.connection_id);
+      await this.secretRepo.deleteSecret(orgId, session.connection_id, { wabaId: input.wabaId });
       await this.connectionRepo.updateConnection(orgId, session.connection_id, {
         status: 'error',
         status_reason: 'PHONE_NOT_IN_WABA',
@@ -1004,6 +1217,10 @@ export class WhatsAppConnectionService {
         code: 'PHONE_NOT_IN_WABA',
       });
     }
+
+    await this.onboardingSessionRepo.updateSession(session.id, {
+      provider_progress: 'assets_verified',
+    });
 
     // Step 7: Phone Normalization
     let displayPhone = matchingPhone.displayPhoneNumber;
@@ -1017,6 +1234,9 @@ export class WhatsAppConnectionService {
     if (input.pin) {
       try {
         await this.metaProvider.registerPhoneNumber(accessToken, input.phoneNumberId, input.pin);
+        await this.onboardingSessionRepo.updateSession(session.id, {
+          provider_progress: 'phone_registered',
+        });
       } catch (err: any) {
         throw new AppError(
           502,
@@ -1029,10 +1249,25 @@ export class WhatsAppConnectionService {
       }
     }
 
-    // Step 9: Messaging Account Webhook Subscription
+    // Step 9: Messaging Account Webhook Subscription (DEC-7D-56, DEC-7D-60, DEC-7D-65)
+    let acquiredWabaLock: { leaseToken: string; generation: number } | null = null;
     try {
-      await this.metaProvider.subscribeMessagingAccountApps(accessToken, input.wabaId);
+      const coordResult = await this.wabaCoordinator.coordinateOnboardingSubscription(
+        input.wabaId,
+        session.id,
+        conn.id,
+        async () => {
+          await this.metaProvider.subscribeMessagingAccountApps(accessToken, input.wabaId);
+        }
+      );
+      acquiredWabaLock = {
+        leaseToken: coordResult.leaseToken,
+        generation: coordResult.generation,
+      };
     } catch (err: any) {
+      if (err instanceof AppError && err.statusCode === 409) {
+        throw err;
+      }
       throw new AppError(
         502,
         `Falha na assinatura de webhooks da conta no provedor: ${err.message || 'Erro no provedor'}`,
@@ -1043,9 +1278,8 @@ export class WhatsAppConnectionService {
       );
     }
 
-    // Step 10: Atomic Materialization Transaction (Inside Firestore Transaction) (DEC-7D-21)
+    // Step 10: Atomic Materialization Transaction (DEC-7D-21, DEC-7D-30, DEC-7D-60)
     const claimId = getClaimId('meta_cloud_api', input.phoneNumberId);
-    const nowIso = new Date().toISOString();
 
     try {
       await db.runTransaction(async (tx) => {
@@ -1068,28 +1302,50 @@ export class WhatsAppConnectionService {
         if (!connDoc.exists) {
           throw new AppError(404, 'Conexão não encontrada.');
         }
-        const conn = connDoc.data() as WhatsAppConnectionRecord;
-        if (conn.organization_id !== orgId) {
+        const currentConn = connDoc.data() as WhatsAppConnectionRecord;
+        if (currentConn.organization_id !== orgId) {
           throw new AppError(404, 'Conexão não encontrada nesta organização.');
         }
-        if (conn.status !== 'pending' && conn.status !== 'connecting') {
-          throw new AppError(400, `Conexão em estado inválido para materialização: ${conn.status}`);
+        if (currentConn.status !== 'pending' && currentConn.status !== 'connecting') {
+          throw new AppError(400, `Conexão em estado inválido para materialização: ${currentConn.status}`);
         }
 
-        // 10d. Read claim doc
+        // Concurrency Guard (DEC-7D-33): Pointer must match
+        if (currentConn.current_onboarding_session_id && currentConn.current_onboarding_session_id !== session.id) {
+          throw new AppError(409, 'ONBOARDING_SESSION_SUPERSEDED: Sessão de onboarding substituída durante materialização.', {
+            code: 'ONBOARDING_SESSION_SUPERSEDED',
+          });
+        }
+
+        // 10d. Verify WABA Lock Lease (DEC-7D-60)
+        const wabaLockRef = db.collection('whatsapp_waba_lifecycle_locks').doc(`lock_meta_${input.wabaId}`);
+        const wabaLockDoc = await tx.get(wabaLockRef);
+        if (wabaLockDoc.exists && acquiredWabaLock) {
+          const lockData = wabaLockDoc.data() as any;
+          if (
+            lockData.lease_token !== acquiredWabaLock.leaseToken ||
+            lockData.operation_generation !== acquiredWabaLock.generation
+          ) {
+            throw new AppError(409, 'WABA_LIFECYCLE_LEASE_LOST: O lease do ciclo de vida WABA foi perdido.', {
+              code: 'WABA_LIFECYCLE_LEASE_LOST',
+            });
+          }
+        }
+
+        // 10e. Read claim doc
         const claimRef = db.collection('whatsapp_provider_identity_claims').doc(claimId);
         const claimDoc = await tx.get(claimRef);
 
-        // 10e. Read configured connections for orgId (bounded by CONFIG_CONSUMING_STATUSES)
+        // 10f. Read configured connections for orgId
         const connectionsQuery = db
           .collection('whatsapp_connections')
           .where('organization_id', '==', orgId)
           .where('status', 'in', ['pending', 'connecting', 'connected', 'error', 'disabled_by_user']);
         const connectionsSnapshot = await tx.get(connectionsQuery);
 
-        // All reads complete. Evaluate transactional commercial capacity & access mode
-        const capacity = SubscriptionService.evaluateOrganizationWhatsAppCapacity(org, sub, new Date());
-        if (!capacity.enabled || capacity.billingAccessMode === 'suspended') {
+        // Capacity & Subscription Access Mode Check (DEC-7D-30)
+        const currentCapacity = SubscriptionService.evaluateOrganizationWhatsAppCapacity(org, sub, new Date());
+        if (!currentCapacity.enabled || currentCapacity.billingAccessMode === 'suspended') {
           throw new AppError(403, 'A assinatura da organização está suspensa ou sem capacidade WhatsApp.', {
             code: 'WHATSAPP_SUBSCRIPTION_SUSPENDED',
           });
@@ -1107,7 +1363,7 @@ export class WhatsAppConnectionService {
           activeConfiguredCount++;
         }
 
-        if (activeConfiguredCount > capacity.totalAllowedConnections) {
+        if (activeConfiguredCount > currentCapacity.totalAllowedConnections) {
           throw new AppError(
             403,
             'Limite de capacidade comercial de conexões WhatsApp atingido para a organização.',
@@ -1115,6 +1371,7 @@ export class WhatsAppConnectionService {
           );
         }
 
+        // Check Claim Collision (DEC-7D-21)
         if (claimDoc.exists) {
           const existingClaim = claimDoc.data();
           if (existingClaim?.connection_id !== session.connection_id) {
@@ -1134,7 +1391,7 @@ export class WhatsAppConnectionService {
           });
         }
 
-        // 10f. Update connection
+        // 10g. Update connection to connected
         tx.update(connRef, {
           status: 'connected',
           phone_number: normalizedPhoneNumber,
@@ -1143,20 +1400,38 @@ export class WhatsAppConnectionService {
           last_connected_at: nowIso,
           status_reason: null,
           pending_expires_at: null,
+          current_onboarding_session_id: null,
           updated_at: nowIso,
         });
 
-        // 10g. Update session to consumed
+        // 10h. Update session to consumed
         const sessionRef = db.collection('whatsapp_onboarding_sessions').doc(session.id);
+        const retentionExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
         tx.update(sessionRef, {
           status: 'consumed',
           consumed_at: nowIso,
+          provider_progress: 'waba_subscribed',
+          retention_expires_at: retentionExpiresAt,
           updated_at: nowIso,
         });
+
+        // 10i. Release WABA Lifecycle Lock
+        if (wabaLockDoc.exists && acquiredWabaLock) {
+          tx.update(wabaLockRef, {
+            operation_status: 'idle',
+            provider_observed_state: 'subscribed',
+            provider_observed_at: nowIso,
+            provider_observed_generation: acquiredWabaLock.generation,
+            lease_token: null,
+            lease_expires_at: null,
+            last_settled_at: nowIso,
+            updated_at: nowIso,
+          });
+        }
       });
     } catch (err: any) {
       if (err?.code === 'PROVIDER_PHONE_ALREADY_REGISTERED' || (err instanceof AppError && err.statusCode === 409)) {
-        await this.secretRepo.deleteSecret(orgId, session.connection_id);
+        await this.secretRepo.deleteSecret(orgId, session.connection_id, { wabaId: input.wabaId });
         await this.connectionRepo.updateConnection(orgId, session.connection_id, {
           status: 'error',
           status_reason: 'PHONE_ALREADY_REGISTERED',
@@ -1165,11 +1440,12 @@ export class WhatsAppConnectionService {
         throw err;
       }
       if (
+        err?.code === 'SUBSCRIPTION_RESTRICTED' ||
         err?.code === 'WHATSAPP_CAPACITY_LIMIT_REACHED' ||
         err?.code === 'WHATSAPP_SUBSCRIPTION_SUSPENDED' ||
         (err instanceof AppError && err.statusCode === 403)
       ) {
-        await this.secretRepo.deleteSecret(orgId, session.connection_id);
+        await this.secretRepo.deleteSecret(orgId, session.connection_id, { wabaId: input.wabaId });
         await this.connectionRepo.updateConnection(orgId, session.connection_id, {
           status: 'error',
           status_reason: 'SUBSCRIPTION_RESTRICTED',
@@ -1187,5 +1463,119 @@ export class WhatsAppConnectionService {
     }
 
     return this.mapToDto(updatedConn, org?.default_whatsapp_connection_id ?? null);
+  }
+
+  async disconnectConnection(
+    orgId: string,
+    connectionId: string,
+    actorUserId: string
+  ): Promise<void> {
+    const member = await this.orgRepo.getOrganizationMember(orgId, actorUserId);
+    if (!member) {
+      throw new AppError(404, 'Organização não encontrada.');
+    }
+    if (member.role !== 'admin' && member.role !== 'owner') {
+      throw new AppError(403, 'Apenas administradores da organização podem desconectar conexões.');
+    }
+
+    const conn = await this.connectionRepo.getConnectionById(connectionId);
+    if (!conn || conn.organization_id !== orgId) {
+      throw new AppError(404, 'Conexão não encontrada nesta organização.');
+    }
+
+    if (conn.status === 'disconnected') {
+      return; // Idempotent no-op
+    }
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+
+    let shouldEnqueueCleanupJob = false;
+    let wabaClaimGen = 0;
+
+    if (conn.provider_waba_id) {
+      const activeDeps = await this.connectionRepo.findActivePlatformDependencies(
+        conn.provider_waba_id,
+        conn.id
+      );
+
+      if (activeDeps.length === 0) {
+        shouldEnqueueCleanupJob = true;
+        const lock = await this.wabaLockRepo.getLock(conn.provider_waba_id);
+        wabaClaimGen = lock?.operation_generation ?? 0;
+      }
+    }
+
+    // Execute atomic local disconnect transaction
+    await db.runTransaction(async (tx) => {
+      const connRef = db.collection('whatsapp_connections').doc(connectionId);
+      const orgRef = db.collection('organizations').doc(orgId);
+      const orgDoc = await tx.get(orgRef);
+
+      if (orgDoc.exists) {
+        const orgData = orgDoc.data() as OrganizationRecord;
+        if (orgData.default_whatsapp_connection_id === connectionId) {
+          tx.update(orgRef, {
+            default_whatsapp_connection_id: null,
+            updated_at: nowIso,
+          });
+        }
+      }
+
+      if (conn.assigned_ministry_id) {
+        const assignmentClaimId = getMinistryAssignmentClaimId(orgId, conn.assigned_ministry_id);
+        tx.delete(db.collection('whatsapp_ministry_assignment_claims').doc(assignmentClaimId));
+      }
+
+      if (conn.provider_phone_number_id) {
+        const claimId = getClaimId(conn.provider, conn.provider_phone_number_id);
+        tx.delete(db.collection('whatsapp_provider_identity_claims').doc(claimId));
+      }
+
+      tx.update(connRef, {
+        status: 'disconnected',
+        status_reason: 'USER_DISCONNECTED',
+        assigned_ministry_id: null,
+        pending_expires_at: null,
+        current_onboarding_session_id: null,
+        updated_at: nowIso,
+      });
+
+      if (!shouldEnqueueCleanupJob) {
+        const secretRef = db.collection('whatsapp_connection_secrets').doc(connectionId);
+        tx.delete(secretRef);
+      }
+    });
+
+    // If zero surviving dependencies, enqueue durable cleanup job
+    if (shouldEnqueueCleanupJob && conn.provider_waba_id) {
+      await this.cleanupJobRepo.createJob({
+        id: `cleanup_conn_${conn.id}`,
+        organization_id: orgId,
+        connection_id: conn.id,
+        provider: 'meta_cloud_api',
+        provider_waba_id: conn.provider_waba_id,
+        provider_phone_number_id: conn.provider_phone_number_id,
+        waba_claim_generation: wabaClaimGen,
+        status: 'pending',
+        attempt_count: 0,
+        max_attempts: 5,
+        next_attempt_at: nowIso,
+        lease_token: null,
+        lease_expires_at: null,
+        last_attempt_started_at: null,
+        last_error_code: null,
+        last_error_at: null,
+        provider_cleanup_proof: null,
+        override_reason: null,
+        manual_action_by: null,
+        manual_action_at: null,
+        manual_action_reason: null,
+        created_at: nowIso,
+        updated_at: nowIso,
+        completed_at: null,
+        retention_expires_at: null,
+      });
+    }
   }
 }

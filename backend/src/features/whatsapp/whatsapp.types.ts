@@ -22,6 +22,7 @@ export interface WhatsAppConnectionRecord {
   status_reason: string | null; // Sanitized internal status reason code
   assigned_ministry_id: string | null; // Foreign key to ministries; null if unassigned or disconnected
   created_by_user_id: string; // Firebase Auth UID of creating Org Admin
+  current_onboarding_session_id?: string | null; // Pointer to active onboarding session (DEC-7D-33)
   pending_expires_at: string | null; // ISO 8601 UTC; 24h TTL for 'pending'; null otherwise
   last_connected_at: string | null; // ISO 8601 UTC timestamp of last active connection
   last_health_check_at: string | null; // ISO 8601 UTC timestamp of last health evaluation
@@ -243,6 +244,7 @@ export interface CreateWhatsAppConnectionData {
   provider_waba_id?: string | null;
   provider_phone_number_id?: string | null;
   assigned_ministry_id?: string | null;
+  current_onboarding_session_id?: string | null;
   pending_expires_at?: string | null;
   last_connected_at?: string | null;
   last_health_check_at?: string | null;
@@ -255,6 +257,13 @@ export type WhatsAppOnboardingSessionStatus =
   | 'expired'
   | 'failed';
 
+export type WhatsAppProviderProgress =
+  | 'none'
+  | 'credential_staged'
+  | 'assets_verified'
+  | 'phone_registered'
+  | 'waba_subscribed';
+
 export interface WhatsAppOnboardingSessionRecord {
   id: string; // "wabs_" + random hex
   organization_id: string;
@@ -262,7 +271,9 @@ export interface WhatsAppOnboardingSessionRecord {
   actor_user_id: string;
   state_nonce_hash: string; // SHA-256 hex
   status: WhatsAppOnboardingSessionStatus;
-  expires_at: string; // ISO 8601 UTC
+  provider_progress?: WhatsAppProviderProgress; // DEC-7D-38
+  expires_at: string; // ISO 8601 UTC (15m logical boundary)
+  retention_expires_at?: string; // ISO 8601 UTC (30d bounded physical retention, DEC-7D-32, DEC-7D-45)
   consumed_at: string | null;
   created_at: string; // ISO 8601 UTC
   updated_at: string; // ISO 8601 UTC
@@ -270,6 +281,7 @@ export interface WhatsAppOnboardingSessionRecord {
 
 export const startWhatsAppOnboardingSchema = z.object({
   displayName: z.string().trim().min(1).max(100).optional(),
+  resumeConnectionId: z.string().trim().min(1).max(100).optional(), // Model B resume (DEC-7D-34)
 });
 
 export type StartWhatsAppOnboardingInput = z.infer<typeof startWhatsAppOnboardingSchema>;
@@ -281,6 +293,8 @@ export interface StartWhatsAppOnboardingResponseDto {
   fbAppId: string;
   configId: string;
   expiresAt: string;
+  mode?: 'start' | 'resume_clean' | 'resume_staged';
+  providerProgress?: WhatsAppProviderProgress;
 }
 
 export const completeWhatsAppOnboardingSchema = z.object({
@@ -336,6 +350,13 @@ export interface WhatsAppAuthorizedPhoneNumber {
   verifiedName?: string;
 }
 
+export interface WhatsAppSubscribedAppsProof {
+  isSubscribed: boolean;
+  proof: 'PROVEN_CLEAN' | 'STILL_SUBSCRIBED' | 'UNPROVEN';
+  status?: 'PROVEN_SUBSCRIBED' | 'PROVEN_UNSUBSCRIBED' | 'UNPROVEN';
+  pageCount?: number;
+}
+
 export interface WhatsAppProvider {
   exchangeOAuthCode(code: string): Promise<WhatsAppOAuthResult>;
   verifyMessagingAccountAccess(accessToken: string, wabaId: string): Promise<boolean>;
@@ -343,4 +364,91 @@ export interface WhatsAppProvider {
   getPhoneNumberDetails(accessToken: string, phoneNumberId: string): Promise<WhatsAppPhoneNumberDetails>;
   registerPhoneNumber(accessToken: string, phoneNumberId: string, pin: string): Promise<void>;
   subscribeMessagingAccountApps(accessToken: string, wabaId: string): Promise<void>;
+  unsubscribeMessagingAccountApps(
+    accessToken: string,
+    wabaId: string
+  ): Promise<{ success: boolean; errorStatus?: number; errorCode?: number }>;
+  checkMessagingAccountSubscribedApps(
+    accessToken: string,
+    wabaId: string
+  ): Promise<WhatsAppSubscribedAppsProof>;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7D1 R15 Distributed Coordination & Lifecycle Schemas
+// ---------------------------------------------------------------------------
+
+export interface WhatsAppUnresolvedRemoteMutation {
+  operation_generation: number;
+  operation: 'subscribe' | 'unsubscribe';
+  dispatched_at: string; // ISO 8601 UTC
+  status: 'unknown_outcome' | 'settled';
+  connection_id: string;
+  audit_note?: string;
+}
+
+export interface WhatsAppWabaLifecycleLockRecord {
+  id: string; // "lock_meta_${providerWabaId}"
+  provider: 'meta';
+  provider_waba_id: string;
+  operation_generation: number;
+  desired_subscription_state: 'subscribed' | 'unsubscribed';
+  operation_status: 'idle' | 'in_flight' | 'unknown_outcome';
+  current_holder_id: string | null;
+  lease_token: string | null;
+  lease_expires_at: string | null; // ISO 8601 UTC (120s concurrency lease)
+  provider_observed_state: 'subscribed' | 'unsubscribed' | 'unknown';
+  provider_observed_at: string | null;
+  provider_observed_generation: number | null;
+  unresolved_remote_mutations: WhatsAppUnresolvedRemoteMutation[]; // Bounded FIFO ledger (max 20 entries, DEC-7D-65)
+  last_settled_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WhatsAppWabaReconciliationJobRecord {
+  id: string; // "recon_meta_${providerWabaId}"
+  provider: 'meta';
+  provider_waba_id: string;
+  desired_state: 'subscribed' | 'unsubscribed';
+  status: 'pending' | 'processing' | 'idle' | 'exhausted' | 'cancelled';
+  attempt_count: number;
+  next_attempt_at: string; // ISO 8601 UTC
+  lease_token: string | null;
+  lease_expires_at: string | null;
+  last_error_code: string | null;
+  last_error_message: string | null;
+  consecutive_stable_observations: number;
+  last_observed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WhatsAppProviderCleanupJobRecord {
+  id: string; // "cleanup_conn_${connectionId}"
+  connection_id: string;
+  organization_id: string;
+  provider: 'meta_cloud_api' | 'meta';
+  provider_waba_id: string;
+  provider_phone_number_id: string | null;
+  status: 'pending' | 'processing' | 'retry_wait' | 'succeeded' | 'exhausted' | 'cancelled' | 'abandoned';
+  attempt_count: number;
+  max_attempts: number; // default 5 (DEC-7D-41, DEC-7D-50)
+  next_attempt_at: string; // ISO 8601 UTC
+  lease_token: string | null;
+  lease_expires_at: string | null; // 5-minute lease (DEC-7D-42)
+  last_attempt_started_at: string | null;
+  last_error_code: string | null;
+  last_error_message?: string | null;
+  last_error_at?: string | null;
+  provider_cleanup_proof: 'proven' | 'unproven' | 'not_needed' | 'overridden' | null;
+  waba_claim_generation?: number;
+  override_reason?: string | null;
+  manual_action_by: string | null; // e.g. "internal_operator"
+  manual_action_at: string | null;
+  manual_action_reason: string | null;
+  retention_expires_at: string | null; // ISO 8601 UTC (30d after success/cancel/abandon; null on exhausted)
+  completed_at?: string | null;
+  created_at: string;
+  updated_at: string;
 }

@@ -34,7 +34,9 @@ const configSchema = z.object({
   metaAppId: z.string().optional(),
   metaAppSecret: z.string().optional(),
   metaConfigId: z.string().optional(),
-  metaGraphApiVersion: z.string().default('v26.0'),
+  metaGraphApiVersion: z.string().regex(/^v[0-9]+(\.[0-9]+)?$/).default('v26.0'),
+  cronSecret: z.string().optional(),
+  internalOperatorSecret: z.string().optional(),
   asaas: z.object({
     apiUrl: z.string().default('https://sandbox.asaas.com/api/v3'),
     apiKey: z.string().optional(),
@@ -75,6 +77,8 @@ const rawConfig = {
   metaAppSecret: process.env.META_APP_SECRET,
   metaConfigId: process.env.META_CONFIG_ID,
   metaGraphApiVersion: process.env.META_GRAPH_API_VERSION || 'v26.0',
+  cronSecret: process.env.CRON_SECRET,
+  internalOperatorSecret: process.env.INTERNAL_OPERATOR_SECRET,
   asaas: {
     apiUrl: process.env.ASAAS_API_URL || (process.env.ASAAS_ENVIRONMENT === 'production' ? 'https://api.asaas.com/v3' : 'https://sandbox.asaas.com/api/v3'),
     apiKey: process.env.ASAAS_API_KEY,

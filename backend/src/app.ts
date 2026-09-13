@@ -15,6 +15,7 @@ import announcementRoutes from './features/announcements/announcement.routes';
 import availabilityRoutes from './features/availability/availability.routes';
 import billingRoutes, { webhookRouter, platformAdminRouter, billingPublicRouter } from './features/billing/billing.routes';
 import organizationRoutes from './features/organizations/organization.routes';
+import internalWhatsAppRoutes from './features/whatsapp/internal-whatsapp.routes';
 import { errorHandler } from './middleware/error-handler';
 import { config } from './config/unifiedConfig';
 
@@ -75,6 +76,7 @@ app.use('/api/v1/billing/webhooks', webhookRouter);
 app.use('/api/v1/billing', billingPublicRouter);
 app.use('/api/v1', subscriptionRoutes);
 app.use('/api/v1/organizations', organizationRoutes);
+app.use('/api/v1/internal', internalWhatsAppRoutes);
 
 app.use('/api/v1/ministries/:ministryId/billing', billingRoutes);
 app.use('/api/v1/groups/:groupId/billing', billingRoutes); // Alias

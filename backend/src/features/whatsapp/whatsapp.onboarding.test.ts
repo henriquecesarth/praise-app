@@ -275,6 +275,13 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
       }),
       registerPhoneNumber: vi.fn().mockResolvedValue(undefined),
       subscribeMessagingAccountApps: vi.fn().mockResolvedValue(undefined),
+      unsubscribeMessagingAccountApps: vi.fn().mockResolvedValue({ success: true }),
+      checkMessagingAccountSubscribedApps: vi.fn().mockResolvedValue({
+        status: 'PROVEN_SUBSCRIBED',
+        appId: '1234567890',
+        pagesTraversed: 1,
+        totalAppsObserved: 1,
+      }),
     };
 
     encryptionService = new WhatsAppEncryptionService(validKey);

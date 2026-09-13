@@ -1,4 +1,4 @@
-﻿import { db } from '../lib/firebase';
+import { db } from '../lib/firebase';
 import { WhatsAppOnboardingSessionRecord } from '../features/whatsapp/whatsapp.types';
 
 export class WhatsAppOnboardingSessionRepository {
@@ -9,7 +9,12 @@ export class WhatsAppOnboardingSessionRepository {
     if (!doc.exists) {
       return null;
     }
-    return { id: doc.id, ...doc.data() } as WhatsAppOnboardingSessionRecord;
+    const session = { id: doc.id, ...doc.data() } as WhatsAppOnboardingSessionRecord;
+    // DEC-7D-45: Logical 30-day retention enforcement
+    if (session.retention_expires_at && new Date(session.retention_expires_at) <= new Date()) {
+      return null;
+    }
+    return session;
   }
 
   async createSession(
