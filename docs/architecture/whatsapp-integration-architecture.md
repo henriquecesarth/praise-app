@@ -564,7 +564,7 @@ The following items are external dependencies on Meta's WhatsApp Cloud API platf
 
 ---
 
-## 18. Updated Decision Register (DEC-7A-01 .. DEC-7A-29, DEC-7C-01 .. DEC-7C-15, DEC-7D-01 .. DEC-7D-64)
+## 18. Updated Decision Register (DEC-7A-01 .. DEC-7A-29, DEC-7C-01 .. DEC-7C-15, DEC-7D-01 .. DEC-7D-69)
 
 | Decision ID | Status | Subject | Summary |
 | :--- | :--- | :--- | :--- |
@@ -667,15 +667,20 @@ The following items are external dependencies on Meta's WhatsApp Cloud API platf
 | **DEC-7D-53** | **Hardened** | Current Vercel Compute Duration Model & Runtime Safety Prerequisite | Reconciles LouvAIO's soft 45s execution target with current Vercel runtime facts (September 2026: Fluid Compute defaults to 300s across all plans, with 300s Hobby max and 800s/1800s Pro/Enterprise max; legacy non-Fluid defaults to 10s Hobby and 15s Pro). Status: `LOUVAIO_VERCEL_FLUID_COMPUTE_STATE: UNVERIFIED`. Establishes mandatory release prerequisite `CLEANUP_EXECUTOR_MIN_EFFECTIVE_FUNCTION_DURATION_SECONDS >= 60` requiring explicit function `maxDuration: 60` in `backend/vercel.json` for `src/app.ts` prior to production deployment, guaranteeing that the runtime envelope never truncates batch execution regardless of compute architecture or default plan ceilings. |
 | **DEC-7D-54** | **New** | Subscribed Apps Exhaustive Pagination Protocol & SSRF Protection | Freezes exact response structure for `GET /{waba_id}/subscribed_apps` where App ID is extracted strictly from `data[].whatsapp_business_api_data.id` and compared against `unifiedConfig.metaAppId`. Traversal advances across pages using safe cursor navigation (`?after=${paging.cursors.after}&limit=100`) on the canonical Meta Graph origin, strictly prohibiting unvalidated navigation to arbitrary `paging.next` URLs (Anti-SSRF). Traversal is bounded to at most 3 pages (up to 300 apps) at 5 seconds per request. Any failure, timeout, malformed payload, or incomplete traversal fails closed as `UNPROVEN_CLEAN`, strictly retaining the encrypted secret. |
 | **DEC-7D-55** | **New** | Canonical Internal Route Family & Operator Administrative Seam | Freezes canonical `/api/v1/internal/whatsapp/cleanup-jobs/...` route family for all machine and operator endpoints: scheduled executor (`GET .../execute`, authenticated via `CRON_SECRET`), administrative retry (`POST .../:jobId/retry`, resets attempt count and schedules attempt), and administrative abandonment (`POST .../:jobId/abandon`, confirms manual deauthorization, purges secret, sets 30d TTL). Eliminates competing route prefix variations. All internal routes enforce `Cache-Control: no-store` and require machine/admin authentication. |
-| **DEC-7D-56** | **Hardened** | Shared WABA Desired-State Coordinator & Remote Reconciliation (`whatsapp_waba_lifecycle_locks`) | Replaces isolated command locks with an authoritative desired-state coordinator in root collection `whatsapp_waba_lifecycle_locks` (`lock_${provider}_${provider_waba_id}`). Tracks `desired_subscription_state` (`'subscribed' | 'unsubscribed'`), point-in-time `provider_observed_state` (`'subscribed' | 'unsubscribed' | 'unknown'`) with provenance (`provider_observed_at`, `provider_observed_generation`), `remote_uncertainty_debt` (`uncertain_generation`, `uncertain_operation`, `quiescence_deadline`, `consecutive_stable_observations`), strictly monotonic `operation_generation`, `operation_status`, and a 120-second operational lease (`lease_token`, `lease_expires_at`). All mutations (`POST` and `DELETE /subscribed_apps`) must participate in this coordinator protocol. Enforces a 120-second lease window providing a 60-second safety margin over the 60-second max function runtime (`CLEANUP_EXECUTOR_MIN_EFFECTIVE_FUNCTION_DURATION_SECONDS = 60`) strictly to coordinate local worker execution concurrency, not remote provider cancellation. Contention returns HTTP 409 `WABA_LIFECYCLE_CONTENTION` with `Retry-After: 5`. |
+| **DEC-7D-56** | **Hardened** | Shared WABA Desired-State Coordinator & Multi-Generation Uncertainty (`whatsapp_waba_lifecycle_locks`) | Replaces isolated command locks with an authoritative desired-state coordinator in root collection `whatsapp_waba_lifecycle_locks` (`lock_${provider}_${provider_waba_id}`). Tracks `desired_subscription_state` (`'subscribed' | 'unsubscribed'`), point-in-time `provider_observed_state` (`'subscribed' | 'unsubscribed' | 'unknown'`) with provenance (`provider_observed_at`, `provider_observed_generation`), multi-generation ledger `unresolved_remote_mutations` (`operation_generation`, `operation`, `dispatched_at`, `status`), strictly monotonic `operation_generation`, `operation_status`, and an operational concurrency lease (`lease_token`, `lease_expires_at`). All mutations (`POST` and `DELETE /subscribed_apps`) must participate in this coordinator protocol. Operational lease coordinates local worker concurrency across transactions, independent of serverless execution ceilings or remote provider timing. Contention returns HTTP 409 `WABA_LIFECYCLE_CONTENTION` with `Retry-After: 5`. |
 | **DEC-7D-57** | **New** | Configured Meta Graph Version Enforcement & Path Injection Protection | Mandates that all Meta Cloud API requests (OAuth, WABA verification, registration, `subscribed_apps` subscribe/unsubscribe/GET) construct target URLs dynamically using `unifiedConfig.metaGraphApiVersion` (`META_GRAPH_API_VERSION` env var, defaulting to `'v26.0'`). Prohibits hardcoded version strings in cleanup executor. Requires strict Zod regex validation (`^v[0-9]+(\.[0-9]+)?$`) at startup to prevent endpoint tampering or URL path injection. Documentation cites `v26.0` as authoritative platform evidence baseline as of September 2026 without freezing runtime configurability. |
 | **DEC-7D-58** | **New** | Internal Cleanup Operator Authorization & Machine-vs-Operator Credential Separation | Establishes explicit authorization boundaries for `/api/v1/internal/whatsapp/cleanup-jobs/...`. Decouples machine scheduling (`GET .../execute`, authenticated strictly via `Authorization: Bearer <CRON_SECRET>` with SHA-256 constant-time check) from privileged human operator remediation (`POST .../:jobId/retry` and `POST .../:jobId/abandon`, requiring dedicated platform operator credential `Authorization: Bearer <INTERNAL_OPERATOR_SECRET>`). Ordinary tenant roles (`org_owner`, `org_admin`, `ministry_admin`, `member`) are strictly rejected with HTTP 401/403. Nonexistent jobs fail closed with HTTP 404. Responses strictly omit cryptographic material. |
 | **DEC-7D-59** | **New** | Manual Remediation Semantics, State Guards & Operational Audit Trail (`retry` and `abandon`) | Freezes state transitions, prerequisites, and audit logging for operator interventions. `POST .../:jobId/abandon` is permitted strictly when `job.status === 'exhausted'`; requests on active `processing` jobs fail closed with HTTP 409 `JOB_CURRENTLY_PROCESSING`, and non-exhausted jobs reject with HTTP 409 `JOB_NOT_EXHAUSTED`. Purges the retained secret from `whatsapp_connection_secrets` using Phase 7C AAD `${organization_id}:${connection_id}`, sets `retention_expires_at = now + 30d`, transitions to `status = 'abandoned'`, and records audit fields. `POST .../:jobId/retry` resets `attempt_count = 0`, transitions to `status = 'pending'`, schedules immediate attempt (`next_attempt_at = now`), clears active lease pointers, rejects active processing leases with HTTP 409, and records audit fields. |
-| **DEC-7D-60** | **Hardened** | Remote Provider Side-Effect Uncertainty & Desired-State Convergence | Formally acknowledges that local Firestore fencing cannot revoke or cancel in-flight HTTP requests dispatched to Meta. Distinguishes mutation outcomes: `NOT_STARTED`, `IN_FLIGHT`, `CONFIRMED_SUCCESS`, `CONFIRMED_FAILURE`, and `UNKNOWN_OUTCOME`. Timeouts, crashes, or lease lapses after request dispatch are strictly classified as `UNKNOWN_OUTCOME`, where secrets must be retained and `remote_uncertainty_debt` is recorded. Stale operation generations cannot determine final desired state. A single snapshot `GET` that happens to match desired state does NOT erase uncertainty debt if an opposing in-flight mutation may still arrive. Taking over an expired lease requires reconciling toward current desired state with active re-assertion. A connection may transition to `connected` strictly when `provider_observed_state === 'subscribed'` is authoritatively verified under the current generation. |
+| **DEC-7D-60** | **Hardened** | Remote Provider Side-Effect Uncertainty & Desired-State Convergence | Formally acknowledges that local Firestore fencing cannot revoke or cancel in-flight HTTP requests dispatched to Meta. Distinguishes mutation outcomes: `NOT_STARTED`, `IN_FLIGHT`, `CONFIRMED_SUCCESS`, `CONFIRMED_FAILURE`, and `UNKNOWN_OUTCOME`. Timeouts, crashes, or lease lapses after request dispatch are strictly classified as `UNKNOWN_OUTCOME`, where secrets must be retained and the operation is appended to `unresolved_remote_mutations`. Stale operation generations cannot determine final desired state. A single snapshot `GET` that happens to match desired state does NOT erase historical uncertainty if an opposing in-flight mutation may still arrive. Taking over an expired lease requires reconciling toward current desired state. A connection may transition to `connected` strictly when current operability is verified (`provider_observed_state === 'subscribed'`) under the current generation. |
 | **DEC-7D-61** | **New** | Authoritative Subscribed Apps Full Exhaustion Proof & Truncation Semantics | Mandates that absence of LouvAIO's App ID (`entry.whatsapp_business_api_data.id === unifiedConfig.metaAppId`) is proven ONLY when pagination of `GET /{waba_id}/subscribed_apps` is completely exhausted (no `paging.cursors.after` or next cursor remaining). Reaching any defensive operational page budget or timeout cap before complete collection exhaustion MUST be classified as `UNPROVEN_CLEAN`, strictly retaining credentials in `whatsapp_connection_secrets`. Prohibits treating unexhausted partial scans as proof of unsubscription. |
 | **DEC-7D-62** | **New** | Operator Principal Attribution, Proof Verification & Force-Abandon Semantics | Replaces client-asserted request body `operator_id` with strictly server-derived identity: `manual_action_by` derives exclusively from the authenticated security principal (`'internal_operator'` under `INTERNAL_OPERATOR_SECRET`), preventing audit log forgery. Reframes `POST .../abandon` to distinguish verified provider proof from manual override: if credentials remain usable, the endpoint verifies unsubscription via `GET /subscribed_apps` (`provider_cleanup_proof = 'proven'`). If credentials are lost (e.g. 401/190), abandon requires explicit `force_abandon: true` and `override_reason: string` (min 10 chars), persisting `provider_cleanup_proof = 'overridden'`. Prohibits labeling unverified human assertions as proven clean. |
-| **DEC-7D-63** | **New** | Late Remote Effect Settlement & Active Re-Assertion Protocol | Solves the asymmetric and symmetric race conditions where a delayed in-flight Meta mutation (e.g. stale `DELETE` from cleanup or stale `POST` from onboarding) executes AFTER a successor generation inspects Meta and assumes the state settled. Mandates that when `remote_uncertainty_debt` exists for an opposing operation, a successor generation cannot passively rely on a matching snapshot `GET`; it MUST actively re-assert its desired mutation (`POST /{waba_id}/subscribed_apps` for onboarding or `DELETE /{waba_id}/subscribed_apps` for cleanup) under its new generation. Passive clearance of debt requires waiting out the Quiescence Settlement Window (`REMOTE_SETTLEMENT_WINDOW_SECONDS = 300`) with at least two consecutive stable observations (`consecutive_stable_observations >= 2`). |
-| **DEC-7D-64** | **New** | Remote Uncertainty Debt & Safe Secret Retention Invariant | Strictly prohibits purging credentials from `whatsapp_connection_secrets` while `remote_uncertainty_debt` is present with `uncertain_operation === 'subscribe'`. Enforces fail-closed secret retention until unsubscription is actively re-asserted and authoritatively confirmed via exhaustive post-condition traversal, or until the quiescence settlement window expires with verified stable absence, or until an operator executes an explicit force-abandon with mandatory justification (`DEC-7D-62`). Eliminates the risk of orphaned, unmanageable webhook subscriptions caused by late-arriving `POST` mutations. |
+| **DEC-7D-63** | **Remediated** | Active Desired-State Re-Assertion as Current Operability Repair | Solves asymmetric and symmetric drift by actively re-asserting desired mutations (`POST` for onboarding, `DELETE` for cleanup) when opposing historical uncertainty exists, rather than passively trusting snapshot `GET` queries. Strictly redefines what active re-assertion proves: a confirmed `POST` 200 establishes current desired state at that moment, but DOES NOT prove that older unconfirmed `DELETE` requests can never execute; a confirmed `DELETE` + exhaustive `GET` confirms absence at that moment, but DOES NOT prove that older unconfirmed `POST` requests can never execute. Active re-assertion restores current operability; historical uncertainty is retained in `unresolved_remote_mutations` for durable eventual convergence. Completely eliminates arbitrary temporal settlement windows (e.g. 300s); 300s is retained strictly as an operational observation cadence, never as provider settlement proof. |
+| **DEC-7D-64** | **Remediated** | Safe Secret Retention Under Any Unresolved Remote Subscribe Mutation | Strictly prohibits automatic destruction of credentials in `whatsapp_connection_secrets` whenever ANY unresolved remote `subscribe` mutation exists in `unresolved_remote_mutations`. Neither a matching snapshot `GET`, nor multiple matching `GET`s, nor any elapsed waiting period (300s, 1h, 24h) may authorize secret deletion while an unconfirmed `subscribe` could theoretically cause LouvAIO to become subscribed later. Secret purge is permitted ONLY when unsubscription is authoritatively confirmed via exhaustive traversal with zero unresolved subscribe mutations, or via explicit operator intervention (`POST .../abandon` with `force_abandon: true` and `override_reason`), setting `provider_cleanup_proof = 'overridden'`. |
+| **DEC-7D-65** | **New** | Multi-Generation Remote Uncertainty Ledger (`unresolved_remote_mutations[]`) | Replaces singular uncertainty fields with a bounded, multi-generation uncertainty ledger in `whatsapp_waba_lifecycle_locks`. Preserves every remotely dispatched operation terminating in `UNKNOWN_OUTCOME` across alternating directions (e.g. Gen 10 unsubscribe, Gen 11 subscribe, Gen 12 unsubscribe) without information loss. Unresolved records are never purged by timer or snapshot; they are removed ONLY upon explicit provider settlement primitive (none currently provided by Meta) or manual operator override (`force_abandon: true`). Emits `WHATSAPP_WABA_UNCERTAINTY_LEDGER_OVERFLOW` critical alert if size reaches 50 entries. |
+| **DEC-7D-66** | **New** | Durable Desired-State Reconciliation Executor & Scheduling (`whatsapp_waba_reconciliation_jobs`) | Establishes durable, background desired-state reconciliation that runs automatically with ZERO future user actions required. When an operation enters `UNKNOWN_OUTCOME`, the system enqueues/activates a durable WABA reconciliation job (`recon_meta_${wabaId}`). Executed by the scheduled executor via protected route `GET /api/v1/internal/whatsapp/cleanup-jobs/execute` (or cron runner) with 5-minute job lease and Two-Query crash recovery. Evaluates current platform dependencies, checks Meta `GET /subscribed_apps`, and automatically repairs drift toward current desired state with bounded backoff (1m, 5m, 15m, 1h, 6h steady-state). Transitions to `quiescent` after 24h with zero drift, or `attention_required` if drift recurs > 5 times. |
+| **DEC-7D-67** | **New** | Separation of Current Provider Operability from Strong Historical Settlement | Decouples immediate customer messaging capability from unprovable distributed settlement. A connection transitions to `status = 'connected'` when current provider operability is authoritatively verified (`POST` succeeded or fresh `GET` confirms subscription under current lease), even if older opposite mutations in `unresolved_remote_mutations` remain unknown. In LouvAIO, `connected` explicitly denotes: "provider was most recently verified operational and durable reconciliation remains active", NOT "no stale remote operation can ever alter provider state again." Reconciliation continues in the background, ensuring drift is healed without blocking customer usage. |
+| **DEC-7D-68** | **New** | Local Connection Disconnect vs Internal Retained Provider-Cleanup Responsibility | Decouples internal business quota accounting from asynchronous external cleanup. When an unmaterialized or expired connection is disconnected, the connection document transitions to `status = 'disconnected'` immediately, freeing customer commercial capacity. If external unsubscription remains unconfirmed or unresolved subscribe mutations exist, the encrypted credential remains safely anchored in `whatsapp_connection_secrets` bound to `${organization_id}:${connection_id}` under cleanup job ownership (`cleanup_conn_${connId}`) with `retention_expires_at = null` (disabling Firestore TTL), server-only, and auditable until proven clean or operator-overridden. |
+| **DEC-7D-69** | **New** | Runtime Duration & Lease Independence from Remote Provider Correctness | Confirms that LouvAIO correctness does NOT depend on a 60-second Vercel execution assumption, Fluid Compute status, or lease duration exceeding remote Meta processing time. In `backend/vercel.json`, `maxDuration` is unconfigured. The operational lease (120s) coordinates local worker transactional concurrency only; it does not claim worker process death or remote request cancellation. If a worker survives past lease expiry, Firestore optimistic concurrency control and generation fencing (`lock.operation_generation === acquiredGeneration`) guarantee stale database writes fail closed with zero modifications. Remote mutations are governed exclusively by durable eventual reconciliation. |
 
 ---
 
@@ -1789,12 +1794,159 @@ The onboarding completion endpoint (`POST /organizations/:orgId/whatsapp/onboard
 | **Case 44** | `subscribed_apps` traversal exceeds operational budget before collection exhaustion (DEC-7D-61) | **TRUNCATED_TRAVERSAL_FAIL_CLOSED** | Pagination reaches defensive cap without reaching last cursor; aborts traversal | State classified as `UNPROVEN_CLEAN`; job transitions to `retry_wait`; secret STRICTLY RETAINED | **0 (Capacity released)** | Unknown | `retry_wait` backoff; never assumes unsubscription upon truncated traversal |
 | **Case 45** | Provider state cannot be proven due to 401/190 authorization revocation (DEC-7D-60) | **AUTH_LOST_PERSISTENT_RETENTION** | Meta returns 401 or code 190 on GET/DELETE; token revoked | Secret RETAINED encrypted; job transitions to `exhausted`; `retention_expires_at = null` | **0 (Capacity released)** | Severed | Awaits administrative remediation; physical TTL suppressed to prevent unconfirmed data loss |
 | **Case 46** | Manual abandon requested with provider proof unavailable (DEC-7D-62) | **FORCE_ABANDON_OVERRIDE** | Operator submits `/abandon` with `force_abandon: true` and `override_reason` | Job transitions to `status = 'abandoned'`; `provider_cleanup_proof = 'overridden'`; secret purged | **0 (Capacity released)** | Manually severed | Purges secret; sets 30d TTL; records complete audit trail with authenticated principal |
-| **Case 47** | Delayed DELETE arrives after Onboarding snapshot GET (DEC-7D-63) | **ACTIVE_REASSERTION_ONBOARDING_SAFETY** | Cleanup Gen 10 sent DELETE, timed out (`UNKNOWN_OUTCOME`), recorded debt; Onboarding Gen 11 starts; snapshot GET shows LouvAIO subscribed | Because `remote_uncertainty_debt.uncertain_operation === 'unsubscribe'`, Onboarding refuses passive GET settlement; actively issues `POST /{waba_id}/subscribed_apps` under Gen 11 | **1 (Held by Gen 11)** | Subscribed (Re-asserted) | Active POST queues after or re-establishes subscription over delayed DELETE; clears debt; materializes `connected` safely without broken webhooks. |
-| **Case 48** | Delayed POST arrives after Cleanup snapshot GET (DEC-7D-63, DEC-7D-64) | **ACTIVE_REASSERTION_CLEANUP_SAFETY** | Onboarding Gen 10 sent POST, timed out (`UNKNOWN_OUTCOME`), recorded debt; Cleanup Gen 11 runs; snapshot GET shows app absent | Because `remote_uncertainty_debt.uncertain_operation === 'subscribe'`, Cleanup refuses passive absence; actively issues `DELETE /{waba_id}/subscribed_apps`, then verifies exhaustive absence | **0 (Capacity released)** | Unsubscribed (Re-asserted) | Active DELETE cancels out delayed POST; exhaustive GET confirms absence; clears debt; purges secret safely with zero orphaned subscriptions. |
-| **Case 49** | Expired 120s WABA lease reclaimed while remote mutation in transit (DEC-7D-56, DEC-7D-60) | **LEASE_RECLAIM_PRESERVES_DEBT** | Worker A dispatches external request; function halts at 60s; 120s WABA lease expires; Worker B reclaims lease | Coordinator increments generation to Gen 11; preserves `remote_uncertainty_debt`; Worker A's stale post-provider writeback fails generation check | **0 or 1** | Controlled by Gen 11 | 120s lease coordinates local container concurrency only; remote uncertainty debt persists across lease transfer for safe active reconciliation. |
-| **Case 50** | Quiescence settlement window elapses with consecutive stable observations (DEC-7D-63) | **PASSIVE_QUIESCENCE_DEBT_CLEARANCE** | Remote uncertainty debt recorded at $T_0$; system is idle; no opposing mutation required; periodic reconciliation checks Meta | At $T_1$ ($T_0 + 310\text{s}$ > 300s), observation 1 confirms desired state (`count = 1`); at $T_2$, observation 2 confirms same state (`count = 2`) | **0 or 1** | Stably settled | Quiescence deadline passed and consecutive stable observations reached; debt cleared passively without redundant provider mutations. |
-| **Case 51** | Secret purge blocked while remote uncertainty debt active for subscribe (DEC-7D-64) | **SAFE_SECRET_RETENTION_UNDER_DEBT** | Cleanup job attempts terminal transition (`succeeded`) while `remote_uncertainty_debt.uncertain_operation === 'subscribe'` remains active | Transaction rejects secret deletion; job forced into `retry_wait` (or `exhausted` with `retention_expires_at = null`) | **0 (Capacity released)** | Unknown / In-flight | Encrypted secret retained fail-closed in `whatsapp_connection_secrets` until debt cleared or operator executes force-abandon. |
-| **Case 52** | Successor actively re-asserts desired state overriding in-flight uncertain mutation (DEC-7D-63) | **SUPERSEDING_ACTIVE_REASSERTION** | Gen N mutation entered `unknown_outcome`; Gen N+1 acquires WABA lease and establishes opposite desired state | Gen N+1 issues opposite mutation actively to Meta; verifies post-condition authoritatively; clears uncertainty debt | **0 or 1** | Converged to Gen N+1 desired state | External provider converged decisively to latest generation's intent; local coordinator state released cleanly. |
+| **Case 47** | Delayed DELETE arrives after Onboarding snapshot GET (DEC-7D-63, DEC-7D-65, DEC-7D-66) | **ACTIVE_REASSERTION_OPERABILITY_REPAIR** | Cleanup Gen 10 sent DELETE, timed out (`unknown_outcome`), recorded in ledger; Onboarding Gen 11 starts; snapshot GET shows LouvAIO subscribed | Because `unresolved_remote_mutations.some(m => m.operation === 'unsubscribe')`, Onboarding refuses passive GET settlement; actively issues `POST /{waba_id}/subscribed_apps` under Gen 11 | **1 (Held by Gen 11)** | Subscribed (Re-asserted) | Active POST re-establishes operability over delayed DELETE; Gen 10 unsubscribe preserved in ledger with audit note; durable reconciler `recon_meta_${wabaId}` verifies long-term convergence without blocking connection. |
+| **Case 48** | Delayed POST arrives after Cleanup snapshot GET (DEC-7D-63, DEC-7D-64, DEC-7D-67) | **ACTIVE_REASSERTION_CLEANUP_SAFETY** | Onboarding Gen 10 sent POST, timed out (`unknown_outcome`), recorded in ledger; Cleanup Gen 11 runs; snapshot GET shows app absent | Because `unresolved_remote_mutations.some(m => m.operation === 'subscribe')`, Cleanup refuses passive absence; actively issues `DELETE /{waba_id}/subscribed_apps`, then verifies exhaustive absence | **0 (Capacity released)** | Unsubscribed (Re-asserted) | Active DELETE cancels delayed POST; exhaustive GET confirms absence; unresolved subscribe record preserved in ledger; secret purge strictly blocked until zero subscribe debt or manual operator override (`force_abandon`). |
+| **Case 49** | Expired 120s WABA lease reclaimed while remote mutation in transit (DEC-7D-56, DEC-7D-60, DEC-7D-65) | **LEASE_RECLAIM_PRESERVES_LEDGER** | Worker A dispatches external request; function halts at 60s; 120s WABA lease expires; Worker B reclaims lease | Coordinator increments generation to Gen 11; preserves `unresolved_remote_mutations`; Worker A's stale post-provider writeback fails generation check | **0 or 1** | Controlled by Gen 11 | 120s lease coordinates local container concurrency only; remote uncertainty records persist across lease transfer for safe active reconciliation without assuming remote quiescence. |
+| **Case 50** | Observation cadence checks state without arbitrary temporal settlement proof (DEC-7D-65, DEC-7D-66, DEC-7D-68) | **OBSERVATION_CADENCE_MONITORING** | Remote uncertainty recorded in ledger; system is idle; background reconciler executes at 300s observation cadence | Consecutive observations confirm Meta state matches desired state; updates `last_observed_at`; historical unknown-outcome records remain in bounded ledger | **0 or 1** | Stably settled | Replaces arbitrary 300s settlement proof; eliminates guessed temporal constants; achieves eventual convergence through continuous observation and autonomous repair. |
+| **Case 51** | Secret purge blocked while unresolved subscribe mutation exists in ledger (DEC-7D-64, DEC-7D-67) | **SAFE_SECRET_RETENTION_UNDER_LEDGER_DEBT** | Cleanup job attempts terminal transition (`succeeded`) while `unresolved_remote_mutations.some(m => m.operation === 'subscribe')` remains active | Transaction rejects secret deletion; job forced into `retry_wait` (or `exhausted` with `retention_expires_at = null`) | **0 (Capacity released)** | Unknown / In-flight | Encrypted secret retained fail-closed in `whatsapp_connection_secrets` until zero subscribe debt or operator executes authorized `force_abandon`. |
+| **Case 52** | Successor actively re-asserts desired state over uncertain prior mutation (DEC-7D-63, DEC-7D-66) | **SUPERSEDING_ACTIVE_REASSERTION** | Gen N mutation entered `unknown_outcome`; Gen N+1 acquires WABA lease and establishes opposite desired state | Gen N+1 actively issues opposite mutation to Meta; verifies post-condition authoritatively; records mutation in ledger | **0 or 1** | Converged to Gen N+1 desired state | External provider converged to latest generation's intent; operability restored immediately; durable reconciler monitors background stability. |
+| **Case 53** | Multi-Generation Ledger Bounding & Saturation (DEC-7D-65) | **LEDGER_BOUNDING_FIFO_PRUNING** | Ledger reaches 20 records; new mutation dispatched | Transaction evaluates ledger length; settled records (`status === 'settled'`) pruned FIFO; unconfirmed records retained | **0 or 1** | Preserved | Ledger memory and document size strictly bounded; prevents document bloat while retaining critical active debt. |
+| **Case 54** | Durable reconciler triggered with zero user action (DEC-7D-68) | **AUTONOMOUS_DURABLE_RECONCILIATION** | Unknown outcome recorded or drift detected; client disconnects or abandons | Server enqueues / transitions `recon_meta_${wabaId}` to `status = 'pending'`, `next_attempt_at = now` | **0 or 1** | Autonomous repair | Reconciler executes in background via native cron/queue with zero user actions, ensuring convergence even if client never returns. |
+| **Case 55** | Late DELETE arrives after connection is connected (DEC-7D-66, DEC-7D-68) | **RECONCILER_AUTOMATIC_REPAIR_LATE_DELETE** | Delayed DELETE arrives at Meta after onboarding commit; inbound webhook dropped | Reconciler runs, detects drift (`observed: unsubscribed`, `desired: subscribed`), acquires lease, actively dispatches `POST` | **1 (Connected)** | Re-subscribed | Webhook restored automatically; self-healing completed without client re-authentication or operational downtime. |
+| **Case 56** | Late POST arrives after connection is disconnected (DEC-7D-66, DEC-7D-68) | **RECONCILER_AUTOMATIC_REPAIR_LATE_POST** | Delayed POST arrives at Meta after cleanup commit; app unexpectedly subscribed | Cleanup job or reconciler detects drift (`observed: subscribed`, `desired: unsubscribed`), actively dispatches `DELETE` | **0 (Released)** | Unsubscribed | App unsubscription re-asserted; verified via exhaustive pagination; secret purged once subscribe debt cleared. |
+| **Case 57** | Disconnect coexistence: quota freed immediately with retained cleanup secret (DEC-7D-39, DEC-7D-64) | **DISCONNECT_COEXISTENCE_CAPACITY_RELEASE** | User disconnects or 24h reservation expires; provider cleanup pending | Local transaction sets `status = 'disconnected'` freeing organization quota immediately; cleanup job holds encrypted secret | **0 (Immediately liberated)** | Unsubscribing | Customer can immediately connect a new phone number; external cleanup proceeds safely out-of-band in background. |
+| **Case 58** | Vercel execution boundary reached before Meta responds (DEC-7D-53, DEC-7D-60, DEC-7D-65) | **SERVERLESS_WALL_CLOCK_BOUNDARY_SAFETY** | Node.js process halted or function execution ceiling reached while Meta HTTP call is in flight | Request outcome cannot be verified; mutation recorded in ledger as `unknown_outcome`; lease expires after 120s | **0 or 1** | Unknown outcome | Successor worker or reconciler safely reclaims lease, queries provider, and executes active re-assertion without double-free or corruption. |
+| **Case 59** | Reconciler backoff progression under Meta 5xx / 429 (DEC-7D-68) | **DURABLE_RECONCILER_EXPONENTIAL_BACKOFF** | Reconciler encounters transient 429 rate limit or 5xx server error from Meta | Job updates `next_attempt_at` according to backoff: 1m -> 5m -> 15m -> 1h -> 6h steady-state | **0 or 1** | Transient error | Protects Meta rate limits while ensuring persistent autonomous convergence attempts without unbounded retry loops. |
+| **Case 60** | Reconciler terminal auth loss (401 / code 190) (DEC-7D-52, DEC-7D-68) | **RECONCILER_AUTH_LOST_CREDENTIAL_RETENTION** | Meta returns HTTP 401 or error code 190 during reconciliation GET/mutation | Reconciler marks job `status = 'exhausted'`, `last_error_code = 'AUTH_LOST'`, strictly retains encrypted secret, sets `retention_expires_at = null` | **0 or 1** | Authorization lost | Physical TTL suppressed; high-severity alert emitted; encrypted secret preserved for administrative remediation. |
+| **Case 61** | Manual operator force-abandon overrides ledger debt (DEC-7D-62, DEC-7D-67) | **MANUAL_OPERATOR_FORCE_ABANDON_OVERRIDE** | Operator calls `POST .../abandon` with `force_abandon: true` and `override_reason` | Job transitions to `status = 'abandoned'`; secret PURGED immediately; audit trail records principal and reason; 30d TTL set | **0 (Released)** | Manually severed | Human authority breaks unresolvable deadlock; destroys encrypted secret; preserves compliance audit log. |
+| **Case 62** | Concurrent onboarding while reconciler holds WABA lease (DEC-7D-56, DEC-7D-68) | **RECONCILER_ONBOARDING_LEASE_CONTENTION** | Onboarding Step 9 contends for WABA lock while reconciler holds active lease | Onboarding Step 9 transaction detects active lease; aborts with HTTP 409 `WABA_LIFECYCLE_CONTENTION` and `Retry-After: 5` | **1 (Held in 15m window)** | Reconciling | Client retries after 5 seconds; completes smoothly once reconciler releases lease. |
+| **Case 63** | Concurrent cleanup while reconciler holds WABA lease (DEC-7D-56, DEC-7D-68) | **RECONCILER_CLEANUP_LEASE_CONTENTION** | Cleanup worker attempts to acquire WABA lease while reconciler holds active lease | Cleanup transaction detects active lease; backs off and transitions job to `retry_wait` | **0 (Capacity released)** | Reconciling | Worker retries on next scheduled cycle; queries dependencies fresh after acquiring lease. |
+| **Case 64** | Shared WABA sibling line protection during durable reconciliation (DEC-7D-25, DEC-7D-68) | **RECONCILER_SIBLING_PROTECTION_GUARD** | Reconciler runs for disconnected connection; queries platform-wide dependencies | Reconciler detects surviving sibling connection (`active_dependencies > 0`); sets desired state `subscribed`; skips Meta DELETE | **0 (For disconnected conn)** | Sibling active | Preserves shared WABA webhook subscription; sibling connections experience zero disruption. |
+| **Case 65** | WABA re-claimed by different organization while reconciler pending (DEC-7D-44, DEC-7D-68) | **RECONCILER_CROSS_TENANT_FENCE_CANCEL** | Reconciler acquires lease; compares claim generation / organization attribution | Generation mismatch or tenant divergence detected; worker marks stale reconciliation job `cancelled` | **0 (Released)** | Controlled by new org | Stale background job aborts safely without mutating new organization's WABA configuration. |
+
+#### Detailed Multi-Generation Convergence Scenarios (Cases 53–65, DEC-7D-65 .. DEC-7D-69)
+
+To eliminate any ambiguity during implementation, each scenario below explicitly specifies the 8 distributed-state dimensions:
+
+##### Scenario 53: Multi-Generation Ledger Bounding & Saturation (DEC-7D-65)
+1. **Desired state:** `subscribed` (or `unsubscribed`).
+2. **Observed provider state:** Stably settled matching current generation.
+3. **Uncertainty records present:** 20 records (bounded FIFO cap reached; settled records pruned, active debt preserved).
+4. **Connection status:** `connected` (or `disconnected`).
+5. **Secret state:** Active in `whatsapp_connection_secrets` (or retained encrypted under cleanup).
+6. **Reconciliation job state:** `recon_meta_${wabaId}` active / `idle`.
+7. **Operator impact:** Zero manual intervention; informational log emitted on FIFO prune.
+8. **Eventual result:** Ledger memory and Firestore document size remain bounded within limits.
+
+##### Scenario 54: Durable Reconciler Triggered with Zero User Action (DEC-7D-68)
+1. **Desired state:** `subscribed` (or `unsubscribed`).
+2. **Observed provider state:** Drift detected or unknown outcome recorded during previous operation.
+3. **Uncertainty records present:** Contains mutation with `status: 'unknown_outcome'`.
+4. **Connection status:** `connected` (or `disconnected`).
+5. **Secret state:** Stored encrypted in `whatsapp_connection_secrets`.
+6. **Reconciliation job state:** `recon_meta_${wabaId}` enqueued / transitioned to `pending`, scheduled automatically.
+7. **Operator impact:** Zero operator intervention; zero customer actions required.
+8. **Eventual result:** Reconciler executes via scheduled cron or queue, converging provider state to desired state autonomously.
+
+##### Scenario 55: Late DELETE Arrives After Connection is Connected (DEC-7D-66, DEC-7D-68)
+1. **Desired state:** `subscribed`.
+2. **Observed provider state:** Unexpectedly `unsubscribed` (delayed DELETE from prior disconnect executed late at Meta).
+3. **Uncertainty records present:** Historical unsubscribe record present in ledger.
+4. **Connection status:** `connected` (active commercial quota allocated).
+5. **Secret state:** Active business token encrypted in `whatsapp_connection_secrets`.
+6. **Reconciliation job state:** `recon_meta_${wabaId}` detects drift, acquires WABA lease, and calls `POST /{waba_id}/subscribed_apps`.
+7. **Operator impact:** Zero user actions; self-healing completed out-of-band.
+8. **Eventual result:** Webhook subscription re-established; inbound messaging restored.
+
+##### Scenario 56: Late POST Arrives After Connection is Disconnected (DEC-7D-66, DEC-7D-68)
+1. **Desired state:** `unsubscribed`.
+2. **Observed provider state:** Unexpectedly `subscribed` (delayed POST from prior onboarding executed late at Meta).
+3. **Uncertainty records present:** Historical subscribe record present in ledger.
+4. **Connection status:** `disconnected`.
+5. **Secret state:** RETAINED encrypted under cleanup job in `whatsapp_connection_secrets`.
+6. **Reconciliation job state:** Cleanup or reconciler detects presence of LouvAIO App ID, acquires lease, calls `DELETE /{waba_id}/subscribed_apps`.
+7. **Operator impact:** Zero operator intervention required under normal operation.
+8. **Eventual result:** LouvAIO App ID unsubscription re-asserted and authoritatively confirmed; secret purged once subscribe debt cleared.
+
+##### Scenario 57: Disconnect Coexistence: Quota Freed Immediately with Retained Cleanup Secret (DEC-7D-39, DEC-7D-64)
+1. **Desired state:** `unsubscribed`.
+2. **Observed provider state:** In-flight or pending cleanup.
+3. **Uncertainty records present:** Unsubscribe mutation in progress.
+4. **Connection status:** `disconnected` (organization quota freed in Step 1 local transaction).
+5. **Secret state:** RETAINED encrypted server-side in `whatsapp_connection_secrets` under cleanup job.
+6. **Reconciliation job state:** Cleanup job `cleanup_conn_${connId}` processing in background.
+7. **Operator impact:** Zero customer impact; customer can immediately onboard a replacement line.
+8. **Eventual result:** Commercial capacity unblocked immediately; distributed cleanup completes safely in background.
+
+##### Scenario 58: Vercel Execution Boundary Reached Before Meta Responds (DEC-7D-53, DEC-7D-60, DEC-7D-65)
+1. **Desired state:** Desired state established under generation N.
+2. **Observed provider state:** Unknown (serverless wall-clock boundary reached while HTTP call in transit).
+3. **Uncertainty records present:** Appended record with `{ operation_generation: N, operation: 'subscribe'|'unsubscribe', status: 'unknown_outcome' }`.
+4. **Connection status:** Preserved safely without corruption.
+5. **Secret state:** RETAINED encrypted in `whatsapp_connection_secrets`.
+6. **Reconciliation job state:** WABA lease expires after 120s; successor worker or reconciler reclaims lease safely.
+7. **Operator impact:** Zero operator intervention; automatic fail-closed recording.
+8. **Eventual result:** Successor inspects provider state, sees unknown outcome in ledger, and performs active re-assertion.
+
+##### Scenario 59: Reconciler Backoff Progression Under Meta 5xx / 429 (DEC-7D-68)
+1. **Desired state:** Desired state established.
+2. **Observed provider state:** Provider returns transient 429 (Rate Limit) or 5xx (Meta Gateway Timeout).
+3. **Uncertainty records present:** Preserved in ledger.
+4. **Connection status:** Unaffected.
+5. **Secret state:** Retained encrypted.
+6. **Reconciliation job state:** `recon_meta_${wabaId}` advances through exponential backoff: 1m -> 5m -> 15m -> 1h -> 6h steady-state.
+7. **Operator impact:** Zero operator intervention during backoff.
+8. **Eventual result:** Protects Meta rate limits while ensuring continuous autonomous retries until provider heals.
+
+##### Scenario 60: Reconciler Terminal Auth Loss (401 / Code 190) (DEC-7D-52, DEC-7D-68)
+1. **Desired state:** Desired state established.
+2. **Observed provider state:** HTTP 401 or Meta error code 190 (Token Expired / Permissions Revoked).
+3. **Uncertainty records present:** Preserved in ledger.
+4. **Connection status:** Connection transitions to `error` (`TOKEN_EXPIRED`) if connected, or remains `disconnected`.
+5. **Secret state:** STRICTLY RETAINED encrypted in `whatsapp_connection_secrets` for administrative audit.
+6. **Reconciliation job state:** Job transitions to `exhausted`, `last_error_code = 'AUTH_LOST'`, `retention_expires_at = null`.
+7. **Operator impact:** High-severity operational alert emitted; requires customer re-OAuth or operator intervention.
+8. **Eventual result:** Retries halted safely; physical TTL suppressed; audit record preserved indefinitely until resolved.
+
+##### Scenario 61: Manual Operator Force-Abandon Overrides Ledger Debt (DEC-7D-62, DEC-7D-67)
+1. **Desired state:** `unsubscribed` (manually abandoned).
+2. **Observed provider state:** Unproven / token permanently invalid.
+3. **Uncertainty records present:** Subscribe records present in ledger.
+4. **Connection status:** `disconnected`.
+5. **Secret state:** PURGED immediately from `whatsapp_connection_secrets`.
+6. **Reconciliation job state:** Cleanup job transitions to `status = 'abandoned'`, `provider_cleanup_proof = 'overridden'`.
+7. **Operator impact:** Administrative operation via `POST .../abandon` with `force_abandon: true` and `override_reason`.
+8. **Eventual result:** Unresolvable deadlock severed by authorized human authority; audit trail preserved for 30 days.
+
+##### Scenario 62: Concurrent Onboarding While Reconciler Holds WABA Lease (DEC-7D-56, DEC-7D-68)
+1. **Desired state:** Both processes target `subscribed`.
+2. **Observed provider state:** Reconciliation in progress.
+3. **Uncertainty records present:** Monitored by reconciler.
+4. **Connection status:** Onboarding connection in `pending`.
+5. **Secret state:** Staged secret preserved.
+6. **Reconciliation state:** Reconciler holds lease; Onboarding Step 9 returns HTTP 409 `WABA_LIFECYCLE_CONTENTION` with `Retry-After: 5`.
+7. **Operator impact:** Zero operator intervention.
+8. **Eventual result:** Onboarding client retries after 5 seconds and completes cleanly once reconciler releases lease.
+
+##### Scenario 63: Concurrent Cleanup While Reconciler Holds WABA Lease (DEC-7D-56, DEC-7D-68)
+1. **Desired state:** Cleanup targets `unsubscribed`; Reconciler verifying state.
+2. **Observed provider state:** In flux.
+3. **Uncertainty records present:** Preserved in ledger.
+4. **Connection status:** Cleanup connection already `disconnected`.
+5. **Secret state:** Retained encrypted.
+6. **Reconciliation state:** Reconciler holds lease; cleanup worker aborts lease acquisition, transitions job to `retry_wait`.
+7. **Operator impact:** Zero operator intervention.
+8. **Eventual result:** Cleanup worker backs off; on next attempt re-evaluates dependencies after acquiring lease.
+
+##### Scenario 64: Shared WABA Sibling Line Protection During Durable Reconciliation (DEC-7D-25, DEC-7D-68)
+1. **Desired state:** `subscribed` (surviving sibling connection exists).
+2. **Observed provider state:** Webhook active or in verification.
+3. **Uncertainty records present:** Historical disconnect record from sibling line.
+4. **Connection status:** Sibling Line A is `disconnected`; Sibling Line B is `connected`.
+5. **Secret state:** Sibling Line A secret purged; Sibling Line B secret active.
+6. **Reconciliation state:** Reconciler detects surviving sibling line (`active_dependencies > 0`), sets desired state `subscribed`, skips DELETE.
+7. **Operator impact:** Zero operator intervention.
+8. **Eventual result:** Shared WABA webhook subscription preserved; Sibling Line B suffers zero disruption.
+
+##### Scenario 65: WABA Re-Claimed by Different Organization While Reconciler Pending (DEC-7D-44, DEC-7D-68)
+1. **Desired state:** Diverged across tenant boundaries.
+2. **Observed provider state:** Belongs to Organization Y.
+3. **Uncertainty records present:** Stale records from Organization X.
+4. **Connection status:** Organization X connection `disconnected`; Organization Y connection `pending` or `connected`.
+5. **Secret state:** Org X secret purged or retained encrypted; Org Y has distinct secret.
+6. **Reconciliation state:** Reconciler acquires lease, detects generation mismatch or tenant divergence, marks Org X reconciler job `cancelled`.
+7. **Operator impact:** Informational log emitted.
+8. **Eventual result:** Stale background job terminates cleanly without mutating new organization's WABA configuration.
 
 ---
 
@@ -1997,7 +2149,7 @@ When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
   ```
 - Primary key lookups on `whatsapp_connections.doc(connId)`, `whatsapp_onboarding_sessions.doc(sessionId)`, and `whatsapp_waba_subscription_claims.doc(claimId)` use deterministic document IDs and require zero new composite indexes.
 
-### 8.12 Platform-Wide WABA Subscription Desired-State Coordination, Remote Fencing, Late Remote Effect Settlement & Reconciliation (DEC-7D-40, DEC-7D-44, DEC-7D-56, DEC-7D-60, DEC-7D-61, DEC-7D-63, DEC-7D-64)
+### 8.12 Platform-Wide WABA Subscription Desired-State Coordination, Multi-Generation Remote Uncertainty & Durable Reconciliation (DEC-7D-40, DEC-7D-44, DEC-7D-56, DEC-7D-60, DEC-7D-61, DEC-7D-63, DEC-7D-64, DEC-7D-65, DEC-7D-66, DEC-7D-67, DEC-7D-68, DEC-7D-69)
 - **Root Collection:** `whatsapp_waba_lifecycle_locks`
 - **Document Key:** `lock_${provider}_${provider_waba_id}` (e.g. `lock_meta_${providerWabaId}`; platform-wide authority across all organizations sharing a WABA).
 - **Authoritative Desired-State Record Schema:**
@@ -2006,12 +2158,12 @@ When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
   export type WabaSubscriptionObservedState = 'subscribed' | 'unsubscribed' | 'unknown';
   export type WabaOperationStatus = 'idle' | 'in_flight' | 'unknown_outcome' | 'reconciling';
 
-  export interface WhatsAppRemoteUncertaintyDebt {
-    uncertain_generation: number;
-    uncertain_operation: 'subscribe' | 'unsubscribe';
-    uncertain_since: string; // ISO 8601 UTC
-    quiescence_deadline: string; // ISO 8601 UTC (uncertain_since + REMOTE_SETTLEMENT_WINDOW_SECONDS)
-    consecutive_stable_observations: number;
+  export interface WhatsAppUnresolvedRemoteMutation {
+    operation_generation: number; // generation under which mutation was dispatched
+    operation: 'subscribe' | 'unsubscribe';
+    dispatched_at: string; // ISO 8601 UTC
+    status: 'unknown_outcome';
+    connection_id?: string; // initiating connection ID
   }
 
   export interface WhatsAppWabaLifecycleLockRecord {
@@ -2022,50 +2174,133 @@ When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
     provider_observed_state: WabaSubscriptionObservedState;
     provider_observed_at: string | null; // ISO 8601 UTC snapshot timestamp
     provider_observed_generation: number | null; // Generation when snapshot was captured
-    remote_uncertainty_debt: WhatsAppRemoteUncertaintyDebt | null; // Active remote in-flight uncertainty debt
+    unresolved_remote_mutations: WhatsAppUnresolvedRemoteMutation[]; // Multi-generation uncertainty ledger (DEC-7D-65)
     operation_generation: number; // strictly monotonic sequence integer (1, 2, 3...)
     operation_status: WabaOperationStatus;
     lease_token: string | null; // UUID v4 of current lock holder
-    lease_expires_at: string | null; // ISO 8601 UTC (120-second operational lease)
-    holder_id: string | null; // "onboarding_session_${sessionId}" or "cleanup_conn_${connId}"
-    last_settled_at: string | null; // ISO 8601 UTC
+    lease_expires_at: string | null; // ISO 8601 UTC (operational concurrency lease)
+    holder_id: string | null; // "onboarding_session_${sessionId}", "cleanup_conn_${connId}", or "recon_meta_${wabaId}"
+    last_settled_at: string | null; // ISO 8601 UTC (when desired === observed was last verified)
+    last_reconciled_at: string | null; // ISO 8601 UTC
     created_at: string; // ISO 8601 UTC
     updated_at: string; // ISO 8601 UTC
   }
   ```
-- **Operational Lease Duration vs Remote Settlement Reframing (DEC-7D-56, DEC-7D-60):**
+- **Durable WABA Reconciliation Job Schema (Root Collection: `whatsapp_waba_reconciliation_jobs`, DEC-7D-66):**
+  ```typescript
+  export type WhatsAppWabaReconciliationJobStatus =
+    | 'pending'
+    | 'processing'
+    | 'retry_wait'
+    | 'quiescent'
+    | 'attention_required';
+
+  export interface WhatsAppWabaReconciliationJobRecord {
+    id: string; // "recon_meta_" + providerWabaId (1:1 per WABA container)
+    provider: 'meta';
+    provider_waba_id: string;
+    status: WhatsAppWabaReconciliationJobStatus;
+    consecutive_stable_passes: number; // count of consecutive observation passes with zero drift
+    consecutive_drift_repairs: number; // count of drift repairs executed
+    last_drift_detected_at: string | null; // ISO 8601 UTC
+    last_reconciled_at: string | null; // ISO 8601 UTC
+    next_attempt_at: string; // ISO 8601 UTC
+    lease_token: string | null; // 5-minute execution lease held by active worker
+    lease_expires_at: string | null; // ISO 8601 UTC
+    last_error_code: string | null;
+    last_error_at: string | null;
+    created_at: string; // ISO 8601 UTC
+    updated_at: string; // ISO 8601 UTC
+    retention_expires_at: string | null; // null while unresolved mutations exist; completed_at + 30d upon permanent retirement
+  }
+  ```
+- **Operational Lease Duration vs Remote Provider Reality (DEC-7D-56, DEC-7D-69):**
   - **120-Second Operational Lease:** Lease duration is strictly **120 seconds** (`WABA_LIFECYCLE_LEASE_DURATION_SECONDS = 120`).
-  - **Local Execution Overlap Coordination Only:** The 120-second lease coordinates *local worker concurrency* across serverless functions. It provides a mandatory **60-second safety margin** over the 60-second maximum serverless function execution budget (`CLEANUP_EXECUTOR_MIN_EFFECTIVE_FUNCTION_DURATION_SECONDS = 60`), guaranteeing that a single serverless container terminates before its local lock can be re-acquired by another worker.
-  - **Zero Remote Settlement Guarantee:** The 120-second lease does **NOT** cancel, revoke, or bound in-flight HTTP requests dispatched to Meta Graph API. Meta has no remote request cancellation or fencing primitives. An HTTP `POST` or `DELETE` that timed out or stalled may still be in transit or processing on Meta's infrastructure long after 120 seconds.
-- **Remote Provider Side-Effect Reality, Outcome Uncertainty & Uncertainty Debt (DEC-7D-60, DEC-7D-63, DEC-7D-64):**
+  - **Local Execution Overlap Coordination Only:** The 120-second lease coordinates *local worker concurrency* across serverless functions. It provides a transactional coordination window so that multiple containers do not concurrently mutate local records.
+  - **Zero Remote Guarantees:** The 120-second lease does **NOT** cancel, revoke, or bound in-flight HTTP requests dispatched to Meta Graph API. Meta has no remote request cancellation, operation ID status query, or fencing primitives. An HTTP `POST` or `DELETE` that timed out or stalled may still be in transit or processing on Meta's infrastructure long after 120 seconds.
+  - **Runtime Duration Decoupling:** Actual repository configuration (`backend/vercel.json`) defines no function `maxDuration`. Correctness holds whether serverless execution lasts 10s, 60s, 300s, or 800s. Even if a worker process survives past lease expiration, Firestore generation fencing (`lock.operation_generation === acquiredGeneration` and `lock.lease_token === acquiredToken`) guarantees that stale worker database writes fail closed with zero modifications. Lease expiry does NOT assume worker process death; remote mutations are governed exclusively by eventual reconciliation.
+- **Multi-Generation Remote Uncertainty Ledger (`unresolved_remote_mutations`, DEC-7D-60, DEC-7D-65):**
   - **Explicit Remote Mutation Outcomes:**
     - `NOT_STARTED`: Request has not been sent.
     - `IN_FLIGHT`: Request has been dispatched; response pending.
     - `CONFIRMED_SUCCESS`: HTTP 200 `{ success: true }` received.
     - `CONFIRMED_FAILURE`: HTTP 4xx (non-ambiguous) or 5xx received.
     - `UNKNOWN_OUTCOME`: Timeout, container kill, network partition, or lease expiration occurs while request is in transit.
-  - **Remote Uncertainty Debt Model (`remote_uncertainty_debt`):**
-    When an operation terminates in `UNKNOWN_OUTCOME`, the WABA lifecycle lock records debt:
-    `uncertain_generation` tracks the generation of the stalled request; `uncertain_operation` tracks whether `'subscribe'` or `'unsubscribe'` was in-flight; `quiescence_deadline` is set to `now + REMOTE_SETTLEMENT_WINDOW_SECONDS` (300 seconds); and `consecutive_stable_observations` starts at 0.
-  - **Snapshot Semantics with Provenance (`provider_observed_at`, `provider_observed_generation`):**
-    `provider_observed_state` is accompanied by provenance timestamps and generations. A snapshot `GET /{waba_id}/subscribed_apps` merely captures the observable state at time $T$. It does **NOT** prove that a delayed in-flight mutation dispatched under a prior generation will not execute at $T + \Delta t$.
-    **Crucial Invariant:** A single snapshot `GET` that happens to match the desired state does **NOT** erase `remote_uncertainty_debt` if an opposing in-flight mutation may still arrive.
-  - **The Delayed Mutation Race (Asymmetric & Symmetric Defects):**
-    - *Asymmetric Race (Delayed DELETE vs Onboarding):* Cleanup (Gen 10) dispatches `DELETE`, network stalls $\rightarrow$ `UNKNOWN_OUTCOME`. Lease expires locally. Onboarding (Gen 11) starts, desires `subscribed`. Onboarding inspects Meta via `GET /subscribed_apps`. Meta hasn't processed `DELETE` yet, so `GET` returns LouvAIO App ID present. If Onboarding naively treats this snapshot as settled, it skips `POST` and connects. Seconds later, Gen 10's delayed `DELETE` executes at Meta, silently severing webhooks for the active customer line!
-    - *Symmetric Race (Delayed POST vs Cleanup):* Onboarding (Gen 10) dispatches `POST`, stalls $\rightarrow$ `UNKNOWN_OUTCOME`. Connection expires after 24 hours. Cleanup (Gen 11) runs, desires `unsubscribed`. Cleanup inspects Meta via `GET /subscribed_apps`. Meta hasn't processed `POST` yet, so app is absent. If Cleanup naively treats this as `PROVEN_UNSUBSCRIBED`, it commits cleanup, purges the encrypted secret, and marks the job `succeeded`. Seconds later, Gen 10's delayed `POST` executes at Meta, subscribing LouvAIO with zero retained credentials!
-- **The Active Re-Assertion Protocol (DEC-7D-63):**
-  To eliminate both race conditions deterministically:
-  Whenever `remote_uncertainty_debt` exists and the current desired state is opposite to the uncertain operation:
-  1. **Onboarding Active Re-Assertion:** If desired state is `'subscribed'` and `remote_uncertainty_debt?.uncertain_operation === 'unsubscribe'`, Onboarding **MUST NOT** rely on a snapshot `GET` returning `'subscribed'`. It **MUST actively dispatch** `POST /{waba_id}/subscribed_apps` under its new generation! Dispatching `POST` ensures that Meta queues/executes the subscription after any delayed `DELETE` or re-establishes the subscription. Upon confirmed success of the active `POST`, `remote_uncertainty_debt` is cleared (`null`), and `provider_observed_state = 'subscribed'`, `provider_observed_generation = acquiredGeneration`, `provider_observed_at = now`.
-  2. **Cleanup Active Re-Assertion:** If desired state is `'unsubscribed'` and `remote_uncertainty_debt?.uncertain_operation === 'subscribe'`, Cleanup **MUST NOT** declare `PROVEN_CLEAN` because a snapshot `GET` found the app absent. It **MUST actively dispatch** `DELETE /{waba_id}/subscribed_apps`, followed by exhaustive `GET` post-condition verification across all pages (DEC-7D-61). Upon verified absence post-DELETE, `remote_uncertainty_debt` is cleared, and `provider_observed_state = 'unsubscribed'`, `provider_observed_generation = acquiredGeneration`, `provider_observed_at = now`.
-- **Passive Quiescence Settlement Window (DEC-7D-63):**
-  `REMOTE_SETTLEMENT_WINDOW_SECONDS = 300` (5 minutes).
-  If no opposing mutation is actively dispatched, `remote_uncertainty_debt` can be passively cleared ONLY when ALL of the following hold:
-  1. `new Date(lock.remote_uncertainty_debt.quiescence_deadline) <= now` (at least 300 seconds have elapsed since the uncertain operation was dispatched);
-  2. At least two consecutive, distinct observation passes (`consecutive_stable_observations >= 2`) confirm the identical observed state;
-  3. Zero new in-flight operations were dispatched during the window.
-- **Safe Secret Retention Invariant (DEC-7D-64):**
-  In `whatsapp_provider_cleanup_jobs`, the secret in `whatsapp_connection_secrets` MUST NEVER be purged while `remote_uncertainty_debt?.uncertain_operation === 'subscribe'`. Any attempt to finalize cleanup under active subscribe uncertainty debt fails closed: job transitions to `retry_wait` (or `exhausted` with `retention_expires_at = null`), keeping the encrypted credential strictly intact until either active re-assertion succeeds, quiescence clears the debt, or an operator explicitly invokes `POST .../abandon` with `force_abandon: true` and `override_reason` (DEC-7D-62).
+  - **Multi-Generation Ledger Invariant:**
+    When an operation terminates in `UNKNOWN_OUTCOME`, the record is appended to `unresolved_remote_mutations`:
+    `{ operation_generation, operation, dispatched_at: now.toISOString(), status: 'unknown_outcome', connection_id }`.
+    A singular uncertainty field is strictly prohibited because it would overwrite and lose prior unresolved operations (e.g. Gen 10 unsubscribe $\rightarrow$ Gen 11 subscribe $\rightarrow$ Gen 12 unsubscribe). Every remotely dispatched operation with `UNKNOWN_OUTCOME` that is still capable of changing provider state must remain represented by the correctness model without information loss.
+  - **Removal & Compaction Semantics (DEC-7D-65):**
+    Unresolved records **NEVER auto-disappear** via timer or matching snapshot `GET`. An unconfirmed HTTP request could theoretically arrive at Meta minutes, hours, or days later.
+    An entry in `unresolved_remote_mutations` may be removed ONLY when:
+    1. An authoritative provider settlement primitive confirms terminal non-execution (none currently exposed by Meta Cloud API); OR
+    2. An authorized platform operator explicitly executes `POST .../abandon` with `force_abandon: true` and `override_reason` (setting `provider_cleanup_proof = 'overridden'`), clearing the corresponding entries; OR
+    3. The line and all sibling lines sharing the WABA are permanently deleted / purged, and an operator dismisses the historical debt after operational audit.
+    *Defensive Ceiling:* If `unresolved_remote_mutations.length >= 50` (`MAX_UNRESOLVED_REMOTE_MUTATIONS = 50`), the coordinator emits a critical alert `WHATSAPP_WABA_UNCERTAINTY_LEDGER_OVERFLOW` requiring immediate operator investigation while preserving all entries.
+- **Active Desired-State Re-Assertion as Current Operability Repair (DEC-7D-63):**
+  - Whenever opposing historical uncertainty exists in `unresolved_remote_mutations` and the current desired state is opposite to an unconfirmed operation:
+    1. **Onboarding Active Re-Assertion:** Desired is `'subscribed'` while unresolved `unsubscribe` exists. Onboarding **MUST NOT** rely on a snapshot `GET` returning `'subscribed'`. It **MUST actively dispatch** `POST /{waba_id}/subscribed_apps` under its current generation.
+    2. **Cleanup Active Re-Assertion:** Desired is `'unsubscribed'` while unresolved `subscribe` exists. Cleanup **MUST NOT** declare clean on snapshot absence. It **MUST actively dispatch** `DELETE /{waba_id}/subscribed_apps` and verify exhaustive absence across all pages (DEC-7D-61).
+  - **Strict Redefinition of What Active Re-Assertion Proves:**
+    Confirmed `POST` 200 establishes: **"Current desired state is successfully asserted at this moment"** (restoring current operability).
+    Confirmed `DELETE` + exhaustive absence establishes: **"LouvAIO App ID is absent at this moment"**.
+    NEITHER proves: "All historical unknown mutations are impossible." Older unconfirmed mutations are **NOT erased** from `unresolved_remote_mutations`. Active re-assertion repairs current state; durable background reconciliation handles any late drift.
+- **Elimination of Arbitrary Temporal Proof & Reframing of Observation Cadence (DEC-7D-63):**
+  - Meta Cloud API supplies **zero evidence** that 300 seconds (or 600s, 1h, 24h) represents a remote request drop or cancellation boundary.
+  - Therefore, 300 seconds MUST NOT:
+    - clear remote uncertainty as a correctness fact;
+    - authorize destructive secret purge;
+    - assert that an old mutation cannot arrive;
+    - serve as a remote fencing boundary.
+  - The 300-second interval is retained strictly as an **operational observation cadence** (`RECONCILIATION_OBSERVATION_CADENCE_SECONDS = 300` / 5 minutes) governing the frequency of background health sweeps.
+- **Durable Desired-State Reconciliation Protocol (DEC-7D-66):**
+  Whenever any operation terminates in `UNKNOWN_OUTCOME`, durable reconciliation work is created immediately:
+  The transaction enqueues or activates `whatsapp_waba_reconciliation_jobs.doc("recon_meta_" + wabaId)` with `status = 'pending'`, `next_attempt_at = now`.
+  **No future user actions are required:** The background scheduled executor (`GET /api/v1/internal/whatsapp/cleanup-jobs/execute` via Vercel Cron or interval runner) discovers and processes the job automatically.
+  **Reconciliation Algorithm:**
+  1. Worker acquires 5-minute lease on `whatsapp_waba_reconciliation_jobs.doc("recon_meta_" + wabaId)`.
+  2. Worker acquires 120-second WABA lifecycle lease on `lock_meta_${wabaId}` under incremented generation.
+  3. **Derive CURRENT Desired State:**
+     Worker queries platform-wide `whatsapp_connections.where('provider_waba_id', '==', wabaId)` across all organizations.
+     If `isWabaDependentConnection(conn, wabaId, now)` is true for $\ge 1$ connection: desired state is `'subscribed'`.
+     If 0 active dependencies: desired state is `'unsubscribed'`.
+  4. **Read Current Provider State:** Worker executes `GET /{waba_id}/subscribed_apps` (with exhaustive cursor-based traversal).
+  5. **Compare & Repair Drift:**
+     - **If Desired === Observed:**
+       Current operability verified. Snapshot provenance updated: `provider_observed_state = observed`, `provider_observed_at = now`, `provider_observed_generation = currentGeneration`.
+       Increment `consecutive_stable_passes += 1`.
+       If `consecutive_stable_passes >= 10` and `now - last_drift_detected_at > 24h`, job transitions to `quiescent` with 6-hour steady-state polling interval (`RECONCILIATION_STEADY_STATE_INTERVAL_SECONDS = 21600`).
+     - **If Desired !== Observed (Drift Detected!):**
+       An older in-flight mutation landed or external unsubscription occurred!
+       Record `last_drift_detected_at = now`, reset `consecutive_stable_passes = 0`, increment `consecutive_drift_repairs += 1`.
+       - If desired is `'subscribed'` (observed `unsubscribed`): Actively call `POST /{waba_id}/subscribed_apps` under current generation to re-subscribe webhook.
+       - If desired is `'unsubscribed'` (observed `subscribed`): Actively call `DELETE /{waba_id}/subscribed_apps` under current generation and verify exhaustive absence.
+       - If `consecutive_drift_repairs > 5`, transition job to `status = 'attention_required'` and log high-severity operational alert.
+  6. **Release Lock & Persist Provenance:**
+     Update `last_reconciled_at = now`, release WABA lock.
+     *Crucial Invariant:* `unresolved_remote_mutations` remains PRESERVED. Eventual convergence guarantees that if another delayed mutation lands later, the next reconciliation pass detects and repairs it again.
+- **Reconciliation Retry & Backoff Cadence (DEC-7D-66):**
+  - Attempt 1: Immediate (`next_attempt_at = now`)
+  - Attempt 2: `now + 1 minute`
+  - Attempt 3: `now + 5 minutes`
+  - Attempt 4: `now + 15 minutes`
+  - Attempt 5: `now + 1 hour`
+  - Steady-state: Every 6 hours (`quiescent` mode) until operator manually retires the WABA container.
+- **Separation of Connection Operability from Strong Settlement (DEC-7D-67):**
+  - LouvAIO does NOT block customer usage merely because distributed remote linearizability cannot be proven against Meta.
+  - A connection may transition to `status = 'connected'` when:
+    1. Current provider operability is authoritatively verified (Step 9 confirmed `POST` 200 or fresh `GET` confirming LouvAIO App ID present under acquired lease);
+    2. Any unresolved `unsubscribe` mutations in `unresolved_remote_mutations` are actively tracked by a scheduled reconciliation job (`recon_meta_${wabaId}`);
+    3. The connection secret is securely stored in `whatsapp_connection_secrets` to enable future automated repairs.
+  - **Truthful Definition of Connected:**
+    In LouvAIO, `status = 'connected'` means: **"Provider was most recently verified operational and durable reconciliation remains active"**, NOT "no stale remote operation can ever alter provider state again."
+- **Local Connection Disconnect vs Internal Retained Provider-Cleanup Responsibility (DEC-7D-68):**
+  - When an unmaterialized, expired, or decommissioned connection is disconnected, the connection document transitions to `status = 'disconnected'` immediately, liberating customer commercial capacity.
+  - If unsubscription from Meta remains unconfirmed or unresolved `subscribe` mutations exist in `unresolved_remote_mutations`:
+    The encrypted credential in `whatsapp_connection_secrets.doc(connectionId)` is **STRICTLY RETAINED** under cleanup job ownership (`cleanup_conn_${connId}`) bound to `${organization_id}:${connection_id}` (Phase 7C AAD).
+    Firestore TTL is disabled (`retention_expires_at = null` on the job record).
+    The credential remains server-only, never exposed in client APIs.
+    Automatic secret destruction is strictly prohibited until unsubscription is proven clean with zero unresolved subscribe mutations in the ledger, or until an operator executes an explicit force-abandon (`provider_cleanup_proof = 'overridden'`).
 - **WABA Dependency Predicate & Evaluated Statuses (DEC-7D-56):**
   ```typescript
   export const WABA_DEPENDENCY_STATUSES: readonly WhatsAppConnectionStatus[] = [
@@ -2093,8 +2328,9 @@ When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
   ```
 - **Deadlock-Free Acquisition Ordering:**
   1. Cleanup workers acquire the **Cleanup Job Lease** (`whatsapp_provider_cleanup_jobs`) FIRST (5-minute lease), then acquire the **WABA Lifecycle Lease** (`whatsapp_waba_lifecycle_locks`) SECOND (120-second lease).
-  2. Onboarding operations acquire ONLY the **WABA Lifecycle Lease** (120-second lease). Zero reverse acquisition path exists; deadlock is mathematically impossible.
-- **Centralized Provider Mutation & Reconciliation Protocol (DEC-7D-56, DEC-7D-60, DEC-7D-63, DEC-7D-64):**
+  2. Reconciliation workers acquire the **WABA Reconciliation Job Lease** (`whatsapp_waba_reconciliation_jobs`) FIRST (5-minute lease), then acquire the **WABA Lifecycle Lease** (`whatsapp_waba_lifecycle_locks`) SECOND (120-second lease).
+  3. Onboarding operations acquire ONLY the **WABA Lifecycle Lease** (120-second lease). Zero reverse acquisition path exists; deadlock is mathematically impossible.
+- **Centralized Provider Mutation & Reconciliation Protocol (DEC-7D-56, DEC-7D-60, DEC-7D-63, DEC-7D-64, DEC-7D-65, DEC-7D-66, DEC-7D-67, DEC-7D-68, DEC-7D-69):**
   All operations mutating `POST /{waba_id}/subscribed_apps` or `DELETE /{waba_id}/subscribed_apps` must participate in the same coordinator protocol:
   1. **Onboarding Subscription & Materialization Flow (Steps 9 & 10):**
      - Step 9 (Acquire & In-Flight): In a Firestore transaction, read `whatsapp_waba_lifecycle_locks.doc("lock_meta_" + wabaId)`:
@@ -2102,20 +2338,21 @@ When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
        - If idle or expired lease:
          Acquire lease: increment `operation_generation = lock.operation_generation + 1`, `desired_subscription_state = 'subscribed'`, `operation_status = 'in_flight'`, `lease_token = randomUUID()`, `holder_id = "onboarding_session_" + session.id`, `lease_expires_at = now + 120s`.
      - Outside transaction:
-       - If `lock.remote_uncertainty_debt?.uncertain_operation === 'unsubscribe'`: Active Re-Assertion Protocol mandates dispatching `POST /{waba_id}/subscribed_apps` to override any delayed DELETE.
+       - If `lock.unresolved_remote_mutations.some(m => m.operation === 'unsubscribe')`: Active Re-Assertion Protocol mandates actively dispatching `POST /{waba_id}/subscribed_apps` to override any delayed DELETE.
        - Call Meta `POST /{waba_id}/subscribed_apps` (idempotent on Meta).
      - Step 10 (Convergence Verification & Materialization Commit):
        - Inside transactional materialization commit:
          - Read `whatsapp_waba_lifecycle_locks.doc("lock_meta_" + wabaId)`.
          - Assert `lock.lease_token === acquiredLeaseToken` AND `lock.operation_generation === acquiredGeneration` AND `new Date(lock.lease_expires_at) > now`!
-         - Assert `lock.provider_observed_state === 'subscribed'` OR provider call in Step 9 succeeded under this lease.
+         - Assert provider call in Step 9 succeeded under this lease OR fresh provider observation confirms `'subscribed'`.
          - If mismatched or expired: roll back transaction with `WABA_LIFECYCLE_LEASE_LOST`.
-         - Clear `remote_uncertainty_debt = null`.
-         - Validate connection pointer (`connection.current_onboarding_session_id === session.id`), capacity quota, and billing access mode.
+         - If Step 9 had failed or timed out: append `{ operation_generation: acquiredGeneration, operation: 'subscribe', dispatched_at: now, status: 'unknown_outcome', connection_id: conn.id }` to `lock.unresolved_remote_mutations`, ensure `recon_meta_${wabaId}` exists in `status = 'pending'`, fail closed without materializing.
+         - If Step 9 succeeded: validate connection pointer (`connection.current_onboarding_session_id === session.id`), capacity quota, and billing access mode.
          - Commit connection as `connected` (`provider_waba_id = wabaId`, `provider_phone_number_id = phoneNumberId`).
          - Release WABA lifecycle lock: `operation_status = 'idle'`, `provider_observed_state = 'subscribed'`, `provider_observed_at = now`, `provider_observed_generation = acquiredGeneration`, `lease_token = null`, `lease_expires_at = null`, `last_settled_at = now`.
          - Commit provider identity claim `claim_meta_${phoneNumberId}`.
-  2. **Cleanup Worker Flow & Expired-Lease Takeover (DEC-7D-56, DEC-7D-60, DEC-7D-63, DEC-7D-64):**
+         - *Note:* If `unresolved_remote_mutations` contains older `unsubscribe` operations, ensure `recon_meta_${wabaId}` is active with `next_attempt_at = now + 300s` to verify long-term stability without blocking connection.
+  2. **Cleanup Worker Flow & Expired-Lease Takeover (DEC-7D-56, DEC-7D-60, DEC-7D-63, DEC-7D-64, DEC-7D-65, DEC-7D-66, DEC-7D-68):**
      - Worker acquires Cleanup Job Lease (5m).
      - In Firestore transaction, worker acquires WABA lease on `whatsapp_waba_lifecycle_locks.doc("lock_meta_" + wabaId)`:
        - If lease active: worker releases transaction; job transitions to `retry_wait`.
@@ -2129,11 +2366,11 @@ When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
        - **If surviving dependencies > 0:**
          - Desired state is `subscribed`! Sibling lines active.
          - Worker MUST NOT call Meta `DELETE`.
-         - If `lock.remote_uncertainty_debt?.uncertain_operation === 'unsubscribe'`: To protect surviving dependencies from a delayed in-flight `DELETE`, worker actively dispatches `POST /{waba_id}/subscribed_apps` before releasing lock!
-         - Inside Firestore transaction: update `desired_subscription_state = 'subscribed'`, `operation_status = 'idle'`, `remote_uncertainty_debt = null`, release WABA lock, transition cleanup job to `cancelled` (`NO_PROVIDER_CLEANUP_NEEDED`), purge secret from `whatsapp_connection_secrets.doc(job.connection_id)`, set `retention_expires_at = completed_at + 30d`.
+         - If `lock.unresolved_remote_mutations.some(m => m.operation === 'unsubscribe')`: To protect surviving dependencies from a delayed in-flight `DELETE`, worker actively dispatches `POST /{waba_id}/subscribed_apps` before releasing lock!
+         - Inside Firestore transaction: update `desired_subscription_state = 'subscribed'`, `operation_status = 'idle'`, release WABA lock, transition cleanup job to `cancelled` (`NO_PROVIDER_CLEANUP_NEEDED`), purge secret from `whatsapp_connection_secrets.doc(job.connection_id)`, set `retention_expires_at = completed_at + 30d`.
        - **If zero surviving dependencies:**
          - Desired state is `unsubscribed`!
-         - If `lock.remote_uncertainty_debt?.uncertain_operation === 'subscribe'`: Active Re-Assertion Protocol mandates calling Meta `DELETE /{waba_id}/subscribed_apps` regardless of initial snapshot `GET`.
+         - If `lock.unresolved_remote_mutations.some(m => m.operation === 'subscribe')`: Active Re-Assertion Protocol mandates calling Meta `DELETE /{waba_id}/subscribed_apps` regardless of initial snapshot `GET`.
          - Worker calls Meta `DELETE /{waba_id}/subscribed_apps` (using `config.metaGraphApiVersion`).
          - If response is ambiguous, execute authoritative post-condition check `GET /{waba_id}/subscribed_apps` with exhaustive full-collection pagination (DEC-7D-61).
          - Inside Firestore transaction:
@@ -2143,13 +2380,17 @@ When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
              - If absence is authoritatively proven across all pages:
                - Update `desired_subscription_state = 'unsubscribed'`.
                - Update `provider_observed_state = 'unsubscribed'`, `provider_observed_at = now`, `provider_observed_generation = acquiredGeneration`.
-               - Clear `remote_uncertainty_debt = null`.
                - Update `operation_status = 'idle'`, `last_settled_at = now`.
                - Release WABA lock (`lease_token = null`, `lease_expires_at = null`).
-               - Write back job outcome `succeeded`, purge secret from `whatsapp_connection_secrets`, set `retention_expires_at = completed_at + 30d`.
+               - **Safe Secret Purge Evaluation (DEC-7D-64):**
+                 - If `lock.unresolved_remote_mutations.some(m => m.operation === 'subscribe')` is TRUE:
+                   Secret purge is **STRICTLY PROHIBITED**! Job transitions to `exhausted` (`UNPROVEN_CLEAN`), `last_error_code = 'UNRESOLVED_REMOTE_SUBSCRIBE_DEBT'`, `retention_expires_at = null`, secret is **STRICTLY RETAINED** encrypted in `whatsapp_connection_secrets`. Ensures `recon_meta_${wabaId}` remains active.
+                 - If zero unresolved subscribe mutations exist:
+                   Job transitions to `succeeded`, secret in `whatsapp_connection_secrets` is **PURGED immediately**, `retention_expires_at = completed_at + 30d`.
              - If unproven / timeout / error:
                - Set `operation_status = 'unknown_outcome'`.
-               - Record `remote_uncertainty_debt = { uncertain_generation: acquiredGeneration, uncertain_operation: 'unsubscribe', uncertain_since: now, quiescence_deadline: now + 300s, consecutive_stable_observations: 0 }`.
+               - Append `{ operation_generation: acquiredGeneration, operation: 'unsubscribe', dispatched_at: now.toISOString(), status: 'unknown_outcome', connection_id: job.connection_id }` to `lock.unresolved_remote_mutations`.
+               - Ensure `recon_meta_${wabaId}` is active with `next_attempt_at = now`.
                - Release WABA lock (`lease_token = null`, `lease_expires_at = null`).
                - Write back job outcome (`retry_wait`, or `exhausted` if max attempts reached with `retention_expires_at = null`); secret is **STRICTLY RETAINED** encrypted.
 
@@ -2223,7 +2464,7 @@ When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
   - **`HTTP 401` / Meta Error Code `190` / Permanent `HTTP 403`:** `AUTHORIZATION_LOST` -> Token or permission invalidated. Job transitions to `exhausted`, `last_error_code = 'AUTH_LOST'`, `retention_expires_at = null`, secret is **STRICTLY RETAINED** encrypted in `whatsapp_connection_secrets` to preserve administrative auditability and remediation capability.
   - **`HTTP 400` with Invalid Container Parameter:** `INVALID_CONTAINER` -> Malformed/invalid WABA container. Job transitions to `exhausted`, `last_error_code = 'INVALID_CONTAINER'`, `retention_expires_at = null`, secret is **STRICTLY RETAINED** encrypted.
   - **`Retries Exhausted (attempt_count >= max_attempts)`:** `UNPROVEN_CLEAN` -> 5 attempts failed without confirmed unsubscription. Job transitions to `exhausted`, `last_error_code = 'MAX_RETRIES_EXCEEDED'`, `retention_expires_at = null` (suppressing Firestore TTL deletion), secret is **STRICTLY RETAINED** encrypted in `whatsapp_connection_secrets`. Emits high-severity `WHATSAPP_PROVIDER_CLEANUP_EXHAUSTED` operational alert.
-  - **Strict Secret Purge Invariant (DEC-7D-51, DEC-7D-52, DEC-7D-64):** Encrypted secret deletion is strictly prohibited on generic 404, generic code 100, permission denied, token revoked, 429, 5xx, or timeout unless proven clean by documented 200 `{ success: true }` or exhaustive post-condition GET confirmation. Furthermore, secret deletion is **STRICTLY PROHIBITED** whenever the WABA lifecycle lock has an active remote uncertainty debt for subscription (`remote_uncertainty_debt?.uncertain_operation === 'subscribe'`), regardless of snapshot absence observations (DEC-7D-64). The secret MUST be retained encrypted fail-closed until either unsubscription is actively re-asserted and authoritatively confirmed via exhaustive traversal, quiescence passes with stable verified absence, or an operator explicitly invokes `POST .../abandon` with `force_abandon: true` and `override_reason` (DEC-7D-62).
+  - **Strict Secret Purge Invariant (DEC-7D-51, DEC-7D-52, DEC-7D-64, DEC-7D-67):** Encrypted secret deletion is strictly prohibited on generic 404, generic code 100, permission denied, token revoked, 429, 5xx, or timeout unless proven clean by documented 200 `{ success: true }` or exhaustive post-condition GET confirmation. Furthermore, secret deletion is **STRICTLY PROHIBITED** whenever the WABA lifecycle lock has any unresolved remote mutation for subscription (`lock.unresolved_remote_mutations.some(m => m.operation === 'subscribe')`), regardless of snapshot absence observations (DEC-7D-64, DEC-7D-67). The secret MUST be retained encrypted fail-closed until either unsubscription is actively re-asserted and authoritatively confirmed via exhaustive traversal, or an operator explicitly invokes `POST .../abandon` with `force_abandon: true` and `override_reason` (DEC-7D-62, DEC-7D-67). Arbitrary temporal settlement windows (such as 300s) are observation intervals only and MUST NEVER be used as autonomous justification to purge secrets under unresolved subscribe debt.
 - **Semantic Distinction: Proven-Clean vs Unproven-Clean (DEC-7D-51, DEC-7D-52):**
   - `PROVEN_CLEAN` (`succeeded`): Documented 200 or verified absence via complete exhaustive traversal of `GET /{waba_id}/subscribed_apps`. Secret purged; TTL set to 30 days.
   - `NO_PROVIDER_CLEANUP_NEEDED` (`cancelled`): Webhook must not be touched due to active sibling lines. Secret purged; TTL set to 30 days.
@@ -2655,14 +2896,42 @@ export interface WhatsAppProvider {
 86. **Manual Abandon With Usable Credential Proves Unsubscription (DEC-7D-62):** When secret can still query Meta, `POST /abandon` executes `GET /subscribed_apps` to verify absence, records `provider_cleanup_proof = 'proven'`, purges secret, and sets 30d TTL.
 87. **Manual Force-Abandon on Revoked Credential (DEC-7D-62):** When token is revoked (401/190), caller must pass `force_abandon: true` and `override_reason` (min 10 chars); endpoint marks `provider_cleanup_proof = 'overridden'`, purges secret, and records audit trail.
 88. **Contention Returns HTTP 409 With Retry-After (DEC-7D-56):** When WABA lifecycle lease is held by another process, competing onboarding Step 9 returns HTTP 409 `WABA_LIFECYCLE_CONTENTION` with `Retry-After: 5` header instead of generic 502.
-89. **Active Re-Assertion on Onboarding Under Unsubscribe Debt (DEC-7D-63):** Onboarding detects `remote_uncertainty_debt.uncertain_operation === 'unsubscribe'`; verifies that client actively issues `POST /{waba_id}/subscribed_apps` even if snapshot `GET` reports `subscribed`, clearing debt upon success.
-90. **Active Re-Assertion on Cleanup Under Subscribe Debt (DEC-7D-63):** Cleanup detects `remote_uncertainty_debt.uncertain_operation === 'subscribe'`; verifies that worker actively issues `DELETE /{waba_id}/subscribed_apps` even if snapshot `GET` reports app absent, clearing debt upon exhaustive absence verification.
-91. **120s Lease Expiry Distinguishes Local Reclaim from Remote Settlement (DEC-7D-56, DEC-7D-60):** WABA lease expiry allows successor to acquire lock, but preserves `remote_uncertainty_debt` indicating remote in-flight mutation; successor does not assume remote quiescence.
+89. **Active Re-Assertion on Onboarding Under Unsubscribe Debt (DEC-7D-63, DEC-7D-66):** Onboarding detects `unresolved_remote_mutations.some(m => m.operation === 'unsubscribe')`; verifies that client actively issues `POST /{waba_id}/subscribed_apps` even if snapshot `GET` reports `subscribed`, re-establishing operability while retaining uncertainty record in ledger.
+90. **Active Re-Assertion on Cleanup Under Subscribe Debt (DEC-7D-63, DEC-7D-66, DEC-7D-67):** Cleanup detects `unresolved_remote_mutations.some(m => m.operation === 'subscribe')`; verifies that worker actively issues `DELETE /{waba_id}/subscribed_apps` even if snapshot `GET` reports app absent, retaining secret fail-closed until zero subscribe debt or operator force-abandon.
+91. **120s Lease Expiry Distinguishes Local Reclaim from Remote Settlement (DEC-7D-56, DEC-7D-60, DEC-7D-65):** WABA lease expiry allows successor to acquire lock, but preserves `unresolved_remote_mutations` indicating remote in-flight mutation; successor does not assume remote quiescence.
 92. **Snapshot Provenance Tracking (DEC-7D-56, DEC-7D-60):** Verifies that `provider_observed_state` mutations record `provider_observed_at` and `provider_observed_generation`; stale snapshots cannot be used to settle desired state.
-93. **Passive Quiescence Settlement Requires Consecutive Observations (DEC-7D-63):** Passive clearing of `remote_uncertainty_debt` requires `now >= quiescence_deadline` (300s) AND `consecutive_stable_observations >= 2`; single observation or premature check leaves debt active.
-94. **Safe Secret Retention Invariant Under Subscribe Debt (DEC-7D-64):** Verifies that cleanup job attempting secret purge fails closed and retains encrypted secret in `whatsapp_connection_secrets` as long as `remote_uncertainty_debt.uncertain_operation === 'subscribe'`.
-95. **Stale Delayed Mutation Arriving After Active Re-Assertion (DEC-7D-63):** Simulates delayed `DELETE` arriving at Meta after Gen 11 active `POST`; subsequent reconciliation or health check detects discrepancy, re-asserts subscription, and maintains service availability.
-96. **Operator Force-Abandon Under Active Debt (DEC-7D-62, DEC-7D-64):** Verifies that operator `POST .../abandon` with `force_abandon: true` and `override_reason` clears debt, purges secret, and logs audit trail even when `remote_uncertainty_debt` was active.
+93. **Reconciliation Observation Cadence Replaces Arbitrary Temporal Proof (DEC-7D-65, DEC-7D-66, DEC-7D-68):** Observation interval (300s) verifies ongoing stability but does NOT autonomously purge unresolved unknown-outcome records from ledger without authoritative proof or manual override.
+94. **Safe Secret Retention Invariant Under Multi-Generation Subscribe Debt (DEC-7D-64, DEC-7D-67):** Verifies that cleanup job attempting secret purge fails closed and retains encrypted secret in `whatsapp_connection_secrets` as long as `unresolved_remote_mutations.some(m => m.operation === 'subscribe')`.
+95. **Stale Delayed Mutation Arriving After Active Re-Assertion (DEC-7D-63, DEC-7D-66, DEC-7D-68):** Simulates delayed `DELETE` arriving at Meta after Gen 11 active `POST`; background durable reconciler detects drift, re-asserts subscription, and restores operability with zero user action.
+96. **Operator Force-Abandon Under Active Debt (DEC-7D-62, DEC-7D-67):** Verifies that operator `POST .../abandon` with `force_abandon: true` and `override_reason` overrides ledger debt, purges secret, and logs complete audit trail even when `unresolved_remote_mutations` contained subscribe debt.
+97. **Multi-Generation Uncertainty Ledger Bounding (DEC-7D-65):** Verifies that `unresolved_remote_mutations` is capped at 20 entries; additions beyond 20 truncate oldest settled records FIFO while retaining active unknown-outcome debt.
+98. **Durable Reconciler Job Creation (`recon_meta_${wabaId}`) Without Future User Action (DEC-7D-68):** Unknown outcome recorded during onboarding or cleanup ensures `whatsapp_waba_reconciliation_jobs` contains `recon_meta_${wabaId}` in `status = 'pending'`, scheduled for execution with zero client involvement.
+99. **Durable Reconciler Lease Fencing and Crash Recovery (DEC-7D-56, DEC-7D-68):** Reconciler worker acquiring WABA lease executes idempotently; worker crash leaves expired lease safely reclaimable by successor worker.
+100. **Active Re-Assertion Does NOT Purge Historical Subscribe Debt From Ledger (DEC-7D-65, DEC-7D-66):** Active `POST` confirms immediate operability but does not erase historical unknown-outcome entries from `unresolved_remote_mutations`.
+101. **Reconciler Automatic Repair of Late DELETE During Active Connection (DEC-7D-66, DEC-7D-68):** Reconciler observes drift (`observed: unsubscribed`, `desired: subscribed`) on active connection; automatically calls `POST /{waba_id}/subscribed_apps` without user action.
+102. **Reconciler Automatic Repair of Late POST During Disconnected Cleanup (DEC-7D-66, DEC-7D-68):** Reconciler observes drift (`observed: subscribed`, `desired: unsubscribed`) on disconnected connection; automatically calls `DELETE /{waba_id}/subscribed_apps` without user action.
+103. **Secret Retention Invariant Under Multi-Generation Subscribe Debt (DEC-7D-64, DEC-7D-67):** Verifies that multiple generations of subscribe attempts with unknown outcome all strictly retain encrypted secret in `whatsapp_connection_secrets`.
+104. **Local Disconnected Status Frees Commercial Quota Immediately While Secret Retained (DEC-7D-39, DEC-7D-64):** Lapsing 24h reservation immediately frees organization quota in local transaction while retaining secret under cleanup job until settled.
+105. **Reconciler Exponential Backoff Progression (1m, 5m, 15m, 1h, 6h) (DEC-7D-68):** Transient provider errors during reconciliation advance through 1m, 5m, 15m, 1h, and 6h steady-state backoff intervals.
+106. **Reconciler Terminal Auth Failure (401/190) Retains Secret and Halts Retries (DEC-7D-52, DEC-7D-68):** HTTP 401 or error code 190 transitions reconciliation job to `exhausted`, strictly retains encrypted secret, sets `retention_expires_at = null`, and emits operational alert.
+107. **Operator Force-Abandon Overrides Ledger Debt and Purges Secret (DEC-7D-62, DEC-7D-67):** Operator calling `/abandon` with `force_abandon: true` purges retained secret and clears ledger debt.
+108. **Sibling Line Protection During Durable Reconciliation (DEC-7D-25, DEC-7D-68):** Reconciler verifies active platform-wide dependencies (> 0) and refuses to dispatch `DELETE` even if one sibling disconnected.
+109. **Cross-Tenant Generation Mismatch Cancels Stale Reconciliation Job (DEC-7D-44, DEC-7D-68):** Reconciliation job observing WABA re-claimed by another organization cancels execution without mutating remote state.
+110. **Vercel Execution Boundary (Wall-Clock Timeout Before Provider Response) Safely Records Unknown Outcome (DEC-7D-53, DEC-7D-65):** Serverless function termination before Meta response records mutation as `unknown_outcome` in ledger and leaves lease safely reclaimable.
+111. **Eventual Convergence Without Linearizability Proof (DEC-7D-66, DEC-7D-69):** Validates that system achieves practical eventual convergence through active re-assertion and autonomous durable reconciliation without claiming impossible remote distributed linearizability.
+
+### 16. Strong vs Eventual Guarantees Specification (DEC-7D-69)
+
+To ensure distributed-systems correctness across the boundary between local Cloud Firestore persistence and external Meta Graph API endpoints, LouvAIO strictly distinguishes strong transactional invariants from eventual remote convergence guarantees:
+
+| Dimension | Local Firestore Coordination | Remote Meta Graph API | Cross-Boundary Architectural Contract |
+| :--- | :--- | :--- | :--- |
+| **Linearizability / Serializability** | **Strong**: ACID serializability via Firestore `runTransaction` with optimistic concurrency control (OCC). | **Eventual / None**: Asynchronous, distributed, multi-region; no two-phase commit (2PC) or transactional consensus. | Local states are strictly linearizable; remote states converge through idempotent re-assertion and durable background reconciliation. |
+| **Mutation Settlement Proof** | **Deterministic**: Immediate commit timestamp; reads within transaction observe committed state. | **Non-Atomic / Ambiguous**: HTTP 200/404 or network timeout; external request may execute after local caller halts. | Local transaction cannot prove remote execution without authoritative provider post-condition query; timeouts are classified as `unknown_outcome`. |
+| **Lease & Worker Fencing** | **Strict**: Fenced via generation counter (`operation_generation`) and unique `lease_token` validated inside transaction. | **Best-Effort / Non-Aborting**: Meta cannot cancel or preempt an in-flight HTTP request once dispatched. | Stale worker's post-provider writeback is rejected locally; remote uncertainty is recorded in multi-generation ledger for successor reconciliation. |
+| **Desired State Convergence** | **Immediate**: Desired state updated synchronously in WABA lock document. | **Eventual**: Converged via Active Re-Assertion and durable reconciler (`recon_meta_${wabaId}`). | System achieves immediate local operability while guaranteeing eventual remote consistency through autonomous background repair without user action. |
+| **Quota & Entitlement Lifecycle** | **Immediate**: Connection marked `disconnected` on 24h expiry or user disconnect, releasing commercial slot instantly. | **Decoupled**: Provider cleanup runs asynchronously in background via `whatsapp_provider_cleanup_jobs`. | Commercial capacity is strictly decoupled from provider network latency or failure modes; quota is never held hostage by external third parties. |
+| **Credential & Secret Retention** | **Strict Fail-Closed**: Stored encrypted with AAD; deletion strictly prohibited while subscribe debt exists or on unconfirmed cleanup. | **Autonomous Lifecycle**: Token revoked by Meta independently or preserved in customer portfolio. | Encrypted credentials are retained server-only until authoritative proof of absence with zero subscribe debt or explicit authorized human operator force-abandon. |
 
 ---
 
