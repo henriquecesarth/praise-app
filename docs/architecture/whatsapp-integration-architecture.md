@@ -564,7 +564,7 @@ The following items are external dependencies on Meta's WhatsApp Cloud API platf
 
 ---
 
-## 18. Updated Decision Register (DEC-7A-01 .. DEC-7A-29, DEC-7C-01 .. DEC-7C-15, DEC-7D-01 .. DEC-7D-53)
+## 18. Updated Decision Register (DEC-7A-01 .. DEC-7A-29, DEC-7C-01 .. DEC-7C-15, DEC-7D-01 .. DEC-7D-55)
 
 | Decision ID | Status | Subject | Summary |
 | :--- | :--- | :--- | :--- |
@@ -663,8 +663,10 @@ The following items are external dependencies on Meta's WhatsApp Cloud API platf
 | **DEC-7D-49** | **New** | Phase 7C AAD Compatibility Lock (`${organization_id}:${connection_id}`) | Freezes the exact canonical Associated Authenticated Data (AAD) format for all WhatsApp credential encryption and decryption as `${organization_id}:${connection_id}` (or `${orgId}:${connectionId}`), preserving exact binary compatibility with Phase 7C (`whatsapp-encryption.service.ts`). Prohibits any prefix (e.g. `whatsapp_secret:` is strictly invalid and classified as an explanatory documentation typo). Prohibits dual AAD fallback or silent migration logic. Cleanup jobs access secrets exclusively through `WhatsAppEncryptionService` and `whatsapp_connection_secrets`, with zero plaintext retention in job documents or responses. |
 | **DEC-7D-50** | **New** | Bounded Pre-Call Attempt Reservation Semantics & Fail-Safe Counter | Formally defines `attempt_count` as the number of provider cleanup attempts reserved by a worker. Prior to dispatching `DELETE /{waba_id}/subscribed_apps` to Meta, the worker executes a fenced Firestore transaction checking `status === 'processing'`, `lease_token === workerLeaseToken`, and `attempt_count < max_attempts`, incrementing `attempt_count += 1` and recording `last_attempt_started_at = now`. Only after this transaction commits does the worker issue the external HTTP request. Enforces invariant that no provider call may be initiated when `attempt_count >= max_attempts`. Acknowledges that distributed external HTTP calls and Firestore writes cannot atomically commit together; pre-call reservation guarantees that provider calls to Meta are strictly bounded by `max_attempts` across any combination of crashes. |
 | **DEC-7D-51** | **New** | Unconfirmed Cleanup Exhaustion, Credential Retention & Operational Incident Lifecycle | Semantically differentiates terminal cleanup outcomes: `PROVEN_CLEAN` (Meta returned 200 or 404: job `succeeded`, secret purged immediately, `retention_expires_at = completed_at + 30d`), `NO_PROVIDER_CLEANUP_NEEDED` (WABA claim generation or active dependencies require preserving webhook: job `cancelled`, secret purged, `retention_expires_at = completed_at + 30d`), and `UNPROVEN_CLEAN` (retries exhausted after 5 attempts across 24h: job `exhausted`, secret RETAINED encrypted in `whatsapp_connection_secrets`, `retention_expires_at = null` to prevent premature TTL deletion, and high-severity `WHATSAPP_PROVIDER_CLEANUP_EXHAUSTED` alert emitted). Prohibits destroying the only recovery credential while Meta webhook status remains unconfirmed. |
-| **DEC-7D-52** | **New** | Unambiguous Meta Cleanup Classification & Authoritative Post-Condition Verification | Prohibits classifying generic HTTP 404 or numeric error code 100 on `DELETE /{waba_id}/subscribed_apps` as `PROVEN_CLEAN` without authoritative evidence. Documented HTTP 2xx (`{ success: true }`) is `PROVEN_CLEAN`. If Meta returns an ambiguous response (e.g. 404 or error claiming not subscribed), the worker issues an authoritative post-condition check: `GET /{waba_id}/subscribed_apps`. If the LouvAIO App ID is confirmed absent, the state is verified as `PROVEN_CLEAN` (job `succeeded`, secret purged immediately, 30d TTL). If the app remains present, or if GET fails transiently, state remains `RETRYABLE_FAILURE` (`retry_wait`, secret retained). If credentials lost authorization (401/190, 403), state is `AUTHORIZATION_LOST` (`exhausted`, secret retained encrypted, `retention_expires_at = null`, operational alert logged). Encrypted secrets are purged ONLY upon confirmed `PROVEN_CLEAN` or WABA dependency bypass (`cancelled`). |
-| **DEC-7D-53** | **New** | Serverless Effective Duration Safety & Configuration Prerequisite | Reconciles LouvAIO's soft 45s execution target with Vercel compute models. While Fluid Compute defaults to 60s, legacy/non-Fluid compute defaults to 10s (Hobby) or 15s (Pro), which would abort a 45s worker. Establishes mandatory release prerequisite `CLEANUP_EXECUTOR_MIN_EFFECTIVE_FUNCTION_DURATION_SECONDS >= 60` requiring `maxDuration: 60` in `backend/vercel.json` functions block for `src/app.ts` prior to production deployment, guaranteeing that function runtime envelope never truncates batch execution. |
+| **DEC-7D-52** | **Hardened** | Meta Cleanup Proof, Ambiguous Response Handling & Authoritative Post-Condition Traversal | Prohibits classifying generic HTTP 404 or numeric error code 100 on `DELETE /{waba_id}/subscribed_apps` as `PROVEN_CLEAN` without authoritative evidence. Documented HTTP 200 (`{ success: true }`) is `PROVEN_CLEAN`. Generic HTTP 404 and numeric error code 100 are strictly ambiguous: neither proves already-unsubscribed nor still-subscribed. When received, the worker executes an authoritative post-condition check: `GET /{waba_id}/subscribed_apps`. Validating absence requires complete, exhaustive collection traversal across all pages via safe cursor-based navigation (`after`), verifying that `entry.whatsapp_business_api_data.id !== unifiedConfig.metaAppId` across the entire collection; a single-page check is strictly insufficient. If confirmed absent across all pages, state is `PROVEN_CLEAN` (job `succeeded`, secret purged, 30d TTL). If app is found, state is `NOT_CLEAN / RETRYABLE_FAILURE` (`retry_wait`). Incomplete pagination, timeout, or malformed responses fail closed as `UNPROVEN_CLEAN` (`retry_wait`, secret retained). Authorization revocation (401/190, 403) transitions to `AUTHORIZATION_LOST` (`exhausted`, secret retained, `retention_expires_at = null`). |
+| **DEC-7D-53** | **Hardened** | Current Vercel Compute Duration Model & Runtime Safety Prerequisite | Reconciles LouvAIO's soft 45s execution target with current Vercel runtime facts (September 2026: Fluid Compute defaults to 300s across all plans, with 300s Hobby max and 800s/1800s Pro/Enterprise max; legacy non-Fluid defaults to 10s Hobby and 15s Pro). Status: `LOUVAIO_VERCEL_FLUID_COMPUTE_STATE: UNVERIFIED`. Establishes mandatory release prerequisite `CLEANUP_EXECUTOR_MIN_EFFECTIVE_FUNCTION_DURATION_SECONDS >= 60` requiring explicit function `maxDuration: 60` in `backend/vercel.json` for `src/app.ts` prior to production deployment, guaranteeing that the runtime envelope never truncates batch execution regardless of compute architecture or default plan ceilings. |
+| **DEC-7D-54** | **New** | Subscribed Apps Exhaustive Pagination Protocol & SSRF Protection | Freezes exact response structure for `GET /{waba_id}/subscribed_apps` where App ID is extracted strictly from `data[].whatsapp_business_api_data.id` and compared against `unifiedConfig.metaAppId`. Traversal advances across pages using safe cursor navigation (`?after=${paging.cursors.after}&limit=100`) on the canonical Meta Graph origin, strictly prohibiting unvalidated navigation to arbitrary `paging.next` URLs (Anti-SSRF). Traversal is bounded to at most 3 pages (up to 300 apps) at 5 seconds per request. Any failure, timeout, malformed payload, or incomplete traversal fails closed as `UNPROVEN_CLEAN`, strictly retaining the encrypted secret. |
+| **DEC-7D-55** | **New** | Canonical Internal Route Family & Operator Administrative Seam | Freezes canonical `/api/v1/internal/whatsapp/cleanup-jobs/...` route family for all machine and operator endpoints: scheduled executor (`GET .../execute`, authenticated via `CRON_SECRET`), administrative retry (`POST .../:jobId/retry`, resets attempt count and schedules attempt), and administrative abandonment (`POST .../:jobId/abandon`, confirms manual deauthorization, purges secret, sets 30d TTL). Eliminates competing route prefix variations. All internal routes enforce `Cache-Control: no-store` and require machine/admin authentication. |
 
 ---
 
@@ -2045,24 +2047,33 @@ When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
     retention_expires_at: string | null; // ISO 8601 UTC (null while unresolved/exhausted; completed_at + 30d upon proven clean or cancelled)
   }
   ```
-- **Provider Result Classification, Post-Condition Verification & Secret Retention Matrix (DEC-7D-43, DEC-7D-51, DEC-7D-52):**
+- **Provider Result Classification, Post-Condition Verification & Secret Retention Matrix (DEC-7D-43, DEC-7D-51, DEC-7D-52, DEC-7D-54):**
   - **`HTTP 200` (`{ success: true }`):** `PROVEN_CLEAN` -> Documented unsubscription confirmed at Meta. Job transitions to `succeeded`, `retention_expires_at = completed_at + 30d`, secret in `whatsapp_connection_secrets.doc(connId)` is **PURGED immediately**.
-  - **`Ambiguous DELETE Response` (Generic HTTP 404, Meta code 100, or error claiming already unsubscribed):**
-    - **Inadmissibility of Generic 404/Code 100 as Proof (DEC-7D-52):** In Meta Graph API, 404 and code 100 are generic parameter/path errors and do NOT by themselves prove that the app is unsubscribed.
-    - **Authoritative Post-Condition Verification:** Worker issues `GET https://graph.facebook.com/${version}/${waba_id}/subscribed_apps`:
-      - If GET returns HTTP 200 and LouvAIO App ID (`META_APP_ID`) is **absent** from the `data` array: State is authoritatively verified as **`PROVEN_CLEAN`**! Job transitions to `succeeded`, `retention_expires_at = completed_at + 30d`, and secret is **PURGED immediately**.
-      - If GET returns HTTP 200 and LouvAIO App ID is **still present**: Unsubscription failed. State is **`RETRYABLE_FAILURE`** -> Job transitions to `retry_wait` with exponential backoff. Secret is **RETAINED**.
-      - If GET fails with 429, 5xx, or network timeout: State is **`RETRYABLE_FAILURE`** -> Job transitions to `retry_wait`. Secret is **RETAINED**.
-      - If GET fails with 401 / code 190 or 403 (token expired or permission revoked): State is **`AUTHORIZATION_LOST`** -> Job transitions to `exhausted`, `last_error_code = 'AUTH_LOST'`, `retention_expires_at = null`, secret is **STRICTLY RETAINED** encrypted for manual review.
+  - **`Ambiguous DELETE Response` (Generic HTTP 404, Meta code 100, or error response):**
+    - **Inadmissibility of Generic 404/Code 100 as Proof (DEC-7D-52):** In Meta Graph API, 404 and code 100 are generic parameter/path errors and do NOT prove that the app is already unsubscribed or still subscribed.
+    - **Authoritative Post-Condition Verification with Exhaustive Pagination (DEC-7D-52, DEC-7D-54):**
+      The worker executes `GET https://graph.facebook.com/${version}/${waba_id}/subscribed_apps?limit=100`:
+      - **Exact Response Shape & App ID Extraction:**
+        Each item in `data` contains `entry.whatsapp_business_api_data.id`. The LouvAIO App ID is extracted strictly from `entry.whatsapp_business_api_data?.id` and compared to `unifiedConfig.metaAppId` (canonical string comparison).
+      - **Exhaustive Traversal Invariant:** A single-page response without LouvAIO's App ID is strictly insufficient if additional pages exist. Traversal MUST continue across all pages via safe cursor pagination (`after = response.paging?.cursors?.after`) on the canonical Meta Graph origin.
+      - **Anti-SSRF Protection:** Worker extracts cursor strings and constructs same-origin Graph requests; direct navigation to arbitrary unvalidated URLs in `paging.next` is strictly prohibited.
+      - **Bounded Pagination Envelope:** Worker traverses at most 3 pages (up to 300 apps) at 5 seconds per request.
+      - **Post-Condition Evaluation:**
+        - **Confirmed Absent Across All Pages:** If the collection is completely exhausted (no further cursors) and `entry.whatsapp_business_api_data?.id === unifiedConfig.metaAppId` was not found on ANY page: State is authoritatively verified as **`PROVEN_CLEAN`**! Job transitions to `succeeded`, `retention_expires_at = completed_at + 30d`, and secret is **PURGED immediately**.
+        - **App ID Present on Any Page:** Unsubscription failed; app remains subscribed. State is **`RETRYABLE_FAILURE`** -> Job transitions to `retry_wait`. Secret is **RETAINED**.
+        - **Incomplete Pagination / Timeout / Malformed Response:** If pagination terminates prematurely (page limit reached, timeout, malformed payload): State fails closed as **`UNPROVEN_CLEAN`** -> Job transitions to `retry_wait`. Secret is **RETAINED**.
+        - **GET Fails with 429, 5xx, or Network Timeout:** State is **`RETRYABLE_FAILURE`** -> Job transitions to `retry_wait`. Secret is **RETAINED**.
+        - **GET Fails with Auth Revocation (401 / code 190, 403):** State is **`AUTHORIZATION_LOST`** -> Job transitions to `exhausted`, `last_error_code = 'AUTH_LOST'`, `retention_expires_at = null`, secret is **STRICTLY RETAINED** encrypted.
   - **`WABA Dependency / Generation Divergence`:** `NO_PROVIDER_CLEANUP_NEEDED` -> Sibling lines exist or WABA re-claimed. Job transitions to `cancelled`, `retention_expires_at = completed_at + 30d`, secret is **PURGED immediately** (provider call skipped by design).
   - **`HTTP 429` (Rate Limited):** `RETRYABLE` -> Job transitions to `retry_wait` (backoff schedule). Secret is **RETAINED**.
   - **`HTTP 5xx` (Meta Server Error / Gateway Timeout):** `RETRYABLE` -> Job transitions to `retry_wait` (backoff schedule). Secret is **RETAINED**.
   - **`Network Timeout / Connection Reset`:** `RETRYABLE` -> Job transitions to `retry_wait` (backoff schedule). Secret is **RETAINED**.
   - **`HTTP 401` / Meta Error Code `190` / Permanent `HTTP 403`:** `AUTHORIZATION_LOST` -> Token or permission invalidated. Job transitions to `exhausted`, `last_error_code = 'AUTH_LOST'`, `retention_expires_at = null`, secret is **STRICTLY RETAINED** encrypted in `whatsapp_connection_secrets` to preserve administrative auditability and remediation capability.
+  - **`HTTP 400` with Invalid Container Parameter:** `INVALID_CONTAINER` -> Malformed/invalid WABA container. Job transitions to `exhausted`, `last_error_code = 'INVALID_CONTAINER'`, `retention_expires_at = null`, secret is **STRICTLY RETAINED** encrypted.
   - **`Retries Exhausted (attempt_count >= max_attempts)`:** `UNPROVEN_CLEAN` -> 5 attempts failed without confirmed unsubscription. Job transitions to `exhausted`, `last_error_code = 'MAX_RETRIES_EXCEEDED'`, `retention_expires_at = null` (suppressing Firestore TTL deletion), secret is **STRICTLY RETAINED** encrypted in `whatsapp_connection_secrets`. Emits high-severity `WHATSAPP_PROVIDER_CLEANUP_EXHAUSTED` operational alert.
-  - **Strict Secret Purge Invariant:** Encrypted secret deletion is strictly prohibited on generic 404, generic code 100, permission denied, token revoked, 429, 5xx, or timeout unless proven clean by 200 `{ success: true }` or authoritative post-condition GET confirmation.
+  - **Strict Secret Purge Invariant:** Encrypted secret deletion is strictly prohibited on generic 404, generic code 100, permission denied, token revoked, 429, 5xx, or timeout unless proven clean by documented 200 `{ success: true }` or exhaustive post-condition GET confirmation.
 - **Semantic Distinction: Proven-Clean vs Unproven-Clean (DEC-7D-51, DEC-7D-52):**
-  - `PROVEN_CLEAN` (`succeeded`): Documented 200 or verified absence via `GET /{waba_id}/subscribed_apps`. Secret purged; TTL set to 30 days.
+  - `PROVEN_CLEAN` (`succeeded`): Documented 200 or verified absence via complete exhaustive traversal of `GET /{waba_id}/subscribed_apps`. Secret purged; TTL set to 30 days.
   - `NO_PROVIDER_CLEANUP_NEEDED` (`cancelled`): Webhook must not be touched due to active sibling lines. Secret purged; TTL set to 30 days.
   - `UNPROVEN_CLEAN` (`exhausted`): Unconfirmed cleanup after 5 attempts over 24h, or authorization lost. Local commercial capacity is released, but the encrypted credential is RETAINED and Firestore TTL is DISABLED (`retention_expires_at = null`) to ensure the incident remains visible and remediable by operators.
 - **Attempt Counting & Backoff Schedule:**
@@ -2097,12 +2108,13 @@ When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
   - **Serverless Execution Bounds & Runtime Duration Prerequisite (DEC-7D-42, DEC-7D-47, DEC-7D-53):**
     - `LOUVAIO_INTERNAL_EXECUTION_BUDGET`: 45,000ms (45 seconds) operates as a **Soft Internal Target** (not a hard mathematical ceiling).
     - Acquisition Cutoff: 35,000ms (35 seconds). If `Date.now() - startTime > 35_000ms`, the loop ceases acquiring NEW candidate jobs.
-    - Provider HTTP timeout: 8,000ms per Meta call, followed by bounded Firestore writeback (1-2s).
-    - **Current Vercel Compute & Duration Evidence (September 2026):**
-      - *Fluid Compute:* Modern Vercel default; functions have an effective default duration of 60 seconds across all tiers.
-      - *Non-Fluid / Legacy Serverless:* Functions default to 10 seconds (Hobby) or 15 seconds (Pro) if `maxDuration` is omitted.
+    - Provider HTTP timeout: 8,000ms per Meta call (with post-condition page traversal capped at 5s per request), followed by bounded Firestore writeback (1-2s).
+    - **Current Vercel Compute & Duration Facts (September 2026):**
+      - *Fluid Compute (Current Vercel Architecture):* Default duration is 300 seconds across all tiers; Hobby maximum is 300 seconds; Pro and Enterprise standard maximum is 800 seconds (~13.3 minutes), with extended support up to 1800 seconds (30 minutes) on eligible runtimes.
+      - *Non-Fluid / Legacy Serverless:* Functions default to 10 seconds (Hobby) or 15 seconds (Pro) if `maxDuration` is unconfigured; Pro configurable up to 300s.
+      - *LouvAIO Project Fluid State:* `LOUVAIO_VERCEL_FLUID_COMPUTE_STATE: UNVERIFIED`.
     - **Mandatory Configuration Release Prerequisite (DEC-7D-53):**
-      To guarantee that the 45s execution envelope is never terminated prematurely by a 10s or 15s platform limit, the deployment configuration in `backend/vercel.json` must explicitly specify:
+      Because existing or non-Fluid projects may enforce a 15-second Pro default ceiling, LouvAIO explicitly decouples safety from platform defaults by requiring a dedicated 60-second runtime envelope:
       ```json
       {
         "functions": {
@@ -2113,6 +2125,7 @@ When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
       }
       ```
       Declared as prerequisite: `CLEANUP_EXECUTOR_MIN_EFFECTIVE_FUNCTION_DURATION_SECONDS >= 60`.
+      *Selector Validation Gap Note:* If monorepo build packaging for `@vercel/node` requires selecting the root bundle or individual entrypoints differently, verify during build deployment (`VERCEL_MAX_DURATION_SELECTOR_VALIDATION_GAP`).
     - Default batch size: 10 jobs. Maximum batch size: 25 jobs.
   - **Vercel Cron Cadence & Plan Limitations:**
     - Running a 5-minute cron schedule (`*/5 * * * *`) requires a Vercel plan supporting minute-level cron execution (Pro or Enterprise; Hobby only supports daily execution).
@@ -2195,8 +2208,12 @@ When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
   - Firestore TTL configuration on the 15-minute `expires_at` field is **strictly prohibited**.
   - **Infrastructure Requirement:**
     `FIRESTORE_TTL_CONFIGURATION_REQUIRED_BEFORE_PRODUCTION: YES` (Declared as operations prerequisite; zero automatic deployment in this task).
-- **Administrative Observability & Index Disposition:**
-  - Operator query for monitoring unresolved incidents:
+- **Administrative Observability & Canonical Internal Routes (DEC-7D-51, DEC-7D-55):**
+  - **Canonical Internal Route Family:**
+    - Scheduled Executor: `GET /api/v1/internal/whatsapp/cleanup-jobs/execute` (Authenticated via `CRON_SECRET`).
+    - Administrative Retry: `POST /api/v1/internal/whatsapp/cleanup-jobs/:jobId/retry` (Authenticated operator endpoint; resets `status = 'pending'`, `attempt_count = 0`, schedules immediate attempt).
+    - Administrative Abandon: `POST /api/v1/internal/whatsapp/cleanup-jobs/:jobId/abandon` (Authenticated operator endpoint; confirms manual unlinking at Meta, purges secret from `whatsapp_connection_secrets`, sets `retention_expires_at = now + 30d`).
+  - **Operator Monitoring Query:**
     `firestore.collection('whatsapp_provider_cleanup_jobs').where('status', '==', 'exhausted').orderBy('created_at', 'desc')`
   - **Index Disposition:** `ADMIN_EXHAUSTED_QUERY_INDEX: DEFERRED`. This query is part of future internal administrative tooling and is NOT executed by Phase 7D1 runtime workers. Its composite index declaration is deferred until administrative tooling implementation.
 
@@ -2432,6 +2449,10 @@ export interface WhatsAppProvider {
 62. **Authoritative Post-Condition Verification (DEC-7D-52):** If `GET /{waba_id}/subscribed_apps` confirms LouvAIO App ID absent, job transitions to `succeeded` and purges secret; if App ID remains present, job transitions to `retry_wait` and retains secret.
 63. **Authorization Lost Credential Retention (DEC-7D-52):** HTTP 401 / code 190 transitions to `exhausted` with `last_error_code = 'AUTH_LOST'`, strictly retains encrypted credential in `whatsapp_connection_secrets`, and leaves `retention_expires_at = null`.
 64. **Runtime Execution Budget & Duration Prerequisite (DEC-7D-53):** Verifies that cleanup executor enforces `CLEANUP_EXECUTOR_MIN_EFFECTIVE_FUNCTION_DURATION_SECONDS >= 60` prerequisite and halts new job acquisition after 35 seconds.
+65. **Subscribed Apps Nested ID Extraction (DEC-7D-54):** Validates that app membership is extracted strictly from `entry.whatsapp_business_api_data.id` and compared against `unifiedConfig.metaAppId`; malformed entries missing `whatsapp_business_api_data` fail closed as `UNPROVEN_CLEAN`.
+66. **Exhaustive Multi-Page Pagination Completeness (DEC-7D-54):** If page 1 lacks `metaAppId` but `paging.cursors.after` exists, worker advances to page 2; if page 2 contains `metaAppId`, job transitions to `retry_wait` and retains secret; if all pages exhausted without match, job transitions to `succeeded` and purges secret.
+67. **Incomplete Pagination Fail-Closed Safety (DEC-7D-54):** If pagination times out or exceeds 3 pages, worker fails closed with `UNPROVEN_CLEAN` (`retry_wait`) and strictly retains encrypted secret.
+68. **Canonical Internal Routes & Administrative Seams (DEC-7D-55):** Verifies routing for `GET /api/v1/internal/whatsapp/cleanup-jobs/execute`, `POST /api/v1/internal/whatsapp/cleanup-jobs/:jobId/retry`, and `POST /api/v1/internal/whatsapp/cleanup-jobs/:jobId/abandon`.
 
 ---
 
