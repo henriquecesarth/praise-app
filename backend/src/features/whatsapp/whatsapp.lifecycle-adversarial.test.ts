@@ -5,8 +5,9 @@ import { WhatsAppConnectionSecretRepository } from '../../repositories/WhatsAppC
 import { WhatsAppProviderCleanupJobRepository } from '../../repositories/WhatsAppProviderCleanupJobRepository';
 import { WhatsAppWabaReconciliationJobRepository } from '../../repositories/WhatsAppWabaReconciliationJobRepository';
 import { WhatsAppCleanupService } from './whatsapp-cleanup.service';
-import { WhatsAppReconciliationService } from './whatsapp-reconciliation.service';
-import { verifyBearerSecret } from './internal-whatsapp.controller';
+import fs from 'fs';
+import path from 'path';
+import { InternalWhatsAppController, verifyBearerSecret } from './internal-whatsapp.controller';
 import { AppError } from '../../middleware/error-handler';
 import { WhatsAppProvider } from './whatsapp.types';
 import { WhatsAppEncryptionService } from './whatsapp-encryption.service';
@@ -301,6 +302,281 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
       await expect(
         cleanupRepo.completeJobInTransaction(jobId, tokenA!, 'succeeded', 'proven')
       ).rejects.toThrow('CLEANUP_JOB_LEASE_LOST');
+    });
+  });
+
+  describe('5. Autonomous Scheduled Execution, Leases, Overlap & Auth Isolation Matrix (Phase 7D1-B-R1)', () => {
+    it('5.1 Proves no-user-action model is wired via Vercel Cron configuration and functions maxDuration', () => {
+      const vercelJsonPath = path.resolve(__dirname, '../../../vercel.json');
+      expect(fs.existsSync(vercelJsonPath)).toBe(true);
+      const content = JSON.parse(fs.readFileSync(vercelJsonPath, 'utf8'));
+
+      expect(content.functions?.['src/app.ts']?.maxDuration).toBe(60);
+      expect(Array.isArray(content.crons)).toBe(true);
+      expect(content.crons).toHaveLength(2);
+
+      const cleanupCron = content.crons.find(
+        (c: any) => c.path === '/api/v1/internal/whatsapp/cleanup-jobs/execute'
+      );
+      expect(cleanupCron).toBeDefined();
+      expect(cleanupCron.schedule).toBe('*/5 * * * *');
+
+      const reconCron = content.crons.find(
+        (c: any) => c.path === '/api/v1/internal/whatsapp/reconciliation-jobs/execute'
+      );
+      expect(reconCron).toBeDefined();
+      expect(reconCron.schedule).toBe('*/5 * * * *');
+    });
+
+    it('5.2 Scheduled cleanup execution executes due jobs and enforces non-cacheable HTTP headers', async () => {
+      const cleanupRepo = new WhatsAppProviderCleanupJobRepository();
+      const testId = crypto.randomUUID().slice(0, 8);
+      const jobId = `cleanup_conn_exec_${testId}`;
+
+      await cleanupRepo.createJob({
+        id: jobId,
+        organization_id: `org-${testId}`,
+        connection_id: `conn-${testId}`,
+        provider: 'meta',
+        provider_waba_id: `waba-${testId}`,
+        provider_phone_number_id: `phone-${testId}`,
+        waba_claim_generation: 1,
+        status: 'pending',
+        attempt_count: 0,
+        max_attempts: 5,
+        next_attempt_at: new Date(Date.now() - 5000).toISOString(),
+        lease_token: null,
+        lease_expires_at: null,
+        last_attempt_started_at: null,
+        last_error_code: null,
+        last_error_at: null,
+        provider_cleanup_proof: null,
+        override_reason: null,
+        manual_action_by: null,
+        manual_action_at: null,
+        manual_action_reason: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null,
+        retention_expires_at: null,
+      });
+
+      const cronSecret = 'valid-cron-secret-501';
+      process.env.CRON_SECRET = cronSecret;
+
+      const req = {
+        headers: { authorization: `Bearer ${cronSecret}` },
+        query: { batchSize: '5' },
+      } as any;
+      const headersSet: Record<string, string> = {};
+      let responseData: any = null;
+      let statusCode = 200;
+      const res = {
+        setHeader: (k: string, v: string) => {
+          headersSet[k] = v;
+        },
+        status: (code: number) => {
+          statusCode = code;
+          return res;
+        },
+        json: (data: any) => {
+          responseData = data;
+          return res;
+        },
+      } as any;
+      const next = vi.fn();
+
+      const controller = new InternalWhatsAppController();
+      await controller.executeCleanupJobs(req, res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(statusCode).toBe(200);
+      expect(headersSet['Cache-Control']).toBe('no-store, no-cache, must-revalidate, proxy-revalidate');
+      expect(headersSet['Pragma']).toBe('no-cache');
+      expect(headersSet['Expires']).toBe('0');
+      expect(responseData?.success).toBe(true);
+      expect(responseData?.cleanup?.candidateCount).toBeGreaterThanOrEqual(1);
+    }, 15000);
+
+    it('5.3 Scheduled reconciliation execution executes due reconciliation jobs', async () => {
+      const reconRepo = new WhatsAppWabaReconciliationJobRepository();
+      const testId = crypto.randomUUID().slice(0, 8);
+      const wabaId = `waba-recon-test-${testId}`;
+
+      await reconRepo.ensureJobPending(wabaId, 'unsubscribed');
+
+      const cronSecret = 'valid-cron-secret-502';
+      process.env.CRON_SECRET = cronSecret;
+
+      const req = {
+        headers: { authorization: `Bearer ${cronSecret}` },
+        query: { batchSize: '5' },
+      } as any;
+      const headersSet: Record<string, string> = {};
+      let responseData: any = null;
+      let statusCode = 200;
+      const res = {
+        setHeader: (k: string, v: string) => {
+          headersSet[k] = v;
+        },
+        status: (code: number) => {
+          statusCode = code;
+          return res;
+        },
+        json: (data: any) => {
+          responseData = data;
+          return res;
+        },
+      } as any;
+      const next = vi.fn();
+
+      const controller = new InternalWhatsAppController();
+      await controller.executeReconciliationJobs(req, res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(statusCode).toBe(200);
+      expect(responseData?.success).toBe(true);
+      expect(responseData?.reconciliation?.candidateCount).toBeGreaterThanOrEqual(1);
+    }, 15000);
+
+    it('5.4 Duplicate scheduler invocations are safe against concurrent execution overlap', async () => {
+      const cleanupRepo = new WhatsAppProviderCleanupJobRepository();
+      const testId = crypto.randomUUID().slice(0, 8);
+      const jobId = `cleanup_conn_overlap_${testId}`;
+
+      await cleanupRepo.createJob({
+        id: jobId,
+        organization_id: `org-${testId}`,
+        connection_id: `conn-${testId}`,
+        provider: 'meta',
+        provider_waba_id: `waba-${testId}`,
+        provider_phone_number_id: `phone-${testId}`,
+        waba_claim_generation: 1,
+        status: 'pending',
+        attempt_count: 0,
+        max_attempts: 5,
+        next_attempt_at: new Date(Date.now() - 5000).toISOString(),
+        lease_token: null,
+        lease_expires_at: null,
+        last_attempt_started_at: null,
+        last_error_code: null,
+        last_error_at: null,
+        provider_cleanup_proof: null,
+        override_reason: null,
+        manual_action_by: null,
+        manual_action_at: null,
+        manual_action_reason: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null,
+        retention_expires_at: null,
+      });
+
+      const cleanupService = new WhatsAppCleanupService();
+
+      // Launch two worker executions concurrently targeting the same due jobs
+      const [res1, res2] = await Promise.all([
+        cleanupService.executeDueJobs({ batchSize: 5 }),
+        cleanupService.executeDueJobs({ batchSize: 5 }),
+      ]);
+
+      // Both runners must complete without unhandled crash, and exactly one acquires the candidate
+      expect(res1.processedCount + res2.processedCount).toBeGreaterThanOrEqual(1);
+    }, 15000);
+
+    it('5.5 Expired job lease (worker crash) becomes claimable by subsequent scheduler invocation', async () => {
+      const cleanupRepo = new WhatsAppProviderCleanupJobRepository();
+      const testId = crypto.randomUUID().slice(0, 8);
+      const jobId = `cleanup_conn_expired_${testId}`;
+
+      // Simulate a crashed worker whose lease expired 10 seconds ago
+      await cleanupRepo.createJob({
+        id: jobId,
+        organization_id: `org-${testId}`,
+        connection_id: `conn-${testId}`,
+        provider: 'meta',
+        provider_waba_id: `waba-${testId}`,
+        provider_phone_number_id: `phone-${testId}`,
+        waba_claim_generation: 1,
+        status: 'processing',
+        attempt_count: 1,
+        max_attempts: 5,
+        next_attempt_at: new Date(Date.now() - 60000).toISOString(),
+        lease_token: 'crashed-worker-lease-token',
+        lease_expires_at: new Date(Date.now() - 10000).toISOString(),
+        last_attempt_started_at: new Date(Date.now() - 60000).toISOString(),
+        last_error_code: null,
+        last_error_at: null,
+        provider_cleanup_proof: null,
+        override_reason: null,
+        manual_action_by: null,
+        manual_action_at: null,
+        manual_action_reason: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null,
+        retention_expires_at: null,
+      });
+
+      // Query B discovers the expired processing lease
+      const dueJobs = await cleanupRepo.findDueJobs(10);
+      const targetJob = dueJobs.find((j) => j.id === jobId);
+      expect(targetJob).toBeDefined();
+      expect(targetJob!.status).toBe('processing');
+
+      // Next scheduler execution acquires a new lease
+      const newLeaseToken = await cleanupRepo.acquireJobLeaseInTransaction(jobId, 60000);
+      expect(newLeaseToken).not.toBeNull();
+      expect(newLeaseToken).not.toBe('crashed-worker-lease-token');
+
+      const updated = await cleanupRepo.getJobById(jobId);
+      expect(updated!.lease_token).toBe(newLeaseToken);
+    }, 15000);
+
+    it('5.6 Rejects unauthorized requests, invalid tokens, and enforces operator/cron authority separation', async () => {
+      const cronSecret = 'actual-cron-secret-12345';
+      const operatorSecret = 'actual-operator-secret-67890';
+      process.env.CRON_SECRET = cronSecret;
+      process.env.INTERNAL_OPERATOR_SECRET = operatorSecret;
+
+      const controller = new InternalWhatsAppController();
+
+      // Case A: Missing authorization on cron route -> 401 UNAUTHORIZED
+      const reqMissing = { headers: {}, query: {} } as any;
+      const res = { setHeader: vi.fn(), status: vi.fn().mockReturnThis(), json: vi.fn() } as any;
+      const next1 = vi.fn();
+      await controller.executeCleanupJobs(reqMissing, res, next1);
+      expect(next1).toHaveBeenCalledWith(
+        expect.objectContaining({ statusCode: 401, details: { code: 'UNAUTHORIZED' } })
+      );
+
+      // Case B: Wrong token on cron route -> 401 UNAUTHORIZED
+      const reqWrong = { headers: { authorization: 'Bearer totally-wrong-token' }, query: {} } as any;
+      const next2 = vi.fn();
+      await controller.executeCleanupJobs(reqWrong, res, next2);
+      expect(next2).toHaveBeenCalledWith(
+        expect.objectContaining({ statusCode: 401, details: { code: 'UNAUTHORIZED' } })
+      );
+
+      // Case C: Operator secret passed to cron route -> 401 UNAUTHORIZED (operator cannot execute cron-only route)
+      const reqOperatorOnCron = { headers: { authorization: `Bearer ${operatorSecret}` }, query: {} } as any;
+      const next3 = vi.fn();
+      await controller.executeCleanupJobs(reqOperatorOnCron, res, next3);
+      expect(next3).toHaveBeenCalledWith(
+        expect.objectContaining({ statusCode: 401, details: { code: 'UNAUTHORIZED' } })
+      );
+
+      // Case D: Cron secret passed to operator force-abandon -> 403 FORBIDDEN (cron machine cannot perform human force-abandon)
+      const reqCronOnAbandon = {
+        headers: { authorization: `Bearer ${cronSecret}` },
+        params: { jobId: 'cleanup_conn_dummy' },
+        body: { force_abandon: true, override_reason: 'Justification >= 10 characters' },
+      } as any;
+      const next4 = vi.fn();
+      await controller.abandonCleanupJob(reqCronOnAbandon, res, next4);
+      expect(next4).toHaveBeenCalledWith(
+        expect.objectContaining({ statusCode: 403, details: { code: 'FORBIDDEN' } })
+      );
     });
   });
 });

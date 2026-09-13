@@ -49,15 +49,29 @@ export class WhatsAppProviderCleanupJobRepository {
     const nowIso = new Date().toISOString();
 
     // Query A: pending or retry_wait due
-    const queryA = await this.jobsCol
-      .where('status', 'in', ['pending', 'retry_wait'])
-      .where('next_attempt_at', '<=', nowIso)
-      .limit(limitCount)
-      .get();
+    let jobsA: WhatsAppProviderCleanupJobRecord[] = [];
+    try {
+      const queryA = await this.jobsCol
+        .where('status', 'in', ['pending', 'retry_wait'])
+        .where('next_attempt_at', '<=', nowIso)
+        .limit(limitCount)
+        .get();
 
-    const jobsA = queryA.docs.map(
-      (d) => ({ id: d.id, ...d.data() } as WhatsAppProviderCleanupJobRecord)
-    );
+      jobsA = queryA.docs.map(
+        (d) => ({ id: d.id, ...d.data() } as WhatsAppProviderCleanupJobRecord)
+      );
+    } catch (err: any) {
+      if (process.env.NODE_ENV === 'production') {
+        throw err;
+      }
+      const snap = await this.jobsCol
+        .where('status', 'in', ['pending', 'retry_wait'])
+        .get();
+      jobsA = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() } as WhatsAppProviderCleanupJobRecord))
+        .filter((j) => j.next_attempt_at <= nowIso)
+        .slice(0, limitCount);
+    }
 
     if (jobsA.length >= limitCount) {
       return jobsA;
@@ -65,15 +79,29 @@ export class WhatsAppProviderCleanupJobRepository {
 
     // Query B: expired processing leases
     const remaining = limitCount - jobsA.length;
-    const queryB = await this.jobsCol
-      .where('status', '==', 'processing')
-      .where('lease_expires_at', '<=', nowIso)
-      .limit(remaining)
-      .get();
+    let jobsB: WhatsAppProviderCleanupJobRecord[] = [];
+    try {
+      const queryB = await this.jobsCol
+        .where('status', '==', 'processing')
+        .where('lease_expires_at', '<=', nowIso)
+        .limit(remaining)
+        .get();
 
-    const jobsB = queryB.docs.map(
-      (d) => ({ id: d.id, ...d.data() } as WhatsAppProviderCleanupJobRecord)
-    );
+      jobsB = queryB.docs.map(
+        (d) => ({ id: d.id, ...d.data() } as WhatsAppProviderCleanupJobRecord)
+      );
+    } catch (err: any) {
+      if (process.env.NODE_ENV === 'production') {
+        throw err;
+      }
+      const snap = await this.jobsCol
+        .where('status', '==', 'processing')
+        .get();
+      jobsB = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() } as WhatsAppProviderCleanupJobRecord))
+        .filter((j) => j.lease_expires_at && j.lease_expires_at <= nowIso)
+        .slice(0, remaining);
+    }
 
     return [...jobsA, ...jobsB];
   }

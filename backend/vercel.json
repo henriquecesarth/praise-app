@@ -6,6 +6,21 @@
       "use": "@vercel/node"
     }
   ],
+  "functions": {
+    "src/app.ts": {
+      "maxDuration": 60
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/v1/internal/whatsapp/cleanup-jobs/execute",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/v1/internal/whatsapp/reconciliation-jobs/execute",
+      "schedule": "*/5 * * * *"
+    }
+  ],
   "routes": [
     {
       "src": "/(.*)",
