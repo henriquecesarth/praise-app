@@ -564,7 +564,7 @@ The following items are external dependencies on Meta's WhatsApp Cloud API platf
 
 ---
 
-## 18. Updated Decision Register (DEC-7A-01 .. DEC-7A-29, DEC-7C-01 .. DEC-7C-15, DEC-7D-01 .. DEC-7D-55)
+## 18. Updated Decision Register (DEC-7A-01 .. DEC-7A-29, DEC-7C-01 .. DEC-7C-15, DEC-7D-01 .. DEC-7D-59)
 
 | Decision ID | Status | Subject | Summary |
 | :--- | :--- | :--- | :--- |
@@ -667,6 +667,10 @@ The following items are external dependencies on Meta's WhatsApp Cloud API platf
 | **DEC-7D-53** | **Hardened** | Current Vercel Compute Duration Model & Runtime Safety Prerequisite | Reconciles LouvAIO's soft 45s execution target with current Vercel runtime facts (September 2026: Fluid Compute defaults to 300s across all plans, with 300s Hobby max and 800s/1800s Pro/Enterprise max; legacy non-Fluid defaults to 10s Hobby and 15s Pro). Status: `LOUVAIO_VERCEL_FLUID_COMPUTE_STATE: UNVERIFIED`. Establishes mandatory release prerequisite `CLEANUP_EXECUTOR_MIN_EFFECTIVE_FUNCTION_DURATION_SECONDS >= 60` requiring explicit function `maxDuration: 60` in `backend/vercel.json` for `src/app.ts` prior to production deployment, guaranteeing that the runtime envelope never truncates batch execution regardless of compute architecture or default plan ceilings. |
 | **DEC-7D-54** | **New** | Subscribed Apps Exhaustive Pagination Protocol & SSRF Protection | Freezes exact response structure for `GET /{waba_id}/subscribed_apps` where App ID is extracted strictly from `data[].whatsapp_business_api_data.id` and compared against `unifiedConfig.metaAppId`. Traversal advances across pages using safe cursor navigation (`?after=${paging.cursors.after}&limit=100`) on the canonical Meta Graph origin, strictly prohibiting unvalidated navigation to arbitrary `paging.next` URLs (Anti-SSRF). Traversal is bounded to at most 3 pages (up to 300 apps) at 5 seconds per request. Any failure, timeout, malformed payload, or incomplete traversal fails closed as `UNPROVEN_CLEAN`, strictly retaining the encrypted secret. |
 | **DEC-7D-55** | **New** | Canonical Internal Route Family & Operator Administrative Seam | Freezes canonical `/api/v1/internal/whatsapp/cleanup-jobs/...` route family for all machine and operator endpoints: scheduled executor (`GET .../execute`, authenticated via `CRON_SECRET`), administrative retry (`POST .../:jobId/retry`, resets attempt count and schedules attempt), and administrative abandonment (`POST .../:jobId/abandon`, confirms manual deauthorization, purges secret, sets 30d TTL). Eliminates competing route prefix variations. All internal routes enforce `Cache-Control: no-store` and require machine/admin authentication. |
+| **DEC-7D-56** | **New** | Shared WABA Lifecycle Lease & Subscribe/Unsubscribe Fencing (`whatsapp_waba_lifecycle_locks`) | Resolves concurrency races where cleanup observing zero dependents unlinks a WABA while concurrent onboarding establishes a dependent connection. Coordinates all WABA-level operations (onboarding `POST /{waba_id}/subscribed_apps` + materialization, and cleanup `DELETE /{waba_id}/subscribed_apps`) through root collection `whatsapp_waba_lifecycle_locks` with deterministic key `lock_${provider}_${provider_waba_id}`. Enforces transactional acquisition of a 60-second operational lease (`lease_token`, `lease_expires_at`, `lease_operation`, `holder_id`). Cleanup MUST re-query platform-wide WABA dependencies strictly AFTER acquiring the WABA lease; if active dependent connections exist, unsubscription is skipped (`NO_PROVIDER_CLEANUP_NEEDED`). Fences writeback with `lease_token` to reject zombie holders. |
+| **DEC-7D-57** | **New** | Configured Meta Graph Version Enforcement & Path Injection Protection | Mandates that all Meta Cloud API requests (OAuth, WABA verification, registration, `subscribed_apps` subscribe/unsubscribe/GET) construct target URLs dynamically using `unifiedConfig.metaGraphApiVersion` (`META_GRAPH_API_VERSION` env var, defaulting to `'v26.0'`). Prohibits hardcoded version strings in cleanup executor. Requires strict Zod regex validation (`^v[0-9]+(\.[0-9]+)?$`) at startup to prevent endpoint tampering or URL path injection. Documentation cites `v26.0` as authoritative platform evidence baseline as of September 2026 without freezing runtime configurability. |
+| **DEC-7D-58** | **New** | Internal Cleanup Operator Authorization & Machine-vs-Operator Credential Separation | Establishes explicit authorization boundaries for `/api/v1/internal/whatsapp/cleanup-jobs/...`. Decouples machine scheduling (`GET .../execute`, authenticated strictly via `Authorization: Bearer <CRON_SECRET>` with SHA-256 constant-time check) from privileged human operator remediation (`POST .../:jobId/retry` and `POST .../:jobId/abandon`, requiring dedicated platform operator credential `Authorization: Bearer <INTERNAL_OPERATOR_SECRET>`). Ordinary tenant roles (`org_owner`, `org_admin`, `ministry_admin`, `member`) are strictly rejected with HTTP 401/403. Nonexistent jobs fail closed with HTTP 404. Responses strictly omit cryptographic material. |
+| **DEC-7D-59** | **New** | Manual Remediation Semantics, State Guards & Operational Audit Trail (`retry` and `abandon`) | Freezes state transitions, prerequisites, and audit logging for operator interventions. `POST .../:jobId/abandon` is permitted strictly when `job.status === 'exhausted'`; requests on active `processing` jobs fail closed with HTTP 409 `JOB_CURRENTLY_PROCESSING`, and non-exhausted jobs reject with HTTP 409 `JOB_NOT_EXHAUSTED`. Request requires `operator_id`, `reason` (min 10 chars), and `confirmed_unlinked_at_meta: true`; upon validation, it purges the retained secret from `whatsapp_connection_secrets` using Phase 7C AAD `${organization_id}:${connection_id}`, sets `retention_expires_at = now + 30d`, transitions to `status = 'abandoned'`, and records `manual_action_by`, `manual_action_at`, and `manual_action_reason`. `POST .../:jobId/retry` resets `attempt_count = 0`, transitions to `status = 'pending'`, schedules immediate attempt (`next_attempt_at = now`), clears active lease pointers, rejects active processing leases with HTTP 409, and records audit fields. |
 
 ---
 
@@ -1768,6 +1772,12 @@ The onboarding completion endpoint (`POST /organizations/:orgId/whatsapp/onboard
 | **Case 32** | Subscribe vs Unsubscribe Crossing In Flight | **CONVERGENCE_REVALIDATION_GUARD** | Step 10 re-validates `claim.status === 'subscribed'`; finds unsubscribed due to network race | Step 10 transaction rolls back; re-issues `POST /{waba_id}/subscribed_apps`; re-commits | **1 (Materializing)** | Converges to subscribed | Guaranteed active webhook subscription before transition to `connected`. |
 | **Case 33** | Cleanup Job Max Attempts Exhausted | **CLEANUP_JOB_EXHAUSTION** | Job fails attempt 5; exhausts 24h retry ceiling | Secret PURGED permanently; job `status = 'exhausted'`, `last_error_code = 'MAX_ATTEMPTS_EXHAUSTED'` | **0 (Already released)** | Unproven cleanup | Eliminates indefinite credential retention; customer capacity remains liberated. |
 | **Case 34** | Replay on Session with Logical Retention Expired (> 30d) | **PURGED_SESSION_REPLAY** | Client submits `/complete` on session where `new Date(session.retention_expires_at) <= now` | Abort immediately; zero mutations; connection untouched | **1 (Active connection)** | Healthy line | `400 ONBOARDING_SESSION_NOT_FOUND` (Application layer enforces 30-day logical boundary even before Firestore physical TTL deletion). |
+| **Case 35** | Cleanup holds WABA lease; concurrent Onboarding arrives (DEC-7D-56) | **WABA_LEASE_CONTENTION_ONBOARDING_RETRY** | Step 9 detects WABA lease held (`operation: 'unsubscribe'`); transaction aborts | Lock held by cleanup; session remains `active` (`provider_progress: 'phone_registered'`) | **1 (Held in 15m window)** | Webhook unsubscription in progress | `502 PROVIDER_SUBSCRIPTION_CONTENTION` (Client retries within 15m session TTL; cleanup completes or releases lock, preventing orphaned WABA unsubscription) |
+| **Case 36** | Onboarding holds WABA lease; concurrent Cleanup arrives (DEC-7D-56) | **WABA_LEASE_CONTENTION_CLEANUP_BACKOFF** | Cleanup worker detects WABA lease held (`operation: 'subscribe'`); transaction aborts | Job transitions to `retry_wait` (or leaves for next scheduled cycle) | **0 (Capacity already released)** | Webhook subscription in progress | Worker backs off; next cleanup attempt queries dependencies strictly AFTER acquiring WABA lease, observing newly materialized connection and transitioning to `cancelled` (`NO_PROVIDER_CLEANUP_NEEDED`) |
+| **Case 37** | Cleanup crashes after acquiring WABA lease (DEC-7D-56) | **WABA_LEASE_CRASH_RECOVERY** | Worker dies holding lease; 60s lease window elapses (`lease_expires_at <= now`) | Lock becomes expired; job lease recovered via Query B | **0 (Already released)** | Untouched or unsubscription in-flight | Next worker or onboarding breaks expired 60s lease safely; no permanent deadlock |
+| **Case 38** | Cleanup DELETE succeeds at Meta, worker crashes before writeback (DEC-7D-56) | **WABA_POST_CONDITION_TAKEOVER_RECOVERY** | Worker unsubs at Meta but dies; WABA lease and job lease expire | Next worker reclaims job, acquires WABA lease, re-queries dependencies (0) | **0 (Already released)** | App unsubscribed at Meta | Worker calls DELETE or GET post-condition; GET authoritatively proves LouvAIO App ID absent (`PROVEN_CLEAN`); job marks `succeeded`, secret purged cleanly |
+| **Case 39** | Onboarding POST subscribed_apps succeeds, local commit fails (DEC-7D-56) | **ONBOARDING_MATERIALIZATION_RETRY_RECOVERY** | Provider subscribes WABA but Step 10 commit fails or crashes; 60s lease expires | Lock expires; session remains `active` (`provider_progress: 'phone_registered'`); connection `pending` | **1 (Held in 24h window)** | App subscribed at Meta | Client retries `/complete` within 15m (or `/start` Branch B2); Step 9 re-acquires WABA lease, re-verifies/idempotently calls Meta, Step 10 commits `connected` |
+| **Case 40** | New dependency created strictly after cleanup releases WABA lease (DEC-7D-56) | **CLEANUP_COMPLETED_SUBSEQUENT_ONBOARDING** | Cleanup completed and released WABA lease; later onboarding begins for same WABA | Lock idle; onboarding acquires lease (`operation: 'subscribe'`) | **1 (New reservation)** | Re-subscribed at Meta | Onboarding re-subscribes LouvAIO app via `POST /{waba_id}/subscribed_apps`, materializes connection, releases lease cleanly |
 
 ---
 
@@ -1970,46 +1980,93 @@ When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
   ```
 - Primary key lookups on `whatsapp_connections.doc(connId)`, `whatsapp_onboarding_sessions.doc(sessionId)`, and `whatsapp_waba_subscription_claims.doc(claimId)` use deterministic document IDs and require zero new composite indexes.
 
-### 8.12 Platform-Wide WABA Subscription Lifecycle Coordination, Claim Leases & Convergence (DEC-7D-40, DEC-7D-44)
-- **Root Collection:** `whatsapp_waba_subscription_claims`
-- **Document Key:** `claim_waba_${providerWabaId}` (platform-wide authority across all organizations).
-- **Schema:**
+### 8.12 Platform-Wide WABA Subscription Lifecycle Coordination, Shared Lifecycle Fencing & Leases (DEC-7D-40, DEC-7D-44, DEC-7D-56)
+- **Root Collection:** `whatsapp_waba_lifecycle_locks`
+- **Document Key:** `lock_${provider}_${provider_waba_id}` (e.g. `lock_meta_${providerWabaId}`; platform-wide authority across all organizations sharing a WABA).
+- **Exact Schema:**
   ```typescript
-  export interface WhatsAppWabaSubscriptionClaimRecord {
-    id: string; // "claim_waba_" + providerWabaId
+  export type WhatsAppWabaLifecycleOperation = 'subscribe' | 'unsubscribe';
+
+  export interface WhatsAppWabaLifecycleLockRecord {
+    id: string; // "lock_meta_" + providerWabaId
+    provider: 'meta_cloud_api';
     provider_waba_id: string;
-    status: 'unsubscribed' | 'subscribing' | 'subscribed' | 'unsubscribing';
-    generation: number; // monotonic sequence counter
-    active_dependency_count: number;
-    last_claimed_by_connection_id: string;
-    lease_token: string | null;
-    lease_expires_at: string | null; // ISO 8601 UTC (5-minute operational lease)
-    updated_at: string;
+    lease_token: string | null; // UUID v4 held by active operation
+    lease_operation: WhatsAppWabaLifecycleOperation | null;
+    lease_expires_at: string | null; // ISO 8601 UTC (bounded 60-second operational lease)
+    holder_id: string | null; // e.g. "onboarding_session_${sessionId}" or "cleanup_conn_${connId}"
+    created_at: string; // ISO 8601 UTC
+    updated_at: string; // ISO 8601 UTC
   }
   ```
-- **Concurrency & Lease Protocol:**
-  1. **Subscription Flow (Step 9):**
-     - In a Firestore transaction, read `claim_waba_${wabaId}`:
-       - If `status === 'unsubscribing'` or missing or expired lease (`lease_expires_at <= now`):
-         Acquire subscription lease: `status = 'subscribing'`, increment `generation`, set `lease_token = randomUUID()`, `lease_expires_at = now + 5m`.
-       - If `status === 'subscribed'`:
-         Increment `active_dependency_count`, increment `generation`.
-     - Outside transaction, call Meta `POST /{waba_id}/subscribed_apps` (idempotent).
-     - In a Firestore transaction: set `status = 'subscribed'`, clear lease, update `session.provider_progress = 'waba_subscribed'`.
-  2. **Unsubscription Flow (Cleanup Worker / Disconnect):**
-     - In a Firestore transaction, read `claim_waba_${wabaId}` and platform surviving dependent connections:
-       - Verify `active_dependency_count === 0` AND `claim.generation === job.waba_claim_generation`.
-       - Set `claim.status = 'unsubscribing'`, `lease_token = workerLeaseToken`, `lease_expires_at = now + 5m`.
-     - Outside transaction, call Meta `DELETE /{waba_id}/subscribed_apps`.
-     - In a Firestore transaction:
-       - Re-verify `claim.generation === job.waba_claim_generation`.
-       - If generation changed or `active_dependency_count > 0`: abort unsubscription commit! Sibling lines are active.
-       - If unchanged: set `claim.status = 'unsubscribed'`, clear lease.
-  3. **Step 10 Convergence Guard:**
-     - Inside the Step 10 materialization transaction, assert `claim.status === 'subscribed'` AND `claim.generation >= step9ClaimGeneration`.
-     - If not subscribed, roll back transaction and re-issue `POST /{waba_id}/subscribed_apps` before final commit.
-  4. **Claim Crash Recovery:**
-     - If a process dies while claim is in `'subscribing'` or `'unsubscribing'`, the 5-minute lease expires (`lease_expires_at <= now`). Any subsequent worker or onboarding transaction breaks the expired lease safely.
+- **WABA Dependency Predicate & Evaluated Statuses (DEC-7D-56):**
+  A connection depends legitimately on the WABA webhook subscription if it requires incoming messaging events or is in-flight/recovering. Disconnected connections are excluded after terminal cleanup.
+  ```typescript
+  export const WABA_DEPENDENCY_STATUSES: readonly WhatsAppConnectionStatus[] = [
+    'connected',
+    'connecting',
+    'error',
+    'disabled_by_user',
+    'pending',
+  ] as const;
+
+  export function isWabaDependentConnection(
+    conn: WhatsAppConnectionRecord,
+    targetWabaId: string,
+    now: Date = new Date()
+  ): boolean {
+    if (conn.provider_waba_id !== targetWabaId) return false;
+    if (conn.status === 'disconnected') return false;
+    if (conn.status === 'pending') {
+      // Pending connection only counts as dependent if reservation deadline is unexpired
+      if (conn.pending_expires_at && new Date(conn.pending_expires_at).getTime() <= now.getTime()) {
+        return false;
+      }
+    }
+    return (WABA_DEPENDENCY_STATUSES as readonly string[]).includes(conn.status);
+  }
+  ```
+- **Deadlock-Free Acquisition Ordering:**
+  To guarantee zero deadlocks between cleanup and onboarding:
+  1. Cleanup workers acquire the **Cleanup Job Lease** (`whatsapp_provider_cleanup_jobs`) FIRST (5-minute lease), then acquire the **WABA Lifecycle Lease** (`whatsapp_waba_lifecycle_locks`) SECOND (60-second lease).
+  2. Onboarding operations acquire ONLY the **WABA Lifecycle Lease** (60-second lease).
+  Zero reverse acquisition path exists; deadlock is mathematically impossible.
+- **WABA Lifecycle Lease Expiry & Duration (DEC-7D-56):**
+  - Lease duration is strictly bounded to **60 seconds** (`WABA_LIFECYCLE_LEASE_DURATION_MS = 60_000`).
+  - Covers worst-case Meta call timeout (8s for DELETE, up to 15s for 3-page GET pagination) + Firestore writeback margin (5-10s).
+  - Bounded duration guarantees that if a worker crashes mid-operation, the lock clears automatically after 60 seconds without manual intervention.
+- **Concurrency & Fencing Protocol (DEC-7D-56):**
+  1. **Onboarding Subscription & Materialization Flow (Steps 9 & 10):**
+     - In Step 9, inside a Firestore transaction, read `whatsapp_waba_lifecycle_locks.doc("lock_meta_" + wabaId)`:
+       - If lease active (`lease_expires_at > now` and `lease_token !== null`): abort transaction with retryable contention error (`502 PROVIDER_SUBSCRIPTION_CONTENTION`). Client retries within 15m session TTL.
+       - If idle or expired lease (`lease_expires_at <= now` or `lease_token === null`):
+         Acquire lease: `lease_token = randomUUID()`, `lease_operation = 'subscribe'`, `holder_id = "onboarding_session_" + session.id`, `lease_expires_at = now + 60s`.
+     - Outside transaction, call Meta `POST /{waba_id}/subscribed_apps` (idempotent on Meta).
+     - Inside Step 10 transactional materialization commit:
+       - Read `whatsapp_waba_lifecycle_locks.doc("lock_meta_" + wabaId)`.
+       - Assert `lock.lease_token === acquiredLeaseToken` AND `new Date(lock.lease_expires_at) > now`! If mismatched or expired, roll back transaction with `WABA_LIFECYCLE_LEASE_LOST`.
+       - Validate connection pointer (`connection.current_onboarding_session_id === session.id`), capacity quota, and billing access mode.
+       - Commit connection as `connected` (`provider_waba_id = wabaId`, `provider_phone_number_id = phoneNumberId`).
+       - Atomically release WABA lifecycle lock: `lease_token = null`, `lease_operation = null`, `holder_id = null`, `lease_expires_at = null`.
+       - Commit provider identity claim `claim_meta_${phoneNumberId}`.
+  2. **Cleanup Worker Flow (DEC-7D-56):**
+     - Worker acquires Cleanup Job Lease on `whatsapp_provider_cleanup_jobs.doc(jobId)` (5-minute lease, attempt reserved).
+     - Inside a Firestore transaction, worker acquires WABA lifecycle lease on `whatsapp_waba_lifecycle_locks.doc("lock_meta_" + wabaId)`:
+       - If lease active (`lease_expires_at > now` and `lease_token !== null`): worker releases transaction; job transitions to `retry_wait` (backoff schedule).
+       - If idle or expired: acquire lease: `lease_token = randomUUID()` (`wabaLeaseToken`), `lease_operation = 'unsubscribe'`, `holder_id = "cleanup_conn_" + connId`, `lease_expires_at = now + 60s`.
+     - **Mandatory Post-Lock Dependency Re-query:**
+       - Strictly AFTER acquiring the WABA lifecycle lease, worker queries `whatsapp_connections.where('provider_waba_id', '==', wabaId)` PLATFORM-WIDE across all organizations.
+       - Filters results using `isWabaDependentConnection(conn, wabaId, now)` for all connections except `job.connection_id`.
+       - **If surviving dependencies > 0:**
+         - Active sibling connections exist! Worker MUST NOT call Meta `DELETE`.
+         - Inside Firestore transaction: release WABA lock, transition job to `cancelled` (`NO_PROVIDER_CLEANUP_NEEDED`), purge secret from `whatsapp_connection_secrets.doc(job.connection_id)`, set `retention_expires_at = completed_at + 30d`.
+       - **If zero surviving dependencies:**
+         - Outside transaction, call Meta `DELETE /{waba_id}/subscribed_apps` (using `config.metaGraphApiVersion`).
+         - If response is ambiguous, execute authoritative post-condition traversal `GET /{waba_id}/subscribed_apps` with exhaustive pagination and nested ID parsing (DEC-7D-52, DEC-7D-54).
+         - Inside Firestore transaction:
+           - Assert `lock.lease_token === wabaLeaseToken` AND `new Date(lock.lease_expires_at) > now`!
+           - If lease lost or expired: worker aborts writeback; stale worker writes zero mutations.
+           - If verified: release WABA lock (`lease_token = null`, `lease_expires_at = null`, etc.) and write back job outcome (`succeeded`, `retry_wait`, or `exhausted`).
 
 ### 8.13 Decoupled Provider Cleanup Job Schema, Leased Executor & Phased Secret Purge (DEC-7D-39, DEC-7D-41, DEC-7D-42, DEC-7D-43)
 - **Root Collection:** `whatsapp_provider_cleanup_jobs`
@@ -2022,7 +2079,8 @@ When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
     | 'retry_wait'
     | 'succeeded'
     | 'exhausted'
-    | 'cancelled';
+    | 'cancelled'
+    | 'abandoned';
 
   export interface WhatsAppProviderCleanupJobRecord {
     id: string; // "cleanup_conn_" + connectionId
@@ -2041,10 +2099,13 @@ When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
     last_attempt_started_at: string | null; // ISO 8601 UTC (pre-call attempt reservation timestamp)
     last_error_code: string | null;
     last_error_at: string | null;
+    manual_action_by: string | null; // Operator identifier (UID or email) for manual remediation
+    manual_action_at: string | null; // ISO 8601 UTC
+    manual_action_reason: string | null; // Operator audit reason (DEC-7D-59)
     created_at: string; // ISO 8601 UTC
     updated_at: string; // ISO 8601 UTC
     completed_at: string | null; // ISO 8601 UTC
-    retention_expires_at: string | null; // ISO 8601 UTC (null while unresolved/exhausted; completed_at + 30d upon proven clean or cancelled)
+    retention_expires_at: string | null; // ISO 8601 UTC (null while unresolved/exhausted; completed_at + 30d upon proven clean, cancelled, or abandoned)
   }
   ```
 - **Provider Result Classification, Post-Condition Verification & Secret Retention Matrix (DEC-7D-43, DEC-7D-51, DEC-7D-52, DEC-7D-54):**
@@ -2208,11 +2269,38 @@ When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
   - Firestore TTL configuration on the 15-minute `expires_at` field is **strictly prohibited**.
   - **Infrastructure Requirement:**
     `FIRESTORE_TTL_CONFIGURATION_REQUIRED_BEFORE_PRODUCTION: YES` (Declared as operations prerequisite; zero automatic deployment in this task).
-- **Administrative Observability & Canonical Internal Routes (DEC-7D-51, DEC-7D-55):**
-  - **Canonical Internal Route Family:**
-    - Scheduled Executor: `GET /api/v1/internal/whatsapp/cleanup-jobs/execute` (Authenticated via `CRON_SECRET`).
-    - Administrative Retry: `POST /api/v1/internal/whatsapp/cleanup-jobs/:jobId/retry` (Authenticated operator endpoint; resets `status = 'pending'`, `attempt_count = 0`, schedules immediate attempt).
-    - Administrative Abandon: `POST /api/v1/internal/whatsapp/cleanup-jobs/:jobId/abandon` (Authenticated operator endpoint; confirms manual unlinking at Meta, purges secret from `whatsapp_connection_secrets`, sets `retention_expires_at = now + 30d`).
+- **Centralized Meta Graph API Versioning & URL Construction (DEC-7D-57):**
+  - All Meta Cloud API requests (OAuth code exchange, WABA verification, registration, `subscribed_apps` subscribe/unsubscribe/GET) must construct target URLs dynamically from `unifiedConfig.metaGraphApiVersion` (`process.env.META_GRAPH_API_VERSION`, defaulting to `'v26.0'`).
+  - Target URL template: `https://graph.facebook.com/${unifiedConfig.metaGraphApiVersion}/${endpoint}`.
+  - Prohibits hardcoding version strings (`v26.0`) inside cleanup executor logic.
+  - Configuration schema enforces strict Zod regex validation:
+    ```typescript
+    metaGraphApiVersion: z.string().regex(/^v[0-9]+(\.[0-9]+)?$/, {
+      message: 'META_GRAPH_API_VERSION must adhere to the format v<number> or v<number>.<number> (e.g. v26.0)',
+    }).default('v26.0'),
+    ```
+  - Eliminates arbitrary URL/path injection vulnerabilities while preserving platform adaptability.
+- **Administrative Observability, Canonical Internal Routes & Operator Authorization (DEC-7D-51, DEC-7D-55, DEC-7D-58, DEC-7D-59):**
+  - **Canonical Internal Route Family & Credential Separation:**
+    - Scheduled Executor: `GET /api/v1/internal/whatsapp/cleanup-jobs/execute`
+      - **Authentication:** Machine-only `Authorization: Bearer ${CRON_SECRET}`.
+      - **Headers:** `Cache-Control: no-store, no-cache, must-revalidate, proxy-revalidate`, `Pragma: no-cache`.
+      - **Verification:** Timing-safe SHA-256 digest comparison (`crypto.timingSafeEqual`).
+    - Administrative Retry: `POST /api/v1/internal/whatsapp/cleanup-jobs/:jobId/retry`
+      - **Authority:** `CLEANUP_OPERATOR_AUTHORITY = Internal Platform Operator (Bearer <INTERNAL_OPERATOR_SECRET>)`.
+      - **Access Boundary:** Dedicated platform operator secret `INTERNAL_OPERATOR_SECRET` (distinct from `CRON_SECRET`). Tenant roles (`org_owner`, `org_admin`, `ministry_admin`, `member`) are strictly rejected with HTTP 403.
+      - **Fail-Closed Tenancy:** Nonexistent `:jobId` fails closed with HTTP 404 `CLEANUP_JOB_NOT_FOUND`.
+      - **State Guard & Race Prevention:** Permitted strictly when `job.status in ['exhausted', 'cancelled']`. If `job.status === 'processing'` and `job.lease_expires_at > now`, request fails closed with HTTP 409 `JOB_CURRENTLY_PROCESSING` to prevent stomping on an active worker lease.
+      - **Mutation Semantics:** Resets `attempt_count = 0`, `status = 'pending'`, `next_attempt_at = now.toISOString()`, clears `lease_token = null`, `lease_expires_at = null`, `last_error_code = null`.
+      - **Audit Trail:** Writes `manual_action_by = body.operator_id`, `manual_action_at = now.toISOString()`, `manual_action_reason = body.reason`.
+    - Administrative Abandon: `POST /api/v1/internal/whatsapp/cleanup-jobs/:jobId/abandon`
+      - **Authority:** `CLEANUP_OPERATOR_AUTHORITY = Internal Platform Operator (Bearer <INTERNAL_OPERATOR_SECRET>)`.
+      - **Access Boundary:** Dedicated platform operator secret `INTERNAL_OPERATOR_SECRET`. Tenant roles are strictly rejected with HTTP 403.
+      - **Fail-Closed Tenancy:** Nonexistent `:jobId` fails closed with HTTP 404 `CLEANUP_JOB_NOT_FOUND`.
+      - **State Guard:** Permitted strictly when `job.status === 'exhausted'`. Active `processing` jobs fail closed with HTTP 409 `JOB_CURRENTLY_PROCESSING`; non-exhausted jobs reject with HTTP 409 `JOB_NOT_EXHAUSTED`.
+      - **Request Schema:** Requires `operator_id: string`, `reason: string` (min 10 characters), and `confirmed_unlinked_at_meta: true` (certifying external verification).
+      - **Destructive Purge & Resolution:** Permanently purges the retained encrypted secret in `whatsapp_connection_secrets.doc(job.connection_id)` using Phase 7C AAD `${organization_id}:${connection_id}`. Transitions job to `status = 'abandoned'`, activates 30-day physical cleanup (`retention_expires_at = now + 30d`), and writes `manual_action_by`, `manual_action_at`, `manual_action_reason`.
+      - **Zero Disclosure:** Responses strictly omit secret ciphertext, IV, auth tag, and app secret, returning only sanitized operational metadata (`job_id`, `status`, `manual_action_by`, `manual_action_at`).
   - **Operator Monitoring Query:**
     `firestore.collection('whatsapp_provider_cleanup_jobs').where('status', '==', 'exhausted').orderBy('created_at', 'desc')`
   - **Index Disposition:** `ADMIN_EXHAUSTED_QUERY_INDEX: DEFERRED`. This query is part of future internal administrative tooling and is NOT executed by Phase 7D1 runtime workers. Its composite index declaration is deferred until administrative tooling implementation.
@@ -2453,6 +2541,16 @@ export interface WhatsAppProvider {
 66. **Exhaustive Multi-Page Pagination Completeness (DEC-7D-54):** If page 1 lacks `metaAppId` but `paging.cursors.after` exists, worker advances to page 2; if page 2 contains `metaAppId`, job transitions to `retry_wait` and retains secret; if all pages exhausted without match, job transitions to `succeeded` and purges secret.
 67. **Incomplete Pagination Fail-Closed Safety (DEC-7D-54):** If pagination times out or exceeds 3 pages, worker fails closed with `UNPROVEN_CLEAN` (`retry_wait`) and strictly retains encrypted secret.
 68. **Canonical Internal Routes & Administrative Seams (DEC-7D-55):** Verifies routing for `GET /api/v1/internal/whatsapp/cleanup-jobs/execute`, `POST /api/v1/internal/whatsapp/cleanup-jobs/:jobId/retry`, and `POST /api/v1/internal/whatsapp/cleanup-jobs/:jobId/abandon`.
+69. **WABA Lifecycle Fence — Cleanup vs Onboarding Race (DEC-7D-56):** Cleanup acquiring WABA lease blocks concurrent onboarding subscribe/materialize on same WABA; onboarding observes held lease and retries safely; cleanup re-evaluating dependencies after lease acquisition detects no race condition.
+70. **WABA Lease Expiry & Zombie Fencing (DEC-7D-56):** WABA lease expires after 60s; subsequent onboarding or cleanup acquires lease with new `lease_token`; delayed stale worker attempting post-provider writeback with old token fails closed with zero state mutations.
+71. **Dependency Recheck After WABA Lease Acquisition (DEC-7D-56):** Cleanup job MUST query platform-wide WABA dependencies strictly AFTER acquiring WABA lifecycle lease; if active dependent connection exists, Meta DELETE is never called and job transitions to `cancelled` (`NO_PROVIDER_CLEANUP_NEEDED`).
+72. **Configured Graph API Version Used by Cleanup URLs (DEC-7D-57):** Cleanup executor constructs all Meta Graph URLs dynamically using `unifiedConfig.metaGraphApiVersion` instead of hardcoding `v26.0`.
+73. **Graph Version Injection Validation (DEC-7D-57):** Configuration schema validates `metaGraphApiVersion` using regex `^v[0-9]+(\.[0-9]+)?$`; malformed or path-traversal inputs fail configuration validation at startup.
+74. **Internal Retry Authorization (DEC-7D-58):** `POST /api/v1/internal/whatsapp/cleanup-jobs/:jobId/retry` rejects tenant roles (`org_admin`, `owner`, `member`) and missing/invalid operator secret with HTTP 401/403; succeeds only with valid `Authorization: Bearer <INTERNAL_OPERATOR_SECRET>`.
+75. **Internal Abandon Authorization & Exhausted-State Guard (DEC-7D-58, DEC-7D-59):** `POST /api/v1/internal/whatsapp/cleanup-jobs/:jobId/abandon` requires operator authorization and asserts `job.status === 'exhausted'`; requests on non-exhausted or active processing jobs are rejected with HTTP 409 `JOB_NOT_EXHAUSTED`.
+76. **Operator vs Active Worker Race (DEC-7D-59):** Attempting operator retry or abandon on a job with an active valid lease (`status === 'processing'` and `lease_expires_at > now`) fails closed with HTTP 409 `JOB_CURRENTLY_PROCESSING`.
+77. **Manual Abandon Audit & Secret Purge (DEC-7D-59):** Abandoning an exhausted job writes `manual_action_by`, `manual_action_at`, and `manual_action_reason`, purges secret from `whatsapp_connection_secrets` using Phase 7C AAD, and sets `retention_expires_at = now + 30d`.
+78. **Cross-Organization WABA Dependency Prevents Unsubscribe (DEC-7D-56):** Cleanup of Organization A's connection sharing a WABA with Organization B's active connection discovers Organization B's dependency during platform-wide lookup, skips Meta DELETE, and cancels cleanup (`NO_PROVIDER_CLEANUP_NEEDED`).
 
 ---
 
