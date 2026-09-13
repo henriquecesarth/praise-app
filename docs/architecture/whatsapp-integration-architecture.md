@@ -564,7 +564,7 @@ The following items are external dependencies on Meta's WhatsApp Cloud API platf
 
 ---
 
-## 18. Updated Decision Register (DEC-7A-01 .. DEC-7A-29, DEC-7C-01 .. DEC-7C-15, DEC-7D-01 .. DEC-7D-49)
+## 18. Updated Decision Register (DEC-7A-01 .. DEC-7A-29, DEC-7C-01 .. DEC-7C-15, DEC-7D-01 .. DEC-7D-51)
 
 | Decision ID | Status | Subject | Summary |
 | :--- | :--- | :--- | :--- |
@@ -653,14 +653,16 @@ The following items are external dependencies on Meta's WhatsApp Cloud API platf
 | **DEC-7D-39** | **Hardened** | Hard Commercial Reservation Expiry vs Durable Provider Cleanup Lifecycle & Scheduled Execution | Decouples local commercial quota accounting from distributed external provider cleanup. Organization capacity is an internal business invariant governed by immediate local state transitions; external Meta unsubscription is an eventual consistency cleanup obligation. Durable cleanup jobs in `whatsapp_provider_cleanup_jobs` are executed via protected internal route `GET /api/v1/internal/whatsapp/cleanup-jobs/execute` (triggered by Vercel Cron with `CRON_SECRET` or interval worker in dev), with `Cache-Control: no-store`, using transactional leases (`lease_token`, `lease_expires_at`) to guarantee at most one active execution per job and crash recovery. |
 | **DEC-7D-40** | **Hardened** | Platform-Wide WABA Subscription Lifecycle Coordination (`whatsapp_waba_subscription_claims`) & Lease Heartbeat | Eliminates lost-subscription race conditions between concurrent onboarding additions and line disconnections across organizations sharing a WABA. Centralizes shared container state in root collection `whatsapp_waba_subscription_claims` with deterministic document key `claim_waba_${providerWabaId}`. Tracks `status` (`'unsubscribed' | 'subscribing' | 'subscribed' | 'unsubscribing'`), monotonic `generation`, `active_dependency_count`, and `lease_expires_at` to prevent permanent stuck states. Step 10 re-verifies subscription state before materialization. |
 | **DEC-7D-41** | **Hardened** | Provider Cleanup Retry Durability, Phased Secret Purge & Terminal Exhaustion Policy | Reconciles Phase 7C immediate secret purge with retryable provider cleanup requirements. When a connection transitions to `disconnected` (`PENDING_EXPIRED` or unmaterialized expiry) and unsubscription from Meta webhooks is required, the encrypted secret in `whatsapp_connection_secrets.doc(connectionId)` is retained under cleanup job ownership (`cleanup_conn_${connId}`) during the retry backoff window. The secret is purged upon successful unsubscription (`succeeded`) or upon reaching max retry exhaustion (5 retries over 24h) or permanent authorization revocation (401/190). Exhausted jobs are flagged for operational audit without indefinitely retaining credentials. |
-| **DEC-7D-42** | **Hardened** | Cleanup Job Executor Contract, Scheduled Route & Lease Protocol | Durable cleanup jobs are processed via machine-authenticated endpoint `GET /api/v1/internal/whatsapp/cleanup-jobs/execute`. Authenticated via `CRON_SECRET` using SHA-256 constant-time digest comparison (`crypto.timingSafeEqual`), returning 401 on unauthorized or malformed access without leaking timing or throwing on length mismatches. Disables response caching via `Cache-Control: no-store`. Discovers candidates via two-query model (Query A: ready jobs; Query B: abandoned processing jobs with expired leases). Workers acquire a 5-minute transactional lease (`lease_token`, `lease_expires_at`) before calling Meta Graph API outside transactions. Bounded batch limit of 10 (max 25) jobs per invocation governed by a 45-second internal execution budget (`LOUVAIO_INTERNAL_EXECUTION_BUDGET`). `attempt_count` is incremented only upon actual provider attempts, preventing infrastructure restarts from exhausting retries. Declares `VERCEL_CRON_CONFIGURATION_REQUIRED_BEFORE_PRODUCTION: YES`. |
-| **DEC-7D-43** | **New** | Provider Cleanup Operation-Specific Outcome Semantics (Succeeded vs Exhausted) | Freezes exact outcome matrix for `DELETE /{waba_id}/subscribed_apps`: `HTTP 200` is `SUCCESS` and `HTTP 404` (or subcode app not subscribed) is `IDEMPOTENT_SUCCESS`, both marking the job `succeeded` and immediately purging the secret. `HTTP 401` / error `190` (invalid/revoked token) and terminal permission errors (`HTTP 403` with revoked portfolio permission) transition to `exhausted` and purge the secret immediately. `HTTP 429`, `HTTP 5xx`, and network timeouts transition to `retry_wait` for exponential backoff (1m, 5m, 30m, 2h, 8h). `succeeded` (proven clean) and `exhausted` (unproven/failed after retries) are semantically distinct. |
+| **DEC-7D-42** | **Hardened** | Cleanup Job Executor Contract, Scheduled Route, Leases & Soft Execution Budget | Durable cleanup jobs are processed via machine-authenticated endpoint `GET /api/v1/internal/whatsapp/cleanup-jobs/execute`. Authenticated via `CRON_SECRET` using fixed-length SHA-256 timing-safe comparison (`crypto.timingSafeEqual`) for well-formed bearer tokens, failing closed with 401 on unauthorized or malformed requests. Disables response caching via `Cache-Control: no-store`. Discovers candidates via two-query model (Query A: ready jobs; Query B: abandoned processing jobs with expired leases). Workers acquire a 5-minute transactional lease (`lease_token`, `lease_expires_at`). Governed by a 45-second soft internal execution budget (`LOUVAIO_INTERNAL_EXECUTION_BUDGET`) with job acquisition cutoff at 35s, leaving ample margin for provider calls and writebacks within Vercel function durations. Declares `VERCEL_CRON_CONFIGURATION_REQUIRED_BEFORE_PRODUCTION: YES`. |
+| **DEC-7D-43** | **Hardened** | Provider Cleanup Operation-Specific Outcome Semantics (Proven-Clean vs Unproven-Clean) | Freezes exact outcome matrix for `DELETE /{waba_id}/subscribed_apps`: `HTTP 200` (`SUCCESS`) and `HTTP 404` / subcode app not subscribed (`IDEMPOTENT_SUCCESS`) represent `PROVEN_CLEAN` states, marking the job `succeeded`, setting 30-day TTL, and immediately purging the secret. `HTTP 429`, `HTTP 5xx`, and network timeouts transition to `retry_wait` for exponential backoff (1m, 5m, 30m, 2h, 8h). Upon exhausting 5 attempts, the job transitions to `exhausted` representing `UNPROVEN_CLEAN`: the encrypted secret in `whatsapp_connection_secrets` is strictly RETAINED to preserve recovery capability, `retention_expires_at` is set to null to prevent premature Firestore TTL deletion, and a high-severity operational audit alert is logged. |
 | **DEC-7D-44** | **New** | WABA Subscription/Unsubscription Generation Convergence & Lease Recovery Protocol | Resolves concurrent subscribe vs unsubscribe races. If a cleanup job's stored `waba_claim_generation` differs from current claim generation or `active_dependency_count > 0`, unsubscription is aborted and the job transitions to `cancelled`. If onboarding arrives while `unsubscribing` is in flight, onboarding increments dependency count, bumps generation, sets `subscribing`, and issues `POST /{waba_id}/subscribed_apps`. Step 10 re-validates that claim `status === 'subscribed'` before committing `connected`. If worker crashes mid-operation, claims in `subscribing`/`unsubscribing` with expired leases (`lease_expires_at <= now`) are recovered safely. |
-| **DEC-7D-45** | **New** | Ephemeral Session & Cleanup Job 30-Day Bounded Logical Retention vs Firestore Physical Purge | Application logic strictly enforces 30-day logical boundary (`retention_expires_at <= now` returns `400 ONBOARDING_SESSION_NOT_FOUND`), independent of when Firestore executes physical deletion. Bounded physical deletion uses Google Cloud Firestore TTL on field `retention_expires_at` for both `whatsapp_onboarding_sessions` and `whatsapp_provider_cleanup_jobs`. Declares `FIRESTORE_TTL_CONFIGURATION_REQUIRED_BEFORE_PRODUCTION: YES`. Prohibits Firestore TTL configuration on the 15-minute `expires_at` field. |
+| **DEC-7D-45** | **Hardened** | Ephemeral Session & Cleanup Job Bounded Logical Retention vs Physical Purge | Application logic strictly enforces 30-day logical boundary (`retention_expires_at <= now` returns `400 ONBOARDING_SESSION_NOT_FOUND`), independent of physical deletion timing. Bounded physical deletion uses Google Cloud Firestore TTL on field `retention_expires_at` for `whatsapp_onboarding_sessions` (created_at + 30d) and resolved `whatsapp_provider_cleanup_jobs` (completed_at + 30d). Crucial Invariant: Unresolved `exhausted` jobs have `retention_expires_at = null` to prevent Firestore background TTL from silently deleting unconfirmed incident records while credentials remain. Prohibits Firestore TTL on the 15-minute `expires_at` field. Declares `FIRESTORE_TTL_CONFIGURATION_REQUIRED_BEFORE_PRODUCTION: YES`. |
 | **DEC-7D-46** | **New** | V8/Node Sensitive Memory Hygiene & Secret Access Boundary | Formally specifies that Node/TypeScript runtimes on V8 cannot guarantee cryptographic zeroization of immutable JavaScript string primitives in heap memory. Mandates that plaintext tokens and PINs are never persisted in databases, session documents, or logs; lifetimes and variable scopes are strictly minimized; mutable Buffers allocated for cryptographic operations are overwritten (`buf.fill(0)`) best-effort; and secrets are decrypted strictly within the authorized tenant context using Phase 7C AAD binding. |
-| **DEC-7D-47** | **New** | Vercel Cron Transport (`GET`), Cache Prevention & Standardized `CRON_SECRET` Authentication | Vercel Cron natively invokes scheduled endpoints using HTTP `GET`. The cleanup executor route is frozen as `GET /api/v1/internal/whatsapp/cleanup-jobs/execute`. Because it performs mutating background cleanup over a GET transport, it strictly enforces non-cacheability (`Cache-Control: no-store, no-cache, must-revalidate, proxy-revalidate`, `Pragma: no-cache`). Authenticated via standard `CRON_SECRET` environment variable injected by Vercel as `Authorization: Bearer ${CRON_SECRET}`. Authentication verifies tokens using SHA-256 constant-time digest comparison (`crypto.timingSafeEqual`) to prevent `RangeError` length mismatch exceptions and timing side-channels. For minute-level cron schedules (e.g. `*/5 * * * *`), declares `VERCEL_PLAN_SUPPORTING_MINUTE_LEVEL_CRON_REQUIRED_BEFORE_PRODUCTION: YES` with status `OPERATIONS_PREREQUISITE_UNVERIFIED`, with external scheduler invocation as verified fallback. |
+| **DEC-7D-47** | **Hardened** | Vercel Cron Transport (`GET`), Current Runtime Durations & Standardized `CRON_SECRET` Auth | Vercel Cron natively invokes scheduled endpoints using HTTP `GET`. Cleanup executor route is frozen as `GET /api/v1/internal/whatsapp/cleanup-jobs/execute` with non-cacheability headers (`Cache-Control: no-store, no-cache, must-revalidate, proxy-revalidate`, `Pragma: no-cache`). Injected automatically as `Authorization: Bearer ${CRON_SECRET}`. For well-formed bearer tokens, verification uses fixed-length SHA-256 digest comparison (`crypto.timingSafeEqual`) to prevent `RangeError` exceptions and timing leaks, while missing/malformed auth fails closed with 401. Reconciled with current Vercel runtime evidence (60s default on Hobby; 15s default configurable up to 300s/900s on Pro/Enterprise), LouvAIO operates a soft 45s target with 35s acquisition cutoff. Minute-level cron (`*/5 * * * *`) declares `VERCEL_PLAN_SUPPORTING_MINUTE_LEVEL_CRON_REQUIRED_BEFORE_PRODUCTION: YES` with status `OPERATIONS_PREREQUISITE_UNVERIFIED` and external scheduler fallback. |
 | **DEC-7D-48** | **New** | Expired Processing Lease Discovery (Two-Query Model) & Stale Worker Fencing | Resolves liveness and crash recovery for in-flight jobs. Discovery executes two parallel bounded queries: Query A for ready jobs (`status in ['pending', 'retry_wait']` and `next_attempt_at <= now`) and Query B for abandoned processing jobs (`status == 'processing'` and `lease_expires_at <= now`), merging and deduplicating in memory. Lease reclamation in Firestore transaction re-verifies reclaimability, issues a fresh `lease_token`, and sets a new 5-minute lease deadline. To prevent a slow worker from overwriting a newer worker's state upon delayed provider response, all post-provider state mutations (`succeeded`, `retry_wait`, `exhausted`, `cancelled`) and secret purges must verify `job.lease_token === workerLeaseToken` inside a transaction. If token differs, the stale worker discards its result with zero modifications. |
 | **DEC-7D-49** | **New** | Phase 7C AAD Compatibility Lock (`${organization_id}:${connection_id}`) | Freezes the exact canonical Associated Authenticated Data (AAD) format for all WhatsApp credential encryption and decryption as `${organization_id}:${connection_id}` (or `${orgId}:${connectionId}`), preserving exact binary compatibility with Phase 7C (`whatsapp-encryption.service.ts`). Prohibits any prefix (e.g. `whatsapp_secret:` is strictly invalid and classified as an explanatory documentation typo). Prohibits dual AAD fallback or silent migration logic. Cleanup jobs access secrets exclusively through `WhatsAppEncryptionService` and `whatsapp_connection_secrets`, with zero plaintext retention in job documents or responses. |
+| **DEC-7D-50** | **New** | Bounded Pre-Call Attempt Reservation Semantics & Fail-Safe Counter | Formally defines `attempt_count` as the number of provider cleanup attempts reserved by a worker. Prior to dispatching `DELETE /{waba_id}/subscribed_apps` to Meta, the worker executes a fenced Firestore transaction checking `status === 'processing'`, `lease_token === workerLeaseToken`, and `attempt_count < max_attempts`, incrementing `attempt_count += 1` and recording `last_attempt_started_at = now`. Only after this transaction commits does the worker issue the external HTTP request. Enforces invariant that no provider call may be initiated when `attempt_count >= max_attempts`. Acknowledges that distributed external HTTP calls and Firestore writes cannot atomically commit together; pre-call reservation guarantees that provider calls to Meta are strictly bounded by `max_attempts` across any combination of crashes. |
+| **DEC-7D-51** | **New** | Unconfirmed Cleanup Exhaustion, Credential Retention & Operational Incident Lifecycle | Semantically differentiates terminal cleanup outcomes: `PROVEN_CLEAN` (Meta returned 200 or 404: job `succeeded`, secret purged immediately, `retention_expires_at = completed_at + 30d`), `NO_PROVIDER_CLEANUP_NEEDED` (WABA claim generation or active dependencies require preserving webhook: job `cancelled`, secret purged, `retention_expires_at = completed_at + 30d`), and `UNPROVEN_CLEAN` (retries exhausted after 5 attempts across 24h: job `exhausted`, secret RETAINED encrypted in `whatsapp_connection_secrets`, `retention_expires_at = null` to prevent premature TTL deletion, and high-severity `WHATSAPP_PROVIDER_CLEANUP_EXHAUSTED` alert emitted). Prohibits destroying the only recovery credential while Meta webhook status remains unconfirmed. |
 
 ---
 
@@ -2027,33 +2029,37 @@ When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
     provider_phone_number_id: string | null;
     waba_claim_generation: number; // generation of claim_waba_${wabaId} when job was scheduled
     status: WhatsAppCleanupJobStatus;
-    attempt_count: number; // 0 initially; incremented upon lease/attempt
+    attempt_count: number; // 0 initially; count of reserved attempts (DEC-7D-50)
     max_attempts: number; // 5
     next_attempt_at: string; // ISO 8601 UTC
     lease_token: string | null; // execution token held by active worker
     lease_expires_at: string | null; // ISO 8601 UTC
+    last_attempt_started_at: string | null; // ISO 8601 UTC (pre-call attempt reservation timestamp)
     last_error_code: string | null;
     last_error_at: string | null;
     created_at: string; // ISO 8601 UTC
     updated_at: string; // ISO 8601 UTC
     completed_at: string | null; // ISO 8601 UTC
-    retention_expires_at: string; // ISO 8601 UTC (created_at + 30 days)
+    retention_expires_at: string | null; // ISO 8601 UTC (null while unresolved/exhausted; completed_at + 30d upon proven clean or cancelled)
   }
   ```
-- **Provider Result Classification Matrix for `DELETE /{waba_id}/subscribed_apps` (DEC-7D-43):**
-  - **`HTTP 200`:** `SUCCESS` -> Job transitions to `succeeded`, secret in `whatsapp_connection_secrets.doc(connId)` is purged immediately.
-  - **`HTTP 404` / Subcode "app not subscribed":** `IDEMPOTENT_SUCCESS` -> Target state is already achieved at Meta. Job transitions to `succeeded`, secret is purged immediately.
-  - **`HTTP 401` / Meta Error Code `190`:** `AUTH_REVOKED_OR_EXPIRED` -> Customer token is invalid/revoked; automatic unsubscription is impossible. Job transitions to `exhausted`, `last_error_code = 'AUTH_REVOKED'`, secret is purged immediately.
+- **Provider Result Classification & Secret Retention Matrix (DEC-7D-43, DEC-7D-51):**
+  - **`HTTP 200` (`SUCCESS`):** `PROVEN_CLEAN` -> Webhook unsubscription confirmed at Meta. Job transitions to `succeeded`, `retention_expires_at = completed_at + 30d`, secret in `whatsapp_connection_secrets.doc(connId)` is **PURGED immediately**.
+  - **`HTTP 404` / Subcode "app not subscribed" (`IDEMPOTENT_SUCCESS`):** `PROVEN_CLEAN` -> Target state already achieved at Meta. Job transitions to `succeeded`, `retention_expires_at = completed_at + 30d`, secret is **PURGED immediately**.
+  - **`WABA Dependency / Generation Divergence`:** `NO_PROVIDER_CLEANUP_NEEDED` -> Sibling lines exist or WABA re-claimed. Job transitions to `cancelled`, `retention_expires_at = completed_at + 30d`, secret is **PURGED immediately** (provider call skipped by design).
+  - **`HTTP 429` (Rate Limited):** `RETRYABLE` -> Job transitions to `retry_wait` (backoff schedule). Secret is **RETAINED**.
+  - **`HTTP 5xx` (Meta Server Error / Gateway Timeout):** `RETRYABLE` -> Job transitions to `retry_wait` (backoff schedule). Secret is **RETAINED**.
+  - **`Network Timeout / Connection Reset`:** `RETRYABLE` -> Job transitions to `retry_wait` (backoff schedule). Secret is **RETAINED**.
+  - **`HTTP 401` / Meta Error Code `190`:** Permanent token invalidation. Job transitions to `exhausted`, `last_error_code = 'AUTH_REVOKED'`, `retention_expires_at = null`, secret is **RETAINED** encrypted in `whatsapp_connection_secrets` to preserve auditability and prevent silent credential loss.
   - **`HTTP 403`:**
-    - If permission permanently revoked (`(#10) Application does not have permission`): Terminal! Job transitions to `exhausted`, secret is purged immediately.
-    - If transient account lock / security checkpoint: `RETRYABLE` -> Job transitions to `retry_wait`.
-  - **`HTTP 400`:** Invalid container ID or malformed parameter -> Terminal! Job transitions to `exhausted`, secret purged.
-  - **`HTTP 429` (Rate Limited):** `RETRYABLE` -> Job transitions to `retry_wait`.
-  - **`HTTP 5xx` (Meta Server Error / Gateway Timeout):** `RETRYABLE` -> Job transitions to `retry_wait`.
-  - **Network Timeout / Connection Reset:** `RETRYABLE` -> Job transitions to `retry_wait`.
-- **Semantic Distinction: `succeeded` vs `exhausted` (DEC-7D-43):**
-  - `succeeded`: Proven clean. Webhook unsubscription confirmed present (200) or already absent (404).
-  - `exhausted`: Unproven cleanup after 5 retry attempts across 24h, or permanently revoked credential. Logged with `WHATSAPP_PROVIDER_CLEANUP_EXHAUSTED` for operational audit. Commercial capacity remains released. Secret is purged permanently to enforce data minimization.
+    - If permission permanently revoked (`(#10) Application does not have permission`): Job transitions to `exhausted`, `retention_expires_at = null`, secret is **RETAINED**.
+    - If transient account lock / security checkpoint: `RETRYABLE` -> Job transitions to `retry_wait`. Secret is **RETAINED**.
+  - **`HTTP 400`:** Invalid container ID or malformed parameter -> Job transitions to `exhausted`, `retention_expires_at = null`, secret is **RETAINED**.
+  - **`Retries Exhausted (attempt_count >= max_attempts)`:** `UNPROVEN_CLEAN` -> Meta unsubscription status is unknown. Job transitions to `exhausted`, `last_error_code = 'MAX_RETRIES_EXCEEDED'`, `retention_expires_at = null` (suppressing Firestore TTL deletion), secret is **STRICTLY RETAINED** encrypted in `whatsapp_connection_secrets` to preserve administrative recovery capability. Emits high-severity `WHATSAPP_PROVIDER_CLEANUP_EXHAUSTED` operational alert.
+- **Semantic Distinction: Proven-Clean vs Unproven-Clean (DEC-7D-51):**
+  - `PROVEN_CLEAN` (`succeeded`): Provably clean at Meta (200 or 404). Secret purged; TTL set to 30 days.
+  - `NO_PROVIDER_CLEANUP_NEEDED` (`cancelled`): Webhook must not be touched due to active sibling lines. Secret purged; TTL set to 30 days.
+  - `UNPROVEN_CLEAN` (`exhausted`): Unconfirmed cleanup after 5 attempts over 24h. Local commercial capacity is released, but the encrypted credential is RETAINED and Firestore TTL is DISABLED (`retention_expires_at = null`) to ensure the unresolved incident remains visible and remediable by operators.
 - **Attempt Counting & Backoff Schedule:**
   - Attempt 1: Scheduled immediately at `next_attempt_at = created_at`.
   - Attempt 2: `now + 1 minute`.
@@ -2069,7 +2075,7 @@ When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
     - `Pragma: no-cache`
     - `Expires: 0`
   - **Authentication:** Injected automatically by Vercel Cron: `Authorization: Bearer ${CRON_SECRET}`.
-  - **Timing-Safe Constant-Time Verification:** To prevent `RangeError` exceptions when incoming token lengths differ, the verification routine computes SHA-256 digests of both the provided token and `process.env.CRON_SECRET` before calling `crypto.timingSafeEqual`:
+  - **Timing-Safe Authentication Verification (DEC-7D-47):** Secret comparison for well-formed bearer credentials uses fixed-length SHA-256 digest equality (`crypto.timingSafeEqual` over 32-byte digests) to guarantee constant-time evaluation and prevent `RangeError` exceptions on length mismatches. Missing or malformed Authorization headers fail closed immediately with `HTTP 401 Unauthorized`. Plaintext secrets are never logged:
     ```typescript
     export function verifyCronSecret(authHeader: string | undefined, expectedSecret: string | undefined): boolean {
       if (!authHeader || !expectedSecret || typeof authHeader !== 'string') return false;
@@ -2083,11 +2089,12 @@ When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
     }
     ```
   - **Public Exposure:** Unauthorized requests return `HTTP 401 Unauthorized` (`{ error: 'UNAUTHORIZED' }`) immediately without executing queries or logging secrets.
-  - **Serverless Execution Bounds & LouvAIO Internal Budget (DEC-7D-42):**
-    - `LOUVAIO_INTERNAL_EXECUTION_BUDGET`: 45,000ms (45 seconds).
+  - **Serverless Execution Bounds & Soft Internal Budget (DEC-7D-42, DEC-7D-47):**
+    - `LOUVAIO_INTERNAL_EXECUTION_BUDGET`: 45,000ms (45 seconds) operates as a **Soft Internal Target** (not a hard mathematical ceiling).
+    - Acquisition Cutoff: 35,000ms (35 seconds). If `Date.now() - startTime > 35_000ms`, the loop ceases acquiring NEW candidate jobs.
+    - Provider HTTP timeout: 8,000ms per Meta call, followed by bounded Firestore writeback (1-2s).
+    - Reconciled with current Vercel runtime evidence (September 2026: 60s default on Hobby; 15s default configurable up to 300s/900s on Pro/Enterprise via `maxDuration`), total execution finishes around ~44-46s, safely within platform allowances without complex dynamic timeout clipping.
     - Default batch size: 10 jobs. Maximum batch size: 25 jobs.
-    - Provider HTTP timeout: 8,000ms per Meta call.
-    - Loop Acquisition Termination: The worker measures elapsed execution time before acquiring each subsequent job. If `Date.now() - startTime > 35_000ms` (within 10 seconds of internal budget), it halts new job acquisition and returns HTTP 200 summary gracefully, deferring remaining work to the next cron cycle.
   - **Vercel Cron Cadence & Plan Limitations:**
     - Running a 5-minute cron schedule (`*/5 * * * *`) requires a Vercel plan supporting minute-level cron execution (Pro or Enterprise; Hobby only supports daily execution).
     - Declares `VERCEL_PLAN_SUPPORTING_MINUTE_LEVEL_CRON_REQUIRED_BEFORE_PRODUCTION: YES`.
@@ -2096,27 +2103,39 @@ When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
   - **Infrastructure Requirements Declared:**
     - `VERCEL_CRON_CONFIGURATION_REQUIRED_BEFORE_PRODUCTION: YES`
     - `CRON_SECRET_ENV_REQUIRED_BEFORE_PRODUCTION: YES`
-- **Two-Query Discovery, Transactional Lease Reclamation & Stale Worker Fencing (DEC-7D-42, DEC-7D-48):**
+- **Two-Query Discovery, Pre-Call Attempt Reservation & Stale Worker Fencing (DEC-7D-42, DEC-7D-48, DEC-7D-50, DEC-7D-51):**
   1. **Two-Query Discovery:** Worker runs Query A (ready jobs) and Query B (expired processing leases), merges snapshots in memory, and bounds to `batchSize`.
   2. **Transactional Lease Acquisition / Reclamation:** For each candidate job, a Firestore transaction on `whatsapp_provider_cleanup_jobs.doc(jobId)` validates:
      - Is ready (`status in ['pending', 'retry_wait'] && next_attempt_at <= now`), OR
      - Is expired processing lease (`status === 'processing' && lease_expires_at <= now`).
      - If neither: abort lease attempt (another worker owns the active lease).
-     - If valid: set `status = 'processing'`, `lease_token = crypto.randomUUID()`, `lease_expires_at = now + 5 minutes`, `updated_at = now`.
-     - **Attempt Count Semantics:** `attempt_count` is **NOT** incremented during lease acquisition! It represents provider attempts actually initiated.
-  3. **WABA Generation & Dependency Check:** Read `claim_waba_${wabaId}`. If `claim.generation !== job.waba_claim_generation` or `active_dependency_count > 0`, transactionally set `status = 'cancelled'`, `completed_at = now`, purge secret under `lease_token`, and skip Meta call.
-  4. **Provider Execution:** Outside transaction, call Meta Graph API `DELETE /{waba_id}/subscribed_apps` (8-second timeout).
-  5. **Stale Worker Fencing on Post-Provider Writeback:** In a Firestore transaction on `whatsapp_provider_cleanup_jobs.doc(jobId)`:
+     - If valid: set `status = 'processing'`, `lease_token = crypto.randomUUID()`, `lease_expires_at = now + 5 minutes`, `updated_at = now`. (Note: `attempt_count` is NOT incremented upon lease acquisition).
+  3. **WABA Generation & Dependency Check:** Read `claim_waba_${wabaId}`. If `claim.generation !== job.waba_claim_generation` or `active_dependency_count > 0`:
+     - Transactionally set `status = 'cancelled'`, `completed_at = now`, `retention_expires_at = now + 30d`.
+     - Purge secret from `whatsapp_connection_secrets.doc(connId)` under `workerLeaseToken` (provider call safely skipped; `NO_PROVIDER_CLEANUP_NEEDED`).
+  4. **Pre-Call Attempt Reservation Transaction (DEC-7D-50):**
+     Before dispatching the HTTP call to Meta, execute a fenced Firestore transaction on `whatsapp_provider_cleanup_jobs.doc(jobId)`:
+     - Verify: `currentJob.status === 'processing'` AND `currentJob.lease_token === workerLeaseToken`.
+     - **Max Attempt Invariant:** Check `currentJob.attempt_count < currentJob.max_attempts`. If `>= max_attempts`, abort call and commit `status = 'exhausted'`, `last_error_code = 'MAX_RETRIES_EXCEEDED'`.
+     - Increment: `attempt_count: currentJob.attempt_count + 1`, `last_attempt_started_at: nowIso`.
+     - Commit reservation.
+  5. **Provider Execution:** Only AFTER reservation transaction commits, call Meta Graph API `DELETE /{waba_id}/subscribed_apps` (8-second timeout).
+  6. **Stale Worker Fencing on Post-Provider Writeback (DEC-7D-48, DEC-7D-51):** In a Firestore transaction on `whatsapp_provider_cleanup_jobs.doc(jobId)`:
      - Read current job document.
      - **Assert:** `currentJob.lease_token === workerLeaseToken`.
      - **If Mismatch:** Worker lease expired while waiting for Meta and another worker reclaimed the job. **ABORT!** Worker discards result, performs ZERO updates to job, and performs ZERO deletes in `whatsapp_connection_secrets`.
      - **If Match:** Worker commits final state:
-       - Increment `attempt_count: job.attempt_count + 1`.
-       - If outcome is `SUCCESS` or `IDEMPOTENT_SUCCESS`: `status = 'succeeded'`, `completed_at = now`, purge secret from `whatsapp_connection_secrets`.
-       - If outcome is `AUTH_REVOKED` or `INVALID_PARAM`: `status = 'exhausted'`, `completed_at = now`, `last_error_code = outcome`, purge secret, log operational audit alert.
-       - If outcome is `RETRYABLE`:
-         - If `job.attempt_count + 1 < 5`: `status = 'retry_wait'`, `next_attempt_at = now + backoff[attempt_count + 1]`.
-         - If `job.attempt_count + 1 >= 5`: `status = 'exhausted'`, `completed_at = now`, purge secret, log alert.
+       - If outcome is `SUCCESS` or `IDEMPOTENT_SUCCESS` (`PROVEN_CLEAN`):
+         `status = 'succeeded'`, `completed_at = nowIso`, `retention_expires_at = nowIso + 30d`, clear lease.
+         Purge secret from `whatsapp_connection_secrets.doc(connId)`.
+       - If outcome is `RETRYABLE` (429, 5xx, timeout):
+         - If `currentJob.attempt_count < currentJob.max_attempts`:
+           `status = 'retry_wait'`, `next_attempt_at = nowIso + backoff[attempt_count]`, `last_error_code = outcome`, clear lease. (Secret is RETAINED).
+         - If `currentJob.attempt_count >= currentJob.max_attempts`:
+           `status = 'exhausted'`, `completed_at = nowIso`, `retention_expires_at = null` (suppress TTL), `last_error_code = 'MAX_RETRIES_EXCEEDED'`, clear lease.
+           **SECRET IS RETAINED ENCRYPTED** in `whatsapp_connection_secrets` to preserve manual remediation capability (`UNPROVEN_CLEAN`). Log operational alert `WHATSAPP_PROVIDER_CLEANUP_EXHAUSTED`.
+       - If outcome is `AUTH_REVOKED` or `INVALID_PARAM`:
+         `status = 'exhausted'`, `completed_at = nowIso`, `retention_expires_at = null`, `last_error_code = outcome`, clear lease. Secret is RETAINED for audit/review. Log alert.
 - **Phase 7C AAD Compatibility Lock (DEC-7D-49):**
   - Secret decryption during provider cleanup MUST use `WhatsAppEncryptionService` with exact canonical AAD:
     ```text
@@ -2146,9 +2165,13 @@ When an unmaterialized `pending` connection reaches `pending_expires_at <= now`:
 ### 8.16 Ephemeral Session & Cleanup Job Bounded Logical Retention vs Firestore Physical Purge (DEC-7D-45)
 - **Application Layer Logical Boundary:**
   - For `whatsapp_onboarding_sessions`: if `new Date(session.retention_expires_at) <= now`, replay requests are treated as `HTTP 400 ONBOARDING_SESSION_NOT_FOUND`, even if the document still physically exists in Firestore.
-  - For `whatsapp_provider_cleanup_jobs`: if `new Date(job.retention_expires_at) <= now`, job is considered logically purged.
-- **Physical Retention Purge Mechanism:**
-  - Google Cloud Firestore TTL configured on field `retention_expires_at` (30 days from document creation) for both `whatsapp_onboarding_sessions` and `whatsapp_provider_cleanup_jobs`.
+  - For `whatsapp_provider_cleanup_jobs`: if `job.retention_expires_at !== null` and `new Date(job.retention_expires_at) <= now`, job is considered logically purged.
+- **Physical Retention Purge Mechanism & Unresolved Job TTL Invariant (DEC-7D-45, DEC-7D-51):**
+  - Google Cloud Firestore TTL configured on field `retention_expires_at`.
+  - For `whatsapp_onboarding_sessions`: set to `created_at + 30 days`.
+  - For `whatsapp_provider_cleanup_jobs`:
+    - Resolved jobs (`succeeded`, `cancelled`): set to `completed_at + 30 days`.
+    - **Crucial Invariant for Unresolved Incidents (`exhausted`):** `retention_expires_at` remains **strictly `null`**! Firestore background TTL will NEVER physically purge an unconfirmed cleanup incident while its encrypted secret remains in `whatsapp_connection_secrets`. The incident record remains discoverable for operator auditing and manual remediation.
   - Deletion is an asynchronous background Google Cloud operation. Application security never depends on exact deletion timing.
   - Firestore TTL configuration on the 15-minute `expires_at` field is **strictly prohibited**.
   - **Infrastructure Requirement:**
@@ -2378,6 +2401,10 @@ export interface WhatsAppProvider {
 54. **Stale Worker Fencing on Post-Provider Writeback (DEC-7D-48):** Worker whose lease expired during a delayed provider call attempts post-provider writeback; Firestore transaction detects `job.lease_token !== workerLeaseToken`; stale worker aborts with zero mutations to job record or secret document.
 55. **Timing-Safe Cron Secret Authentication & Robust Error Handling (DEC-7D-47):** Valid `CRON_SECRET` succeeds; missing or incorrect secret returns HTTP 401; secret of differing byte length returns HTTP 401 cleanly via SHA-256 digest comparison without throwing `RangeError`.
 56. **Lease Acquisition Preserves Attempt Count on Worker Crash (DEC-7D-42):** Worker crash after lease acquisition but before initiating Meta HTTP call leaves `attempt_count` unchanged; subsequent worker reclaims job with original attempt count, preventing infrastructure restarts from exhausting retries.
+57. **Pre-Call Attempt Reservation Boundedness (DEC-7D-50):** Fenced transaction increments `attempt_count` and writes `last_attempt_started_at` before dispatching Meta HTTP call; crash after reservation leaves attempt counted; subsequent worker observes incremented attempt count, proving provider calls cannot exceed max attempts under crash loops.
+58. **Max Attempt Invariant Enforcement (DEC-7D-50):** Job with `attempt_count >= max_attempts` transactionally rejects initiating Meta HTTP call and transitions immediately to `status = 'exhausted'` with `last_error_code = 'MAX_RETRIES_EXCEEDED'`.
+59. **Unconfirmed Exhaustion Secret Retention & TTL Suppression (DEC-7D-51):** Cleanup job reaching max retry exhaustion without confirmed provider success transitions to `status = 'exhausted'`, strictly retains the encrypted secret in `whatsapp_connection_secrets`, sets `retention_expires_at = null` to prevent physical TTL deletion, and logs `WHATSAPP_PROVIDER_CLEANUP_EXHAUSTED`.
+60. **Proven-Clean Secret Purge & TTL Activation (DEC-7D-51):** Cleanup job receiving HTTP 200 or 404 transitions to `succeeded`, purges secret from `whatsapp_connection_secrets`, and sets `retention_expires_at = completed_at + 30d` for eventual Firestore TTL physical cleanup.
 
 ---
 
@@ -2427,7 +2454,7 @@ The following operational prerequisites MUST be configured in the deployment env
 ### 2. Firestore & Operations Deployment Prerequisites (Phase 7D1)
 - **`FIRESTORE_INDEX_DECLARATION_REQUIRED_FOR_7D1: YES`**: Two composite indexes on `whatsapp_provider_cleanup_jobs` are required for two-query discovery (Query A: `status` ASC, `next_attempt_at` ASC, `__name__` ASC; Query B: `status` ASC, `lease_expires_at` ASC, `__name__` ASC). Must be declared in `backend/firestore.indexes.json`.
 - **`FIRESTORE_INDEX_DEPLOYMENT_REQUIRED_BEFORE_PRODUCTION: YES`**: Deployed to Google Cloud Firestore before production cleanup execution.
-- **`FIRESTORE_TTL_CONFIGURATION_REQUIRED_BEFORE_PRODUCTION: YES`**: Native Firestore TTL policy must be configured on `retention_expires_at` for `whatsapp_onboarding_sessions` and `whatsapp_provider_cleanup_jobs`. Prohibits TTL on 15-minute `expires_at`.
+- **`FIRESTORE_TTL_CONFIGURATION_REQUIRED_BEFORE_PRODUCTION: YES`**: Native Firestore TTL policy must be configured on `retention_expires_at` for `whatsapp_onboarding_sessions` (created_at + 30d) and resolved `whatsapp_provider_cleanup_jobs` (`succeeded`/`cancelled` only; omitted / null on `exhausted` to preserve unconfirmed incidents). Prohibits TTL on 15-minute `expires_at`.
 - **`VERCEL_CRON_CONFIGURATION_REQUIRED_BEFORE_PRODUCTION: YES`**: Vercel cron configuration declared in `backend/vercel.json` invoking `GET /api/v1/internal/whatsapp/cleanup-jobs/execute`.
 - **`VERCEL_PLAN_SUPPORTING_MINUTE_LEVEL_CRON_REQUIRED_BEFORE_PRODUCTION: YES`**: Minute-level native cron (e.g. `*/5 * * * *`) requires a plan supporting minute-level cadence (Pro or Enterprise). Status: `OPERATIONS_PREREQUISITE_UNVERIFIED`. Verified fallback: external scheduler.
 - **`CRON_SECRET_ENV_REQUIRED_BEFORE_PRODUCTION: YES`**: Machine-to-machine authorization secret configured in Vercel project environment variables.
