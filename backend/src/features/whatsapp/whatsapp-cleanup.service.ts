@@ -44,8 +44,8 @@ export class WhatsAppCleanupService {
     acquisitionCutoffMs?: number;
   } = {}): Promise<CleanupExecutionSummary> {
     const batchSize = Math.min(Math.max(1, options.batchSize ?? 10), 25);
-    const softBudgetMs = options.softBudgetMs ?? 45_000;
-    const acquisitionCutoffMs = options.acquisitionCutoffMs ?? 35_000;
+    const softBudgetMs = options.softBudgetMs ?? 20_000;
+    const acquisitionCutoffMs = options.acquisitionCutoffMs ?? 15_000;
 
     const startTime = Date.now();
     const candidateJobs = await this.cleanupJobRepo.findDueJobs(batchSize);
@@ -61,7 +61,7 @@ export class WhatsAppCleanupService {
     };
 
     for (const candidate of candidateJobs) {
-      if (Date.now() - startTime > acquisitionCutoffMs) {
+      if (Date.now() - startTime > acquisitionCutoffMs || Date.now() - startTime > softBudgetMs) {
         summary.skippedCount++;
         continue;
       }

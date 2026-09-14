@@ -2984,10 +2984,15 @@ The following operational prerequisites MUST be configured in the deployment env
 - **`ADMIN_EXHAUSTED_QUERY_INDEX: DEFERRED`**: Index for administrative monitoring query (`status == 'exhausted'` orderBy `created_at` DESC) is deferred until operator tooling implementation.
 - **`CLEANUP_EXECUTOR_MIN_EFFECTIVE_FUNCTION_DURATION_SECONDS >= 60`**: Mandatory configuration prerequisite; requires `maxDuration: 60` in `backend/vercel.json` functions block for `src/app.ts` prior to production deployment (DEC-7D-53).
 - **`FIRESTORE_TTL_CONFIGURATION_REQUIRED_BEFORE_PRODUCTION: YES`**: Native Firestore TTL policy must be configured on `retention_expires_at` for `whatsapp_onboarding_sessions` (created_at + 30d) and resolved `whatsapp_provider_cleanup_jobs` (`succeeded`/`cancelled` only; omitted / null on `exhausted` to preserve unconfirmed incidents). Prohibits TTL on 15-minute `expires_at`.
-- **`DURABLE_EXECUTOR: GOOGLE_CLOUD_SCHEDULER`**: Production durable executor is Google Cloud Scheduler (project `praise-app-7a362`), decoupling autonomous 5-minute execution from Vercel hosting tier.
+- **`DURABLE_EXECUTOR: CRON_JOB_ORG`**: Autonomous durable executor is `cron-job.org` (Free tier), decoupling autonomous 5-minute execution from Vercel hosting tier and requiring R$ 0 infrastructure costs.
+- **`EXECUTOR_CLASS: EXTERNAL_BEST_EFFORT_SCHEDULER`**: Best-effort external HTTP scheduler trigger. Durability and consistency are fully guaranteed by Cloud Firestore leases, transactional reservations, and retry schedules.
+- **`GOOGLE_CLOUD_BILLING_REQUIRED_FOR_SCHEDULER: NO`**: Google Cloud Scheduler and Google Cloud Billing / Firebase Blaze are NOT required for scheduled execution.
 - **`VERCEL_PLAN: HOBBY`**: Vercel production project uses the Hobby (Free) plan.
 - **`VERCEL_CRON: NOT_USED_FOR_PHASE_7D1`**: Native Vercel Cron is not used due to Hobby plan restrictions on minute-level crons. Removed from `backend/vercel.json`.
-- **`SCHEDULE: EVERY_5_MINUTES`**: Both cleanup and reconciliation jobs execute every 5 minutes (`*/5 * * * *`) via Google Cloud Scheduler invoking canonical backend HTTPS endpoints with `Authorization: Bearer <CRON_SECRET>`.
-- **`CRON_SECRET_ENV_REQUIRED_BEFORE_PRODUCTION: YES`**: Machine-to-machine authorization secret configured in backend environment variables and injected by Google Cloud Scheduler HTTP headers.
+- **`SCHEDULE: EVERY_5_MINUTES`**: Both cleanup and reconciliation jobs execute every 5 minutes (`*/5 * * * *`) via `cron-job.org` invoking canonical backend HTTPS endpoints with `Authorization: Bearer <CRON_SECRET>`.
+- **`SCHEDULER_COST_CURRENT_STAGE: R$0`**: Operating cost of the autonomous scheduler is zero (R$ 0).
+- **`SCHEDULER_JOB_COUNT: 2_GLOBAL`**: Exactly two global jobs (Cleanup and Reconciliation). No per-tenant or per-connection jobs.
+- **`CRON_SECRET_ENV_REQUIRED_BEFORE_PRODUCTION: YES`**: Machine-to-machine authorization secret configured in backend environment variables and injected by `cron-job.org` HTTP headers.
+- **`EXECUTION_BUDGET_HARDENING`**: Worker soft budget is 20s (`softBudgetMs: 20000`) and candidate acquisition cutoff is 15s (`acquisitionCutoffMs: 15000`), guaranteeing responses finish `<= 25 seconds` to safely operate below the 30-second free-tier scheduler timeout envelope.
 - **`FIRESTORE_RULES_MODIFICATION_REQUIRED: NO`**: All operations are backend-authoritative via Firebase Admin SDK.
 - **`DIRECT_CLIENT_FIRESTORE_ACCESS: PROHIBITED`**: Frontend communicates exclusively via REST API (`api.ts`).

@@ -38,13 +38,20 @@ export class InternalWhatsAppController {
       res.setHeader('Expires', '0');
 
       const batchSize = req.query.batchSize ? Number(req.query.batchSize) : undefined;
-      const cleanupSummary = await this.cleanupService.executeDueJobs({ batchSize });
-      const reconSummary = await this.reconService.executeDueJobs({ batchSize });
+      const cleanupSummary = await this.cleanupService.executeDueJobs({
+        batchSize,
+        softBudgetMs: 20_000,
+        acquisitionCutoffMs: 15_000,
+      });
 
       res.status(200).json({
-        success: true,
-        cleanup: cleanupSummary,
-        reconciliation: reconSummary,
+        ok: true,
+        claimed: cleanupSummary.candidateCount,
+        processed: cleanupSummary.processedCount,
+        succeeded: cleanupSummary.succeededCount,
+        retryWait: cleanupSummary.retryWaitCount,
+        exhausted: cleanupSummary.exhaustedCount,
+        skipped: cleanupSummary.skippedCount,
       });
     } catch (err) {
       next(err);
@@ -67,11 +74,20 @@ export class InternalWhatsAppController {
       res.setHeader('Expires', '0');
 
       const batchSize = req.query.batchSize ? Number(req.query.batchSize) : undefined;
-      const summary = await this.reconService.executeDueJobs({ batchSize });
+      const summary = await this.reconService.executeDueJobs({
+        batchSize,
+        softBudgetMs: 20_000,
+        acquisitionCutoffMs: 15_000,
+      });
 
       res.status(200).json({
-        success: true,
-        reconciliation: summary,
+        ok: true,
+        claimed: summary.candidateCount,
+        processed: summary.processedCount,
+        stable: summary.stableCount,
+        repaired: summary.repairedCount,
+        failed: summary.failedCount,
+        skipped: summary.skippedCount,
       });
     } catch (err) {
       next(err);

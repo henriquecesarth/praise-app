@@ -305,8 +305,8 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
     });
   });
 
-  describe('5. Autonomous Scheduled Execution, Leases, Overlap & Auth Isolation Matrix (Phase 7D1-B-R1 & Phase 7D1-B-R2)', () => {
-    it('5.1 Proves no-user-action model is decoupled from Vercel Cron for Hobby compatibility and wired via Cloud Scheduler artifact', () => {
+  describe('5. Autonomous Scheduled Execution, Leases, Overlap & Auth Isolation Matrix (Phase 7D1-B-R1, Phase 7D1-B-R2 & Phase 7D1-B-R3)', () => {
+    it('5.1 Proves no-user-action model is decoupled from Vercel Cron for Hobby compatibility and wired via cron-job.org zero-cost operational artifact', () => {
       const vercelJsonPath = path.resolve(__dirname, '../../../vercel.json');
       expect(fs.existsSync(vercelJsonPath)).toBe(true);
       const content = JSON.parse(fs.readFileSync(vercelJsonPath, 'utf8'));
@@ -317,21 +317,28 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
       // Must contain NO Hobby-invalid frequent crons
       expect(content.crons).toBeUndefined();
 
-      // Cloud Scheduler deployment artifact must exist and target canonical endpoints
-      const scriptPath = path.resolve(__dirname, '../../../scripts/deploy-cloud-schedulers.sh');
-      expect(fs.existsSync(scriptPath)).toBe(true);
-      const scriptContent = fs.readFileSync(scriptPath, 'utf8');
+      // cron-job.org zero-cost setup artifact must exist and target canonical endpoints
+      const docPath = path.resolve(__dirname, '../../../../docs/operations/cronjob-org-setup.md');
+      expect(fs.existsSync(docPath)).toBe(true);
+      const docContent = fs.readFileSync(docPath, 'utf8');
 
-      expect(scriptContent).toContain('praise-whatsapp-cleanup-executor');
-      expect(scriptContent).toContain('praise-whatsapp-reconciliation-executor');
-      expect(scriptContent).toContain('/api/v1/internal/whatsapp/cleanup-jobs/execute');
-      expect(scriptContent).toContain('/api/v1/internal/whatsapp/reconciliation-jobs/execute');
-      expect(scriptContent).toContain('*/5 * * * *');
-      expect(scriptContent).toContain('praise-app-7a362');
-      expect(scriptContent).toContain('Authorization=Bearer ${CRON_SECRET}');
+      expect(docContent).toContain('LouvAIO WhatsApp Provider Cleanup Executor');
+      expect(docContent).toContain('LouvAIO WhatsApp WABA Reconciliation Executor');
+      expect(docContent).toContain('/api/v1/internal/whatsapp/cleanup-jobs/execute');
+      expect(docContent).toContain('/api/v1/internal/whatsapp/reconciliation-jobs/execute');
+      expect(docContent).toContain('*/5 * * * *');
+      expect(docContent).toContain('Bearer <YOUR_CRON_SECRET>');
+      expect(docContent).toContain('R$ 0');
+      expect(docContent).toContain('30s');
+
+      // Obsolete Google Cloud Scheduler artifacts must NOT exist
+      const oldScriptPath = path.resolve(__dirname, '../../../scripts/deploy-cloud-schedulers.sh');
+      expect(fs.existsSync(oldScriptPath)).toBe(false);
+      const oldDocPath = path.resolve(__dirname, '../../../../docs/operations/cloud-scheduler-setup.md');
+      expect(fs.existsSync(oldDocPath)).toBe(false);
     });
 
-    it('5.2 Scheduled cleanup execution executes due jobs and enforces non-cacheable HTTP headers', async () => {
+    it('5.2 Scheduled cleanup execution executes due jobs and enforces non-cacheable HTTP headers and compact JSON summary', async () => {
       const cleanupRepo = new WhatsAppProviderCleanupJobRepository();
       const testId = crypto.randomUUID().slice(0, 8);
       const jobId = `cleanup_conn_exec_${testId}`;
@@ -397,11 +404,17 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
       expect(headersSet['Cache-Control']).toBe('no-store, no-cache, must-revalidate, proxy-revalidate');
       expect(headersSet['Pragma']).toBe('no-cache');
       expect(headersSet['Expires']).toBe('0');
-      expect(responseData?.success).toBe(true);
-      expect(responseData?.cleanup?.candidateCount).toBeGreaterThanOrEqual(1);
+      expect(responseData?.ok).toBe(true);
+      expect(responseData?.claimed).toBeGreaterThanOrEqual(1);
+      expect(responseData?.processed).toBeDefined();
+      expect(responseData?.succeeded).toBeDefined();
+      expect(responseData?.retryWait).toBeDefined();
+      expect(responseData?.exhausted).toBeDefined();
+      expect(responseData?.skipped).toBeDefined();
+      expect(responseData?.cleanup).toBeUndefined();
     }, 15000);
 
-    it('5.3 Scheduled reconciliation execution executes due reconciliation jobs', async () => {
+    it('5.3 Scheduled reconciliation execution executes due reconciliation jobs with compact JSON summary', async () => {
       const reconRepo = new WhatsAppWabaReconciliationJobRepository();
       const testId = crypto.randomUUID().slice(0, 8);
       const wabaId = `waba-recon-test-${testId}`;
@@ -438,8 +451,17 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
 
       expect(next).not.toHaveBeenCalled();
       expect(statusCode).toBe(200);
-      expect(responseData?.success).toBe(true);
-      expect(responseData?.reconciliation?.candidateCount).toBeGreaterThanOrEqual(1);
+      expect(headersSet['Cache-Control']).toBe('no-store, no-cache, must-revalidate, proxy-revalidate');
+      expect(headersSet['Pragma']).toBe('no-cache');
+      expect(headersSet['Expires']).toBe('0');
+      expect(responseData?.ok).toBe(true);
+      expect(responseData?.claimed).toBeGreaterThanOrEqual(1);
+      expect(responseData?.processed).toBeDefined();
+      expect(responseData?.stable).toBeDefined();
+      expect(responseData?.repaired).toBeDefined();
+      expect(responseData?.failed).toBeDefined();
+      expect(responseData?.skipped).toBeDefined();
+      expect(responseData?.reconciliation).toBeUndefined();
     }, 15000);
 
     it('5.4 Duplicate scheduler invocations are safe against concurrent execution overlap', async () => {
@@ -580,6 +602,59 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
       expect(next4).toHaveBeenCalledWith(
         expect.objectContaining({ statusCode: 403, details: { code: 'FORBIDDEN' } })
       );
+    });
+
+    it('5.7 Proves candidate acquisition cutoff prevents starting new jobs after budget without dropping leases or attempts', async () => {
+      const cleanupRepo = new WhatsAppProviderCleanupJobRepository();
+      const testId = crypto.randomUUID().slice(0, 8);
+      const jobId = `cleanup_conn_cutoff_${testId}`;
+
+      await cleanupRepo.createJob({
+        id: jobId,
+        organization_id: `org-${testId}`,
+        connection_id: `conn-${testId}`,
+        provider: 'meta',
+        provider_waba_id: `waba-${testId}`,
+        provider_phone_number_id: `phone-${testId}`,
+        waba_claim_generation: 1,
+        status: 'pending',
+        attempt_count: 0,
+        max_attempts: 5,
+        next_attempt_at: new Date(Date.now() - 5000).toISOString(),
+        lease_token: null,
+        lease_expires_at: null,
+        last_attempt_started_at: null,
+        last_error_code: null,
+        last_error_at: null,
+        provider_cleanup_proof: null,
+        override_reason: null,
+        manual_action_by: null,
+        manual_action_at: null,
+        manual_action_reason: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null,
+        retention_expires_at: null,
+      });
+
+      const cleanupService = new WhatsAppCleanupService();
+
+      // Simulate invocation where acquisitionCutoffMs is 0 (budget already exhausted)
+      const summary = await cleanupService.executeDueJobs({
+        batchSize: 10,
+        acquisitionCutoffMs: 0,
+      });
+
+      expect(summary.candidateCount).toBeGreaterThanOrEqual(1);
+      expect(summary.processedCount).toBe(0);
+      expect(summary.skippedCount).toBeGreaterThanOrEqual(1);
+
+      // Verify that candidate in Firestore remains completely untouched, pending, attempt 0, lease null
+      const job = await cleanupRepo.getJobById(jobId);
+      expect(job!.status).toBe('pending');
+      expect(job!.attempt_count).toBe(0);
+      expect(job!.lease_token).toBeNull();
+      expect(job!.lease_expires_at).toBeNull();
     });
   });
 });
