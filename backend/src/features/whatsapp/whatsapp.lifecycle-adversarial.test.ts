@@ -305,27 +305,30 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
     });
   });
 
-  describe('5. Autonomous Scheduled Execution, Leases, Overlap & Auth Isolation Matrix (Phase 7D1-B-R1)', () => {
-    it('5.1 Proves no-user-action model is wired via Vercel Cron configuration and functions maxDuration', () => {
+  describe('5. Autonomous Scheduled Execution, Leases, Overlap & Auth Isolation Matrix (Phase 7D1-B-R1 & Phase 7D1-B-R2)', () => {
+    it('5.1 Proves no-user-action model is decoupled from Vercel Cron for Hobby compatibility and wired via Cloud Scheduler artifact', () => {
       const vercelJsonPath = path.resolve(__dirname, '../../../vercel.json');
       expect(fs.existsSync(vercelJsonPath)).toBe(true);
       const content = JSON.parse(fs.readFileSync(vercelJsonPath, 'utf8'));
 
+      // Functions maxDuration 60 must be preserved
       expect(content.functions?.['src/app.ts']?.maxDuration).toBe(60);
-      expect(Array.isArray(content.crons)).toBe(true);
-      expect(content.crons).toHaveLength(2);
 
-      const cleanupCron = content.crons.find(
-        (c: any) => c.path === '/api/v1/internal/whatsapp/cleanup-jobs/execute'
-      );
-      expect(cleanupCron).toBeDefined();
-      expect(cleanupCron.schedule).toBe('*/5 * * * *');
+      // Must contain NO Hobby-invalid frequent crons
+      expect(content.crons).toBeUndefined();
 
-      const reconCron = content.crons.find(
-        (c: any) => c.path === '/api/v1/internal/whatsapp/reconciliation-jobs/execute'
-      );
-      expect(reconCron).toBeDefined();
-      expect(reconCron.schedule).toBe('*/5 * * * *');
+      // Cloud Scheduler deployment artifact must exist and target canonical endpoints
+      const scriptPath = path.resolve(__dirname, '../../../scripts/deploy-cloud-schedulers.sh');
+      expect(fs.existsSync(scriptPath)).toBe(true);
+      const scriptContent = fs.readFileSync(scriptPath, 'utf8');
+
+      expect(scriptContent).toContain('praise-whatsapp-cleanup-executor');
+      expect(scriptContent).toContain('praise-whatsapp-reconciliation-executor');
+      expect(scriptContent).toContain('/api/v1/internal/whatsapp/cleanup-jobs/execute');
+      expect(scriptContent).toContain('/api/v1/internal/whatsapp/reconciliation-jobs/execute');
+      expect(scriptContent).toContain('*/5 * * * *');
+      expect(scriptContent).toContain('praise-app-7a362');
+      expect(scriptContent).toContain('Authorization=Bearer ${CRON_SECRET}');
     });
 
     it('5.2 Scheduled cleanup execution executes due jobs and enforces non-cacheable HTTP headers', async () => {

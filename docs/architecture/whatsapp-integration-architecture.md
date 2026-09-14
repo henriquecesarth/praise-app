@@ -2984,8 +2984,10 @@ The following operational prerequisites MUST be configured in the deployment env
 - **`ADMIN_EXHAUSTED_QUERY_INDEX: DEFERRED`**: Index for administrative monitoring query (`status == 'exhausted'` orderBy `created_at` DESC) is deferred until operator tooling implementation.
 - **`CLEANUP_EXECUTOR_MIN_EFFECTIVE_FUNCTION_DURATION_SECONDS >= 60`**: Mandatory configuration prerequisite; requires `maxDuration: 60` in `backend/vercel.json` functions block for `src/app.ts` prior to production deployment (DEC-7D-53).
 - **`FIRESTORE_TTL_CONFIGURATION_REQUIRED_BEFORE_PRODUCTION: YES`**: Native Firestore TTL policy must be configured on `retention_expires_at` for `whatsapp_onboarding_sessions` (created_at + 30d) and resolved `whatsapp_provider_cleanup_jobs` (`succeeded`/`cancelled` only; omitted / null on `exhausted` to preserve unconfirmed incidents). Prohibits TTL on 15-minute `expires_at`.
-- **`VERCEL_CRON_CONFIGURATION_REQUIRED_BEFORE_PRODUCTION: YES`**: Vercel cron configuration declared in `backend/vercel.json` invoking `GET /api/v1/internal/whatsapp/cleanup-jobs/execute`.
-- **`VERCEL_PLAN_SUPPORTING_MINUTE_LEVEL_CRON_REQUIRED_BEFORE_PRODUCTION: YES`**: Minute-level native cron (e.g. `*/5 * * * *`) requires a plan supporting minute-level cadence (Pro or Enterprise). Status: `OPERATIONS_PREREQUISITE_UNVERIFIED`. Verified fallback: external scheduler.
-- **`CRON_SECRET_ENV_REQUIRED_BEFORE_PRODUCTION: YES`**: Machine-to-machine authorization secret configured in Vercel project environment variables.
+- **`DURABLE_EXECUTOR: GOOGLE_CLOUD_SCHEDULER`**: Production durable executor is Google Cloud Scheduler (project `praise-app-7a362`), decoupling autonomous 5-minute execution from Vercel hosting tier.
+- **`VERCEL_PLAN: HOBBY`**: Vercel production project uses the Hobby (Free) plan.
+- **`VERCEL_CRON: NOT_USED_FOR_PHASE_7D1`**: Native Vercel Cron is not used due to Hobby plan restrictions on minute-level crons. Removed from `backend/vercel.json`.
+- **`SCHEDULE: EVERY_5_MINUTES`**: Both cleanup and reconciliation jobs execute every 5 minutes (`*/5 * * * *`) via Google Cloud Scheduler invoking canonical backend HTTPS endpoints with `Authorization: Bearer <CRON_SECRET>`.
+- **`CRON_SECRET_ENV_REQUIRED_BEFORE_PRODUCTION: YES`**: Machine-to-machine authorization secret configured in backend environment variables and injected by Google Cloud Scheduler HTTP headers.
 - **`FIRESTORE_RULES_MODIFICATION_REQUIRED: NO`**: All operations are backend-authoritative via Firebase Admin SDK.
 - **`DIRECT_CLIENT_FIRESTORE_ACCESS: PROHIBITED`**: Frontend communicates exclusively via REST API (`api.ts`).
