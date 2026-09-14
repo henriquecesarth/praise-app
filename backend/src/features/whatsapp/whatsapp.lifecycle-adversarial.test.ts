@@ -724,6 +724,9 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
         new WhatsAppEncryptionService(testKey)
       );
 
+      const candidateRecord = await cleanupRepo.getJobById(jobId);
+      vi.spyOn(cleanupRepo, 'findDueJobs').mockResolvedValue([candidateRecord!]);
+
       const summary = await cleanupService.executeDueJobs({
         batchSize: 1,
         deadline: tightDeadline,
@@ -1078,6 +1081,9 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
       });
 
       const cleanupService = new WhatsAppCleanupService(cleanupRepo);
+      const candidateRecord = await cleanupRepo.getJobById(jobId);
+      vi.spyOn(cleanupRepo, 'findDueJobs').mockResolvedValue([candidateRecord!]);
+
       await cleanupService.executeDueJobs({
         batchSize: 1,
         acquisitionCutoffMs: 24000,

@@ -26,7 +26,7 @@ export class InternalWhatsAppController {
   executeCleanupJobs = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const authHeader = req.headers.authorization;
-      const cronSecret = config.cronSecret || process.env.CRON_SECRET;
+      const cronSecret = process.env.CRON_SECRET || config.cronSecret;
 
       if (!verifyBearerSecret(authHeader, cronSecret)) {
         throw new AppError(401, 'UNAUTHORIZED: Credencial de cron inválida ou ausente.', {
@@ -69,7 +69,7 @@ export class InternalWhatsAppController {
   executeReconciliationJobs = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const authHeader = req.headers.authorization;
-      const cronSecret = config.cronSecret || process.env.CRON_SECRET;
+      const cronSecret = process.env.CRON_SECRET || config.cronSecret;
 
       if (!verifyBearerSecret(authHeader, cronSecret)) {
         throw new AppError(401, 'UNAUTHORIZED: Credencial de cron inválida ou ausente.', {
@@ -112,7 +112,7 @@ export class InternalWhatsAppController {
   retryCleanupJob = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const authHeader = req.headers.authorization;
-      const operatorSecret = config.internalOperatorSecret || process.env.INTERNAL_OPERATOR_SECRET;
+      const operatorSecret = process.env.INTERNAL_OPERATOR_SECRET || config.internalOperatorSecret;
 
       if (!verifyBearerSecret(authHeader, operatorSecret)) {
         throw new AppError(403, 'FORBIDDEN: Credencial de operador interno inválida ou ausente.', {
@@ -138,7 +138,7 @@ export class InternalWhatsAppController {
   abandonCleanupJob = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const authHeader = req.headers.authorization;
-      const operatorSecret = config.internalOperatorSecret || process.env.INTERNAL_OPERATOR_SECRET;
+      const operatorSecret = process.env.INTERNAL_OPERATOR_SECRET || config.internalOperatorSecret;
 
       if (!verifyBearerSecret(authHeader, operatorSecret)) {
         throw new AppError(403, 'FORBIDDEN: Credencial de operador interno inválida ou ausente.', {

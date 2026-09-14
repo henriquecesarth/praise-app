@@ -11,7 +11,9 @@ export class WhatsAppEncryptionService {
   }
 
   private getValidatedKey(): Buffer {
-    const rawKey = this.configuredKey || config.whatsappTokenEncryptionKey || process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY;
+    const rawKey = (this.configuredKey !== undefined && this.configuredKey !== null)
+      ? this.configuredKey
+      : (config.whatsappTokenEncryptionKey || process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY);
 
     if (!rawKey || typeof rawKey !== 'string') {
       throw new AppError(500, 'WHATSAPP_ENCRYPTION_KEY_INVALID_OR_MISSING: Chave de criptografia do WhatsApp ausente ou inválida.', {

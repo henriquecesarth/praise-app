@@ -61,7 +61,15 @@ O Playwright inicia `vite preview` em `127.0.0.1:4173`. Reconstrua `web/dist/` a
 
 ## Isolation Rules
 
-- Não aponte testes automatizados para dados reais de produção.
+- **Regra Rígida de Isolamento de Banco de Dados**: Testes automatizados de backend NUNCA devem escrever ou ler do projeto Firebase de produção/compartilhado (`praise-app-7a362`).
+- **Guarda Central de Isolamento (`assertTestIsolationGuard`)**: Em `NODE_ENV === 'test'`, qualquer tentativa de inicializar persistência Firestore sem `FIRESTORE_EMULATOR_HOST` configurado falha imediatamente em fail-closed (`TEST_ISOLATION_ERROR`). Além disso, credenciais de Service Account (`cert(...)`) são estritamente suprimidas em modo de teste.
+- **Firestore Emulator**:
+  - Iniciar emulador localmente:
+    ```bash
+    npx firebase-tools emulators:start --only firestore
+    ```
+  - O emulador sobe por padrão em `127.0.0.1:8080`.
+  - `backend/vitest.config.ts` define `FIRESTORE_EMULATOR_HOST=127.0.0.1:8080` por padrão nas suítes de teste.
 - `web/e2e/mock-api.ts` deve interceptar contratos HTTP e manter qualquer escrita em memória.
 - Jornadas E2E de leitura usam entidades de fixture.
 - Mudanças de contrato no backend devem incluir testes unitários/integrados próprios em `backend/src/`.

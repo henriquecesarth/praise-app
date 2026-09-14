@@ -31,3 +31,6 @@ mobile/*.iml
 Thumbs.db
 
 .agents/*
+
+# Logs
+*-debug.log
