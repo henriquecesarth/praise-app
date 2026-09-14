@@ -115,28 +115,33 @@ Both global scheduled jobs invoke canonical internal HTTPS endpoints authenticat
 
 ---
 
-## 4. Execution Budget & Timeout Hardening
+## 4. Execution Budget, Deadline Propagation & 30-Second Timeout Hardening (Phase 7D1-B-R3-R1)
 
-The free tier of `cron-job.org` enforces a strict request timeout of ~30 seconds.
-To guarantee reliable completion well within this limit (operational safety envelope `<= 20-25s`):
+The free tier of `cron-job.org` enforces a strict connection timeout of ~30 seconds.
+To provide an implementation-enforced execution deadline designed to return safely within the 30-second scheduler envelope (`<= 24-25s`):
 
-1. **Execution Budgets**:
-   - `softBudgetMs`: `20_000` (20 seconds).
-   - `acquisitionCutoffMs`: `15_000` (15 seconds).
-2. **Pre-Execution Check**:
-   - Before acquiring or dispatching any candidate job in the loop:
-     ```typescript
-     if (Date.now() - startTime > acquisitionCutoffMs || Date.now() - startTime > softBudgetMs) {
-       summary.skippedCount++;
-       continue;
-     }
-     ```
-   - If 15 seconds have elapsed, no new candidate is leased or called. It remains due in Firestore for the subsequent 5-minute tick.
-3. **No Lost Leases / No Dropped Attempts**:
-   - Skipping a job past the cutoff does NOT increment `attempt_count` and does NOT lock the job lease.
-   - Jobs remain in `pending` / `retry_wait` status.
-4. **Function Runtime Limit**:
-   - Vercel function configuration in `backend/vercel.json` retains `maxDuration: 60` for `src/app.ts`, providing a 35s serverless buffer above the 25s execution envelope.
+1. **`WhatsAppExecutionDeadline` Authority**:
+   - Initialized at route entry with `budgetMs: 24_000` (24 seconds) and `safetyMarginMs: 1_500` (1.5 seconds).
+   - Dynamic remaining budget is calculated as `deadlineAt - Date.now() - safetyMarginMs`.
+   - Propagated downstream into both Cleanup and Reconciliation services and provider calls.
+2. **Pre-Acquisition & Pre-Call Execution Checks**:
+   - Acquisition Cutoff: 15,000ms (`acquisitionCutoffMs: 15_000`). If 15s have elapsed, or if `!deadline.hasRemaining(3_000)`, candidate loop ceases acquiring new jobs.
+   - Pre-Reservation Attempt Guard: Before reserving attempts or calling Meta Graph API, worker verifies `deadline.hasRemaining(3_000)`. If insufficient budget remains, the worker skips remote dispatch, releases WABA lease as `idle`, and reschedules the job with `INSUFFICIENT_EXECUTION_BUDGET` without incrementing `attempt_count`.
+3. **Clamped Provider Timeouts**:
+   - Provider timeouts are clamped dynamically to remaining budget via `deadline.getClampedTimeoutMs(normalTimeoutMs, minOperationalMs)`.
+   - Mutation timeouts (e.g. DELETE 10s) and verification timeouts (10s) are clamped so they cannot block past the deadline.
+   - If remaining budget is less than the minimum operational threshold (1.5s / 2.0s), the provider call is not initiated.
+4. **Deadline-Aware Pagination**:
+   - `checkMessagingAccountSubscribedApps` checks remaining budget before fetching each page (`deadlineAt - Date.now() < 1000`).
+   - If budget is insufficient, pagination breaks safely and returns `{ proof: 'UNPROVEN', status: 'UNPROVEN' }`, preventing connection timeout.
+5. **Post-Condition Verification Budget Guard**:
+   - If DELETE outcome is ambiguous, worker runs verification only if `deadline.hasRemaining(2_000)`.
+   - If verification budget is exhausted, worker marks `isProvenClean = false` with `VERIFICATION_BUDGET_EXHAUSTED`, records `unknown_outcome` in WABA lock ledger, and schedules reconciler resolution.
+6. **No Lost Leases / No Dropped Attempts**:
+   - Skipping a job past the cutoff or due to tight deadline does NOT increment `attempt_count` and does NOT lock the job lease.
+   - Jobs remain durable in Firestore for subsequent scheduler ticks.
+7. **Function Runtime Limit**:
+   - Vercel function configuration in `backend/vercel.json` retains `maxDuration: 60` for `src/app.ts`, providing an ample serverless buffer above the 24-second execution envelope.
 
 ---
 

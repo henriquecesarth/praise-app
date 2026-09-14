@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { config } from '../../config/unifiedConfig';
 import { WhatsAppCleanupService } from './whatsapp-cleanup.service';
 import { WhatsAppReconciliationService } from './whatsapp-reconciliation.service';
+import { WhatsAppExecutionDeadline } from './whatsapp-execution-deadline';
 import { AppError } from '../../middleware/error-handler';
 
 export function verifyBearerSecret(authHeader: string | undefined, expectedSecret: string | undefined): boolean {
@@ -37,9 +38,16 @@ export class InternalWhatsAppController {
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
 
+      const deadline = new WhatsAppExecutionDeadline({
+        startTime: Date.now(),
+        budgetMs: 24_000,
+        safetyMarginMs: 1_500,
+      });
+
       const batchSize = req.query.batchSize ? Number(req.query.batchSize) : undefined;
       const cleanupSummary = await this.cleanupService.executeDueJobs({
         batchSize,
+        deadline,
         softBudgetMs: 20_000,
         acquisitionCutoffMs: 15_000,
       });
@@ -73,9 +81,16 @@ export class InternalWhatsAppController {
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
 
+      const deadline = new WhatsAppExecutionDeadline({
+        startTime: Date.now(),
+        budgetMs: 24_000,
+        safetyMarginMs: 1_500,
+      });
+
       const batchSize = req.query.batchSize ? Number(req.query.batchSize) : undefined;
       const summary = await this.reconService.executeDueJobs({
         batchSize,
+        deadline,
         softBudgetMs: 20_000,
         acquisitionCutoffMs: 15_000,
       });

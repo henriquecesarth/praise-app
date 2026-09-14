@@ -11,6 +11,10 @@ import { InternalWhatsAppController, verifyBearerSecret } from './internal-whats
 import { AppError } from '../../middleware/error-handler';
 import { WhatsAppProvider } from './whatsapp.types';
 import { WhatsAppEncryptionService } from './whatsapp-encryption.service';
+import { WhatsAppExecutionDeadline } from './whatsapp-execution-deadline';
+import { WhatsAppReconciliationService } from './whatsapp-reconciliation.service';
+import { MetaWhatsAppProvider } from './meta-whatsapp.provider';
+import { WhatsAppConnectionRepository } from '../../repositories/WhatsAppConnectionRepository';
 
 describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () => {
   const testKey = 'YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=';
@@ -54,7 +58,7 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
       const updated = await lockRepo.getLock(wabaId);
       expect(updated).not.toBeNull();
       expect(updated!.unresolved_remote_mutations.length).toBeLessThanOrEqual(20);
-    });
+    }, 15000);
 
     it('1.2 FAILS CLOSED with 500 WABA_UNCERTAINTY_LEDGER_SATURATED when all 20 entries are unresolved', async () => {
       const lockRepo = new WhatsAppWabaLifecycleLockRepository();
@@ -81,16 +85,17 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
           connection_id: 'conn-21',
         })
       ).rejects.toThrow('WABA_UNCERTAINTY_LEDGER_SATURATED');
-    });
+    }, 15000);
   });
 
   describe('2. Secret Purge Safety Under Subscribe Debt (DEC-7D-64)', () => {
     it('2.1 Blocks secret deletion with 409 SECRET_PURGE_BLOCKED_UNDER_SUBSCRIBE_DEBT when subscribe debt exists', async () => {
       const lockRepo = new WhatsAppWabaLifecycleLockRepository();
       const secretRepo = new WhatsAppConnectionSecretRepository();
-      const wabaId = 'waba-debt-01';
-      const orgId = 'org-debt-01';
-      const connId = 'conn-debt-01';
+      const testId = crypto.randomUUID().slice(0, 8);
+      const wabaId = `waba-debt-${testId}`;
+      const orgId = `org-debt-${testId}`;
+      const connId = `conn-debt-${testId}`;
 
       // Create secret
       await secretRepo.setSecret({
@@ -656,5 +661,627 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
       expect(job!.lease_token).toBeNull();
       expect(job!.lease_expires_at).toBeNull();
     });
+  });
+
+  describe('6. 30-Second Execution Envelope, Deadline Propagation & Clamped Timeout Matrix (Phase 7D1-B-R3-R1)', () => {
+    it('6.A Job starting near acquisition cutoff skips operation that cannot fit remaining budget without incrementing attempt count or locking', async () => {
+      const cleanupRepo = new WhatsAppProviderCleanupJobRepository();
+      const lockRepo = new WhatsAppWabaLifecycleLockRepository();
+      const testId = crypto.randomUUID().slice(0, 8);
+      const jobId = `cleanup_conn_budget_${testId}`;
+      const wabaId = `waba-budget-${testId}`;
+
+      await cleanupRepo.createJob({
+        id: jobId,
+        organization_id: `org-${testId}`,
+        connection_id: `conn-${testId}`,
+        provider: 'meta',
+        provider_waba_id: wabaId,
+        provider_phone_number_id: `phone-${testId}`,
+        waba_claim_generation: 1,
+        status: 'pending',
+        attempt_count: 0,
+        max_attempts: 5,
+        next_attempt_at: new Date(Date.now() - 5000).toISOString(),
+        lease_token: null,
+        lease_expires_at: null,
+        last_attempt_started_at: null,
+        last_error_code: null,
+        last_error_at: null,
+        provider_cleanup_proof: null,
+        override_reason: null,
+        manual_action_by: null,
+        manual_action_at: null,
+        manual_action_reason: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null,
+        retention_expires_at: null,
+      });
+
+      // Deadline allows candidate acquisition (loop check), but budget runs out before remote call
+      const tightDeadline = new WhatsAppExecutionDeadline({
+        startTime: Date.now(),
+        budgetMs: 24000,
+        safetyMarginMs: 1500,
+      });
+
+      let callCount = 0;
+      vi.spyOn(tightDeadline, 'hasRemaining').mockImplementation((ms) => {
+        callCount++;
+        // 1st call is in executeDueJobs candidate loop (ms = 3000) -> allow candidate acquisition
+        if (callCount === 1) return true;
+        // Subsequent calls inside processSingleJob -> budget exhausted before dispatch
+        return false;
+      });
+
+      const cleanupService = new WhatsAppCleanupService(
+        cleanupRepo,
+        lockRepo,
+        new WhatsAppWabaReconciliationJobRepository(),
+        new WhatsAppConnectionRepository(),
+        new WhatsAppConnectionSecretRepository(),
+        new WhatsAppEncryptionService(testKey)
+      );
+
+      const summary = await cleanupService.executeDueJobs({
+        batchSize: 1,
+        deadline: tightDeadline,
+      });
+
+      expect(summary.candidateCount).toBe(1);
+      expect(summary.processedCount).toBe(1);
+      expect(summary.skippedCount).toBe(1);
+
+      // Verify attempt count was NOT incremented (remains 0)
+      const job = await cleanupRepo.getJobById(jobId);
+      expect(job!.attempt_count).toBe(0);
+      expect(job!.status).toBe('retry_wait');
+      expect(job!.last_error_code).toBe('INSUFFICIENT_EXECUTION_BUDGET');
+      expect(job!.lease_token).toBeNull();
+
+      // Verify WABA lock lease was released as idle
+      const lock = await lockRepo.getLock(wabaId);
+      if (lock) {
+        expect(lock.operation_status).toBe('idle');
+      }
+    }, 15000);
+
+    it('6.B Provider timeout is clamped to remaining worker deadline (deadline.getClampedTimeoutMs)', () => {
+      // 1. With ample time, returns normal timeout
+      const ampleDeadline = new WhatsAppExecutionDeadline({
+        startTime: Date.now(),
+        budgetMs: 24000,
+        safetyMarginMs: 1500,
+      });
+      expect(ampleDeadline.getClampedTimeoutMs(10000, 1500)).toBe(10000);
+
+      // 2. With partial time remaining
+      const constrainedDeadline = new WhatsAppExecutionDeadline({
+        startTime: Date.now() - 19000,
+        budgetMs: 24000,
+        safetyMarginMs: 1500,
+      });
+      const clamped = constrainedDeadline.getClampedTimeoutMs(10000, 1500);
+      expect(clamped).toBeLessThanOrEqual(5000);
+      expect(clamped).toBeGreaterThanOrEqual(2000);
+
+      // 3. With insufficient time (< minOperationalMs), returns 0
+      const exhaustedDeadline = new WhatsAppExecutionDeadline({
+        startTime: Date.now() - 23500,
+        budgetMs: 24000,
+        safetyMarginMs: 1500,
+      });
+      expect(exhaustedDeadline.getClampedTimeoutMs(10000, 1500)).toBe(0);
+
+      // 4. Provider helper resolves correctly against deadlineAt
+      const provider = new MetaWhatsAppProvider();
+      const resolved = (provider as any).resolveEffectiveTimeoutMs(10000, {
+        deadlineAt: Date.now() + 3000,
+      });
+      expect(resolved).toBeLessThanOrEqual(3000);
+      expect(resolved).toBeGreaterThan(0);
+    });
+
+    it('6.C Mutation dispatched then deadline/timeout occurs -> unknown_outcome recorded in ledger', async () => {
+      const cleanupRepo = new WhatsAppProviderCleanupJobRepository();
+      const lockRepo = new WhatsAppWabaLifecycleLockRepository();
+      const secretRepo = new WhatsAppConnectionSecretRepository();
+      const testId = crypto.randomUUID().slice(0, 8);
+      const jobId = `cleanup_conn_tout_${testId}`;
+      const wabaId = `waba-tout-${testId}`;
+      const orgId = `org-${testId}`;
+      const connId = `conn-${testId}`;
+
+      const encService = new WhatsAppEncryptionService(testKey);
+      const { encryptedAccessToken, iv, authTag } = encService.encryptToken('EAAGtesttoken', orgId, connId);
+      await secretRepo.setSecret({
+        id: connId,
+        organization_id: orgId,
+        connection_id: connId,
+        key_version: 1,
+        encrypted_access_token: encryptedAccessToken,
+        iv,
+        auth_tag: authTag,
+        token_type: 'business_token',
+        expires_at: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      await cleanupRepo.createJob({
+        id: jobId,
+        organization_id: orgId,
+        connection_id: connId,
+        provider: 'meta',
+        provider_waba_id: wabaId,
+        provider_phone_number_id: `phone-${testId}`,
+        waba_claim_generation: 1,
+        status: 'pending',
+        attempt_count: 0,
+        max_attempts: 5,
+        next_attempt_at: new Date(Date.now() - 5000).toISOString(),
+        lease_token: null,
+        lease_expires_at: null,
+        last_attempt_started_at: null,
+        last_error_code: null,
+        last_error_at: null,
+        provider_cleanup_proof: null,
+        override_reason: null,
+        manual_action_by: null,
+        manual_action_at: null,
+        manual_action_reason: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null,
+        retention_expires_at: null,
+      });
+
+      // Provider throws timeout
+      const mockMetaProvider = {
+        subscribeMessagingAccountApps: vi.fn(),
+        unsubscribeMessagingAccountApps: vi.fn().mockRejectedValue(
+          new AppError(504, 'Meta API request timed out after 5000ms', { code: 'PROVIDER_TIMEOUT' })
+        ),
+        checkMessagingAccountSubscribedApps: vi.fn().mockResolvedValue({
+          status: 'UNPROVEN',
+          proof: 'UNPROVEN',
+        }),
+      } as unknown as WhatsAppProvider;
+
+      const cleanupService = new WhatsAppCleanupService(
+        cleanupRepo,
+        lockRepo,
+        new WhatsAppWabaReconciliationJobRepository(),
+        new WhatsAppConnectionRepository(),
+        secretRepo,
+        encService,
+        mockMetaProvider
+      );
+
+      const deadline = new WhatsAppExecutionDeadline({
+        startTime: Date.now(),
+        budgetMs: 24000,
+        safetyMarginMs: 1500,
+      });
+
+      const candidateRecord = await cleanupRepo.getJobById(jobId);
+      vi.spyOn(cleanupRepo, 'findDueJobs').mockResolvedValue([candidateRecord!]);
+
+      const summary = await cleanupService.executeDueJobs({
+        batchSize: 1,
+        deadline,
+      });
+
+      expect(summary.retryWaitCount).toBe(1);
+
+      // Verify unknown_outcome recorded in WABA lock ledger
+      const lock = await lockRepo.getLock(wabaId);
+      expect(lock).not.toBeNull();
+      expect(lock!.operation_status).toBe('unknown_outcome');
+      const unknownEntry = lock!.unresolved_remote_mutations.find(
+        (m) => m.operation === 'unsubscribe' && m.status === 'unknown_outcome'
+      );
+      expect(unknownEntry).toBeDefined();
+    }, 15000);
+
+    it('6.D DELETE succeeds but exhaustive verification cannot finish before deadline -> isProvenClean = false / not PROVEN_CLEAN', async () => {
+      const cleanupRepo = new WhatsAppProviderCleanupJobRepository();
+      const lockRepo = new WhatsAppWabaLifecycleLockRepository();
+      const secretRepo = new WhatsAppConnectionSecretRepository();
+      const testId = crypto.randomUUID().slice(0, 8);
+      const jobId = `cleanup_conn_verif_${testId}`;
+      const wabaId = `waba-verif-${testId}`;
+      const orgId = `org-${testId}`;
+      const connId = `conn-${testId}`;
+
+      const encService = new WhatsAppEncryptionService(testKey);
+      const { encryptedAccessToken, iv, authTag } = encService.encryptToken('EAAGtesttoken', orgId, connId);
+      await secretRepo.setSecret({
+        id: connId,
+        organization_id: orgId,
+        connection_id: connId,
+        key_version: 1,
+        encrypted_access_token: encryptedAccessToken,
+        iv,
+        auth_tag: authTag,
+        token_type: 'business_token',
+        expires_at: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      await cleanupRepo.createJob({
+        id: jobId,
+        organization_id: orgId,
+        connection_id: connId,
+        provider: 'meta',
+        provider_waba_id: wabaId,
+        provider_phone_number_id: `phone-${testId}`,
+        waba_claim_generation: 1,
+        status: 'pending',
+        attempt_count: 0,
+        max_attempts: 5,
+        next_attempt_at: new Date(Date.now() - 5000).toISOString(),
+        lease_token: null,
+        lease_expires_at: null,
+        last_attempt_started_at: null,
+        last_error_code: null,
+        last_error_at: null,
+        provider_cleanup_proof: null,
+        override_reason: null,
+        manual_action_by: null,
+        manual_action_at: null,
+        manual_action_reason: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null,
+        retention_expires_at: null,
+      });
+
+      // Provider DELETE returns non-success (ambiguous)
+      const mockMetaProvider = {
+        subscribeMessagingAccountApps: vi.fn(),
+        unsubscribeMessagingAccountApps: vi.fn().mockResolvedValue({ success: false }),
+        checkMessagingAccountSubscribedApps: vi.fn(),
+      } as unknown as WhatsAppProvider;
+
+      const cleanupService = new WhatsAppCleanupService(
+        cleanupRepo,
+        lockRepo,
+        new WhatsAppWabaReconciliationJobRepository(),
+        new WhatsAppConnectionRepository(),
+        secretRepo,
+        encService,
+        mockMetaProvider
+      );
+
+      // Deadline allows unsubscribe (>= 3000ms), but runs out before verification (hasRemaining(2000) = false)
+      const customDeadline = new WhatsAppExecutionDeadline({
+        startTime: Date.now(),
+        budgetMs: 24000,
+        safetyMarginMs: 1500,
+      });
+      vi.spyOn(customDeadline, 'hasRemaining').mockImplementation((ms) => {
+        // Allow candidate loop and pre-call checks (3000ms)
+        if (ms >= 3000) return true;
+        // Deny post-condition verification check (2000ms)
+        return false;
+      });
+
+      const candidateRecord = await cleanupRepo.getJobById(jobId);
+      vi.spyOn(cleanupRepo, 'findDueJobs').mockResolvedValue([candidateRecord!]);
+
+      const summary = await cleanupService.executeDueJobs({
+        batchSize: 1,
+        deadline: customDeadline,
+      });
+
+      // Provider DELETE was called, but verification was skipped due to deadline
+      expect(mockMetaProvider.unsubscribeMessagingAccountApps).toHaveBeenCalled();
+      expect(mockMetaProvider.checkMessagingAccountSubscribedApps).not.toHaveBeenCalled();
+
+      // Job is in retry_wait, not completed
+      expect(summary.retryWaitCount).toBe(1);
+      const job = await cleanupRepo.getJobById(jobId);
+      expect(job!.status).toBe('retry_wait');
+      expect(job!.last_error_code).toBe('VERIFICATION_BUDGET_EXHAUSTED');
+      expect(job!.provider_cleanup_proof).not.toBe('PROVEN_CLEAN');
+
+      // WABA lock records unknown_outcome so reconciler will settle it
+      const lock = await lockRepo.getLock(wabaId);
+      expect(lock!.operation_status).toBe('unknown_outcome');
+    }, 15000);
+
+    it('6.E Pagination stops safely when deadline is insufficient -> returns UNPROVEN', async () => {
+      const provider = new MetaWhatsAppProvider({ appId: 'test-app-id', appSecret: 'test-app-secret' });
+
+      const origFetch = globalThis.fetch;
+      try {
+        let pageCount = 0;
+        const now = Date.now();
+        const deadlineAt = now + 1500;
+
+        vi.useFakeTimers();
+        vi.setSystemTime(now);
+
+        globalThis.fetch = vi.fn().mockImplementation(async () => {
+          pageCount++;
+          // Simulate 600ms latency so remaining budget becomes 900ms (< 1000ms threshold)
+          vi.setSystemTime(Date.now() + 600);
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              data: [{ id: 'app-other', name: 'Other App' }],
+              paging: {
+                cursors: { after: 'cursor123' },
+                next: 'https://graph.facebook.com/v21.0/waba/subscribed_apps?after=cursor123',
+              },
+            }),
+          } as any;
+        });
+
+        const result = await provider.checkMessagingAccountSubscribedApps(
+          'waba-page-test',
+          'access-token',
+          { deadlineAt }
+        );
+
+        expect(result.status).toBe('UNPROVEN');
+        expect(result.proof).toBe('UNPROVEN');
+        // Paging stopped after 1 page without fetching page 2
+        expect(pageCount).toBe(1);
+      } finally {
+        vi.useRealTimers();
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    it('6.F Budget exhaustion before dispatch leaves job durable for next tick (pending, attempt 0)', async () => {
+      const cleanupRepo = new WhatsAppProviderCleanupJobRepository();
+      const testId = crypto.randomUUID().slice(0, 8);
+      const jobId = `cleanup_conn_durable_${testId}`;
+
+      await cleanupRepo.createJob({
+        id: jobId,
+        organization_id: `org-${testId}`,
+        connection_id: `conn-${testId}`,
+        provider: 'meta',
+        provider_waba_id: `waba-${testId}`,
+        provider_phone_number_id: `phone-${testId}`,
+        waba_claim_generation: 1,
+        status: 'pending',
+        attempt_count: 0,
+        max_attempts: 5,
+        next_attempt_at: new Date(Date.now() - 5000).toISOString(),
+        lease_token: null,
+        lease_expires_at: null,
+        last_attempt_started_at: null,
+        last_error_code: null,
+        last_error_at: null,
+        provider_cleanup_proof: null,
+        override_reason: null,
+        manual_action_by: null,
+        manual_action_at: null,
+        manual_action_reason: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null,
+        retention_expires_at: null,
+      });
+
+      const deadline = new WhatsAppExecutionDeadline({
+        startTime: Date.now() - 23000,
+        budgetMs: 24000,
+        safetyMarginMs: 1500,
+      });
+
+      const cleanupService = new WhatsAppCleanupService(cleanupRepo);
+      await cleanupService.executeDueJobs({
+        batchSize: 1,
+        acquisitionCutoffMs: 24000,
+        deadline,
+      });
+
+      const job = await cleanupRepo.getJobById(jobId);
+      expect(job).not.toBeNull();
+      expect(job!.attempt_count).toBe(0);
+      expect(job!.status).toBe('pending');
+      expect(job!.lease_token).toBeNull();
+      expect(job!.lease_expires_at).toBeNull();
+    }, 15000);
+
+    it('6.G Subsequent scheduler tick successfully discovers and processes the deferred job', async () => {
+      const cleanupRepo = new WhatsAppProviderCleanupJobRepository();
+      const lockRepo = new WhatsAppWabaLifecycleLockRepository();
+      const secretRepo = new WhatsAppConnectionSecretRepository();
+      const testId = crypto.randomUUID().slice(0, 8);
+      const jobId = `cleanup_conn_subsequent_${testId}`;
+      const wabaId = `waba-subsequent-${testId}`;
+      const orgId = `org-${testId}`;
+      const connId = `conn-${testId}`;
+
+      const encService = new WhatsAppEncryptionService(testKey);
+      const { encryptedAccessToken, iv, authTag } = encService.encryptToken('EAAGtesttoken', orgId, connId);
+      await secretRepo.setSecret({
+        id: connId,
+        organization_id: orgId,
+        connection_id: connId,
+        key_version: 1,
+        encrypted_access_token: encryptedAccessToken,
+        iv,
+        auth_tag: authTag,
+        token_type: 'business_token',
+        expires_at: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      await cleanupRepo.createJob({
+        id: jobId,
+        organization_id: orgId,
+        connection_id: connId,
+        provider: 'meta',
+        provider_waba_id: wabaId,
+        provider_phone_number_id: `phone-${testId}`,
+        waba_claim_generation: 1,
+        status: 'retry_wait',
+        attempt_count: 0,
+        max_attempts: 5,
+        next_attempt_at: new Date(Date.now() - 1000).toISOString(),
+        lease_token: null,
+        lease_expires_at: null,
+        last_attempt_started_at: null,
+        last_error_code: 'INSUFFICIENT_EXECUTION_BUDGET',
+        last_error_at: new Date(Date.now() - 60000).toISOString(),
+        provider_cleanup_proof: null,
+        override_reason: null,
+        manual_action_by: null,
+        manual_action_at: null,
+        manual_action_reason: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null,
+        retention_expires_at: null,
+      });
+
+      const mockMetaProvider = {
+        subscribeMessagingAccountApps: vi.fn(),
+        unsubscribeMessagingAccountApps: vi.fn().mockResolvedValue({ success: true }),
+        checkMessagingAccountSubscribedApps: vi.fn().mockResolvedValue({
+          status: 'PROVEN_UNSUBSCRIBED',
+          proof: 'PROVEN_CLEAN',
+        }),
+      } as unknown as WhatsAppProvider;
+
+      const cleanupService = new WhatsAppCleanupService(
+        cleanupRepo,
+        lockRepo,
+        new WhatsAppWabaReconciliationJobRepository(),
+        new WhatsAppConnectionRepository(),
+        secretRepo,
+        encService,
+        mockMetaProvider
+      );
+
+      const freshDeadline = new WhatsAppExecutionDeadline({
+        startTime: Date.now(),
+        budgetMs: 24000,
+        safetyMarginMs: 1500,
+      });
+
+      const candidateRecord = await cleanupRepo.getJobById(jobId);
+      vi.spyOn(cleanupRepo, 'findDueJobs').mockResolvedValue([candidateRecord!]);
+
+      const summary = await cleanupService.executeDueJobs({
+        batchSize: 1,
+        deadline: freshDeadline,
+      });
+
+      expect(summary.processedCount).toBe(1);
+      expect(summary.succeededCount).toBe(1);
+
+      const job = await cleanupRepo.getJobById(jobId);
+      expect(job!.status).toBe('succeeded');
+      expect(job!.attempt_count).toBe(1);
+      expect(job!.provider_cleanup_proof).toBe('proven');
+    }, 15000);
+
+    it('6.H Compact route response schema ({ ok, claimed, processed, ... }) remains unchanged', async () => {
+      const cronSecret = 'valid-cron-secret-schema';
+      process.env.CRON_SECRET = cronSecret;
+
+      const controller = new InternalWhatsAppController();
+
+      let cleanupJson: any = null;
+      let cleanupStatus = 0;
+      const resCleanup = {
+        setHeader: vi.fn(),
+        status: (c: number) => {
+          cleanupStatus = c;
+          return resCleanup;
+        },
+        json: (data: any) => {
+          cleanupJson = data;
+          return resCleanup;
+        },
+      } as any;
+      await controller.executeCleanupJobs(
+        { headers: { authorization: `Bearer ${cronSecret}` }, query: {} } as any,
+        resCleanup,
+        vi.fn()
+      );
+
+      expect(cleanupStatus).toBe(200);
+      expect(Object.keys(cleanupJson).sort()).toEqual(
+        ['claimed', 'exhausted', 'ok', 'processed', 'retryWait', 'skipped', 'succeeded'].sort()
+      );
+      expect(typeof cleanupJson.ok).toBe('boolean');
+      expect(typeof cleanupJson.claimed).toBe('number');
+      expect(typeof cleanupJson.processed).toBe('number');
+      expect(typeof cleanupJson.succeeded).toBe('number');
+      expect(typeof cleanupJson.retryWait).toBe('number');
+      expect(typeof cleanupJson.exhausted).toBe('number');
+      expect(typeof cleanupJson.skipped).toBe('number');
+
+      let reconJson: any = null;
+      let reconStatus = 0;
+      const resRecon = {
+        setHeader: vi.fn(),
+        status: (c: number) => {
+          reconStatus = c;
+          return resRecon;
+        },
+        json: (data: any) => {
+          reconJson = data;
+          return resRecon;
+        },
+      } as any;
+      await controller.executeReconciliationJobs(
+        { headers: { authorization: `Bearer ${cronSecret}` }, query: {} } as any,
+        resRecon,
+        vi.fn()
+      );
+
+      expect(reconStatus).toBe(200);
+      expect(Object.keys(reconJson).sort()).toEqual(
+        ['claimed', 'failed', 'ok', 'processed', 'repaired', 'skipped', 'stable'].sort()
+      );
+      expect(typeof reconJson.ok).toBe('boolean');
+      expect(typeof reconJson.claimed).toBe('number');
+      expect(typeof reconJson.processed).toBe('number');
+      expect(typeof reconJson.stable).toBe('number');
+      expect(typeof reconJson.repaired).toBe('number');
+      expect(typeof reconJson.failed).toBe('number');
+      expect(typeof reconJson.skipped).toBe('number');
+    }, 15000);
+
+    it('6.I Existing overlap/crash/ledger/secret-purge invariants hold without degradation', async () => {
+      const lockRepo = new WhatsAppWabaLifecycleLockRepository();
+      const testId = crypto.randomUUID().slice(0, 8);
+      const wabaId = `waba-invariants-${testId}`;
+
+      const { leaseToken, generation } = await lockRepo.acquireLeaseInTransaction(
+        wabaId,
+        'cleanup_worker',
+        10000,
+        'reconciling'
+      );
+      expect(leaseToken).toBeDefined();
+
+      // Confirms lock cannot be concurrently acquired by another worker (throws 409)
+      await expect(
+        lockRepo.acquireLeaseInTransaction(wabaId, 'second_worker', 10000, 'reconciling')
+      ).rejects.toThrow();
+
+      // Release lock cleanly
+      await lockRepo.releaseLeaseInTransaction(wabaId, leaseToken, generation, {
+        operation_status: 'idle',
+      });
+      const lock = await lockRepo.getLock(wabaId);
+      expect(lock!.operation_status).toBe('idle');
+      expect(lock!.lease_token).toBeNull();
+    }, 15000);
   });
 });

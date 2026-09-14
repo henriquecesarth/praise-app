@@ -357,20 +357,31 @@ export interface WhatsAppSubscribedAppsProof {
   pageCount?: number;
 }
 
+export interface WhatsAppProviderRequestOptions {
+  timeoutMs?: number;
+  deadlineAt?: number;
+}
+
 export interface WhatsAppProvider {
   exchangeOAuthCode(code: string): Promise<WhatsAppOAuthResult>;
   verifyMessagingAccountAccess(accessToken: string, wabaId: string): Promise<boolean>;
   listAuthorizedPhoneNumbers(accessToken: string, wabaId: string): Promise<WhatsAppAuthorizedPhoneNumber[]>;
   getPhoneNumberDetails(accessToken: string, phoneNumberId: string): Promise<WhatsAppPhoneNumberDetails>;
   registerPhoneNumber(accessToken: string, phoneNumberId: string, pin: string): Promise<void>;
-  subscribeMessagingAccountApps(accessToken: string, wabaId: string): Promise<void>;
+  subscribeMessagingAccountApps(
+    accessToken: string,
+    wabaId: string,
+    options?: WhatsAppProviderRequestOptions
+  ): Promise<void>;
   unsubscribeMessagingAccountApps(
     accessToken: string,
-    wabaId: string
+    wabaId: string,
+    options?: WhatsAppProviderRequestOptions
   ): Promise<{ success: boolean; errorStatus?: number; errorCode?: number }>;
   checkMessagingAccountSubscribedApps(
     accessToken: string,
-    wabaId: string
+    wabaId: string,
+    options?: WhatsAppProviderRequestOptions
   ): Promise<WhatsAppSubscribedAppsProof>;
 }
 

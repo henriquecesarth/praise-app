@@ -359,11 +359,37 @@ export class MetaWhatsAppProvider implements WhatsAppProvider {
     }
   }
 
-  async subscribeMessagingAccountApps(accessToken: string, wabaId: string): Promise<void> {
+  private resolveEffectiveTimeoutMs(
+    defaultTimeoutMs: number,
+    options?: import('./whatsapp.types').WhatsAppProviderRequestOptions
+  ): number {
+    let timeoutMs = defaultTimeoutMs;
+    if (options?.timeoutMs !== undefined && options.timeoutMs > 0) {
+      timeoutMs = Math.min(timeoutMs, options.timeoutMs);
+    }
+    if (options?.deadlineAt !== undefined) {
+      const remainingToDeadline = options.deadlineAt - Date.now();
+      timeoutMs = Math.min(timeoutMs, Math.max(0, remainingToDeadline));
+    }
+    return timeoutMs;
+  }
+
+  async subscribeMessagingAccountApps(
+    accessToken: string,
+    wabaId: string,
+    options?: import('./whatsapp.types').WhatsAppProviderRequestOptions
+  ): Promise<void> {
     const url = new URL(`https://graph.facebook.com/${this.graphApiVersion}/${wabaId}/subscribed_apps`);
 
+    const effectiveTimeoutMs = this.resolveEffectiveTimeoutMs(15000, options);
+    if (effectiveTimeoutMs <= 0) {
+      throw new AppError(504, 'WHATSAPP_PROVIDER_TIMEOUT: Tempo limite esgotado ao assinar webhooks.', {
+        code: 'WHATSAPP_PROVIDER_TIMEOUT',
+      });
+    }
+
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const timeoutId = setTimeout(() => controller.abort(), effectiveTimeoutMs);
 
     try {
       const res = await fetch(url.toString(), {
@@ -403,12 +429,20 @@ export class MetaWhatsAppProvider implements WhatsAppProvider {
 
   async unsubscribeMessagingAccountApps(
     accessToken: string,
-    wabaId: string
+    wabaId: string,
+    options?: import('./whatsapp.types').WhatsAppProviderRequestOptions
   ): Promise<{ success: boolean; errorStatus?: number; errorCode?: number }> {
     const url = new URL(`https://graph.facebook.com/${this.graphApiVersion}/${wabaId}/subscribed_apps`);
 
+    const effectiveTimeoutMs = this.resolveEffectiveTimeoutMs(10000, options);
+    if (effectiveTimeoutMs <= 0) {
+      throw new AppError(504, 'WHATSAPP_PROVIDER_TIMEOUT: Tempo limite esgotado ao desinscrever webhooks.', {
+        code: 'WHATSAPP_PROVIDER_TIMEOUT',
+      });
+    }
+
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const timeoutId = setTimeout(() => controller.abort(), effectiveTimeoutMs);
 
     try {
       const res = await fetch(url.toString(), {
@@ -460,7 +494,8 @@ export class MetaWhatsAppProvider implements WhatsAppProvider {
 
   async checkMessagingAccountSubscribedApps(
     accessToken: string,
-    wabaId: string
+    wabaId: string,
+    options?: import('./whatsapp.types').WhatsAppProviderRequestOptions
   ): Promise<import('./whatsapp.types').WhatsAppSubscribedAppsProof> {
     const targetAppId = this.appId;
     if (!targetAppId) {
@@ -474,9 +509,19 @@ export class MetaWhatsAppProvider implements WhatsAppProvider {
     let pageCount = 0;
 
     while (nextUrl && pageCount < MAX_PAGES) {
+      // Check remaining execution budget before dispatching next page (Section 9)
+      if (options?.deadlineAt !== undefined && options.deadlineAt - Date.now() < 1000) {
+        return { isSubscribed: false, proof: 'UNPROVEN', status: 'UNPROVEN', pageCount };
+      }
+
+      const pageTimeoutMs = this.resolveEffectiveTimeoutMs(10000, options);
+      if (pageTimeoutMs <= 0) {
+        return { isSubscribed: false, proof: 'UNPROVEN', status: 'UNPROVEN', pageCount };
+      }
+
       pageCount++;
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const timeoutId = setTimeout(() => controller.abort(), pageTimeoutMs);
 
       try {
         const res = await fetch(nextUrl, {
@@ -488,12 +533,12 @@ export class MetaWhatsAppProvider implements WhatsAppProvider {
         });
 
         if (!res.ok) {
-          return { isSubscribed: false, proof: 'UNPROVEN', pageCount };
+          return { isSubscribed: false, proof: 'UNPROVEN', status: 'UNPROVEN', pageCount };
         }
 
         const data = (await res.json()) as any;
         if (!data || !Array.isArray(data.data)) {
-          return { isSubscribed: false, proof: 'UNPROVEN', pageCount };
+          return { isSubscribed: false, proof: 'UNPROVEN', status: 'UNPROVEN', pageCount };
         }
 
         // Nested ID inspection (DEC-7D-54): entry.whatsapp_business_api_data.id === metaAppId
@@ -502,7 +547,7 @@ export class MetaWhatsAppProvider implements WhatsAppProvider {
             entry?.whatsapp_business_api_data?.id ??
             entry?.id;
           if (String(entryAppId) === String(targetAppId)) {
-            return { isSubscribed: true, proof: 'STILL_SUBSCRIBED', pageCount };
+            return { isSubscribed: true, proof: 'STILL_SUBSCRIBED', status: 'PROVEN_SUBSCRIBED', pageCount };
           }
         }
 
@@ -511,14 +556,14 @@ export class MetaWhatsAppProvider implements WhatsAppProvider {
         if (afterCursor && data.paging?.next) {
           const parsedNext = new URL(data.paging.next);
           if (parsedNext.hostname !== 'graph.facebook.com') {
-            return { isSubscribed: false, proof: 'UNPROVEN', pageCount };
+            return { isSubscribed: false, proof: 'UNPROVEN', status: 'UNPROVEN', pageCount };
           }
           nextUrl = parsedNext.toString();
         } else {
           nextUrl = null;
         }
       } catch {
-        return { isSubscribed: false, proof: 'UNPROVEN', pageCount };
+        return { isSubscribed: false, proof: 'UNPROVEN', status: 'UNPROVEN', pageCount };
       } finally {
         clearTimeout(timeoutId);
       }
@@ -526,9 +571,9 @@ export class MetaWhatsAppProvider implements WhatsAppProvider {
 
     if (nextUrl !== null) {
       // Hit operational page limit before collection exhaustion -> UNPROVEN (DEC-7D-61)
-      return { isSubscribed: false, proof: 'UNPROVEN', pageCount };
+      return { isSubscribed: false, proof: 'UNPROVEN', status: 'UNPROVEN', pageCount };
     }
 
-    return { isSubscribed: false, proof: 'PROVEN_CLEAN', pageCount };
+    return { isSubscribed: false, proof: 'PROVEN_CLEAN', status: 'PROVEN_UNSUBSCRIBED', pageCount };
   }
 }

@@ -9,6 +9,8 @@ import { MetaWhatsAppProvider } from './meta-whatsapp.provider';
 import { WhatsAppProvider, WhatsAppProviderCleanupJobRecord } from './whatsapp.types';
 import { AppError } from '../../middleware/error-handler';
 
+import { WhatsAppExecutionDeadline } from './whatsapp-execution-deadline';
+
 export const CLEANUP_BACKOFF_SCHEDULE_MS = [
   0,
   60 * 1000,          // 1 minute
@@ -42,12 +44,21 @@ export class WhatsAppCleanupService {
     batchSize?: number;
     softBudgetMs?: number;
     acquisitionCutoffMs?: number;
+    deadline?: WhatsAppExecutionDeadline;
   } = {}): Promise<CleanupExecutionSummary> {
     const batchSize = Math.min(Math.max(1, options.batchSize ?? 10), 25);
     const softBudgetMs = options.softBudgetMs ?? 20_000;
     const acquisitionCutoffMs = options.acquisitionCutoffMs ?? 15_000;
 
     const startTime = Date.now();
+    const deadline =
+      options.deadline ??
+      new WhatsAppExecutionDeadline({
+        startTime,
+        budgetMs: options.softBudgetMs ? options.softBudgetMs + 4_000 : 24_000,
+        safetyMarginMs: 1_500,
+      });
+
     const candidateJobs = await this.cleanupJobRepo.findDueJobs(batchSize);
 
     const summary: CleanupExecutionSummary = {
@@ -61,13 +72,18 @@ export class WhatsAppCleanupService {
     };
 
     for (const candidate of candidateJobs) {
-      if (Date.now() - startTime > acquisitionCutoffMs || Date.now() - startTime > softBudgetMs) {
+      if (
+        Date.now() - startTime > acquisitionCutoffMs ||
+        Date.now() - startTime > softBudgetMs ||
+        deadline.isExpired() ||
+        !deadline.hasRemaining(3_000)
+      ) {
         summary.skippedCount++;
         continue;
       }
 
       try {
-        const outcome = await this.processSingleJob(candidate);
+        const outcome = await this.processSingleJob(candidate, deadline);
         summary.processedCount++;
         if (outcome === 'succeeded') summary.succeededCount++;
         else if (outcome === 'cancelled') summary.cancelledCount++;
@@ -83,11 +99,30 @@ export class WhatsAppCleanupService {
   }
 
   private async processSingleJob(
-    candidate: WhatsAppProviderCleanupJobRecord
+    candidate: WhatsAppProviderCleanupJobRecord,
+    deadline?: WhatsAppExecutionDeadline
   ): Promise<'succeeded' | 'cancelled' | 'retry_wait' | 'exhausted' | 'skipped'> {
+    const activeDeadline =
+      deadline ??
+      new WhatsAppExecutionDeadline({
+        budgetMs: 24_000,
+        safetyMarginMs: 1_500,
+      });
+
     // 1. Acquire Job Lease (5 minutes)
     const jobLeaseToken = await this.cleanupJobRepo.acquireJobLeaseInTransaction(candidate.id, 5 * 60 * 1000);
     if (!jobLeaseToken) {
+      return 'skipped';
+    }
+
+    // Check remaining budget before acquiring WABA lock
+    if (!activeDeadline.hasRemaining(3_000)) {
+      await this.cleanupJobRepo.recordRetryWaitInTransaction(
+        candidate.id,
+        jobLeaseToken,
+        new Date().toISOString(),
+        'INSUFFICIENT_EXECUTION_BUDGET'
+      );
       return 'skipped';
     }
 
@@ -135,7 +170,13 @@ export class WhatsAppCleanupService {
           if (secret) {
             try {
               const token = this.encryptionService.decryptToken(secret, candidate.organization_id, candidate.connection_id);
-              await this.metaProvider.subscribeMessagingAccountApps(token, wabaId);
+              const reassertTimeout = activeDeadline.getClampedTimeoutMs(15_000, 2_000);
+              if (reassertTimeout > 0) {
+                await this.metaProvider.subscribeMessagingAccountApps(token, wabaId, {
+                  timeoutMs: reassertTimeout,
+                  deadlineAt: activeDeadline.deadlineAt,
+                });
+              }
             } catch {
               // Best effort re-assertion; durable reconciler will verify
             }
@@ -165,6 +206,20 @@ export class WhatsAppCleanupService {
       }
 
       // Zero surviving dependencies -> Desired state is 'unsubscribed'!
+      // Enforce deadline check BEFORE attempt reservation and before mutation dispatch (Section 7, Section 10)
+      if (!activeDeadline.hasRemaining(3_000)) {
+        await this.wabaLockRepo.releaseLeaseInTransaction(wabaId, wabaLeaseToken, acquiredGen, {
+          operation_status: 'idle',
+        });
+        await this.cleanupJobRepo.recordRetryWaitInTransaction(
+          candidate.id,
+          jobLeaseToken,
+          new Date().toISOString(),
+          'INSUFFICIENT_EXECUTION_BUDGET'
+        );
+        return 'skipped';
+      }
+
       // 4. Pre-Call Attempt Reservation (DEC-7D-50)
       const reservation = await this.cleanupJobRepo.reserveAttemptInTransaction(candidate.id, jobLeaseToken);
       if (!reservation.reserved) {
@@ -217,24 +272,33 @@ export class WhatsAppCleanupService {
       let deleteErrorCode: string | null = null;
       let authLost = false;
 
-      try {
-        const res = await this.metaProvider.unsubscribeMessagingAccountApps(accessToken, wabaId);
-        if (res.success) {
-          deleteSuccess = true;
-        } else {
-          ambiguousDelete = true;
-        }
-      } catch (err: any) {
-        const msg = String(err?.message || '');
-        if (msg.includes('401') || msg.includes('190') || msg.includes('403') || msg.includes('TOKEN_EXPIRED')) {
-          authLost = true;
-          deleteErrorCode = 'AUTH_LOST';
-        } else if (msg.includes('400')) {
-          deleteErrorCode = 'INVALID_CONTAINER';
-          authLost = true; // Non-retryable
-        } else {
-          ambiguousDelete = true;
-          deleteErrorCode = err?.code || 'META_API_ERROR';
+      const deleteTimeout = activeDeadline.getClampedTimeoutMs(10_000, 1_500);
+      if (deleteTimeout <= 0) {
+        ambiguousDelete = true;
+        deleteErrorCode = 'INSUFFICIENT_EXECUTION_BUDGET';
+      } else {
+        try {
+          const res = await this.metaProvider.unsubscribeMessagingAccountApps(accessToken, wabaId, {
+            timeoutMs: deleteTimeout,
+            deadlineAt: activeDeadline.deadlineAt,
+          });
+          if (res.success) {
+            deleteSuccess = true;
+          } else {
+            ambiguousDelete = true;
+          }
+        } catch (err: any) {
+          const msg = String(err?.message || '');
+          if (msg.includes('401') || msg.includes('190') || msg.includes('403') || msg.includes('TOKEN_EXPIRED')) {
+            authLost = true;
+            deleteErrorCode = 'AUTH_LOST';
+          } else if (msg.includes('400')) {
+            deleteErrorCode = 'INVALID_CONTAINER';
+            authLost = true; // Non-retryable
+          } else {
+            ambiguousDelete = true;
+            deleteErrorCode = err?.code || 'META_API_ERROR';
+          }
         }
       }
 
@@ -255,20 +319,30 @@ export class WhatsAppCleanupService {
       if (deleteSuccess) {
         isProvenClean = true;
       } else if (ambiguousDelete) {
-        try {
-          const proof = await this.metaProvider.checkMessagingAccountSubscribedApps(accessToken, wabaId);
-          if (proof.status === 'PROVEN_UNSUBSCRIBED') {
-            isProvenClean = true;
-          } else if (proof.status === 'PROVEN_SUBSCRIBED') {
-            isProvenClean = false;
-            deleteErrorCode = 'APP_STILL_SUBSCRIBED';
-          } else {
-            isProvenClean = false;
-            deleteErrorCode = 'UNPROVEN_CLEAN';
-          }
-        } catch (err: any) {
+        // Only run verification if deadline allows (Section 8)
+        if (!activeDeadline.hasRemaining(2_000)) {
           isProvenClean = false;
-          deleteErrorCode = 'POST_CONDITION_CHECK_FAILED';
+          deleteErrorCode = deleteErrorCode || 'VERIFICATION_BUDGET_EXHAUSTED';
+        } else {
+          try {
+            const verifyTimeout = activeDeadline.getClampedTimeoutMs(10_000, 1_000);
+            const proof = await this.metaProvider.checkMessagingAccountSubscribedApps(accessToken, wabaId, {
+              timeoutMs: verifyTimeout,
+              deadlineAt: activeDeadline.deadlineAt,
+            });
+            if (proof.status === 'PROVEN_UNSUBSCRIBED' || proof.proof === 'PROVEN_CLEAN') {
+              isProvenClean = true;
+            } else if (proof.status === 'PROVEN_SUBSCRIBED' || proof.proof === 'STILL_SUBSCRIBED') {
+              isProvenClean = false;
+              deleteErrorCode = 'APP_STILL_SUBSCRIBED';
+            } else {
+              isProvenClean = false;
+              deleteErrorCode = 'UNPROVEN_CLEAN';
+            }
+          } catch (err: any) {
+            isProvenClean = false;
+            deleteErrorCode = 'POST_CONDITION_CHECK_FAILED';
+          }
         }
       }
 
@@ -328,9 +402,13 @@ export class WhatsAppCleanupService {
 
         await this.reconJobRepo.ensureJobPending(wabaId);
 
-        await this.wabaLockRepo.releaseLeaseInTransaction(wabaId, wabaLeaseToken, acquiredGen, {
-          operation_status: 'unknown_outcome',
-        });
+        try {
+          await this.wabaLockRepo.releaseLeaseInTransaction(wabaId, wabaLeaseToken, acquiredGen, {
+            operation_status: 'unknown_outcome',
+          });
+        } catch {
+          // Lease already cleared by recordUnknownOutcomeInTransaction
+        }
 
         if (currentAttempt < candidate.max_attempts) {
           const backoffMs = CLEANUP_BACKOFF_SCHEDULE_MS[currentAttempt] ?? (2 * 60 * 60 * 1000);

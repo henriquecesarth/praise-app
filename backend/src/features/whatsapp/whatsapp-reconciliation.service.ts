@@ -7,6 +7,7 @@ import { MetaWhatsAppProvider } from './meta-whatsapp.provider';
 import { WhatsAppProvider, WhatsAppWabaReconciliationJobRecord } from './whatsapp.types';
 import { AppError } from '../../middleware/error-handler';
 import { db } from '../../lib/firebase';
+import { WhatsAppExecutionDeadline } from './whatsapp-execution-deadline';
 
 export interface ReconciliationExecutionSummary {
   candidateCount: number;
@@ -31,11 +32,19 @@ export class WhatsAppReconciliationService {
     batchSize?: number;
     softBudgetMs?: number;
     acquisitionCutoffMs?: number;
+    deadline?: WhatsAppExecutionDeadline;
   } = {}): Promise<ReconciliationExecutionSummary> {
     const batchSize = Math.min(Math.max(1, options.batchSize ?? 10), 25);
     const softBudgetMs = options.softBudgetMs ?? 20_000;
     const acquisitionCutoffMs = options.acquisitionCutoffMs ?? 15_000;
     const startTime = Date.now();
+    const deadline =
+      options.deadline ??
+      new WhatsAppExecutionDeadline({
+        startTime,
+        budgetMs: options.softBudgetMs ? options.softBudgetMs + 4_000 : 24_000,
+        safetyMarginMs: 1_500,
+      });
 
     const candidateJobs = await this.reconJobRepo.findDueJobs(batchSize);
 
@@ -49,13 +58,18 @@ export class WhatsAppReconciliationService {
     };
 
     for (const candidate of candidateJobs) {
-      if (Date.now() - startTime > acquisitionCutoffMs || Date.now() - startTime > softBudgetMs) {
+      if (
+        Date.now() - startTime > acquisitionCutoffMs ||
+        Date.now() - startTime > softBudgetMs ||
+        deadline.isExpired() ||
+        !deadline.hasRemaining(3_000)
+      ) {
         summary.skippedCount++;
         continue;
       }
 
       try {
-        const outcome = await this.processSingleJob(candidate);
+        const outcome = await this.processSingleJob(candidate, deadline);
         summary.processedCount++;
         if (outcome === 'stable') summary.stableCount++;
         else if (outcome === 'repaired') summary.repairedCount++;
@@ -70,11 +84,29 @@ export class WhatsAppReconciliationService {
   }
 
   private async processSingleJob(
-    candidate: WhatsAppWabaReconciliationJobRecord
+    candidate: WhatsAppWabaReconciliationJobRecord,
+    deadline?: WhatsAppExecutionDeadline
   ): Promise<'stable' | 'repaired' | 'failed' | 'skipped'> {
+    const activeDeadline =
+      deadline ??
+      new WhatsAppExecutionDeadline({
+        budgetMs: 24_000,
+        safetyMarginMs: 1_500,
+      });
+
     // 1. Acquire Job Lease (5 minutes)
     const jobLeaseToken = await this.reconJobRepo.acquireJobLeaseInTransaction(candidate.id, 5 * 60 * 1000);
     if (!jobLeaseToken) {
+      return 'skipped';
+    }
+
+    // Check remaining budget before acquiring WABA lock
+    if (!activeDeadline.hasRemaining(3_000)) {
+      await this.reconJobRepo.recordJobFailureInTransaction(
+        candidate.id,
+        jobLeaseToken,
+        'INSUFFICIENT_EXECUTION_BUDGET'
+      );
       return 'skipped';
     }
 
@@ -133,15 +165,23 @@ export class WhatsAppReconciliationService {
 
       // 5. Query Current Remote State
       let observedState: 'subscribed' | 'unsubscribed' | 'unproven' = 'unproven';
-      try {
-        const proof = await this.metaProvider.checkMessagingAccountSubscribedApps(accessToken, wabaId);
-        if (proof.status === 'PROVEN_SUBSCRIBED') {
-          observedState = 'subscribed';
-        } else if (proof.status === 'PROVEN_UNSUBSCRIBED') {
-          observedState = 'unsubscribed';
-        }
-      } catch {
+      const queryTimeout = activeDeadline.getClampedTimeoutMs(10_000, 1_500);
+      if (queryTimeout <= 0) {
         observedState = 'unproven';
+      } else {
+        try {
+          const proof = await this.metaProvider.checkMessagingAccountSubscribedApps(accessToken, wabaId, {
+            timeoutMs: queryTimeout,
+            deadlineAt: activeDeadline.deadlineAt,
+          });
+          if (proof.status === 'PROVEN_SUBSCRIBED' || proof.proof === 'STILL_SUBSCRIBED' || proof.isSubscribed === true) {
+            observedState = 'subscribed';
+          } else if (proof.status === 'PROVEN_UNSUBSCRIBED' || proof.proof === 'PROVEN_CLEAN') {
+            observedState = 'unsubscribed';
+          }
+        } catch {
+          observedState = 'unproven';
+        }
       }
 
       if (observedState === 'unproven') {
@@ -165,25 +205,61 @@ export class WhatsAppReconciliationService {
         return 'stable';
       } else {
         // Drift detected!
-        if (desiredState === 'subscribed' && observedState === 'unsubscribed') {
-          try {
-            await this.metaProvider.subscribeMessagingAccountApps(accessToken, wabaId);
-          } catch {
-            // Repair failed
-          }
-        } else if (desiredState === 'unsubscribed' && observedState === 'subscribed') {
-          try {
-            await this.metaProvider.unsubscribeMessagingAccountApps(accessToken, wabaId);
-          } catch {
-            // Repair failed
+        // Enforce deadline check before dispatching repair mutation (Section 7)
+        const repairTimeout = activeDeadline.getClampedTimeoutMs(
+          desiredState === 'subscribed' ? 15_000 : 10_000,
+          2_000
+        );
+
+        let repairUncertain = false;
+
+        if (repairTimeout > 0) {
+          if (desiredState === 'subscribed' && observedState === 'unsubscribed') {
+            try {
+              await this.metaProvider.subscribeMessagingAccountApps(accessToken, wabaId, {
+                timeoutMs: repairTimeout,
+                deadlineAt: activeDeadline.deadlineAt,
+              });
+            } catch (err: any) {
+              if (err?.code === 'WHATSAPP_PROVIDER_TIMEOUT' || err?.name === 'AbortError') {
+                repairUncertain = true;
+              }
+            }
+          } else if (desiredState === 'unsubscribed' && observedState === 'subscribed') {
+            try {
+              const res = await this.metaProvider.unsubscribeMessagingAccountApps(accessToken, wabaId, {
+                timeoutMs: repairTimeout,
+                deadlineAt: activeDeadline.deadlineAt,
+              });
+              if (!res.success) {
+                repairUncertain = true;
+              }
+            } catch (err: any) {
+              if (err?.code === 'WHATSAPP_PROVIDER_TIMEOUT' || err?.name === 'AbortError') {
+                repairUncertain = true;
+              }
+            }
           }
         }
 
+        // Section 6: If provider mutation was dispatched and outcome cannot be confirmed authoritatively before deadline
+        if (repairUncertain) {
+          await this.wabaLockRepo.recordUnknownOutcomeInTransaction(wabaId, {
+            operation_generation: acquiredGen,
+            operation: desiredState === 'subscribed' ? 'subscribe' : 'unsubscribe',
+            connection_id: 'reconciliation_repair',
+          });
+        }
+
         await this.reconJobRepo.recordJobFailureInTransaction(candidate.id, jobLeaseToken, 'DRIFT_DETECTED');
-        await this.wabaLockRepo.releaseLeaseInTransaction(wabaId, wabaLeaseToken, acquiredGen, {
-          desired_subscription_state: desiredState,
-          operation_status: 'idle',
-        });
+        try {
+          await this.wabaLockRepo.releaseLeaseInTransaction(wabaId, wabaLeaseToken, acquiredGen, {
+            desired_subscription_state: desiredState,
+            operation_status: repairUncertain ? 'unknown_outcome' : 'idle',
+          });
+        } catch {
+          // Lease already cleared if recordUnknownOutcomeInTransaction ran
+        }
         return 'repaired';
       }
     } finally {
