@@ -2,6 +2,14 @@ import { z } from 'zod';
 import { BillingAccessMode } from '../organizations/organization.types';
 import { AppError } from '../../middleware/error-handler';
 
+export const whatsappSupportedProviderSchema = z.enum(['meta_cloud_api', 'zernio']);
+export type WhatsAppSupportedProvider = z.infer<typeof whatsappSupportedProviderSchema>;
+export type WhatsAppProviderType = WhatsAppSupportedProvider;
+
+export function isWhatsAppSupportedProvider(val: unknown): val is WhatsAppSupportedProvider {
+  return whatsappSupportedProviderSchema.safeParse(val).success;
+}
+
 export type WhatsAppConnectionStatus =
   | 'pending'
   | 'connecting'
@@ -15,7 +23,9 @@ export interface WhatsAppConnectionRecord {
   organization_id: string; // Foreign key to organizations
   display_name: string; // Local label (1..100 chars)
   phone_number: string | null; // Canonical E.164 string; null prior to materialization
-  provider: 'meta_cloud_api'; // Platform provider
+  provider: WhatsAppSupportedProvider; // Platform provider
+  provider_profile_id?: string | null; // Zernio Profile ID (1:1 dedicated profile; D1/D3)
+  provider_account_id?: string | null; // Zernio Account ID (D1/D3)
   provider_waba_id: string | null; // Meta WABA ID; null prior to materialization
   provider_phone_number_id: string | null; // Meta Phone Number ID; null prior to materialization
   status: WhatsAppConnectionStatus; // Current lifecycle status
@@ -46,8 +56,8 @@ export interface WhatsAppConnectionSecretRecord {
 
 export interface WhatsAppProviderIdentityClaimRecord {
   id: string; // Deterministic claim ID: `claim_${provider}_${provider_phone_number_id}`
-  provider: 'meta_cloud_api';
-  provider_phone_number_id: string; // Meta Phone Number ID (foreign uniqueness key)
+  provider: WhatsAppSupportedProvider;
+  provider_phone_number_id: string; // Meta Phone Number ID or provider-specific uniqueness key
   organization_id: string; // Tenant context
   connection_id: string; // Foreign key to claiming whatsapp_connections record
   created_at: string; // ISO 8601 UTC
@@ -65,6 +75,16 @@ export const CONFIG_CONSUMING_STATUSES: WhatsAppConnectionStatus[] = [
 export function isProviderIdentityMaterialized(
   conn: Partial<WhatsAppConnectionRecord>
 ): boolean {
+  if (conn.provider === 'zernio') {
+    return (
+      conn.phone_number !== null &&
+      conn.phone_number !== undefined &&
+      conn.provider_profile_id !== null &&
+      conn.provider_profile_id !== undefined &&
+      conn.provider_account_id !== null &&
+      conn.provider_account_id !== undefined
+    );
+  }
   return (
     conn.phone_number !== null &&
     conn.phone_number !== undefined &&
@@ -97,7 +117,7 @@ export interface WhatsAppConnectionDto {
   organizationId: string;
   displayName: string;
   phoneNumber: string | null;
-  provider: 'meta_cloud_api';
+  provider: WhatsAppSupportedProvider;
   status: WhatsAppConnectionStatus;
   statusReason: string | null;
   isOrganizationDefault: boolean;
@@ -238,6 +258,9 @@ export interface CreateWhatsAppConnectionData {
   organization_id: string;
   display_name: string;
   created_by_user_id: string;
+  provider?: WhatsAppSupportedProvider;
+  provider_profile_id?: string | null;
+  provider_account_id?: string | null;
   status?: WhatsAppConnectionStatus;
   status_reason?: string | null;
   phone_number?: string | null;
@@ -360,6 +383,25 @@ export interface WhatsAppSubscribedAppsProof {
 export interface WhatsAppProviderRequestOptions {
   timeoutMs?: number;
   deadlineAt?: number;
+  signal?: AbortSignal;
+}
+
+export interface WhatsAppAccountRef {
+  connectionId: string;
+  provider: WhatsAppSupportedProvider;
+  providerAccountId?: string | null;
+  providerProfileId?: string | null;
+  providerWabaId?: string | null;
+  providerPhoneNumberId?: string | null;
+}
+
+export type WhatsAppNormalizedHealthStatus = 'CONNECTED' | 'DISCONNECTED' | 'UNKNOWN';
+
+export interface WhatsAppAccountHealthResult {
+  normalizedStatus: WhatsAppNormalizedHealthStatus;
+  rawStatus?: string;
+  displayPhoneNumber?: string;
+  verifiedName?: string;
 }
 
 export interface WhatsAppProvider {

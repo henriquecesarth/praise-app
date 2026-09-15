@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import { z } from 'zod';
+import { AppError } from '../middleware/error-handler';
 
 dotenv.config();
 
@@ -37,6 +38,8 @@ const configSchema = z.object({
   metaGraphApiVersion: z.string().regex(/^v[0-9]+(\.[0-9]+)?$/).default('v26.0'),
   cronSecret: z.string().optional(),
   internalOperatorSecret: z.string().optional(),
+  zernioApiKey: z.string().min(1).optional(),
+  zernioWebhookSecret: z.string().min(1).optional(),
   asaas: z.object({
     apiUrl: z.string().default('https://sandbox.asaas.com/api/v3'),
     apiKey: z.string().optional(),
@@ -79,6 +82,8 @@ const rawConfig = {
   metaGraphApiVersion: process.env.META_GRAPH_API_VERSION || 'v26.0',
   cronSecret: process.env.CRON_SECRET,
   internalOperatorSecret: process.env.INTERNAL_OPERATOR_SECRET,
+  zernioApiKey: process.env.ZERNIO_API_KEY?.trim() || undefined,
+  zernioWebhookSecret: process.env.ZERNIO_WEBHOOK_SECRET?.trim() || undefined,
   asaas: {
     apiUrl: process.env.ASAAS_API_URL || (process.env.ASAAS_ENVIRONMENT === 'production' ? 'https://api.asaas.com/v3' : 'https://sandbox.asaas.com/api/v3'),
     apiKey: process.env.ASAAS_API_KEY,
@@ -87,6 +92,28 @@ const rawConfig = {
   },
 };
 
-
 export const config = configSchema.parse(rawConfig);
+
+export const ZERNIO_DEFAULT_BASE_URL = 'https://zernio.com/api/v1';
+
+export function requireZernioApiKey(override?: string): string {
+  const key = (override ?? config.zernioApiKey)?.trim();
+  if (!key) {
+    throw new AppError(500, 'ZERNIO_CONFIG_ERROR: ZERNIO_API_KEY não configurada no ambiente.', {
+      code: 'ZERNIO_CONFIG_ERROR',
+    });
+  }
+  return key;
+}
+
+export function requireZernioWebhookSecret(override?: string): string {
+  const secret = (override ?? config.zernioWebhookSecret)?.trim();
+  if (!secret) {
+    throw new AppError(500, 'ZERNIO_CONFIG_ERROR: ZERNIO_WEBHOOK_SECRET não configurada no ambiente.', {
+      code: 'ZERNIO_CONFIG_ERROR',
+    });
+  }
+  return secret;
+}
+
 
