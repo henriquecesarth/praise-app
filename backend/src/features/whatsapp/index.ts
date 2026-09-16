@@ -6,3 +6,4 @@ export * from './whatsapp.controller';
 export * from './zernio.types';
 export * from './zernio-http-client';
 export * from './zernio-profile.service';
+export * from './public-whatsapp.controller';

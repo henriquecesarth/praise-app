@@ -775,4 +775,216 @@ describe('ZernioHttpClient Suite (Phase 7D2-D2)', () => {
       }
     });
   });
+
+  describe('Hosted Connect URL, Account & WhatsApp Number Info (Phase 7D2-D4)', () => {
+    describe('getConnectUrl', () => {
+      it('calls GET connect/whatsapp with expected query params and returns authUrl', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () =>
+            JSON.stringify({
+              authUrl: 'https://zernio.com/connect/whatsapp?session=xyz123',
+              state: 'state_nonce_123',
+            }),
+        } as any);
+
+        const res = await client.getConnectUrl({
+          profileId: 'prof_123',
+          redirectUrl: 'https://app.louvaio.com/api/v1/whatsapp/zernio/callback?token=abc',
+        });
+
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        const callUrl = new URL(fetchSpy.mock.calls[0][0]);
+        expect(callUrl.pathname).toContain('connect/whatsapp');
+        expect(callUrl.searchParams.get('profileId')).toBe('prof_123');
+        expect(callUrl.searchParams.get('redirect_url')).toBe(
+          'https://app.louvaio.com/api/v1/whatsapp/zernio/callback?token=abc'
+        );
+        expect(callUrl.searchParams.get('onboarding')).toBe('api');
+        expect(callUrl.searchParams.get('signup')).toBe('hosted');
+        expect(res.authUrl).toBe('https://zernio.com/connect/whatsapp?session=xyz123');
+        expect(res.state).toBe('state_nonce_123');
+      });
+
+      it('accepts data-wrapped connect URL response', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () =>
+            JSON.stringify({
+              data: {
+                authUrl: 'https://auth.zernio.com/hosted/wa',
+              },
+            }),
+        } as any);
+
+        const res = await client.getConnectUrl({
+          profileId: 'prof_sub',
+          redirectUrl: 'https://app.louvaio.com/callback',
+        });
+
+        expect(res.authUrl).toBe('https://auth.zernio.com/hosted/wa');
+      });
+
+      it('rejects empty profileId with 400', async () => {
+        await expect(
+          client.getConnectUrl({
+            profileId: '   ',
+            redirectUrl: 'https://app.louvaio.com/callback',
+          })
+        ).rejects.toThrow('ZERNIO_INVALID_PROFILE_ID');
+      });
+
+      it('rejects invalid redirectUrl with 400', async () => {
+        await expect(
+          client.getConnectUrl({
+            profileId: 'prof_1',
+            redirectUrl: 'not-a-valid-url',
+          })
+        ).rejects.toThrow('ZERNIO_INVALID_REDIRECT_URL');
+      });
+
+      it('rejects non-HTTPS authUrl with 502 ZERNIO_PROTOCOL_ERROR', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () =>
+            JSON.stringify({
+              authUrl: 'http://zernio.com/connect',
+            }),
+        } as any);
+
+        await expect(
+          client.getConnectUrl({
+            profileId: 'prof_1',
+            redirectUrl: 'https://app.louvaio.com/callback',
+          })
+        ).rejects.toThrow('ZERNIO_PROTOCOL_ERROR');
+      });
+
+      it('rejects non-zernio.com authUrl domain with 502 ZERNIO_PROTOCOL_ERROR', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () =>
+            JSON.stringify({
+              authUrl: 'https://malicious.site.com/phishing',
+            }),
+        } as any);
+
+        await expect(
+          client.getConnectUrl({
+            profileId: 'prof_1',
+            redirectUrl: 'https://app.louvaio.com/callback',
+          })
+        ).rejects.toThrow('ZERNIO_PROTOCOL_ERROR');
+      });
+    });
+
+    describe('getAccount', () => {
+      it('calls GET accounts/:accountId with properly encoded URL', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () =>
+            JSON.stringify({
+              account: {
+                _id: 'acc_wa_999',
+                profileId: 'prof_101',
+                platform: 'whatsapp',
+                status: 'connected',
+                username: 'ministry_line',
+              },
+            }),
+        } as any);
+
+        const account = await client.getAccount('acc_wa_999');
+
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        const callUrl = fetchSpy.mock.calls[0][0];
+        expect(callUrl).toContain('accounts/acc_wa_999');
+        expect(account._id).toBe('acc_wa_999');
+        expect(account.profileId).toBe('prof_101');
+        expect(account.platform).toBe('whatsapp');
+        expect(account.status).toBe('connected');
+      });
+
+      it('rejects empty accountId or slash in accountId with 400', async () => {
+        await expect(client.getAccount('   ')).rejects.toThrow('ZERNIO_INVALID_ACCOUNT_ID');
+        await expect(client.getAccount('acc/dangerous')).rejects.toThrow('ZERNIO_INVALID_ACCOUNT_ID');
+      });
+
+      it('handles 404 not found error correctly', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+          ok: false,
+          status: 404,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () =>
+            JSON.stringify({
+              type: 'not_found',
+              error: 'Account not found',
+            }),
+        } as any);
+
+        try {
+          await client.getAccount('acc_missing');
+          expect.unreachable('Should have thrown');
+        } catch (err: any) {
+          expect(err).toBeInstanceOf(ZernioError);
+          expect(err.kind).toBe('NOT_FOUND');
+          expect(err.statusCode).toBe(404);
+        }
+      });
+    });
+
+    describe('getWhatsAppNumberInfo', () => {
+      it('calls GET accounts/:accountId/whatsapp and returns normalized phone number', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () =>
+            JSON.stringify({
+              whatsapp: {
+                phoneNumber: '+5511999998888',
+                status: 'connected',
+                verifiedName: 'LouvAIO Ministry',
+                qualityRating: 'GREEN',
+              },
+            }),
+        } as any);
+
+        const info = await client.getWhatsAppNumberInfo('acc_wa_999');
+
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        const callUrl = fetchSpy.mock.calls[0][0];
+        expect(callUrl).toContain('accounts/acc_wa_999/whatsapp');
+        expect(info.phoneNumber).toBe('+5511999998888');
+        expect(info.status).toBe('connected');
+        expect(info.verifiedName).toBe('LouvAIO Ministry');
+      });
+
+      it('rejects invalid E.164 phone number returned by Zernio with 502', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () =>
+            JSON.stringify({
+              phoneNumber: 'not-a-phone-number',
+            }),
+        } as any);
+
+        await expect(client.getWhatsAppNumberInfo('acc_wa_999')).rejects.toThrow(
+          'ZERNIO_PROTOCOL_ERROR'
+        );
+      });
+    });
+  });
 });

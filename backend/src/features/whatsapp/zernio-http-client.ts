@@ -7,10 +7,19 @@ import {
   EnsureProfileOptions,
   ZernioError,
   ZernioErrorKind,
+  ZernioConnectUrlParams,
+  ZernioConnectUrlResponse,
+  zernioConnectUrlResponseSchema,
+  validateZernioAuthUrl,
+  ZernioAccount,
+  zernioGetAccountResponseSchema,
+  ZernioWhatsAppNumberInfo,
+  zernioGetWhatsAppNumberInfoResponseSchema,
   zernioCreateProfileResponseSchema,
   zernioGetProfileResponseSchema,
   zernioListProfilesResponseSchema,
 } from './zernio.types';
+import { normalizeToE164 } from './whatsapp.types';
 import { ZernioProfileService } from './zernio-profile.service';
 
 export interface ZernioHttpClientOptions {
@@ -441,5 +450,138 @@ export class ZernioHttpClient {
   ): Promise<ZernioProfile> {
     const service = new ZernioProfileService(this);
     return service.ensureProfileForConnection(connectionId, options);
+  }
+
+  async getConnectUrl(
+    params: ZernioConnectUrlParams,
+    options?: ZernioRequestOptions
+  ): Promise<ZernioConnectUrlResponse> {
+    const cleanProfileId = params.profileId?.trim();
+    if (!cleanProfileId) {
+      throw new AppError(400, 'ZERNIO_INVALID_PROFILE_ID: profileId não pode ser vazio.', {
+        code: 'ZERNIO_INVALID_PROFILE_ID',
+      });
+    }
+
+    const cleanRedirectUrl = params.redirectUrl?.trim();
+    if (!cleanRedirectUrl) {
+      throw new AppError(400, 'ZERNIO_INVALID_REDIRECT_URL: redirectUrl não pode ser vazio.', {
+        code: 'ZERNIO_INVALID_REDIRECT_URL',
+      });
+    }
+
+    try {
+      new URL(cleanRedirectUrl);
+    } catch {
+      throw new AppError(400, 'ZERNIO_INVALID_REDIRECT_URL: redirectUrl não é uma URL válida.', {
+        code: 'ZERNIO_INVALID_REDIRECT_URL',
+      });
+    }
+
+    const raw = await this.request<unknown>('connect/whatsapp', {
+      method: 'GET',
+      query: {
+        profileId: cleanProfileId,
+        redirect_url: cleanRedirectUrl,
+        onboarding: 'api',
+        signup: 'hosted',
+      },
+      ...options,
+    });
+
+    const parsed = zernioConnectUrlResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ZernioError({
+        statusCode: 502,
+        kind: 'TRANSIENT_PROVIDER_ERROR',
+        message: 'ZERNIO_PROTOCOL_ERROR: Resposta de connect/whatsapp malformada pelo provedor Zernio.',
+        providerCode: 'ZERNIO_PROTOCOL_ERROR',
+      });
+    }
+
+    validateZernioAuthUrl(parsed.data.authUrl);
+
+    return parsed.data;
+  }
+
+  async getAccount(
+    accountId: string,
+    options?: ZernioRequestOptions
+  ): Promise<ZernioAccount> {
+    const cleanId = accountId?.trim();
+    if (!cleanId) {
+      throw new AppError(400, 'ZERNIO_INVALID_ACCOUNT_ID: accountId não pode ser vazio.', {
+        code: 'ZERNIO_INVALID_ACCOUNT_ID',
+      });
+    }
+    if (cleanId.includes('/')) {
+      throw new AppError(400, 'ZERNIO_INVALID_ACCOUNT_ID: accountId não pode conter barra ("/").', {
+        code: 'ZERNIO_INVALID_ACCOUNT_ID',
+      });
+    }
+
+    const raw = await this.request<unknown>(`accounts/${encodeURIComponent(cleanId)}`, {
+      method: 'GET',
+      ...options,
+    });
+
+    const parsed = zernioGetAccountResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ZernioError({
+        statusCode: 502,
+        kind: 'TRANSIENT_PROVIDER_ERROR',
+        message: 'ZERNIO_PROTOCOL_ERROR: Resposta de consulta de conta malformada pelo provedor Zernio.',
+        providerCode: 'ZERNIO_PROTOCOL_ERROR',
+      });
+    }
+
+    return parsed.data;
+  }
+
+  async getWhatsAppNumberInfo(
+    accountId: string,
+    options?: ZernioRequestOptions
+  ): Promise<ZernioWhatsAppNumberInfo> {
+    const cleanId = accountId?.trim();
+    if (!cleanId) {
+      throw new AppError(400, 'ZERNIO_INVALID_ACCOUNT_ID: accountId não pode ser vazio.', {
+        code: 'ZERNIO_INVALID_ACCOUNT_ID',
+      });
+    }
+    if (cleanId.includes('/')) {
+      throw new AppError(400, 'ZERNIO_INVALID_ACCOUNT_ID: accountId não pode conter barra ("/").', {
+        code: 'ZERNIO_INVALID_ACCOUNT_ID',
+      });
+    }
+
+    const raw = await this.request<unknown>(`accounts/${encodeURIComponent(cleanId)}/whatsapp`, {
+      method: 'GET',
+      ...options,
+    });
+
+    const parsed = zernioGetWhatsAppNumberInfoResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ZernioError({
+        statusCode: 502,
+        kind: 'TRANSIENT_PROVIDER_ERROR',
+        message:
+          'ZERNIO_PROTOCOL_ERROR: Resposta de detalhes do número WhatsApp malformada pelo provedor Zernio.',
+        providerCode: 'ZERNIO_PROTOCOL_ERROR',
+      });
+    }
+
+    try {
+      normalizeToE164(parsed.data.phoneNumber);
+    } catch {
+      throw new ZernioError({
+        statusCode: 502,
+        kind: 'TRANSIENT_PROVIDER_ERROR',
+        message:
+          'ZERNIO_PROTOCOL_ERROR: Número de telefone retornado pelo Zernio em formato inválido.',
+        providerCode: 'ZERNIO_PROTOCOL_ERROR',
+      });
+    }
+
+    return parsed.data;
   }
 }

@@ -339,6 +339,7 @@ export interface WhatsAppOnboardingSessionRecord {
 export const startWhatsAppOnboardingSchema = z.object({
   displayName: z.string().trim().min(1).max(100).optional(),
   resumeConnectionId: z.string().trim().min(1).max(100).optional(), // Model B resume (DEC-7D-34)
+  provider: whatsappSupportedProviderSchema.optional(),
 });
 
 export type StartWhatsAppOnboardingInput = z.infer<typeof startWhatsAppOnboardingSchema>;
@@ -347,11 +348,13 @@ export interface StartWhatsAppOnboardingResponseDto {
   sessionId: string;
   connectionId: string;
   stateNonce: string; // raw 32-byte hex entropy returned strictly once
-  fbAppId: string;
-  configId: string;
+  fbAppId?: string;
+  configId?: string;
   expiresAt: string;
   mode?: 'start' | 'resume_clean' | 'resume_staged';
   providerProgress?: WhatsAppProviderProgress;
+  provider?: WhatsAppSupportedProvider;
+  authUrl?: string;
 }
 
 export const completeWhatsAppOnboardingSchema = z.object({

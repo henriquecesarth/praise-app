@@ -48,7 +48,120 @@ export const zernioListProfilesResponseSchema = z.union([
     .transform((val) => val.items),
 ]);
 
+export const zernioConnectUrlResponseSchema = z.union([
+  z.object({
+    authUrl: z.string().min(1, 'authUrl não pode ser vazio'),
+    state: z.string().optional(),
+  }),
+  z
+    .object({
+      data: z.object({
+        authUrl: z.string().min(1, 'authUrl não pode ser vazio'),
+        state: z.string().optional(),
+      }),
+    })
+    .transform((val) => val.data),
+]);
+
+export type ZernioConnectUrlResponse = z.infer<typeof zernioConnectUrlResponseSchema>;
+
+export function validateZernioAuthUrl(authUrl: string): void {
+  if (!authUrl || typeof authUrl !== 'string') {
+    throw new AppError(502, 'ZERNIO_PROTOCOL_ERROR: authUrl inválida retornada pelo Zernio.', {
+      code: 'ZERNIO_PROTOCOL_ERROR',
+    });
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(authUrl);
+  } catch {
+    throw new AppError(502, 'ZERNIO_PROTOCOL_ERROR: authUrl não é uma URL válida.', {
+      code: 'ZERNIO_PROTOCOL_ERROR',
+    });
+  }
+
+  if (parsed.protocol !== 'https:') {
+    throw new AppError(502, 'ZERNIO_PROTOCOL_ERROR: authUrl deve usar estritamente o protocolo HTTPS.', {
+      code: 'ZERNIO_PROTOCOL_ERROR',
+    });
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname !== 'zernio.com' && !hostname.endsWith('.zernio.com')) {
+    throw new AppError(502, 'ZERNIO_PROTOCOL_ERROR: authUrl deve pertencer ao domínio zernio.com.', {
+      code: 'ZERNIO_PROTOCOL_ERROR',
+    });
+  }
+}
+
+export const zernioAccountSchema = z
+  .object({
+    _id: z.string().min(1, 'Account _id é obrigatório'),
+    profileId: z.string().min(1, 'profileId é obrigatório'),
+    platform: z.string().min(1, 'platform é obrigatória'),
+    status: z.string().min(1, 'status é obrigatório'),
+    username: z.string().optional(),
+    phoneNumber: z.string().optional(),
+    displayName: z.string().optional(),
+    createdAt: z.string().optional(),
+    updatedAt: z.string().optional(),
+  })
+  .passthrough();
+
+export type ZernioAccount = z.infer<typeof zernioAccountSchema>;
+
+export const zernioGetAccountResponseSchema = z.union([
+  z
+    .object({
+      account: zernioAccountSchema,
+    })
+    .transform((val) => val.account),
+  z
+    .object({
+      data: zernioAccountSchema,
+    })
+    .transform((val) => val.data),
+  zernioAccountSchema,
+]);
+
+export const zernioWhatsAppNumberInfoSchema = z
+  .object({
+    phoneNumber: z.string().min(1, 'phoneNumber é obrigatório'),
+    status: z.string().optional(),
+    verifiedName: z.string().optional(),
+    qualityRating: z.string().optional(),
+    platform: z.string().optional(),
+  })
+  .passthrough();
+
+export type ZernioWhatsAppNumberInfo = z.infer<typeof zernioWhatsAppNumberInfoSchema>;
+
+export const zernioGetWhatsAppNumberInfoResponseSchema = z.union([
+  z
+    .object({
+      whatsapp: zernioWhatsAppNumberInfoSchema,
+    })
+    .transform((val) => val.whatsapp),
+  z
+    .object({
+      channel: zernioWhatsAppNumberInfoSchema,
+    })
+    .transform((val) => val.channel),
+  z
+    .object({
+      data: zernioWhatsAppNumberInfoSchema,
+    })
+    .transform((val) => val.data),
+  zernioWhatsAppNumberInfoSchema,
+]);
+
 // --- Request DTOs & Options ---
+
+export interface ZernioConnectUrlParams {
+  profileId: string;
+  redirectUrl: string;
+}
 
 export interface ZernioCreateProfileDto {
   name: string;

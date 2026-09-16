@@ -39,10 +39,14 @@ import {
   normalizeToE164,
   isProviderIdentityMaterialized,
   getClaimId,
+  getZernioAccountClaimId,
+  getZernioPhoneClaimId,
   getMinistryAssignmentClaimId,
   WhatsAppMinistryAssignmentClaimRecord,
 } from './whatsapp.types';
 import { OrganizationRecord } from '../organizations/organization.types';
+import { ZernioHttpClient } from './zernio-http-client';
+import { ZernioAccount, ZernioWhatsAppNumberInfo } from './zernio.types';
 
 export class WhatsAppConnectionService {
   constructor(
@@ -58,7 +62,8 @@ export class WhatsAppConnectionService {
     private readonly encryptionService: WhatsAppEncryptionService = new WhatsAppEncryptionService(),
     private readonly wabaCoordinator: WhatsAppWabaCoordinatorService = new WhatsAppWabaCoordinatorService(),
     private readonly cleanupJobRepo: WhatsAppProviderCleanupJobRepository = new WhatsAppProviderCleanupJobRepository(),
-    private readonly wabaLockRepo: WhatsAppWabaLifecycleLockRepository = new WhatsAppWabaLifecycleLockRepository()
+    private readonly wabaLockRepo: WhatsAppWabaLifecycleLockRepository = new WhatsAppWabaLifecycleLockRepository(),
+    private readonly zernioClient: ZernioHttpClient = new ZernioHttpClient()
   ) {}
 
   private mapToDto(conn: WhatsAppConnectionRecord, defaultConnectionId: string | null): WhatsAppConnectionDto {
@@ -666,16 +671,445 @@ export class WhatsAppConnectionService {
           code: 'CONNECTION_NOT_MATERIALIZED',
         });
       }
-      const claimId = getClaimId(conn.provider, conn.provider_phone_number_id!);
-      const claim = await this.claimRepo.getClaim(claimId);
-      if (!claim || claim.connection_id !== conn.id || claim.organization_id !== orgId) {
-        throw new AppError(400, 'Claim de identidade do provedor inválido ou ausente.', {
-          code: 'INVALID_PROVIDER_CLAIM',
-        });
+      if (conn.provider === 'zernio') {
+        const accountClaimId = getZernioAccountClaimId(conn.provider_account_id!);
+        const phoneClaimId = getZernioPhoneClaimId(conn.phone_number!);
+        const [accountClaim, phoneClaim] = await Promise.all([
+          this.claimRepo.getClaim(accountClaimId),
+          this.claimRepo.getClaim(phoneClaimId),
+        ]);
+        if (!accountClaim || accountClaim.connection_id !== conn.id || accountClaim.organization_id !== orgId) {
+          throw new AppError(400, 'Claim de identidade do provedor (conta Zernio) inválido ou ausente.', {
+            code: 'INVALID_PROVIDER_CLAIM',
+          });
+        }
+        if (!phoneClaim || phoneClaim.connection_id !== conn.id || phoneClaim.organization_id !== orgId) {
+          throw new AppError(400, 'Claim de identidade do provedor (telefone Zernio) inválido ou ausente.', {
+            code: 'INVALID_PROVIDER_CLAIM',
+          });
+        }
+      } else {
+        const claimId = getClaimId(conn.provider, conn.provider_phone_number_id!);
+        const claim = await this.claimRepo.getClaim(claimId);
+        if (!claim || claim.connection_id !== conn.id || claim.organization_id !== orgId) {
+          throw new AppError(400, 'Claim de identidade do provedor inválido ou ausente.', {
+            code: 'INVALID_PROVIDER_CLAIM',
+          });
+        }
       }
     }
 
     await this.connectionRepo.setConnectionStatus(orgId, connectionId, targetStatus, reason);
+  }
+
+  async startZernioOnboarding(
+    orgId: string,
+    actorUserId: string,
+    input: StartWhatsAppOnboardingInput
+  ): Promise<StartWhatsAppOnboardingResponseDto> {
+    const now = new Date();
+    const nowIso = now.toISOString();
+
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+    const sessionId = `wabs_z_${tokenHash}`;
+    const sessionExpiresAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
+    const retentionExpiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    let targetConnectionId: string;
+    let mode: 'start' | 'resume_clean' = 'start';
+
+    if (input.resumeConnectionId) {
+      targetConnectionId = input.resumeConnectionId;
+      mode = 'resume_clean';
+      await db.runTransaction(async (tx) => {
+        const connRef = db.collection('whatsapp_connections').doc(targetConnectionId);
+        const connDoc = await tx.get(connRef);
+        if (!connDoc.exists) {
+          throw new AppError(404, 'CONNECTION_NOT_FOUND: Conexão não encontrada.', {
+            code: 'CONNECTION_NOT_FOUND',
+          });
+        }
+        const conn = connDoc.data() as WhatsAppConnectionRecord;
+        if (conn.organization_id !== orgId) {
+          throw new AppError(404, 'CONNECTION_NOT_FOUND: Conexão não encontrada nesta organização.', {
+            code: 'CONNECTION_NOT_FOUND',
+          });
+        }
+        if (conn.provider !== 'zernio') {
+          throw new AppError(400, 'Esta conexão não pertence ao provedor Zernio.', {
+            code: 'INVALID_PROVIDER',
+          });
+        }
+        if (conn.status === 'connected') {
+          throw new AppError(409, 'CONNECTION_ALREADY_CONNECTED: Conexão já conectada.', {
+            code: 'CONNECTION_ALREADY_CONNECTED',
+          });
+        }
+        if (conn.status === 'disconnected') {
+          throw new AppError(410, 'CONNECTION_RESERVATION_EXPIRED: Reserva de conexão expirada.', {
+            code: 'CONNECTION_RESERVATION_EXPIRED',
+          });
+        }
+        if (conn.pending_expires_at && new Date(conn.pending_expires_at) <= now) {
+          tx.update(connRef, {
+            status: 'disconnected',
+            status_reason: 'PENDING_EXPIRED',
+            pending_expires_at: null,
+            assigned_ministry_id: null,
+            updated_at: nowIso,
+          });
+          throw new AppError(410, 'CONNECTION_RESERVATION_EXPIRED: Prazo de 24 horas da reserva expirado.', {
+            code: 'CONNECTION_RESERVATION_EXPIRED',
+          });
+        }
+
+        const orgRef = db.collection('organizations').doc(orgId);
+        const orgDoc = await tx.get(orgRef);
+        const org = { id: orgDoc.id, ...orgDoc.data() } as OrganizationRecord;
+
+        const subRef = db.collection('ministry_subscriptions').doc(org.billing_anchor_ministry_id);
+        const subDoc = await tx.get(subRef);
+        const sub = subDoc.exists ? ({ id: subDoc.id, ...subDoc.data() } as MinistrySubscriptionRecord) : null;
+
+        const capacity = SubscriptionService.evaluateOrganizationWhatsAppCapacity(org, sub, now);
+        if (!capacity.enabled || capacity.billingAccessMode !== 'normal') {
+          throw new AppError(403, 'A organização não possui capacidade comercial normal disponível.', {
+            code: 'WHATSAPP_CAPACITY_LIMIT_REACHED',
+          });
+        }
+
+        if (conn.current_onboarding_session_id) {
+          const priorSessionRef = db.collection('whatsapp_onboarding_sessions').doc(conn.current_onboarding_session_id);
+          tx.update(priorSessionRef, {
+            status: 'expired',
+            updated_at: nowIso,
+          });
+        }
+
+        const sessionRecord: WhatsAppOnboardingSessionRecord = {
+          id: sessionId,
+          organization_id: orgId,
+          connection_id: conn.id,
+          actor_user_id: actorUserId,
+          state_nonce_hash: tokenHash,
+          status: 'active',
+          provider_progress: 'none',
+          expires_at: sessionExpiresAt,
+          retention_expires_at: retentionExpiresAt,
+          consumed_at: null,
+          created_at: nowIso,
+          updated_at: nowIso,
+        };
+        tx.set(db.collection('whatsapp_onboarding_sessions').doc(sessionId), sessionRecord);
+
+        tx.update(connRef, {
+          current_onboarding_session_id: sessionId,
+          updated_at: nowIso,
+        });
+      });
+    } else {
+      targetConnectionId = `wac_${crypto.randomBytes(12).toString('hex')}`;
+      mode = 'start';
+      await db.runTransaction(async (tx) => {
+        const orgRef = db.collection('organizations').doc(orgId);
+        const orgDoc = await tx.get(orgRef);
+        if (!orgDoc.exists) {
+          throw new AppError(404, 'Organização não encontrada.');
+        }
+        const org = { id: orgDoc.id, ...orgDoc.data() } as OrganizationRecord;
+
+        const subRef = db.collection('ministry_subscriptions').doc(org.billing_anchor_ministry_id);
+        const subDoc = await tx.get(subRef);
+        const sub = subDoc.exists ? ({ id: subDoc.id, ...subDoc.data() } as MinistrySubscriptionRecord) : null;
+
+        const capacity = SubscriptionService.evaluateOrganizationWhatsAppCapacity(org, sub, now);
+        if (!capacity.enabled || capacity.billingAccessMode !== 'normal') {
+          throw new AppError(
+            403,
+            'A organização não possui capacidade comercial disponível para WhatsApp no plano atual.',
+            { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED' }
+          );
+        }
+
+        const query = db
+          .collection('whatsapp_connections')
+          .where('organization_id', '==', orgId)
+          .where('status', 'in', ['pending', 'connecting', 'connected', 'error', 'disabled_by_user']);
+
+        const snapshot = await tx.get(query);
+
+        let activeConfiguredCount = 0;
+        for (const doc of snapshot.docs) {
+          const conn = doc.data() as WhatsAppConnectionRecord;
+          if (conn.status === 'pending') {
+            const isExpired = conn.pending_expires_at && new Date(conn.pending_expires_at) <= now;
+            if (isExpired) {
+              tx.update(doc.ref, {
+                status: 'disconnected',
+                status_reason: 'PENDING_EXPIRED',
+                pending_expires_at: null,
+                assigned_ministry_id: null,
+                updated_at: nowIso,
+              });
+              continue;
+            }
+          }
+          activeConfiguredCount++;
+        }
+
+        if (activeConfiguredCount >= capacity.totalAllowedConnections) {
+          throw new AppError(
+            403,
+            'Limite de capacidade comercial de conexões WhatsApp atingido para a organização.',
+            { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED' }
+          );
+        }
+
+        tx.update(orgRef, {
+          whatsapp_reservation_sequence: FieldValue.increment(1),
+          updated_at: nowIso,
+        });
+
+        const pendingExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+
+        const connectionRecord: WhatsAppConnectionRecord = {
+          id: targetConnectionId,
+          organization_id: orgId,
+          display_name: input.displayName?.trim() || 'Linha WhatsApp',
+          phone_number: null,
+          provider: 'zernio',
+          provider_profile_id: null,
+          provider_account_id: null,
+          provider_waba_id: null,
+          provider_phone_number_id: null,
+          status: 'pending',
+          status_reason: null,
+          assigned_ministry_id: null,
+          created_by_user_id: actorUserId,
+          current_onboarding_session_id: sessionId,
+          pending_expires_at: pendingExpiresAt,
+          last_connected_at: null,
+          last_health_check_at: null,
+          created_at: nowIso,
+          updated_at: nowIso,
+        };
+        tx.set(db.collection('whatsapp_connections').doc(targetConnectionId), connectionRecord);
+
+        const sessionRecord: WhatsAppOnboardingSessionRecord = {
+          id: sessionId,
+          organization_id: orgId,
+          connection_id: targetConnectionId,
+          actor_user_id: actorUserId,
+          state_nonce_hash: tokenHash,
+          status: 'active',
+          provider_progress: 'none',
+          expires_at: sessionExpiresAt,
+          retention_expires_at: retentionExpiresAt,
+          consumed_at: null,
+          created_at: nowIso,
+          updated_at: nowIso,
+        };
+        tx.set(db.collection('whatsapp_onboarding_sessions').doc(sessionId), sessionRecord);
+      });
+    }
+
+    // Ensure dedicated Zernio profile for this connection
+    const profile = await this.zernioClient.ensureProfileForConnection(targetConnectionId);
+
+    // Bind profile to connection
+    await this.connectionRepo.bindZernioProfileToConnection({
+      organizationId: orgId,
+      connectionId: targetConnectionId,
+      providerProfileId: profile._id,
+    });
+
+    // Build callback redirect URL
+    const publicApiBase = (config.billingPublicApiUrl || config.webAppUrl || '').trim().replace(/\/+$/, '');
+    if (!publicApiBase) {
+      throw new AppError(500, 'WHATSAPP_CONFIG_ERROR: URL pública do LouvAIO não configurada no servidor.');
+    }
+    const redirectUrl = `${publicApiBase}/api/v1/whatsapp/zernio/callback?token=${encodeURIComponent(rawToken)}`;
+
+    // Call Zernio GET /v1/connect/whatsapp
+    const connectRes = await this.zernioClient.getConnectUrl({
+      profileId: profile._id,
+      redirectUrl,
+    });
+
+    return {
+      sessionId,
+      connectionId: targetConnectionId,
+      stateNonce: rawToken,
+      expiresAt: sessionExpiresAt,
+      authUrl: connectRes.authUrl,
+      provider: 'zernio',
+      mode,
+    };
+  }
+
+  async handleZernioCallback(query: Record<string, string | undefined>): Promise<string> {
+    const webAppBase = (config.webAppUrl || 'http://localhost:5173').trim().replace(/\/+$/, '');
+
+    const token = query?.token?.trim();
+    if (!token || typeof token !== 'string' || token.length !== 64 || !/^[0-9a-fA-F]{64}$/.test(token)) {
+      return `${webAppBase}/whatsapp/callback?status=invalid_token`;
+    }
+
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const sessionId = `wabs_z_${tokenHash}`;
+
+    const session = await this.onboardingSessionRepo.getSessionById(sessionId);
+    if (!session) {
+      return `${webAppBase}/whatsapp/callback?status=session_not_found`;
+    }
+
+    // Timing-safe verification of token hash
+    const storedBuf = Buffer.from(session.state_nonce_hash, 'hex');
+    const incomingBuf = Buffer.from(tokenHash, 'hex');
+    if (storedBuf.length !== incomingBuf.length || !crypto.timingSafeEqual(storedBuf, incomingBuf)) {
+      return `${webAppBase}/whatsapp/callback?status=invalid_token`;
+    }
+
+    // Idempotent replay check if already consumed
+    if (session.status === 'consumed') {
+      const conn = await this.connectionRepo.getConnectionById(session.connection_id);
+      if (conn && conn.status === 'connected') {
+        return `${webAppBase}/whatsapp/callback?status=success&connectionId=${encodeURIComponent(conn.id)}`;
+      }
+      return `${webAppBase}/whatsapp/callback?status=session_consumed`;
+    }
+
+    // Check terminal session states
+    if (session.status === 'expired') {
+      return `${webAppBase}/whatsapp/callback?status=session_expired`;
+    }
+    if (session.status === 'failed') {
+      return `${webAppBase}/whatsapp/callback?status=failed`;
+    }
+
+    // Check logical expiration
+    if (new Date(session.expires_at) <= new Date()) {
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'expired' });
+      return `${webAppBase}/whatsapp/callback?status=session_expired`;
+    }
+
+    // Check failure hints in query
+    if (
+      query.connection_cancelled === 'true' ||
+      query.connection_cancelled === '1' ||
+      query.error ||
+      query.error_code
+    ) {
+      const failureStatus =
+        query.error ||
+        query.error_code ||
+        (query.connection_cancelled === 'true' || query.connection_cancelled === '1'
+          ? 'connection_cancelled'
+          : 'failed');
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      return `${webAppBase}/whatsapp/callback?status=${encodeURIComponent(failureStatus)}`;
+    }
+
+    // Candidate account validation
+    const candidateAccountId = query.accountId?.trim();
+    if (!candidateAccountId || candidateAccountId.includes('/')) {
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      return `${webAppBase}/whatsapp/callback?status=missing_account_id`;
+    }
+
+    const conn = await this.connectionRepo.getConnectionById(session.connection_id);
+    if (!conn || conn.organization_id !== session.organization_id) {
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      return `${webAppBase}/whatsapp/callback?status=connection_not_found`;
+    }
+
+    if (conn.provider !== 'zernio' || !conn.provider_profile_id) {
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      return `${webAppBase}/whatsapp/callback?status=invalid_connection_state`;
+    }
+
+    // Step 1: Server-side account verification via GET /v1/accounts/:accountId
+    let account: ZernioAccount;
+    try {
+      account = await this.zernioClient.getAccount(candidateAccountId);
+    } catch {
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      return `${webAppBase}/whatsapp/callback?status=account_verification_failed`;
+    }
+
+    if (
+      account._id !== candidateAccountId ||
+      account.profileId !== conn.provider_profile_id ||
+      account.platform.toLowerCase() !== 'whatsapp' ||
+      (account.status !== 'connected' && account.status !== 'active')
+    ) {
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      return `${webAppBase}/whatsapp/callback?status=account_verification_failed`;
+    }
+
+    // Step 2: Server-side number verification via GET /v1/accounts/:accountId/whatsapp
+    let numberInfo: ZernioWhatsAppNumberInfo;
+    try {
+      numberInfo = await this.zernioClient.getWhatsAppNumberInfo(candidateAccountId);
+    } catch {
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      return `${webAppBase}/whatsapp/callback?status=number_verification_failed`;
+    }
+
+    let canonicalPhone: string;
+    try {
+      canonicalPhone = normalizeToE164(numberInfo.phoneNumber);
+    } catch {
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      return `${webAppBase}/whatsapp/callback?status=invalid_phone_number`;
+    }
+
+    if (numberInfo.status && numberInfo.status.toLowerCase() === 'disconnected') {
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      return `${webAppBase}/whatsapp/callback?status=number_verification_failed`;
+    }
+
+    // Step 3: Atomic Materialization of Zernio Provider Identity
+    try {
+      await this.connectionRepo.materializeZernioProviderIdentity({
+        organizationId: conn.organization_id,
+        connectionId: conn.id,
+        providerProfileId: conn.provider_profile_id,
+        providerAccountId: candidateAccountId,
+        phoneNumber: canonicalPhone,
+      });
+    } catch (err: any) {
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      if (
+        err?.code === 'ZERNIO_ACCOUNT_ALREADY_REGISTERED' ||
+        err?.code === 'PROVIDER_PHONE_ALREADY_REGISTERED' ||
+        err?.statusCode === 409
+      ) {
+        return `${webAppBase}/whatsapp/callback?status=identity_conflict`;
+      }
+      return `${webAppBase}/whatsapp/callback?status=materialization_failed`;
+    }
+
+    // Step 4: Transition status: pending -> connecting -> connected
+    try {
+      await this.transitionConnectionStatus(conn.organization_id, conn.id, 'connecting');
+      await this.transitionConnectionStatus(conn.organization_id, conn.id, 'connected');
+    } catch {
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      return `${webAppBase}/whatsapp/callback?status=status_transition_failed`;
+    }
+
+    // Step 5: Consume onboarding session
+    const nowIso = new Date().toISOString();
+    const retentionExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    await this.onboardingSessionRepo.updateSession(session.id, {
+      status: 'consumed',
+      consumed_at: nowIso,
+      retention_expires_at: retentionExpiresAt,
+    });
+
+    return `${webAppBase}/whatsapp/callback?status=success&connectionId=${encodeURIComponent(conn.id)}`;
   }
 
   async startOnboarding(
@@ -690,6 +1124,10 @@ export class WhatsAppConnectionService {
 
     if (member.role !== 'admin' && member.role !== 'owner') {
       throw new AppError(403, 'Apenas administradores da organização podem iniciar o onboarding do WhatsApp.');
+    }
+
+    if (input.provider === 'zernio') {
+      return await this.startZernioOnboarding(orgId, actorUserId, input);
     }
 
     const fbAppId = config.metaAppId || process.env.META_APP_ID;
