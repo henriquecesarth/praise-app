@@ -1,4 +1,4 @@
-﻿import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import { WhatsAppConnectionService } from './whatsapp-connection.service';
 
 export class PublicWhatsAppController {
@@ -12,6 +12,21 @@ export class PublicWhatsAppController {
         req.query as Record<string, string | undefined>
       );
       res.redirect(302, redirectUrl);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  handleZernioWebhook = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const signature = req.headers['x-zernio-signature'] as string | undefined;
+      const headerEventId = req.headers['x-zernio-event-id'] as string | undefined;
+      const result = await this.whatsappService.handleZernioWebhook({
+        rawBody: req.body,
+        signature,
+        headerEventId,
+      });
+      res.status(result.statusCode).json(result.body);
     } catch (err) {
       next(err);
     }

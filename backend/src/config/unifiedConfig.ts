@@ -97,7 +97,7 @@ export const config = configSchema.parse(rawConfig);
 export const ZERNIO_DEFAULT_BASE_URL = 'https://zernio.com/api/v1';
 
 export function requireZernioApiKey(override?: string): string {
-  const key = (override ?? config.zernioApiKey)?.trim();
+  const key = (override ?? config.zernioApiKey ?? process.env.ZERNIO_API_KEY)?.trim();
   if (!key) {
     throw new AppError(500, 'ZERNIO_CONFIG_ERROR: ZERNIO_API_KEY não configurada no ambiente.', {
       code: 'ZERNIO_CONFIG_ERROR',
@@ -107,7 +107,7 @@ export function requireZernioApiKey(override?: string): string {
 }
 
 export function requireZernioWebhookSecret(override?: string): string {
-  const secret = (override ?? config.zernioWebhookSecret)?.trim();
+  const secret = (override ?? config.zernioWebhookSecret ?? process.env.ZERNIO_WEBHOOK_SECRET)?.trim();
   if (!secret) {
     throw new AppError(500, 'ZERNIO_CONFIG_ERROR: ZERNIO_WEBHOOK_SECRET não configurada no ambiente.', {
       code: 'ZERNIO_CONFIG_ERROR',

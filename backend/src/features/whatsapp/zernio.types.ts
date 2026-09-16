@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { z } from 'zod';
 import { AppError } from '../../middleware/error-handler';
 import { WhatsAppProviderRequestOptions } from './whatsapp.types';
@@ -288,4 +289,150 @@ export function buildZernioProfileIdempotencyKey(connectionId: string): string {
     });
   }
   return `profile_wac_${cleanId}`;
+}
+
+// --- Webhook Schemas, Types & Event Records (Phase 7D2-D5) ---
+
+export const zernioWebhookBaseEnvelopeSchema = z
+  .object({
+    id: z.string().min(1, 'Webhook id é obrigatório'),
+    event: z.string().min(1, 'Webhook event é obrigatório'),
+    timestamp: z.union([z.string(), z.number()]).optional(),
+  })
+  .passthrough();
+
+export type ZernioWebhookBaseEnvelope = z.infer<typeof zernioWebhookBaseEnvelopeSchema>;
+
+export const zernioAccountConnectedWebhookSchema = zernioWebhookBaseEnvelopeSchema
+  .extend({
+    accountId: z.string().min(1).optional(),
+    profileId: z
+      .union([
+        z.string().min(1),
+        z.object({ _id: z.string().min(1) }).transform((p) => p._id),
+      ])
+      .optional(),
+    platform: z.string().optional(),
+    username: z.string().optional(),
+    displayName: z.string().optional(),
+    data: z
+      .object({
+        accountId: z.string().min(1).optional(),
+        profileId: z
+          .union([
+            z.string().min(1),
+            z.object({ _id: z.string().min(1) }).transform((p) => p._id),
+          ])
+          .optional(),
+        platform: z.string().optional(),
+        username: z.string().optional(),
+        displayName: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
+  })
+  .transform((val) => {
+    const accountId = val.accountId || val.data?.accountId;
+    const profileId = val.profileId || val.data?.profileId;
+    const platform = val.platform || val.data?.platform;
+    const username = val.username || val.data?.username;
+    const displayName = val.displayName || val.data?.displayName;
+
+    if (!accountId) {
+      throw new Error('Missing accountId in account.connected event payload');
+    }
+    if (!profileId) {
+      throw new Error('Missing profileId in account.connected event payload');
+    }
+
+    return {
+      ...val,
+      accountId,
+      profileId,
+      platform,
+      username,
+      displayName,
+    };
+  });
+
+export type ZernioAccountConnectedWebhookEvent = z.infer<typeof zernioAccountConnectedWebhookSchema>;
+
+export const zernioAccountDisconnectedWebhookSchema = zernioWebhookBaseEnvelopeSchema
+  .extend({
+    accountId: z.string().min(1).optional(),
+    profileId: z
+      .union([
+        z.string().min(1),
+        z.object({ _id: z.string().min(1) }).transform((p) => p._id),
+      ])
+      .optional(),
+    disconnectionType: z.string().optional(),
+    data: z
+      .object({
+        accountId: z.string().min(1).optional(),
+        profileId: z
+          .union([
+            z.string().min(1),
+            z.object({ _id: z.string().min(1) }).transform((p) => p._id),
+          ])
+          .optional(),
+        disconnectionType: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
+  })
+  .transform((val) => {
+    const accountId = val.accountId || val.data?.accountId;
+    const profileId = val.profileId || val.data?.profileId;
+    const disconnectionType = val.disconnectionType || val.data?.disconnectionType;
+
+    if (!accountId) {
+      throw new Error('Missing accountId in account.disconnected event payload');
+    }
+    if (!profileId) {
+      throw new Error('Missing profileId in account.disconnected event payload');
+    }
+
+    return {
+      ...val,
+      accountId,
+      profileId,
+      disconnectionType,
+    };
+  });
+
+export type ZernioAccountDisconnectedWebhookEvent = z.infer<
+  typeof zernioAccountDisconnectedWebhookSchema
+>;
+
+export type WhatsAppZernioWebhookStatus =
+  | 'received'
+  | 'processing'
+  | 'processed'
+  | 'ignored'
+  | 'retryable_error'
+  | 'terminal_error';
+
+export interface WhatsAppZernioWebhookEventRecord {
+  id: string; // zwh_${sha256(payload.id)}
+  event_id: string; // payload.id
+  event_type: string;
+  status: WhatsAppZernioWebhookStatus;
+  payload?: Record<string, unknown>;
+  processing_attempt_count: number;
+  lease_until: string | null;
+  received_at: string;
+  processed_at: string | null;
+  error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export function buildZernioWebhookEventDocId(eventId: string): string {
+  const cleanId = eventId?.trim();
+  if (!cleanId) {
+    throw new AppError(400, 'eventId é obrigatório para gerar ID do documento de webhook.');
+  }
+  const hash = crypto.createHash('sha256').update(cleanId).digest('hex');
+  return `zwh_${hash}`;
 }

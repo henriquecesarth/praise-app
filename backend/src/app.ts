@@ -34,6 +34,10 @@ const corsOptions: cors.CorsOptions = {
 };
 
 app.use(cors(corsOptions));
+
+// ─── Route-Scoped Raw Body Routes (Must precede global express.json) ─────────
+app.use('/api/v1/whatsapp', publicWhatsAppRoutes);
+
 app.use(express.json());
 
 // Cabeçalhos HTTP de segurança (Defense in depth)
@@ -78,7 +82,6 @@ app.use('/api/v1/billing', billingPublicRouter);
 app.use('/api/v1', subscriptionRoutes);
 app.use('/api/v1/organizations', organizationRoutes);
 app.use('/api/v1/internal', internalWhatsAppRoutes);
-app.use('/api/v1/whatsapp', publicWhatsAppRoutes);
 
 app.use('/api/v1/ministries/:ministryId/billing', billingRoutes);
 app.use('/api/v1/groups/:groupId/billing', billingRoutes); // Alias

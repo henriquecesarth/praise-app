@@ -2,7 +2,7 @@ import { db } from '../../lib/firebase';
 import crypto from 'crypto';
 import { FieldValue } from 'firebase-admin/firestore';
 import { AppError } from '../../middleware/error-handler';
-import { config } from '../../config/unifiedConfig';
+import { config, requireZernioWebhookSecret } from '../../config/unifiedConfig';
 import { WhatsAppConnectionRepository } from '../../repositories/WhatsAppConnectionRepository';
 import { WhatsAppConnectionSecretRepository } from '../../repositories/WhatsAppConnectionSecretRepository';
 import { WhatsAppProviderIdentityClaimRepository } from '../../repositories/WhatsAppProviderIdentityClaimRepository';
@@ -10,6 +10,7 @@ import { WhatsAppMinistryAssignmentClaimRepository } from '../../repositories/Wh
 import { WhatsAppOnboardingSessionRepository } from '../../repositories/WhatsAppOnboardingSessionRepository';
 import { WhatsAppProviderCleanupJobRepository } from '../../repositories/WhatsAppProviderCleanupJobRepository';
 import { WhatsAppWabaLifecycleLockRepository } from '../../repositories/WhatsAppWabaLifecycleLockRepository';
+import { WhatsAppZernioWebhookRepository } from '../../repositories/WhatsAppZernioWebhookRepository';
 import { WhatsAppWabaCoordinatorService } from './whatsapp-waba-coordinator.service';
 import { MetaWhatsAppProvider } from './meta-whatsapp.provider';
 import { WhatsAppEncryptionService } from './whatsapp-encryption.service';
@@ -52,6 +53,9 @@ import {
   ZERNIO_HOSTED_ONBOARDING_SESSION_TTL_MS,
   getZernioAccountProfileId,
   mapZernioCallbackError,
+  ZernioError,
+  zernioAccountConnectedWebhookSchema,
+  zernioAccountDisconnectedWebhookSchema,
 } from './zernio.types';
 
 export class WhatsAppConnectionService {
@@ -69,7 +73,8 @@ export class WhatsAppConnectionService {
     private readonly wabaCoordinator: WhatsAppWabaCoordinatorService = new WhatsAppWabaCoordinatorService(),
     private readonly cleanupJobRepo: WhatsAppProviderCleanupJobRepository = new WhatsAppProviderCleanupJobRepository(),
     private readonly wabaLockRepo: WhatsAppWabaLifecycleLockRepository = new WhatsAppWabaLifecycleLockRepository(),
-    private readonly zernioClient: ZernioHttpClient = new ZernioHttpClient()
+    private readonly zernioClient: ZernioHttpClient = new ZernioHttpClient(),
+    private readonly webhookRepo: WhatsAppZernioWebhookRepository = new WhatsAppZernioWebhookRepository()
   ) {}
 
   private mapToDto(conn: WhatsAppConnectionRecord, defaultConnectionId: string | null): WhatsAppConnectionDto {
@@ -1050,65 +1055,29 @@ export class WhatsAppConnectionService {
       return `${webAppBase}/whatsapp/callback?status=account_verification_failed`;
     }
 
-    // Step 1: Server-side account verification via GET /v1/accounts?profileId=...&platform=whatsapp&page=1&limit=2
-    let matchingAccounts: ZernioAccount[];
+    // Step 1 & 2: Server-side account and number verification via shared helper
+    let verified: {
+      account: ZernioAccount;
+      numberInfo: ZernioWhatsAppNumberInfo;
+      canonicalPhone: string;
+    };
     try {
-      matchingAccounts = await this.zernioClient.listAccounts({
-        profileId: conn.provider_profile_id,
-        platform: 'whatsapp',
-        page: 1,
-        limit: 2,
+      verified = await this.verifyZernioWhatsAppAccount({
+        providerProfileId: conn.provider_profile_id,
+        providerAccountId: candidateAccountId,
       });
-    } catch {
+    } catch (err: any) {
       await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      if (err?.code === 'NUMBER_VERIFICATION_FAILED') {
+        return `${webAppBase}/whatsapp/callback?status=number_verification_failed`;
+      }
+      if (err?.code === 'INVALID_PHONE_NUMBER') {
+        return `${webAppBase}/whatsapp/callback?status=invalid_phone_number`;
+      }
       return `${webAppBase}/whatsapp/callback?status=account_verification_failed`;
     }
 
-    // Require exactly 1 match whose _id === candidateAccountId and whose normalized profileId equals conn.provider_profile_id
-    const matched = matchingAccounts.filter(
-      (acc) =>
-        acc._id === candidateAccountId &&
-        getZernioAccountProfileId(acc) === conn.provider_profile_id
-    );
-    if (matched.length !== 1) {
-      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
-      return `${webAppBase}/whatsapp/callback?status=account_verification_failed`;
-    }
-
-    const account = matched[0];
-    if (
-      account.platform.toLowerCase() !== 'whatsapp' ||
-      (account.status !== 'connected' && account.status !== 'active')
-    ) {
-      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
-      return `${webAppBase}/whatsapp/callback?status=account_verification_failed`;
-    }
-
-    // Step 2: Server-side number verification via GET /v1/whatsapp/number-info?accountId=...
-    let numberInfo: ZernioWhatsAppNumberInfo;
-    try {
-      numberInfo = await this.zernioClient.getWhatsAppNumberInfo(candidateAccountId);
-    } catch {
-      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
-      return `${webAppBase}/whatsapp/callback?status=number_verification_failed`;
-    }
-
-    if (
-      !numberInfo.phone ||
-      numberInfo.phone.status?.toUpperCase() !== 'CONNECTED' ||
-      numberInfo.phone.platform_type?.toUpperCase() !== 'CLOUD_API'
-    ) {
-      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
-      return `${webAppBase}/whatsapp/callback?status=number_verification_failed`;
-    }
-
-    let canonicalPhone: string;
-    try {
-      canonicalPhone = normalizeToE164(numberInfo.phone.display_phone_number);
-    } catch {
-      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
-      return `${webAppBase}/whatsapp/callback?status=invalid_phone_number`;
-    }
+    const { canonicalPhone } = verified;
 
     // Step 3, 4, 5: Replay / Idempotency convergence
     const isAlreadyConnectedWithSameIdentity =
@@ -1171,6 +1140,458 @@ export class WhatsAppConnectionService {
     }
 
     return `${webAppBase}/whatsapp/callback?status=success&connectionId=${encodeURIComponent(conn.id)}`;
+  }
+
+  async verifyZernioWhatsAppAccount(params: {
+    providerProfileId: string;
+    providerAccountId: string;
+  }): Promise<{
+    account: ZernioAccount;
+    numberInfo: ZernioWhatsAppNumberInfo;
+    canonicalPhone: string;
+  }> {
+    const { providerProfileId, providerAccountId } = params;
+
+    // Step 1: Server-side account verification via GET /v1/accounts?profileId=...&platform=whatsapp&page=1&limit=2
+    let matchingAccounts: ZernioAccount[];
+    try {
+      matchingAccounts = await this.zernioClient.listAccounts({
+        profileId: providerProfileId,
+        platform: 'whatsapp',
+        page: 1,
+        limit: 2,
+      });
+    } catch (err: any) {
+      if (
+        err instanceof ZernioError &&
+        (err.kind === 'TIMEOUT' || err.kind === 'TRANSIENT_PROVIDER_ERROR' || err.statusCode >= 500)
+      ) {
+        throw err;
+      }
+      throw new AppError(400, `Zernio account verification failed: ${err.message}`, {
+        code: 'ACCOUNT_VERIFICATION_FAILED',
+        originalError: err,
+      });
+    }
+
+    // Require exactly 1 match whose _id === providerAccountId and whose normalized profileId equals providerProfileId
+    const matched = matchingAccounts.filter(
+      (acc) =>
+        acc._id === providerAccountId &&
+        getZernioAccountProfileId(acc) === providerProfileId
+    );
+    if (matched.length !== 1) {
+      throw new AppError(400, 'Zernio account verification failed: matching account not found or ambiguous', {
+        code: 'ACCOUNT_VERIFICATION_FAILED',
+      });
+    }
+
+    const account = matched[0];
+    if (
+      account.platform.toLowerCase() !== 'whatsapp' ||
+      (account.status !== 'connected' && account.status !== 'active')
+    ) {
+      throw new AppError(400, 'Zernio account verification failed: account not active on whatsapp platform', {
+        code: 'ACCOUNT_VERIFICATION_FAILED',
+      });
+    }
+
+    // Step 2: Server-side number verification via GET /v1/whatsapp/number-info?accountId=...
+    let numberInfo: ZernioWhatsAppNumberInfo;
+    try {
+      numberInfo = await this.zernioClient.getWhatsAppNumberInfo(providerAccountId);
+    } catch (err: any) {
+      if (
+        err instanceof ZernioError &&
+        (err.kind === 'TIMEOUT' || err.kind === 'TRANSIENT_PROVIDER_ERROR' || err.statusCode >= 500)
+      ) {
+        throw err;
+      }
+      throw new AppError(400, `Zernio number verification failed: ${err.message}`, {
+        code: 'NUMBER_VERIFICATION_FAILED',
+        originalError: err,
+      });
+    }
+
+    if (
+      !numberInfo.phone ||
+      numberInfo.phone.status?.toUpperCase() !== 'CONNECTED' ||
+      numberInfo.phone.platform_type?.toUpperCase() !== 'CLOUD_API'
+    ) {
+      throw new AppError(400, 'Zernio number verification failed: phone not connected or invalid platform', {
+        code: 'NUMBER_VERIFICATION_FAILED',
+      });
+    }
+
+    let canonicalPhone: string;
+    try {
+      canonicalPhone = normalizeToE164(numberInfo.phone.display_phone_number);
+    } catch (err: any) {
+      throw new AppError(400, `Invalid phone number format in Zernio number info: ${err.message}`, {
+        code: 'INVALID_PHONE_NUMBER',
+      });
+    }
+
+    return {
+      account,
+      numberInfo,
+      canonicalPhone,
+    };
+  }
+
+  async handleZernioWebhook(params: {
+    rawBody: Buffer | unknown;
+    signature?: string;
+    headerEventId?: string;
+  }): Promise<{ statusCode: number; body: Record<string, unknown> }> {
+    const rawSignature = params.signature?.trim();
+    if (!rawSignature) {
+      throw new AppError(401, 'X-Zernio-Signature header ausente ou vazio.', {
+        code: 'MISSING_SIGNATURE',
+      });
+    }
+
+    const secret = requireZernioWebhookSecret();
+
+    if (!params.rawBody || !Buffer.isBuffer(params.rawBody)) {
+      throw new AppError(400, 'Raw body deve ser um Buffer válido.', {
+        code: 'INVALID_RAW_BODY',
+      });
+    }
+    if (params.rawBody.length === 0) {
+      throw new AppError(400, 'Corpo da requisição vazio.', {
+        code: 'EMPTY_BODY',
+      });
+    }
+
+    const cleanSig = (
+      rawSignature.startsWith('sha256=') ? rawSignature.slice(7) : rawSignature
+    ).trim().toLowerCase();
+
+    if (!/^[0-9a-f]{64}$/.test(cleanSig)) {
+      throw new AppError(401, 'Formato de assinatura X-Zernio-Signature inválido.', {
+        code: 'INVALID_SIGNATURE_FORMAT',
+      });
+    }
+
+    const computedHex = crypto
+      .createHmac('sha256', secret)
+      .update(params.rawBody)
+      .digest('hex');
+
+    const incomingBuf = Buffer.from(cleanSig, 'hex');
+    const computedBuf = Buffer.from(computedHex, 'hex');
+
+    if (incomingBuf.length !== computedBuf.length || !crypto.timingSafeEqual(incomingBuf, computedBuf)) {
+      throw new AppError(401, 'Assinatura X-Zernio-Signature inválida.', {
+        code: 'INVALID_SIGNATURE',
+      });
+    }
+
+    let payload: any;
+    try {
+      payload = JSON.parse(params.rawBody.toString('utf8'));
+    } catch {
+      throw new AppError(400, 'Payload JSON inválido.', {
+        code: 'INVALID_JSON_PAYLOAD',
+      });
+    }
+
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new AppError(400, 'Payload deve ser um objeto JSON.', {
+        code: 'INVALID_JSON_PAYLOAD',
+      });
+    }
+
+    const eventId = typeof payload.id === 'string' ? payload.id.trim() : '';
+    if (!eventId) {
+      throw new AppError(400, 'payload.id é obrigatório.', {
+        code: 'MISSING_EVENT_ID',
+      });
+    }
+
+    if (params.headerEventId !== undefined && params.headerEventId !== null && params.headerEventId !== '') {
+      const headerId = String(params.headerEventId).trim();
+      if (headerId !== eventId) {
+        throw new AppError(400, 'X-Zernio-Event-Id não coincide com payload.id.', {
+          code: 'EVENT_ID_MISMATCH',
+          headerEventId: headerId,
+          payloadEventId: eventId,
+        });
+      }
+    }
+
+    const eventType = typeof payload.event === 'string' ? payload.event.trim() : '';
+    if (!eventType) {
+      throw new AppError(400, 'payload.event é obrigatório.', {
+        code: 'MISSING_EVENT_TYPE',
+      });
+    }
+
+    const acquisition = await this.webhookRepo.acquireEvent({
+      eventId,
+      eventType,
+      payload,
+    });
+
+    if (!acquisition.shouldProcess) {
+      if (acquisition.isConcurrentLeaseActive) {
+        throw new AppError(429, 'Evento em processamento concorrente ativo.', {
+          code: 'CONCURRENT_WEBHOOK_PROCESSING',
+          eventId,
+        });
+      }
+      return {
+        statusCode: 200,
+        body: {
+          ok: true,
+          status: 'duplicate',
+          eventId,
+          processingStatus: acquisition.record.status,
+        },
+      };
+    }
+
+    // D5 scope: actively process ONLY 'account.connected' and 'account.disconnected'
+    if (eventType !== 'account.connected' && eventType !== 'account.disconnected') {
+      await this.webhookRepo.markEventIgnored(
+        acquisition.record.id,
+        `Ignored unhandled event: ${eventType}`
+      );
+      return {
+        statusCode: 200,
+        body: {
+          ok: true,
+          status: 'ignored',
+          eventId,
+          eventType,
+        },
+      };
+    }
+
+    if (eventType === 'account.connected') {
+      const parseResult = zernioAccountConnectedWebhookSchema.safeParse(payload);
+      if (!parseResult.success) {
+        const errMsg = `Payload do evento account.connected inválido: ${parseResult.error.message}`;
+        await this.webhookRepo.markEventTerminalError(acquisition.record.id, errMsg);
+        return {
+          statusCode: 200,
+          body: {
+            ok: true,
+            status: 'terminal_error',
+            eventId,
+            error: errMsg,
+          },
+        };
+      }
+
+      const { accountId, profileId, platform } = parseResult.data;
+
+      if (accountId.includes('/')) {
+        const errMsg = 'accountId não pode conter barra ("/")';
+        await this.webhookRepo.markEventTerminalError(acquisition.record.id, errMsg);
+        return {
+          statusCode: 200,
+          body: { ok: true, status: 'terminal_error', eventId, error: errMsg },
+        };
+      }
+
+      if (platform && platform.trim().toLowerCase() !== 'whatsapp') {
+        const reason = `Ignored non-whatsapp platform: ${platform}`;
+        await this.webhookRepo.markEventIgnored(acquisition.record.id, reason);
+        return {
+          statusCode: 200,
+          body: { ok: true, status: 'ignored', eventId, reason },
+        };
+      }
+
+      let conn: WhatsAppConnectionRecord | null;
+      try {
+        conn = await this.connectionRepo.findByZernioProfileId(profileId);
+      } catch (err: any) {
+        await this.webhookRepo.markEventTerminalError(acquisition.record.id, err.message);
+        return {
+          statusCode: 200,
+          body: { ok: true, status: 'terminal_error', eventId, error: err.message },
+        };
+      }
+
+      if (!conn) {
+        const reason = `No connection found for profileId: ${profileId}`;
+        await this.webhookRepo.markEventIgnored(acquisition.record.id, reason);
+        return {
+          statusCode: 200,
+          body: { ok: true, status: 'ignored', eventId, reason },
+        };
+      }
+
+      if (conn.status === 'disconnected') {
+        const reason = 'Connection is disconnected and cannot be revived';
+        await this.webhookRepo.markEventIgnored(acquisition.record.id, reason);
+        return {
+          statusCode: 200,
+          body: { ok: true, status: 'ignored', eventId, reason },
+        };
+      }
+
+      let verified: {
+        account: ZernioAccount;
+        numberInfo: ZernioWhatsAppNumberInfo;
+        canonicalPhone: string;
+      };
+      try {
+        verified = await this.verifyZernioWhatsAppAccount({
+          providerProfileId: conn.provider_profile_id!,
+          providerAccountId: accountId,
+        });
+      } catch (err: any) {
+        const isRetryable =
+          err instanceof ZernioError &&
+          (err.kind === 'TIMEOUT' ||
+            err.kind === 'TRANSIENT_PROVIDER_ERROR' ||
+            err.kind === 'RATE_LIMITED' ||
+            err.statusCode >= 500);
+
+        if (isRetryable) {
+          await this.webhookRepo.markEventRetryableError(acquisition.record.id, err.message);
+          throw err;
+        }
+
+        await this.webhookRepo.markEventTerminalError(acquisition.record.id, err.message);
+        return {
+          statusCode: 200,
+          body: { ok: true, status: 'terminal_error', eventId, error: err.message },
+        };
+      }
+
+      const { canonicalPhone } = verified;
+
+      const isAlreadyConnectedWithSameIdentity =
+        conn.status === 'connected' &&
+        conn.provider_account_id === accountId &&
+        conn.phone_number === canonicalPhone;
+
+      if (isAlreadyConnectedWithSameIdentity) {
+        await this.webhookRepo.markEventProcessed(acquisition.record.id);
+        return {
+          statusCode: 200,
+          body: { ok: true, status: 'processed', eventId, connectionId: conn.id },
+        };
+      }
+
+      if (conn.status === 'connected') {
+        const errMsg = 'Connection is already connected with different account/phone';
+        await this.webhookRepo.markEventTerminalError(acquisition.record.id, errMsg);
+        return {
+          statusCode: 200,
+          body: { ok: true, status: 'terminal_error', eventId, error: errMsg },
+        };
+      }
+
+      // D3 Materialization
+      try {
+        await this.connectionRepo.materializeZernioProviderIdentity({
+          organizationId: conn.organization_id,
+          connectionId: conn.id,
+          providerProfileId: conn.provider_profile_id!,
+          providerAccountId: accountId,
+          phoneNumber: canonicalPhone,
+        });
+      } catch (err: any) {
+        if (
+          err?.code === 'ZERNIO_ACCOUNT_ALREADY_REGISTERED' ||
+          err?.code === 'PROVIDER_PHONE_ALREADY_REGISTERED' ||
+          err?.statusCode === 409
+        ) {
+          await this.webhookRepo.markEventTerminalError(acquisition.record.id, err.message);
+          return {
+            statusCode: 200,
+            body: { ok: true, status: 'terminal_error', eventId, error: err.message },
+          };
+        }
+        await this.webhookRepo.markEventRetryableError(acquisition.record.id, err.message);
+        throw err;
+      }
+
+      // Advance status: pending -> connecting -> connected
+      try {
+        if (conn.status === 'pending') {
+          await this.transitionConnectionStatus(conn.organization_id, conn.id, 'connecting');
+        }
+        await this.transitionConnectionStatus(conn.organization_id, conn.id, 'connected');
+      } catch (err: any) {
+        await this.webhookRepo.markEventRetryableError(acquisition.record.id, err.message);
+        throw err;
+      }
+
+      await this.webhookRepo.markEventProcessed(acquisition.record.id);
+      return {
+        statusCode: 200,
+        body: { ok: true, status: 'processed', eventId, connectionId: conn.id },
+      };
+    }
+
+    // eventType === 'account.disconnected'
+    const parseResult = zernioAccountDisconnectedWebhookSchema.safeParse(payload);
+    if (!parseResult.success) {
+      const errMsg = `Payload do evento account.disconnected inválido: ${parseResult.error.message}`;
+      await this.webhookRepo.markEventTerminalError(acquisition.record.id, errMsg);
+      return {
+        statusCode: 200,
+        body: { ok: true, status: 'terminal_error', eventId, error: errMsg },
+      };
+    }
+
+    const { accountId, profileId, disconnectionType } = parseResult.data;
+
+    let conn: WhatsAppConnectionRecord | null;
+    try {
+      conn = await this.connectionRepo.findByZernioProfileId(profileId);
+    } catch (err: any) {
+      await this.webhookRepo.markEventTerminalError(acquisition.record.id, err.message);
+      return {
+        statusCode: 200,
+        body: { ok: true, status: 'terminal_error', eventId, error: err.message },
+      };
+    }
+
+    if (!conn) {
+      const reason = `No connection found for profileId: ${profileId}`;
+      await this.webhookRepo.markEventIgnored(acquisition.record.id, reason);
+      return {
+        statusCode: 200,
+        body: { ok: true, status: 'ignored', eventId, reason },
+      };
+    }
+
+    if (conn.provider_account_id && conn.provider_account_id !== accountId) {
+      const reason = `Account mismatch: conn has ${conn.provider_account_id}, event has ${accountId}`;
+      await this.webhookRepo.markEventIgnored(acquisition.record.id, reason);
+      return {
+        statusCode: 200,
+        body: { ok: true, status: 'ignored', eventId, reason },
+      };
+    }
+
+    const reason = disconnectionType
+      ? `PROVIDER_DISCONNECTED:${disconnectionType}`
+      : 'PROVIDER_DISCONNECTED';
+
+    if (conn.status === 'connected' || conn.status === 'connecting') {
+      try {
+        await this.transitionConnectionStatus(conn.organization_id, conn.id, 'error', reason);
+      } catch (err: any) {
+        await this.webhookRepo.markEventRetryableError(acquisition.record.id, err.message);
+        throw err;
+      }
+    }
+
+    // CRITICAL: NEVER release claims in D5. Claims remain retained for D7.
+    await this.webhookRepo.markEventProcessed(acquisition.record.id);
+    return {
+      statusCode: 200,
+      body: { ok: true, status: 'processed', eventId, connectionId: conn.id },
+    };
   }
 
   async startOnboarding(
