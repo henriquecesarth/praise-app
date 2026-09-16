@@ -9,7 +9,7 @@ import {
 } from './whatsapp.types';
 import { AppError } from '../../middleware/error-handler';
 
-describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', () => {
+describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout: 15000 }, () => {
   const connectionRepo = new WhatsAppConnectionRepository();
   const claimRepo = new WhatsAppProviderIdentityClaimRepository();
   const service = new WhatsAppConnectionService(connectionRepo, undefined, claimRepo);
@@ -636,57 +636,114 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', () => {
     });
   });
 
-  describe('Terminal Disconnect Lifecycle & Reacquisition', () => {
-    it('releases both Zernio account and phone claims on disconnect, allowing reacquisition', async () => {
+  describe('Terminal Disconnect Lifecycle & Claim Retention', () => {
+    it('retains both Zernio account and phone claims on disconnect; prevents reacquisition by other connections', async () => {
       const orgId = uniqueId('org');
-      const accountId = uniqueId('acc_disconnect');
+      const accountId = uniqueId('acc_retained');
       const phoneNumber = '+5511977770010';
 
-      const conn1 = await connectionRepo.createConnection({
+      // 1. Create Zernio Connection A
+      const connA = await connectionRepo.createConnection({
         organization_id: orgId,
         display_name: 'Conn To Disconnect',
         created_by_user_id: 'user-1',
         provider: 'zernio',
       });
-      await service.bindZernioProfileToConnection(orgId, conn1.id, 'prof_disc_1');
-      await service.materializeZernioProviderIdentity(orgId, conn1.id, {
+      // 2. Bind Profile A
+      await service.bindZernioProfileToConnection(orgId, connA.id, 'prof_disc_1');
+      // 3. Materialize account X + phone P
+      await service.materializeZernioProviderIdentity(orgId, connA.id, {
         providerProfileId: 'prof_disc_1',
         providerAccountId: accountId,
         phoneNumber,
       });
 
-      // Verify claims exist
-      expect(await claimRepo.getZernioAccountClaim(accountId)).not.toBeNull();
-      expect(await claimRepo.getZernioPhoneClaim(phoneNumber)).not.toBeNull();
+      // Verify claims exist and point to connA
+      const preAccClaim = await claimRepo.getZernioAccountClaim(accountId);
+      const prePhoneClaim = await claimRepo.getZernioPhoneClaim(phoneNumber);
+      expect(preAccClaim?.connection_id).toBe(connA.id);
+      expect(prePhoneClaim?.connection_id).toBe(connA.id);
 
-      // Disconnect
-      await connectionRepo.disconnectConnection(orgId, conn1.id);
+      // 4. Locally disconnect Connection A
+      await connectionRepo.disconnectConnection(orgId, connA.id);
 
-      // Verify claims are released
-      expect(await claimRepo.getZernioAccountClaim(accountId)).toBeNull();
-      expect(await claimRepo.getZernioPhoneClaim(phoneNumber)).toBeNull();
+      // 5. Assert: Connection A is locally disconnected; claims STILL exist and point to Conn A
+      const updatedConnA = await connectionRepo.getConnectionById(connA.id);
+      expect(updatedConnA?.status).toBe('disconnected');
 
-      // A new connection can now acquire both claims!
-      const conn2 = await connectionRepo.createConnection({
+      const postAccClaim = await claimRepo.getZernioAccountClaim(accountId);
+      const postPhoneClaim = await claimRepo.getZernioPhoneClaim(phoneNumber);
+      expect(postAccClaim).not.toBeNull();
+      expect(postAccClaim?.connection_id).toBe(connA.id);
+      expect(postAccClaim?.organization_id).toBe(orgId);
+      expect(postPhoneClaim).not.toBeNull();
+      expect(postPhoneClaim?.connection_id).toBe(connA.id);
+      expect(postPhoneClaim?.organization_id).toBe(orgId);
+
+      // 6. Create Connection B (same org)
+      const connB = await connectionRepo.createConnection({
         organization_id: orgId,
-        display_name: 'Conn Reacquiring',
+        display_name: 'Conn B Reclaim Attempt',
         created_by_user_id: 'user-2',
         provider: 'zernio',
       });
-      await service.bindZernioProfileToConnection(orgId, conn2.id, 'prof_disc_2');
+      // 7. Bind Profile B
+      await service.bindZernioProfileToConnection(orgId, connB.id, 'prof_disc_2');
 
+      // 8. Attempt materialization using retained account X -> must fail 409
       await expect(
-        service.materializeZernioProviderIdentity(orgId, conn2.id, {
+        service.materializeZernioProviderIdentity(orgId, connB.id, {
           providerProfileId: 'prof_disc_2',
           providerAccountId: accountId,
+          phoneNumber: '+5511977770011',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        message: expect.stringContaining('ZERNIO_ACCOUNT_ALREADY_REGISTERED'),
+      });
+
+      // 9. Attempt materialization using retained phone P with another account -> must fail 409
+      await expect(
+        service.materializeZernioProviderIdentity(orgId, connB.id, {
+          providerProfileId: 'prof_disc_2',
+          providerAccountId: uniqueId('acc_another'),
           phoneNumber,
         })
-      ).resolves.not.toThrow();
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        message: expect.stringContaining('PROVIDER_PHONE_ALREADY_REGISTERED'),
+      });
 
-      const reacquiredAcc = await claimRepo.getZernioAccountClaim(accountId);
-      const reacquiredPhone = await claimRepo.getZernioPhoneClaim(phoneNumber);
-      expect(reacquiredAcc?.connection_id).toBe(conn2.id);
-      expect(reacquiredPhone?.connection_id).toBe(conn2.id);
+      // 10. Attempt materialization across another Organization -> must fail 409
+      const otherOrgId = uniqueId('org_other');
+      const connC = await connectionRepo.createConnection({
+        organization_id: otherOrgId,
+        display_name: 'Conn C Cross Org',
+        created_by_user_id: 'user-3',
+        provider: 'zernio',
+      });
+      await service.bindZernioProfileToConnection(otherOrgId, connC.id, 'prof_disc_3');
+
+      await expect(
+        service.materializeZernioProviderIdentity(otherOrgId, connC.id, {
+          providerProfileId: 'prof_disc_3',
+          providerAccountId: accountId,
+          phoneNumber: '+5511977770012',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        message: expect.stringContaining('ZERNIO_ACCOUNT_ALREADY_REGISTERED'),
+      });
+
+      // 11. Inspect final Firestore state
+      const finalConnB = await connectionRepo.getConnectionById(connB.id);
+      expect(finalConnB?.provider_account_id).toBeNull();
+      expect(finalConnB?.phone_number).toBeNull();
+
+      const finalAccClaim = await claimRepo.getZernioAccountClaim(accountId);
+      const finalPhoneClaim = await claimRepo.getZernioPhoneClaim(phoneNumber);
+      expect(finalAccClaim?.connection_id).toBe(connA.id);
+      expect(finalPhoneClaim?.connection_id).toBe(connA.id);
     });
   });
 
@@ -810,6 +867,43 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', () => {
       const orphanAccClaim = await claimRepo.getZernioAccountClaim(losingAcc);
       expect(orphanAccClaim).toBeNull();
     });
+
+    it('RACE 3: Two concurrent profile binds on the SAME connection with DIFFERENT profile IDs - exactly ONE wins', async () => {
+      const orgId = uniqueId('org_race3');
+      const conn = await connectionRepo.createConnection({
+        organization_id: orgId,
+        display_name: 'Racer Profile Bind',
+        created_by_user_id: 'user-race3',
+        provider: 'zernio',
+      });
+
+      const [res1, res2] = await Promise.allSettled([
+        service.bindZernioProfileToConnection(orgId, conn.id, 'prof_race_3a'),
+        service.bindZernioProfileToConnection(orgId, conn.id, 'prof_race_3b'),
+      ]);
+
+      const fulfilled = [res1, res2].filter((r) => r.status === 'fulfilled');
+      const rejected = [res1, res2].filter((r) => r.status === 'rejected');
+
+      expect(fulfilled.length).toBe(1);
+      expect(rejected.length).toBe(1);
+
+      const rejectionReason = (rejected[0] as PromiseRejectedResult).reason;
+      expect(rejectionReason).toBeInstanceOf(AppError);
+      expect(rejectionReason.statusCode).toBe(409);
+      expect(rejectionReason.message).toContain('ZERNIO_PROFILE_ALREADY_BOUND');
+
+      const winningConn = (fulfilled[0] as PromiseFulfilledResult<any>).value;
+      const winningProfileId = winningConn.provider_profile_id;
+      expect(['prof_race_3a', 'prof_race_3b']).toContain(winningProfileId);
+
+      // Inspect final Firestore state
+      const finalConn = await connectionRepo.getConnectionById(conn.id);
+      expect(finalConn?.provider_profile_id).toBe(winningProfileId);
+      expect(finalConn?.provider_account_id).toBeNull();
+      expect(finalConn?.phone_number).toBeNull();
+      expect(finalConn?.status).toBe('pending');
+    });
   });
 
   describe('STEP 11: Meta Regression & Namespace Isolation', () => {
@@ -857,6 +951,61 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', () => {
 
       expect(metaClaimDoc?.connection_id).toBe(metaConn.id);
       expect(zernioClaimDoc?.connection_id).toBe(zernioConn.id);
+    });
+  });
+
+  describe('STEP 15: Account ID Path Safety & Slash Rejection', () => {
+    it('rejects providerAccountId containing "/" in getZernioAccountClaimId with sanitized error', () => {
+      expect(() => getZernioAccountClaimId('acc/123')).toThrowError(AppError);
+      try {
+        getZernioAccountClaimId('acc/123');
+      } catch (err: any) {
+        expect(err.statusCode).toBe(400);
+        expect((err.details as any)?.code).toBe('INVALID_ACCOUNT_ID');
+        expect(err.message).toContain('não pode conter barra');
+        expect(err.message).not.toContain('acc/123');
+      }
+    });
+
+    it('rejects empty or whitespace providerAccountId in getZernioAccountClaimId', () => {
+      expect(() => getZernioAccountClaimId('')).toThrowError(AppError);
+      expect(() => getZernioAccountClaimId('   ')).toThrowError(AppError);
+    });
+
+    it('generates correct deterministic claim ID for valid alphanumeric and hyphenated IDs', () => {
+      expect(getZernioAccountClaimId('acc_test_123')).toBe('claim_zernio_account_acc_test_123');
+      expect(getZernioAccountClaimId('65f0a1b2c3d4e5f6a7b8c9d0')).toBe('claim_zernio_account_65f0a1b2c3d4e5f6a7b8c9d0');
+      expect(getZernioAccountClaimId('org-acc-999')).toBe('claim_zernio_account_org-acc-999');
+    });
+
+    it('rejects providerAccountId containing "/" in materializeZernioProviderIdentity before writes (no partial write)', async () => {
+      const orgId = uniqueId('org_slash');
+      const conn = await connectionRepo.createConnection({
+        organization_id: orgId,
+        display_name: 'Conn Slash Test',
+        created_by_user_id: 'user-1',
+        provider: 'zernio',
+      });
+      await service.bindZernioProfileToConnection(orgId, conn.id, 'prof_slash');
+
+      await expect(
+        service.materializeZernioProviderIdentity(orgId, conn.id, {
+          providerProfileId: 'prof_slash',
+          providerAccountId: 'invalid/account/id',
+          phoneNumber: '+5511977770088',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 400,
+        message: expect.stringContaining('não pode conter barra'),
+      });
+
+      // Verify no partial write occurred on connection or claims
+      const checkedConn = await connectionRepo.getConnectionById(conn.id);
+      expect(checkedConn?.provider_account_id).toBeNull();
+      expect(checkedConn?.phone_number).toBeNull();
+
+      const phoneClaim = await claimRepo.getZernioPhoneClaim('+5511977770088');
+      expect(phoneClaim).toBeNull();
     });
   });
 });

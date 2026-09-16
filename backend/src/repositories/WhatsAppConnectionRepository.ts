@@ -239,22 +239,6 @@ export class WhatsAppConnectionRepository {
         claimDoc = await tx.get(claimRef);
       }
 
-      let zernioAccountClaimRef: FirebaseFirestore.DocumentReference | undefined;
-      let zernioAccountClaimDoc: FirebaseFirestore.DocumentSnapshot | undefined;
-      if (conn.provider === 'zernio' && conn.provider_account_id) {
-        const accClaimId = getZernioAccountClaimId(conn.provider_account_id);
-        zernioAccountClaimRef = this.claimsCol.doc(accClaimId);
-        zernioAccountClaimDoc = await tx.get(zernioAccountClaimRef);
-      }
-
-      let zernioPhoneClaimRef: FirebaseFirestore.DocumentReference | undefined;
-      let zernioPhoneClaimDoc: FirebaseFirestore.DocumentSnapshot | undefined;
-      if (conn.provider === 'zernio' && conn.phone_number) {
-        const phoneClaimId = getZernioPhoneClaimId(conn.phone_number);
-        zernioPhoneClaimRef = this.claimsCol.doc(phoneClaimId);
-        zernioPhoneClaimDoc = await tx.get(zernioPhoneClaimRef);
-      }
-
       let assignmentClaimRef: FirebaseFirestore.DocumentReference | undefined;
       let assignmentClaimDoc: FirebaseFirestore.DocumentSnapshot | undefined;
       if (conn.assigned_ministry_id) {
@@ -297,25 +281,8 @@ export class WhatsAppConnectionRepository {
         tx.delete(claimRef);
       }
 
-      // Release Zernio account claim IF AND ONLY IF owned by this connection
-      if (
-        zernioAccountClaimRef &&
-        zernioAccountClaimDoc?.exists &&
-        zernioAccountClaimDoc.data()?.connection_id === connectionId &&
-        zernioAccountClaimDoc.data()?.organization_id === orgId
-      ) {
-        tx.delete(zernioAccountClaimRef);
-      }
-
-      // Release Zernio phone claim IF AND ONLY IF owned by this connection
-      if (
-        zernioPhoneClaimRef &&
-        zernioPhoneClaimDoc?.exists &&
-        zernioPhoneClaimDoc.data()?.connection_id === connectionId &&
-        zernioPhoneClaimDoc.data()?.organization_id === orgId
-      ) {
-        tx.delete(zernioPhoneClaimRef);
-      }
+      // Note: Zernio account and phone claims are intentionally retained upon local disconnect.
+      // Remote cleanup must be strongly proven before Zernio claims can be released (D7).
 
       // Release assignment claim IF AND ONLY IF owned by this connection
       if (
@@ -459,6 +426,11 @@ export class WhatsAppConnectionRepository {
     const normalizedAccountId = providerAccountId?.trim();
     if (!normalizedAccountId) {
       throw new AppError(400, 'providerAccountId é obrigatório e não pode ser vazio.', {
+        code: 'INVALID_ACCOUNT_ID',
+      });
+    }
+    if (normalizedAccountId.includes('/')) {
+      throw new AppError(400, 'providerAccountId não pode conter barra ("/").', {
         code: 'INVALID_ACCOUNT_ID',
       });
     }

@@ -37,7 +37,27 @@ export class WhatsAppProviderIdentityClaimRepository {
     if (claimDoc.exists) {
       const existingClaim = claimDoc.data() as WhatsAppProviderIdentityClaimRecord;
       if (existingClaim.connection_id !== claim.connection_id) {
-        // Read referenced connection to see if it is still live
+        // For Zernio claims, a disconnected owner connection does NOT make the claim reclaimable.
+        // Identity claims remain exclusive until explicit remote cleanup settlement in D7.
+        if (claim.provider === 'zernio' || existingClaim.provider === 'zernio') {
+          const isAccountClaim =
+            claim.id.startsWith('claim_zernio_account_') ||
+            existingClaim.id.startsWith('claim_zernio_account_');
+          if (isAccountClaim) {
+            throw new AppError(
+              409,
+              'ZERNIO_ACCOUNT_ALREADY_REGISTERED: Esta conta Zernio já está vinculada a outra conexão.',
+              { code: 'ZERNIO_ACCOUNT_ALREADY_REGISTERED' }
+            );
+          }
+          throw new AppError(
+            409,
+            'PROVIDER_PHONE_ALREADY_REGISTERED: Este número de telefone já está registrado em outra conexão ativa.',
+            { code: 'PROVIDER_PHONE_ALREADY_REGISTERED' }
+          );
+        }
+
+        // Meta Cloud API: preserve existing behavior (disconnected connection allows reclaim)
         const connRef = this.connectionsCol.doc(existingClaim.connection_id);
         const connDoc = await tx.get(connRef);
 

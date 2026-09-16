@@ -106,6 +106,11 @@ export function getZernioAccountClaimId(providerAccountId: string): string {
       code: 'INVALID_ACCOUNT_ID',
     });
   }
+  if (cleanId.includes('/')) {
+    throw new AppError(400, 'providerAccountId não pode conter barra ("/").', {
+      code: 'INVALID_ACCOUNT_ID',
+    });
+  }
   return `claim_zernio_account_${cleanId}`;
 }
 
