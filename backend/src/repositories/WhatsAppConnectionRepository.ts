@@ -8,6 +8,12 @@ import {
   CreateWhatsAppConnectionData,
   CONFIG_CONSUMING_STATUSES,
   getClaimId,
+  getZernioAccountClaimId,
+  getZernioPhoneClaimId,
+  normalizeToE164,
+  BindZernioProfileInput,
+  MaterializeZernioProviderIdentityInput,
+  WhatsAppProviderIdentityClaimRecord,
   getMinistryAssignmentClaimId,
   parseWhatsAppCursor,
 } from '../features/whatsapp/whatsapp.types';
@@ -25,7 +31,13 @@ export class WhatsAppConnectionRepository {
     if (!doc.exists) {
       return null;
     }
-    return { id: doc.id, ...doc.data() } as WhatsAppConnectionRecord;
+    const data = doc.data() || {};
+    return {
+      id: doc.id,
+      ...data,
+      provider_profile_id: data.provider_profile_id ?? null,
+      provider_account_id: data.provider_account_id ?? null,
+    } as WhatsAppConnectionRecord;
   }
 
   async listConnectionsByOrganization(
@@ -130,7 +142,9 @@ export class WhatsAppConnectionRepository {
       organization_id: data.organization_id,
       display_name: data.display_name,
       phone_number: data.phone_number || null,
-      provider: 'meta_cloud_api',
+      provider: data.provider || 'meta_cloud_api',
+      provider_profile_id: data.provider_profile_id || null,
+      provider_account_id: data.provider_account_id || null,
       provider_waba_id: data.provider_waba_id || null,
       provider_phone_number_id: data.provider_phone_number_id || null,
       status,
@@ -225,6 +239,22 @@ export class WhatsAppConnectionRepository {
         claimDoc = await tx.get(claimRef);
       }
 
+      let zernioAccountClaimRef: FirebaseFirestore.DocumentReference | undefined;
+      let zernioAccountClaimDoc: FirebaseFirestore.DocumentSnapshot | undefined;
+      if (conn.provider === 'zernio' && conn.provider_account_id) {
+        const accClaimId = getZernioAccountClaimId(conn.provider_account_id);
+        zernioAccountClaimRef = this.claimsCol.doc(accClaimId);
+        zernioAccountClaimDoc = await tx.get(zernioAccountClaimRef);
+      }
+
+      let zernioPhoneClaimRef: FirebaseFirestore.DocumentReference | undefined;
+      let zernioPhoneClaimDoc: FirebaseFirestore.DocumentSnapshot | undefined;
+      if (conn.provider === 'zernio' && conn.phone_number) {
+        const phoneClaimId = getZernioPhoneClaimId(conn.phone_number);
+        zernioPhoneClaimRef = this.claimsCol.doc(phoneClaimId);
+        zernioPhoneClaimDoc = await tx.get(zernioPhoneClaimRef);
+      }
+
       let assignmentClaimRef: FirebaseFirestore.DocumentReference | undefined;
       let assignmentClaimDoc: FirebaseFirestore.DocumentSnapshot | undefined;
       if (conn.assigned_ministry_id) {
@@ -256,7 +286,7 @@ export class WhatsAppConnectionRepository {
         updated_at: now,
       });
 
-      // Release provider claim IF AND ONLY IF owned by this connection
+      // Release Meta provider claim IF AND ONLY IF owned by this connection
       if (
         claimRef &&
         claimDoc?.exists &&
@@ -265,6 +295,26 @@ export class WhatsAppConnectionRepository {
         claimDoc.data()?.provider_phone_number_id === conn.provider_phone_number_id
       ) {
         tx.delete(claimRef);
+      }
+
+      // Release Zernio account claim IF AND ONLY IF owned by this connection
+      if (
+        zernioAccountClaimRef &&
+        zernioAccountClaimDoc?.exists &&
+        zernioAccountClaimDoc.data()?.connection_id === connectionId &&
+        zernioAccountClaimDoc.data()?.organization_id === orgId
+      ) {
+        tx.delete(zernioAccountClaimRef);
+      }
+
+      // Release Zernio phone claim IF AND ONLY IF owned by this connection
+      if (
+        zernioPhoneClaimRef &&
+        zernioPhoneClaimDoc?.exists &&
+        zernioPhoneClaimDoc.data()?.connection_id === connectionId &&
+        zernioPhoneClaimDoc.data()?.organization_id === orgId
+      ) {
+        tx.delete(zernioPhoneClaimRef);
       }
 
       // Release assignment claim IF AND ONLY IF owned by this connection
@@ -315,5 +365,319 @@ export class WhatsAppConnectionRepository {
     }
 
     return active;
+  }
+
+  async bindZernioProfileToConnection(
+    params: BindZernioProfileInput,
+    existingTx?: FirebaseFirestore.Transaction
+  ): Promise<WhatsAppConnectionRecord> {
+    const { organizationId, connectionId, providerProfileId } = params;
+
+    const normalizedProfileId = providerProfileId?.trim();
+    if (!normalizedProfileId) {
+      throw new AppError(400, 'providerProfileId é obrigatório e não pode ser vazio.', {
+        code: 'INVALID_PROFILE_ID',
+      });
+    }
+
+    const runInTransaction = async (tx: FirebaseFirestore.Transaction) => {
+      const connRef = this.connectionsCol.doc(connectionId);
+      const connDoc = await tx.get(connRef);
+
+      if (!connDoc.exists) {
+        throw new AppError(404, 'Conexão não encontrada.');
+      }
+
+      const raw = connDoc.data() || {};
+      const conn = {
+        id: connDoc.id,
+        ...raw,
+        provider_profile_id: raw.provider_profile_id ?? null,
+        provider_account_id: raw.provider_account_id ?? null,
+      } as WhatsAppConnectionRecord;
+
+      if (conn.organization_id !== organizationId) {
+        throw new AppError(404, 'Conexão não encontrada nesta organização.');
+      }
+
+      if (conn.provider !== 'zernio') {
+        throw new AppError(400, 'Esta conexão não pertence ao provedor Zernio.', {
+          code: 'INVALID_PROVIDER',
+        });
+      }
+
+      // Idempotency: if already bound to the exact same profile ID
+      if (conn.provider_profile_id === normalizedProfileId) {
+        return conn;
+      }
+
+      // Conflict: if already bound to a different profile ID
+      if (conn.provider_profile_id && conn.provider_profile_id !== normalizedProfileId) {
+        throw new AppError(
+          409,
+          'ZERNIO_PROFILE_ALREADY_BOUND: A conexão já possui outro perfil Zernio vinculado.',
+          {
+            code: 'ZERNIO_PROFILE_ALREADY_BOUND',
+            currentProfileId: conn.provider_profile_id,
+            requestedProfileId: normalizedProfileId,
+          }
+        );
+      }
+
+      const now = new Date().toISOString();
+      tx.update(connRef, {
+        provider_profile_id: normalizedProfileId,
+        updated_at: now,
+      });
+
+      return {
+        ...conn,
+        provider_profile_id: normalizedProfileId,
+        updated_at: now,
+      };
+    };
+
+    if (existingTx) {
+      return await runInTransaction(existingTx);
+    }
+    return await db.runTransaction(runInTransaction);
+  }
+
+  async materializeZernioProviderIdentity(
+    params: MaterializeZernioProviderIdentityInput,
+    existingTx?: FirebaseFirestore.Transaction
+  ): Promise<WhatsAppConnectionRecord> {
+    const { organizationId, connectionId, providerProfileId, providerAccountId, phoneNumber } = params;
+
+    const normalizedProfileId = providerProfileId?.trim();
+    if (!normalizedProfileId) {
+      throw new AppError(400, 'providerProfileId é obrigatório e não pode ser vazio.', {
+        code: 'INVALID_PROFILE_ID',
+      });
+    }
+
+    const normalizedAccountId = providerAccountId?.trim();
+    if (!normalizedAccountId) {
+      throw new AppError(400, 'providerAccountId é obrigatório e não pode ser vazio.', {
+        code: 'INVALID_ACCOUNT_ID',
+      });
+    }
+
+    // Phone canonicalization via project-wide normalizeToE164
+    const canonicalPhoneNumber = normalizeToE164(phoneNumber);
+
+    const runInTransaction = async (tx: FirebaseFirestore.Transaction) => {
+      // 1. Read Connection
+      const connRef = this.connectionsCol.doc(connectionId);
+      const connDoc = await tx.get(connRef);
+
+      if (!connDoc.exists) {
+        throw new AppError(404, 'Conexão não encontrada.');
+      }
+
+      const raw = connDoc.data() || {};
+      const conn = {
+        id: connDoc.id,
+        ...raw,
+        provider_profile_id: raw.provider_profile_id ?? null,
+        provider_account_id: raw.provider_account_id ?? null,
+      } as WhatsAppConnectionRecord;
+
+      if (conn.organization_id !== organizationId) {
+        throw new AppError(404, 'Conexão não encontrada nesta organização.');
+      }
+
+      if (conn.provider !== 'zernio') {
+        throw new AppError(400, 'Esta conexão não pertence ao provedor Zernio.', {
+          code: 'INVALID_PROVIDER',
+        });
+      }
+
+      // Precondition: Profile must already be bound
+      if (!conn.provider_profile_id) {
+        throw new AppError(400, 'Conexão deve ter um perfil Zernio vinculado antes da materialização.', {
+          code: 'ZERNIO_PROFILE_NOT_BOUND',
+        });
+      }
+
+      if (conn.provider_profile_id !== normalizedProfileId) {
+        throw new AppError(
+          409,
+          'ZERNIO_PROFILE_IDENTITY_MISMATCH: O perfil Zernio fornecido diverge do perfil vinculado à conexão.',
+          {
+            code: 'ZERNIO_PROFILE_IDENTITY_MISMATCH',
+            boundProfileId: conn.provider_profile_id,
+            suppliedProfileId: normalizedProfileId,
+          }
+        );
+      }
+
+      // Check existing connection account/phone values for conflict
+      if (conn.provider_account_id && conn.provider_account_id !== normalizedAccountId) {
+        throw new AppError(
+          409,
+          'ZERNIO_ACCOUNT_IDENTITY_MISMATCH: A conexão já possui outra conta Zernio materializada.',
+          {
+            code: 'ZERNIO_ACCOUNT_IDENTITY_MISMATCH',
+            existingAccountId: conn.provider_account_id,
+            suppliedAccountId: normalizedAccountId,
+          }
+        );
+      }
+
+      if (conn.phone_number && conn.phone_number !== canonicalPhoneNumber) {
+        throw new AppError(
+          409,
+          'PROVIDER_PHONE_IDENTITY_MISMATCH: A conexão já possui outro número de telefone materializado.',
+          {
+            code: 'PROVIDER_PHONE_IDENTITY_MISMATCH',
+            existingPhoneNumber: conn.phone_number,
+            suppliedPhoneNumber: canonicalPhoneNumber,
+          }
+        );
+      }
+
+      // 2. Resolve Claim References & READ BOTH CLAIM DOCUMENTS BEFORE WRITES
+      const accountClaimId = getZernioAccountClaimId(normalizedAccountId);
+      const accountClaimRef = this.claimsCol.doc(accountClaimId);
+
+      const phoneClaimId = getZernioPhoneClaimId(canonicalPhoneNumber);
+      const phoneClaimRef = this.claimsCol.doc(phoneClaimId);
+
+      const [accountClaimDoc, phoneClaimDoc] = await Promise.all([
+        tx.get(accountClaimRef),
+        tx.get(phoneClaimRef),
+      ]);
+
+      // 3. Verify Account Claim Ownership
+      if (accountClaimDoc.exists) {
+        const existingAccClaim = accountClaimDoc.data() as WhatsAppProviderIdentityClaimRecord;
+        if (existingAccClaim.connection_id !== connectionId || existingAccClaim.organization_id !== organizationId) {
+          throw new AppError(
+            409,
+            'ZERNIO_ACCOUNT_ALREADY_REGISTERED: Esta conta Zernio já está vinculada a outra conexão.',
+            {
+              code: 'ZERNIO_ACCOUNT_ALREADY_REGISTERED',
+              claimedByConnectionId: existingAccClaim.connection_id,
+            }
+          );
+        }
+      }
+
+      // 4. Verify Phone Claim Ownership
+      if (phoneClaimDoc.exists) {
+        const existingPhoneClaim = phoneClaimDoc.data() as WhatsAppProviderIdentityClaimRecord;
+        if (existingPhoneClaim.connection_id !== connectionId || existingPhoneClaim.organization_id !== organizationId) {
+          throw new AppError(
+            409,
+            'PROVIDER_PHONE_ALREADY_REGISTERED: Este número de telefone já está registrado em outra conexão ativa.',
+            {
+              code: 'PROVIDER_PHONE_ALREADY_REGISTERED',
+              claimedByConnectionId: existingPhoneClaim.connection_id,
+            }
+          );
+        }
+      }
+
+      // 5. Check Idempotency (Already fully materialized with both claims intact)
+      const isAlreadyMaterialized =
+        conn.provider_account_id === normalizedAccountId &&
+        conn.phone_number === canonicalPhoneNumber &&
+        accountClaimDoc.exists &&
+        phoneClaimDoc.exists;
+
+      if (isAlreadyMaterialized) {
+        return conn;
+      }
+
+      // 6. Write Phase (Atomic reservation of both claims + connection update)
+      const now = new Date().toISOString();
+
+      if (!accountClaimDoc.exists) {
+        const accountClaimRecord: WhatsAppProviderIdentityClaimRecord = {
+          id: accountClaimId,
+          provider: 'zernio',
+          provider_phone_number_id: normalizedAccountId,
+          organization_id: organizationId,
+          connection_id: connectionId,
+          created_at: now,
+          updated_at: now,
+        };
+        tx.set(accountClaimRef, accountClaimRecord);
+      }
+
+      if (!phoneClaimDoc.exists) {
+        const phoneClaimRecord: WhatsAppProviderIdentityClaimRecord = {
+          id: phoneClaimId,
+          provider: 'zernio',
+          provider_phone_number_id: canonicalPhoneNumber,
+          organization_id: organizationId,
+          connection_id: connectionId,
+          created_at: now,
+          updated_at: now,
+        };
+        tx.set(phoneClaimRef, phoneClaimRecord);
+      }
+
+      tx.update(connRef, {
+        provider_account_id: normalizedAccountId,
+        phone_number: canonicalPhoneNumber,
+        updated_at: now,
+      });
+
+      return {
+        ...conn,
+        provider_account_id: normalizedAccountId,
+        phone_number: canonicalPhoneNumber,
+        updated_at: now,
+      };
+    };
+
+    if (existingTx) {
+      return await runInTransaction(existingTx);
+    }
+    return await db.runTransaction(runInTransaction);
+  }
+
+  async findByZernioProfileId(
+    profileId: string,
+    orgId?: string
+  ): Promise<WhatsAppConnectionRecord | null> {
+    const cleanId = profileId?.trim();
+    if (!cleanId) return null;
+
+    // Single-field equality uses automatic indexing (no composite index required)
+    const snap = await this.connectionsCol
+      .where('provider_profile_id', '==', cleanId)
+      .limit(2)
+      .get();
+
+    if (snap.empty) {
+      return null;
+    }
+    if (snap.docs.length > 1) {
+      throw new AppError(
+        500,
+        'AMBIGUOUS_ZERNIO_PROFILE_MAPPING: Múltiplas conexões encontradas para o mesmo perfil Zernio.',
+        { code: 'AMBIGUOUS_ZERNIO_PROFILE_MAPPING' }
+      );
+    }
+
+    const doc = snap.docs[0];
+    const data = doc.data() || {};
+    const record = {
+      id: doc.id,
+      ...data,
+      provider_profile_id: data.provider_profile_id ?? null,
+      provider_account_id: data.provider_account_id ?? null,
+    } as WhatsAppConnectionRecord;
+
+    if (record.provider !== 'zernio') {
+      return null;
+    }
+    if (orgId && record.organization_id !== orgId) {
+      return null;
+    }
+    return record;
   }
 }

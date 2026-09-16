@@ -3,6 +3,8 @@ import { AppError } from '../middleware/error-handler';
 import {
   WhatsAppProviderIdentityClaimRecord,
   WhatsAppConnectionRecord,
+  getZernioAccountClaimId,
+  getZernioPhoneClaimId,
 } from '../features/whatsapp/whatsapp.types';
 
 export class WhatsAppProviderIdentityClaimRepository {
@@ -15,6 +17,14 @@ export class WhatsAppProviderIdentityClaimRepository {
       return null;
     }
     return { id: doc.id, ...doc.data() } as WhatsAppProviderIdentityClaimRecord;
+  }
+
+  async getZernioAccountClaim(accountId: string): Promise<WhatsAppProviderIdentityClaimRecord | null> {
+    return this.getClaim(getZernioAccountClaimId(accountId));
+  }
+
+  async getZernioPhoneClaim(phoneNumber: string): Promise<WhatsAppProviderIdentityClaimRecord | null> {
+    return this.getClaim(getZernioPhoneClaimId(phoneNumber));
   }
 
   async acquireClaimInTransaction(

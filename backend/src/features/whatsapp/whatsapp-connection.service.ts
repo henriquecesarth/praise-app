@@ -616,6 +616,36 @@ export class WhatsAppConnectionService {
     });
   }
 
+  async bindZernioProfileToConnection(
+    orgId: string,
+    connectionId: string,
+    providerProfileId: string
+  ): Promise<WhatsAppConnectionRecord> {
+    return await this.connectionRepo.bindZernioProfileToConnection({
+      organizationId: orgId,
+      connectionId,
+      providerProfileId,
+    });
+  }
+
+  async materializeZernioProviderIdentity(
+    orgId: string,
+    connectionId: string,
+    data: {
+      providerProfileId: string;
+      providerAccountId: string;
+      phoneNumber: string;
+    }
+  ): Promise<WhatsAppConnectionRecord> {
+    return await this.connectionRepo.materializeZernioProviderIdentity({
+      organizationId: orgId,
+      connectionId,
+      providerProfileId: data.providerProfileId,
+      providerAccountId: data.providerAccountId,
+      phoneNumber: data.phoneNumber,
+    });
+  }
+
   async transitionConnectionStatus(
     orgId: string,
     connectionId: string,

@@ -99,6 +99,35 @@ export function getClaimId(provider: string, providerPhoneNumberId: string): str
   return `claim_${provider}_${providerPhoneNumberId}`;
 }
 
+export function getZernioAccountClaimId(providerAccountId: string): string {
+  const cleanId = providerAccountId?.trim();
+  if (!cleanId) {
+    throw new AppError(400, 'providerAccountId é obrigatório para construir o claim ID.', {
+      code: 'INVALID_ACCOUNT_ID',
+    });
+  }
+  return `claim_zernio_account_${cleanId}`;
+}
+
+export function getZernioPhoneClaimId(phoneNumber: string): string {
+  const canonical = normalizeToE164(phoneNumber);
+  return `claim_zernio_phone_${canonical}`;
+}
+
+export interface BindZernioProfileInput {
+  organizationId: string;
+  connectionId: string;
+  providerProfileId: string;
+}
+
+export interface MaterializeZernioProviderIdentityInput {
+  organizationId: string;
+  connectionId: string;
+  providerProfileId: string;
+  providerAccountId: string;
+  phoneNumber: string;
+}
+
 export interface WhatsAppMinistryAssignmentClaimRecord {
   id: string; // Deterministic claim ID: `assignment_claim_${orgId}_${ministryId}`
   organization_id: string; // Tenant context
