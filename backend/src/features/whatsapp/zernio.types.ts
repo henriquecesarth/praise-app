@@ -95,15 +95,26 @@ export function validateZernioAuthUrl(authUrl: string): void {
   }
 }
 
+export const ZERNIO_HOSTED_ONBOARDING_SESSION_TTL_MS = 60 * 60 * 1000;
+
+export const zernioAccountProfileIdSchema = z.union([
+  z.string().min(1),
+  z.object({
+    _id: z.string().min(1),
+    name: z.string().optional(),
+  }),
+]);
+
 export const zernioAccountSchema = z
   .object({
     _id: z.string().min(1, 'Account _id é obrigatório'),
-    profileId: z.string().min(1, 'profileId é obrigatório'),
+    profileId: zernioAccountProfileIdSchema,
     platform: z.string().min(1, 'platform é obrigatória'),
-    status: z.string().min(1, 'status é obrigatório'),
+    status: z.string().optional(),
     username: z.string().optional(),
     phoneNumber: z.string().optional(),
     displayName: z.string().optional(),
+    isActive: z.boolean().optional(),
     createdAt: z.string().optional(),
     updatedAt: z.string().optional(),
   })
@@ -111,50 +122,71 @@ export const zernioAccountSchema = z
 
 export type ZernioAccount = z.infer<typeof zernioAccountSchema>;
 
-export const zernioGetAccountResponseSchema = z.union([
-  z
-    .object({
-      account: zernioAccountSchema,
-    })
-    .transform((val) => val.account),
-  z
-    .object({
-      data: zernioAccountSchema,
-    })
-    .transform((val) => val.data),
-  zernioAccountSchema,
+export function getZernioAccountProfileId(account: ZernioAccount): string {
+  if (typeof account.profileId === 'string') {
+    return account.profileId;
+  }
+  return account.profileId._id;
+}
+
+export const zernioListAccountsResponseSchema = z.union([
+  z.array(zernioAccountSchema),
+  z.object({ accounts: z.array(zernioAccountSchema) }).transform((val) => val.accounts),
+  z.object({ data: z.array(zernioAccountSchema) }).transform((val) => val.data),
+  z.object({ items: z.array(zernioAccountSchema) }).transform((val) => val.items),
 ]);
+
+export const zernioPhoneDetailsSchema = z
+  .object({
+    display_phone_number: z.string().min(1, 'display_phone_number é obrigatório'),
+    status: z.string().min(1, 'status é obrigatório'),
+    platform_type: z.string().min(1, 'platform_type é obrigatório'),
+    quality_rating: z.string().optional(),
+    verified_name: z.string().optional(),
+  })
+  .passthrough();
 
 export const zernioWhatsAppNumberInfoSchema = z
   .object({
-    phoneNumber: z.string().min(1, 'phoneNumber é obrigatório'),
-    status: z.string().optional(),
-    verifiedName: z.string().optional(),
-    qualityRating: z.string().optional(),
-    platform: z.string().optional(),
+    phone: zernioPhoneDetailsSchema,
+    waba: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
 
 export type ZernioWhatsAppNumberInfo = z.infer<typeof zernioWhatsAppNumberInfoSchema>;
 
 export const zernioGetWhatsAppNumberInfoResponseSchema = z.union([
-  z
-    .object({
-      whatsapp: zernioWhatsAppNumberInfoSchema,
-    })
-    .transform((val) => val.whatsapp),
-  z
-    .object({
-      channel: zernioWhatsAppNumberInfoSchema,
-    })
-    .transform((val) => val.channel),
-  z
-    .object({
-      data: zernioWhatsAppNumberInfoSchema,
-    })
-    .transform((val) => val.data),
   zernioWhatsAppNumberInfoSchema,
+  z.object({ data: zernioWhatsAppNumberInfoSchema }).transform((val) => val.data),
 ]);
+
+export interface ZernioListAccountsParams {
+  profileId: string;
+  platform?: string;
+  page: number;
+  limit: number;
+}
+
+export const ZERNIO_KNOWN_CALLBACK_ERRORS = [
+  'connection_cancelled',
+  'session_expired',
+  'payment_required',
+  'one_whatsapp_per_profile',
+  'whatsapp_number_already_connected',
+  'whatsapp_number_pinned_to_profile',
+  'whatsapp_error',
+] as const;
+
+export type ZernioKnownCallbackError = (typeof ZERNIO_KNOWN_CALLBACK_ERRORS)[number];
+
+export function mapZernioCallbackError(rawError?: string | null): string {
+  if (!rawError) return 'failed';
+  const clean = rawError.trim().toLowerCase();
+  if ((ZERNIO_KNOWN_CALLBACK_ERRORS as readonly string[]).includes(clean)) {
+    return clean;
+  }
+  return 'provider_error';
+}
 
 // --- Request DTOs & Options ---
 

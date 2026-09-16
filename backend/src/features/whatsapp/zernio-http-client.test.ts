@@ -886,76 +886,143 @@ describe('ZernioHttpClient Suite (Phase 7D2-D2)', () => {
       });
     });
 
-    describe('getAccount', () => {
-      it('calls GET accounts/:accountId with properly encoded URL', async () => {
+    describe('listAccounts', () => {
+      it('calls GET accounts?profileId=...&platform=whatsapp&page=1&limit=2 with properly encoded URL', async () => {
         fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
           ok: true,
           status: 200,
           headers: new Headers({ 'content-type': 'application/json' }),
           text: async () =>
             JSON.stringify({
-              account: {
-                _id: 'acc_wa_999',
-                profileId: 'prof_101',
-                platform: 'whatsapp',
-                status: 'connected',
-                username: 'ministry_line',
-              },
+              accounts: [
+                {
+                  _id: 'acc_wa_999',
+                  profileId: 'prof_101',
+                  platform: 'whatsapp',
+                  status: 'connected',
+                  username: 'ministry_line',
+                },
+              ],
             }),
         } as any);
 
-        const account = await client.getAccount('acc_wa_999');
+        const accounts = await client.listAccounts({
+          profileId: 'prof_101',
+          platform: 'whatsapp',
+          page: 1,
+          limit: 2,
+        });
 
         expect(fetchSpy).toHaveBeenCalledTimes(1);
-        const callUrl = fetchSpy.mock.calls[0][0];
-        expect(callUrl).toContain('accounts/acc_wa_999');
-        expect(account._id).toBe('acc_wa_999');
-        expect(account.profileId).toBe('prof_101');
-        expect(account.platform).toBe('whatsapp');
-        expect(account.status).toBe('connected');
+        const callUrl = new URL(fetchSpy.mock.calls[0][0]);
+        expect(callUrl.pathname).toContain('accounts');
+        expect(callUrl.searchParams.get('profileId')).toBe('prof_101');
+        expect(callUrl.searchParams.get('platform')).toBe('whatsapp');
+        expect(callUrl.searchParams.get('page')).toBe('1');
+        expect(callUrl.searchParams.get('limit')).toBe('2');
+
+        expect(accounts).toHaveLength(1);
+        expect(accounts[0]._id).toBe('acc_wa_999');
+        expect(accounts[0].profileId).toBe('prof_101');
       });
 
-      it('rejects empty accountId or slash in accountId with 400', async () => {
-        await expect(client.getAccount('   ')).rejects.toThrow('ZERNIO_INVALID_ACCOUNT_ID');
-        await expect(client.getAccount('acc/dangerous')).rejects.toThrow('ZERNIO_INVALID_ACCOUNT_ID');
-      });
-
-      it('handles 404 not found error correctly', async () => {
+      it('normalizes account when profileId is returned as an object { _id, name }', async () => {
         fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-          ok: false,
-          status: 404,
+          ok: true,
+          status: 200,
           headers: new Headers({ 'content-type': 'application/json' }),
           text: async () =>
-            JSON.stringify({
-              type: 'not_found',
-              error: 'Account not found',
-            }),
+            JSON.stringify([
+              {
+                _id: 'acc_wa_obj',
+                profileId: {
+                  _id: 'prof_obj_123',
+                  name: 'Ministry Profile',
+                },
+                platform: 'whatsapp',
+                status: 'connected',
+              },
+            ]),
         } as any);
 
-        try {
-          await client.getAccount('acc_missing');
-          expect.unreachable('Should have thrown');
-        } catch (err: any) {
-          expect(err).toBeInstanceOf(ZernioError);
-          expect(err.kind).toBe('NOT_FOUND');
-          expect(err.statusCode).toBe(404);
-        }
+        const accounts = await client.listAccounts({
+          profileId: 'prof_obj_123',
+          platform: 'whatsapp',
+          page: 1,
+          limit: 2,
+        });
+
+        expect(accounts).toHaveLength(1);
+        expect(accounts[0]._id).toBe('acc_wa_obj');
+        expect(accounts[0].profileId).toEqual({
+          _id: 'prof_obj_123',
+          name: 'Ministry Profile',
+        });
+      });
+
+      it('rejects empty profileId with 400', async () => {
+        await expect(
+          client.listAccounts({
+            profileId: '   ',
+            page: 1,
+            limit: 2,
+          })
+        ).rejects.toThrow('ZERNIO_INVALID_PROFILE_ID');
+      });
+
+      it('rejects invalid pagination (page/limit missing or non-positive) with 400', async () => {
+        await expect(
+          client.listAccounts({
+            profileId: 'prof_1',
+            page: 0,
+            limit: 2,
+          })
+        ).rejects.toThrow('ZERNIO_INVALID_PAGINATION');
+
+        await expect(
+          client.listAccounts({
+            profileId: 'prof_1',
+            page: 1,
+            limit: 0,
+          })
+        ).rejects.toThrow('ZERNIO_INVALID_PAGINATION');
+      });
+
+      it('rejects malformed list response with 502 ZERNIO_PROTOCOL_ERROR', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () => JSON.stringify({ notAccounts: 'malformed' }),
+        } as any);
+
+        await expect(
+          client.listAccounts({
+            profileId: 'prof_1',
+            page: 1,
+            limit: 2,
+          })
+        ).rejects.toThrow('ZERNIO_PROTOCOL_ERROR');
       });
     });
 
     describe('getWhatsAppNumberInfo', () => {
-      it('calls GET accounts/:accountId/whatsapp and returns normalized phone number', async () => {
+      it('calls GET whatsapp/number-info?accountId=... and returns normalized phone details', async () => {
         fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
           ok: true,
           status: 200,
           headers: new Headers({ 'content-type': 'application/json' }),
           text: async () =>
             JSON.stringify({
-              whatsapp: {
-                phoneNumber: '+5511999998888',
-                status: 'connected',
-                verifiedName: 'LouvAIO Ministry',
-                qualityRating: 'GREEN',
+              phone: {
+                display_phone_number: '+55 11 99999-8888',
+                status: 'CONNECTED',
+                platform_type: 'CLOUD_API',
+                quality_rating: 'GREEN',
+              },
+              waba: {
+                id: 'waba_12345',
+                name: 'LouvAIO WABA',
               },
             }),
         } as any);
@@ -963,11 +1030,18 @@ describe('ZernioHttpClient Suite (Phase 7D2-D2)', () => {
         const info = await client.getWhatsAppNumberInfo('acc_wa_999');
 
         expect(fetchSpy).toHaveBeenCalledTimes(1);
-        const callUrl = fetchSpy.mock.calls[0][0];
-        expect(callUrl).toContain('accounts/acc_wa_999/whatsapp');
-        expect(info.phoneNumber).toBe('+5511999998888');
-        expect(info.status).toBe('connected');
-        expect(info.verifiedName).toBe('LouvAIO Ministry');
+        const callUrl = new URL(fetchSpy.mock.calls[0][0]);
+        expect(callUrl.pathname).toContain('whatsapp/number-info');
+        expect(callUrl.searchParams.get('accountId')).toBe('acc_wa_999');
+        expect(info.phone.display_phone_number).toBe('+55 11 99999-8888');
+        expect(info.phone.status).toBe('CONNECTED');
+        expect(info.phone.platform_type).toBe('CLOUD_API');
+        expect(info.waba?.id).toBe('waba_12345');
+      });
+
+      it('rejects empty accountId or slash in accountId with 400', async () => {
+        await expect(client.getWhatsAppNumberInfo('   ')).rejects.toThrow('ZERNIO_INVALID_ACCOUNT_ID');
+        await expect(client.getWhatsAppNumberInfo('acc/dangerous')).rejects.toThrow('ZERNIO_INVALID_ACCOUNT_ID');
       });
 
       it('rejects invalid E.164 phone number returned by Zernio with 502', async () => {
@@ -977,7 +1051,11 @@ describe('ZernioHttpClient Suite (Phase 7D2-D2)', () => {
           headers: new Headers({ 'content-type': 'application/json' }),
           text: async () =>
             JSON.stringify({
-              phoneNumber: 'not-a-phone-number',
+              phone: {
+                display_phone_number: 'not-a-phone-number',
+                status: 'CONNECTED',
+                platform_type: 'CLOUD_API',
+              },
             }),
         } as any);
 

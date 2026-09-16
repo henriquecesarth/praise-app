@@ -349,7 +349,7 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
       expect(res.sessionId).toBeDefined();
       expect(res.connectionId).toBeDefined();
       expect(res.stateNonce).toBeDefined();
-      expect(res.stateNonce.length).toBe(64); // 32 bytes hex
+      expect(res.stateNonce!.length).toBe(64); // 32 bytes hex
       expect(res.expiresAt).toBeDefined();
 
       // Check pending connection in store
@@ -369,7 +369,7 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
       expect(session?.actor_user_id).toBe(adminUserId);
 
       // Verify SHA-256 state_nonce_hash
-      const expectedHash = crypto.createHash('sha256').update(res.stateNonce).digest('hex');
+      const expectedHash = crypto.createHash('sha256').update(res.stateNonce!).digest('hex');
       expect(session?.state_nonce_hash).toBe(expectedHash);
     });
 
@@ -501,7 +501,7 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
       });
       activeSessionId = started.sessionId;
       activeConnectionId = started.connectionId;
-      activeRawNonce = started.stateNonce;
+      activeRawNonce = started.stateNonce!;
     });
 
     it('Case 1: Session not found or expired fails with 400 ONBOARDING_SESSION_EXPIRED', async () => {

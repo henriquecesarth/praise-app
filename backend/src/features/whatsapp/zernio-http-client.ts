@@ -12,7 +12,8 @@ import {
   zernioConnectUrlResponseSchema,
   validateZernioAuthUrl,
   ZernioAccount,
-  zernioGetAccountResponseSchema,
+  zernioListAccountsResponseSchema,
+  ZernioListAccountsParams,
   ZernioWhatsAppNumberInfo,
   zernioGetWhatsAppNumberInfoResponseSchema,
   zernioCreateProfileResponseSchema,
@@ -504,33 +505,49 @@ export class ZernioHttpClient {
     return parsed.data;
   }
 
-  async getAccount(
-    accountId: string,
+  async listAccounts(
+    params: ZernioListAccountsParams,
     options?: ZernioRequestOptions
-  ): Promise<ZernioAccount> {
-    const cleanId = accountId?.trim();
-    if (!cleanId) {
-      throw new AppError(400, 'ZERNIO_INVALID_ACCOUNT_ID: accountId não pode ser vazio.', {
-        code: 'ZERNIO_INVALID_ACCOUNT_ID',
-      });
-    }
-    if (cleanId.includes('/')) {
-      throw new AppError(400, 'ZERNIO_INVALID_ACCOUNT_ID: accountId não pode conter barra ("/").', {
-        code: 'ZERNIO_INVALID_ACCOUNT_ID',
+  ): Promise<ZernioAccount[]> {
+    const cleanProfileId = params.profileId?.trim();
+    if (!cleanProfileId) {
+      throw new AppError(400, 'ZERNIO_INVALID_PROFILE_ID: profileId não pode ser vazio.', {
+        code: 'ZERNIO_INVALID_PROFILE_ID',
       });
     }
 
-    const raw = await this.request<unknown>(`accounts/${encodeURIComponent(cleanId)}`, {
+    if (
+      typeof params.page !== 'number' ||
+      params.page < 1 ||
+      typeof params.limit !== 'number' ||
+      params.limit < 1
+    ) {
+      throw new AppError(
+        400,
+        'ZERNIO_INVALID_PAGINATION: page e limit devem ser fornecidos juntos e maiores que zero.',
+        {
+          code: 'ZERNIO_INVALID_PAGINATION',
+        }
+      );
+    }
+
+    const raw = await this.request<unknown>('accounts', {
       method: 'GET',
+      query: {
+        profileId: cleanProfileId,
+        platform: params.platform || 'whatsapp',
+        page: params.page,
+        limit: params.limit,
+      },
       ...options,
     });
 
-    const parsed = zernioGetAccountResponseSchema.safeParse(raw);
+    const parsed = zernioListAccountsResponseSchema.safeParse(raw);
     if (!parsed.success) {
       throw new ZernioError({
         statusCode: 502,
         kind: 'TRANSIENT_PROVIDER_ERROR',
-        message: 'ZERNIO_PROTOCOL_ERROR: Resposta de consulta de conta malformada pelo provedor Zernio.',
+        message: 'ZERNIO_PROTOCOL_ERROR: Resposta de listagem de contas malformada pelo provedor Zernio.',
         providerCode: 'ZERNIO_PROTOCOL_ERROR',
       });
     }
@@ -554,8 +571,11 @@ export class ZernioHttpClient {
       });
     }
 
-    const raw = await this.request<unknown>(`accounts/${encodeURIComponent(cleanId)}/whatsapp`, {
+    const raw = await this.request<unknown>('whatsapp/number-info', {
       method: 'GET',
+      query: {
+        accountId: cleanId,
+      },
       ...options,
     });
 
@@ -571,7 +591,7 @@ export class ZernioHttpClient {
     }
 
     try {
-      normalizeToE164(parsed.data.phoneNumber);
+      normalizeToE164(parsed.data.phone.display_phone_number);
     } catch {
       throw new ZernioError({
         statusCode: 502,

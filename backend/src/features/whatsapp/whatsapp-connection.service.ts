@@ -46,7 +46,13 @@ import {
 } from './whatsapp.types';
 import { OrganizationRecord } from '../organizations/organization.types';
 import { ZernioHttpClient } from './zernio-http-client';
-import { ZernioAccount, ZernioWhatsAppNumberInfo } from './zernio.types';
+import {
+  ZernioAccount,
+  ZernioWhatsAppNumberInfo,
+  ZERNIO_HOSTED_ONBOARDING_SESSION_TTL_MS,
+  getZernioAccountProfileId,
+  mapZernioCallbackError,
+} from './zernio.types';
 
 export class WhatsAppConnectionService {
   constructor(
@@ -713,7 +719,7 @@ export class WhatsAppConnectionService {
     const rawToken = crypto.randomBytes(32).toString('hex');
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
     const sessionId = `wabs_z_${tokenHash}`;
-    const sessionExpiresAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
+    const sessionExpiresAt = new Date(now.getTime() + ZERNIO_HOSTED_ONBOARDING_SESSION_TTL_MS).toISOString();
     const retentionExpiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
     let targetConnectionId: string;
@@ -940,7 +946,6 @@ export class WhatsAppConnectionService {
     return {
       sessionId,
       connectionId: targetConnectionId,
-      stateNonce: rawToken,
       expiresAt: sessionExpiresAt,
       authUrl: connectRes.authUrl,
       provider: 'zernio',
@@ -971,10 +976,18 @@ export class WhatsAppConnectionService {
       return `${webAppBase}/whatsapp/callback?status=invalid_token`;
     }
 
+    const candidateAccountId = query?.accountId?.trim();
+
     // Idempotent replay check if already consumed
     if (session.status === 'consumed') {
       const conn = await this.connectionRepo.getConnectionById(session.connection_id);
       if (conn && conn.status === 'connected') {
+        if (
+          (candidateAccountId && conn.provider_account_id && candidateAccountId !== conn.provider_account_id) ||
+          (query?.profileId && conn.provider_profile_id && query.profileId.trim() !== conn.provider_profile_id)
+        ) {
+          return `${webAppBase}/whatsapp/callback?status=identity_conflict`;
+        }
         return `${webAppBase}/whatsapp/callback?status=success&connectionId=${encodeURIComponent(conn.id)}`;
       }
       return `${webAppBase}/whatsapp/callback?status=session_consumed`;
@@ -997,22 +1010,20 @@ export class WhatsAppConnectionService {
     // Check failure hints in query
     if (
       query.connection_cancelled === 'true' ||
-      query.connection_cancelled === '1' ||
-      query.error ||
-      query.error_code
+      query.connection_cancelled === '1'
     ) {
-      const failureStatus =
-        query.error ||
-        query.error_code ||
-        (query.connection_cancelled === 'true' || query.connection_cancelled === '1'
-          ? 'connection_cancelled'
-          : 'failed');
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      return `${webAppBase}/whatsapp/callback?status=connection_cancelled`;
+    }
+
+    if (query.error || query.error_code) {
+      const rawError = query.error || query.error_code;
+      const failureStatus = mapZernioCallbackError(rawError);
       await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
       return `${webAppBase}/whatsapp/callback?status=${encodeURIComponent(failureStatus)}`;
     }
 
     // Candidate account validation
-    const candidateAccountId = query.accountId?.trim();
     if (!candidateAccountId || candidateAccountId.includes('/')) {
       await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
       return `${webAppBase}/whatsapp/callback?status=missing_account_id`;
@@ -1029,18 +1040,43 @@ export class WhatsAppConnectionService {
       return `${webAppBase}/whatsapp/callback?status=invalid_connection_state`;
     }
 
-    // Step 1: Server-side account verification via GET /v1/accounts/:accountId
-    let account: ZernioAccount;
+    // Prechecks: fail-fast if query.connected !== 'whatsapp' or query.profileId !== conn.provider_profile_id
+    if (query.connected && query.connected.trim().toLowerCase() !== 'whatsapp') {
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      return `${webAppBase}/whatsapp/callback?status=account_verification_failed`;
+    }
+    if (query.profileId && query.profileId.trim() !== conn.provider_profile_id) {
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      return `${webAppBase}/whatsapp/callback?status=account_verification_failed`;
+    }
+
+    // Step 1: Server-side account verification via GET /v1/accounts?profileId=...&platform=whatsapp&page=1&limit=2
+    let matchingAccounts: ZernioAccount[];
     try {
-      account = await this.zernioClient.getAccount(candidateAccountId);
+      matchingAccounts = await this.zernioClient.listAccounts({
+        profileId: conn.provider_profile_id,
+        platform: 'whatsapp',
+        page: 1,
+        limit: 2,
+      });
     } catch {
       await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
       return `${webAppBase}/whatsapp/callback?status=account_verification_failed`;
     }
 
+    // Require exactly 1 match whose _id === candidateAccountId and whose normalized profileId equals conn.provider_profile_id
+    const matched = matchingAccounts.filter(
+      (acc) =>
+        acc._id === candidateAccountId &&
+        getZernioAccountProfileId(acc) === conn.provider_profile_id
+    );
+    if (matched.length !== 1) {
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      return `${webAppBase}/whatsapp/callback?status=account_verification_failed`;
+    }
+
+    const account = matched[0];
     if (
-      account._id !== candidateAccountId ||
-      account.profileId !== conn.provider_profile_id ||
       account.platform.toLowerCase() !== 'whatsapp' ||
       (account.status !== 'connected' && account.status !== 'active')
     ) {
@@ -1048,7 +1084,7 @@ export class WhatsAppConnectionService {
       return `${webAppBase}/whatsapp/callback?status=account_verification_failed`;
     }
 
-    // Step 2: Server-side number verification via GET /v1/accounts/:accountId/whatsapp
+    // Step 2: Server-side number verification via GET /v1/whatsapp/number-info?accountId=...
     let numberInfo: ZernioWhatsAppNumberInfo;
     try {
       numberInfo = await this.zernioClient.getWhatsAppNumberInfo(candidateAccountId);
@@ -1057,57 +1093,82 @@ export class WhatsAppConnectionService {
       return `${webAppBase}/whatsapp/callback?status=number_verification_failed`;
     }
 
+    if (
+      !numberInfo.phone ||
+      numberInfo.phone.status?.toUpperCase() !== 'CONNECTED' ||
+      numberInfo.phone.platform_type?.toUpperCase() !== 'CLOUD_API'
+    ) {
+      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      return `${webAppBase}/whatsapp/callback?status=number_verification_failed`;
+    }
+
     let canonicalPhone: string;
     try {
-      canonicalPhone = normalizeToE164(numberInfo.phoneNumber);
+      canonicalPhone = normalizeToE164(numberInfo.phone.display_phone_number);
     } catch {
       await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
       return `${webAppBase}/whatsapp/callback?status=invalid_phone_number`;
     }
 
-    if (numberInfo.status && numberInfo.status.toLowerCase() === 'disconnected') {
-      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
-      return `${webAppBase}/whatsapp/callback?status=number_verification_failed`;
-    }
+    // Step 3, 4, 5: Replay / Idempotency convergence
+    const isAlreadyConnectedWithSameIdentity =
+      conn.status === 'connected' &&
+      conn.provider_account_id === candidateAccountId &&
+      conn.phone_number === canonicalPhone;
 
-    // Step 3: Atomic Materialization of Zernio Provider Identity
-    try {
-      await this.connectionRepo.materializeZernioProviderIdentity({
-        organizationId: conn.organization_id,
-        connectionId: conn.id,
-        providerProfileId: conn.provider_profile_id,
-        providerAccountId: candidateAccountId,
-        phoneNumber: canonicalPhone,
-      });
-    } catch (err: any) {
-      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
-      if (
-        err?.code === 'ZERNIO_ACCOUNT_ALREADY_REGISTERED' ||
-        err?.code === 'PROVIDER_PHONE_ALREADY_REGISTERED' ||
-        err?.statusCode === 409
-      ) {
+    if (!isAlreadyConnectedWithSameIdentity) {
+      if (conn.status === 'connected') {
+        await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
         return `${webAppBase}/whatsapp/callback?status=identity_conflict`;
       }
-      return `${webAppBase}/whatsapp/callback?status=materialization_failed`;
-    }
 
-    // Step 4: Transition status: pending -> connecting -> connected
-    try {
-      await this.transitionConnectionStatus(conn.organization_id, conn.id, 'connecting');
-      await this.transitionConnectionStatus(conn.organization_id, conn.id, 'connected');
-    } catch {
-      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
-      return `${webAppBase}/whatsapp/callback?status=status_transition_failed`;
+      // Step 3: Atomic Materialization of Zernio Provider Identity
+      try {
+        await this.connectionRepo.materializeZernioProviderIdentity({
+          organizationId: conn.organization_id,
+          connectionId: conn.id,
+          providerProfileId: conn.provider_profile_id,
+          providerAccountId: candidateAccountId,
+          phoneNumber: canonicalPhone,
+        });
+      } catch (err: any) {
+        await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+        if (
+          err?.code === 'ZERNIO_ACCOUNT_ALREADY_REGISTERED' ||
+          err?.code === 'PROVIDER_PHONE_ALREADY_REGISTERED' ||
+          err?.statusCode === 409
+        ) {
+          return `${webAppBase}/whatsapp/callback?status=identity_conflict`;
+        }
+        return `${webAppBase}/whatsapp/callback?status=materialization_failed`;
+      }
+
+      // Step 4: Transition status: pending -> connecting -> connected
+      try {
+        if (conn.status === 'pending') {
+          await this.transitionConnectionStatus(conn.organization_id, conn.id, 'connecting');
+        }
+        await this.transitionConnectionStatus(conn.organization_id, conn.id, 'connected');
+      } catch {
+        await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+        return `${webAppBase}/whatsapp/callback?status=status_transition_failed`;
+      }
     }
 
     // Step 5: Consume onboarding session
-    const nowIso = new Date().toISOString();
-    const retentionExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-    await this.onboardingSessionRepo.updateSession(session.id, {
-      status: 'consumed',
-      consumed_at: nowIso,
-      retention_expires_at: retentionExpiresAt,
-    });
+    try {
+      const nowIso = new Date().toISOString();
+      const retentionExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      await this.onboardingSessionRepo.updateSession(session.id, {
+        status: 'consumed',
+        consumed_at: nowIso,
+        retention_expires_at: retentionExpiresAt,
+      });
+    } catch {
+      // If session finalization fails after connection is connected, do NOT mark session failed;
+      // leave it active/replayable and return finalization_failed.
+      return `${webAppBase}/whatsapp/callback?status=finalization_failed`;
+    }
 
     return `${webAppBase}/whatsapp/callback?status=success&connectionId=${encodeURIComponent(conn.id)}`;
   }

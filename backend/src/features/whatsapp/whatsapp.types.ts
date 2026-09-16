@@ -347,7 +347,7 @@ export type StartWhatsAppOnboardingInput = z.infer<typeof startWhatsAppOnboardin
 export interface StartWhatsAppOnboardingResponseDto {
   sessionId: string;
   connectionId: string;
-  stateNonce: string; // raw 32-byte hex entropy returned strictly once
+  stateNonce?: string; // raw 32-byte hex entropy returned strictly once for Meta embedded signup
   fbAppId?: string;
   configId?: string;
   expiresAt: string;

@@ -143,7 +143,11 @@ describe('Zernio Hosted Onboarding & Verified Callback Integration (Phase 7D2-D4
       expect(result.sessionId).toMatch(/^wabs_z_[0-9a-f]{64}$/);
       expect(result.authUrl).toBe('https://zernio.com/connect/whatsapp?session=sess_123');
       expect(result.mode).toBe('start');
-      expect(result.stateNonce).toHaveLength(64);
+      expect(result.stateNonce).toBeUndefined();
+      const expectedMinExpiresAt = Date.now() + 59 * 60 * 1000;
+      const expectedMaxExpiresAt = Date.now() + 61 * 60 * 1000;
+      expect(new Date(result.expiresAt).getTime()).toBeGreaterThanOrEqual(expectedMinExpiresAt);
+      expect(new Date(result.expiresAt).getTime()).toBeLessThanOrEqual(expectedMaxExpiresAt);
 
       // Verify connection in Firestore
       const conn = await connectionRepo.getConnectionById(result.connectionId);
@@ -393,7 +397,7 @@ describe('Zernio Hosted Onboarding & Verified Callback Integration (Phase 7D2-D4
         actor_user_id: adminUserId,
         state_nonce_hash: tokenHash,
         status: 'active',
-        expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+        expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       });
@@ -403,34 +407,41 @@ describe('Zernio Hosted Onboarding & Verified Callback Integration (Phase 7D2-D4
 
       const fakeFetch = vi.fn(async (url: string) => {
         const urlObj = new URL(url);
-        if (urlObj.pathname.endsWith(`/accounts/${candidateAccountId}`)) {
+        if (urlObj.pathname.includes('/accounts')) {
           return {
             ok: true,
             status: 200,
             headers: new Headers({ 'content-type': 'application/json' }),
             text: async () =>
               JSON.stringify({
-                account: {
-                  _id: candidateAccountId,
-                  profileId: boundProfileId, // MATCHES!
-                  platform: 'whatsapp',
-                  status: 'connected',
-                  username: 'ministry_praise',
-                },
+                accounts: [
+                  {
+                    _id: candidateAccountId,
+                    profileId: boundProfileId, // MATCHES!
+                    platform: 'whatsapp',
+                    status: 'connected',
+                    username: 'ministry_praise',
+                  },
+                ],
               }),
           } as any;
         }
-        if (urlObj.pathname.endsWith(`/accounts/${candidateAccountId}/whatsapp`)) {
+        if (urlObj.pathname.includes('/whatsapp/number-info')) {
           return {
             ok: true,
             status: 200,
             headers: new Headers({ 'content-type': 'application/json' }),
             text: async () =>
               JSON.stringify({
-                whatsapp: {
-                  phoneNumber: candidatePhone,
-                  status: 'connected',
-                  verifiedName: 'LouvAIO Ministry',
+                phone: {
+                  display_phone_number: candidatePhone,
+                  status: 'CONNECTED',
+                  platform_type: 'CLOUD_API',
+                  quality_rating: 'GREEN',
+                },
+                waba: {
+                  id: 'waba_happy_1',
+                  name: 'LouvAIO Ministry',
                 },
               }),
           } as any;
@@ -540,6 +551,193 @@ describe('Zernio Hosted Onboarding & Verified Callback Integration (Phase 7D2-D4
 
       const expectedPrefix = (config.webAppUrl || 'http://localhost:5173').replace(/\/+$/, '');
       expect(redirectUrl).toBe(`${expectedPrefix}/whatsapp/callback?status=success&connectionId=${conn.id}`);
+    });
+
+    it('redirects to status=identity_conflict when consumed session is replayed with a different accountId', async () => {
+      const orgId = uniqueId('org');
+      const rawToken = crypto.randomBytes(32).toString('hex');
+      const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+      const sessionId = `wabs_z_${tokenHash}`;
+
+      const conn = await connectionRepo.createConnection({
+        organization_id: orgId,
+        display_name: 'Already Connected Line',
+        created_by_user_id: 'user',
+        provider: 'zernio',
+        status: 'connected',
+        provider_profile_id: 'prof_done',
+        provider_account_id: 'acc_done',
+        phone_number: '+5511999990000',
+      });
+
+      await db.collection('whatsapp_onboarding_sessions').doc(sessionId).set({
+        id: sessionId,
+        organization_id: orgId,
+        connection_id: conn.id,
+        actor_user_id: 'user',
+        state_nonce_hash: tokenHash,
+        status: 'consumed',
+        consumed_at: new Date().toISOString(),
+        expires_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      const service = new WhatsAppConnectionService(
+        connectionRepo,
+        undefined,
+        claimRepo,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        sessionRepo
+      );
+
+      const redirectUrl = await service.handleZernioCallback({
+        token: rawToken,
+        accountId: 'acc_DIFFERENT_CONFLICT',
+      });
+
+      const expectedPrefix = (config.webAppUrl || 'http://localhost:5173').replace(/\/+$/, '');
+      expect(redirectUrl).toBe(`${expectedPrefix}/whatsapp/callback?status=identity_conflict`);
+    });
+
+    it('handles session finalization failure by leaving session active and returns finalization_failed, then retry converges to success', async () => {
+      const orgId = uniqueId('org');
+      const ministryId = uniqueId('min');
+      const adminUserId = uniqueId('user_admin');
+
+      await setupTestOrganization(orgId, ministryId, adminUserId);
+
+      const rawToken = crypto.randomBytes(32).toString('hex');
+      const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+      const sessionId = `wabs_z_${tokenHash}`;
+
+      const boundProfileId = 'prof_bound_failinj';
+      const conn = await connectionRepo.createConnection({
+        organization_id: orgId,
+        display_name: 'Finalization Failure Line',
+        created_by_user_id: adminUserId,
+        provider: 'zernio',
+        status: 'pending',
+        provider_profile_id: boundProfileId,
+        current_onboarding_session_id: sessionId,
+      });
+
+      await db.collection('whatsapp_onboarding_sessions').doc(sessionId).set({
+        id: sessionId,
+        organization_id: orgId,
+        connection_id: conn.id,
+        actor_user_id: adminUserId,
+        state_nonce_hash: tokenHash,
+        status: 'active',
+        expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      const candidateAccountId = uniqueId('acc_failinj');
+      const candidatePhone = `+55119${Math.floor(10000000 + Math.random() * 90000000)}`;
+
+      const fakeFetch = vi.fn(async (url: string) => {
+        const urlObj = new URL(url);
+        if (urlObj.pathname.includes('/accounts')) {
+          return {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            text: async () =>
+              JSON.stringify({
+                accounts: [
+                  {
+                    _id: candidateAccountId,
+                    profileId: boundProfileId,
+                    platform: 'whatsapp',
+                    status: 'connected',
+                  },
+                ],
+              }),
+          } as any;
+        }
+        if (urlObj.pathname.includes('/whatsapp/number-info')) {
+          return {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            text: async () =>
+              JSON.stringify({
+                phone: {
+                  display_phone_number: candidatePhone,
+                  status: 'CONNECTED',
+                  platform_type: 'CLOUD_API',
+                },
+                waba: { id: 'waba_failinj' },
+              }),
+          } as any;
+        }
+        return { ok: false, status: 404, text: async () => 'Not found' } as any;
+      });
+
+      const zernioClient = new ZernioHttpClient({ apiKey: 'k', fetchFn: fakeFetch as any });
+      const service = new WhatsAppConnectionService(
+        connectionRepo,
+        undefined,
+        claimRepo,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        sessionRepo,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        zernioClient
+      );
+
+      // Inject transient failure into updateSession during Step 5
+      const realUpdateSession = sessionRepo.updateSession.bind(sessionRepo);
+      let injectionActive = true;
+      vi.spyOn(sessionRepo, 'updateSession').mockImplementation(async (id: string, updates: any) => {
+        if (injectionActive && updates.status === 'consumed') {
+          throw new Error('Transient Firestore error during session consumption');
+        }
+        return realUpdateSession(id, updates);
+      });
+
+      const expectedPrefix = (config.webAppUrl || 'http://localhost:5173').replace(/\/+$/, '');
+
+      // First attempt: should fail at Step 5, session remains active (NOT failed)
+      const res1 = await service.handleZernioCallback({
+        token: rawToken,
+        accountId: candidateAccountId,
+        connected: 'whatsapp',
+      });
+      expect(res1).toBe(`${expectedPrefix}/whatsapp/callback?status=finalization_failed`);
+
+      // Verify connection IS connected in Firestore
+      const connAfterFirst = await connectionRepo.getConnectionById(conn.id);
+      expect(connAfterFirst?.status).toBe('connected');
+      expect(connAfterFirst?.provider_account_id).toBe(candidateAccountId);
+
+      // Verify session is still active (NOT marked failed)
+      const sessionAfterFirst = await sessionRepo.getSessionById(sessionId);
+      expect(sessionAfterFirst?.status).toBe('active');
+
+      // Now remove injection and retry with the same callback parameters
+      injectionActive = false;
+      const res2 = await service.handleZernioCallback({
+        token: rawToken,
+        accountId: candidateAccountId,
+        connected: 'whatsapp',
+      });
+      expect(res2).toBe(`${expectedPrefix}/whatsapp/callback?status=success&connectionId=${conn.id}`);
+
+      // Session is now consumed
+      const sessionAfterRetry = await sessionRepo.getSessionById(sessionId);
+      expect(sessionAfterRetry?.status).toBe('consumed');
     });
   });
 
@@ -684,6 +882,68 @@ describe('Zernio Hosted Onboarding & Verified Callback Integration (Phase 7D2-D4
       expect(redirect).toBe(`${expectedPrefix}/whatsapp/callback?status=one_whatsapp_per_profile`);
     });
 
+    it('maps unknown error code to provider_error and known error code to its normalized code', async () => {
+      const orgId = uniqueId('org');
+      const rawToken1 = crypto.randomBytes(32).toString('hex');
+      const tokenHash1 = crypto.createHash('sha256').update(rawToken1).digest('hex');
+      const sessionId1 = `wabs_z_${tokenHash1}`;
+
+      await db.collection('whatsapp_onboarding_sessions').doc(sessionId1).set({
+        id: sessionId1,
+        organization_id: orgId,
+        connection_id: 'wac_dummy',
+        actor_user_id: 'user',
+        state_nonce_hash: tokenHash1,
+        status: 'active',
+        expires_at: new Date(Date.now() + 600000).toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      const rawToken2 = crypto.randomBytes(32).toString('hex');
+      const tokenHash2 = crypto.createHash('sha256').update(rawToken2).digest('hex');
+      const sessionId2 = `wabs_z_${tokenHash2}`;
+
+      await db.collection('whatsapp_onboarding_sessions').doc(sessionId2).set({
+        id: sessionId2,
+        organization_id: orgId,
+        connection_id: 'wac_dummy',
+        actor_user_id: 'user',
+        state_nonce_hash: tokenHash2,
+        status: 'active',
+        expires_at: new Date(Date.now() + 600000).toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      const service = new WhatsAppConnectionService(
+        connectionRepo,
+        undefined,
+        claimRepo,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        sessionRepo
+      );
+
+      const expectedPrefix = (config.webAppUrl || 'http://localhost:5173').replace(/\/+$/, '');
+
+      // Unknown attacker payload maps to provider_error
+      const redirectUnknown = await service.handleZernioCallback({
+        token: rawToken1,
+        error: 'attacker_xss_<script>alert(1)</script>',
+      });
+      expect(redirectUnknown).toBe(`${expectedPrefix}/whatsapp/callback?status=provider_error`);
+
+      // Known provider error maps to normalized error string
+      const redirectKnown = await service.handleZernioCallback({
+        token: rawToken2,
+        error: 'WHATSAPP_NUMBER_ALREADY_CONNECTED',
+      });
+      expect(redirectKnown).toBe(`${expectedPrefix}/whatsapp/callback?status=whatsapp_number_already_connected`);
+    });
+
     it('redirects to status=missing_account_id when accountId is missing or has slash', async () => {
       const orgId = uniqueId('org');
       const rawToken1 = crypto.randomBytes(32).toString('hex');
@@ -776,12 +1036,14 @@ describe('Zernio Hosted Onboarding & Verified Callback Integration (Phase 7D2-D4
           headers: new Headers({ 'content-type': 'application/json' }),
           text: async () =>
             JSON.stringify({
-              account: {
-                _id: 'acc_target',
-                profileId: 'prof_DIFFERENT_ATTACK',
-                platform: 'whatsapp',
-                status: 'connected',
-              },
+              accounts: [
+                {
+                  _id: 'acc_target',
+                  profileId: 'prof_DIFFERENT_ATTACK',
+                  platform: 'whatsapp',
+                  status: 'connected',
+                },
+              ],
             }),
         } as any;
       });
@@ -852,12 +1114,14 @@ describe('Zernio Hosted Onboarding & Verified Callback Integration (Phase 7D2-D4
           headers: new Headers({ 'content-type': 'application/json' }),
           text: async () =>
             JSON.stringify({
-              account: {
-                _id: 'acc_target',
-                profileId: 'prof_expected',
-                platform: 'telegram',
-                status: 'connected',
-              },
+              accounts: [
+                {
+                  _id: 'acc_target',
+                  profileId: 'prof_expected',
+                  platform: 'telegram',
+                  status: 'connected',
+                },
+              ],
             }),
         } as any;
       });
@@ -886,6 +1150,101 @@ describe('Zernio Hosted Onboarding & Verified Callback Integration (Phase 7D2-D4
       });
 
       const expectedPrefix = (config.webAppUrl || 'http://localhost:5173').replace(/\/+$/, '');
+      expect(redirect).toBe(`${expectedPrefix}/whatsapp/callback?status=account_verification_failed`);
+    });
+
+    it('redirects to status=account_verification_failed when query connected parameter is not whatsapp', async () => {
+      const orgId = uniqueId('org');
+      const rawToken = crypto.randomBytes(32).toString('hex');
+      const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+      const sessionId = `wabs_z_${tokenHash}`;
+
+      const conn = await connectionRepo.createConnection({
+        organization_id: orgId,
+        display_name: 'Line Precheck Conn',
+        created_by_user_id: 'user',
+        provider: 'zernio',
+        status: 'pending',
+        provider_profile_id: 'prof_precheck',
+      });
+
+      await db.collection('whatsapp_onboarding_sessions').doc(sessionId).set({
+        id: sessionId,
+        organization_id: orgId,
+        connection_id: conn.id,
+        actor_user_id: 'user',
+        state_nonce_hash: tokenHash,
+        status: 'active',
+        expires_at: new Date(Date.now() + 600000).toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      const service = new WhatsAppConnectionService(
+        connectionRepo,
+        undefined,
+        claimRepo,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        sessionRepo
+      );
+
+      const expectedPrefix = (config.webAppUrl || 'http://localhost:5173').replace(/\/+$/, '');
+      const redirect = await service.handleZernioCallback({
+        token: rawToken,
+        accountId: 'acc_123',
+        connected: 'instagram',
+      });
+      expect(redirect).toBe(`${expectedPrefix}/whatsapp/callback?status=account_verification_failed`);
+    });
+
+    it('redirects to status=account_verification_failed when query profileId does not match conn.provider_profile_id', async () => {
+      const orgId = uniqueId('org');
+      const rawToken = crypto.randomBytes(32).toString('hex');
+      const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+      const sessionId = `wabs_z_${tokenHash}`;
+
+      const conn = await connectionRepo.createConnection({
+        organization_id: orgId,
+        display_name: 'Line Precheck Prof',
+        created_by_user_id: 'user',
+        provider: 'zernio',
+        status: 'pending',
+        provider_profile_id: 'prof_expected',
+      });
+
+      await db.collection('whatsapp_onboarding_sessions').doc(sessionId).set({
+        id: sessionId,
+        organization_id: orgId,
+        connection_id: conn.id,
+        actor_user_id: 'user',
+        state_nonce_hash: tokenHash,
+        status: 'active',
+        expires_at: new Date(Date.now() + 600000).toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      const service = new WhatsAppConnectionService(
+        connectionRepo,
+        undefined,
+        claimRepo,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        sessionRepo
+      );
+
+      const expectedPrefix = (config.webAppUrl || 'http://localhost:5173').replace(/\/+$/, '');
+      const redirect = await service.handleZernioCallback({
+        token: rawToken,
+        accountId: 'acc_123',
+        connected: 'whatsapp',
+        profileId: 'prof_mismatch_attack',
+      });
       expect(redirect).toBe(`${expectedPrefix}/whatsapp/callback?status=account_verification_failed`);
     });
   });
@@ -934,28 +1293,41 @@ describe('Zernio Hosted Onboarding & Verified Callback Integration (Phase 7D2-D4
 
       const fakeFetch = vi.fn(async (url: string) => {
         const urlObj = new URL(url);
-        if (urlObj.pathname.includes('/whatsapp')) {
+        if (urlObj.pathname.includes('/accounts')) {
           return {
             ok: true,
             status: 200,
             headers: new Headers({ 'content-type': 'application/json' }),
-            text: async () => JSON.stringify({ phoneNumber: '+5511999991111' }),
+            text: async () =>
+              JSON.stringify({
+                accounts: [
+                  {
+                    _id: existingAccountId,
+                    profileId: boundProfileId,
+                    platform: 'whatsapp',
+                    status: 'connected',
+                  },
+                ],
+              }),
           } as any;
         }
-        return {
-          ok: true,
-          status: 200,
-          headers: new Headers({ 'content-type': 'application/json' }),
-          text: async () =>
-            JSON.stringify({
-              account: {
-                _id: existingAccountId,
-                profileId: boundProfileId,
-                platform: 'whatsapp',
-                status: 'connected',
-              },
-            }),
-        } as any;
+        if (urlObj.pathname.includes('/whatsapp/number-info')) {
+          return {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            text: async () =>
+              JSON.stringify({
+                phone: {
+                  display_phone_number: '+5511999991111',
+                  status: 'CONNECTED',
+                  platform_type: 'CLOUD_API',
+                },
+                waba: { id: 'waba_coll_1' },
+              }),
+          } as any;
+        }
+        return { ok: false, status: 404, text: async () => 'Not found' } as any;
       });
 
       const zernioClient = new ZernioHttpClient({ apiKey: 'k', fetchFn: fakeFetch as any });
