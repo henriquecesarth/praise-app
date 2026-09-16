@@ -207,18 +207,16 @@ describe('ZernioProfileService & Lifecycle Suite (Phase 7D2-D2)', () => {
   });
 
   describe('409 Conflict Recovery & In-Flight Discrimination (Step 9)', () => {
-    describe('Case A: Idempotency Key Still In Flight', () => {
-      it('treats 409 without name conflict indicators as in-flight and throws retryable ZERNIO_OPERATION_IN_FLIGHT', async () => {
+    describe('Case A: Positive Idempotency In-Flight & Unknown 409 Discrimination', () => {
+      it('treats 409 with stable in-flight code as in-flight and throws retryable ZERNIO_OPERATION_IN_FLIGHT', async () => {
         fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
           ok: false,
           status: 409,
           headers: new Headers(),
           text: async () =>
             JSON.stringify({
-              error: {
-                code: 'idempotency_key_in_progress',
-                message: 'Request with this Idempotency-Key is currently being processed.',
-              },
+              code: 'idempotency_key_in_progress',
+              error: 'Request with this Idempotency-Key is currently being processed.',
             }),
         } as any);
 
@@ -236,16 +234,15 @@ describe('ZernioProfileService & Lifecycle Suite (Phase 7D2-D2)', () => {
         expect(fetchSpy).toHaveBeenCalledTimes(1);
       });
 
-      it('does not generate a new idempotency key or change profile name when in-flight 409 occurs', async () => {
+      it('treats 409 with request_in_progress code as in-flight without generating new key', async () => {
         fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
           ok: false,
           status: 409,
           headers: new Headers(),
           text: async () =>
             JSON.stringify({
-              error: {
-                message: 'Concurrent request in progress for key',
-              },
+              code: 'request_in_progress',
+              error: 'Still processing.',
             }),
         } as any);
 
@@ -254,6 +251,59 @@ describe('ZernioProfileService & Lifecycle Suite (Phase 7D2-D2)', () => {
         );
         const headers = fetchSpy.mock.calls[0][1].headers;
         expect(headers['Idempotency-Key']).toBe(expectedIdempotencyKey);
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('treats unknown 409 as generic non-retryable CONFLICT, performs ZERO lookups, and does NOT become in-flight', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+          ok: false,
+          status: 409,
+          headers: new Headers(),
+          text: async () =>
+            JSON.stringify({
+              code: 'profile_limit_exceeded',
+              error: 'Account profile limit reached.',
+            }),
+        } as any);
+
+        try {
+          await service.ensureProfileForConnection(connectionId);
+          expect.unreachable('Should have thrown');
+        } catch (err: any) {
+          expect(err).toBeInstanceOf(ZernioError);
+          expect(err.statusCode).toBe(409);
+          expect(err.kind).toBe('CONFLICT');
+          expect(err.details?.code).not.toBe('ZERNIO_OPERATION_IN_FLIGHT');
+          expect(err.details?.retryable).toBeUndefined();
+        }
+
+        // ZERO lookups performed
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('does NOT classify as in-flight solely because human-readable message contains words like "processing"', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+          ok: false,
+          status: 409,
+          headers: new Headers(),
+          text: async () =>
+            JSON.stringify({
+              error: 'Request still processing in queue.',
+            }),
+        } as any);
+
+        try {
+          await service.ensureProfileForConnection(connectionId);
+          expect.unreachable('Should have thrown');
+        } catch (err: any) {
+          expect(err).toBeInstanceOf(ZernioError);
+          expect(err.statusCode).toBe(409);
+          expect(err.kind).toBe('CONFLICT');
+          expect(err.details?.code).not.toBe('ZERNIO_OPERATION_IN_FLIGHT');
+        }
+
+        // Must NOT attempt name lookup or candidate recovery
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
       });
     });
 

@@ -127,22 +127,44 @@ export class ZernioHttpClient {
       // Non-JSON or empty response body
     }
 
-    const providerCode =
-      typeof body?.error?.code === 'string'
-        ? body.error.code
-        : typeof body?.code === 'string'
-        ? body.code
-        : typeof body?.error === 'string'
-        ? body.error
+    // Flat canonical envelope:
+    // { error: "...", type: "...", code: "...", param: "...", platform: "...", details: ..., platformError: ... }
+    // Fallback if legacy nested: { error: { message: "...", type: "...", code: "...", ... } }
+    const providerType =
+      typeof body?.type === 'string'
+        ? body.type
+        : typeof body?.error?.type === 'string'
+        ? body.error.type
         : undefined;
 
-    const providerMessage =
-      typeof body?.error?.message === 'string'
+    const providerCode =
+      typeof body?.code === 'string'
+        ? body.code
+        : typeof body?.error?.code === 'string'
+        ? body.error.code
+        : undefined;
+
+    const providerParam =
+      typeof body?.param === 'string'
+        ? body.param
+        : typeof body?.error?.param === 'string'
+        ? body.error.param
+        : undefined;
+
+    const providerPlatform =
+      typeof body?.platform === 'string'
+        ? body.platform
+        : typeof body?.error?.platform === 'string'
+        ? body.error.platform
+        : undefined;
+
+    const rawErrorMessage =
+      typeof body?.error === 'string'
+        ? body.error
+        : typeof body?.error?.message === 'string'
         ? body.error.message
         : typeof body?.message === 'string'
         ? body.message
-        : typeof body?.error === 'string'
-        ? body.error
         : res.statusText || 'Erro retornado pela API Zernio';
 
     let safeDetails: Record<string, unknown> | undefined;
@@ -157,31 +179,43 @@ export class ZernioHttpClient {
       }
     }
 
+    const rawPlatformError = body?.platformError;
+    if (rawPlatformError && typeof rawPlatformError === 'object' && !Array.isArray(rawPlatformError)) {
+      if (!safeDetails) safeDetails = {};
+      safeDetails.platformError = {
+        code: rawPlatformError.code,
+        error_subcode: rawPlatformError.error_subcode,
+        type: rawPlatformError.type,
+      };
+    }
+
     let kind: ZernioErrorKind;
     let safeMessage: string;
 
-    if (status === 401 || status === 403) {
-      kind = 'AUTH';
-      safeMessage = `ZERNIO_AUTH_ERROR: ${providerMessage}`;
+    if (providerType === 'platform_error') {
+      kind = 'PLATFORM_ERROR';
+      safeMessage = `ZERNIO_PLATFORM_ERROR: Falha na plataforma vinculada (${providerCode || providerPlatform || rawErrorMessage}).`;
+    } else if (status === 409 || providerCode === 'profilenameconflict') {
+      kind = 'CONFLICT';
+      safeMessage = `ZERNIO_CONFLICT: Conflito de recurso no provedor Zernio (${providerCode || rawErrorMessage}).`;
     } else if (status === 402) {
       kind = 'PAYMENT_REQUIRED';
-      safeMessage =
-        'ZERNIO_PAYMENT_REQUIRED: Provedor Zernio requer pagamento ou créditos de assinatura.';
-    } else if (status === 400 || status === 422) {
-      kind = 'VALIDATION';
-      safeMessage = `ZERNIO_VALIDATION_ERROR: ${providerMessage}`;
-    } else if (status === 404) {
-      kind = 'NOT_FOUND';
-      safeMessage = 'ZERNIO_NOT_FOUND: Recurso não encontrado no provedor Zernio.';
-    } else if (status === 409) {
-      kind = 'CONFLICT';
-      safeMessage = `ZERNIO_CONFLICT: Conflito de recurso no provedor Zernio (${providerCode || providerMessage}).`;
-    } else if (status === 429) {
+      safeMessage = 'ZERNIO_PAYMENT_REQUIRED: Provedor Zernio requer pagamento ou créditos de assinatura.';
+    } else if (providerType === 'authentication_error' || providerType === 'permission_error' || status === 401 || status === 403) {
+      kind = 'AUTH';
+      safeMessage = `ZERNIO_AUTH_ERROR: ${rawErrorMessage}`;
+    } else if (providerType === 'rate_limit_error' || status === 429) {
       kind = 'RATE_LIMITED';
       safeMessage = 'ZERNIO_RATE_LIMITED: Limite de requisições excedido no provedor Zernio.';
-    } else if (status >= 500 && status <= 599) {
+    } else if (providerType === 'not_found' || status === 404) {
+      kind = 'NOT_FOUND';
+      safeMessage = 'ZERNIO_NOT_FOUND: Recurso não encontrado no provedor Zernio.';
+    } else if (providerType === 'invalid_request_error' || status === 400 || status === 422) {
+      kind = 'VALIDATION';
+      safeMessage = `ZERNIO_VALIDATION_ERROR: ${rawErrorMessage}`;
+    } else if (providerType === 'api_error' || (status >= 500 && status <= 599)) {
       kind = 'TRANSIENT_PROVIDER_ERROR';
-      safeMessage = `ZERNIO_PROVIDER_UNAVAILABLE: Falha temporária do provedor Zernio (HTTP ${status}).`;
+      safeMessage = `ZERNIO_PROVIDER_UNAVAILABLE: Falha no serviço Zernio (HTTP ${status}${providerCode ? ': ' + providerCode : ''}).`;
     } else {
       kind = 'UNKNOWN_PROVIDER_ERROR';
       safeMessage = `ZERNIO_PROVIDER_ERROR: Erro inesperado do provedor Zernio (HTTP ${status}).`;
@@ -191,7 +225,10 @@ export class ZernioHttpClient {
       statusCode: status,
       kind,
       message: safeMessage,
+      providerType,
       providerCode,
+      providerParam,
+      providerPlatform,
       retryAfterSeconds,
       safeDetails,
     });

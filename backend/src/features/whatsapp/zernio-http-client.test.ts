@@ -362,19 +362,160 @@ describe('ZernioHttpClient Suite (Phase 7D2-D2)', () => {
       }
     });
 
-    it('extracts safeDetails.existingProfileId on 409 conflict responses', async () => {
+    it('parses flat canonical error envelope with top-level type, code, param, and platform', async () => {
+      fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        headers: new Headers(),
+        text: async () =>
+          JSON.stringify({
+            error: 'Invalid phone number parameter.',
+            type: 'invalid_request_error',
+            code: 'parameter_invalid',
+            param: 'phone_number',
+            platform: 'whatsapp',
+          }),
+      } as any);
+
+      try {
+        await client.request('flat-envelope-test');
+        expect.unreachable('Should have thrown');
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(ZernioError);
+        expect(err.statusCode).toBe(400);
+        expect(err.kind).toBe('VALIDATION');
+        expect(err.providerType).toBe('invalid_request_error');
+        expect(err.providerCode).toBe('parameter_invalid');
+        expect(err.providerParam).toBe('phone_number');
+        expect(err.providerPlatform).toBe('whatsapp');
+      }
+    });
+
+    it('classifies 502 + type=platform_error as PLATFORM_ERROR, preserving code and platform', async () => {
+      fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        headers: new Headers(),
+        text: async () =>
+          JSON.stringify({
+            error: 'Upstream Meta Cloud API rejected phone registration.',
+            type: 'platform_error',
+            code: 'meta_registration_rejected',
+            platform: 'meta',
+            platformError: {
+              code: 131031,
+              error_subcode: 460,
+              type: 'OAuthException',
+            },
+          }),
+      } as any);
+
+      try {
+        await client.request('platform-502');
+        expect.unreachable('Should have thrown');
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(ZernioError);
+        expect(err.statusCode).toBe(502);
+        expect(err.kind).toBe('PLATFORM_ERROR');
+        expect(err.providerType).toBe('platform_error');
+        expect(err.providerCode).toBe('meta_registration_rejected');
+        expect(err.providerPlatform).toBe('meta');
+        expect(err.safeDetails?.platformError).toEqual({
+          code: 131031,
+          error_subcode: 460,
+          type: 'OAuthException',
+        });
+      }
+    });
+
+    it('classifies 400 + type=platform_error as PLATFORM_ERROR (upstream platform input rejection)', async () => {
+      fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        headers: new Headers(),
+        text: async () =>
+          JSON.stringify({
+            error: 'Upstream platform rejected parameters.',
+            type: 'platform_error',
+            code: 'platform_input_rejected',
+            platform: 'meta',
+          }),
+      } as any);
+
+      try {
+        await client.request('platform-400');
+        expect.unreachable('Should have thrown');
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(ZernioError);
+        expect(err.statusCode).toBe(400);
+        expect(err.kind).toBe('PLATFORM_ERROR');
+        expect(err.providerType).toBe('platform_error');
+        expect(err.providerCode).toBe('platform_input_rejected');
+      }
+    });
+
+    it('classifies 500 + type=api_error as TRANSIENT_PROVIDER_ERROR', async () => {
+      fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        headers: new Headers(),
+        text: async () =>
+          JSON.stringify({
+            error: 'An internal API error occurred.',
+            type: 'api_error',
+            code: 'internal_error',
+          }),
+      } as any);
+
+      try {
+        await client.request('api-error-500');
+        expect.unreachable('Should have thrown');
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(ZernioError);
+        expect(err.statusCode).toBe(500);
+        expect(err.kind).toBe('TRANSIENT_PROVIDER_ERROR');
+        expect(err.providerType).toBe('api_error');
+        expect(err.providerCode).toBe('internal_error');
+      }
+    });
+
+    it('classifies 503 + type=api_error + code=temporarily_unavailable and preserves Retry-After', async () => {
+      fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        headers: new Headers({ 'Retry-After': '30' }),
+        text: async () =>
+          JSON.stringify({
+            error: 'Service temporarily unavailable.',
+            type: 'api_error',
+            code: 'temporarily_unavailable',
+          }),
+      } as any);
+
+      try {
+        await client.request('api-error-503');
+        expect.unreachable('Should have thrown');
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(ZernioError);
+        expect(err.statusCode).toBe(503);
+        expect(err.kind).toBe('TRANSIENT_PROVIDER_ERROR');
+        expect(err.providerType).toBe('api_error');
+        expect(err.providerCode).toBe('temporarily_unavailable');
+        expect(err.retryAfterSeconds).toBe(30);
+      }
+    });
+
+    it('extracts safeDetails.existingProfileId on 409 conflict responses from flat or nested details', async () => {
       fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
         ok: false,
         status: 409,
         headers: new Headers(),
         text: async () =>
           JSON.stringify({
-            error: {
-              code: 'profilenameconflict',
-              message: 'Profile name already exists',
-              details: {
-                existingProfileId: 'prof_existing_abc999',
-              },
+            error: 'Profile name already exists',
+            code: 'profilenameconflict',
+            details: {
+              existingProfileId: 'prof_existing_abc999',
             },
           }),
       } as any);
@@ -391,6 +532,7 @@ describe('ZernioHttpClient Suite (Phase 7D2-D2)', () => {
       }
     });
   });
+
 
   describe('Profile API Operations (createProfile, getProfile, findProfileByExactName)', () => {
     describe('createProfile', () => {

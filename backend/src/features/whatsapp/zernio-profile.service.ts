@@ -1,4 +1,4 @@
-﻿import { AppError } from '../../middleware/error-handler';
+import { AppError } from '../../middleware/error-handler';
 import {
   ZernioProfile,
   EnsureProfileOptions,
@@ -90,88 +90,87 @@ export class ZernioProfileService {
     err: ZernioError,
     options?: EnsureProfileOptions
   ): Promise<ZernioProfile> {
-    const isConflict = this.isProfileNameConflict(err);
+    // Case A: POSITIVE PROFILE NAME CONFLICT
+    if (this.isProfileNameConflict(err)) {
+      // Subcase A1: existingProfileId is available
+      const existingProfileId = err.safeDetails?.existingProfileId as string | undefined;
+      if (
+        existingProfileId &&
+        typeof existingProfileId === 'string' &&
+        existingProfileId.trim().length > 0
+      ) {
+        const candidate = await this.client.getProfile(existingProfileId.trim(), options);
+        if (candidate._id !== existingProfileId.trim() || candidate.name !== expectedName) {
+          throw new AppError(
+            409,
+            'ZERNIO_PROFILE_IDENTITY_MISMATCH: O perfil existente possui nome ou ID divergente do esperado.',
+            {
+              code: 'ZERNIO_PROFILE_IDENTITY_MISMATCH',
+            }
+          );
+        }
+        return candidate;
+      }
 
-    // Case A: IDEMPOTENCY KEY STILL IN FLIGHT
-    if (!isConflict) {
+      // Subcase A2: existingProfileId is unavailable -> fallback to exact name lookup
+      const lookupCandidate = await this.client.findProfileByExactName(expectedName, options);
+      if (!lookupCandidate) {
+        throw new AppError(
+          404,
+          'ZERNIO_PROFILE_RECOVERY_FAILED: Não foi possível localizar o perfil conflitante pelo nome.',
+          {
+            code: 'ZERNIO_PROFILE_RECOVERY_FAILED',
+          }
+        );
+      }
+
+      // Then GET the candidate by ID and verify again
+      const verified = await this.client.getProfile(lookupCandidate._id, options);
+      if (verified._id !== lookupCandidate._id || verified.name !== expectedName) {
+        throw new AppError(
+          409,
+          'ZERNIO_PROFILE_IDENTITY_MISMATCH: O perfil recuperado diverge da identidade esperada.',
+          {
+            code: 'ZERNIO_PROFILE_IDENTITY_MISMATCH',
+          }
+        );
+      }
+
+      return verified;
+    }
+
+    // Case B: POSITIVE IDEMPOTENCY IN-FLIGHT (stable provider code only)
+    if (this.isIdempotencyInFlight(err)) {
       throw new AppError(
         409,
         'ZERNIO_OPERATION_IN_FLIGHT: A criação do perfil ainda está em processamento pelo provedor.',
         {
           code: 'ZERNIO_OPERATION_IN_FLIGHT',
           retryable: true,
+          providerCode: err.providerCode,
         }
       );
     }
 
-    // Case B: PROFILE NAME CONFLICT
-    // Subcase B1: existingProfileId is available
-    const existingProfileId = err.safeDetails?.existingProfileId as string | undefined;
-    if (
-      existingProfileId &&
-      typeof existingProfileId === 'string' &&
-      existingProfileId.trim().length > 0
-    ) {
-      const candidate = await this.client.getProfile(existingProfileId.trim(), options);
-      if (candidate._id !== existingProfileId.trim() || candidate.name !== expectedName) {
-        throw new AppError(
-          409,
-          'ZERNIO_PROFILE_IDENTITY_MISMATCH: O perfil existente possui nome ou ID divergente do esperado.',
-          {
-            code: 'ZERNIO_PROFILE_IDENTITY_MISMATCH',
-          }
-        );
-      }
-      return candidate;
-    }
-
-    // Subcase B2: existingProfileId is unavailable -> fallback to exact name lookup
-    const lookupCandidate = await this.client.findProfileByExactName(expectedName, options);
-    if (!lookupCandidate) {
-      throw new AppError(
-        404,
-        'ZERNIO_PROFILE_RECOVERY_FAILED: Não foi possível localizar o perfil conflitante pelo nome.',
-        {
-          code: 'ZERNIO_PROFILE_RECOVERY_FAILED',
-        }
-      );
-    }
-
-    // Then GET the candidate by ID and verify again
-    const verified = await this.client.getProfile(lookupCandidate._id, options);
-    if (verified._id !== lookupCandidate._id || verified.name !== expectedName) {
-      throw new AppError(
-        409,
-        'ZERNIO_PROFILE_IDENTITY_MISMATCH: O perfil recuperado diverge da identidade esperada.',
-        {
-          code: 'ZERNIO_PROFILE_IDENTITY_MISMATCH',
-        }
-      );
-    }
-
-    return verified;
+    // Case C: UNKNOWN / UNRECOGNIZED 409
+    // Default: generic CONFLICT, fail closed, non-retryable by profile orchestration, zero lookup, zero ownership assumption
+    throw err;
   }
 
   private isProfileNameConflict(err: ZernioError): boolean {
-    if (err.safeDetails?.existingProfileId) {
-      return true;
-    }
-    const code = err.providerCode?.toLowerCase() || '';
     if (
-      code.includes('profilenameconflict') ||
-      code.includes('profile_name_conflict') ||
-      code.includes('nameconflict')
+      err.safeDetails?.existingProfileId &&
+      typeof err.safeDetails.existingProfileId === 'string' &&
+      err.safeDetails.existingProfileId.trim().length > 0
     ) {
       return true;
     }
-    const message = err.message.toLowerCase();
-    if (
-      message.includes('profile name conflict') ||
-      message.includes('already exists with name') ||
-      message.includes('name is already in use')
-    ) {
-      return true;
-    }
-    return false;
+    const code = err.providerCode?.toLowerCase().replace(/[^a-z0-9_]/g, '') || '';
+    return code === 'profilenameconflict' || code === 'profile_name_conflict';
+  }
+
+  private isIdempotencyInFlight(err: ZernioError): boolean {
+    const code = err.providerCode?.toLowerCase().replace(/[^a-z0-9_]/g, '') || '';
+    return code === 'idempotency_key_in_progress' || code === 'request_in_progress';
   }
 }

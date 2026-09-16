@@ -1,4 +1,4 @@
-﻿import { z } from 'zod';
+import { z } from 'zod';
 import { AppError } from '../../middleware/error-handler';
 import { WhatsAppProviderRequestOptions } from './whatsapp.types';
 import { WhatsAppExecutionDeadline } from './whatsapp-execution-deadline';
@@ -75,6 +75,7 @@ export type ZernioErrorKind =
   | 'NOT_FOUND'
   | 'CONFLICT'
   | 'RATE_LIMITED'
+  | 'PLATFORM_ERROR'
   | 'TRANSIENT_PROVIDER_ERROR'
   | 'TIMEOUT'
   | 'UNKNOWN_PROVIDER_ERROR';
@@ -83,27 +84,39 @@ export interface ZernioErrorOptions {
   statusCode: number;
   kind: ZernioErrorKind;
   message: string;
+  providerType?: string;
   providerCode?: string;
+  providerParam?: string;
+  providerPlatform?: string;
   retryAfterSeconds?: number;
   safeDetails?: Record<string, unknown>;
 }
 
 export class ZernioError extends AppError {
   readonly kind: ZernioErrorKind;
+  readonly providerType?: string;
   readonly providerCode?: string;
+  readonly providerParam?: string;
+  readonly providerPlatform?: string;
   readonly retryAfterSeconds?: number;
   readonly safeDetails?: Record<string, unknown>;
 
   constructor(options: ZernioErrorOptions) {
     super(options.statusCode, options.message, {
       kind: options.kind,
+      providerType: options.providerType,
       providerCode: options.providerCode,
+      providerParam: options.providerParam,
+      providerPlatform: options.providerPlatform,
       retryAfterSeconds: options.retryAfterSeconds,
       ...(options.safeDetails || {}),
     });
     this.name = 'ZernioError';
     this.kind = options.kind;
+    this.providerType = options.providerType;
     this.providerCode = options.providerCode;
+    this.providerParam = options.providerParam;
+    this.providerPlatform = options.providerPlatform;
     this.retryAfterSeconds = options.retryAfterSeconds;
     this.safeDetails = options.safeDetails;
     Object.setPrototypeOf(this, ZernioError.prototype);
