@@ -139,21 +139,9 @@ export class ZernioProfileService {
       return verified;
     }
 
-    // Case B: POSITIVE IDEMPOTENCY IN-FLIGHT (stable provider code only)
-    if (this.isIdempotencyInFlight(err)) {
-      throw new AppError(
-        409,
-        'ZERNIO_OPERATION_IN_FLIGHT: A criação do perfil ainda está em processamento pelo provedor.',
-        {
-          code: 'ZERNIO_OPERATION_IN_FLIGHT',
-          retryable: true,
-          providerCode: err.providerCode,
-        }
-      );
-    }
-
-    // Case C: UNKNOWN / UNRECOGNIZED 409
-    // Default: generic CONFLICT, fail closed, non-retryable by profile orchestration, zero lookup, zero ownership assumption
+    // Case B: ALL OTHER 409 CONFLICTS
+    // Every other 409 remains kind=CONFLICT, fails closed, zero profile lookup,
+    // zero ownership inference, no automatic retry classification, no conversion to in-flight.
     throw err;
   }
 
@@ -165,12 +153,7 @@ export class ZernioProfileService {
     ) {
       return true;
     }
-    const code = err.providerCode?.toLowerCase().replace(/[^a-z0-9_]/g, '') || '';
-    return code === 'profilenameconflict' || code === 'profile_name_conflict';
-  }
-
-  private isIdempotencyInFlight(err: ZernioError): boolean {
-    const code = err.providerCode?.toLowerCase().replace(/[^a-z0-9_]/g, '') || '';
-    return code === 'idempotency_key_in_progress' || code === 'request_in_progress';
+    const code = err.providerCode?.toLowerCase().replace(/[^a-z0-9]/g, '') || '';
+    return code === 'profilenameconflict';
   }
 }

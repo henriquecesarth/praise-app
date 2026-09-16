@@ -206,9 +206,9 @@ describe('ZernioProfileService & Lifecycle Suite (Phase 7D2-D2)', () => {
     });
   });
 
-  describe('409 Conflict Recovery & In-Flight Discrimination (Step 9)', () => {
-    describe('Case A: Positive Idempotency In-Flight & Unknown 409 Discrimination', () => {
-      it('treats 409 with stable in-flight code as in-flight and throws retryable ZERNIO_OPERATION_IN_FLIGHT', async () => {
+  describe('409 Conflict Recovery & Unsupported Codes Audit (Step 9)', () => {
+    describe('Case A: Non-Conflict & Undocumented 409 Codes (Fail Closed with Zero Lookups)', () => {
+      it('treats 409 with code=idempotency_key_in_progress as generic CONFLICT, fails closed, and makes zero lookups', async () => {
         fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
           ok: false,
           status: 409,
@@ -224,17 +224,19 @@ describe('ZernioProfileService & Lifecycle Suite (Phase 7D2-D2)', () => {
           await service.ensureProfileForConnection(connectionId);
           expect.unreachable('Should have thrown');
         } catch (err: any) {
-          expect(err).toBeInstanceOf(AppError);
+          expect(err).toBeInstanceOf(ZernioError);
           expect(err.statusCode).toBe(409);
-          expect(err.details?.code).toBe('ZERNIO_OPERATION_IN_FLIGHT');
-          expect(err.details?.retryable).toBe(true);
+          expect(err.kind).toBe('CONFLICT');
+          expect(err.providerCode).toBe('idempotency_key_in_progress');
+          expect(err.details?.code).not.toBe('ZERNIO_OPERATION_IN_FLIGHT');
+          expect(err.details?.retryable).toBeUndefined();
         }
 
         // Must NOT attempt name lookup or candidate recovery
         expect(fetchSpy).toHaveBeenCalledTimes(1);
       });
 
-      it('treats 409 with request_in_progress code as in-flight without generating new key', async () => {
+      it('treats 409 with code=request_in_progress as generic CONFLICT, fails closed, and makes zero lookups', async () => {
         fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
           ok: false,
           status: 409,
@@ -246,11 +248,19 @@ describe('ZernioProfileService & Lifecycle Suite (Phase 7D2-D2)', () => {
             }),
         } as any);
 
-        await expect(service.ensureProfileForConnection(connectionId)).rejects.toThrow(
-          /ZERNIO_OPERATION_IN_FLIGHT/
-        );
-        const headers = fetchSpy.mock.calls[0][1].headers;
-        expect(headers['Idempotency-Key']).toBe(expectedIdempotencyKey);
+        try {
+          await service.ensureProfileForConnection(connectionId);
+          expect.unreachable('Should have thrown');
+        } catch (err: any) {
+          expect(err).toBeInstanceOf(ZernioError);
+          expect(err.statusCode).toBe(409);
+          expect(err.kind).toBe('CONFLICT');
+          expect(err.providerCode).toBe('request_in_progress');
+          expect(err.details?.code).not.toBe('ZERNIO_OPERATION_IN_FLIGHT');
+          expect(err.details?.retryable).toBeUndefined();
+        }
+
+        // Must NOT attempt name lookup or candidate recovery
         expect(fetchSpy).toHaveBeenCalledTimes(1);
       });
 
@@ -281,7 +291,7 @@ describe('ZernioProfileService & Lifecycle Suite (Phase 7D2-D2)', () => {
         expect(fetchSpy).toHaveBeenCalledTimes(1);
       });
 
-      it('does NOT classify as in-flight solely because human-readable message contains words like "processing"', async () => {
+      it('does NOT classify 409 as in-flight solely because human-readable message contains words like "processing"', async () => {
         fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
           ok: false,
           status: 409,
