@@ -11,6 +11,7 @@ import { WhatsAppOnboardingSessionRepository } from '../../repositories/WhatsApp
 import { WhatsAppProviderCleanupJobRepository } from '../../repositories/WhatsAppProviderCleanupJobRepository';
 import { WhatsAppWabaLifecycleLockRepository } from '../../repositories/WhatsAppWabaLifecycleLockRepository';
 import { WhatsAppZernioWebhookRepository } from '../../repositories/WhatsAppZernioWebhookRepository';
+import { WhatsAppOutboundDispatchRepository } from '../../repositories/WhatsAppOutboundDispatchRepository';
 import { WhatsAppWabaCoordinatorService } from './whatsapp-waba-coordinator.service';
 import { MetaWhatsAppProvider } from './meta-whatsapp.provider';
 import { WhatsAppEncryptionService } from './whatsapp-encryption.service';
@@ -56,6 +57,7 @@ import {
   ZernioError,
   zernioAccountConnectedWebhookSchema,
   zernioAccountDisconnectedWebhookSchema,
+  zernioMessageWebhookSchema,
 } from './zernio.types';
 
 export class WhatsAppConnectionService {
@@ -74,7 +76,8 @@ export class WhatsAppConnectionService {
     private readonly cleanupJobRepo: WhatsAppProviderCleanupJobRepository = new WhatsAppProviderCleanupJobRepository(),
     private readonly wabaLockRepo: WhatsAppWabaLifecycleLockRepository = new WhatsAppWabaLifecycleLockRepository(),
     private readonly zernioClient: ZernioHttpClient = new ZernioHttpClient(),
-    private readonly webhookRepo: WhatsAppZernioWebhookRepository = new WhatsAppZernioWebhookRepository()
+    private readonly webhookRepo: WhatsAppZernioWebhookRepository = new WhatsAppZernioWebhookRepository(),
+    private readonly outboundRepo: WhatsAppOutboundDispatchRepository = new WhatsAppOutboundDispatchRepository()
   ) {}
 
   private mapToDto(conn: WhatsAppConnectionRecord, defaultConnectionId: string | null): WhatsAppConnectionDto {
@@ -1352,8 +1355,17 @@ export class WhatsAppConnectionService {
       };
     }
 
-    // D5 scope: actively process ONLY 'account.connected' and 'account.disconnected'
-    if (eventType !== 'account.connected' && eventType !== 'account.disconnected') {
+        // D5/D6 scope: actively process 'account.connected', 'account.disconnected', 'message.sent', 'message.delivered', 'message.read', 'message.failed'
+    const activeEventTypes = [
+      'account.connected',
+      'account.disconnected',
+      'message.sent',
+      'message.delivered',
+      'message.read',
+      'message.failed',
+    ];
+
+    if (!activeEventTypes.includes(eventType)) {
       await this.webhookRepo.markEventIgnored(
         acquisition.record.id,
         `Ignored unhandled event: ${eventType}`
@@ -1531,66 +1543,131 @@ export class WhatsAppConnectionService {
       };
     }
 
-    // eventType === 'account.disconnected'
-    const parseResult = zernioAccountDisconnectedWebhookSchema.safeParse(payload);
-    if (!parseResult.success) {
-      const errMsg = `Payload do evento account.disconnected inválido: ${parseResult.error.message}`;
-      await this.webhookRepo.markEventTerminalError(acquisition.record.id, errMsg);
-      return {
-        statusCode: 200,
-        body: { ok: true, status: 'terminal_error', eventId, error: errMsg },
-      };
-    }
+    if (eventType === 'account.disconnected') {
+      const parseResult = zernioAccountDisconnectedWebhookSchema.safeParse(payload);
+      if (!parseResult.success) {
+        const errMsg = `Payload do evento account.disconnected inválido: ${parseResult.error.message}`;
+        await this.webhookRepo.markEventTerminalError(acquisition.record.id, errMsg);
+        return {
+          statusCode: 200,
+          body: { ok: true, status: 'terminal_error', eventId, error: errMsg },
+        };
+      }
 
-    const { accountId, profileId, disconnectionType } = parseResult.data;
+      const { accountId, profileId, disconnectionType } = parseResult.data;
 
-    let conn: WhatsAppConnectionRecord | null;
-    try {
-      conn = await this.connectionRepo.findByZernioProfileId(profileId);
-    } catch (err: any) {
-      await this.webhookRepo.markEventTerminalError(acquisition.record.id, err.message);
-      return {
-        statusCode: 200,
-        body: { ok: true, status: 'terminal_error', eventId, error: err.message },
-      };
-    }
-
-    if (!conn) {
-      const reason = `No connection found for profileId: ${profileId}`;
-      await this.webhookRepo.markEventIgnored(acquisition.record.id, reason);
-      return {
-        statusCode: 200,
-        body: { ok: true, status: 'ignored', eventId, reason },
-      };
-    }
-
-    if (conn.provider_account_id && conn.provider_account_id !== accountId) {
-      const reason = `Account mismatch: conn has ${conn.provider_account_id}, event has ${accountId}`;
-      await this.webhookRepo.markEventIgnored(acquisition.record.id, reason);
-      return {
-        statusCode: 200,
-        body: { ok: true, status: 'ignored', eventId, reason },
-      };
-    }
-
-    const reason = disconnectionType
-      ? `PROVIDER_DISCONNECTED:${disconnectionType}`
-      : 'PROVIDER_DISCONNECTED';
-
-    if (conn.status === 'connected' || conn.status === 'connecting') {
+      let conn: WhatsAppConnectionRecord | null;
       try {
-        await this.transitionConnectionStatus(conn.organization_id, conn.id, 'error', reason);
+        conn = await this.connectionRepo.findByZernioProfileId(profileId);
       } catch (err: any) {
+        await this.webhookRepo.markEventTerminalError(acquisition.record.id, err.message);
+        return {
+          statusCode: 200,
+          body: { ok: true, status: 'terminal_error', eventId, error: err.message },
+        };
+      }
+
+      if (!conn) {
+        const reason = `No connection found for profileId: ${profileId}`;
+        await this.webhookRepo.markEventIgnored(acquisition.record.id, reason);
+        return {
+          statusCode: 200,
+          body: { ok: true, status: 'ignored', eventId, reason },
+        };
+      }
+
+      if (conn.provider_account_id && conn.provider_account_id !== accountId) {
+        const reason = `Account mismatch: conn has ${conn.provider_account_id}, event has ${accountId}`;
+        await this.webhookRepo.markEventIgnored(acquisition.record.id, reason);
+        return {
+          statusCode: 200,
+          body: { ok: true, status: 'ignored', eventId, reason },
+        };
+      }
+
+      const reason = disconnectionType
+        ? `PROVIDER_DISCONNECTED:${disconnectionType}`
+        : 'PROVIDER_DISCONNECTED';
+
+      if (conn.status === 'connected' || conn.status === 'connecting') {
+        try {
+          await this.transitionConnectionStatus(conn.organization_id, conn.id, 'error', reason);
+        } catch (err: any) {
+          await this.webhookRepo.markEventRetryableError(acquisition.record.id, err.message);
+          throw err;
+        }
+      }
+
+      // CRITICAL: NEVER release claims in D5. Claims remain retained for D7.
+      await this.webhookRepo.markEventProcessed(acquisition.record.id);
+      return {
+        statusCode: 200,
+        body: { ok: true, status: 'processed', eventId, connectionId: conn.id },
+      };
+    }
+
+    // D6 message lifecycle handling: message.sent, message.delivered, message.read, message.failed
+    if (
+      eventType === 'message.sent' ||
+      eventType === 'message.delivered' ||
+      eventType === 'message.read' ||
+      eventType === 'message.failed'
+    ) {
+      const parseResult = zernioMessageWebhookSchema.safeParse(payload);
+      if (!parseResult.success) {
+        const errMsg = `Payload do evento ${eventType} inválido: ${parseResult.error.message}`;
+        await this.webhookRepo.markEventTerminalError(acquisition.record.id, errMsg);
+        return {
+          statusCode: 200,
+          body: { ok: true, status: 'terminal_error', eventId, error: errMsg },
+        };
+      }
+
+      const { accountId, messageId, conversationId, error: errorObj } = parseResult.data;
+
+      const conn = await this.connectionRepo.findByZernioAccountId(accountId);
+      if (!conn) {
+        const reason = `No connection found for accountId: ${accountId}`;
+        await this.webhookRepo.markEventIgnored(acquisition.record.id, reason);
+        return {
+          statusCode: 200,
+          body: { ok: true, status: 'ignored', eventId, reason },
+        };
+      }
+
+      try {
+        await this.outboundRepo.recordProviderMessageLifecycleEvent({
+          providerMessageId: messageId,
+          providerAccountId: accountId,
+          organizationId: conn.organization_id,
+          connectionId: conn.id,
+          eventType,
+          conversationId,
+          timestamp: typeof payload.timestamp === 'string' ? payload.timestamp : new Date().toISOString(),
+          error: errorObj,
+        });
+      } catch (err: any) {
+        if (err?.code === 'ZERNIO_ACCOUNT_MISMATCH') {
+          await this.webhookRepo.markEventTerminalError(acquisition.record.id, err.message);
+          return {
+            statusCode: 200,
+            body: { ok: true, status: 'terminal_error', eventId, error: err.message },
+          };
+        }
         await this.webhookRepo.markEventRetryableError(acquisition.record.id, err.message);
         throw err;
       }
+
+      await this.webhookRepo.markEventProcessed(acquisition.record.id);
+      return {
+        statusCode: 200,
+        body: { ok: true, status: 'processed', eventId, messageId, eventType },
+      };
     }
 
-    // CRITICAL: NEVER release claims in D5. Claims remain retained for D7.
-    await this.webhookRepo.markEventProcessed(acquisition.record.id);
     return {
       statusCode: 200,
-      body: { ok: true, status: 'processed', eventId, connectionId: conn.id },
+      body: { ok: true, status: 'ignored', eventId, eventType },
     };
   }
 

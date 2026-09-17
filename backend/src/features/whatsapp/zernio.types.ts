@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { z } from 'zod';
 import { AppError } from '../../middleware/error-handler';
-import { WhatsAppProviderRequestOptions } from './whatsapp.types';
+import { WhatsAppProviderRequestOptions, normalizeToE164 } from './whatsapp.types';
 import { WhatsAppExecutionDeadline } from './whatsapp-execution-deadline';
 
 // --- Zod Runtime Schemas ---
@@ -436,3 +436,288 @@ export function buildZernioWebhookEventDocId(eventId: string): string {
   const hash = crypto.createHash('sha256').update(cleanId).digest('hex');
   return `zwh_${hash}`;
 }
+
+// --- D6: Outbound Messaging, Templates & Message Delivery Lifecycle ---
+
+export function formatZernioParticipantId(raw: string): string {
+  if (!raw || typeof raw !== 'string') {
+    throw new AppError(400, 'Número de telefone deve estar no formato canônico E.164.', {
+      code: 'INVALID_PHONE_E164',
+    });
+  }
+  const cleaned = raw.trim().replace(/[\s\-\(\)]/g, '');
+  const withPlus = cleaned.startsWith('+') ? cleaned : `+${cleaned}`;
+  const canonical = normalizeToE164(withPlus);
+  return canonical.replace(/\D/g, '');
+}
+
+export const zernioWhatsAppTemplateSchema = z
+  .object({
+    _id: z.string().optional(),
+    id: z.string().optional(),
+    name: z.string().min(1, 'Template name é obrigatório'),
+    language: z.string().min(1, 'Template language é obrigatório'),
+    status: z.string().min(1, 'Template status é obrigatório'),
+    category: z.string().optional(),
+    components: z.array(z.record(z.string(), z.unknown())).optional(),
+    createdAt: z.string().optional(),
+    updatedAt: z.string().optional(),
+  })
+  .passthrough()
+  .transform((val) => ({
+    ...val,
+    id: val.id || val._id || val.name,
+  }));
+
+export type ZernioWhatsAppTemplate = z.infer<typeof zernioWhatsAppTemplateSchema>;
+
+export const zernioListWhatsAppTemplatesResponseSchema = z.union([
+  z.array(zernioWhatsAppTemplateSchema),
+  z.object({ templates: z.array(zernioWhatsAppTemplateSchema) }).transform((val) => val.templates),
+  z.object({ data: z.array(zernioWhatsAppTemplateSchema) }).transform((val) => val.data),
+  z.object({ items: z.array(zernioWhatsAppTemplateSchema) }).transform((val) => val.items),
+]);
+
+export interface ZernioListTemplatesParams {
+  accountId: string;
+  name?: string;
+  language?: string;
+  status?: string;
+  limit?: number;
+}
+
+export interface ZernioCreateTemplateConversationParams {
+  accountId: string;
+  participantId: string;
+  templateName: string;
+  templateLanguage: string;
+  templateParams?: unknown[] | Record<string, unknown>;
+}
+
+export const zernioCreateConversationResponseSchema = z
+  .record(z.string(), z.unknown())
+  .transform((val, ctx) => {
+    const d = (val.data && typeof val.data === 'object' ? val.data : val) as Record<string, any>;
+    const conversationObj = d.conversation && typeof d.conversation === 'object' ? d.conversation : null;
+    const messageObj = d.message && typeof d.message === 'object' ? d.message : null;
+
+    const conversationId =
+      conversationObj?.providerConversationId ||
+      d.providerConversationId ||
+      conversationObj?.id ||
+      conversationObj?._id ||
+      d.conversationId ||
+      d.id ||
+      d._id;
+
+    const messageId =
+      messageObj?.providerMessageId ||
+      d.providerMessageId ||
+      messageObj?.id ||
+      messageObj?._id ||
+      d.messageId ||
+      d.id ||
+      d._id;
+
+    if (!conversationId || !messageId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Missing conversation or message ID in response',
+      });
+      return z.NEVER;
+    }
+
+    return {
+      providerConversationId: String(conversationId),
+      providerMessageId: String(messageId),
+    };
+  });
+
+export type ZernioCreateConversationResponse = z.infer<typeof zernioCreateConversationResponseSchema>;
+
+export interface ZernioSendMessageParams {
+  conversationId: string;
+  accountId: string;
+  message: string;
+  idempotencyKey?: string;
+}
+
+export const zernioSendMessageResponseSchema = z
+  .record(z.string(), z.unknown())
+  .transform((val, ctx) => {
+    const d = (val.data && typeof val.data === 'object' ? val.data : val) as Record<string, any>;
+    const messageObj = d.message && typeof d.message === 'object' ? d.message : null;
+
+    const messageId =
+      messageObj?.providerMessageId ||
+      d.providerMessageId ||
+      messageObj?.id ||
+      messageObj?._id ||
+      d.messageId ||
+      d.id ||
+      d._id;
+
+    const conversationId =
+      conversationObj_id_or_empty(d, messageObj);
+
+    if (!messageId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Missing message ID in send message response',
+      });
+      return z.NEVER;
+    }
+
+    return {
+      providerMessageId: String(messageId),
+      providerConversationId: String(conversationId),
+    };
+  });
+
+function conversationObj_id_or_empty(d: Record<string, any>, messageObj: Record<string, any> | null): string {
+  return (
+    messageObj?.providerConversationId ||
+    messageObj?.conversationId ||
+    d.providerConversationId ||
+    d.conversationId ||
+    (d.conversation && typeof d.conversation === 'object'
+      ? d.conversation.providerConversationId || d.conversation.id || d.conversation._id
+      : '') ||
+    ''
+  );
+}
+
+export type ZernioSendMessageResponse = z.infer<typeof zernioSendMessageResponseSchema>;
+
+export type WhatsAppOutboundDispatchStatus =
+  | 'pending'
+  | 'sending'
+  | 'accepted'
+  | 'delivered'
+  | 'read'
+  | 'failed'
+  | 'outcome_unknown';
+
+export type WhatsAppOutboundDispatchPhase = 'prepared' | 'request_started' | 'completed';
+
+export interface WhatsAppOutboundDispatchRecord {
+  id: string; // logical dispatch ID
+  organization_id: string;
+  ministry_id: string | null;
+  connection_id: string;
+  provider: 'zernio';
+  provider_account_id: string;
+  recipient_e164: string;
+  recipient_participant_id: string;
+  dispatch_kind: 'proactive_template' | 'existing_conversation_text';
+  template_name?: string | null;
+  template_language?: string | null;
+  template_params?: unknown[] | Record<string, unknown> | null;
+  message_text?: string | null;
+  request_fingerprint: string;
+  provider_idempotency_key?: string | null;
+  status: WhatsAppOutboundDispatchStatus;
+  phase: WhatsAppOutboundDispatchPhase;
+  provider_conversation_id?: string | null;
+  provider_message_id?: string | null;
+  send_started_at?: string | null;
+  provider_accepted_at?: string | null;
+  delivered_at?: string | null;
+  read_at?: string | null;
+  failed_at?: string | null;
+  last_error_type?: string | null;
+  last_error_code?: string | null;
+  outcome_unknown_reason?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type WhatsAppZernioProviderMessageStatus =
+  | 'sent'
+  | 'delivered'
+  | 'read'
+  | 'failed'
+  | 'unknown';
+
+export interface WhatsAppZernioProviderMessageRecord {
+  id: string; // zmsg_${sha256(providerMessageId)}
+  provider_message_id: string;
+  provider_account_id: string;
+  organization_id?: string | null;
+  connection_id?: string | null;
+  outbound_dispatch_id?: string | null;
+  provider_conversation_id?: string | null;
+  status: WhatsAppZernioProviderMessageStatus;
+  sent_at?: string | null;
+  delivered_at?: string | null;
+  read_at?: string | null;
+  failed_at?: string | null;
+  failure_code?: string | null;
+  failure_message?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export function buildZernioProviderMessageDocId(providerMessageId: string): string {
+  const cleanId = providerMessageId?.trim();
+  if (!cleanId) {
+    throw new AppError(400, 'providerMessageId é obrigatório para gerar ID do documento de mensagem.');
+  }
+  const hash = crypto.createHash('sha256').update(cleanId).digest('hex');
+  return `zmsg_${hash}`;
+}
+
+export const zernioMessageWebhookSchema = zernioWebhookBaseEnvelopeSchema
+  .extend({
+    accountId: z.string().min(1).optional(),
+    messageId: z.string().min(1).optional(),
+    conversationId: z.string().optional(),
+    error: z
+      .object({
+        code: z.union([z.string(), z.number()]).optional(),
+        message: z.string().optional(),
+        details: z.unknown().optional(),
+        href: z.string().optional(),
+      })
+      .optional(),
+    data: z
+      .object({
+        accountId: z.string().min(1).optional(),
+        messageId: z.string().min(1).optional(),
+        id: z.string().min(1).optional(),
+        conversationId: z.string().optional(),
+        error: z
+          .object({
+            code: z.union([z.string(), z.number()]).optional(),
+            message: z.string().optional(),
+            details: z.unknown().optional(),
+            href: z.string().optional(),
+          })
+          .optional(),
+      })
+      .passthrough()
+      .optional(),
+  })
+  .transform((val) => {
+    const accountId = val.accountId || val.data?.accountId;
+    const messageId = val.messageId || val.data?.messageId || val.data?.id;
+    const conversationId = val.conversationId || val.data?.conversationId;
+    const errorObj = val.error || val.data?.error;
+
+    if (!accountId) {
+      throw new Error('Missing accountId in message webhook event payload');
+    }
+    if (!messageId) {
+      throw new Error('Missing messageId in message webhook event payload');
+    }
+
+    return {
+      ...val,
+      accountId,
+      messageId,
+      conversationId,
+      error: errorObj,
+    };
+  });
+
+export type ZernioMessageWebhookEvent = z.infer<typeof zernioMessageWebhookSchema>;

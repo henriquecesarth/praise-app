@@ -1064,5 +1064,148 @@ describe('ZernioHttpClient Suite (Phase 7D2-D2)', () => {
         );
       });
     });
+
+    describe('Phase 7D2-D6: Outbound Messaging Endpoints', () => {
+      describe('listWhatsAppTemplates', () => {
+        it('calls GET whatsapp/templates?accountId=... and parses templates', async () => {
+          fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            text: async () =>
+              JSON.stringify({
+                templates: [
+                  {
+                    id: 'tmpl_1',
+                    name: 'schedule_reminder',
+                    language: 'pt_BR',
+                    status: 'APPROVED',
+                    category: 'UTILITY',
+                  },
+                ],
+              }),
+          } as any);
+
+          const result = await client.listWhatsAppTemplates({ accountId: 'acc_wa_123' });
+
+          expect(fetchSpy).toHaveBeenCalledTimes(1);
+          const callUrl = new URL(fetchSpy.mock.calls[0][0]);
+          expect(callUrl.pathname).toContain('whatsapp/templates');
+          expect(callUrl.searchParams.get('accountId')).toBe('acc_wa_123');
+          expect(result).toHaveLength(1);
+          expect(result[0].name).toBe('schedule_reminder');
+          expect(result[0].status).toBe('APPROVED');
+        });
+
+        it('rejects empty or slash accountId', async () => {
+          await expect(client.listWhatsAppTemplates({ accountId: '' })).rejects.toThrow('ZERNIO_INVALID_ACCOUNT_ID');
+          await expect(client.listWhatsAppTemplates({ accountId: 'acc/123' })).rejects.toThrow('ZERNIO_INVALID_ACCOUNT_ID');
+        });
+
+        it('rejects invalid schema response with ZERNIO_PROTOCOL_ERROR', async () => {
+          fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            text: async () => JSON.stringify({ templates: 'not-an-array' }),
+          } as any);
+
+          await expect(client.listWhatsAppTemplates({ accountId: 'acc_wa_123' })).rejects.toThrow('ZERNIO_PROTOCOL_ERROR');
+        });
+      });
+
+      describe('createWhatsAppTemplateConversation', () => {
+        it('calls POST inbox/conversations WITHOUT Idempotency-Key header', async () => {
+          fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            text: async () =>
+              JSON.stringify({
+                conversation: {
+                  id: 'conv_wa_1',
+                  providerConversationId: 'pconv_1',
+                },
+                message: {
+                  id: 'msg_wa_1',
+                  providerMessageId: 'wamid.HBgL...',
+                  status: 'sent',
+                },
+              }),
+          } as any);
+
+          const result = await client.createWhatsAppTemplateConversation({
+            accountId: 'acc_wa_123',
+            participantId: '5511999998888',
+            templateName: 'schedule_reminder',
+            templateLanguage: 'pt_BR',
+          });
+
+          expect(fetchSpy).toHaveBeenCalledTimes(1);
+          const call = fetchSpy.mock.calls[0];
+          expect(call[0]).toContain('inbox/conversations');
+          expect(call[1].method).toBe('POST');
+          // STRICT INVARIANT: no Idempotency-Key on conversation create
+          expect(call[1].headers['Idempotency-Key']).toBeUndefined();
+          expect(result.providerConversationId).toBe('pconv_1');
+          expect(result.providerMessageId).toBe('wamid.HBgL...');
+        });
+
+        it('rejects invalid request payload before dispatch', async () => {
+          await expect(
+            client.createWhatsAppTemplateConversation({
+              accountId: '',
+              participantId: '5511999998888',
+              templateName: 'schedule_reminder',
+              templateLanguage: 'pt_BR',
+            })
+          ).rejects.toThrow('ZERNIO_INVALID_ACCOUNT_ID');
+        });
+      });
+
+      describe('sendWhatsAppConversationMessage', () => {
+        it('calls POST inbox/conversations/:id/messages WITH Idempotency-Key header', async () => {
+          fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            text: async () =>
+              JSON.stringify({
+                message: {
+                  id: 'msg_wa_2',
+                  providerMessageId: 'wamid.HBgL2...',
+                  status: 'sent',
+                },
+              }),
+          } as any);
+
+          const result = await client.sendWhatsAppConversationMessage({
+            conversationId: 'conv_wa_1',
+            accountId: 'acc_wa_123',
+            message: 'Olá, ensaio confirmado!',
+            idempotencyKey: 'idem_key_unique_123',
+          });
+
+          expect(fetchSpy).toHaveBeenCalledTimes(1);
+          const call = fetchSpy.mock.calls[0];
+          expect(call[0]).toContain('inbox/conversations/conv_wa_1/messages');
+          expect(call[1].method).toBe('POST');
+          // STRICT INVARIANT: Idempotency-Key IS sent for existing conversation messages
+          expect(call[1].headers['Idempotency-Key']).toBe('idem_key_unique_123');
+          expect(result.providerMessageId).toBe('wamid.HBgL2...');
+        });
+
+        it('rejects empty or invalid conversationId', async () => {
+          await expect(
+            client.sendWhatsAppConversationMessage({
+              conversationId: '   ',
+              accountId: 'acc_wa_123',
+              message: 'Olá',
+              idempotencyKey: 'key_1',
+            })
+          ).rejects.toThrow('ZERNIO_INVALID_CONVERSATION_ID');
+        });
+      });
+    });
   });
 });

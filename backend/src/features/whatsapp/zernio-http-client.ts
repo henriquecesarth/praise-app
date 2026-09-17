@@ -19,6 +19,15 @@ import {
   zernioCreateProfileResponseSchema,
   zernioGetProfileResponseSchema,
   zernioListProfilesResponseSchema,
+  ZernioWhatsAppTemplate,
+  zernioListWhatsAppTemplatesResponseSchema,
+  ZernioListTemplatesParams,
+  ZernioCreateTemplateConversationParams,
+  zernioCreateConversationResponseSchema,
+  ZernioCreateConversationResponse,
+  ZernioSendMessageParams,
+  zernioSendMessageResponseSchema,
+  ZernioSendMessageResponse,
 } from './zernio.types';
 import { normalizeToE164 } from './whatsapp.types';
 import { ZernioProfileService } from './zernio-profile.service';
@@ -598,6 +607,166 @@ export class ZernioHttpClient {
         kind: 'TRANSIENT_PROVIDER_ERROR',
         message:
           'ZERNIO_PROTOCOL_ERROR: Número de telefone retornado pelo Zernio em formato inválido.',
+        providerCode: 'ZERNIO_PROTOCOL_ERROR',
+      });
+    }
+
+    return parsed.data;
+  }
+
+  async listWhatsAppTemplates(
+    params: ZernioListTemplatesParams,
+    options?: ZernioRequestOptions
+  ): Promise<ZernioWhatsAppTemplate[]> {
+    const cleanAccountId = params.accountId?.trim();
+    if (!cleanAccountId || cleanAccountId.includes('/')) {
+      throw new AppError(400, 'ZERNIO_INVALID_ACCOUNT_ID: accountId não pode ser vazio ou conter barras.', {
+        code: 'ZERNIO_INVALID_ACCOUNT_ID',
+      });
+    }
+
+    const query: Record<string, string | number | undefined> = {
+      accountId: cleanAccountId,
+      limit: Math.min(Math.max(1, params.limit ?? 20), 50),
+    };
+    if (params.name) query.name = params.name.trim();
+    if (params.language) query.language = params.language.trim();
+    if (params.status) query.status = params.status.trim();
+
+    const raw = await this.request<unknown>('whatsapp/templates', {
+      method: 'GET',
+      query,
+      ...options,
+    });
+
+    const parsed = zernioListWhatsAppTemplatesResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ZernioError({
+        statusCode: 502,
+        kind: 'TRANSIENT_PROVIDER_ERROR',
+        message: 'ZERNIO_PROTOCOL_ERROR: Resposta de templates WhatsApp malformada pelo provedor Zernio.',
+        providerCode: 'ZERNIO_PROTOCOL_ERROR',
+      });
+    }
+
+    return parsed.data;
+  }
+
+  async createWhatsAppTemplateConversation(
+    params: ZernioCreateTemplateConversationParams,
+    options?: ZernioRequestOptions
+  ): Promise<ZernioCreateConversationResponse> {
+    const cleanAccountId = params.accountId?.trim();
+    if (!cleanAccountId || cleanAccountId.includes('/')) {
+      throw new AppError(400, 'ZERNIO_INVALID_ACCOUNT_ID: accountId não pode ser vazio ou conter barras.', {
+        code: 'ZERNIO_INVALID_ACCOUNT_ID',
+      });
+    }
+
+    const cleanParticipantId = params.participantId?.trim();
+    if (!cleanParticipantId || !/^\d{1,15}$/.test(cleanParticipantId)) {
+      throw new AppError(
+        400,
+        'ZERNIO_INVALID_PARTICIPANT_ID: participantId deve conter apenas dígitos (código do país + número).',
+        {
+          code: 'ZERNIO_INVALID_PARTICIPANT_ID',
+        }
+      );
+    }
+
+    const cleanTemplateName = params.templateName?.trim();
+    if (!cleanTemplateName) {
+      throw new AppError(400, 'ZERNIO_INVALID_TEMPLATE_NAME: templateName não pode ser vazio.', {
+        code: 'ZERNIO_INVALID_TEMPLATE_NAME',
+      });
+    }
+
+    const cleanTemplateLanguage = params.templateLanguage?.trim();
+    if (!cleanTemplateLanguage) {
+      throw new AppError(400, 'ZERNIO_INVALID_TEMPLATE_LANGUAGE: templateLanguage não pode ser vazio.', {
+        code: 'ZERNIO_INVALID_TEMPLATE_LANGUAGE',
+      });
+    }
+
+    const body: Record<string, unknown> = {
+      accountId: cleanAccountId,
+      participantId: cleanParticipantId,
+      templateName: cleanTemplateName,
+      templateLanguage: cleanTemplateLanguage,
+    };
+
+    if (params.templateParams !== undefined) {
+      body.templateParams = params.templateParams;
+    }
+
+    // Explicitly omit idempotencyKey: POST /inbox/conversations does NOT support Idempotency-Key
+    const requestOptions: ZernioHttpRequestOptions = {
+      method: 'POST',
+      body,
+      ...options,
+      idempotencyKey: undefined,
+    };
+
+    const raw = await this.request<unknown>('inbox/conversations', requestOptions);
+
+    const parsed = zernioCreateConversationResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ZernioError({
+        statusCode: 502,
+        kind: 'TRANSIENT_PROVIDER_ERROR',
+        message: 'ZERNIO_PROTOCOL_ERROR: Resposta de criação de conversa malformada pelo provedor Zernio.',
+        providerCode: 'ZERNIO_PROTOCOL_ERROR',
+      });
+    }
+
+    return parsed.data;
+  }
+
+  async sendWhatsAppConversationMessage(
+    params: ZernioSendMessageParams,
+    options?: ZernioRequestOptions
+  ): Promise<ZernioSendMessageResponse> {
+    const cleanConversationId = params.conversationId?.trim();
+    if (!cleanConversationId || cleanConversationId.includes('/')) {
+      throw new AppError(400, 'ZERNIO_INVALID_CONVERSATION_ID: conversationId não pode ser vazio ou conter barras.', {
+        code: 'ZERNIO_INVALID_CONVERSATION_ID',
+      });
+    }
+
+    const cleanAccountId = params.accountId?.trim();
+    if (!cleanAccountId || cleanAccountId.includes('/')) {
+      throw new AppError(400, 'ZERNIO_INVALID_ACCOUNT_ID: accountId não pode ser vazio ou conter barras.', {
+        code: 'ZERNIO_INVALID_ACCOUNT_ID',
+      });
+    }
+
+    const cleanMessage = params.message?.trim();
+    if (!cleanMessage) {
+      throw new AppError(400, 'ZERNIO_INVALID_MESSAGE: message não pode ser vazio.', {
+        code: 'ZERNIO_INVALID_MESSAGE',
+      });
+    }
+
+    const endpoint = `inbox/conversations/${encodeURIComponent(cleanConversationId)}/messages`;
+
+    const requestOptions: ZernioHttpRequestOptions = {
+      method: 'POST',
+      body: {
+        accountId: cleanAccountId,
+        message: cleanMessage,
+      },
+      idempotencyKey: params.idempotencyKey || options?.idempotencyKey,
+      ...options,
+    };
+
+    const raw = await this.request<unknown>(endpoint, requestOptions);
+
+    const parsed = zernioSendMessageResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ZernioError({
+        statusCode: 502,
+        kind: 'TRANSIENT_PROVIDER_ERROR',
+        message: 'ZERNIO_PROTOCOL_ERROR: Resposta de envio de mensagem malformada pelo provedor Zernio.',
         providerCode: 'ZERNIO_PROTOCOL_ERROR',
       });
     }

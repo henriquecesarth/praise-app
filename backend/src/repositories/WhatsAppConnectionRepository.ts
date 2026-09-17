@@ -652,4 +652,46 @@ export class WhatsAppConnectionRepository {
     }
     return record;
   }
+
+  async findByZernioAccountId(
+    accountId: string,
+    orgId?: string
+  ): Promise<WhatsAppConnectionRecord | null> {
+    const cleanId = accountId?.trim();
+    if (!cleanId) return null;
+
+    // Single-field equality uses automatic indexing (no composite index required)
+    const snap = await this.connectionsCol
+      .where('provider_account_id', '==', cleanId)
+      .limit(2)
+      .get();
+
+    if (snap.empty) {
+      return null;
+    }
+    if (snap.docs.length > 1) {
+      throw new AppError(
+        500,
+        'AMBIGUOUS_ZERNIO_ACCOUNT_MAPPING: Múltiplas conexões encontradas para a mesma conta Zernio.',
+        { code: 'AMBIGUOUS_ZERNIO_ACCOUNT_MAPPING' }
+      );
+    }
+
+    const doc = snap.docs[0];
+    const data = doc.data() || {};
+    const record = {
+      id: doc.id,
+      ...data,
+      provider_profile_id: data.provider_profile_id ?? null,
+      provider_account_id: data.provider_account_id ?? null,
+    } as WhatsAppConnectionRecord;
+
+    if (record.provider !== 'zernio') {
+      return null;
+    }
+    if (orgId && record.organization_id !== orgId) {
+      return null;
+    }
+    return record;
+  }
 }
