@@ -1,4 +1,4 @@
-﻿import crypto from 'crypto';
+import crypto from 'crypto';
 import { AppError } from '../../middleware/error-handler';
 import { ZernioHttpClient } from './zernio-http-client';
 import { WhatsAppConnectionRepository } from '../../repositories/WhatsAppConnectionRepository';
@@ -182,7 +182,7 @@ export class WhatsAppOutboundService {
       .digest('hex');
 
     // Step 3: Prepare dispatch intent
-    const { record: prepared, isExisting } = await this.outboundRepo.prepareDispatch({
+    await this.outboundRepo.prepareDispatch({
       id: cleanDispatchId,
       organizationId: conn.organization_id,
       ministryId: params.ministryId || conn.assigned_ministry_id || null,
@@ -197,24 +197,30 @@ export class WhatsAppOutboundService {
       requestFingerprint,
     });
 
-    if (isExisting) {
-      if (['accepted', 'delivered', 'read', 'failed', 'outcome_unknown'].includes(prepared.status)) {
-        return prepared;
-      }
-      if (prepared.phase === 'request_started') {
-        await this.outboundRepo.markOutcomeUnknown(
-          cleanDispatchId,
-          'REPLAY_BLOCKED_REQUEST_ALREADY_STARTED: Envio proativo prévio foi iniciado; resultado incerto impede reenvio automático.'
-        );
-        const updated = await this.outboundRepo.getDispatchById(cleanDispatchId);
-        return updated!;
-      }
+    // Step 4: Atomically acquire dispatch execution rights
+    const acquisition = await this.outboundRepo.acquireDispatchExecution({
+      dispatchId: cleanDispatchId,
+      organizationId: conn.organization_id,
+      requestFingerprint,
+      connectionId: conn.id,
+    });
+
+    if (acquisition.outcome === 'terminal' || acquisition.outcome === 'outcome_unknown') {
+      return acquisition.record;
     }
 
-    // Step 4: Mark request started (Crash window boundary)
-    await this.outboundRepo.markRequestStarted(cleanDispatchId);
+    if (acquisition.outcome === 'in_progress') {
+      throw new AppError(
+        409,
+        'WHATSAPP_DISPATCH_IN_PROGRESS: O despacho já está em processamento por outra execução ativa.',
+        {
+          code: 'WHATSAPP_DISPATCH_IN_PROGRESS',
+          dispatchId: cleanDispatchId,
+        }
+      );
+    }
 
-    // Step 5: Provider HTTP call
+    // Step 5: Provider HTTP call (only when outcome === 'acquired')
     try {
       const response = await this.zernioClient.createWhatsAppTemplateConversation({
         accountId: conn.provider_account_id,
@@ -227,6 +233,7 @@ export class WhatsAppOutboundService {
       return await this.outboundRepo.markAccepted(cleanDispatchId, {
         providerMessageId: response.providerMessageId,
         providerConversationId: response.providerConversationId,
+        executionId: acquisition.executionId,
       });
     } catch (err: any) {
       const isAmbiguous =
@@ -234,6 +241,7 @@ export class WhatsAppOutboundService {
         (err.kind === 'TIMEOUT' ||
           err.statusCode === 500 ||
           err.statusCode === 502 ||
+          err.statusCode === 503 ||
           err.statusCode === 504 ||
           err.kind === 'TRANSIENT_PROVIDER_ERROR');
 
@@ -302,7 +310,7 @@ export class WhatsAppOutboundService {
       )
       .digest('hex');
 
-    const { record: prepared, isExisting } = await this.outboundRepo.prepareDispatch({
+    await this.outboundRepo.prepareDispatch({
       id: cleanDispatchId,
       organizationId: conn.organization_id,
       ministryId: params.ministryId || conn.assigned_ministry_id || null,
@@ -316,21 +324,27 @@ export class WhatsAppOutboundService {
       providerIdempotencyKey,
     });
 
-    if (isExisting) {
-      if (['accepted', 'delivered', 'read', 'failed', 'outcome_unknown'].includes(prepared.status)) {
-        return prepared;
-      }
-      if (prepared.phase === 'request_started') {
-        await this.outboundRepo.markOutcomeUnknown(
-          cleanDispatchId,
-          'REPLAY_BLOCKED_REQUEST_ALREADY_STARTED: Envio prévio foi iniciado; resultado incerto impede reenvio automático.'
-        );
-        const updated = await this.outboundRepo.getDispatchById(cleanDispatchId);
-        return updated!;
-      }
+    const acquisition = await this.outboundRepo.acquireDispatchExecution({
+      dispatchId: cleanDispatchId,
+      organizationId: conn.organization_id,
+      requestFingerprint,
+      connectionId: conn.id,
+    });
+
+    if (acquisition.outcome === 'terminal' || acquisition.outcome === 'outcome_unknown') {
+      return acquisition.record;
     }
 
-    await this.outboundRepo.markRequestStarted(cleanDispatchId);
+    if (acquisition.outcome === 'in_progress') {
+      throw new AppError(
+        409,
+        'WHATSAPP_DISPATCH_IN_PROGRESS: O despacho já está em processamento por outra execução ativa.',
+        {
+          code: 'WHATSAPP_DISPATCH_IN_PROGRESS',
+          dispatchId: cleanDispatchId,
+        }
+      );
+    }
 
     try {
       const response = await this.zernioClient.sendWhatsAppConversationMessage({
@@ -343,14 +357,34 @@ export class WhatsAppOutboundService {
       return await this.outboundRepo.markAccepted(cleanDispatchId, {
         providerMessageId: response.providerMessageId,
         providerConversationId: response.providerConversationId || cleanConversationId,
+        executionId: acquisition.executionId,
       });
     } catch (err: any) {
+      // Provider 409: Idempotency-Key still processing on provider side
+      if (err instanceof ZernioError && (err.statusCode === 409 || err.kind === 'CONFLICT')) {
+        await this.outboundRepo.markOutcomeUnknown(
+          cleanDispatchId,
+          `PROVIDER_IDEMPOTENCY_IN_FLIGHT: A chave de idempotência ainda está em processamento no provedor (HTTP 409).`
+        );
+        throw new AppError(
+          409,
+          `WHATSAPP_DISPATCH_PROVIDER_IN_FLIGHT: A mensagem ainda está em processamento no provedor.`,
+          {
+            code: 'WHATSAPP_DISPATCH_PROVIDER_IN_FLIGHT',
+            dispatchId: cleanDispatchId,
+            originalError: err,
+          }
+        );
+      }
+
       const isAmbiguous =
         err instanceof ZernioError &&
         (err.kind === 'TIMEOUT' ||
           err.statusCode === 500 ||
           err.statusCode === 502 ||
-          err.statusCode === 504);
+          err.statusCode === 503 ||
+          err.statusCode === 504 ||
+          err.kind === 'TRANSIENT_PROVIDER_ERROR');
 
       if (isAmbiguous) {
         await this.outboundRepo.markOutcomeUnknown(

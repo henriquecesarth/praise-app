@@ -939,4 +939,835 @@ describe('Zernio Outbound Dispatch & Message Delivery Lifecycle Suite (Phase 7D2
       expect(shadow).toBeNull();
     });
   });
+
+  describe('Section 8: Hardened Concurrency, Execution Leases & Ambiguity Edge Cases (Phase 7D2-D6-R2)', () => {
+    it('Concurrent proactive dispatch: exactly ONE provider HTTP request and safe winner/loser convergence', async () => {
+      const dispatchId = uniqueId('disp_concurrent_pro');
+      let callCount = 0;
+
+      let releaseFirstHttp: () => void = () => {};
+      const firstHttpStarted = new Promise<void>((resolve) => {
+        releaseFirstHttp = resolve;
+      });
+
+      fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (url: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/whatsapp/templates')) {
+          return {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            text: async () =>
+              JSON.stringify({
+                templates: [
+                  {
+                    id: 'tmpl_1',
+                    name: 'rehearsal_reminder',
+                    language: 'pt_BR',
+                    status: 'APPROVED',
+                    category: 'UTILITY',
+                  },
+                ],
+              }),
+          } as any;
+        }
+        if (urlStr.includes('inbox/conversations')) {
+          callCount++;
+          // Caller 1 holds execution lease in flight until Caller 2 attempts
+          await firstHttpStarted;
+          return {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            text: async () =>
+              JSON.stringify({
+                message: { id: 'msg_concur_1', providerMessageId: 'wamid.concur1' },
+                conversation: { id: 'conv_concur_1', providerConversationId: 'conv_concur_1' },
+              }),
+          } as any;
+        }
+        return { ok: false, status: 404, headers: new Headers(), text: async () => '{}' } as any;
+      });
+
+      const p1 = outboundService.sendProactiveTemplate({
+        dispatchId,
+        ministryId: testMinistryId,
+        recipientPhone: '+5511999998888',
+        templateName: 'rehearsal_reminder',
+        templateLanguage: 'pt_BR',
+      });
+
+      while (callCount === 0) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+
+      let caller2Error: any = null;
+      try {
+        await outboundService.sendProactiveTemplate({
+          dispatchId,
+          ministryId: testMinistryId,
+          recipientPhone: '+5511999998888',
+          templateName: 'rehearsal_reminder',
+          templateLanguage: 'pt_BR',
+        });
+      } catch (err: any) {
+        caller2Error = err;
+      }
+
+      releaseFirstHttp();
+      const p1Result = await p1;
+
+      expect(callCount).toBe(1);
+      expect(caller2Error).not.toBeNull();
+      expect(caller2Error.statusCode).toBe(409);
+      expect(caller2Error.message).toContain('WHATSAPP_DISPATCH_IN_PROGRESS');
+      expect(p1Result.status).toBe('accepted');
+
+      const dispatch = await outboundRepo.getDispatchById(dispatchId);
+      expect(dispatch!.status).toBe('accepted');
+      expect(dispatch!.phase).toBe('completed');
+      expect(dispatch!.provider_message_id).toBe('wamid.concur1');
+
+      const shadow = await outboundRepo.getProviderMessageShadow(
+        buildZernioProviderMessageDocId('wamid.concur1')
+      );
+      expect(shadow).not.toBeNull();
+      expect(shadow!.outbound_dispatch_id).toBe(dispatchId);
+    });
+
+    it('Concurrent existing-conversation dispatch: exactly ONE provider call, no overwrite of accepted status', async () => {
+      const dispatchId = uniqueId('disp_concurrent_exist');
+      const conversationId = 'conv_existing_concurrent';
+      let callCount = 0;
+
+      let releaseFirstHttp: () => void = () => {};
+      const firstHttpStarted = new Promise<void>((resolve) => {
+        releaseFirstHttp = resolve;
+      });
+
+      fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (url: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('messages')) {
+          callCount++;
+          await firstHttpStarted;
+          return {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            text: async () =>
+              JSON.stringify({
+                message: { id: 'msg_exist_concur_1', providerMessageId: 'wamid.existconcur1' },
+                conversationId,
+              }),
+          } as any;
+        }
+        return { ok: false, status: 404, headers: new Headers(), text: async () => '{}' } as any;
+      });
+
+      const p1 = outboundService.sendExistingConversationText({
+        dispatchId,
+        conversationId,
+        ministryId: testMinistryId,
+        messageText: 'Olá equipe',
+      });
+
+      while (callCount === 0) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+
+      let caller2Error: any = null;
+      try {
+        await outboundService.sendExistingConversationText({
+          dispatchId,
+          conversationId,
+          ministryId: testMinistryId,
+          messageText: 'Olá equipe',
+        });
+      } catch (err: any) {
+        caller2Error = err;
+      }
+
+      releaseFirstHttp();
+      const p1Result = await p1;
+
+      expect(callCount).toBe(1);
+      expect(caller2Error).not.toBeNull();
+      expect(caller2Error.statusCode).toBe(409);
+      expect(caller2Error.message).toContain('WHATSAPP_DISPATCH_IN_PROGRESS');
+      expect(p1Result.status).toBe('accepted');
+
+      const dispatch = await outboundRepo.getDispatchById(dispatchId);
+      expect(dispatch!.status).toBe('accepted');
+      expect(dispatch!.phase).toBe('completed');
+    });
+
+    it('Active execution lease blocks duplicate send with 409 WHATSAPP_DISPATCH_IN_PROGRESS and leaves record untouched', async () => {
+      const dispatchId = uniqueId('disp_active_lease');
+
+      await db.collection('whatsapp_outbound_dispatches').doc(dispatchId).set({
+        id: dispatchId,
+        organization_id: testOrgId,
+        ministry_id: testMinistryId,
+        connection_id: testConnId,
+        provider: 'zernio',
+        provider_account_id: testAccountId,
+        recipient_e164: '+5511999998888',
+        recipient_participant_id: '5511999998888',
+        dispatch_kind: 'proactive_template',
+        template_name: 'rehearsal_reminder',
+        template_language: 'pt_BR',
+        request_fingerprint: crypto
+          .createHash('sha256')
+          .update(
+            JSON.stringify({
+              accountId: testAccountId,
+              recipient: '5511999998888',
+              templateName: 'rehearsal_reminder',
+              templateLanguage: 'pt_BR',
+              templateParams: null,
+            })
+          )
+          .digest('hex'),
+        status: 'pending',
+        phase: 'request_started',
+        request_execution_id: 'exec_active_123',
+        request_lease_until: new Date(Date.now() + 60000).toISOString(),
+        send_started_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (url: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/whatsapp/templates')) {
+          return {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            text: async () =>
+              JSON.stringify({
+                templates: [
+                  {
+                    id: 'tmpl_1',
+                    name: 'rehearsal_reminder',
+                    language: 'pt_BR',
+                    status: 'APPROVED',
+                    category: 'UTILITY',
+                  },
+                ],
+              }),
+          } as any;
+        }
+        return { ok: false, status: 404, headers: new Headers(), text: async () => '{}' } as any;
+      });
+
+      await expect(
+        outboundService.sendProactiveTemplate({
+          dispatchId,
+          ministryId: testMinistryId,
+          recipientPhone: '+5511999998888',
+          templateName: 'rehearsal_reminder',
+          templateLanguage: 'pt_BR',
+        })
+      ).rejects.toThrow('WHATSAPP_DISPATCH_IN_PROGRESS');
+
+      const conversationCalls = fetchSpy.mock.calls.filter((call: any[]) =>
+        String(call[0]).includes('/inbox/conversations')
+      );
+      expect(conversationCalls.length).toBe(0);
+
+      const dispatch = await outboundRepo.getDispatchById(dispatchId);
+      expect(dispatch!.status).toBe('pending');
+      expect(dispatch!.phase).toBe('request_started');
+      expect(dispatch!.request_execution_id).toBe('exec_active_123');
+    });
+
+    it('Expired execution lease: converges atomically to outcome_unknown and never grants permission to resend', async () => {
+      const dispatchId = uniqueId('disp_expired_lease');
+
+      await db.collection('whatsapp_outbound_dispatches').doc(dispatchId).set({
+        id: dispatchId,
+        organization_id: testOrgId,
+        ministry_id: testMinistryId,
+        connection_id: testConnId,
+        provider: 'zernio',
+        provider_account_id: testAccountId,
+        recipient_e164: '+5511999998888',
+        recipient_participant_id: '5511999998888',
+        dispatch_kind: 'proactive_template',
+        template_name: 'rehearsal_reminder',
+        template_language: 'pt_BR',
+        request_fingerprint: crypto
+          .createHash('sha256')
+          .update(
+            JSON.stringify({
+              accountId: testAccountId,
+              recipient: '5511999998888',
+              templateName: 'rehearsal_reminder',
+              templateLanguage: 'pt_BR',
+              templateParams: null,
+            })
+          )
+          .digest('hex'),
+        status: 'pending',
+        phase: 'request_started',
+        request_execution_id: 'exec_stale_old',
+        request_lease_until: new Date(Date.now() - 5000).toISOString(),
+        send_started_at: new Date(Date.now() - 65000).toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (url: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/whatsapp/templates')) {
+          return {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            text: async () =>
+              JSON.stringify({
+                templates: [
+                  {
+                    id: 'tmpl_1',
+                    name: 'rehearsal_reminder',
+                    language: 'pt_BR',
+                    status: 'APPROVED',
+                    category: 'UTILITY',
+                  },
+                ],
+              }),
+          } as any;
+        }
+        return { ok: false, status: 404, headers: new Headers(), text: async () => '{}' } as any;
+      });
+
+      const result = await outboundService.sendProactiveTemplate({
+        dispatchId,
+        ministryId: testMinistryId,
+        recipientPhone: '+5511999998888',
+        templateName: 'rehearsal_reminder',
+        templateLanguage: 'pt_BR',
+      });
+
+      const conversationCalls = fetchSpy.mock.calls.filter((call: any[]) =>
+        String(call[0]).includes('/inbox/conversations')
+      );
+      expect(conversationCalls.length).toBe(0);
+      expect(result.status).toBe('outcome_unknown');
+      expect(result.phase).toBe('completed');
+      expect(result.outcome_unknown_reason).toContain('EXECUTION_LEASE_EXPIRED');
+
+      // Subsequent attempt still makes ZERO provider calls
+      const retryResult = await outboundService.sendProactiveTemplate({
+        dispatchId,
+        ministryId: testMinistryId,
+        recipientPhone: '+5511999998888',
+        templateName: 'rehearsal_reminder',
+        templateLanguage: 'pt_BR',
+      });
+      expect(fetchSpy.mock.calls.filter((call: any[]) => String(call[0]).includes('/inbox/conversations')).length).toBe(0);
+      expect(retryResult.status).toBe('outcome_unknown');
+    });
+
+    it('Late original executor: authoritative provider 2xx converges outcome_unknown to accepted', async () => {
+      const dispatchId = uniqueId('disp_late_exec');
+      const executionId = 'exec_late_original_777';
+
+      await db.collection('whatsapp_outbound_dispatches').doc(dispatchId).set({
+        id: dispatchId,
+        organization_id: testOrgId,
+        ministry_id: testMinistryId,
+        connection_id: testConnId,
+        provider: 'zernio',
+        provider_account_id: testAccountId,
+        recipient_e164: '+5511999998888',
+        recipient_participant_id: '5511999998888',
+        dispatch_kind: 'proactive_template',
+        template_name: 'rehearsal_reminder',
+        template_language: 'pt_BR',
+        request_fingerprint: 'fp_late',
+        status: 'outcome_unknown',
+        phase: 'completed',
+        request_execution_id: executionId,
+        outcome_unknown_reason: 'EXECUTION_LEASE_EXPIRED...',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      const updated = await outboundRepo.markAccepted(dispatchId, {
+        providerMessageId: 'wamid.late.recovered',
+        providerConversationId: 'conv_late_recovered',
+        executionId,
+      });
+
+      expect(updated.status).toBe('accepted');
+      expect(updated.phase).toBe('completed');
+      expect(updated.provider_message_id).toBe('wamid.late.recovered');
+      expect(updated.outcome_unknown_reason).toBeNull();
+    });
+
+    it('Proactive send 503: marks outcome_unknown and subsequent retry causes ZERO provider calls', async () => {
+      const dispatchId = uniqueId('disp_proactive_503');
+      let callCount = 0;
+
+      fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (url: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('whatsapp/templates')) {
+          return {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            text: async () =>
+              JSON.stringify({
+                templates: [
+                  {
+                    id: 'tmpl_1',
+                    name: 'rehearsal_reminder',
+                    language: 'pt_BR',
+                    status: 'APPROVED',
+                    category: 'UTILITY',
+                  },
+                ],
+              }),
+          } as any;
+        }
+        if (urlStr.includes('inbox/conversations')) {
+          callCount++;
+          return {
+            ok: false,
+            status: 503,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            text: async () =>
+              JSON.stringify({
+                error: {
+                  type: 'api_error',
+                  message: 'Service Temporarily Unavailable',
+                },
+              }),
+          } as any;
+        }
+        return { ok: false, status: 404, headers: new Headers(), text: async () => '{}' } as any;
+      });
+
+      await expect(
+        outboundService.sendProactiveTemplate({
+          dispatchId,
+          ministryId: testMinistryId,
+          recipientPhone: '+5511999998888',
+          templateName: 'rehearsal_reminder',
+          templateLanguage: 'pt_BR',
+        })
+      ).rejects.toThrow('WHATSAPP_SEND_OUTCOME_UNKNOWN');
+
+      expect(callCount).toBe(1);
+
+      const dispatch = await outboundRepo.getDispatchById(dispatchId);
+      expect(dispatch!.status).toBe('outcome_unknown');
+      expect(dispatch!.phase).toBe('completed');
+
+      const retryResult = await outboundService.sendProactiveTemplate({
+        dispatchId,
+        ministryId: testMinistryId,
+        recipientPhone: '+5511999998888',
+        templateName: 'rehearsal_reminder',
+        templateLanguage: 'pt_BR',
+      });
+
+      expect(callCount).toBe(1);
+      expect(retryResult.status).toBe('outcome_unknown');
+    });
+
+    it('Existing-conversation send 503: marks outcome_unknown and replay causes ZERO second provider call', async () => {
+      const dispatchId = uniqueId('disp_exist_503');
+      const conversationId = 'conv_503_test';
+      let callCount = 0;
+
+      fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (url: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('messages')) {
+          callCount++;
+          return {
+            ok: false,
+            status: 503,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            text: async () =>
+              JSON.stringify({
+                error: {
+                  type: 'api_error',
+                  message: 'Service Unavailable',
+                },
+              }),
+          } as any;
+        }
+        return { ok: false, status: 404, headers: new Headers(), text: async () => '{}' } as any;
+      });
+
+      await expect(
+        outboundService.sendExistingConversationText({
+          dispatchId,
+          conversationId,
+          ministryId: testMinistryId,
+          messageText: 'Mensagem 503',
+        })
+      ).rejects.toThrow('WHATSAPP_SEND_OUTCOME_UNKNOWN');
+
+      expect(callCount).toBe(1);
+
+      const dispatch = await outboundRepo.getDispatchById(dispatchId);
+      expect(dispatch!.status).toBe('outcome_unknown');
+
+      const replay = await outboundService.sendExistingConversationText({
+        dispatchId,
+        conversationId,
+        ministryId: testMinistryId,
+        messageText: 'Mensagem 503',
+      });
+
+      expect(callCount).toBe(1);
+      expect(replay.status).toBe('outcome_unknown');
+    });
+
+    it('Existing-conversation provider 409: idempotency in-flight marks outcome_unknown and does NOT mark failed', async () => {
+      const dispatchId = uniqueId('disp_exist_409');
+      const conversationId = 'conv_409_test';
+
+      fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (url: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('messages')) {
+          return {
+            ok: false,
+            status: 409,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            text: async () =>
+              JSON.stringify({
+                error: {
+                  type: 'conflict_error',
+                  message: 'A request with this idempotency key is currently being processed.',
+                },
+              }),
+          } as any;
+        }
+        return { ok: false, status: 404, headers: new Headers(), text: async () => '{}' } as any;
+      });
+
+      await expect(
+        outboundService.sendExistingConversationText({
+          dispatchId,
+          conversationId,
+          ministryId: testMinistryId,
+          messageText: 'Mensagem 409',
+        })
+      ).rejects.toThrow('WHATSAPP_DISPATCH_PROVIDER_IN_FLIGHT');
+
+      const dispatch = await outboundRepo.getDispatchById(dispatchId);
+      expect(dispatch!.status).toBe('outcome_unknown');
+      expect(dispatch!.status).not.toBe('failed');
+    });
+
+    it('Existing-conversation provider 500: marks outcome_unknown and replay causes ZERO second provider call', async () => {
+      const dispatchId = uniqueId('disp_exist_500');
+      const conversationId = 'conv_500_test';
+      let callCount = 0;
+
+      fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (url: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('messages')) {
+          callCount++;
+          return {
+            ok: false,
+            status: 500,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            text: async () =>
+              JSON.stringify({
+                error: {
+                  type: 'api_error',
+                  message: 'Internal Server Error',
+                },
+              }),
+          } as any;
+        }
+        return { ok: false, status: 404, headers: new Headers(), text: async () => '{}' } as any;
+      });
+
+      await expect(
+        outboundService.sendExistingConversationText({
+          dispatchId,
+          conversationId,
+          ministryId: testMinistryId,
+          messageText: 'Mensagem 500',
+        })
+      ).rejects.toThrow('WHATSAPP_SEND_OUTCOME_UNKNOWN');
+
+      expect(callCount).toBe(1);
+
+      const dispatch = await outboundRepo.getDispatchById(dispatchId);
+      expect(dispatch!.status).toBe('outcome_unknown');
+
+      const replay = await outboundService.sendExistingConversationText({
+        dispatchId,
+        conversationId,
+        ministryId: testMinistryId,
+        messageText: 'Mensagem 500',
+      });
+
+      expect(callCount).toBe(1);
+      expect(replay.status).toBe('outcome_unknown');
+    });
+
+    it('Cross-tenant dispatch ID replay: rejected with 403 and zero provider calls', async () => {
+      const dispatchId = uniqueId('disp_cross_tenant_test');
+      const otherOrgId = uniqueId('org_other');
+
+      await db.collection('whatsapp_outbound_dispatches').doc(dispatchId).set({
+        id: dispatchId,
+        organization_id: testOrgId,
+        ministry_id: testMinistryId,
+        connection_id: testConnId,
+        provider: 'zernio',
+        provider_account_id: testAccountId,
+        recipient_e164: '+5511999998888',
+        recipient_participant_id: '5511999998888',
+        dispatch_kind: 'proactive_template',
+        template_name: 'rehearsal_reminder',
+        template_language: 'pt_BR',
+        request_fingerprint: 'fp_org_a',
+        status: 'accepted',
+        phase: 'completed',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      fetchSpy = vi.spyOn(global, 'fetch');
+
+      await expect(
+        outboundRepo.prepareDispatch({
+          id: dispatchId,
+          organizationId: otherOrgId,
+          connectionId: 'conn_other',
+          providerAccountId: 'acc_other',
+          recipientE164: '+5511999998888',
+          recipientParticipantId: '5511999998888',
+          dispatchKind: 'proactive_template',
+          requestFingerprint: 'fp_org_a',
+        })
+      ).rejects.toThrow('FORBIDDEN_DISPATCH_TENANT_MISMATCH');
+
+      const dispatch = await outboundRepo.getDispatchById(dispatchId);
+      expect(dispatch!.organization_id).toBe(testOrgId);
+      expect(dispatch!.status).toBe('accepted');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('Ambiguous account lookup: two connections with same provider_account_id fails closed with 500', async () => {
+      const duplicateAccountId = uniqueId('acc_ambiguous');
+      const conn1Id = uniqueId('conn_amb_1');
+      const conn2Id = uniqueId('conn_amb_2');
+
+      await db.collection('whatsapp_connections').doc(conn1Id).set({
+        id: conn1Id,
+        organization_id: testOrgId,
+        provider: 'zernio',
+        provider_account_id: duplicateAccountId,
+        status: 'connected',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      await db.collection('whatsapp_connections').doc(conn2Id).set({
+        id: conn2Id,
+        organization_id: testOrgId,
+        provider: 'zernio',
+        provider_account_id: duplicateAccountId,
+        status: 'connected',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      await expect(
+        connectionRepo.findByZernioAccountId(duplicateAccountId)
+      ).rejects.toThrow('AMBIGUOUS_ZERNIO_ACCOUNT_MAPPING');
+    });
+
+    it('Unknown provider message webhook: creates shadow only, outbound_dispatch_id null, zero fake dispatches', async () => {
+      const unknownMsgId = 'wamid.unknown.' + Date.now();
+
+      const deliveredEvent = {
+        id: uniqueId('evt_unknown_msg'),
+        event: 'message.delivered',
+        data: {
+          accountId: testAccountId,
+          messageId: unknownMsgId,
+          timestamp: new Date().toISOString(),
+        },
+      };
+      const deliveredBody = JSON.stringify(deliveredEvent);
+
+      const response = await connectionService.handleZernioWebhook({
+        rawBody: Buffer.from(deliveredBody, 'utf8'),
+        signature: signPayload(deliveredBody),
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.body.status).toBe('processed');
+
+      const shadow = await outboundRepo.getProviderMessageShadow(
+        buildZernioProviderMessageDocId(unknownMsgId)
+      );
+      expect(shadow).not.toBeNull();
+      expect(shadow!.outbound_dispatch_id).toBeNull();
+      expect(shadow!.status).toBe('delivered');
+    });
+
+    it('Out-of-order: read -> delivered -> sent preserves status=read', async () => {
+      const providerMsgId = 'wamid.ooo.read.deliv.sent.' + Date.now();
+      const shadowDocId = buildZernioProviderMessageDocId(providerMsgId);
+
+      // 1. read arrives first
+      const readEvent = {
+        id: uniqueId('evt_read_first'),
+        event: 'message.read',
+        data: { accountId: testAccountId, messageId: providerMsgId, timestamp: new Date().toISOString() },
+      };
+      await connectionService.handleZernioWebhook({
+        rawBody: Buffer.from(JSON.stringify(readEvent), 'utf8'),
+        signature: signPayload(JSON.stringify(readEvent)),
+      });
+      let shadow = await outboundRepo.getProviderMessageShadow(shadowDocId);
+      expect(shadow!.status).toBe('read');
+
+      // 2. delivered arrives second
+      const delivEvent = {
+        id: uniqueId('evt_deliv_second'),
+        event: 'message.delivered',
+        data: { accountId: testAccountId, messageId: providerMsgId, timestamp: new Date().toISOString() },
+      };
+      await connectionService.handleZernioWebhook({
+        rawBody: Buffer.from(JSON.stringify(delivEvent), 'utf8'),
+        signature: signPayload(JSON.stringify(delivEvent)),
+      });
+      shadow = await outboundRepo.getProviderMessageShadow(shadowDocId);
+      expect(shadow!.status).toBe('read');
+      expect(shadow!.delivered_at).not.toBeNull();
+
+      // 3. sent arrives third
+      const sentEvent = {
+        id: uniqueId('evt_sent_third'),
+        event: 'message.sent',
+        data: { accountId: testAccountId, messageId: providerMsgId, timestamp: new Date().toISOString() },
+      };
+      await connectionService.handleZernioWebhook({
+        rawBody: Buffer.from(JSON.stringify(sentEvent), 'utf8'),
+        signature: signPayload(JSON.stringify(sentEvent)),
+      });
+      shadow = await outboundRepo.getProviderMessageShadow(shadowDocId);
+      expect(shadow!.status).toBe('read');
+      expect(shadow!.sent_at).not.toBeNull();
+    });
+
+    it('Out-of-order: delivered -> sent preserves status=delivered', async () => {
+      const providerMsgId = 'wamid.ooo.deliv.sent.' + Date.now();
+      const shadowDocId = buildZernioProviderMessageDocId(providerMsgId);
+
+      // 1. delivered arrives first
+      const delivEvent = {
+        id: uniqueId('evt_deliv_1'),
+        event: 'message.delivered',
+        data: { accountId: testAccountId, messageId: providerMsgId, timestamp: new Date().toISOString() },
+      };
+      await connectionService.handleZernioWebhook({
+        rawBody: Buffer.from(JSON.stringify(delivEvent), 'utf8'),
+        signature: signPayload(JSON.stringify(delivEvent)),
+      });
+      let shadow = await outboundRepo.getProviderMessageShadow(shadowDocId);
+      expect(shadow!.status).toBe('delivered');
+
+      // 2. sent arrives second
+      const sentEvent = {
+        id: uniqueId('evt_sent_2'),
+        event: 'message.sent',
+        data: { accountId: testAccountId, messageId: providerMsgId, timestamp: new Date().toISOString() },
+      };
+      await connectionService.handleZernioWebhook({
+        rawBody: Buffer.from(JSON.stringify(sentEvent), 'utf8'),
+        signature: signPayload(JSON.stringify(sentEvent)),
+      });
+      shadow = await outboundRepo.getProviderMessageShadow(shadowDocId);
+      expect(shadow!.status).toBe('delivered');
+    });
+
+    it('Out-of-order: read -> failed preserves status=read and records failure diagnostics', async () => {
+      const providerMsgId = 'wamid.ooo.read.failed.' + Date.now();
+      const shadowDocId = buildZernioProviderMessageDocId(providerMsgId);
+
+      // 1. read arrives first
+      const readEvent = {
+        id: uniqueId('evt_read_1'),
+        event: 'message.read',
+        data: { accountId: testAccountId, messageId: providerMsgId, timestamp: new Date().toISOString() },
+      };
+      await connectionService.handleZernioWebhook({
+        rawBody: Buffer.from(JSON.stringify(readEvent), 'utf8'),
+        signature: signPayload(JSON.stringify(readEvent)),
+      });
+      let shadow = await outboundRepo.getProviderMessageShadow(shadowDocId);
+      expect(shadow!.status).toBe('read');
+
+      // 2. stale message.failed arrives later
+      const failEvent = {
+        id: uniqueId('evt_fail_stale'),
+        event: 'message.failed',
+        data: {
+          accountId: testAccountId,
+          messageId: providerMsgId,
+          error: { code: '131026', message: 'Undeliverable' },
+          timestamp: new Date().toISOString(),
+        },
+      };
+      await connectionService.handleZernioWebhook({
+        rawBody: Buffer.from(JSON.stringify(failEvent), 'utf8'),
+        signature: signPayload(JSON.stringify(failEvent)),
+      });
+      shadow = await outboundRepo.getProviderMessageShadow(shadowDocId);
+      expect(shadow!.status).toBe('read');
+      expect(shadow!.failure_code).toBe('131026');
+    });
+
+    it('Out-of-order: delivered -> failed preserves status=delivered and records failure diagnostics', async () => {
+      const providerMsgId = 'wamid.ooo.deliv.failed.' + Date.now();
+      const shadowDocId = buildZernioProviderMessageDocId(providerMsgId);
+
+      // 1. delivered arrives first
+      const delivEvent = {
+        id: uniqueId('evt_deliv_1'),
+        event: 'message.delivered',
+        data: { accountId: testAccountId, messageId: providerMsgId, timestamp: new Date().toISOString() },
+      };
+      await connectionService.handleZernioWebhook({
+        rawBody: Buffer.from(JSON.stringify(delivEvent), 'utf8'),
+        signature: signPayload(JSON.stringify(delivEvent)),
+      });
+      let shadow = await outboundRepo.getProviderMessageShadow(shadowDocId);
+      expect(shadow!.status).toBe('delivered');
+
+      // 2. stale message.failed arrives later
+      const failEvent = {
+        id: uniqueId('evt_fail_stale_deliv'),
+        event: 'message.failed',
+        data: {
+          accountId: testAccountId,
+          messageId: providerMsgId,
+          error: { code: '131026', message: 'Undeliverable' },
+          timestamp: new Date().toISOString(),
+        },
+      };
+      await connectionService.handleZernioWebhook({
+        rawBody: Buffer.from(JSON.stringify(failEvent), 'utf8'),
+        signature: signPayload(JSON.stringify(failEvent)),
+      });
+      shadow = await outboundRepo.getProviderMessageShadow(shadowDocId);
+      expect(shadow!.status).toBe('delivered');
+      expect(shadow!.failure_code).toBe('131026');
+    });
+  });
 });

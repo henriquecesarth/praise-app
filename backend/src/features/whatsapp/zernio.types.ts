@@ -619,7 +619,9 @@ export interface WhatsAppOutboundDispatchRecord {
   status: WhatsAppOutboundDispatchStatus;
   phase: WhatsAppOutboundDispatchPhase;
   provider_conversation_id?: string | null;
-  provider_message_id?: string | null;
+  provider_message_id?: string | null; // Opaque Zernio/provider message ID
+  request_execution_id?: string | null;
+  request_lease_until?: string | null;
   send_started_at?: string | null;
   provider_accepted_at?: string | null;
   delivered_at?: string | null;
@@ -632,6 +634,39 @@ export interface WhatsAppOutboundDispatchRecord {
   updated_at: string;
 }
 
+export type AcquireDispatchExecutionOutcome =
+  | 'acquired'
+  | 'in_progress'
+  | 'terminal'
+  | 'outcome_unknown';
+
+export type AcquireDispatchExecutionResult =
+  | {
+      outcome: 'acquired';
+      record: WhatsAppOutboundDispatchRecord;
+      executionId: string;
+    }
+  | {
+      outcome: 'in_progress';
+      record: WhatsAppOutboundDispatchRecord;
+    }
+  | {
+      outcome: 'terminal';
+      record: WhatsAppOutboundDispatchRecord;
+    }
+  | {
+      outcome: 'outcome_unknown';
+      record: WhatsAppOutboundDispatchRecord;
+    };
+
+export interface AcquireDispatchExecutionParams {
+  dispatchId: string;
+  organizationId: string;
+  requestFingerprint: string;
+  connectionId?: string;
+  leaseDurationMs?: number;
+}
+
 export type WhatsAppZernioProviderMessageStatus =
   | 'sent'
   | 'delivered'
@@ -641,7 +676,7 @@ export type WhatsAppZernioProviderMessageStatus =
 
 export interface WhatsAppZernioProviderMessageRecord {
   id: string; // zmsg_${sha256(providerMessageId)}
-  provider_message_id: string;
+  provider_message_id: string; // Opaque Zernio/provider message ID
   provider_account_id: string;
   organization_id?: string | null;
   connection_id?: string | null;

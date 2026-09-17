@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { db } from '../lib/firebase';
 import { AppError } from '../middleware/error-handler';
 import {
@@ -5,6 +6,8 @@ import {
   WhatsAppOutboundDispatchStatus,
   WhatsAppZernioProviderMessageRecord,
   WhatsAppZernioProviderMessageStatus,
+  AcquireDispatchExecutionParams,
+  AcquireDispatchExecutionResult,
   buildZernioProviderMessageDocId,
 } from '../features/whatsapp/zernio.types';
 
@@ -77,6 +80,26 @@ export class WhatsAppOutboundDispatchRepository {
 
       if (snap.exists) {
         const existing = snap.data() as WhatsAppOutboundDispatchRecord;
+        if (existing.organization_id !== params.organizationId) {
+          throw new AppError(
+            403,
+            'FORBIDDEN_DISPATCH_TENANT_MISMATCH: Despacho pertence a outra organização.',
+            {
+              code: 'FORBIDDEN_DISPATCH_TENANT_MISMATCH',
+              dispatchId: cleanId,
+            }
+          );
+        }
+        if (params.connectionId && existing.connection_id !== params.connectionId) {
+          throw new AppError(
+            403,
+            'FORBIDDEN_DISPATCH_CONNECTION_MISMATCH: Despacho pertence a outra conexão.',
+            {
+              code: 'FORBIDDEN_DISPATCH_CONNECTION_MISMATCH',
+              dispatchId: cleanId,
+            }
+          );
+        }
         if (existing.request_fingerprint !== params.requestFingerprint) {
           throw new AppError(
             422,
@@ -110,6 +133,8 @@ export class WhatsAppOutboundDispatchRepository {
         phase: 'prepared',
         provider_conversation_id: null,
         provider_message_id: null,
+        request_execution_id: null,
+        request_lease_until: null,
         send_started_at: null,
         provider_accepted_at: null,
         delivered_at: null,
@@ -127,6 +152,112 @@ export class WhatsAppOutboundDispatchRepository {
     });
   }
 
+  async acquireDispatchExecution(
+    params: AcquireDispatchExecutionParams
+  ): Promise<AcquireDispatchExecutionResult> {
+    const cleanId = params.dispatchId.trim();
+    if (!cleanId) {
+      throw new AppError(400, 'dispatchId é obrigatório para adquirir execução.');
+    }
+    const docRef = this.dispatchesCol.doc(cleanId);
+
+    return await db.runTransaction(async (tx) => {
+      // 1. ALL READS FIRST
+      const snap = await tx.get(docRef);
+      if (!snap.exists) {
+        throw new AppError(404, `Despacho ${cleanId} não encontrado.`);
+      }
+
+      const existing = snap.data() as WhatsAppOutboundDispatchRecord;
+
+      // 2. Validate tenant, connection, and request fingerprint
+      if (existing.organization_id !== params.organizationId) {
+        throw new AppError(
+          403,
+          'FORBIDDEN_DISPATCH_TENANT_MISMATCH: Despacho pertence a outra organização.',
+          { code: 'FORBIDDEN_DISPATCH_TENANT_MISMATCH', dispatchId: cleanId }
+        );
+      }
+      if (params.connectionId && existing.connection_id !== params.connectionId) {
+        throw new AppError(
+          403,
+          'FORBIDDEN_DISPATCH_CONNECTION_MISMATCH: Despacho pertence a outra conexão.',
+          { code: 'FORBIDDEN_DISPATCH_CONNECTION_MISMATCH', dispatchId: cleanId }
+        );
+      }
+      if (existing.request_fingerprint !== params.requestFingerprint) {
+        throw new AppError(
+          422,
+          'DISPATCH_FINGERPRINT_MISMATCH: Tentativa de reutilizar dispatchId com parâmetros divergentes.',
+          { code: 'DISPATCH_FINGERPRINT_MISMATCH', dispatchId: cleanId }
+        );
+      }
+
+      // 3. Inspect terminal or outcome_unknown states
+      if (['accepted', 'delivered', 'read', 'failed'].includes(existing.status)) {
+        return { outcome: 'terminal', record: existing };
+      }
+      if (existing.status === 'outcome_unknown' || existing.phase === 'completed') {
+        return { outcome: 'outcome_unknown', record: existing };
+      }
+
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+
+      // 4. Inspect request_started phase (Active vs Expired Lease)
+      if (existing.phase === 'request_started') {
+        const leaseUntilMs = existing.request_lease_until
+          ? new Date(existing.request_lease_until).getTime()
+          : 0;
+
+        if (leaseUntilMs > nowMs) {
+          // Active lease held by another worker - leave untouched, return in_progress
+          return { outcome: 'in_progress', record: existing };
+        } else {
+          // Expired lease! Original execution owner disappeared or hung.
+          // Atomically converge to outcome_unknown and completed phase.
+          // Lease expiration NEVER grants permission to send again.
+          const updates: Partial<WhatsAppOutboundDispatchRecord> = {
+            status: 'outcome_unknown',
+            phase: 'completed',
+            outcome_unknown_reason:
+              'EXECUTION_LEASE_EXPIRED: O lease de execução expirou sem confirmação do provedor; resultado incerto impede reenvio automático.',
+            updated_at: nowIso,
+          };
+          tx.update(docRef, updates);
+          return {
+            outcome: 'outcome_unknown',
+            record: { ...existing, ...updates },
+          };
+        }
+      }
+
+      // 5. phase === 'prepared' -> Grant execution permission
+      if (existing.phase === 'prepared') {
+        const leaseDurationMs = params.leaseDurationMs ?? 60000;
+        const executionId = `exec_${crypto.randomBytes(16).toString('hex')}`;
+        const leaseUntilIso = new Date(nowMs + leaseDurationMs).toISOString();
+
+        const updates: Partial<WhatsAppOutboundDispatchRecord> = {
+          phase: 'request_started',
+          request_execution_id: executionId,
+          request_lease_until: leaseUntilIso,
+          send_started_at: existing.send_started_at || nowIso,
+          updated_at: nowIso,
+        };
+
+        tx.update(docRef, updates);
+        return {
+          outcome: 'acquired',
+          executionId,
+          record: { ...existing, ...updates },
+        };
+      }
+
+      return { outcome: 'terminal', record: existing };
+    });
+  }
+
   async markRequestStarted(dispatchId: string): Promise<void> {
     const cleanId = dispatchId.trim();
     const nowIso = new Date().toISOString();
@@ -139,7 +270,11 @@ export class WhatsAppOutboundDispatchRepository {
 
   async markAccepted(
     dispatchId: string,
-    params: { providerMessageId: string; providerConversationId: string }
+    params: {
+      providerMessageId: string;
+      providerConversationId: string;
+      executionId?: string;
+    }
   ): Promise<WhatsAppOutboundDispatchRecord> {
     const cleanId = dispatchId.trim();
     const cleanMessageId = params.providerMessageId.trim();
@@ -150,12 +285,26 @@ export class WhatsAppOutboundDispatchRepository {
     const shadowRef = this.providerMessagesCol.doc(shadowDocId);
 
     return await db.runTransaction(async (tx) => {
+      // 1. ALL READS FIRST
       const dispatchDoc = await tx.get(dispatchRef);
       if (!dispatchDoc.exists) {
         throw new AppError(404, `Despacho ${cleanId} não encontrado.`);
       }
       const dispatch = dispatchDoc.data() as WhatsAppOutboundDispatchRecord;
       const nowIso = new Date().toISOString();
+
+      // Validate execution token if provided and active
+      if (
+        params.executionId &&
+        dispatch.request_execution_id &&
+        dispatch.request_execution_id !== params.executionId
+      ) {
+        throw new AppError(
+          409,
+          'WHATSAPP_EXECUTION_TOKEN_MISMATCH: O token de execução não corresponde ao executor registrado para o despacho.',
+          { code: 'WHATSAPP_EXECUTION_TOKEN_MISMATCH', dispatchId: cleanId }
+        );
+      }
 
       const shadowDoc = await tx.get(shadowRef);
       let evolvedStatus: WhatsAppOutboundDispatchStatus = 'accepted';
@@ -213,10 +362,11 @@ export class WhatsAppOutboundDispatchRepository {
         phase: 'completed',
         provider_message_id: cleanMessageId,
         provider_conversation_id: cleanConvId,
-        provider_accepted_at: nowIso,
-        delivered_at: deliveredAt,
-        read_at: readAt,
-        failed_at: failedAt,
+        provider_accepted_at: dispatch.provider_accepted_at || nowIso,
+        delivered_at: deliveredAt || dispatch.delivered_at,
+        read_at: readAt || dispatch.read_at,
+        failed_at: failedAt || dispatch.failed_at,
+        outcome_unknown_reason: null, // Genuine provider 2xx clears outcome_unknown
         updated_at: nowIso,
       };
 
@@ -225,10 +375,11 @@ export class WhatsAppOutboundDispatchRepository {
         phase: 'completed',
         provider_message_id: cleanMessageId,
         provider_conversation_id: cleanConvId,
-        provider_accepted_at: nowIso,
-        delivered_at: deliveredAt,
-        read_at: readAt,
-        failed_at: failedAt,
+        provider_accepted_at: dispatch.provider_accepted_at || nowIso,
+        delivered_at: deliveredAt || dispatch.delivered_at,
+        read_at: readAt || dispatch.read_at,
+        failed_at: failedAt || dispatch.failed_at,
+        outcome_unknown_reason: null,
         updated_at: nowIso,
       });
 
@@ -242,24 +393,42 @@ export class WhatsAppOutboundDispatchRepository {
   ): Promise<void> {
     const cleanId = dispatchId.trim();
     const nowIso = new Date().toISOString();
-    await this.dispatchesCol.doc(cleanId).update({
-      phase: 'completed',
-      status: 'failed',
-      failed_at: nowIso,
-      last_error_type: error.type || 'send_error',
-      last_error_code: error.code || 'SEND_FAILED',
-      updated_at: nowIso,
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(this.dispatchesCol.doc(cleanId));
+      if (!snap.exists) return;
+      const data = snap.data() as WhatsAppOutboundDispatchRecord;
+      // Do not overwrite confirmed delivery facts
+      if (['accepted', 'delivered', 'read'].includes(data.status)) {
+        return;
+      }
+      tx.update(this.dispatchesCol.doc(cleanId), {
+        phase: 'completed',
+        status: 'failed',
+        failed_at: nowIso,
+        last_error_type: error.type || 'send_error',
+        last_error_code: error.code || 'SEND_FAILED',
+        updated_at: nowIso,
+      });
     });
   }
 
   async markOutcomeUnknown(dispatchId: string, reason: string): Promise<void> {
     const cleanId = dispatchId.trim();
     const nowIso = new Date().toISOString();
-    await this.dispatchesCol.doc(cleanId).update({
-      phase: 'completed',
-      status: 'outcome_unknown',
-      outcome_unknown_reason: reason,
-      updated_at: nowIso,
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(this.dispatchesCol.doc(cleanId));
+      if (!snap.exists) return;
+      const data = snap.data() as WhatsAppOutboundDispatchRecord;
+      // Do not overwrite confirmed delivery facts
+      if (['accepted', 'delivered', 'read'].includes(data.status)) {
+        return;
+      }
+      tx.update(this.dispatchesCol.doc(cleanId), {
+        phase: 'completed',
+        status: 'outcome_unknown',
+        outcome_unknown_reason: reason,
+        updated_at: nowIso,
+      });
     });
   }
 
