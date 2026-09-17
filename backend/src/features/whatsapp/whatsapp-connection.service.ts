@@ -46,6 +46,7 @@ import {
   getZernioPhoneClaimId,
   getMinistryAssignmentClaimId,
   WhatsAppMinistryAssignmentClaimRecord,
+  WhatsAppProviderCleanupJobRecord,
 } from './whatsapp.types';
 import { OrganizationRecord } from '../organizations/organization.types';
 import { ZernioHttpClient } from './zernio-http-client';
@@ -718,6 +719,115 @@ export class WhatsAppConnectionService {
     await this.connectionRepo.setConnectionStatus(orgId, connectionId, targetStatus, reason);
   }
 
+  async transitionZernioConnectedAtomically(params: {
+    orgId: string;
+    connectionId: string;
+    providerAccountId: string;
+    providerProfileId?: string | null;
+    phoneNumber: string;
+  }): Promise<void> {
+    const { orgId, connectionId, providerAccountId, phoneNumber } = params;
+    const providerProfileId = params.providerProfileId ?? null;
+    const now = new Date().toISOString();
+    const reconJobId = `recon_zernio_${connectionId}`;
+
+    await db.runTransaction(async (tx) => {
+      // 1. ALL READS FIRST
+      const connRef = db.collection('whatsapp_connections').doc(connectionId);
+      const connDoc = await tx.get(connRef);
+      if (!connDoc.exists) {
+        throw new AppError(404, 'Conexão não encontrada nesta organização.');
+      }
+      const conn = connDoc.data() as WhatsAppConnectionRecord;
+      if (conn.organization_id !== orgId) {
+        throw new AppError(404, 'Conexão não encontrada nesta organização.');
+      }
+
+      const accountClaimId = getZernioAccountClaimId(providerAccountId);
+      const phoneClaimId = getZernioPhoneClaimId(phoneNumber);
+      const accountClaimRef = db.collection('whatsapp_provider_identity_claims').doc(accountClaimId);
+      const phoneClaimRef = db.collection('whatsapp_provider_identity_claims').doc(phoneClaimId);
+
+      const [accountClaimDoc, phoneClaimDoc] = await Promise.all([
+        tx.get(accountClaimRef),
+        tx.get(phoneClaimRef),
+      ]);
+
+      const reconJobRef = db.collection('whatsapp_waba_reconciliation_jobs').doc(reconJobId);
+      const reconJobDoc = await tx.get(reconJobRef);
+
+      // 2. VALIDATE CLAIMS
+      if (
+        !accountClaimDoc.exists ||
+        accountClaimDoc.data()?.connection_id !== connectionId ||
+        accountClaimDoc.data()?.organization_id !== orgId
+      ) {
+        throw new AppError(400, 'Claim de identidade do provedor (conta Zernio) inválido ou ausente.', {
+          code: 'INVALID_PROVIDER_CLAIM',
+        });
+      }
+      if (
+        !phoneClaimDoc.exists ||
+        phoneClaimDoc.data()?.connection_id !== connectionId ||
+        phoneClaimDoc.data()?.organization_id !== orgId
+      ) {
+        throw new AppError(400, 'Claim de identidade do provedor (telefone Zernio) inválido ou ausente.', {
+          code: 'INVALID_PROVIDER_CLAIM',
+        });
+      }
+
+      // 3. ALL WRITES AFTER READS
+      tx.update(connRef, {
+        status: 'connected',
+        status_reason: null,
+        last_connected_at: now,
+        pending_expires_at: null,
+        updated_at: now,
+      });
+
+      if (!reconJobDoc.exists) {
+        tx.set(reconJobRef, {
+          id: reconJobId,
+          provider: 'zernio',
+          provider_waba_id: null,
+          organization_id: orgId,
+          connection_id: connectionId,
+          provider_account_id: providerAccountId,
+          provider_profile_id: providerProfileId,
+          phone_number: phoneNumber,
+          desired_state: 'connected',
+          status: 'pending',
+          attempt_count: 0,
+          next_attempt_at: now,
+          lease_token: null,
+          lease_expires_at: null,
+          last_error_code: null,
+          last_error_message: null,
+          consecutive_stable_observations: 0,
+          last_observed_at: null,
+          created_at: now,
+          updated_at: now,
+        });
+      } else {
+        const existingRecon = reconJobDoc.data() as any;
+        const reconUpdates: any = {
+          desired_state: 'connected',
+          organization_id: orgId,
+          connection_id: connectionId,
+          provider_account_id: providerAccountId,
+          provider_profile_id: providerProfileId ?? existingRecon.provider_profile_id,
+          phone_number: phoneNumber,
+          updated_at: now,
+        };
+        if (existingRecon.status !== 'processing') {
+          reconUpdates.status = 'pending';
+          reconUpdates.next_attempt_at = now;
+        }
+        tx.update(reconJobRef, reconUpdates);
+      }
+    });
+  }
+
   async startZernioOnboarding(
     orgId: string,
     actorUserId: string,
@@ -1117,16 +1227,11 @@ export class WhatsAppConnectionService {
         return `${webAppBase}/whatsapp/callback?status=materialization_failed`;
       }
 
-      // Step 4: Transition status: pending -> connecting -> connected
+      // Step 4: Transition status: pending -> connecting -> connected (atomic with recon ownership)
       try {
-        if (conn.status === 'pending') {
-          await this.transitionConnectionStatus(conn.organization_id, conn.id, 'connecting');
-        }
-        await this.transitionConnectionStatus(conn.organization_id, conn.id, 'connected');
-        await this.reconJobRepo.ensureZernioJobPending({
+        await this.transitionZernioConnectedAtomically({
+          orgId: conn.organization_id,
           connectionId: conn.id,
-          organizationId: conn.organization_id,
-          desiredState: 'connected',
           providerAccountId: candidateAccountId,
           providerProfileId: conn.provider_profile_id,
           phoneNumber: canonicalPhone,
@@ -1535,16 +1640,11 @@ export class WhatsAppConnectionService {
         throw err;
       }
 
-      // Advance status: pending -> connecting -> connected
+      // Advance status: pending -> connecting -> connected (atomic with recon ownership)
       try {
-        if (conn.status === 'pending') {
-          await this.transitionConnectionStatus(conn.organization_id, conn.id, 'connecting');
-        }
-        await this.transitionConnectionStatus(conn.organization_id, conn.id, 'connected');
-        await this.reconJobRepo.ensureZernioJobPending({
+        await this.transitionZernioConnectedAtomically({
+          orgId: conn.organization_id,
           connectionId: conn.id,
-          organizationId: conn.organization_id,
-          desiredState: 'connected',
           providerAccountId: accountId,
           providerProfileId: conn.provider_profile_id,
           phoneNumber: canonicalPhone,
@@ -2547,10 +2647,45 @@ export class WhatsAppConnectionService {
       const isMaterialized = Boolean(conn.provider_account_id);
 
       await db.runTransaction(async (tx) => {
+        // 1. ALL READS FIRST (Strict Firestore rule: zero reads after any writes)
         const connRef = db.collection('whatsapp_connections').doc(connectionId);
+        const freshConnDoc = await tx.get(connRef);
+        if (!freshConnDoc.exists) {
+          throw new AppError(404, 'Conexão não encontrada nesta organização.');
+        }
+        const freshConn = freshConnDoc.data() as WhatsAppConnectionRecord;
+        if (freshConn.organization_id !== orgId) {
+          throw new AppError(404, 'Conexão não encontrada nesta organização.');
+        }
+        if (freshConn.status === 'disconnected') {
+          return; // Idempotent no-op
+        }
+
         const orgRef = db.collection('organizations').doc(orgId);
         const orgDoc = await tx.get(orgRef);
 
+        let assignmentClaimRef: FirebaseFirestore.DocumentReference | undefined;
+        let assignmentClaimDoc: FirebaseFirestore.DocumentSnapshot | undefined;
+        if (freshConn.assigned_ministry_id) {
+          const assignmentClaimId = getMinistryAssignmentClaimId(orgId, freshConn.assigned_ministry_id);
+          assignmentClaimRef = db.collection('whatsapp_ministry_assignment_claims').doc(assignmentClaimId);
+          assignmentClaimDoc = await tx.get(assignmentClaimRef);
+        }
+
+        const cleanupJobId = `cleanup_conn_${freshConn.id}`;
+        const cleanupJobRef = db.collection('whatsapp_provider_cleanup_jobs').doc(cleanupJobId);
+        let cleanupJobDoc: FirebaseFirestore.DocumentSnapshot | undefined;
+
+        const reconJobId = `recon_zernio_${freshConn.id}`;
+        const reconJobRef = db.collection('whatsapp_waba_reconciliation_jobs').doc(reconJobId);
+        let reconJobDoc: FirebaseFirestore.DocumentSnapshot | undefined;
+
+        if (isMaterialized) {
+          cleanupJobDoc = await tx.get(cleanupJobRef);
+          reconJobDoc = await tx.get(reconJobRef);
+        }
+
+        // 2. ALL WRITES AFTER ALL READS
         if (orgDoc.exists) {
           const orgData = orgDoc.data() as OrganizationRecord;
           if (orgData.default_whatsapp_connection_id === connectionId) {
@@ -2561,9 +2696,13 @@ export class WhatsAppConnectionService {
           }
         }
 
-        if (conn.assigned_ministry_id) {
-          const assignmentClaimId = getMinistryAssignmentClaimId(orgId, conn.assigned_ministry_id);
-          tx.delete(db.collection('whatsapp_ministry_assignment_claims').doc(assignmentClaimId));
+        if (
+          assignmentClaimRef &&
+          assignmentClaimDoc?.exists &&
+          assignmentClaimDoc.data()?.connection_id === connectionId &&
+          assignmentClaimDoc.data()?.organization_id === orgId
+        ) {
+          tx.delete(assignmentClaimRef);
         }
 
         // NOTE: For Zernio, do NOT delete claim_zernio_account_* or claim_zernio_phone_* here.
@@ -2581,49 +2720,103 @@ export class WhatsAppConnectionService {
         if (!isMaterialized) {
           const secretRef = db.collection('whatsapp_connection_secrets').doc(connectionId);
           tx.delete(secretRef);
+        } else {
+          // BLOCKER 1: In the same atomic commit, create/upsert the deterministic cleanup job
+          if (!cleanupJobDoc?.exists) {
+            const newCleanupJob: WhatsAppProviderCleanupJobRecord = {
+              id: cleanupJobId,
+              organization_id: orgId,
+              connection_id: freshConn.id,
+              provider: 'zernio',
+              provider_waba_id: null,
+              provider_phone_number_id: null,
+              provider_account_id: freshConn.provider_account_id,
+              provider_profile_id: freshConn.provider_profile_id,
+              phone_number: freshConn.phone_number,
+              status: 'pending',
+              attempt_count: 0,
+              max_attempts: 5,
+              next_attempt_at: nowIso,
+              lease_token: null,
+              lease_expires_at: null,
+              last_attempt_started_at: null,
+              last_error_code: null,
+              last_error_at: null,
+              provider_cleanup_proof: null,
+              override_reason: null,
+              manual_action_by: null,
+              manual_action_at: null,
+              manual_action_reason: null,
+              created_at: nowIso,
+              updated_at: nowIso,
+              completed_at: null,
+              retention_expires_at: null,
+            };
+            tx.set(cleanupJobRef, newCleanupJob);
+          } else {
+            const existingJob = cleanupJobDoc.data() as WhatsAppProviderCleanupJobRecord;
+            if (existingJob.status !== 'succeeded') {
+              const updates: Partial<WhatsAppProviderCleanupJobRecord> = {
+                organization_id: orgId,
+                connection_id: freshConn.id,
+                provider: 'zernio',
+                provider_account_id: freshConn.provider_account_id ?? existingJob.provider_account_id,
+                provider_profile_id: freshConn.provider_profile_id ?? existingJob.provider_profile_id,
+                phone_number: freshConn.phone_number ?? existingJob.phone_number,
+                updated_at: nowIso,
+              };
+              if (existingJob.status !== 'processing') {
+                updates.status = 'pending';
+                updates.next_attempt_at = nowIso;
+              }
+              tx.update(cleanupJobRef, updates);
+            }
+          }
+
+          // MEDIUM 1: Upsert recon job in the same transaction
+          if (!reconJobDoc?.exists) {
+            const newReconJob = {
+              id: reconJobId,
+              provider: 'zernio',
+              provider_waba_id: null,
+              organization_id: freshConn.organization_id,
+              connection_id: freshConn.id,
+              provider_account_id: freshConn.provider_account_id || null,
+              provider_profile_id: freshConn.provider_profile_id || null,
+              phone_number: freshConn.phone_number || null,
+              desired_state: 'disconnected',
+              status: 'pending',
+              attempt_count: 0,
+              next_attempt_at: nowIso,
+              lease_token: null,
+              lease_expires_at: null,
+              last_error_code: null,
+              last_error_message: null,
+              consecutive_stable_observations: 0,
+              last_observed_at: null,
+              created_at: nowIso,
+              updated_at: nowIso,
+            };
+            tx.set(reconJobRef, newReconJob);
+          } else {
+            const existingRecon = reconJobDoc.data() as any;
+            const reconUpdates: any = {
+              desired_state: 'disconnected',
+              organization_id: freshConn.organization_id,
+              connection_id: freshConn.id,
+              provider_account_id: freshConn.provider_account_id !== undefined ? freshConn.provider_account_id : existingRecon.provider_account_id,
+              provider_profile_id: freshConn.provider_profile_id !== undefined ? freshConn.provider_profile_id : existingRecon.provider_profile_id,
+              phone_number: freshConn.phone_number !== undefined ? freshConn.phone_number : existingRecon.phone_number,
+              updated_at: nowIso,
+            };
+            if (existingRecon.status !== 'processing') {
+              reconUpdates.status = 'pending';
+              reconUpdates.next_attempt_at = nowIso;
+            }
+            tx.update(reconJobRef, reconUpdates);
+          }
         }
       });
-
-      if (isMaterialized) {
-        await this.cleanupJobRepo.createJob({
-          id: `cleanup_conn_${conn.id}`,
-          organization_id: orgId,
-          connection_id: conn.id,
-          provider: 'zernio',
-          provider_waba_id: null,
-          provider_phone_number_id: null,
-          provider_account_id: conn.provider_account_id,
-          provider_profile_id: conn.provider_profile_id,
-          phone_number: conn.phone_number,
-          status: 'pending',
-          attempt_count: 0,
-          max_attempts: 5,
-          next_attempt_at: nowIso,
-          lease_token: null,
-          lease_expires_at: null,
-          last_attempt_started_at: null,
-          last_error_code: null,
-          last_error_at: null,
-          provider_cleanup_proof: null,
-          override_reason: null,
-          manual_action_by: null,
-          manual_action_at: null,
-          manual_action_reason: null,
-          created_at: nowIso,
-          updated_at: nowIso,
-          completed_at: null,
-          retention_expires_at: null,
-        });
-
-        await this.reconJobRepo.ensureZernioJobPending({
-          connectionId: conn.id,
-          organizationId: conn.organization_id,
-          desiredState: 'disconnected',
-          providerAccountId: conn.provider_account_id,
-          providerProfileId: conn.provider_profile_id,
-          phoneNumber: conn.phone_number,
-        });
-      }
 
       return;
     }

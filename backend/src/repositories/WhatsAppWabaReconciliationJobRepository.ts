@@ -409,15 +409,14 @@ export class WhatsAppWabaReconciliationJobRepository {
       const now = new Date();
       const nowIso = now.toISOString();
 
-      let errorCode = isStandalone ? (arg3 || 'DRIFT_DETECTED') : arg4?.errorCode || 'DRIFT_DETECTED';
-      let errorMessage = isStandalone ? null : arg4?.errorMessage || null;
-      let backoffSeconds = 60;
-      let terminalAuthLost = false;
+      const options = isStandalone
+        ? (typeof arg3 === 'object' && arg3 !== null ? arg3 : { errorCode: arg3 })
+        : (typeof arg4 === 'object' && arg4 !== null ? arg4 : { errorCode: arg4 });
 
-      if (!isStandalone && arg4) {
-        if (arg4.nextAttemptSeconds) backoffSeconds = arg4.nextAttemptSeconds;
-        if (arg4.terminalAuthLost) terminalAuthLost = true;
-      }
+      let errorCode = options?.errorCode || 'DRIFT_DETECTED';
+      let errorMessage = options?.errorMessage || null;
+      let backoffSeconds = options?.nextAttemptSeconds ?? 60;
+      let terminalAuthLost = !!options?.terminalAuthLost;
 
       if (terminalAuthLost) {
         tx.update(docRef, {

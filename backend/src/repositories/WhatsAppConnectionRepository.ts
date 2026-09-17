@@ -250,6 +250,13 @@ export class WhatsAppConnectionRepository {
       const secretRef = this.secretsCol.doc(connectionId);
       const secretDoc = await tx.get(secretRef);
 
+      let cleanupJobRef: FirebaseFirestore.DocumentReference | undefined;
+      let cleanupJobDoc: FirebaseFirestore.DocumentSnapshot | undefined;
+      if (conn.provider === 'zernio' && conn.provider_account_id) {
+        cleanupJobRef = db.collection('whatsapp_provider_cleanup_jobs').doc(`cleanup_conn_${connectionId}`);
+        cleanupJobDoc = await tx.get(cleanupJobRef);
+      }
+
       // Write phase
       const now = new Date().toISOString();
 
@@ -295,8 +302,43 @@ export class WhatsAppConnectionRepository {
         tx.delete(assignmentClaimRef);
       }
 
-      // Delete secret IF AND ONLY IF owned by this connection
+      // If materialized Zernio: create deterministic cleanup job in the same atomic commit
+      if (conn.provider === 'zernio' && conn.provider_account_id && cleanupJobRef && !cleanupJobDoc?.exists) {
+        tx.set(cleanupJobRef, {
+          id: `cleanup_conn_${connectionId}`,
+          organization_id: orgId,
+          connection_id: connectionId,
+          provider: 'zernio',
+          provider_waba_id: null,
+          provider_phone_number_id: null,
+          provider_account_id: conn.provider_account_id,
+          provider_profile_id: conn.provider_profile_id || null,
+          phone_number: conn.phone_number || null,
+          status: 'pending',
+          attempt_count: 0,
+          max_attempts: 5,
+          next_attempt_at: now,
+          lease_token: null,
+          lease_expires_at: null,
+          last_attempt_started_at: null,
+          last_error_code: null,
+          last_error_at: null,
+          provider_cleanup_proof: null,
+          override_reason: null,
+          manual_action_by: null,
+          manual_action_at: null,
+          manual_action_reason: null,
+          created_at: now,
+          updated_at: now,
+          completed_at: null,
+          retention_expires_at: null,
+        });
+      }
+
+      // Delete secret IF AND ONLY IF owned by this connection AND not materialized Zernio (retained for D7 cleanup)
+      const isMaterializedZernio = conn.provider === 'zernio' && Boolean(conn.provider_account_id);
       if (
+        !isMaterializedZernio &&
         secretDoc.exists &&
         secretDoc.data()?.organization_id === orgId &&
         secretDoc.data()?.connection_id === connectionId

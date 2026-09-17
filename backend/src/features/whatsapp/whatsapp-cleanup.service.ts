@@ -6,10 +6,10 @@ import { WhatsAppConnectionRepository } from '../../repositories/WhatsAppConnect
 import { WhatsAppConnectionSecretRepository } from '../../repositories/WhatsAppConnectionSecretRepository';
 import { WhatsAppEncryptionService } from './whatsapp-encryption.service';
 import { MetaWhatsAppProvider } from './meta-whatsapp.provider';
-import { WhatsAppProvider, WhatsAppProviderCleanupJobRecord } from './whatsapp.types';
+import { WhatsAppProvider, WhatsAppProviderCleanupJobRecord, normalizeToE164 } from './whatsapp.types';
 import { AppError } from '../../middleware/error-handler';
 import { ZernioHttpClient } from './zernio-http-client';
-import { ZernioError } from './zernio.types';
+import { ZernioError, isZernioAccountProvenAbsent, ZernioAccount } from './zernio.types';
 
 import { WhatsAppExecutionDeadline } from './whatsapp-execution-deadline';
 
@@ -562,17 +562,42 @@ export class WhatsAppCleanupService {
       return 'skipped';
     }
 
-    // 2. Tenant & Connection state validation
+    // 2. Tenant & Connection state validation (HIGH 1: strict candidate identity)
     const conn = await this.connectionRepo.getConnectionById(candidate.connection_id);
-    if (!conn || conn.organization_id !== candidate.organization_id) {
-      // Cross-tenant mismatch or missing connection: complete as cancelled
-      await this.cleanupJobRepo.completeJobInTransaction(
+    if (!conn) {
+      await this.cleanupJobRepo.recordExhaustionInTransaction(
         candidate.id,
         jobLeaseToken,
-        'cancelled',
-        'not_needed'
+        'CONNECTION_NOT_FOUND'
       );
-      return 'cancelled';
+      return 'exhausted';
+    }
+
+    if (conn.provider !== 'zernio') {
+      await this.cleanupJobRepo.recordExhaustionInTransaction(
+        candidate.id,
+        jobLeaseToken,
+        'NON_ZERNIO_PROVIDER'
+      );
+      return 'exhausted';
+    }
+
+    if (conn.organization_id !== candidate.organization_id) {
+      await this.cleanupJobRepo.recordExhaustionInTransaction(
+        candidate.id,
+        jobLeaseToken,
+        'CROSS_TENANT_MISMATCH'
+      );
+      return 'exhausted';
+    }
+
+    if (conn.id !== candidate.connection_id) {
+      await this.cleanupJobRepo.recordExhaustionInTransaction(
+        candidate.id,
+        jobLeaseToken,
+        'CONNECTION_ID_MISMATCH'
+      );
+      return 'exhausted';
     }
 
     if (conn.status !== 'disconnected') {
@@ -586,8 +611,52 @@ export class WhatsAppCleanupService {
       return 'cancelled';
     }
 
-    const accountId = candidate.provider_account_id || conn.provider_account_id;
-    const profileId = candidate.provider_profile_id || conn.provider_profile_id;
+    // Require strict equality for materialized identities
+    if (candidate.provider_account_id !== conn.provider_account_id) {
+      await this.cleanupJobRepo.recordExhaustionInTransaction(
+        candidate.id,
+        jobLeaseToken,
+        'PROVIDER_ACCOUNT_ID_MISMATCH'
+      );
+      return 'exhausted';
+    }
+
+    if (candidate.provider_profile_id !== conn.provider_profile_id) {
+      await this.cleanupJobRepo.recordExhaustionInTransaction(
+        candidate.id,
+        jobLeaseToken,
+        'PROVIDER_PROFILE_ID_MISMATCH'
+      );
+      return 'exhausted';
+    }
+
+    let candPhoneCanon: string | null = null;
+    let connPhoneCanon: string | null = null;
+    if (candidate.phone_number) {
+      try {
+        candPhoneCanon = normalizeToE164(candidate.phone_number);
+      } catch {
+        candPhoneCanon = candidate.phone_number;
+      }
+    }
+    if (conn.phone_number) {
+      try {
+        connPhoneCanon = normalizeToE164(conn.phone_number);
+      } catch {
+        connPhoneCanon = conn.phone_number;
+      }
+    }
+    if (candPhoneCanon !== connPhoneCanon) {
+      await this.cleanupJobRepo.recordExhaustionInTransaction(
+        candidate.id,
+        jobLeaseToken,
+        'PHONE_NUMBER_MISMATCH'
+      );
+      return 'exhausted';
+    }
+
+    const accountId = conn.provider_account_id;
+    const profileId = conn.provider_profile_id;
 
     // 3. If no provider account ID, it was never materialized remotely
     if (!accountId || !profileId) {
@@ -600,8 +669,9 @@ export class WhatsAppCleanupService {
       (m) => m.status === 'unknown_outcome'
     );
     if (hasPriorUnknown || candidate.attempt_count > 0) {
+      let accounts: ZernioAccount[];
       try {
-        const accounts = await this.zernioClient.listAccounts(
+        accounts = await this.zernioClient.listAccounts(
           {
             profileId,
             platform: 'whatsapp',
@@ -611,14 +681,43 @@ export class WhatsAppCleanupService {
           },
           { deadline: activeDeadline }
         );
-        const isPresent = accounts.some((a) => a._id === accountId);
-        if (!isPresent) {
-          // Account already absent from Zernio: strong settlement proof!
-          await this.cleanupJobRepo.settleZernioCleanupInTransaction(candidate.id, jobLeaseToken);
-          return 'succeeded';
-        }
       } catch (checkErr: any) {
-        // If check failed with transient error, proceed to attempt reservation
+        // BLOCKER 2: IF presence verification is UNKNOWN: NO DELETE.
+        const backoffSeconds = this.resolveBackoffSeconds(candidate.attempt_count);
+        await this.cleanupJobRepo.recordRetryWaitInTransaction(
+          candidate.id,
+          jobLeaseToken,
+          {
+            errorCode: 'ZERNIO_PRESENCE_CHECK_FAILED',
+            errorMessage: checkErr.message || 'Falha ao verificar presença no Zernio.',
+            nextAttemptSeconds: backoffSeconds,
+          }
+        );
+        return 'retry_wait';
+      }
+
+      if (isZernioAccountProvenAbsent(accounts, accountId, 10)) {
+        // Account already absent from Zernio: strong settlement proof!
+        await this.cleanupJobRepo.settleZernioCleanupInTransaction(candidate.id, jobLeaseToken);
+        return 'succeeded';
+      }
+
+      if (accounts.some((a) => (a as any)._id === accountId || (a as any).id === accountId)) {
+        // Account is proven present: fall through to attempt reservation and deleteAccount
+      } else {
+        // Target absent from first returned page, but response indicates additional possible results!
+        // MEDIUM 2 / Test 45: MUST NOT settle. Fail closed with retry_wait.
+        const backoffSeconds = this.resolveBackoffSeconds(candidate.attempt_count);
+        await this.cleanupJobRepo.recordRetryWaitInTransaction(
+          candidate.id,
+          jobLeaseToken,
+          {
+            errorCode: 'ZERNIO_PRESENCE_PAGINATION_INCOMPLETE',
+            errorMessage: 'Página de contas incompleta; não é possível provar ausência com segurança.',
+            nextAttemptSeconds: backoffSeconds,
+          }
+        );
+        return 'retry_wait';
       }
     }
 
@@ -681,20 +780,32 @@ export class WhatsAppCleanupService {
           },
           { deadline: activeDeadline }
         );
-        const isPresent = accounts.some((a) => a._id === accountId);
-        if (!isPresent) {
+        if (isZernioAccountProvenAbsent(accounts, accountId, 10)) {
           // Verified absence: Strong settlement proof!
           await this.cleanupJobRepo.settleZernioCleanupInTransaction(candidate.id, jobLeaseToken);
           return 'succeeded';
-        } else {
+        } else if (accounts.some((a) => (a as any)._id === accountId || (a as any).id === accountId)) {
           // DELETE returned 404 but account is still present in listing: ambiguous
           const backoffSeconds = this.resolveBackoffSeconds(candidate.attempt_count + 1);
           await this.cleanupJobRepo.recordRetryWaitInTransaction(
             candidate.id,
             jobLeaseToken,
             {
-              errorCode: 'ZERNIO_DELETE_404_STILL_PRESENT',
+              errorCode: 'ZERNIO_ACCOUNT_STILL_PRESENT_AFTER_404',
               errorMessage: 'Zernio DELETE retornou 404 mas conta ainda consta na listagem.',
+              nextAttemptSeconds: backoffSeconds,
+            }
+          );
+          return 'retry_wait';
+        } else {
+          // Truncated page / additional results possible: cannot settle!
+          const backoffSeconds = this.resolveBackoffSeconds(candidate.attempt_count + 1);
+          await this.cleanupJobRepo.recordRetryWaitInTransaction(
+            candidate.id,
+            jobLeaseToken,
+            {
+              errorCode: 'ZERNIO_DELETE_404_INCOMPLETE_PAGE',
+              errorMessage: 'DELETE retornou 404 mas listagem é incompleta para provar ausência.',
               nextAttemptSeconds: backoffSeconds,
             }
           );
@@ -706,7 +817,7 @@ export class WhatsAppCleanupService {
           candidate.id,
           jobLeaseToken,
           {
-            errorCode: 'ZERNIO_DELETE_404_PROBE_FAILED',
+            errorCode: 'ZERNIO_ABSENCE_PROBE_FAILED',
             errorMessage: probeErr.message || 'Falha ao verificar ausência após 404',
             nextAttemptSeconds: backoffSeconds,
           }
@@ -768,38 +879,12 @@ export class WhatsAppCleanupService {
       jobLeaseToken,
       {
         operation: 'delete_account',
-        errorCode: err.kind || 'TIMEOUT',
+        errorCode: 'UNKNOWN_OUTCOME',
         errorMessage: err.message,
         nextAttemptSeconds: backoffSeconds,
         auditNote: `deleteAccount falhou: ${err.message || 'resultado indeterminado'}`,
       }
     );
-
-    // If budget permits, probe presence
-    if (activeDeadline.hasRemaining(2_000)) {
-      try {
-        const accounts = await this.zernioClient.listAccounts(
-          {
-            profileId,
-            platform: 'whatsapp',
-            page: 1,
-            limit: 10,
-            includeOverLimit: true,
-          },
-          { deadline: activeDeadline }
-        );
-        const isPresent = accounts.some((a) => a._id === accountId);
-        if (!isPresent) {
-          const newLeaseToken = await this.cleanupJobRepo.acquireJobLeaseInTransaction(candidate.id, 60_000);
-          if (newLeaseToken) {
-            await this.cleanupJobRepo.settleZernioCleanupInTransaction(candidate.id, newLeaseToken);
-            return 'succeeded';
-          }
-        }
-      } catch {
-        // Probe failed, remain in retry_wait
-      }
-    }
 
     return 'retry_wait';
   }

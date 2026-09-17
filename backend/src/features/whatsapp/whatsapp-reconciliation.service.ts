@@ -448,8 +448,44 @@ export class WhatsAppReconciliationService {
         return 'failed';
       }
 
-      // Case 3C: Connection is disconnected (do NOT revive!)
+      // Case 3C: Connection is disconnected (do NOT revive! Repair/ensure cleanup ownership)
       if (conn.status === 'disconnected') {
+        if (accountId && profileId) {
+          const cleanupJobId = `cleanup_conn_${conn.id}`;
+          const existingCleanup = await this.cleanupJobRepo.getJobById(cleanupJobId);
+          if (!existingCleanup) {
+            await this.cleanupJobRepo.createJob({
+              id: cleanupJobId,
+              organization_id: conn.organization_id,
+              connection_id: conn.id,
+              provider: 'zernio',
+              provider_waba_id: null,
+              provider_phone_number_id: null,
+              provider_account_id: accountId,
+              provider_profile_id: profileId,
+              phone_number: conn.phone_number,
+              status: 'pending',
+              attempt_count: 0,
+              max_attempts: 5,
+              next_attempt_at: new Date().toISOString(),
+              lease_token: null,
+              lease_expires_at: null,
+              last_attempt_started_at: null,
+              last_error_code: null,
+              last_error_at: null,
+              provider_cleanup_proof: null,
+              override_reason: null,
+              manual_action_by: null,
+              manual_action_at: null,
+              manual_action_reason: null,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              completed_at: null,
+              retention_expires_at: null,
+            });
+          }
+        }
+
         await this.reconJobRepo.recordJobSuccessInTransaction(candidate.id, jobLeaseToken, {
           nextAttemptSeconds: 86400,
         });
@@ -459,30 +495,12 @@ export class WhatsAppReconciliationService {
 
     // Scenario 4: desired_state === 'disconnected'
     if (candidate.desired_state === 'disconnected') {
-      if (!accountId || !profileId) {
-        await this.reconJobRepo.recordJobSuccessInTransaction(candidate.id, jobLeaseToken, {
-          nextAttemptSeconds: 86400,
-        });
-        return 'stable';
-      }
-
-      try {
-        const accounts = await this.zernioClient.listAccounts(
-          {
-            profileId,
-            platform: 'whatsapp',
-            page: 1,
-            limit: 10,
-            includeOverLimit: true,
-          },
-          { deadline: activeDeadline }
-        );
-        const isPresent = accounts.some((a) => a._id === accountId);
-
-        if (isPresent) {
-          // Account still exists remotely: ensure cleanup job is enqueued!
+      if (conn.status === 'disconnected' && accountId && profileId) {
+        const cleanupJobId = `cleanup_conn_${conn.id}`;
+        const existingCleanup = await this.cleanupJobRepo.getJobById(cleanupJobId);
+        if (!existingCleanup) {
           await this.cleanupJobRepo.createJob({
-            id: `cleanup_conn_${conn.id}`,
+            id: cleanupJobId,
             organization_id: conn.organization_id,
             connection_id: conn.id,
             provider: 'zernio',
@@ -510,28 +528,13 @@ export class WhatsAppReconciliationService {
             completed_at: null,
             retention_expires_at: null,
           });
-
-          await this.reconJobRepo.recordJobFailureInTransaction(candidate.id, jobLeaseToken, {
-            errorCode: 'REMOTE_ACCOUNT_STILL_PRESENT',
-            errorMessage: 'Conta Zernio ainda presente após desconexão. Cleanup job assegurado.',
-            nextAttemptSeconds: 60,
-          });
-          return 'failed';
-        } else {
-          // Account absent: verified clean!
-          await this.reconJobRepo.recordJobSuccessInTransaction(candidate.id, jobLeaseToken, {
-            nextAttemptSeconds: 86400,
-          });
-          return 'stable';
         }
-      } catch (err: any) {
-        await this.reconJobRepo.recordJobFailureInTransaction(candidate.id, jobLeaseToken, {
-          errorCode: 'RECONCILIATION_PROBE_ERROR',
-          errorMessage: err.message,
-          nextAttemptSeconds: 60,
-        });
-        return 'failed';
       }
+
+      await this.reconJobRepo.recordJobSuccessInTransaction(candidate.id, jobLeaseToken, {
+        nextAttemptSeconds: 86400,
+      });
+      return 'stable';
     }
 
     return 'stable';

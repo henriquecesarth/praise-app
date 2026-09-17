@@ -347,12 +347,14 @@ export class WhatsAppProviderCleanupJobRepository {
   async recordRetryWaitInTransaction(
     arg1: FirebaseFirestore.Transaction | string,
     arg2: string,
-    arg3: string | { errorCode: string; errorMessage: string; nextAttemptSeconds: number },
-    arg4?: string
+    arg3: any,
+    arg4?: any
   ): Promise<void> {
     const isStandalone = typeof arg1 === 'string';
     const jobId = isStandalone ? arg1 : arg2;
     const leaseToken = isStandalone ? arg2 : (arg3 as string);
+    const payload = isStandalone ? arg3 : arg4;
+    const optionalErrorCode = isStandalone ? arg4 : undefined;
 
     const handler = async (tx: FirebaseFirestore.Transaction) => {
       const docRef = this.getJobRef(jobId);
@@ -370,14 +372,16 @@ export class WhatsAppProviderCleanupJobRepository {
       let errorCode: string | null = null;
       let errorMessage: string | null = null;
 
-      if (isStandalone) {
-        nextAttemptAt = arg3 as string;
-        errorCode = arg4 || null;
+      if (typeof payload === 'object' && payload !== null) {
+        errorCode = payload.errorCode || null;
+        errorMessage = payload.errorMessage || null;
+        const seconds = payload.nextAttemptSeconds ?? 60;
+        nextAttemptAt = new Date(now.getTime() + seconds * 1000).toISOString();
+      } else if (typeof payload === 'string') {
+        nextAttemptAt = payload;
+        errorCode = optionalErrorCode || null;
       } else {
-        const params = arg3 as { errorCode: string; errorMessage: string; nextAttemptSeconds: number };
-        nextAttemptAt = new Date(now.getTime() + params.nextAttemptSeconds * 1000).toISOString();
-        errorCode = params.errorCode;
-        errorMessage = params.errorMessage;
+        nextAttemptAt = new Date(now.getTime() + 60 * 1000).toISOString();
       }
 
       const nowIso = now.toISOString();
@@ -502,23 +506,30 @@ export class WhatsAppProviderCleanupJobRepository {
 
   async settleZernioCleanupInTransaction(
     jobId: string,
-    leaseToken: string
+    leaseToken: string,
+    options?: { providerCleanupProof?: 'proven' | 'proven_absent' | 'unproven' | string }
   ): Promise<void>;
   async settleZernioCleanupInTransaction(
     tx: FirebaseFirestore.Transaction,
     jobId: string,
-    leaseToken: string
+    leaseToken: string,
+    options?: { providerCleanupProof?: 'proven' | 'proven_absent' | 'unproven' | string }
   ): Promise<void>;
   async settleZernioCleanupInTransaction(
     arg1: FirebaseFirestore.Transaction | string,
     arg2?: string,
-    arg3?: string
+    arg3?: any,
+    arg4?: any
   ): Promise<void> {
     const isStandalone = typeof arg1 === 'string';
     const jobId = isStandalone ? arg1 : arg2!;
     const leaseToken = isStandalone ? arg2! : arg3!;
+    const options = isStandalone ? arg3 : arg4;
+    const proof: 'proven' | 'proven_absent' | 'unproven' =
+      options?.providerCleanupProof || 'proven_absent';
 
     const handler = async (tx: FirebaseFirestore.Transaction) => {
+      // 1. ALL READS FIRST (Strict Firestore rule: zero reads after any writes)
       const jobRef = this.getJobRef(jobId);
       const jobDoc = await tx.get(jobRef);
       if (!jobDoc.exists) {
@@ -545,37 +556,80 @@ export class WhatsAppProviderCleanupJobRepository {
         });
       }
 
-      // Check and release account claim
+      // Read account claim
       const accountId = job.provider_account_id || conn.provider_account_id;
+      let accountClaimRef: FirebaseFirestore.DocumentReference | null = null;
+      let accountClaimDoc: FirebaseFirestore.DocumentSnapshot | null = null;
       if (accountId) {
         const accountClaimId = getZernioAccountClaimId(accountId);
-        const accountClaimRef = db.collection('whatsapp_provider_identity_claims').doc(accountClaimId);
-        const accountClaimDoc = await tx.get(accountClaimRef);
-        if (accountClaimDoc.exists) {
-          const claimData = accountClaimDoc.data();
-          if (claimData?.connection_id === job.connection_id) {
-            tx.delete(accountClaimRef);
-          }
+        accountClaimRef = db.collection('whatsapp_provider_identity_claims').doc(accountClaimId);
+        accountClaimDoc = await tx.get(accountClaimRef);
+      }
+
+      // Read phone claim
+      const phoneNumber = job.phone_number || conn.phone_number;
+      let phoneClaimRef: FirebaseFirestore.DocumentReference | null = null;
+      let phoneClaimDoc: FirebaseFirestore.DocumentSnapshot | null = null;
+      if (phoneNumber) {
+        const phoneClaimId = getZernioPhoneClaimId(phoneNumber);
+        phoneClaimRef = db.collection('whatsapp_provider_identity_claims').doc(phoneClaimId);
+        phoneClaimDoc = await tx.get(phoneClaimRef);
+      }
+
+      // Read secret
+      const secretRef = db.collection('whatsapp_connection_secrets').doc(job.connection_id);
+      const secretDoc = await tx.get(secretRef);
+
+      // 2. VALIDATION PHASE (All reads succeeded, validate invariants fail-closed)
+      // HIGH 2: Account claim ownership validation
+      if (accountClaimDoc && accountClaimDoc.exists) {
+        const claimData = accountClaimDoc.data();
+        if (
+          claimData?.organization_id !== job.organization_id ||
+          claimData?.connection_id !== job.connection_id
+        ) {
+          throw new AppError(409, 'CLAIM_OWNERSHIP_CONFLICT: Account claim owned by another organization or connection.', {
+            code: 'CLAIM_OWNERSHIP_CONFLICT',
+            claimId: accountClaimDoc.id,
+            expectedConnectionId: job.connection_id,
+            actualConnectionId: claimData?.connection_id,
+            expectedOrganizationId: job.organization_id,
+            actualOrganizationId: claimData?.organization_id,
+          });
         }
       }
 
-      // Check and release phone claim
-      const phoneNumber = job.phone_number || conn.phone_number;
-      if (phoneNumber) {
-        const phoneClaimId = getZernioPhoneClaimId(phoneNumber);
-        const phoneClaimRef = db.collection('whatsapp_provider_identity_claims').doc(phoneClaimId);
-        const phoneClaimDoc = await tx.get(phoneClaimRef);
-        if (phoneClaimDoc.exists) {
-          const claimData = phoneClaimDoc.data();
-          if (claimData?.connection_id === job.connection_id) {
-            tx.delete(phoneClaimRef);
-          }
+      // HIGH 2: Phone claim ownership validation
+      if (phoneClaimDoc && phoneClaimDoc.exists) {
+        const claimData = phoneClaimDoc.data();
+        if (
+          claimData?.organization_id !== job.organization_id ||
+          claimData?.connection_id !== job.connection_id
+        ) {
+          throw new AppError(409, 'CLAIM_OWNERSHIP_CONFLICT: Phone claim owned by another organization or connection.', {
+            code: 'CLAIM_OWNERSHIP_CONFLICT',
+            claimId: phoneClaimDoc.id,
+            expectedConnectionId: job.connection_id,
+            actualConnectionId: claimData?.connection_id,
+            expectedOrganizationId: job.organization_id,
+            actualOrganizationId: claimData?.organization_id,
+          });
         }
+      }
+
+      // 3. WRITE PHASE (Zero reads executed from this point forward)
+      if (accountClaimRef && accountClaimDoc?.exists) {
+        tx.delete(accountClaimRef);
+      }
+
+      if (phoneClaimRef && phoneClaimDoc?.exists) {
+        tx.delete(phoneClaimRef);
       }
 
       // Delete connection secret if any remains
-      const secretRef = db.collection('whatsapp_connection_secrets').doc(job.connection_id);
-      tx.delete(secretRef);
+      if (secretDoc.exists) {
+        tx.delete(secretRef);
+      }
 
       const now = new Date();
       const nowIso = now.toISOString();
@@ -594,7 +648,7 @@ export class WhatsAppProviderCleanupJobRepository {
 
       tx.update(jobRef, {
         status: 'succeeded',
-        provider_cleanup_proof: 'proven',
+        provider_cleanup_proof: proof,
         settled_at: nowIso,
         completed_at: nowIso,
         lease_token: null,

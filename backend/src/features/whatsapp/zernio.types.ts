@@ -130,12 +130,93 @@ export function getZernioAccountProfileId(account: ZernioAccount): string {
   return account.profileId._id;
 }
 
+const paginationFields = {
+  total: z.number().optional(),
+  totalCount: z.number().optional(),
+  count: z.number().optional(),
+  hasMore: z.boolean().optional(),
+  has_more: z.boolean().optional(),
+  page: z.number().optional(),
+  limit: z.number().optional(),
+  totalPages: z.number().optional(),
+  pages: z.number().optional(),
+  pagination: z
+    .object({
+      total: z.number().optional(),
+      totalCount: z.number().optional(),
+      count: z.number().optional(),
+      hasMore: z.boolean().optional(),
+      has_more: z.boolean().optional(),
+      page: z.number().optional(),
+      limit: z.number().optional(),
+      totalPages: z.number().optional(),
+      pages: z.number().optional(),
+    })
+    .optional(),
+};
+
+function enrichWithPagination(accounts: ZernioAccount[], val: any): ZernioAccount[] {
+  const list: any = [...accounts];
+  const pag = val.pagination || {};
+  list.total = val.total ?? val.totalCount ?? val.count ?? pag.total ?? pag.totalCount ?? pag.count;
+  list.hasMore = val.hasMore ?? val.has_more ?? pag.hasMore ?? pag.has_more;
+  list.page = val.page ?? pag.page;
+  list.limit = val.limit ?? pag.limit;
+  list.totalPages = val.totalPages ?? val.pages ?? pag.totalPages ?? pag.pages;
+  return list as ZernioAccount[];
+}
+
 export const zernioListAccountsResponseSchema = z.union([
   z.array(zernioAccountSchema),
-  z.object({ accounts: z.array(zernioAccountSchema) }).transform((val) => val.accounts),
-  z.object({ data: z.array(zernioAccountSchema) }).transform((val) => val.data),
-  z.object({ items: z.array(zernioAccountSchema) }).transform((val) => val.items),
+  z
+    .object({
+      accounts: z.array(zernioAccountSchema),
+      ...paginationFields,
+    })
+    .passthrough()
+    .transform((val) => enrichWithPagination(val.accounts, val)),
+  z
+    .object({
+      data: z.array(zernioAccountSchema),
+      ...paginationFields,
+    })
+    .passthrough()
+    .transform((val) => enrichWithPagination(val.data, val)),
+  z
+    .object({
+      items: z.array(zernioAccountSchema),
+      ...paginationFields,
+    })
+    .passthrough()
+    .transform((val) => enrichWithPagination(val.items, val)),
 ]);
+
+export function isZernioAccountProvenAbsent(
+  accounts: ZernioAccount[],
+  targetAccountId: string,
+  requestedLimit: number = 10
+): boolean {
+  if (accounts.some((a) => a._id === targetAccountId || (a as any).id === targetAccountId)) {
+    return false; // Present
+  }
+
+  const list = accounts as any;
+  if (list.hasMore === true) {
+    return false; // Additional results exist
+  }
+  if (typeof list.total === 'number' && list.total > accounts.length) {
+    return false; // Incomplete page: total indicates more results exist
+  }
+  if (typeof list.totalPages === 'number' && list.totalPages > 1) {
+    return false; // Multiple pages exist
+  }
+  if (accounts.length >= requestedLimit && typeof list.total !== 'number' && list.hasMore === undefined) {
+    // Truncated page: full page returned without total proof that this is the complete set
+    return false;
+  }
+
+  return true; // Conclusively proven absent
+}
 
 export const zernioDeleteAccountResponseSchema = z
   .object({

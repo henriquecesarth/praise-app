@@ -542,7 +542,7 @@ export interface WhatsAppProviderCleanupJobRecord {
   last_error_code: string | null;
   last_error_message?: string | null;
   last_error_at?: string | null;
-  provider_cleanup_proof: 'proven' | 'unproven' | 'not_needed' | 'overridden' | null;
+  provider_cleanup_proof: 'proven' | 'proven_absent' | 'unproven' | 'not_needed' | 'overridden' | null;
   waba_claim_generation?: number;
   override_reason?: string | null;
   manual_action_by: string | null; // e.g. "internal_operator"
