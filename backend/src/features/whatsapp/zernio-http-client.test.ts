@@ -420,11 +420,14 @@ describe('ZernioHttpClient Suite (Phase 7D2-D2)', () => {
         expect(err.providerType).toBe('platform_error');
         expect(err.providerCode).toBe('meta_registration_rejected');
         expect(err.providerPlatform).toBe('meta');
-        expect(err.safeDetails?.platformError).toEqual({
-          code: 131031,
-          error_subcode: 460,
-          type: 'OAuthException',
-        });
+        expect(err.safeDetails?.platformError).toEqual(
+          expect.objectContaining({
+            code: 131031,
+            error_subcode: 460,
+            subcode: 460,
+            type: 'OAuthException',
+          })
+        );
       }
     });
 
@@ -529,6 +532,41 @@ describe('ZernioHttpClient Suite (Phase 7D2-D2)', () => {
         expect(err.kind).toBe('CONFLICT');
         expect(err.providerCode).toBe('profilenameconflict');
         expect(err.safeDetails?.existingProfileId).toBe('prof_existing_abc999');
+      }
+    });
+
+    it('extracts safeDetails.platformError preserving code 100 subcode 33 for dead channel detection', async () => {
+      fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        headers: new Headers(),
+        text: async () =>
+          JSON.stringify({
+            error: {
+              message: 'Invalid parameter',
+              type: 'OAuthException',
+              code: 100,
+              error_subcode: 33,
+            },
+            platformError: {
+              code: 100,
+              error_subcode: 33,
+              type: 'OAuthException',
+              message: 'The phone number has been deleted or deregistered',
+            },
+          }),
+      } as any);
+
+      try {
+        await client.request('whatsapp/number-info');
+        expect.unreachable('Should have thrown');
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(ZernioError);
+        expect(err.statusCode).toBe(400);
+        expect(err.safeDetails?.platformError).toBeDefined();
+        expect((err.safeDetails.platformError as any).code).toBe(100);
+        expect((err.safeDetails.platformError as any).subcode).toBe(33);
+        expect((err.safeDetails.platformError as any).error_subcode).toBe(33);
       }
     });
   });
@@ -1003,6 +1041,105 @@ describe('ZernioHttpClient Suite (Phase 7D2-D2)', () => {
             limit: 2,
           })
         ).rejects.toThrow('ZERNIO_PROTOCOL_ERROR');
+      });
+
+      it('appends includeOverLimit=true to query parameters when provided', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () =>
+            JSON.stringify([
+              {
+                _id: 'acc_wa_overlimit',
+                profileId: 'prof_101',
+                platform: 'whatsapp',
+                status: 'connected',
+              },
+            ]),
+        } as any);
+
+        const accounts = await client.listAccounts({
+          profileId: 'prof_101',
+          platform: 'whatsapp',
+          page: 1,
+          limit: 10,
+          includeOverLimit: true,
+        });
+
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        const callUrl = new URL(fetchSpy.mock.calls[0][0]);
+        expect(callUrl.searchParams.get('includeOverLimit')).toBe('true');
+        expect(accounts).toHaveLength(1);
+      });
+    });
+
+    describe('deleteAccount', () => {
+      it('calls DELETE accounts/{accountId} and returns parsed response', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () => JSON.stringify({ message: 'Account deleted successfully' }),
+        } as any);
+
+        const res = await client.deleteAccount('acc_to_delete_123');
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        const callUrl = new URL(fetchSpy.mock.calls[0][0]);
+        expect(callUrl.pathname).toContain('accounts/acc_to_delete_123');
+        expect(fetchSpy.mock.calls[0][1].method).toBe('DELETE');
+        expect(res.message).toBe('Account deleted successfully');
+      });
+
+      it('returns success: true when response body is empty or lenient JSON', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () => '',
+        } as any);
+
+        const res = await client.deleteAccount('acc_to_delete_456');
+        expect(res.success).toBe(true);
+      });
+
+      it('rejects empty or whitespace accountId with 400', async () => {
+        await expect(client.deleteAccount('')).rejects.toThrow('ZERNIO_INVALID_ACCOUNT_ID');
+        await expect(client.deleteAccount('   ')).rejects.toThrow('ZERNIO_INVALID_ACCOUNT_ID');
+      });
+
+      it('rejects accountId containing slash with 400', async () => {
+        await expect(client.deleteAccount('acc/dangerous')).rejects.toThrow('ZERNIO_INVALID_ACCOUNT_ID');
+      });
+
+      it('throws 404 NOT_FOUND error when account does not exist', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+          ok: false,
+          status: 404,
+          statusText: 'Not Found',
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () => JSON.stringify({ error: 'Account not found', code: 'not_found' }),
+        } as any);
+
+        await expect(client.deleteAccount('acc_nonexistent')).rejects.toThrow('ZERNIO_NOT_FOUND');
+      });
+
+      it('throws 429 RATE_LIMITED error and extracts retryAfterSeconds', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+          ok: false,
+          status: 429,
+          statusText: 'Too Many Requests',
+          headers: new Headers({ 'Retry-After': '45', 'content-type': 'application/json' }),
+          text: async () => JSON.stringify({ error: 'Rate limit exceeded' }),
+        } as any);
+
+        try {
+          await client.deleteAccount('acc_rate_limited');
+          expect.unreachable('Should have thrown');
+        } catch (err: any) {
+          expect(err.kind).toBe('RATE_LIMITED');
+          expect(err.retryAfterSeconds).toBe(45);
+        }
       });
     });
 

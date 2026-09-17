@@ -137,6 +137,15 @@ export const zernioListAccountsResponseSchema = z.union([
   z.object({ items: z.array(zernioAccountSchema) }).transform((val) => val.items),
 ]);
 
+export const zernioDeleteAccountResponseSchema = z
+  .object({
+    message: z.string().optional(),
+    success: z.boolean().optional(),
+  })
+  .passthrough();
+
+export type ZernioDeleteAccountResponse = z.infer<typeof zernioDeleteAccountResponseSchema>;
+
 export const zernioPhoneDetailsSchema = z
   .object({
     display_phone_number: z.string().min(1, 'display_phone_number é obrigatório'),
@@ -166,6 +175,7 @@ export interface ZernioListAccountsParams {
   platform?: string;
   page: number;
   limit: number;
+  includeOverLimit?: boolean;
 }
 
 export const ZERNIO_KNOWN_CALLBACK_ERRORS = [

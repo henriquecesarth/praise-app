@@ -8,6 +8,8 @@ import { WhatsAppEncryptionService } from './whatsapp-encryption.service';
 import { MetaWhatsAppProvider } from './meta-whatsapp.provider';
 import { WhatsAppProvider, WhatsAppProviderCleanupJobRecord } from './whatsapp.types';
 import { AppError } from '../../middleware/error-handler';
+import { ZernioHttpClient } from './zernio-http-client';
+import { ZernioError } from './zernio.types';
 
 import { WhatsAppExecutionDeadline } from './whatsapp-execution-deadline';
 
@@ -37,7 +39,8 @@ export class WhatsAppCleanupService {
     private readonly connectionRepo: WhatsAppConnectionRepository = new WhatsAppConnectionRepository(),
     private readonly secretRepo: WhatsAppConnectionSecretRepository = new WhatsAppConnectionSecretRepository(),
     private readonly encryptionService: WhatsAppEncryptionService = new WhatsAppEncryptionService(),
-    private readonly metaProvider: WhatsAppProvider = new MetaWhatsAppProvider()
+    private readonly metaProvider: WhatsAppProvider = new MetaWhatsAppProvider(),
+    private readonly zernioClient: ZernioHttpClient = new ZernioHttpClient()
   ) {}
 
   async executeDueJobs(options: {
@@ -115,6 +118,10 @@ export class WhatsAppCleanupService {
       return 'skipped';
     }
 
+    if (candidate.provider === 'zernio') {
+      return await this.processSingleZernioJob(candidate, jobLeaseToken, activeDeadline);
+    }
+
     // Check remaining budget before acquiring WABA lock
     if (!activeDeadline.hasRemaining(3_000)) {
       await this.cleanupJobRepo.recordRetryWaitInTransaction(
@@ -126,6 +133,9 @@ export class WhatsAppCleanupService {
       return 'skipped';
     }
 
+    if (!candidate.provider_waba_id) {
+      return 'skipped';
+    }
     const wabaId = candidate.provider_waba_id;
 
     // 2. Acquire WABA Lifecycle Lock Lease (120 seconds)
@@ -522,15 +532,280 @@ export class WhatsAppCleanupService {
     await this.secretRepo.deleteSecret(job.organization_id, job.connection_id, {
       force: true,
       overrideReason: options.overrideReason,
-      wabaId: job.provider_waba_id,
+      wabaId: job.provider_waba_id || undefined,
     });
 
     // Force abandon lock uncertainty for this connection
-    await this.wabaLockRepo.forceAbandonOverrideInTransaction(job.provider_waba_id, options.overrideReason);
+    if (job.provider_waba_id) {
+      await this.wabaLockRepo.forceAbandonOverrideInTransaction(job.provider_waba_id, options.overrideReason);
+    }
 
     await this.cleanupJobRepo.abandonJob(jobId, options.overrideReason, 'internal_operator');
 
     const updated = await this.cleanupJobRepo.getJobById(jobId);
     return updated!;
+  }
+
+  private async processSingleZernioJob(
+    candidate: WhatsAppProviderCleanupJobRecord,
+    jobLeaseToken: string,
+    activeDeadline: WhatsAppExecutionDeadline
+  ): Promise<'succeeded' | 'cancelled' | 'retry_wait' | 'exhausted' | 'skipped'> {
+    // 1. Budget check
+    if (!activeDeadline.hasRemaining(3_000)) {
+      await this.cleanupJobRepo.recordRetryWaitInTransaction(
+        candidate.id,
+        jobLeaseToken,
+        new Date().toISOString(),
+        'INSUFFICIENT_EXECUTION_BUDGET'
+      );
+      return 'skipped';
+    }
+
+    // 2. Tenant & Connection state validation
+    const conn = await this.connectionRepo.getConnectionById(candidate.connection_id);
+    if (!conn || conn.organization_id !== candidate.organization_id) {
+      // Cross-tenant mismatch or missing connection: complete as cancelled
+      await this.cleanupJobRepo.completeJobInTransaction(
+        candidate.id,
+        jobLeaseToken,
+        'cancelled',
+        'not_needed'
+      );
+      return 'cancelled';
+    }
+
+    if (conn.status !== 'disconnected') {
+      // Connection is not disconnected; cleanup is not needed or cancelled
+      await this.cleanupJobRepo.completeJobInTransaction(
+        candidate.id,
+        jobLeaseToken,
+        'cancelled',
+        'not_needed'
+      );
+      return 'cancelled';
+    }
+
+    const accountId = candidate.provider_account_id || conn.provider_account_id;
+    const profileId = candidate.provider_profile_id || conn.provider_profile_id;
+
+    // 3. If no provider account ID, it was never materialized remotely
+    if (!accountId || !profileId) {
+      await this.cleanupJobRepo.settleZernioCleanupInTransaction(candidate.id, jobLeaseToken);
+      return 'succeeded';
+    }
+
+    // 4. Pre-cleanup presence check (if candidate has prior attempts or unknown mutations)
+    const hasPriorUnknown = candidate.unresolved_remote_mutations?.some(
+      (m) => m.status === 'unknown_outcome'
+    );
+    if (hasPriorUnknown || candidate.attempt_count > 0) {
+      try {
+        const accounts = await this.zernioClient.listAccounts(
+          {
+            profileId,
+            platform: 'whatsapp',
+            page: 1,
+            limit: 10,
+            includeOverLimit: true,
+          },
+          { deadline: activeDeadline }
+        );
+        const isPresent = accounts.some((a) => a._id === accountId);
+        if (!isPresent) {
+          // Account already absent from Zernio: strong settlement proof!
+          await this.cleanupJobRepo.settleZernioCleanupInTransaction(candidate.id, jobLeaseToken);
+          return 'succeeded';
+        }
+      } catch (checkErr: any) {
+        // If check failed with transient error, proceed to attempt reservation
+      }
+    }
+
+    // 5. Pre-call attempt reservation
+    const reserveResult = await this.cleanupJobRepo.reserveAttemptInTransaction(
+      candidate.id,
+      jobLeaseToken
+    );
+    if (typeof reserveResult === 'object' && !reserveResult.reserved) {
+      return 'exhausted';
+    }
+
+    // 6. Check budget after reservation
+    if (!activeDeadline.hasRemaining(3_000)) {
+      await this.cleanupJobRepo.recordRetryWaitInTransaction(
+        candidate.id,
+        jobLeaseToken,
+        new Date().toISOString(),
+        'INSUFFICIENT_EXECUTION_BUDGET'
+      );
+      return 'skipped';
+    }
+
+    // 7. Execute remote DELETE /v1/accounts/{accountId}
+    try {
+      await this.zernioClient.deleteAccount(accountId, { deadline: activeDeadline });
+      // HTTP 200 OK -> Confirmed cleanup proof! Strong settlement!
+      await this.cleanupJobRepo.settleZernioCleanupInTransaction(candidate.id, jobLeaseToken);
+      return 'succeeded';
+    } catch (err: any) {
+      return await this.handleZernioDeleteError(
+        candidate,
+        jobLeaseToken,
+        accountId,
+        profileId,
+        err,
+        activeDeadline
+      );
+    }
+  }
+
+  private async handleZernioDeleteError(
+    candidate: WhatsAppProviderCleanupJobRecord,
+    jobLeaseToken: string,
+    accountId: string,
+    profileId: string,
+    err: any,
+    activeDeadline: WhatsAppExecutionDeadline
+  ): Promise<'succeeded' | 'retry_wait' | 'exhausted'> {
+    // Case A: 404 Not Found -> Verify absence via listAccounts({ includeOverLimit: true })
+    if (err.statusCode === 404 || err.kind === 'NOT_FOUND') {
+      try {
+        const accounts = await this.zernioClient.listAccounts(
+          {
+            profileId,
+            platform: 'whatsapp',
+            page: 1,
+            limit: 10,
+            includeOverLimit: true,
+          },
+          { deadline: activeDeadline }
+        );
+        const isPresent = accounts.some((a) => a._id === accountId);
+        if (!isPresent) {
+          // Verified absence: Strong settlement proof!
+          await this.cleanupJobRepo.settleZernioCleanupInTransaction(candidate.id, jobLeaseToken);
+          return 'succeeded';
+        } else {
+          // DELETE returned 404 but account is still present in listing: ambiguous
+          const backoffSeconds = this.resolveBackoffSeconds(candidate.attempt_count + 1);
+          await this.cleanupJobRepo.recordRetryWaitInTransaction(
+            candidate.id,
+            jobLeaseToken,
+            {
+              errorCode: 'ZERNIO_DELETE_404_STILL_PRESENT',
+              errorMessage: 'Zernio DELETE retornou 404 mas conta ainda consta na listagem.',
+              nextAttemptSeconds: backoffSeconds,
+            }
+          );
+          return 'retry_wait';
+        }
+      } catch (probeErr: any) {
+        const backoffSeconds = this.resolveBackoffSeconds(candidate.attempt_count + 1);
+        await this.cleanupJobRepo.recordRetryWaitInTransaction(
+          candidate.id,
+          jobLeaseToken,
+          {
+            errorCode: 'ZERNIO_DELETE_404_PROBE_FAILED',
+            errorMessage: probeErr.message || 'Falha ao verificar ausência após 404',
+            nextAttemptSeconds: backoffSeconds,
+          }
+        );
+        return 'retry_wait';
+      }
+    }
+
+    // Case B: 429 Rate Limited
+    if (err.statusCode === 429 || err.kind === 'RATE_LIMITED') {
+      const retryAfter = (err instanceof ZernioError && err.retryAfterSeconds) ? err.retryAfterSeconds : 60;
+      await this.cleanupJobRepo.recordRetryWaitInTransaction(
+        candidate.id,
+        jobLeaseToken,
+        {
+          errorCode: 'RATE_LIMITED',
+          errorMessage: err.message,
+          nextAttemptSeconds: retryAfter,
+        }
+      );
+      return 'retry_wait';
+    }
+
+    // Case C: 401 / 403 Auth Error
+    if (err.statusCode === 401 || err.statusCode === 403 || err.kind === 'AUTH') {
+      if (candidate.attempt_count + 1 >= candidate.max_attempts) {
+        await this.cleanupJobRepo.recordExhaustionInTransaction(candidate.id, jobLeaseToken, {
+          errorCode: 'ZERNIO_AUTH_ERROR',
+          errorMessage: err.message,
+        });
+        return 'exhausted';
+      }
+      const backoffSeconds = this.resolveBackoffSeconds(candidate.attempt_count + 1);
+      await this.cleanupJobRepo.recordRetryWaitInTransaction(
+        candidate.id,
+        jobLeaseToken,
+        {
+          errorCode: 'ZERNIO_AUTH_ERROR',
+          errorMessage: err.message,
+          nextAttemptSeconds: backoffSeconds,
+        }
+      );
+      return 'retry_wait';
+    }
+
+    // Case D: 400 / 422 Validation Error
+    if (err.statusCode === 400 || err.statusCode === 422 || err.kind === 'VALIDATION') {
+      await this.cleanupJobRepo.recordExhaustionInTransaction(candidate.id, jobLeaseToken, {
+        errorCode: 'ZERNIO_VALIDATION_ERROR',
+        errorMessage: err.message,
+      });
+      return 'exhausted';
+    }
+
+    // Case E: 5xx, Timeout, Network Error, Indeterminate
+    const backoffSeconds = this.resolveBackoffSeconds(candidate.attempt_count + 1);
+    await this.cleanupJobRepo.recordUnresolvedMutationInTransaction(
+      candidate.id,
+      jobLeaseToken,
+      {
+        operation: 'delete_account',
+        errorCode: err.kind || 'TIMEOUT',
+        errorMessage: err.message,
+        nextAttemptSeconds: backoffSeconds,
+        auditNote: `deleteAccount falhou: ${err.message || 'resultado indeterminado'}`,
+      }
+    );
+
+    // If budget permits, probe presence
+    if (activeDeadline.hasRemaining(2_000)) {
+      try {
+        const accounts = await this.zernioClient.listAccounts(
+          {
+            profileId,
+            platform: 'whatsapp',
+            page: 1,
+            limit: 10,
+            includeOverLimit: true,
+          },
+          { deadline: activeDeadline }
+        );
+        const isPresent = accounts.some((a) => a._id === accountId);
+        if (!isPresent) {
+          const newLeaseToken = await this.cleanupJobRepo.acquireJobLeaseInTransaction(candidate.id, 60_000);
+          if (newLeaseToken) {
+            await this.cleanupJobRepo.settleZernioCleanupInTransaction(candidate.id, newLeaseToken);
+            return 'succeeded';
+          }
+        }
+      } catch {
+        // Probe failed, remain in retry_wait
+      }
+    }
+
+    return 'retry_wait';
+  }
+
+  private resolveBackoffSeconds(attemptCount: number): number {
+    const idx = Math.min(Math.max(0, attemptCount), CLEANUP_BACKOFF_SCHEDULE_MS.length - 1);
+    return Math.max(5, Math.floor(CLEANUP_BACKOFF_SCHEDULE_MS[idx] / 1000));
   }
 }

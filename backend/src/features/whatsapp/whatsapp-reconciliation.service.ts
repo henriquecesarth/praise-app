@@ -4,10 +4,13 @@ import { WhatsAppConnectionRepository } from '../../repositories/WhatsAppConnect
 import { WhatsAppConnectionSecretRepository } from '../../repositories/WhatsAppConnectionSecretRepository';
 import { WhatsAppEncryptionService } from './whatsapp-encryption.service';
 import { MetaWhatsAppProvider } from './meta-whatsapp.provider';
-import { WhatsAppProvider, WhatsAppWabaReconciliationJobRecord } from './whatsapp.types';
+import { WhatsAppProvider, WhatsAppWabaReconciliationJobRecord, normalizeToE164 } from './whatsapp.types';
+import { WhatsAppProviderCleanupJobRepository } from '../../repositories/WhatsAppProviderCleanupJobRepository';
 import { AppError } from '../../middleware/error-handler';
 import { db } from '../../lib/firebase';
 import { WhatsAppExecutionDeadline } from './whatsapp-execution-deadline';
+import { ZernioHttpClient } from './zernio-http-client';
+import { ZernioError } from './zernio.types';
 
 export interface ReconciliationExecutionSummary {
   candidateCount: number;
@@ -25,7 +28,9 @@ export class WhatsAppReconciliationService {
     private readonly connectionRepo: WhatsAppConnectionRepository = new WhatsAppConnectionRepository(),
     private readonly secretRepo: WhatsAppConnectionSecretRepository = new WhatsAppConnectionSecretRepository(),
     private readonly encryptionService: WhatsAppEncryptionService = new WhatsAppEncryptionService(),
-    private readonly metaProvider: WhatsAppProvider = new MetaWhatsAppProvider()
+    private readonly metaProvider: WhatsAppProvider = new MetaWhatsAppProvider(),
+    private readonly zernioClient: ZernioHttpClient = new ZernioHttpClient(),
+    private readonly cleanupJobRepo: WhatsAppProviderCleanupJobRepository = new WhatsAppProviderCleanupJobRepository()
   ) {}
 
   async executeDueJobs(options: {
@@ -100,6 +105,10 @@ export class WhatsAppReconciliationService {
       return 'skipped';
     }
 
+    if (candidate.provider === 'zernio') {
+      return await this.processSingleZernioJob(candidate, jobLeaseToken, activeDeadline);
+    }
+
     // Check remaining budget before acquiring WABA lock
     if (!activeDeadline.hasRemaining(3_000)) {
       await this.reconJobRepo.recordJobFailureInTransaction(
@@ -110,6 +119,9 @@ export class WhatsAppReconciliationService {
       return 'skipped';
     }
 
+    if (!candidate.provider_waba_id) {
+      return 'skipped';
+    }
     const wabaId = candidate.provider_waba_id;
 
     // 2. Acquire WABA Lifecycle Lock Lease (120 seconds)
@@ -269,5 +281,282 @@ export class WhatsAppReconciliationService {
         // Ignored
       }
     }
+  }
+
+  private async processSingleZernioJob(
+    candidate: WhatsAppWabaReconciliationJobRecord,
+    jobLeaseToken: string,
+    activeDeadline: WhatsAppExecutionDeadline
+  ): Promise<'stable' | 'repaired' | 'failed' | 'skipped'> {
+    // 1. Check budget
+    if (!activeDeadline.hasRemaining(3_000)) {
+      await this.reconJobRepo.recordJobFailureInTransaction(
+        candidate.id,
+        jobLeaseToken,
+        'INSUFFICIENT_EXECUTION_BUDGET'
+      );
+      return 'skipped';
+    }
+
+    // 2. Fetch connection
+    if (!candidate.connection_id) {
+      await this.reconJobRepo.recordJobSuccessInTransaction(candidate.id, jobLeaseToken, {
+        nextAttemptSeconds: 86400,
+      });
+      return 'stable';
+    }
+
+    const conn = await this.connectionRepo.getConnectionById(candidate.connection_id);
+    if (!conn) {
+      await this.reconJobRepo.recordJobSuccessInTransaction(candidate.id, jobLeaseToken, {
+        nextAttemptSeconds: 86400,
+      });
+      return 'stable';
+    }
+
+    if (candidate.organization_id && conn.organization_id !== candidate.organization_id) {
+      await this.reconJobRepo.recordJobFailureInTransaction(candidate.id, jobLeaseToken, {
+        errorCode: 'CROSS_TENANT_MISMATCH',
+        nextAttemptSeconds: 300,
+      });
+      return 'failed';
+    }
+
+    const accountId = candidate.provider_account_id || conn.provider_account_id;
+    const profileId = candidate.provider_profile_id || conn.provider_profile_id;
+
+    // 3. Reconcile based on desired state
+    if (candidate.desired_state === 'connected') {
+      if (!accountId) {
+        // Never materialized
+        await this.reconJobRepo.recordJobSuccessInTransaction(candidate.id, jobLeaseToken, {
+          nextAttemptSeconds: 300,
+        });
+        return 'stable';
+      }
+
+      // Case 3A: Connection is connected
+      if (conn.status === 'connected') {
+        try {
+          const numberInfo = await this.zernioClient.getWhatsAppNumberInfo(accountId, {
+            deadline: activeDeadline,
+          });
+
+          const isHealthy =
+            numberInfo.phone?.status?.toUpperCase() === 'CONNECTED' &&
+            numberInfo.phone?.platform_type?.toUpperCase() === 'CLOUD_API';
+
+          let phoneMatches = false;
+          try {
+            phoneMatches = normalizeToE164(numberInfo.phone?.display_phone_number) === conn.phone_number;
+          } catch {
+            phoneMatches = false;
+          }
+
+          if (isHealthy && phoneMatches) {
+            // Stable observation
+            await this.reconJobRepo.recordJobSuccessInTransaction(candidate.id, jobLeaseToken, {
+              nextAttemptSeconds: 300,
+            });
+            return 'stable';
+          }
+
+          // Identity drift detected (phone mismatch or not CLOUD_API)
+          await this.connectionRepo.updateConnection(conn.organization_id, conn.id, {
+            status: 'error',
+            status_reason: 'ZERNIO_RECONCILIATION_IDENTITY_DRIFT',
+            updated_at: new Date().toISOString(),
+          });
+          await this.reconJobRepo.recordJobFailureInTransaction(candidate.id, jobLeaseToken, {
+            errorCode: 'IDENTITY_DRIFT',
+            errorMessage: 'Identidade ou status divergente do número WhatsApp no Zernio.',
+            nextAttemptSeconds: 60,
+          });
+          return 'failed';
+        } catch (err: any) {
+          if (this.isRemoteDeadWhatsAppChannel(err)) {
+            // Remote dead channel (code 100 subcode 33)
+            await this.connectionRepo.updateConnection(conn.organization_id, conn.id, {
+              status: 'error',
+              status_reason: 'ZERNIO_RECONCILIATION_REMOTE_DEAD',
+              updated_at: new Date().toISOString(),
+            });
+            await this.reconJobRepo.recordJobFailureInTransaction(candidate.id, jobLeaseToken, {
+              errorCode: 'ZERNIO_RECONCILIATION_REMOTE_DEAD',
+              errorMessage: err.message,
+              nextAttemptSeconds: 60,
+            });
+            return 'failed';
+          }
+
+          // Transient/network/timeout/unrecognized probe error: do not mark connection error
+          await this.reconJobRepo.recordJobFailureInTransaction(candidate.id, jobLeaseToken, {
+            errorCode: err.kind || 'PROBE_ERROR',
+            errorMessage: err.message,
+            nextAttemptSeconds: 60,
+          });
+          return 'failed';
+        }
+      }
+
+      // Case 3B: Connection is in error
+      if (conn.status === 'error') {
+        const canHeal =
+          conn.status_reason === 'PROVIDER_DISCONNECTED' ||
+          conn.status_reason?.startsWith('PROVIDER_DISCONNECTED:') ||
+          conn.status_reason === 'ZERNIO_RECONCILIATION_REMOTE_DEAD';
+
+        if (canHeal) {
+          try {
+            const numberInfo = await this.zernioClient.getWhatsAppNumberInfo(accountId, {
+              deadline: activeDeadline,
+            });
+
+            const isHealthy =
+              numberInfo.phone?.status?.toUpperCase() === 'CONNECTED' &&
+              numberInfo.phone?.platform_type?.toUpperCase() === 'CLOUD_API';
+
+            let phoneMatches = false;
+            try {
+              phoneMatches = normalizeToE164(numberInfo.phone?.display_phone_number) === conn.phone_number;
+            } catch {
+              phoneMatches = false;
+            }
+
+            if (isHealthy && phoneMatches) {
+              // Remote channel recovered! Heal back to connected!
+              await this.connectionRepo.updateConnection(conn.organization_id, conn.id, {
+                status: 'connected',
+                status_reason: null,
+                updated_at: new Date().toISOString(),
+              });
+              await this.reconJobRepo.recordJobSuccessInTransaction(candidate.id, jobLeaseToken, {
+                nextAttemptSeconds: 300,
+              });
+              return 'repaired';
+            }
+          } catch (healErr: any) {
+            // Still dead
+          }
+        }
+
+        // Still in error
+        await this.reconJobRepo.recordJobFailureInTransaction(candidate.id, jobLeaseToken, {
+          errorCode: 'CONNECTION_IN_ERROR',
+          nextAttemptSeconds: 120,
+        });
+        return 'failed';
+      }
+
+      // Case 3C: Connection is disconnected (do NOT revive!)
+      if (conn.status === 'disconnected') {
+        await this.reconJobRepo.recordJobSuccessInTransaction(candidate.id, jobLeaseToken, {
+          nextAttemptSeconds: 86400,
+        });
+        return 'stable';
+      }
+    }
+
+    // Scenario 4: desired_state === 'disconnected'
+    if (candidate.desired_state === 'disconnected') {
+      if (!accountId || !profileId) {
+        await this.reconJobRepo.recordJobSuccessInTransaction(candidate.id, jobLeaseToken, {
+          nextAttemptSeconds: 86400,
+        });
+        return 'stable';
+      }
+
+      try {
+        const accounts = await this.zernioClient.listAccounts(
+          {
+            profileId,
+            platform: 'whatsapp',
+            page: 1,
+            limit: 10,
+            includeOverLimit: true,
+          },
+          { deadline: activeDeadline }
+        );
+        const isPresent = accounts.some((a) => a._id === accountId);
+
+        if (isPresent) {
+          // Account still exists remotely: ensure cleanup job is enqueued!
+          await this.cleanupJobRepo.createJob({
+            id: `cleanup_conn_${conn.id}`,
+            organization_id: conn.organization_id,
+            connection_id: conn.id,
+            provider: 'zernio',
+            provider_waba_id: null,
+            provider_phone_number_id: null,
+            provider_account_id: accountId,
+            provider_profile_id: profileId,
+            phone_number: conn.phone_number,
+            status: 'pending',
+            attempt_count: 0,
+            max_attempts: 5,
+            next_attempt_at: new Date().toISOString(),
+            lease_token: null,
+            lease_expires_at: null,
+            last_attempt_started_at: null,
+            last_error_code: null,
+            last_error_at: null,
+            provider_cleanup_proof: null,
+            override_reason: null,
+            manual_action_by: null,
+            manual_action_at: null,
+            manual_action_reason: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            completed_at: null,
+            retention_expires_at: null,
+          });
+
+          await this.reconJobRepo.recordJobFailureInTransaction(candidate.id, jobLeaseToken, {
+            errorCode: 'REMOTE_ACCOUNT_STILL_PRESENT',
+            errorMessage: 'Conta Zernio ainda presente após desconexão. Cleanup job assegurado.',
+            nextAttemptSeconds: 60,
+          });
+          return 'failed';
+        } else {
+          // Account absent: verified clean!
+          await this.reconJobRepo.recordJobSuccessInTransaction(candidate.id, jobLeaseToken, {
+            nextAttemptSeconds: 86400,
+          });
+          return 'stable';
+        }
+      } catch (err: any) {
+        await this.reconJobRepo.recordJobFailureInTransaction(candidate.id, jobLeaseToken, {
+          errorCode: 'RECONCILIATION_PROBE_ERROR',
+          errorMessage: err.message,
+          nextAttemptSeconds: 60,
+        });
+        return 'failed';
+      }
+    }
+
+    return 'stable';
+  }
+
+  private isRemoteDeadWhatsAppChannel(err: unknown): boolean {
+    if (!err) return false;
+    if (err instanceof ZernioError) {
+      const platformErr = (err.safeDetails as any)?.platformError;
+      if (platformErr) {
+        const code = String(platformErr.code ?? '');
+        const subcode = String(platformErr.error_subcode ?? platformErr.subcode ?? '');
+        if (code === '100' && subcode === '33') {
+          return true;
+        }
+      }
+      const rawPlatform = (err as any).platformError;
+      if (rawPlatform) {
+        const code = String(rawPlatform.code ?? '');
+        const subcode = String(rawPlatform.error_subcode ?? rawPlatform.subcode ?? '');
+        if (code === '100' && subcode === '33') {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 }

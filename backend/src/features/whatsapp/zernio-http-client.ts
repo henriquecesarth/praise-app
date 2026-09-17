@@ -14,6 +14,8 @@ import {
   ZernioAccount,
   zernioListAccountsResponseSchema,
   ZernioListAccountsParams,
+  zernioDeleteAccountResponseSchema,
+  ZernioDeleteAccountResponse,
   ZernioWhatsAppNumberInfo,
   zernioGetWhatsAppNumberInfoResponseSchema,
   zernioCreateProfileResponseSchema,
@@ -198,13 +200,21 @@ export class ZernioHttpClient {
       }
     }
 
-    const rawPlatformError = body?.platformError;
-    if (rawPlatformError && typeof rawPlatformError === 'object' && !Array.isArray(rawPlatformError)) {
+    const rawPlatformError =
+      (body?.platformError && typeof body.platformError === 'object' && !Array.isArray(body.platformError) ? body.platformError : undefined) ||
+      (body?.error?.platformError && typeof body.error.platformError === 'object' && !Array.isArray(body.error.platformError) ? body.error.platformError : undefined) ||
+      (body?.details?.platformError && typeof body.details.platformError === 'object' && !Array.isArray(body.details.platformError) ? body.details.platformError : undefined) ||
+      (body?.error && typeof body.error === 'object' && !Array.isArray(body.error) && ('error_subcode' in body.error || 'subcode' in body.error) ? body.error : undefined);
+
+    if (rawPlatformError) {
       if (!safeDetails) safeDetails = {};
+      const subcode = rawPlatformError.error_subcode ?? rawPlatformError.subcode;
       safeDetails.platformError = {
         code: rawPlatformError.code,
-        error_subcode: rawPlatformError.error_subcode,
+        error_subcode: subcode,
+        subcode: subcode,
         type: rawPlatformError.type,
+        message: typeof rawPlatformError.message === 'string' ? rawPlatformError.message : undefined,
       };
     }
 
@@ -540,14 +550,19 @@ export class ZernioHttpClient {
       );
     }
 
+    const query: Record<string, string | number | boolean | undefined> = {
+      profileId: cleanProfileId,
+      platform: params.platform || 'whatsapp',
+      page: params.page,
+      limit: params.limit,
+    };
+    if (params.includeOverLimit !== undefined) {
+      query.includeOverLimit = params.includeOverLimit;
+    }
+
     const raw = await this.request<unknown>('accounts', {
       method: 'GET',
-      query: {
-        profileId: cleanProfileId,
-        platform: params.platform || 'whatsapp',
-        page: params.page,
-        limit: params.limit,
-      },
+      query,
       ...options,
     });
 
@@ -559,6 +574,35 @@ export class ZernioHttpClient {
         message: 'ZERNIO_PROTOCOL_ERROR: Resposta de listagem de contas malformada pelo provedor Zernio.',
         providerCode: 'ZERNIO_PROTOCOL_ERROR',
       });
+    }
+
+    return parsed.data;
+  }
+
+  async deleteAccount(
+    accountId: string,
+    options?: ZernioRequestOptions
+  ): Promise<ZernioDeleteAccountResponse> {
+    const cleanId = accountId?.trim();
+    if (!cleanId) {
+      throw new AppError(400, 'ZERNIO_INVALID_ACCOUNT_ID: accountId não pode ser vazio.', {
+        code: 'ZERNIO_INVALID_ACCOUNT_ID',
+      });
+    }
+    if (cleanId.includes('/')) {
+      throw new AppError(400, 'ZERNIO_INVALID_ACCOUNT_ID: accountId não pode conter barra ("/").', {
+        code: 'ZERNIO_INVALID_ACCOUNT_ID',
+      });
+    }
+
+    const raw = await this.request<unknown>(`accounts/${encodeURIComponent(cleanId)}`, {
+      method: 'DELETE',
+      ...options,
+    });
+
+    const parsed = zernioDeleteAccountResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      return { success: true };
     }
 
     return parsed.data;

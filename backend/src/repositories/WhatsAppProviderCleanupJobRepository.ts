@@ -1,7 +1,13 @@
 import { db } from '../lib/firebase';
 import crypto from 'crypto';
 import { AppError } from '../middleware/error-handler';
-import { WhatsAppProviderCleanupJobRecord } from '../features/whatsapp/whatsapp.types';
+import {
+  WhatsAppProviderCleanupJobRecord,
+  WhatsAppUnresolvedRemoteMutation,
+  WhatsAppConnectionRecord,
+  getZernioAccountClaimId,
+  getZernioPhoneClaimId,
+} from '../features/whatsapp/whatsapp.types';
 
 export class WhatsAppProviderCleanupJobRepository {
   private readonly jobsCol = db.collection('whatsapp_provider_cleanup_jobs');
@@ -313,7 +319,10 @@ export class WhatsAppProviderCleanupJobRepository {
       }
 
       const now = new Date();
-      const retentionExpiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      const hasUnknown = job.unresolved_remote_mutations?.some((m) => m.status === 'unknown_outcome');
+      const retentionExpiresAt = hasUnknown
+        ? null
+        : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
       const nowIso = now.toISOString();
 
       tx.update(docRef, {
@@ -489,5 +498,232 @@ export class WhatsAppProviderCleanupJobRepository {
         updated_at: nowIso,
       });
     });
+  }
+
+  async settleZernioCleanupInTransaction(
+    jobId: string,
+    leaseToken: string
+  ): Promise<void>;
+  async settleZernioCleanupInTransaction(
+    tx: FirebaseFirestore.Transaction,
+    jobId: string,
+    leaseToken: string
+  ): Promise<void>;
+  async settleZernioCleanupInTransaction(
+    arg1: FirebaseFirestore.Transaction | string,
+    arg2?: string,
+    arg3?: string
+  ): Promise<void> {
+    const isStandalone = typeof arg1 === 'string';
+    const jobId = isStandalone ? arg1 : arg2!;
+    const leaseToken = isStandalone ? arg2! : arg3!;
+
+    const handler = async (tx: FirebaseFirestore.Transaction) => {
+      const jobRef = this.getJobRef(jobId);
+      const jobDoc = await tx.get(jobRef);
+      if (!jobDoc.exists) {
+        throw new AppError(404, 'Cleanup job não encontrado.');
+      }
+      const job = jobDoc.data() as WhatsAppProviderCleanupJobRecord;
+      if (job.lease_token !== leaseToken) {
+        throw new AppError(409, 'CLEANUP_JOB_LEASE_LOST: Token de lease divergente.');
+      }
+
+      // Read connection
+      const connRef = db.collection('whatsapp_connections').doc(job.connection_id);
+      const connDoc = await tx.get(connRef);
+      if (!connDoc.exists) {
+        throw new AppError(404, 'Conexão não encontrada.');
+      }
+      const conn = connDoc.data() as WhatsAppConnectionRecord;
+      if (conn.organization_id !== job.organization_id) {
+        throw new AppError(403, 'Isolamento multi-inquilino violado.');
+      }
+      if (conn.status !== 'disconnected') {
+        throw new AppError(409, 'CLEANUP_CONNECTION_NOT_DISCONNECTED: Conexão não está em estado desconectado.', {
+          code: 'CLEANUP_CONNECTION_NOT_DISCONNECTED',
+        });
+      }
+
+      // Check and release account claim
+      const accountId = job.provider_account_id || conn.provider_account_id;
+      if (accountId) {
+        const accountClaimId = getZernioAccountClaimId(accountId);
+        const accountClaimRef = db.collection('whatsapp_provider_identity_claims').doc(accountClaimId);
+        const accountClaimDoc = await tx.get(accountClaimRef);
+        if (accountClaimDoc.exists) {
+          const claimData = accountClaimDoc.data();
+          if (claimData?.connection_id === job.connection_id) {
+            tx.delete(accountClaimRef);
+          }
+        }
+      }
+
+      // Check and release phone claim
+      const phoneNumber = job.phone_number || conn.phone_number;
+      if (phoneNumber) {
+        const phoneClaimId = getZernioPhoneClaimId(phoneNumber);
+        const phoneClaimRef = db.collection('whatsapp_provider_identity_claims').doc(phoneClaimId);
+        const phoneClaimDoc = await tx.get(phoneClaimRef);
+        if (phoneClaimDoc.exists) {
+          const claimData = phoneClaimDoc.data();
+          if (claimData?.connection_id === job.connection_id) {
+            tx.delete(phoneClaimRef);
+          }
+        }
+      }
+
+      // Delete connection secret if any remains
+      const secretRef = db.collection('whatsapp_connection_secrets').doc(job.connection_id);
+      tx.delete(secretRef);
+
+      const now = new Date();
+      const nowIso = now.toISOString();
+
+      // Settle any unknown mutations on the job
+      const updatedMutations = (job.unresolved_remote_mutations || []).map((m) =>
+        m.status === 'unknown_outcome'
+          ? { ...m, status: 'settled' as const, audit_note: m.audit_note ? `${m.audit_note} (settled)` : 'settled by D7 cleanup' }
+          : m
+      );
+
+      const hasUnknown = updatedMutations.some((m) => m.status === 'unknown_outcome');
+      const retentionExpiresAt = hasUnknown
+        ? null
+        : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+      tx.update(jobRef, {
+        status: 'succeeded',
+        provider_cleanup_proof: 'proven',
+        settled_at: nowIso,
+        completed_at: nowIso,
+        lease_token: null,
+        lease_expires_at: null,
+        retention_expires_at: retentionExpiresAt,
+        last_error_code: null,
+        last_error_message: null,
+        unresolved_remote_mutations: updatedMutations,
+        updated_at: nowIso,
+      });
+    };
+
+    if (isStandalone) {
+      await db.runTransaction(handler);
+    } else {
+      await handler(arg1 as FirebaseFirestore.Transaction);
+    }
+  }
+
+  async recordUnresolvedMutationInTransaction(
+    jobId: string,
+    leaseToken: string,
+    options: {
+      operation?: 'delete_account';
+      auditNote?: string;
+      errorCode?: string;
+      errorMessage?: string;
+      nextAttemptSeconds?: number;
+    }
+  ): Promise<void>;
+  async recordUnresolvedMutationInTransaction(
+    tx: FirebaseFirestore.Transaction,
+    jobId: string,
+    leaseToken: string,
+    options: {
+      operation?: 'delete_account';
+      auditNote?: string;
+      errorCode?: string;
+      errorMessage?: string;
+      nextAttemptSeconds?: number;
+    }
+  ): Promise<void>;
+  async recordUnresolvedMutationInTransaction(
+    arg1: FirebaseFirestore.Transaction | string,
+    arg2: string,
+    arg3: any,
+    arg4?: any
+  ): Promise<void> {
+    const isStandalone = typeof arg1 === 'string';
+    const jobId = isStandalone ? arg1 : arg2;
+    const leaseToken = isStandalone ? arg2 : arg3;
+    const opts = (isStandalone ? arg3 : arg4) || {};
+
+    const handler = async (tx: FirebaseFirestore.Transaction) => {
+      const docRef = this.getJobRef(jobId);
+      const doc = await tx.get(docRef);
+      if (!doc.exists) {
+        return;
+      }
+      const job = doc.data() as WhatsAppProviderCleanupJobRecord;
+      if (job.lease_token !== leaseToken) {
+        throw new AppError(409, 'CLEANUP_JOB_LEASE_LOST: Token de lease divergente.');
+      }
+
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const backoffSeconds = opts.nextAttemptSeconds ?? 60;
+      const nextAttemptAt = new Date(now.getTime() + backoffSeconds * 1000).toISOString();
+
+      let mutations = [...(job.unresolved_remote_mutations || [])];
+
+      // Enforce FIFO cap 20
+      if (mutations.length >= 20) {
+        const settledIndices = mutations
+          .map((m, idx) => (m.status === 'settled' ? idx : -1))
+          .filter((idx) => idx !== -1);
+
+        if (settledIndices.length === 0) {
+          tx.update(docRef, {
+            status: 'exhausted',
+            provider_cleanup_proof: 'unproven',
+            lease_token: null,
+            lease_expires_at: null,
+            retention_expires_at: null,
+            last_error_code: 'UNCERTAINTY_LEDGER_SATURATED',
+            last_error_message: 'Livro-razão de incertezas Zernio saturado (20 registros não liquidados).',
+            updated_at: nowIso,
+          });
+          throw new AppError(
+            500,
+            'ZERNIO_UNCERTAINTY_LEDGER_SATURATED: O livro-razão de incertezas atingiu o limite de 20 registros não liquidados.',
+            { code: 'ZERNIO_UNCERTAINTY_LEDGER_SATURATED' }
+          );
+        }
+
+        const oldestSettledIndex = settledIndices[0];
+        mutations.splice(oldestSettledIndex, 1);
+      }
+
+      const newMutation: WhatsAppUnresolvedRemoteMutation = {
+        operation_generation: job.attempt_count,
+        operation: opts.operation || 'delete_account',
+        dispatched_at: nowIso,
+        status: 'unknown_outcome',
+        connection_id: job.connection_id,
+        provider: 'zernio',
+        provider_account_id: job.provider_account_id || undefined,
+        audit_note: opts.auditNote || opts.errorMessage || 'Zernio deleteAccount indeterminate error',
+      };
+
+      mutations.push(newMutation);
+
+      tx.update(docRef, {
+        status: 'retry_wait',
+        lease_token: null,
+        lease_expires_at: null,
+        retention_expires_at: null, // TTL suppressed when unknown mutations present
+        last_error_code: opts.errorCode || 'UNKNOWN_OUTCOME',
+        last_error_message: opts.errorMessage || null,
+        next_attempt_at: nextAttemptAt,
+        unresolved_remote_mutations: mutations,
+        updated_at: nowIso,
+      });
+    };
+
+    if (isStandalone) {
+      await db.runTransaction(handler);
+    } else {
+      await handler(arg1 as FirebaseFirestore.Transaction);
+    }
   }
 }

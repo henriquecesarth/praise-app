@@ -470,11 +470,13 @@ export interface WhatsAppProvider {
 
 export interface WhatsAppUnresolvedRemoteMutation {
   operation_generation: number;
-  operation: 'subscribe' | 'unsubscribe';
+  operation: 'subscribe' | 'unsubscribe' | 'delete_account';
   dispatched_at: string; // ISO 8601 UTC
   status: 'unknown_outcome' | 'settled';
   connection_id: string;
   audit_note?: string;
+  provider?: 'meta' | 'zernio';
+  provider_account_id?: string;
 }
 
 export interface WhatsAppWabaLifecycleLockRecord {
@@ -497,10 +499,15 @@ export interface WhatsAppWabaLifecycleLockRecord {
 }
 
 export interface WhatsAppWabaReconciliationJobRecord {
-  id: string; // "recon_meta_${providerWabaId}"
-  provider: 'meta';
-  provider_waba_id: string;
-  desired_state: 'subscribed' | 'unsubscribed';
+  id: string; // "recon_meta_${providerWabaId}" | "recon_zernio_${connectionId}"
+  provider: 'meta' | 'zernio';
+  provider_waba_id?: string | null;
+  organization_id?: string;
+  connection_id?: string;
+  provider_account_id?: string | null;
+  provider_profile_id?: string | null;
+  phone_number?: string | null;
+  desired_state: 'subscribed' | 'unsubscribed' | 'connected' | 'disconnected';
   status: 'pending' | 'processing' | 'idle' | 'exhausted' | 'cancelled';
   attempt_count: number;
   next_attempt_at: string; // ISO 8601 UTC
@@ -518,9 +525,13 @@ export interface WhatsAppProviderCleanupJobRecord {
   id: string; // "cleanup_conn_${connectionId}"
   connection_id: string;
   organization_id: string;
-  provider: 'meta_cloud_api' | 'meta';
-  provider_waba_id: string;
-  provider_phone_number_id: string | null;
+  provider: 'meta_cloud_api' | 'meta' | 'zernio';
+  provider_waba_id?: string | null;
+  provider_phone_number_id?: string | null;
+  provider_account_id?: string | null;
+  provider_profile_id?: string | null;
+  phone_number?: string | null;
+  unresolved_remote_mutations?: WhatsAppUnresolvedRemoteMutation[];
   status: 'pending' | 'processing' | 'retry_wait' | 'succeeded' | 'exhausted' | 'cancelled' | 'abandoned';
   attempt_count: number;
   max_attempts: number; // default 5 (DEC-7D-41, DEC-7D-50)
@@ -539,6 +550,7 @@ export interface WhatsAppProviderCleanupJobRecord {
   manual_action_reason: string | null;
   retention_expires_at: string | null; // ISO 8601 UTC (30d after success/cancel/abandon; null on exhausted)
   completed_at?: string | null;
+  settled_at?: string | null;
   created_at: string;
   updated_at: string;
 }

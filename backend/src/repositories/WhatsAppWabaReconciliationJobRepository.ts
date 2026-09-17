@@ -18,6 +18,101 @@ export class WhatsAppWabaReconciliationJobRepository {
     return { id: doc.id, ...doc.data() } as WhatsAppWabaReconciliationJobRecord;
   }
 
+  async getJobById(jobId: string): Promise<WhatsAppWabaReconciliationJobRecord | null> {
+    const doc = await this.jobsCol.doc(jobId).get();
+    if (!doc.exists) {
+      return null;
+    }
+    return { id: doc.id, ...doc.data() } as WhatsAppWabaReconciliationJobRecord;
+  }
+
+  async ensureZernioJobPending(
+    params: {
+      connectionId: string;
+      organizationId: string;
+      desiredState?: 'connected' | 'disconnected';
+      providerAccountId?: string | null;
+      providerProfileId?: string | null;
+      phoneNumber?: string | null;
+    },
+    tx?: FirebaseFirestore.Transaction
+  ): Promise<void> {
+    const jobId = `recon_zernio_${params.connectionId}`;
+    const docRef = this.jobsCol.doc(jobId);
+    const nowIso = new Date().toISOString();
+    const desiredState = params.desiredState || 'connected';
+
+    const applyUpdate = (existingJob: WhatsAppWabaReconciliationJobRecord | null) => {
+      if (!existingJob) {
+        const newJob: WhatsAppWabaReconciliationJobRecord = {
+          id: jobId,
+          provider: 'zernio',
+          provider_waba_id: null,
+          organization_id: params.organizationId,
+          connection_id: params.connectionId,
+          provider_account_id: params.providerAccountId || null,
+          provider_profile_id: params.providerProfileId || null,
+          phone_number: params.phoneNumber || null,
+          desired_state: desiredState,
+          status: 'pending',
+          attempt_count: 0,
+          next_attempt_at: nowIso,
+          lease_token: null,
+          lease_expires_at: null,
+          last_error_code: null,
+          last_error_message: null,
+          consecutive_stable_observations: 0,
+          last_observed_at: null,
+          created_at: nowIso,
+          updated_at: nowIso,
+        };
+        return { op: 'set' as const, data: newJob };
+      }
+
+      const updateData: Partial<WhatsAppWabaReconciliationJobRecord> = {
+        desired_state: desiredState,
+        organization_id: params.organizationId,
+        connection_id: params.connectionId,
+        provider_account_id: params.providerAccountId !== undefined ? params.providerAccountId : existingJob.provider_account_id,
+        provider_profile_id: params.providerProfileId !== undefined ? params.providerProfileId : existingJob.provider_profile_id,
+        phone_number: params.phoneNumber !== undefined ? params.phoneNumber : existingJob.phone_number,
+        updated_at: nowIso,
+      };
+
+      if (existingJob.status !== 'processing') {
+        updateData.status = 'pending';
+        updateData.next_attempt_at = nowIso;
+      }
+
+      return {
+        op: 'update' as const,
+        data: updateData,
+      };
+    };
+
+    if (tx) {
+      const doc = await tx.get(docRef);
+      const existing = doc.exists ? ({ id: doc.id, ...doc.data() } as WhatsAppWabaReconciliationJobRecord) : null;
+      const res = applyUpdate(existing);
+      if (res.op === 'set') {
+        tx.set(docRef, res.data);
+      } else {
+        tx.update(docRef, res.data);
+      }
+    } else {
+      await db.runTransaction(async (t) => {
+        const doc = await t.get(docRef);
+        const existing = doc.exists ? ({ id: doc.id, ...doc.data() } as WhatsAppWabaReconciliationJobRecord) : null;
+        const res = applyUpdate(existing);
+        if (res.op === 'set') {
+          t.set(docRef, res.data);
+        } else {
+          t.update(docRef, res.data);
+        }
+      });
+    }
+  }
+
   async ensureJobPending(
     wabaId: string,
     desiredState: 'subscribed' | 'unsubscribed' = 'subscribed',

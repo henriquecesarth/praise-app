@@ -10,6 +10,7 @@ import { WhatsAppMinistryAssignmentClaimRepository } from '../../repositories/Wh
 import { WhatsAppOnboardingSessionRepository } from '../../repositories/WhatsAppOnboardingSessionRepository';
 import { WhatsAppProviderCleanupJobRepository } from '../../repositories/WhatsAppProviderCleanupJobRepository';
 import { WhatsAppWabaLifecycleLockRepository } from '../../repositories/WhatsAppWabaLifecycleLockRepository';
+import { WhatsAppWabaReconciliationJobRepository } from '../../repositories/WhatsAppWabaReconciliationJobRepository';
 import { WhatsAppZernioWebhookRepository } from '../../repositories/WhatsAppZernioWebhookRepository';
 import { WhatsAppOutboundDispatchRepository } from '../../repositories/WhatsAppOutboundDispatchRepository';
 import { WhatsAppWabaCoordinatorService } from './whatsapp-waba-coordinator.service';
@@ -77,7 +78,8 @@ export class WhatsAppConnectionService {
     private readonly wabaLockRepo: WhatsAppWabaLifecycleLockRepository = new WhatsAppWabaLifecycleLockRepository(),
     private readonly zernioClient: ZernioHttpClient = new ZernioHttpClient(),
     private readonly webhookRepo: WhatsAppZernioWebhookRepository = new WhatsAppZernioWebhookRepository(),
-    private readonly outboundRepo: WhatsAppOutboundDispatchRepository = new WhatsAppOutboundDispatchRepository()
+    private readonly outboundRepo: WhatsAppOutboundDispatchRepository = new WhatsAppOutboundDispatchRepository(),
+    private readonly reconJobRepo: WhatsAppWabaReconciliationJobRepository = new WhatsAppWabaReconciliationJobRepository()
   ) {}
 
   private mapToDto(conn: WhatsAppConnectionRecord, defaultConnectionId: string | null): WhatsAppConnectionDto {
@@ -1121,6 +1123,14 @@ export class WhatsAppConnectionService {
           await this.transitionConnectionStatus(conn.organization_id, conn.id, 'connecting');
         }
         await this.transitionConnectionStatus(conn.organization_id, conn.id, 'connected');
+        await this.reconJobRepo.ensureZernioJobPending({
+          connectionId: conn.id,
+          organizationId: conn.organization_id,
+          desiredState: 'connected',
+          providerAccountId: candidateAccountId,
+          providerProfileId: conn.provider_profile_id,
+          phoneNumber: canonicalPhone,
+        });
       } catch {
         await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
         return `${webAppBase}/whatsapp/callback?status=status_transition_failed`;
@@ -1531,6 +1541,14 @@ export class WhatsAppConnectionService {
           await this.transitionConnectionStatus(conn.organization_id, conn.id, 'connecting');
         }
         await this.transitionConnectionStatus(conn.organization_id, conn.id, 'connected');
+        await this.reconJobRepo.ensureZernioJobPending({
+          connectionId: conn.id,
+          organizationId: conn.organization_id,
+          desiredState: 'connected',
+          providerAccountId: accountId,
+          providerProfileId: conn.provider_profile_id,
+          phoneNumber: canonicalPhone,
+        });
       } catch (err: any) {
         await this.webhookRepo.markEventRetryableError(acquisition.record.id, err.message);
         throw err;
@@ -1592,6 +1610,14 @@ export class WhatsAppConnectionService {
       if (conn.status === 'connected' || conn.status === 'connecting') {
         try {
           await this.transitionConnectionStatus(conn.organization_id, conn.id, 'error', reason);
+          await this.reconJobRepo.ensureZernioJobPending({
+            connectionId: conn.id,
+            organizationId: conn.organization_id,
+            desiredState: 'connected',
+            providerAccountId: conn.provider_account_id,
+            providerProfileId: conn.provider_profile_id,
+            phoneNumber: conn.phone_number,
+          });
         } catch (err: any) {
           await this.webhookRepo.markEventRetryableError(acquisition.record.id, err.message);
           throw err;
@@ -2516,6 +2542,91 @@ export class WhatsAppConnectionService {
 
     const now = new Date();
     const nowIso = now.toISOString();
+
+    if (conn.provider === 'zernio') {
+      const isMaterialized = Boolean(conn.provider_account_id);
+
+      await db.runTransaction(async (tx) => {
+        const connRef = db.collection('whatsapp_connections').doc(connectionId);
+        const orgRef = db.collection('organizations').doc(orgId);
+        const orgDoc = await tx.get(orgRef);
+
+        if (orgDoc.exists) {
+          const orgData = orgDoc.data() as OrganizationRecord;
+          if (orgData.default_whatsapp_connection_id === connectionId) {
+            tx.update(orgRef, {
+              default_whatsapp_connection_id: null,
+              updated_at: nowIso,
+            });
+          }
+        }
+
+        if (conn.assigned_ministry_id) {
+          const assignmentClaimId = getMinistryAssignmentClaimId(orgId, conn.assigned_ministry_id);
+          tx.delete(db.collection('whatsapp_ministry_assignment_claims').doc(assignmentClaimId));
+        }
+
+        // NOTE: For Zernio, do NOT delete claim_zernio_account_* or claim_zernio_phone_* here.
+        // Claim release authority is strictly D7 cleanup strong settlement (settleZernioCleanupInTransaction).
+
+        tx.update(connRef, {
+          status: 'disconnected',
+          status_reason: 'USER_DISCONNECTED',
+          assigned_ministry_id: null,
+          pending_expires_at: null,
+          current_onboarding_session_id: null,
+          updated_at: nowIso,
+        });
+
+        if (!isMaterialized) {
+          const secretRef = db.collection('whatsapp_connection_secrets').doc(connectionId);
+          tx.delete(secretRef);
+        }
+      });
+
+      if (isMaterialized) {
+        await this.cleanupJobRepo.createJob({
+          id: `cleanup_conn_${conn.id}`,
+          organization_id: orgId,
+          connection_id: conn.id,
+          provider: 'zernio',
+          provider_waba_id: null,
+          provider_phone_number_id: null,
+          provider_account_id: conn.provider_account_id,
+          provider_profile_id: conn.provider_profile_id,
+          phone_number: conn.phone_number,
+          status: 'pending',
+          attempt_count: 0,
+          max_attempts: 5,
+          next_attempt_at: nowIso,
+          lease_token: null,
+          lease_expires_at: null,
+          last_attempt_started_at: null,
+          last_error_code: null,
+          last_error_at: null,
+          provider_cleanup_proof: null,
+          override_reason: null,
+          manual_action_by: null,
+          manual_action_at: null,
+          manual_action_reason: null,
+          created_at: nowIso,
+          updated_at: nowIso,
+          completed_at: null,
+          retention_expires_at: null,
+        });
+
+        await this.reconJobRepo.ensureZernioJobPending({
+          connectionId: conn.id,
+          organizationId: conn.organization_id,
+          desiredState: 'disconnected',
+          providerAccountId: conn.provider_account_id,
+          providerProfileId: conn.provider_profile_id,
+          phoneNumber: conn.phone_number,
+        });
+      }
+
+      return;
+    }
 
     let shouldEnqueueCleanupJob = false;
     let wabaClaimGen = 0;
