@@ -1146,7 +1146,11 @@ describe('Zernio Webhook Ingestion & Lifecycle Repair Suite (Phase 7D2-D5)', { t
       });
 
       expect(response.status).toBe(200);
-      const json = await response.json();
+      const json = (await response.json()) as {
+        ok: boolean;
+        eventId: string;
+        status: string;
+      };
       expect(json.ok).toBe(true);
       expect(json.eventId).toBe(eventId);
       expect(json.status).toBe('ignored');
@@ -1166,14 +1170,18 @@ describe('Zernio Webhook Ingestion & Lifecycle Repair Suite (Phase 7D2-D5)', { t
       });
 
       expect(response.status).toBe(401);
-      const json = await response.json();
-      expect(json.error?.message || json.error).toContain('X-Zernio-Signature');
+      const json = (await response.json()) as {
+        error?: { message?: string };
+      };
+      expect(json.error?.message).toContain('X-Zernio-Signature');
     });
 
     it('verifies standard routes (e.g. GET /api/health) still work alongside raw webhook route', async () => {
       const response = await fetch(`${baseUrl}/api/health`);
       expect(response.status).toBe(200);
-      const json = await response.json();
+      const json = (await response.json()) as {
+        status: string;
+      };
       expect(json.status).toBe('ok');
     });
   });
