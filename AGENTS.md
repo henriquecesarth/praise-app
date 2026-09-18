@@ -167,11 +167,3 @@ O relatório final deve informar:
 - próximo passo natural, quando houver.
 
 Nunca declare teste, lint, build, integração externa ou comportamento como validado sem executar ou inspecionar a evidência correspondente.
-
-## 11. Agent Roles and Orchestration
-
-Este arquivo `AGENTS.md` contém instruções globais do repositório e a política de orquestração. As definições semânticas canônicas dos papéis LouvAIO ficam em `.agents/agents/<role>/agent.md`, compartilhadas com Gemini/Antigravity. Os adaptadores nativos do Codex ficam em `.codex/agents/<role>.toml` e são registrados pelo `.codex/config.toml`; a definição canônica sempre prevalece em caso de divergência.
-
-Para trabalho arquitetural substancial, atue como `product-architect`. Para implementação de produto fora de billing, delegue a `feature-engineer`; para revisão independente, use `feature-reviewer`. Implementação de billing pertence a `billing-engineer`, revisão de billing a `billing-reviewer`, e investigação ou homologação controlada de provedores a `sandbox-auditor`.
-
-Uma revisão feita pelo mesmo agente que implementou a mudança não é independente. Não duplique as definições completas dos papéis neste arquivo.

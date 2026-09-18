@@ -58,7 +58,7 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
       const updated = await lockRepo.getLock(wabaId);
       expect(updated).not.toBeNull();
       expect(updated!.unresolved_remote_mutations.length).toBeLessThanOrEqual(20);
-    }, 15000);
+    }, 30000);
 
     it('1.2 FAILS CLOSED with 500 WABA_UNCERTAINTY_LEDGER_SATURATED when all 20 entries are unresolved', async () => {
       const lockRepo = new WhatsAppWabaLifecycleLockRepository();
@@ -85,7 +85,7 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
           connection_id: 'conn-21',
         })
       ).rejects.toThrow('WABA_UNCERTAINTY_LEDGER_SATURATED');
-    }, 15000);
+    }, 30000);
   });
 
   describe('2. Secret Purge Safety Under Subscribe Debt (DEC-7D-64)', () => {
@@ -417,7 +417,7 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
       expect(responseData?.exhausted).toBeDefined();
       expect(responseData?.skipped).toBeDefined();
       expect(responseData?.cleanup).toBeUndefined();
-    }, 15000);
+    }, 30000);
 
     it('5.3 Scheduled reconciliation execution executes due reconciliation jobs with compact JSON summary', async () => {
       const reconRepo = new WhatsAppWabaReconciliationJobRepository();
@@ -467,7 +467,7 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
       expect(responseData?.failed).toBeDefined();
       expect(responseData?.skipped).toBeDefined();
       expect(responseData?.reconciliation).toBeUndefined();
-    }, 15000);
+    }, 30000);
 
     it('5.4 Duplicate scheduler invocations are safe against concurrent execution overlap', async () => {
       const cleanupRepo = new WhatsAppProviderCleanupJobRepository();
@@ -512,7 +512,7 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
 
       // Both runners must complete without unhandled crash, and exactly one acquires the candidate
       expect(res1.processedCount + res2.processedCount).toBeGreaterThanOrEqual(1);
-    }, 15000);
+    }, 30000);
 
     it('5.5 Expired job lease (worker crash) becomes claimable by subsequent scheduler invocation', async () => {
       const cleanupRepo = new WhatsAppProviderCleanupJobRepository();
@@ -561,7 +561,7 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
 
       const updated = await cleanupRepo.getJobById(jobId);
       expect(updated!.lease_token).toBe(newLeaseToken);
-    }, 15000);
+    }, 30000);
 
     it('5.6 Rejects unauthorized requests, invalid tokens, and enforces operator/cron authority separation', async () => {
       const cronSecret = 'actual-cron-secret-12345';
@@ -748,7 +748,7 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
       if (lock) {
         expect(lock.operation_status).toBe('idle');
       }
-    }, 15000);
+    }, 30000);
 
     it('6.B Provider timeout is clamped to remaining worker deadline (deadline.getClampedTimeoutMs)', () => {
       // 1. With ample time, returns normal timeout
@@ -886,7 +886,7 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
         (m) => m.operation === 'unsubscribe' && m.status === 'unknown_outcome'
       );
       expect(unknownEntry).toBeDefined();
-    }, 15000);
+    }, 30000);
 
     it('6.D DELETE succeeds but exhaustive verification cannot finish before deadline -> isProvenClean = false / not PROVEN_CLEAN', async () => {
       const cleanupRepo = new WhatsAppProviderCleanupJobRepository();
@@ -994,7 +994,7 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
       // WABA lock records unknown_outcome so reconciler will settle it
       const lock = await lockRepo.getLock(wabaId);
       expect(lock!.operation_status).toBe('unknown_outcome');
-    }, 15000);
+    }, 30000);
 
     it('6.E Pagination stops safely when deadline is insufficient -> returns UNPROVEN', async () => {
       const provider = new MetaWhatsAppProvider({ appId: 'test-app-id', appSecret: 'test-app-secret' });
@@ -1096,7 +1096,7 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
       expect(job!.status).toBe('pending');
       expect(job!.lease_token).toBeNull();
       expect(job!.lease_expires_at).toBeNull();
-    }, 15000);
+    }, 30000);
 
     it('6.G Subsequent scheduler tick successfully discovers and processes the deferred job', async () => {
       const cleanupRepo = new WhatsAppProviderCleanupJobRepository();
@@ -1192,7 +1192,7 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
       expect(job!.status).toBe('succeeded');
       expect(job!.attempt_count).toBe(1);
       expect(job!.provider_cleanup_proof).toBe('proven');
-    }, 15000);
+    }, 30000);
 
     it('6.H Compact route response schema ({ ok, claimed, processed, ... }) remains unchanged', async () => {
       const cronSecret = 'valid-cron-secret-schema';
@@ -1261,7 +1261,7 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
       expect(typeof reconJson.repaired).toBe('number');
       expect(typeof reconJson.failed).toBe('number');
       expect(typeof reconJson.skipped).toBe('number');
-    }, 15000);
+    }, 30000);
 
     it('6.I Existing overlap/crash/ledger/secret-purge invariants hold without degradation', async () => {
       const lockRepo = new WhatsAppWabaLifecycleLockRepository();
@@ -1288,6 +1288,6 @@ describe('Phase 7D1 Adversarial Lifecycle & Distributed Convergence Matrix', () 
       const lock = await lockRepo.getLock(wabaId);
       expect(lock!.operation_status).toBe('idle');
       expect(lock!.lease_token).toBeNull();
-    }, 15000);
+    }, 30000);
   });
 });

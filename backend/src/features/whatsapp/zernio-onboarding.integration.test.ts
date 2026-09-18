@@ -43,6 +43,14 @@ describe('Zernio Hosted Onboarding & Verified Callback Integration (Phase 7D2-D4
       updated_at: now,
     });
 
+    await db.collection('ministries').doc(anchorMinistryId).set({
+      id: anchorMinistryId,
+      name: 'Ministry ' + anchorMinistryId,
+      organization_id: orgId,
+      created_at: now,
+      updated_at: now,
+    });
+
     await db.collection('ministry_subscriptions').doc(anchorMinistryId).set({
       id: anchorMinistryId,
       ministry_id: anchorMinistryId,

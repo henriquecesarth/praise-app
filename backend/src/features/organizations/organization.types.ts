@@ -1,4 +1,4 @@
-﻿import { z } from 'zod';
+import { z } from 'zod';
 
 export type OrganizationRole = 'owner' | 'admin';
 
@@ -23,16 +23,28 @@ export interface OrganizationMemberRecord {
   updated_at: string;
 }
 
+import type { WhatsAppCommercialState } from '../subscriptions/whatsapp-commercial-evaluator';
+
 export type BillingAccessMode = 'normal' | 'grace' | 'suspended';
 
 export interface OrganizationWhatsAppCapacity {
   organizationId: string;
   billingAnchorMinistryId: string;
-  enabled: boolean;
+  totalAllowedConnections: number;
   includedConnections: number;
   additionalConnections: number;
-  totalAllowedConnections: number;
+  configuredConnectionsCount?: number;
+  remainingCapacity?: number;
+  commercialState?: WhatsAppCommercialState;
+  canSendMessages?: boolean;
+  canCreateConnection?: boolean;
+  canResumeAuthorizedOnboarding?: boolean;
+  restrictionReason?: string;
+  gracePeriodExpiresBillingDate?: string | null;
+  // Legacy compatibility fields (derived strictly from canonical evaluator)
+  enabled: boolean;
   billingAccessMode: BillingAccessMode;
+  connectionAccessMode?: 'normal' | 'grace' | 'restricted_over_limit' | 'suspended';
 }
 
 export const addOrganizationMemberSchema = z.object({

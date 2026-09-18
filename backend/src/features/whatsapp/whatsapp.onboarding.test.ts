@@ -31,6 +31,7 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
   let sessionsStore: Map<string, any>;
   let secretsStore: Map<string, any>;
   let claimsStore: Map<string, any>;
+  let ministriesStore: Map<string, any>;
 
   let mockProvider: WhatsAppProvider;
   let encryptionService: WhatsAppEncryptionService;
@@ -56,12 +57,21 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
     organizationsStore = new Map();
     orgMembersStore = new Map();
     subscriptionsStore = new Map();
+    ministriesStore = new Map();
     connectionsStore = new Map();
     sessionsStore = new Map();
     secretsStore = new Map();
     claimsStore = new Map();
 
     const now = new Date().toISOString();
+
+    ministriesStore.set(anchorMinistryId, {
+      id: anchorMinistryId,
+      name: 'Anchor Ministry',
+      organization_id: orgId,
+      created_at: now,
+      updated_at: now,
+    });
 
     // 1. Organization
     organizationsStore.set(orgId, {
@@ -128,6 +138,8 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
             return orgMembersStore;
           case 'ministry_subscriptions':
             return subscriptionsStore;
+          case 'ministries':
+            return ministriesStore;
           case 'whatsapp_connections':
             return connectionsStore;
           case 'whatsapp_onboarding_sessions':

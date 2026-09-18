@@ -140,8 +140,8 @@ Funções musicais como Ministro, Vocalista, Violão e Bateria são classificaç
 
 ### WhatsApp Commercial Entitlement
 
-- concessão e fiscalização de capacidade comercial WhatsApp por Organização (Phase 7D2-D8 / 7D2-D8-R1);
-- consumo estrito da projeção canônica do Billing V1 (`ministry_subscriptions` do ministério âncora) através de avaliador comercial puro (`evaluateWhatsAppCommercialEntitlement`), sem I/O de rede ou persistência de estados financeiros paralelos;
+- concessão e fiscalização de capacidade comercial WhatsApp por Organização (Phase 7D2-D8 / 7D2-D8-R1 / 7D2-D8-R3);
+- consumo estrito da cadeia canônica de autoridade comercial (`Organization` -> `billing_anchor_ministry_id` -> documento real de `Ministry` -> `ministry_subscriptions` / `SubscriptionService`) através do avaliador comercial puro (`evaluateWhatsAppCommercialEntitlement`) como autoridade comercial única e centralizada, eliminando modelos sintéticos e autoridades divergentes; ausência de subscrição sob âncora resulta estritamente em `integrity_failure` (`COMMERCIAL_INTEGRITY_VIOLATION`);
 - política declarativa V1: plano Premium possui exatamente 1 conexão WhatsApp incluída; todos os outros planos (Free, Lite, Lite+, Essential, Pro) possuem 0 conexões incluídas; conexões adicionais pagas não são suportadas (0 conexões adicionais);
 - carência operacional de 7 dias civis de faturamento (`grace_period_expires_billing_date`) em `America/Sao_Paulo` permitindo operação contínua e retomada de integrações autorizadas durante atrasos transitórios de renovação;
 - contagem de capacidade exata e limitada via consultas particionadas no Firestore (`getConsumingConnections`): Partição 1 para status operacionais (`connecting`, `connected`, `error`, `disabled_by_user` limit 50); Partição 2 para status `pending` ordenada por `FieldPath.documentId()` em páginas limitadas de 50 registros até 10 páginas (máximo de 500 registros) com saturação fail-closed 429 `CAPACITY_ACCOUNTING_SATURATED`;

@@ -107,6 +107,54 @@ export function consumesCommercialCapacity(
   return true;
 }
 
+export interface CivilBillingDateParseResult {
+  valid: boolean;
+  dateStr?: string;
+  year?: number;
+  month?: number;
+  day?: number;
+  reason?:
+    | 'MISSING_DATE'
+    | 'INVALID_RUNTIME_TYPE'
+    | 'MALFORMED_FORMAT'
+    | 'INVALID_MONTH'
+    | 'YEAR_OUT_OF_RANGE'
+    | 'IMPOSSIBLE_CALENDAR_DATE';
+}
+
+/**
+ * Validador e analisador estrito de data civil de faturamento (YYYY-MM-DD).
+ * Rejeita strings com whitespace, formatos parciais, timestamps e datas de calendário impossíveis.
+ */
+export function parseCanonicalCivilBillingDate(raw: unknown): CivilBillingDateParseResult {
+  if (raw === null || raw === undefined) {
+    return { valid: false, reason: 'MISSING_DATE' };
+  }
+  if (typeof raw !== 'string') {
+    return { valid: false, reason: 'INVALID_RUNTIME_TYPE' };
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return { valid: false, reason: 'MALFORMED_FORMAT' };
+  }
+  const parts = raw.split('-');
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10);
+  const day = parseInt(parts[2], 10);
+
+  if (month < 1 || month > 12) {
+    return { valid: false, reason: 'INVALID_MONTH' };
+  }
+  if (year < 2000 || year > 2100) {
+    return { valid: false, reason: 'YEAR_OUT_OF_RANGE' };
+  }
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (day < 1 || day > daysInMonth) {
+    return { valid: false, reason: 'IMPOSSIBLE_CALENDAR_DATE' };
+  }
+
+  return { valid: true, dateStr: raw, year, month, day };
+}
+
 /**
  * Avaliador canônico e puro de direito comercial WhatsApp (Phase 7D2-D8).
  * Zero I/O, zero mutações externas, determinístico e imune a desvios de relógio.
@@ -127,21 +175,37 @@ export function evaluateWhatsAppCommercialEntitlement(
   }
 
   // 2. Barreira de Integridade e Tenant Boundary (Anti-IDOR)
+  // Cadeia canônica estrita:
+  // organization -> billing_anchor_ministry_id -> ACTUAL Ministry document -> ministry_subscriptions
+  // O avaliador NUNCA sintetiza um ministério âncora a partir do ID da organização.
   const org = facts.organization;
-  const anchorMinistry =
-    facts.anchorMinistry !== undefined
-      ? facts.anchorMinistry
-      : org?.billing_anchor_ministry_id
-      ? { id: org.billing_anchor_ministry_id, organization_id: org.id }
-      : null;
+  const anchorMinistry = facts.anchorMinistry ?? null;
+  const sub = facts.subscription;
 
-  if (
-    !org ||
-    !anchorMinistry ||
-    !org.billing_anchor_ministry_id ||
-    anchorMinistry.id !== org.billing_anchor_ministry_id ||
-    anchorMinistry.organization_id !== org.id
-  ) {
+  const hasValidAnchorId = Boolean(
+    org?.billing_anchor_ministry_id &&
+    typeof org.billing_anchor_ministry_id === 'string' &&
+    org.billing_anchor_ministry_id.trim().length > 0
+  );
+
+  const isAnchorValid = Boolean(
+    org &&
+    hasValidAnchorId &&
+    anchorMinistry &&
+    anchorMinistry.id === org.billing_anchor_ministry_id &&
+    anchorMinistry.organization_id === org.id
+  );
+
+  const isSubscriptionUsable = Boolean(
+    sub &&
+    sub.ministry_id === org?.billing_anchor_ministry_id &&
+    typeof sub.plan_id === 'string' &&
+    sub.plan_id.trim().length > 0 &&
+    typeof sub.billing_status === 'string' &&
+    sub.billing_status.trim().length > 0
+  );
+
+  if (!isAnchorValid || !isSubscriptionUsable || !org || !sub) {
     return {
       state: 'integrity_failure',
       canSendMessages: false,
@@ -156,14 +220,16 @@ export function evaluateWhatsAppCommercialEntitlement(
         billingAnchorMinistryId: org?.billing_anchor_ministry_id,
         anchorMinistryId: anchorMinistry?.id,
         anchorMinistryOrgId: anchorMinistry?.organization_id,
+        subscriptionId: sub?.id,
+        subscriptionMinistryId: sub?.ministry_id,
+        subscriptionPlanId: sub?.plan_id,
+        subscriptionBillingStatus: sub?.billing_status,
       },
     };
   }
 
-  const sub = facts.subscription;
-
   // 3. Suspensão Administrativa (prioridade máxima sobre plano e pagamentos)
-  if (sub?.administratively_suspended) {
+  if (sub.administratively_suspended) {
     return {
       state: 'administratively_suspended',
       canSendMessages: false,
@@ -182,28 +248,27 @@ export function evaluateWhatsAppCommercialEntitlement(
   }
 
   // 4. Determinação do Plano Efetivo e Quota Incluída
-  let effectivePlanId = sub?.plan_id || DEFAULT_PLAN_ID;
-  if (sub) {
-    const isLegacyCancelExpired = Boolean(
-      sub.cancel_at_period_end &&
-      !sub.active_cancellation_transition_id &&
-      sub.current_period_end &&
-      !isNaN(new Date(sub.current_period_end).getTime()) &&
-      now > new Date(sub.current_period_end)
-    );
-    if (isLegacyCancelExpired) {
+  // O LouvAIO Billing V1 governa transições de assinatura através do reconciliador durável.
+  // Uma assinatura retém a titularidade do seu plano efetivo até a convergência autoritativa pelo Billing V1.
+  let effectivePlanId = sub.plan_id;
+  if (
+    sub.cancel_at_period_end &&
+    !sub.active_cancellation_transition_id &&
+    sub.current_period_end &&
+    !isNaN(new Date(sub.current_period_end).getTime()) &&
+    now > new Date(sub.current_period_end)
+  ) {
+    effectivePlanId = DEFAULT_PLAN_ID;
+  } else if (sub.subscription_mode === 'complimentary' && sub.expires_at) {
+    const grantExpires = new Date(sub.expires_at);
+    if (!isNaN(grantExpires.getTime()) && now > grantExpires) {
       effectivePlanId = DEFAULT_PLAN_ID;
-    } else if (sub.subscription_mode === 'complimentary' && sub.expires_at) {
-      const grantExpires = new Date(sub.expires_at);
-      if (!isNaN(grantExpires.getTime()) && now > grantExpires) {
-        effectivePlanId = DEFAULT_PLAN_ID;
-      }
     }
   }
 
   const allowedConnections = getIncludedWhatsAppConnections(effectivePlanId);
 
-  // 5. Plano Excluído (Ex: Free, Lite, Lite+, Essential, Pro possuem quota 0)
+  // 5. Plano Excluído (Planos canônicos com quota 0: Free, Lite, Lite+, Essential, Pro)
   if (allowedConnections <= 0) {
     return {
       state: 'plan_excluded',
@@ -218,22 +283,39 @@ export function evaluateWhatsAppCommercialEntitlement(
         organizationId: org.id,
         billingAnchorMinistryId: org.billing_anchor_ministry_id,
         planId: effectivePlanId,
-        billingStatus: sub?.billing_status,
+        billingStatus: sub.billing_status,
       },
     };
   }
 
   // 6. Avaliação Financeira / Status de Faturamento
-  const billingStatus = sub?.billing_status || 'past_due';
+  const billingStatus = sub.billing_status;
 
   if (billingStatus === 'past_due') {
-    // Carência civil de 7 dias [start, end)
-    const graceEndDate =
-      sub?.grace_period_expires_billing_date ||
-      (sub?.grace_period_expires_at ? getBillingDate(sub.grace_period_expires_at) : null);
+    // Carência civil estrita de 7 dias [start, end)
+    const graceParse = parseCanonicalCivilBillingDate(sub.grace_period_expires_billing_date);
+    if (!graceParse.valid) {
+      return {
+        state: 'integrity_failure',
+        canSendMessages: false,
+        canCreateConnection: false,
+        canResumeAuthorizedOnboarding: false,
+        allowedConnections: 0,
+        consumingConnections,
+        availableSlots: 0,
+        restrictionReason: 'COMMERCIAL_INTEGRITY_VIOLATION',
+        details: {
+          organizationId: org.id,
+          billingAnchorMinistryId: org.billing_anchor_ministry_id,
+          billingStatus,
+          gracePeriodExpiresBillingDate: sub.grace_period_expires_billing_date,
+          graceParseError: graceParse.reason,
+        },
+      };
+    }
 
-    const currentCommercialDate = getBillingDate(now);
-    const isWithinGrace = Boolean(graceEndDate && currentCommercialDate < graceEndDate);
+    const currentCommercialDateStr = getBillingDate(now);
+    const isWithinGrace = currentCommercialDateStr < graceParse.dateStr!;
 
     if (isWithinGrace) {
       // Dentro da carência: verifica se há excesso de conexões consumidoras
@@ -252,7 +334,7 @@ export function evaluateWhatsAppCommercialEntitlement(
             billingAnchorMinistryId: org.billing_anchor_ministry_id,
             planId: effectivePlanId,
             billingStatus,
-            gracePeriodExpiresBillingDate: graceEndDate,
+            gracePeriodExpiresBillingDate: graceParse.dateStr,
           },
         };
       }
@@ -272,11 +354,11 @@ export function evaluateWhatsAppCommercialEntitlement(
           billingAnchorMinistryId: org.billing_anchor_ministry_id,
           planId: effectivePlanId,
           billingStatus,
-          gracePeriodExpiresBillingDate: graceEndDate,
+          gracePeriodExpiresBillingDate: graceParse.dateStr,
         },
       };
     } else {
-      // Fora da carência (ou sem carência registrada)
+      // Fora da carência / fronteira exata de expiração atingida
       return {
         state: 'post_payment_grace',
         canSendMessages: false,
@@ -291,7 +373,7 @@ export function evaluateWhatsAppCommercialEntitlement(
           billingAnchorMinistryId: org.billing_anchor_ministry_id,
           planId: effectivePlanId,
           billingStatus,
-          gracePeriodExpiresBillingDate: graceEndDate,
+          gracePeriodExpiresBillingDate: graceParse.dateStr,
         },
       };
     }

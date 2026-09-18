@@ -13,6 +13,7 @@ import {
 } from './organization.types';
 import { MinistryRecord, MinistryMemberRecord } from '../../repositories/MinistryRepository';
 import { MinistrySubscriptionRecord } from '../subscriptions/subscription.types';
+import { getBillingDate } from '../../utils/billing-date';
 
 describe('Organization & WhatsApp Entitlement Feature Suite (Phase 7B)', () => {
   // In-memory Firestore stores
@@ -766,31 +767,24 @@ describe('Organization & WhatsApp Entitlement Feature Suite (Phase 7B)', () => {
     it('22. Grace Billing-Access Mode (LOW-7B-01): Paid plan in grace period retains enabled: true with billingAccessMode: grace', async () => {
       const org = await orgRepo.lazyProvisionForMinistry(ministryId, ownerUserId);
 
-      // Premium plan with active grace period and over limit usage
+      // Premium plan with active payment grace period
+      const futureGraceDate = getBillingDate(new Date(Date.now() + 5 * 86400000));
       subscriptionsStore.set(ministryId, {
         id: ministryId,
         ministry_id: ministryId,
         plan_id: 'premium',
         member_addon_blocks: 0,
-        billing_status: 'active',
+        billing_status: 'past_due',
         subscription_mode: 'paid',
         administratively_suspended: false,
         suspended_at: null,
         suspension_reason: null,
         grace_period_expires_at: new Date(Date.now() + 5 * 86400000).toISOString(),
+        grace_period_expires_billing_date: futureGraceDate,
         current_period_start: new Date().toISOString(),
         current_period_end: new Date(Date.now() + 30 * 86400000).toISOString(),
         cancel_at_period_end: false,
         created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
-
-      // Usage exceeds Premium quota (members: 300, songs: 1500) -> triggers resolveAccessMode => 'grace'
-      usageStore.set(ministryId, {
-        id: ministryId,
-        ministry_id: ministryId,
-        members_count: 350,
-        songs_count: 300,
         updated_at: new Date().toISOString(),
       });
 
@@ -806,6 +800,7 @@ describe('Organization & WhatsApp Entitlement Feature Suite (Phase 7B)', () => {
       const org = await orgRepo.lazyProvisionForMinistry(ministryId, ownerUserId);
 
       // Premium plan with past_due status and expired grace
+      const pastGraceDate = getBillingDate(new Date(Date.now() - 2 * 86400000));
       subscriptionsStore.set(ministryId, {
         id: ministryId,
         ministry_id: ministryId,
@@ -817,6 +812,7 @@ describe('Organization & WhatsApp Entitlement Feature Suite (Phase 7B)', () => {
         suspended_at: null,
         suspension_reason: null,
         grace_period_expires_at: new Date(Date.now() - 2 * 86400000).toISOString(),
+        grace_period_expires_billing_date: pastGraceDate,
         current_period_start: new Date().toISOString(),
         current_period_end: new Date(Date.now() + 30 * 86400000).toISOString(),
         cancel_at_period_end: false,

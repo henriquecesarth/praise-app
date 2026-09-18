@@ -400,27 +400,37 @@ export class WhatsAppConnectionService {
 
   async getOrganizationCapacityUsage(orgId: string): Promise<OrganizationWhatsAppCapacityUsageDto> {
     const capacity = await this.subService.getOrganizationWhatsAppCapacity(orgId);
-    const configuredCount = await this.connectionRepo.countConfiguredConnections(orgId);
-    const remainingCapacity = Math.max(0, capacity.totalAllowedConnections - configuredCount);
+    const configuredCount = capacity.configuredConnectionsCount ?? (await this.connectionRepo.countConfiguredConnections(orgId));
     const isOverLimit = configuredCount > capacity.totalAllowedConnections;
 
-    let connectionAccessMode: 'normal' | 'grace' | 'restricted_over_limit' | 'suspended';
-    if (capacity.billingAccessMode === 'suspended') {
-      connectionAccessMode = 'suspended';
-    } else if (isOverLimit) {
-      connectionAccessMode = 'restricted_over_limit';
-    } else {
-      connectionAccessMode = capacity.billingAccessMode;
-    }
-
-    const canCreateConnection =
-      capacity.billingAccessMode === 'normal' &&
-      configuredCount < capacity.totalAllowedConnections;
+    const commercialState =
+      capacity.commercialState ??
+      (capacity.billingAccessMode === 'suspended'
+        ? 'administratively_suspended'
+        : isOverLimit
+        ? 'restricted_over_limit'
+        : capacity.billingAccessMode === 'grace'
+        ? 'payment_grace'
+        : 'healthy');
 
     const canSendMessages =
-      capacity.billingAccessMode !== 'suspended' &&
-      !isOverLimit &&
-      capacity.totalAllowedConnections > 0;
+      capacity.canSendMessages ??
+      (capacity.billingAccessMode !== 'suspended' && !isOverLimit && capacity.totalAllowedConnections > 0);
+
+    const canCreateConnection =
+      capacity.canCreateConnection ??
+      (capacity.billingAccessMode === 'normal' && configuredCount < capacity.totalAllowedConnections);
+
+    const canResumeAuthorizedOnboarding =
+      capacity.canResumeAuthorizedOnboarding ?? (capacity.billingAccessMode !== 'suspended');
+
+    const connectionAccessMode =
+      capacity.connectionAccessMode ??
+      (capacity.billingAccessMode === 'suspended'
+        ? 'suspended'
+        : isOverLimit
+        ? 'restricted_over_limit'
+        : capacity.billingAccessMode);
 
     return {
       organizationId: orgId,
@@ -429,11 +439,15 @@ export class WhatsAppConnectionService {
       includedConnections: capacity.includedConnections,
       additionalConnections: capacity.additionalConnections,
       configuredConnectionsCount: configuredCount,
-      remainingCapacity,
+      remainingCapacity: capacity.remainingCapacity ?? Math.max(0, capacity.totalAllowedConnections - configuredCount),
+      commercialState,
+      canSendMessages,
+      canCreateConnection,
+      canResumeAuthorizedOnboarding,
+      restrictionReason: capacity.restrictionReason,
+      gracePeriodExpiresBillingDate: capacity.gracePeriodExpiresBillingDate ?? null,
       billingAccessMode: capacity.billingAccessMode,
       connectionAccessMode,
-      canCreateConnection,
-      canSendMessages,
     };
   }
 
@@ -861,7 +875,9 @@ export class WhatsAppConnectionService {
 
         const anchorMinistryRef = db.collection('ministries').doc(org.billing_anchor_ministry_id);
         const anchorMinistryDoc = await tx.get(anchorMinistryRef);
-        const anchorMinistry = anchorMinistryDoc.exists ? ({ id: anchorMinistryDoc.id, ...anchorMinistryDoc.data() } as any) : undefined;
+        const anchorMinistry = anchorMinistryDoc.exists
+          ? { id: anchorMinistryDoc.id, organization_id: anchorMinistryDoc.data()?.organization_id }
+          : null;
 
         const subRef = db.collection('ministry_subscriptions').doc(org.billing_anchor_ministry_id);
         const subDoc = await tx.get(subRef);
@@ -871,7 +887,7 @@ export class WhatsAppConnectionService {
 
         const entitlement = evaluateWhatsAppCommercialEntitlement({
           organization: org,
-          anchorMinistry: anchorMinistry ? { id: anchorMinistry.id, organization_id: anchorMinistry.organization_id } : undefined,
+          anchorMinistry,
           subscription: sub,
           consumingConnectionsCount: consumingCount,
           now,
@@ -932,7 +948,9 @@ export class WhatsAppConnectionService {
 
         const anchorMinistryRef = db.collection('ministries').doc(org.billing_anchor_ministry_id);
         const anchorMinistryDoc = await tx.get(anchorMinistryRef);
-        const anchorMinistry = anchorMinistryDoc.exists ? ({ id: anchorMinistryDoc.id, ...anchorMinistryDoc.data() } as any) : undefined;
+        const anchorMinistry = anchorMinistryDoc.exists
+          ? { id: anchorMinistryDoc.id, organization_id: anchorMinistryDoc.data()?.organization_id }
+          : null;
 
         const subRef = db.collection('ministry_subscriptions').doc(org.billing_anchor_ministry_id);
         const subDoc = await tx.get(subRef);
@@ -945,7 +963,7 @@ export class WhatsAppConnectionService {
 
         const entitlement = evaluateWhatsAppCommercialEntitlement({
           organization: org,
-          anchorMinistry: anchorMinistry ? { id: anchorMinistry.id, organization_id: anchorMinistry.organization_id } : undefined,
+          anchorMinistry,
           subscription: sub,
           consumingConnectionsCount: activeConfiguredCount,
           now,
@@ -1815,7 +1833,9 @@ export class WhatsAppConnectionService {
 
         const anchorMinistryRef = db.collection('ministries').doc(org.billing_anchor_ministry_id);
         const anchorMinistryDoc = await tx.get(anchorMinistryRef);
-        const anchorMinistry = anchorMinistryDoc.exists ? ({ id: anchorMinistryDoc.id, ...anchorMinistryDoc.data() } as any) : undefined;
+        const anchorMinistry = anchorMinistryDoc.exists
+          ? { id: anchorMinistryDoc.id, organization_id: anchorMinistryDoc.data()?.organization_id }
+          : null;
 
         const subRef = db.collection('ministry_subscriptions').doc(org.billing_anchor_ministry_id);
         const subDoc = await tx.get(subRef);
@@ -1825,7 +1845,7 @@ export class WhatsAppConnectionService {
 
         const entitlement = evaluateWhatsAppCommercialEntitlement({
           organization: org,
-          anchorMinistry: anchorMinistry ? { id: anchorMinistry.id, organization_id: anchorMinistry.organization_id } : undefined,
+          anchorMinistry,
           subscription: sub,
           consumingConnectionsCount: consumingCount,
           now,
@@ -1954,7 +1974,9 @@ export class WhatsAppConnectionService {
 
       const anchorMinistryRef = db.collection('ministries').doc(org.billing_anchor_ministry_id);
       const anchorMinistryDoc = await tx.get(anchorMinistryRef);
-      const anchorMinistry = anchorMinistryDoc.exists ? ({ id: anchorMinistryDoc.id, ...anchorMinistryDoc.data() } as any) : undefined;
+      const anchorMinistry = anchorMinistryDoc.exists
+        ? { id: anchorMinistryDoc.id, organization_id: anchorMinistryDoc.data()?.organization_id }
+        : null;
 
       const activeConfiguredCount = await this.connectionRepo.countConsumingConnections(orgId, now, tx, {
         disconnectExpired: true,
@@ -1963,7 +1985,7 @@ export class WhatsAppConnectionService {
 
       const entitlement = evaluateWhatsAppCommercialEntitlement({
         organization: org,
-        anchorMinistry: anchorMinistry ? { id: anchorMinistry.id, organization_id: anchorMinistry.organization_id } : undefined,
+        anchorMinistry,
         subscription: sub,
         consumingConnectionsCount: activeConfiguredCount,
         now,
@@ -2176,9 +2198,15 @@ export class WhatsAppConnectionService {
       });
     }
 
-    // Step 3: Entitlement Downgrade Gate (DEC-7D-16)
-    const capacity = await this.subService.getOrganizationWhatsAppCapacity(orgId);
-    if (!capacity.enabled || capacity.billingAccessMode === 'suspended') {
+    // Step 3: Entitlement Downgrade Gate (DEC-7D-16 / Phase 7D2-D8-R3)
+    const entitlement = await this.subService.getOrganizationCommercialEntitlement(orgId, now);
+    const isSuspendedOrNoPlanCapacity =
+      entitlement.allowedConnections <= 0 ||
+      entitlement.state === 'administratively_suspended' ||
+      entitlement.state === 'post_payment_grace' ||
+      entitlement.state === 'integrity_failure';
+
+    if (isSuspendedOrNoPlanCapacity) {
       await this.releaseTerminalPendingReservation(
         orgId,
         session.id,
@@ -2413,13 +2441,15 @@ export class WhatsAppConnectionService {
         // 10f. Read configured connections for orgId
         const anchorMinistryRef = db.collection('ministries').doc(org.billing_anchor_ministry_id);
         const anchorMinistryDoc = await tx.get(anchorMinistryRef);
-        const anchorMinistry = anchorMinistryDoc.exists ? ({ id: anchorMinistryDoc.id, ...anchorMinistryDoc.data() } as any) : undefined;
+        const anchorMinistry = anchorMinistryDoc.exists
+          ? { id: anchorMinistryDoc.id, organization_id: anchorMinistryDoc.data()?.organization_id }
+          : null;
 
         const activeConfiguredCount = await this.connectionRepo.countConsumingConnections(orgId, now, tx);
 
         const entitlement = evaluateWhatsAppCommercialEntitlement({
           organization: org,
-          anchorMinistry: anchorMinistry ? { id: anchorMinistry.id, organization_id: anchorMinistry.organization_id } : undefined,
+          anchorMinistry,
           subscription: sub,
           consumingConnectionsCount: activeConfiguredCount,
           now,

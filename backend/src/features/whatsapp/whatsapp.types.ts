@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { BillingAccessMode } from '../organizations/organization.types';
+import type { WhatsAppCommercialState } from '../subscriptions/whatsapp-commercial-evaluator';
 import { AppError } from '../../middleware/error-handler';
 
 export const whatsappSupportedProviderSchema = z.enum(['meta_cloud_api', 'zernio']);
@@ -186,10 +187,14 @@ export interface OrganizationWhatsAppCapacityUsageDto {
   additionalConnections: number;
   configuredConnectionsCount: number;
   remainingCapacity: number;
+  commercialState: WhatsAppCommercialState;
+  canSendMessages: boolean;
+  canCreateConnection: boolean;
+  canResumeAuthorizedOnboarding: boolean;
+  restrictionReason?: string;
+  gracePeriodExpiresBillingDate?: string | null;
   billingAccessMode: BillingAccessMode;
   connectionAccessMode: 'normal' | 'grace' | 'restricted_over_limit' | 'suspended';
-  canCreateConnection: boolean;
-  canSendMessages: boolean;
 }
 
 export interface ResolvedWhatsAppConnectionResult {

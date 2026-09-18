@@ -22,6 +22,16 @@ describe('WhatsApp Commercial Entitlement Integration Suite (Phase 7D2-D8)', { t
     return `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
   }
 
+  function createDeferred<T = void>() {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (reason?: any) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
   async function setupTestOrganization(params: {
     orgId: string;
     anchorMinistryId: string;
@@ -552,14 +562,14 @@ describe('WhatsApp Commercial Entitlement Integration Suite (Phase 7D2-D8)', { t
       expect(admissionResult.valid).toBe(true);
     });
 
-    it('handles concurrent capacity mutation during D6 dispatch admission with transaction retry', async () => {
-      const orgId = uniqueId('org_tx_concur');
-      const anchorMinId = uniqueId('min_tx_concur');
-      await setupTestOrganization({ orgId, anchorMinistryId: anchorMinId });
+    it('Scenario 21: handles concurrent capacity mutation during D6 dispatch admission with deterministic OCC interleaving and transaction retry', async () => {
+      const orgId = uniqueId('org_tx_occ');
+      const anchorMinId = uniqueId('min_tx_occ');
+      await setupTestOrganization({ orgId, anchorMinistryId: anchorMinId, planId: 'premium' });
 
       const now = new Date('2026-09-18T12:00:00.000Z');
-      const dispatchId = uniqueId('disp_tx');
-      const connectionId = uniqueId('wac_tx');
+      const dispatchId = uniqueId('disp_occ');
+      const connectionId = uniqueId('wac_occ');
       const fingerprint = crypto.createHash('sha256').update(dispatchId).digest('hex');
 
       await db.collection('whatsapp_connections').doc(connectionId).set({
@@ -592,6 +602,106 @@ describe('WhatsApp Commercial Entitlement Integration Suite (Phase 7D2-D8)', { t
         updated_at: now.toISOString(),
       });
 
+      let attempt = 0;
+      const t1ReadDone = createDeferred();
+
+      const testDispatchRepo = new WhatsAppOutboundDispatchRepository();
+      const origCount = (testDispatchRepo as any).connectionRepo.countConsumingConnections.bind(
+        (testDispatchRepo as any).connectionRepo
+      );
+      (testDispatchRepo as any).connectionRepo.countConsumingConnections = async function (...args: any[]) {
+        attempt++;
+        if (attempt === 1) {
+          // Signal that T1 has completed all reads inside the transaction (dispatch, org, anchor ministry, subscription).
+          t1ReadDone.resolve();
+          // Simulate Firestore OCC collision at commit: concurrent mutation of read set aborts attempt 1 with gRPC code 10.
+          const occAbortedErr: any = new Error(
+            '10 ABORTED: Transaction aborted due to concurrent mutation of read set.'
+          );
+          occAbortedErr.code = 10;
+          throw occAbortedErr;
+        }
+        // Attempt 2: Proceed with fresh data from re-read.
+        return 0;
+      };
+
+      try {
+        const t1Promise = testDispatchRepo.acquireDispatchExecution({
+          dispatchId,
+          organizationId: orgId,
+          connectionId,
+          requestFingerprint: fingerprint,
+        });
+
+        // Wait until T1 has performed all reads
+        await t1ReadDone.promise;
+
+        // T2: Concurrently mutate the subscription document in Firestore
+        await db.collection('ministry_subscriptions').doc(anchorMinId).update({
+          administratively_suspended: true,
+          updated_at: new Date().toISOString(),
+        });
+
+        // On retry (Attempt 2), T1 re-reads the subscription, finds it administratively suspended, and throws 403
+        await expect(t1Promise).rejects.toMatchObject({
+          statusCode: 403,
+          details: expect.objectContaining({
+            code: 'ADMINISTRATIVELY_SUSPENDED',
+          }),
+        });
+
+        expect(attempt).toBeGreaterThanOrEqual(2);
+
+        // Verify dispatch document in Firestore remains prepared with null execution ID
+        const finalDispatch = await testDispatchRepo.getDispatchById(dispatchId);
+        expect(finalDispatch?.phase).toBe('prepared');
+        expect(finalDispatch?.request_execution_id).toBeNull();
+      } finally {
+        (testDispatchRepo as any).connectionRepo.countConsumingConnections = origCount;
+      }
+    });
+
+    it('Scenario 22: T1 commits first -> subsequent subscription restriction does not cancel already-owned execution', async () => {
+      const orgId = uniqueId('org_t1_first');
+      const anchorMinId = uniqueId('min_t1_first');
+      await setupTestOrganization({ orgId, anchorMinistryId: anchorMinId, planId: 'premium' });
+
+      const now = new Date('2026-09-18T12:00:00.000Z');
+      const dispatchId = uniqueId('disp_t1_first');
+      const connectionId = uniqueId('wac_t1_first');
+      const fingerprint = crypto.createHash('sha256').update(dispatchId).digest('hex');
+
+      await db.collection('whatsapp_connections').doc(connectionId).set({
+        id: connectionId,
+        organization_id: orgId,
+        display_name: 'Conn 1',
+        status: 'connected',
+        provider: 'zernio',
+        created_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      });
+
+      await db.collection('whatsapp_outbound_dispatches').doc(dispatchId).set({
+        id: dispatchId,
+        organization_id: orgId,
+        connection_id: connectionId,
+        provider_account_id: 'acc_1',
+        recipient_e164: '+5511999999999',
+        recipient_participant_id: 'part_1',
+        dispatch_kind: 'proactive_template',
+        status: 'pending',
+        phase: 'prepared',
+        request_fingerprint: fingerprint,
+        request_execution_id: null,
+        request_lease_until: null,
+        send_started_at: null,
+        retry_count: 0,
+        max_retries: 3,
+        created_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      });
+
+      // T1 commits first
       const acquireResult = await dispatchRepo.acquireDispatchExecution({
         dispatchId,
         organizationId: orgId,
@@ -599,9 +709,19 @@ describe('WhatsApp Commercial Entitlement Integration Suite (Phase 7D2-D8)', { t
         requestFingerprint: fingerprint,
       });
       expect(acquireResult.outcome).toBe('acquired');
-      if (acquireResult.outcome === 'acquired') {
-        expect(acquireResult.executionId).toBeDefined();
-      }
+      const executionId = acquireResult.outcome === 'acquired' ? acquireResult.executionId : null;
+      expect(executionId).toBeDefined();
+
+      // Subsequent subscription restriction occurs after T1 has committed
+      await db.collection('ministry_subscriptions').doc(anchorMinId).update({
+        administratively_suspended: true,
+        updated_at: new Date().toISOString(),
+      });
+
+      // Assert that dispatch record in Firestore still has phase 'request_started' and retains executionId
+      const dispatchAfter = await dispatchRepo.getDispatchById(dispatchId);
+      expect(dispatchAfter?.phase).toBe('request_started');
+      expect(dispatchAfter?.request_execution_id).toBe(executionId);
     });
   });
 
@@ -739,6 +859,249 @@ describe('WhatsApp Commercial Entitlement Integration Suite (Phase 7D2-D8)', { t
       expect(ent.canSendMessages).toBe(false);
       expect(ent.canCreateConnection).toBe(false);
       expect(ent.restrictionReason).toBe('COMMERCIAL_INTEGRITY_VIOLATION');
+    });
+
+    it('Scenario 1: returns integrity_failure when organization lacks billing_anchor_ministry_id', async () => {
+      const orgId = uniqueId('org_no_anchor');
+      const nowIso = new Date().toISOString();
+      await db.collection('organizations').doc(orgId).set({
+        id: orgId,
+        name: 'No Anchor Org',
+        slug: `org-${orgId}`,
+        owner_user_id: 'u1',
+        billing_anchor_ministry_id: '',
+        default_whatsapp_connection_id: null,
+        created_at: nowIso,
+        updated_at: nowIso,
+      });
+
+      const ent = await subService.getOrganizationCommercialEntitlement(orgId);
+      expect(ent.state).toBe('integrity_failure');
+      expect(ent.restrictionReason).toBe('COMMERCIAL_INTEGRITY_VIOLATION');
+      expect(ent.canSendMessages).toBe(false);
+      expect(ent.canCreateConnection).toBe(false);
+    });
+
+    it('Scenario 2: returns integrity_failure when anchor ministry document is absent', async () => {
+      const orgId = uniqueId('org_ghost_anchor');
+      const nonExistentMinistryId = uniqueId('min_absent');
+      const nowIso = new Date().toISOString();
+      await db.collection('organizations').doc(orgId).set({
+        id: orgId,
+        name: 'Ghost Anchor Org',
+        slug: `org-${orgId}`,
+        owner_user_id: 'u1',
+        billing_anchor_ministry_id: nonExistentMinistryId,
+        default_whatsapp_connection_id: null,
+        created_at: nowIso,
+        updated_at: nowIso,
+      });
+
+      const ent = await subService.getOrganizationCommercialEntitlement(orgId);
+      expect(ent.state).toBe('integrity_failure');
+      expect(ent.restrictionReason).toBe('COMMERCIAL_INTEGRITY_VIOLATION');
+      expect(ent.canSendMessages).toBe(false);
+      expect(ent.canCreateConnection).toBe(false);
+    });
+
+    it('Scenario 4: returns integrity_failure when subscription document is absent (never defaults to free)', async () => {
+      const orgId = uniqueId('org_no_sub');
+      const minId = uniqueId('min_no_sub');
+      const nowIso = new Date().toISOString();
+      await db.collection('organizations').doc(orgId).set({
+        id: orgId,
+        name: 'No Sub Org',
+        slug: `org-${orgId}`,
+        owner_user_id: 'u1',
+        billing_anchor_ministry_id: minId,
+        default_whatsapp_connection_id: null,
+        created_at: nowIso,
+        updated_at: nowIso,
+      });
+      await db.collection('ministries').doc(minId).set({
+        id: minId,
+        name: 'No Sub Ministry',
+        organization_id: orgId,
+        created_at: nowIso,
+        updated_at: nowIso,
+      });
+
+      const ent = await subService.getOrganizationCommercialEntitlement(orgId);
+      expect(ent.state).toBe('integrity_failure');
+      expect(ent.restrictionReason).toBe('COMMERCIAL_INTEGRITY_VIOLATION');
+      expect(ent.canSendMessages).toBe(false);
+      expect(ent.canCreateConnection).toBe(false);
+    });
+
+    it('Scenario 14: SubscriptionService.getOrganizationWhatsAppCapacity matches canonical evaluator', async () => {
+      const orgId = uniqueId('org_single_auth');
+      const minId = uniqueId('min_single_auth');
+      await setupTestOrganization({ orgId, anchorMinistryId: minId, planId: 'premium' });
+
+      const ent = await subService.getOrganizationCommercialEntitlement(orgId);
+      const cap = await subService.getOrganizationWhatsAppCapacity(orgId);
+
+      expect(cap.commercialState).toBe(ent.state);
+      expect(cap.canSendMessages).toBe(ent.canSendMessages);
+      expect(cap.canCreateConnection).toBe(ent.canCreateConnection);
+      expect(cap.canResumeAuthorizedOnboarding).toBe(ent.canResumeAuthorizedOnboarding);
+      expect(cap.totalAllowedConnections).toBe(ent.allowedConnections);
+      expect(cap.configuredConnectionsCount).toBe(ent.consumingConnections);
+      expect(cap.enabled).toBe(true);
+      expect(cap.billingAccessMode).toBe('normal');
+    });
+
+    it('Scenario 15: completeOnboarding Step 3 uses canonical entitlement and releases pending reservation on commercial denial', async () => {
+      const orgId = uniqueId('org_complete_deny');
+      const minId = uniqueId('min_complete_deny');
+      const pastGraceDate = getBillingDate(new Date(Date.now() - 3 * 86400000));
+      await setupTestOrganization({
+        orgId,
+        anchorMinistryId: minId,
+        planId: 'premium',
+        billingStatus: 'past_due',
+        graceDate: pastGraceDate,
+      });
+
+      const now = new Date();
+      const connId = uniqueId('wac_preserve');
+      const sessionId = uniqueId('wabs_preserve');
+
+      await db.collection('whatsapp_connections').doc(connId).set({
+        id: connId,
+        organization_id: orgId,
+        display_name: 'Staged Line',
+        phone_number: null,
+        provider: 'meta_cloud_api',
+        provider_waba_id: null,
+        provider_phone_number_id: null,
+        status: 'pending',
+        status_reason: null,
+        assigned_ministry_id: null,
+        created_by_user_id: 'user_1',
+        current_onboarding_session_id: sessionId,
+        pending_expires_at: new Date(now.getTime() + 12 * 3600 * 1000).toISOString(),
+        last_connected_at: null,
+        last_health_check_at: null,
+        created_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      });
+
+      const stateNonce = 'valid_nonce_123';
+      const stateNonceHash = crypto.createHash('sha256').update(stateNonce).digest('hex');
+
+      await db.collection('whatsapp_onboarding_sessions').doc(sessionId).set({
+        id: sessionId,
+        organization_id: orgId,
+        connection_id: connId,
+        actor_user_id: 'user_1',
+        state_nonce_hash: stateNonceHash,
+        status: 'active',
+        provider_progress: 'credentials_acquired',
+        expires_at: new Date(now.getTime() + 15 * 60 * 1000).toISOString(),
+        retention_expires_at: new Date(now.getTime() + 30 * 24 * 3600 * 1000).toISOString(),
+        consumed_at: null,
+        created_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      });
+
+      await db.collection('organization_members').doc(`${orgId}_user_1`).set({
+        id: `${orgId}_user_1`,
+        organization_id: orgId,
+        user_id: 'user_1',
+        role: 'owner',
+        created_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      });
+
+      const { WhatsAppConnectionService } = await import('../whatsapp/whatsapp-connection.service');
+      const connService = new WhatsAppConnectionService();
+
+      await expect(
+        connService.completeOnboarding(orgId, 'user_1', {
+          sessionId,
+          stateNonce,
+          selectedWabaId: 'waba_123',
+          selectedPhoneNumberId: 'phone_123',
+          mode: 'embedded_signup',
+        } as any)
+      ).rejects.toMatchObject({
+        statusCode: 403,
+      });
+
+      // Pending reservation is released to disconnected per DEC-7D-16
+      const connDoc = await db.collection('whatsapp_connections').doc(connId).get();
+      expect(connDoc.exists).toBe(true);
+      expect(connDoc.data()?.status).toBe('disconnected');
+      expect(connDoc.data()?.status_reason).toBe('SUBSCRIPTION_RESTRICTED');
+    });
+
+    it('Scenario 16: public capacity endpoint returns canonical D8 contract shape', async () => {
+      const orgId = uniqueId('org_pub_contract');
+      const minId = uniqueId('min_pub_contract');
+      await setupTestOrganization({ orgId, anchorMinistryId: minId, planId: 'premium' });
+
+      const { OrganizationController } = await import('../organizations/organization.controller');
+      const orgController = new OrganizationController();
+
+      let statusCode = 200;
+      let jsonResult: any = null;
+      const res: any = {
+        status: (code: number) => {
+          statusCode = code;
+          return res;
+        },
+        json: (data: any) => {
+          jsonResult = data;
+          return res;
+        },
+      };
+      const req: any = {
+        params: { organizationId: orgId },
+        user: { id: 'user-1' },
+      };
+      const next = vi.fn();
+
+      await orgController.getWhatsAppCapacity(req, res, next);
+      expect(next).not.toHaveBeenCalled();
+      expect(jsonResult).toBeDefined();
+      expect(jsonResult).toMatchObject({
+        organizationId: orgId,
+        billingAnchorMinistryId: minId,
+        totalAllowedConnections: 1,
+        configuredConnectionsCount: 0,
+        commercialState: 'healthy',
+        canSendMessages: true,
+        canCreateConnection: true,
+        canResumeAuthorizedOnboarding: true,
+        enabled: true,
+        billingAccessMode: 'normal',
+      });
+    });
+
+    it('Scenario 23: fails closed on capacity accounting saturation with 429', async () => {
+      const orgId = uniqueId('org_saturated');
+      const minId = uniqueId('min_saturated');
+      await setupTestOrganization({ orgId, anchorMinistryId: minId, planId: 'premium' });
+
+      const spy = vi.spyOn(WhatsAppConnectionRepository.prototype, 'countConsumingConnections').mockRejectedValueOnce(
+        new AppError(
+          429,
+          'CAPACITY_ACCOUNTING_SATURATED: Muitas conexões pendentes para contabilização segura.',
+          { code: 'CAPACITY_ACCOUNTING_SATURATED' }
+        )
+      );
+
+      await expect(
+        subService.getOrganizationWhatsAppCapacity(orgId)
+      ).rejects.toMatchObject({
+        statusCode: 429,
+        details: expect.objectContaining({
+          code: 'CAPACITY_ACCOUNTING_SATURATED',
+        }),
+      });
+
+      spy.mockRestore();
     });
   });
 
