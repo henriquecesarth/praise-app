@@ -375,6 +375,29 @@ describe('Phase 4A.6C: Recurring Renewal Ingestion & Recovery Runtime Hardening'
       getCustomer: vi.fn().mockResolvedValue(null),
       setCustomer: vi.fn().mockResolvedValue(undefined),
       updateCustomer: vi.fn().mockResolvedValue(undefined),
+      recordOrdinaryRecurringOverdueAtomic: vi.fn().mockImplementation(async (params: any) => {
+        await mockSubRepo.setSubscription({
+          ...currentAppSub,
+          billing_status: 'past_due',
+          grace_period_expires_billing_date: '2026-10-16',
+          grace_period_expires_at: '2026-10-16T00:00:00.000Z',
+        });
+        await mockBillingRepo.saveTransaction({
+          id: `asaas_${params.providerPaymentId}`,
+          ministry_id: params.ministryId,
+          provider: 'asaas',
+          provider_payment_id: params.providerPaymentId,
+          provider_subscription_id: params.providerSubscriptionId,
+          transaction_type: 'recurring_payment',
+          status: 'overdue',
+          due_date: params.overdueBillingDate,
+          invoice_url: params.invoiceUrl,
+        });
+        return {
+          success: true,
+          outcome: 'marked_past_due',
+        };
+      }),
     };
 
     mockSubRepo = {

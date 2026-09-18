@@ -1017,3 +1017,37 @@ export interface SettleOrdinaryRecurringRenewalResult {
   transaction?: BillingTransactionRecord;
   error?: string;
 }
+
+export interface RecordOrdinaryRecurringOverdueInput {
+  ministryId: string;
+  provider: BillingProviderName;
+  providerPaymentId?: string | null;
+  providerSubscriptionId: string;
+  overdueBillingDate: string; // YYYY-MM-DD
+  expectedCurrentPeriodEnd?: string | null;
+  amountCents?: number;
+  invoiceUrl?: string | null;
+  now?: Date | string;
+  timeZone?: string;
+}
+
+export type RecordOrdinaryRecurringOverdueOutcome =
+  | 'marked_past_due'
+  | 'already_past_due'
+  | 'already_settled'
+  | 'stale_overdue_period_advanced'
+  | 'out_of_order_overdue_ignored'
+  | 'future_cycle_overdue_ignored'
+  | 'cycle_boundary_mismatch'
+  | 'subscription_not_found'
+  | 'billing_subscription_not_found'
+  | 'complimentary_plan_preserved'
+  | 'not_paid_subscription'
+  | 'provider_subscription_mismatch';
+
+export interface RecordOrdinaryRecurringOverdueResult {
+  success: boolean;
+  outcome: RecordOrdinaryRecurringOverdueOutcome;
+  transaction?: BillingTransactionRecord;
+  error?: string;
+}

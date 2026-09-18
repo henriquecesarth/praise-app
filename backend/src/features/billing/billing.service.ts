@@ -1987,49 +1987,29 @@ export class BillingService {
           return { status: 'ok', processed: false, reason: 'future_cycle_overdue_ignored' };
         }
 
-        // Entrar em past_due e abrir carência civil de 7 dias ancorada na fronteira de renovação
-        const graceEndBillingDate = addCommercialDays(
-          currentRenewalBoundary,
-          7,
-          config.billingTimezone
-        );
-        const graceExpiresIso = new Date(`${graceEndBillingDate}T00:00:00.000Z`).toISOString();
+        // Entrar em past_due e abrir carência civil de 7 dias de forma atômica
+        // protegendo contra lost-update race com PAYMENT_CONFIRMED / PAYMENT_RECEIVED
+        const overdueResult = await this.billingRepo.recordOrdinaryRecurringOverdueAtomic({
+          ministryId,
+          provider: this.provider.name,
+          providerPaymentId: parsedEvent.providerPaymentId || null,
+          providerSubscriptionId: resolvedProviderSubId,
+          overdueBillingDate: paymentRenewalDate,
+          expectedCurrentPeriodEnd: currentRenewalBoundary,
+          amountCents: parsedEvent.amountCents || billingSub?.amount_cents || 0,
+          invoiceUrl: resolvedInvoiceUrl,
+          now,
+          timeZone: config.billingTimezone,
+        });
 
-        if (currentAppSub && currentAppSub.billing_status === 'active') {
-          await this.subscriptionRepo.setSubscription({
-            ...currentAppSub,
-            billing_status: 'past_due',
-            grace_period_expires_at: currentAppSub.grace_period_expires_at || graceExpiresIso,
-            grace_period_expires_billing_date: currentAppSub.grace_period_expires_billing_date || graceEndBillingDate,
-            updated_at: now.toISOString(),
-          });
-        }
-
-        if (billingSub) {
-          await this.billingRepo.setSubscription({
-            ...billingSub,
-            status: 'past_due',
-            updated_at: now.toISOString(),
-          });
-        }
-
-        if (parsedEvent.providerPaymentId) {
-          await this.billingRepo.saveTransaction({
-            id: `${this.provider.name}_${parsedEvent.providerPaymentId}`,
-            ministry_id: ministryId,
-            provider: this.provider.name,
-            provider_payment_id: parsedEvent.providerPaymentId,
-            provider_subscription_id: billingSub.provider_subscription_id,
-            transaction_type: 'recurring_payment',
-            amount_cents: parsedEvent.amountCents || billingSub.amount_cents || 0,
-            currency: 'BRL',
-            status: 'overdue',
-            due_date: currentRenewalBoundary,
-            paid_at: null,
-            invoice_url: resolvedInvoiceUrl,
-            created_at: now.toISOString(),
-            updated_at: now.toISOString(),
-          });
+        if (!overdueResult.success) {
+          await this.billingRepo.markWebhookEventProcessed(
+            this.provider.name,
+            parsedEvent.providerEventId,
+            'ignored',
+            `Evento PAYMENT_OVERDUE ignorado por guarda de concorrência: ${overdueResult.outcome} (${overdueResult.error})`
+          );
+          return { status: 'ok', processed: false, reason: overdueResult.outcome };
         }
 
         await this.billingRepo.markWebhookEventProcessed(
@@ -6926,8 +6906,15 @@ export class BillingService {
       // Garante que ministry_subscriptions.billing_status seja past_due com grace_period_expires_billing_date
       // mesmo se o processo tiver sofrido crash imediatamente após enterScheduledPaidTransitionGrace
       const currentAppSub = await this.subscriptionRepo.getSubscription(ministryId);
+      const appPeriodStart = normalizeToBillingDate(currentAppSub?.current_period_start, config.billingTimezone);
+      const isAlreadyRenewedOrSettled =
+        appPeriodStart &&
+        appPeriodStart >= effectiveBillingDate &&
+        currentAppSub?.billing_status === 'active';
+
       if (
         currentAppSub &&
+        !isAlreadyRenewedOrSettled &&
         (currentAppSub.billing_status !== 'past_due' ||
           currentAppSub.grace_period_expires_billing_date !== graceEndBillingDate ||
           currentAppSub.locked_member_quota !== graceSnapshot.effective_member_quota ||

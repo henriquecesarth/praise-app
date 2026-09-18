@@ -25,10 +25,14 @@ import {
   SettleOrdinaryRecurringRenewalInput,
   SettleOrdinaryRecurringRenewalResult,
   SettleOrdinaryRecurringRenewalOutcome,
+  RecordOrdinaryRecurringOverdueInput,
+  RecordOrdinaryRecurringOverdueResult,
+  RecordOrdinaryRecurringOverdueOutcome,
 } from '../features/billing/billing.types';
 import { MinistrySubscriptionRecord } from '../features/subscriptions/subscription.types';
 import {
   addCommercialInterval,
+  addCommercialDays,
   getBillingDate,
   normalizeToBillingDate,
 } from '../utils/billing-date';
@@ -3839,9 +3843,16 @@ export class BillingRepository {
           );
         }
 
+        // Proteção Canônica de Status de Liquidação (Imutabilidade de status paid)
+        let resolvedStatus = transaction.status;
+        if (existing.status === 'paid' && transaction.status === 'overdue') {
+          resolvedStatus = 'paid';
+        }
+
         const merged: BillingTransactionRecord = {
           ...existing,
           ...transaction,
+          status: resolvedStatus,
           paid_billing_date: existing.paid_billing_date || transaction.paid_billing_date || null,
           created_at: existing.created_at || transaction.created_at,
           updated_at: transaction.updated_at || new Date().toISOString(),
@@ -4185,6 +4196,222 @@ export class BillingRepository {
       return {
         success: true,
         outcome: 'settled',
+        transaction: transactionRecord,
+      };
+    });
+  }
+
+  /**
+   * Registra e sincroniza a inadimplência (past_due) de renovação recorrente ordinária de forma atômica (Phase 7D2-PR0).
+   *
+   * Invariantes atômicos garantidos em UMA única transação Firestore:
+   * 1. Validações pré-commit:
+   *    - Assinatura do ministério existe e está em modo pago ('paid').
+   *    - Assinatura de faturamento existe e provider_subscription_id coincide estritamente.
+   *    - Planos cortesia ('complimentary') são estritamente isolados e protegidos contra past_due.
+   * 2. Proteção contra sobrescrita de liquidação (Lost-Update Remediation):
+   *    - Se a transação já foi quitada (status === 'paid'): aborta fail-closed (already_settled) sem tocar no status ou período.
+   * 3. Salvaguardas de Stale Overdue e CAS de Fronteira Comercial:
+   *    - Se expectedCurrentPeriodEnd diverge da fronteira atual: o ciclo já avançou/mudou concorrentemente;
+   *      rejeita como stale_overdue_period_advanced.
+   *    - Se overdueBillingDate < currentRenewalBoundary: cobrança de ciclo anterior (out_of_order_overdue_ignored).
+   *    - Se overdueBillingDate > currentRenewalBoundary: cobrança de ciclo futuro (future_cycle_overdue_ignored).
+   *    - Se current_period_start já alcançou overdueBillingDate e está active: stale_overdue_period_advanced.
+   * 4. Transição Legítima de Inadimplência:
+   *    - Atualiza ministry_subscriptions com merge: billing_status = 'past_due' e carência civil de 7 dias [boundary, boundary+7).
+   *      NUNCA altera current_period_start, current_period_end ou quotas.
+   *    - Atualiza billing_subscriptions com merge: status = 'past_due'.
+   *    - Grava transação determinística com status: 'overdue'.
+   */
+  async recordOrdinaryRecurringOverdueAtomic(
+    input: RecordOrdinaryRecurringOverdueInput
+  ): Promise<RecordOrdinaryRecurringOverdueResult> {
+    const {
+      ministryId,
+      provider,
+      providerPaymentId = null,
+      providerSubscriptionId,
+      overdueBillingDate,
+      expectedCurrentPeriodEnd = null,
+      amountCents = 0,
+      invoiceUrl = null,
+      now = new Date(),
+      timeZone = 'America/Sao_Paulo',
+    } = input;
+
+    const nowIso = now instanceof Date ? now.toISOString() : new Date(now).toISOString();
+    const appSubRef = this.ministrySubscriptionsCollection.doc(ministryId);
+    const billingSubId = `${ministryId}_${provider}`;
+    const billingSubRef = this.subscriptionsCollection.doc(billingSubId);
+    const txId = providerPaymentId ? `${provider}_${providerPaymentId}` : null;
+    const txRef = txId ? this.transactionsCollection.doc(txId) : null;
+
+    return await db.runTransaction(async (t: any) => {
+      // 1. Reads
+      const [appSubSnap, billingSubSnap, txSnap] = await Promise.all([
+        t.get(appSubRef),
+        t.get(billingSubRef),
+        txRef ? t.get(txRef) : Promise.resolve(null),
+      ]);
+
+      if (!appSubSnap.exists) {
+        return { success: false, outcome: 'subscription_not_found', error: 'Subscription not found' };
+      }
+      if (!billingSubSnap.exists) {
+        return { success: false, outcome: 'billing_subscription_not_found', error: 'Billing subscription not found' };
+      }
+
+      const appSub = appSubSnap.data() as MinistrySubscriptionRecord;
+      const billingSub = billingSubSnap.data() as BillingSubscriptionRecord;
+
+      // 2. Isolamento de Planos Cortesia e Validação de Modo Pago
+      if (appSub.subscription_mode === 'complimentary') {
+        return { success: false, outcome: 'complimentary_plan_preserved', error: 'Complimentary plan preserved' };
+      }
+
+      if (appSub.subscription_mode !== 'paid') {
+        return { success: false, outcome: 'not_paid_subscription', error: 'Subscription is not paid' };
+      }
+
+      // 3. Provider Subscription ID Match
+      if (
+        !billingSub.provider_subscription_id ||
+        billingSub.provider_subscription_id !== providerSubscriptionId
+      ) {
+        return {
+          success: false,
+          outcome: 'provider_subscription_mismatch',
+          error: `Provider subscription mismatch: expected ${billingSub.provider_subscription_id}, got ${providerSubscriptionId}`,
+        };
+      }
+
+      // 4. Determinar a fronteira de renovação corrente e a data do overdue
+      const currentRenewalBoundary =
+        normalizeToBillingDate(billingSub.current_period_end_billing_date, timeZone) ||
+        normalizeToBillingDate(billingSub.current_period_end, timeZone) ||
+        normalizeToBillingDate(appSub.current_period_end, timeZone);
+
+      if (!currentRenewalBoundary) {
+        return {
+          success: false,
+          outcome: 'cycle_boundary_mismatch',
+          error: 'Current renewal boundary cannot be determined',
+        };
+      }
+
+      const normOverdueBillingDate = normalizeToBillingDate(overdueBillingDate, timeZone);
+      if (!normOverdueBillingDate) {
+        return {
+          success: false,
+          outcome: 'cycle_boundary_mismatch',
+          error: 'Overdue billing date is invalid',
+        };
+      }
+
+      // 5. Se a transação já estiver quitada (paid): abortar imediatamente para não sobrescrever liquidação
+      const existingTx = txSnap && txSnap.exists ? (txSnap.data() as BillingTransactionRecord) : null;
+      if (existingTx && existingTx.status === 'paid') {
+        return {
+          success: false,
+          outcome: 'already_settled',
+          error: 'Payment has already been settled and paid',
+          transaction: existingTx,
+        };
+      }
+
+      // 6. Salvaguardas de Stale Overdue:
+      // Caso 6.1: Divergência de expectedCurrentPeriodEnd (o ciclo avançou concorrentemente)
+      if (expectedCurrentPeriodEnd) {
+        const normExpected = normalizeToBillingDate(expectedCurrentPeriodEnd, timeZone);
+        if (normExpected && normExpected !== currentRenewalBoundary) {
+          return {
+            success: false,
+            outcome: 'stale_overdue_period_advanced',
+            error: `Expected current period end (${normExpected}) diverges from stored boundary (${currentRenewalBoundary})`,
+          };
+        }
+      }
+
+      // Caso 6.2: Overdue de ciclo anterior (< currentRenewalBoundary)
+      if (normOverdueBillingDate < currentRenewalBoundary) {
+        return {
+          success: false,
+          outcome: 'out_of_order_overdue_ignored',
+          error: `Payment overdue date (${normOverdueBillingDate}) is before current renewal boundary (${currentRenewalBoundary})`,
+        };
+      }
+
+      // Caso 6.3: Overdue de ciclo futuro (> currentRenewalBoundary)
+      if (normOverdueBillingDate > currentRenewalBoundary) {
+        return {
+          success: false,
+          outcome: 'future_cycle_overdue_ignored',
+          error: `Payment overdue date (${normOverdueBillingDate}) is after current renewal boundary (${currentRenewalBoundary})`,
+        };
+      }
+
+      // Caso 6.4: Guarda monotônica de current_period_start
+      const appPeriodStart = normalizeToBillingDate(appSub.current_period_start, timeZone);
+      if (appPeriodStart && appPeriodStart >= normOverdueBillingDate && appSub.billing_status === 'active') {
+        return {
+          success: false,
+          outcome: 'stale_overdue_period_advanced',
+          error: `Current period start (${appPeriodStart}) already reached overdue boundary (${normOverdueBillingDate})`,
+        };
+      }
+
+      // 7. Transição Legítima para past_due:
+      const graceEndBillingDate = addCommercialDays(
+        currentRenewalBoundary,
+        7,
+        timeZone
+      );
+      const graceExpiresIso = new Date(`${graceEndBillingDate}T00:00:00.000Z`).toISOString();
+
+      t.set(
+        appSubRef,
+        {
+          billing_status: 'past_due',
+          grace_period_expires_at: appSub.grace_period_expires_at || graceExpiresIso,
+          grace_period_expires_billing_date: appSub.grace_period_expires_billing_date || graceEndBillingDate,
+          updated_at: nowIso,
+        },
+        { merge: true }
+      );
+
+      t.set(
+        billingSubRef,
+        {
+          status: 'past_due',
+          updated_at: nowIso,
+        },
+        { merge: true }
+      );
+
+      let transactionRecord: BillingTransactionRecord | undefined;
+      if (txRef && providerPaymentId) {
+        transactionRecord = {
+          id: txId!,
+          ministry_id: ministryId,
+          provider,
+          provider_payment_id: providerPaymentId,
+          provider_subscription_id: billingSub.provider_subscription_id,
+          transaction_type: 'recurring_payment',
+          amount_cents: amountCents || billingSub.amount_cents || 0,
+          currency: 'BRL',
+          status: 'overdue',
+          due_date: currentRenewalBoundary,
+          paid_at: null,
+          invoice_url: invoiceUrl || existingTx?.invoice_url || null,
+          created_at: existingTx?.created_at || nowIso,
+          updated_at: nowIso,
+        };
+        t.set(txRef, transactionRecord, { merge: true });
+      }
+
+      return {
+        success: true,
+        outcome: appSub.billing_status === 'past_due' ? 'already_past_due' : 'marked_past_due',
         transaction: transactionRecord,
       };
     });
