@@ -4,6 +4,8 @@ import { SubscriptionRepository } from '../../repositories/SubscriptionRepositor
 import {
   PLANS_CATALOG,
   getPlanDefinition,
+  getIncludedWhatsAppConnections,
+  isPlanId,
   getEffectiveMemberQuota,
   getEffectiveSongQuota,
   isUsageOverLimit,
@@ -48,7 +50,7 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
         annualPriceCents: 16092,
         addonBlockMonthlyPriceCents: 0,
         addonBlockAnnualPriceCents: 0,
-        includedWhatsAppConnections: 1,
+        includedWhatsAppConnections: 0,
       });
 
       // Lite+
@@ -63,7 +65,7 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
         annualPriceCents: 26892,
         addonBlockMonthlyPriceCents: 0,
         addonBlockAnnualPriceCents: 0,
-        includedWhatsAppConnections: 1,
+        includedWhatsAppConnections: 0,
       });
 
       // Essential
@@ -78,7 +80,7 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
         annualPriceCents: 37692,
         addonBlockMonthlyPriceCents: 990,
         addonBlockAnnualPriceCents: 10692,
-        includedWhatsAppConnections: 1,
+        includedWhatsAppConnections: 0,
       });
 
       // Pro
@@ -93,7 +95,7 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
         annualPriceCents: 97092,
         addonBlockMonthlyPriceCents: 690,
         addonBlockAnnualPriceCents: 7452,
-        includedWhatsAppConnections: 1,
+        includedWhatsAppConnections: 0,
       });
 
       // Premium
@@ -112,11 +114,53 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
       });
     });
 
-    it('deve retornar plano Free padrão quando solicitado um planId desconhecido', () => {
+    it('deve retornar nenhuma definição quando solicitado um planId desconhecido', () => {
       const plan = getPlanDefinition('invalido_qualquer');
-      expect(plan.id).toBe('free');
-      expect(plan.name).toBe('Free');
+      expect(plan).toBeUndefined();
     });
+
+    it('deve aplicar a matriz canônica de conexões WhatsApp incluídas', () => {
+      expect(getIncludedWhatsAppConnections('free')).toBe(0);
+      expect(getIncludedWhatsAppConnections('lite')).toBe(0);
+      expect(getIncludedWhatsAppConnections('lite_plus')).toBe(0);
+      expect(getIncludedWhatsAppConnections('essential')).toBe(0);
+      expect(getIncludedWhatsAppConnections('pro')).toBe(0);
+      expect(getIncludedWhatsAppConnections('premium')).toBe(1);
+    });
+
+    it.each([
+      '',
+      'paid_but_unknown',
+      'constructor',
+      'toString',
+      'valueOf',
+      'hasOwnProperty',
+      '__proto__',
+    ])('deve falhar fechado para planId não suportado: %s', (planId) => {
+      expect(isPlanId(planId)).toBe(false);
+      expect(getPlanDefinition(planId)).toBeUndefined();
+      expect(getIncludedWhatsAppConnections(planId)).toBe(0);
+    });
+
+    it.each([undefined, null, 1, {}, []])('deve falhar fechado para planId malformado: %o', (planId) => {
+      expect(isPlanId(planId)).toBe(false);
+      expect(getPlanDefinition(planId)).toBeUndefined();
+      expect(getIncludedWhatsAppConnections(planId)).toBe(0);
+    });
+
+    it.each([undefined, null, -1, Number.NaN, 1.5, '1'])(
+      'deve negar allowance WhatsApp com metadado inválido: %s',
+      (includedWhatsAppConnections) => {
+        const originalAllowance = PLANS_CATALOG.premium.includedWhatsAppConnections;
+
+        try {
+          (PLANS_CATALOG.premium as { includedWhatsAppConnections: unknown }).includedWhatsAppConnections = includedWhatsAppConnections;
+          expect(getIncludedWhatsAppConnections('premium')).toBe(0);
+        } finally {
+          PLANS_CATALOG.premium.includedWhatsAppConnections = originalAllowance;
+        }
+      }
+    );
   });
 
   // --------------------------------------------------------------------------
@@ -276,6 +320,17 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
       };
       service = new SubscriptionService(mockRepo as unknown as SubscriptionRepository);
     });
+
+    it.each(['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__'])(
+      'deve rejeitar chave de protótipo em mutação de plano: %s',
+      async (planId) => {
+        await expect(service.changePlan('min-1', planId as any)).rejects.toThrow(/Plano inválido/i);
+        await expect(service.grantComplimentaryPlan('min-1', planId as any, 'platform-admin')).rejects.toThrow(
+          /Plano inválido para concessão/i
+        );
+        expect(mockRepo.ensureSubscriptionAndUsage).not.toHaveBeenCalled();
+      }
+    );
 
     it('deve realizar downgrade de Pro (85 membros) para Free, registrando carência de 7 dias sem apagar dados', async () => {
       const existingSub: MinistrySubscriptionRecord = {

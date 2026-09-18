@@ -273,6 +273,11 @@ export class MinistryRepository {
       const subData = subDoc.exists ? (subDoc.data() as any) : null;
       const planId = subData?.plan_id || DEFAULT_PLAN_ID;
       const plan = getPlanDefinition(planId);
+      if (!plan) {
+        throw new AppError(500, 'A assinatura do ministério possui um plano inválido.', {
+          code: 'PLAN_DEFINITION_NOT_FOUND',
+        });
+      }
       const effectiveQuota = getEffectiveMemberQuota(plan, subData?.member_addon_blocks || 0);
 
       let currentMembersCount = 0;

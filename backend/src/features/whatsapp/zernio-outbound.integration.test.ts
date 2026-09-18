@@ -112,7 +112,7 @@ describe('Zernio Outbound Dispatch & Message Delivery Lifecycle Suite (Phase 7D2
     await db.collection('ministry_subscriptions').doc(testMinistryId).set({
       id: testMinistryId,
       ministry_id: testMinistryId,
-      plan_id: 'pro',
+      plan_id: 'premium',
       member_addon_blocks: 0,
       billing_status: 'active',
       subscription_mode: 'paid',

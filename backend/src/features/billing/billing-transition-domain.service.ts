@@ -1,8 +1,8 @@
 import {
   PlanId,
   BillingInterval,
-  PLANS_CATALOG,
   getPlanDefinition,
+  isPlanId,
   calculatePlanPriceCents,
   getEffectiveMemberQuota,
   getEffectiveSongQuota,
@@ -54,7 +54,7 @@ export function validateTargetContract(target: TargetContractRequest): void {
     throw new AppError(400, 'Objeto de destino de transição inválido.', { code: 'INVALID_TARGET_REQUEST' });
   }
 
-  if (!target.plan_id || !(target.plan_id in PLANS_CATALOG)) {
+  if (!isPlanId(target.plan_id)) {
     throw new AppError(400, `Plano de destino '${target.plan_id}' inválido ou não encontrado no catálogo.`, {
       code: 'INVALID_TARGET_PLAN',
     });

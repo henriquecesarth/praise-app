@@ -17,8 +17,8 @@ import { config } from '../../config/unifiedConfig';
 import {
   PlanId,
   BillingInterval,
-  PLANS_CATALOG,
   getPlanDefinition,
+  isPlanId,
   getEffectiveMemberQuota,
   getEffectiveSongQuota,
   calculatePlanPriceCents,
@@ -230,7 +230,7 @@ export class BillingService {
     interval: BillingInterval,
     requestedAddonBlocks: number = 0
   ): Promise<CheckoutPreviewResult> {
-    if (!(targetPlanId in PLANS_CATALOG)) {
+    if (!isPlanId(targetPlanId)) {
       throw new AppError(400, `Plano inválido: ${targetPlanId}`);
     }
 
@@ -506,7 +506,7 @@ export class BillingService {
   ): Promise<CheckoutCreationResult> {
     const { planId, interval, addonBlocks = 0, successUrl, cancelUrl } = request;
 
-    if (!(planId in PLANS_CATALOG)) {
+    if (!isPlanId(planId)) {
       throw new AppError(400, `Plano inválido: ${planId}`);
     }
 

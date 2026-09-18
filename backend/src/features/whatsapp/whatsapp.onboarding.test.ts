@@ -106,11 +106,11 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
       updated_at: now,
     });
 
-    // 3. Subscription (Pro plan -> 1 included connection)
+    // 3. Subscription (Premium plan -> 1 included connection)
     subscriptionsStore.set(anchorMinistryId, {
       id: anchorMinistryId,
       ministry_id: anchorMinistryId,
-      plan_id: 'pro',
+      plan_id: 'premium',
       member_addon_blocks: 0,
       billing_status: 'active',
       subscription_mode: 'paid',
@@ -374,7 +374,7 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
     });
 
     it('aborts with 403 WHATSAPP_CAPACITY_LIMIT_REACHED when active connections meet plan limit', async () => {
-      // Pro plan allows 1 connection. Pre-occupy it:
+      // Premium plan allows 1 connection. Pre-occupy it:
       connectionsStore.set('wac_existing', {
         id: 'wac_existing',
         organization_id: orgId,
@@ -457,7 +457,7 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
       subscriptionsStore.set(anchorMinistryId, {
         id: anchorMinistryId,
         ministry_id: anchorMinistryId,
-        plan_id: 'pro',
+        plan_id: 'premium',
         billing_status: 'past_due',
         subscription_mode: 'paid',
         grace_period_expires_billing_date: '2099-12-31',
@@ -475,7 +475,7 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
       subscriptionsStore.set(anchorMinistryId, {
         id: anchorMinistryId,
         ministry_id: anchorMinistryId,
-        plan_id: 'pro',
+        plan_id: 'premium',
         billing_status: 'canceled',
         subscription_mode: 'paid',
         administratively_suspended: true,
@@ -603,7 +603,7 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
       subscriptionsStore.set(anchorMinistryId, {
         id: anchorMinistryId,
         ministry_id: anchorMinistryId,
-        plan_id: 'pro',
+        plan_id: 'premium',
         billing_status: 'canceled',
         subscription_mode: 'paid',
         administratively_suspended: true,
@@ -631,7 +631,7 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
       subscriptionsStore.set(anchorMinistryId, {
         id: anchorMinistryId,
         ministry_id: anchorMinistryId,
-        plan_id: 'pro',
+        plan_id: 'premium',
         billing_status: 'past_due',
         subscription_mode: 'paid',
         grace_period_expires_billing_date: '2099-12-31',
@@ -652,7 +652,7 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
     });
 
     it('Entitlement Race: downgrade between start and commit rejects completion with 403, acquires zero claims and purges secret', async () => {
-      // Pre-occupy 1 connection so configured total becomes 2, exceeding Pro capacity of 1
+      // Pre-occupy 1 connection so configured total becomes 2, exceeding Premium capacity of 1
       connectionsStore.set('wac_conn_1', {
         id: 'wac_conn_1',
         organization_id: orgId,

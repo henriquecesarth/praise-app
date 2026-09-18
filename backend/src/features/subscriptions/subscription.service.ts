@@ -6,6 +6,7 @@ import {
   DEFAULT_PLAN_ID,
   DEFAULT_GRACE_PERIOD_DAYS,
   getPlanDefinition,
+  isPlanId,
   getIncludedWhatsAppConnections,
   getEffectiveMemberQuota,
   getEffectiveSongQuota,
@@ -336,7 +337,7 @@ export class SubscriptionService {
     grantReason?: string,
     expiresAt?: string | null
   ): Promise<MinistrySubscriptionRecord> {
-    if (!(targetPlanId in PLANS_CATALOG)) {
+    if (!isPlanId(targetPlanId)) {
       throw new AppError(400, `Plano inválido para concessão: ${targetPlanId}`);
     }
 
@@ -421,7 +422,7 @@ export class SubscriptionService {
    * Não apaga dados em caso de downgrade.
    */
   async changePlan(ministryId: string, targetPlanId: PlanId): Promise<MinistrySubscriptionRecord> {
-    if (!(targetPlanId in PLANS_CATALOG)) {
+    if (!isPlanId(targetPlanId)) {
       throw new AppError(400, `Plano inválido: ${targetPlanId}`);
     }
 

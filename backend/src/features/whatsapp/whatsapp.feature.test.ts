@@ -279,7 +279,7 @@ describe('WhatsApp Connection Domain Feature & Security Suite (Phase 7C)', () =>
     subscriptionsStore.set(anchorMinistryId, {
       id: anchorMinistryId,
       ministry_id: anchorMinistryId,
-      plan_id: 'pro',
+      plan_id: 'premium',
       member_addon_blocks: 0,
       billing_status: 'active',
       subscription_mode: 'paid',
@@ -290,7 +290,7 @@ describe('WhatsApp Connection Domain Feature & Security Suite (Phase 7C)', () =>
     subscriptionsStore.set(otherOrgMinistryId, {
       id: otherOrgMinistryId,
       ministry_id: otherOrgMinistryId,
-      plan_id: 'pro',
+      plan_id: 'premium',
       member_addon_blocks: 0,
       billing_status: 'active',
       subscription_mode: 'paid',
@@ -993,7 +993,7 @@ describe('WhatsApp Connection Domain Feature & Security Suite (Phase 7C)', () =>
     });
 
     it('3.5 Ministry with dedicated assignment returns direct connection (source: exclusive)', async () => {
-      // Set conn1 status to disconnected so org configuredCount = 1 (within Pro plan capacity of 1)
+      // Set conn1 status to disconnected so org configuredCount = 1 (within Premium plan capacity of 1)
       const conn1 = connectionsStore.get(conn1Id)!;
       connectionsStore.set(conn1Id, { ...conn1, status: 'disconnected' });
 
@@ -1018,7 +1018,7 @@ describe('WhatsApp Connection Domain Feature & Security Suite (Phase 7C)', () =>
     });
 
     it('3.6 Ministry without dedicated assignment falls back to Organization default (source: default)', async () => {
-      // Set conn2 status to disconnected so org configuredCount = 1 (within Pro plan capacity of 1)
+      // Set conn2 status to disconnected so org configuredCount = 1 (within Premium plan capacity of 1)
       const conn2 = connectionsStore.get(conn2Id)!;
       connectionsStore.set(conn2Id, { ...conn2, status: 'disconnected' });
 
@@ -1109,7 +1109,7 @@ describe('WhatsApp Connection Domain Feature & Security Suite (Phase 7C)', () =>
     });
 
     it('3.10 Over-limit state: When configured connections exceed capacity, status returns restricted_over_limit', async () => {
-      // Both conn1Id and conn2Id are connected, exceeding Pro plan limit of 1
+      // Both conn1Id and conn2Id are connected, exceeding Premium plan limit of 1
       const { req, res, next } = createMockReqRes({ ministryId: secondaryMinistryId }, {}, memberUserId);
 
       await controller.getMinistryWhatsAppStatus(req, res, next);
@@ -1228,4 +1228,3 @@ describe('WhatsApp Connection Domain Feature & Security Suite (Phase 7C)', () =>
     });
   });
 });
-

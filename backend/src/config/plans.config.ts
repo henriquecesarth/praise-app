@@ -93,7 +93,7 @@ export const PLANS_CATALOG: Record<PlanId, PlanDefinition> = {
     annualPriceCents: calculateAnnualDiscountPriceCents(1490), // R$ 160,92
     addonBlockMonthlyPriceCents: 0,
     addonBlockAnnualPriceCents: 0,
-    includedWhatsAppConnections: 1,
+    includedWhatsAppConnections: 0,
   },
   lite_plus: {
     id: 'lite_plus',
@@ -106,7 +106,7 @@ export const PLANS_CATALOG: Record<PlanId, PlanDefinition> = {
     annualPriceCents: calculateAnnualDiscountPriceCents(2490), // R$ 268,92
     addonBlockMonthlyPriceCents: 0,
     addonBlockAnnualPriceCents: 0,
-    includedWhatsAppConnections: 1,
+    includedWhatsAppConnections: 0,
   },
   essential: {
     id: 'essential',
@@ -119,7 +119,7 @@ export const PLANS_CATALOG: Record<PlanId, PlanDefinition> = {
     annualPriceCents: calculateAnnualDiscountPriceCents(3490), // R$ 376,92
     addonBlockMonthlyPriceCents: 990, // +10 membros = R$ 9,90/mês
     addonBlockAnnualPriceCents: calculateAnnualDiscountPriceCents(990), // R$ 106,92/ano
-    includedWhatsAppConnections: 1,
+    includedWhatsAppConnections: 0,
   },
   pro: {
     id: 'pro',
@@ -132,7 +132,7 @@ export const PLANS_CATALOG: Record<PlanId, PlanDefinition> = {
     annualPriceCents: calculateAnnualDiscountPriceCents(8990), // R$ 970,92
     addonBlockMonthlyPriceCents: 690, // +10 membros = R$ 6,90/mês
     addonBlockAnnualPriceCents: calculateAnnualDiscountPriceCents(690), // R$ 74,52/ano
-    includedWhatsAppConnections: 1,
+    includedWhatsAppConnections: 0,
   },
   premium: {
     id: 'premium',
@@ -149,16 +149,22 @@ export const PLANS_CATALOG: Record<PlanId, PlanDefinition> = {
   },
 };
 
-export function getPlanDefinition(planId: string): PlanDefinition {
-  if (planId in PLANS_CATALOG) {
-    return PLANS_CATALOG[planId as PlanId];
-  }
-  return PLANS_CATALOG[DEFAULT_PLAN_ID];
+export function isPlanId(planId: unknown): planId is PlanId {
+  return typeof planId === 'string' && Object.prototype.hasOwnProperty.call(PLANS_CATALOG, planId);
 }
 
-export function getIncludedWhatsAppConnections(planId: string): number {
+export function getPlanDefinition(planId: PlanId): PlanDefinition;
+export function getPlanDefinition(planId: unknown): PlanDefinition | undefined;
+export function getPlanDefinition(planId: unknown): PlanDefinition | undefined {
+  if (!isPlanId(planId)) return undefined;
+
+  return PLANS_CATALOG[planId];
+}
+
+export function getIncludedWhatsAppConnections(planId: unknown): number {
   const plan = getPlanDefinition(planId);
-  return plan.includedWhatsAppConnections ?? (plan.id === 'free' ? 0 : 1);
+  const allowance = plan?.includedWhatsAppConnections;
+  return typeof allowance === 'number' && Number.isInteger(allowance) && allowance >= 0 ? allowance : 0;
 }
 
 export interface PlanPriceCalculation {

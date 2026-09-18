@@ -644,11 +644,11 @@ describe('Organization & WhatsApp Entitlement Feature Suite (Phase 7B)', () => {
       const org = await orgRepo.lazyProvisionForMinistry(ministryId, ownerUserId);
       await orgRepo.linkMinistryToOrganization(org.id, secondaryMinistryId, ownerUserId);
 
-      // Anchor ministry is Pro plan
+      // Anchor ministry is Premium plan
       subscriptionsStore.set(ministryId, {
         id: ministryId,
         ministry_id: ministryId,
-        plan_id: 'pro',
+        plan_id: 'premium',
         member_addon_blocks: 0,
         billing_status: 'active',
         subscription_mode: 'paid',
@@ -685,7 +685,7 @@ describe('Organization & WhatsApp Entitlement Feature Suite (Phase 7B)', () => {
       const capacity = await subService.getOrganizationWhatsAppCapacity(org.id);
 
       expect(capacity.billingAnchorMinistryId).toBe(ministryId);
-      expect(capacity.includedConnections).toBe(1); // Evaluates anchor Pro plan, NOT secondary Free plan
+      expect(capacity.includedConnections).toBe(1); // Evaluates anchor Premium plan, NOT secondary Free plan
       expect(capacity.additionalConnections).toBe(0);
       expect(capacity.totalAllowedConnections).toBe(1);
       expect(capacity.enabled).toBe(true);
@@ -723,14 +723,14 @@ describe('Organization & WhatsApp Entitlement Feature Suite (Phase 7B)', () => {
       expect(capacity.billingAccessMode).toBe('normal');
     });
 
-    it('21. Paid Plan Quota: Paid plan returns included: 1, additional: 0, total: 1, billingAccessMode: normal (and suspended when suspended)', async () => {
+    it('21. Premium Plan Quota: Premium returns included: 1, additional: 0, total: 1, billingAccessMode: normal (and suspended when suspended)', async () => {
       const org = await orgRepo.lazyProvisionForMinistry(ministryId, ownerUserId);
 
-      // Paid plan (Lite+)
+      // Premium plan
       subscriptionsStore.set(ministryId, {
         id: ministryId,
         ministry_id: ministryId,
-        plan_id: 'lite_plus',
+        plan_id: 'premium',
         member_addon_blocks: 0,
         billing_status: 'active',
         subscription_mode: 'paid',
@@ -766,11 +766,11 @@ describe('Organization & WhatsApp Entitlement Feature Suite (Phase 7B)', () => {
     it('22. Grace Billing-Access Mode (LOW-7B-01): Paid plan in grace period retains enabled: true with billingAccessMode: grace', async () => {
       const org = await orgRepo.lazyProvisionForMinistry(ministryId, ownerUserId);
 
-      // Paid plan (Lite+) with active grace period and over limit usage
+      // Premium plan with active grace period and over limit usage
       subscriptionsStore.set(ministryId, {
         id: ministryId,
         ministry_id: ministryId,
-        plan_id: 'lite_plus',
+        plan_id: 'premium',
         member_addon_blocks: 0,
         billing_status: 'active',
         subscription_mode: 'paid',
@@ -785,11 +785,11 @@ describe('Organization & WhatsApp Entitlement Feature Suite (Phase 7B)', () => {
         updated_at: new Date().toISOString(),
       });
 
-      // Usage exceeds Lite+ quota (members: 30, songs: 150) -> triggers resolveAccessMode => 'grace'
+      // Usage exceeds Premium quota (members: 300, songs: 1500) -> triggers resolveAccessMode => 'grace'
       usageStore.set(ministryId, {
         id: ministryId,
         ministry_id: ministryId,
-        members_count: 50,
+        members_count: 350,
         songs_count: 300,
         updated_at: new Date().toISOString(),
       });
@@ -805,11 +805,11 @@ describe('Organization & WhatsApp Entitlement Feature Suite (Phase 7B)', () => {
     it('23. Restricted Over Limit Billing-Access Mode: Restricted plan past grace returns enabled: false with billingAccessMode: suspended', async () => {
       const org = await orgRepo.lazyProvisionForMinistry(ministryId, ownerUserId);
 
-      // Paid plan with past_due status and expired grace
+      // Premium plan with past_due status and expired grace
       subscriptionsStore.set(ministryId, {
         id: ministryId,
         ministry_id: ministryId,
-        plan_id: 'lite_plus',
+        plan_id: 'premium',
         member_addon_blocks: 0,
         billing_status: 'past_due',
         subscription_mode: 'paid',

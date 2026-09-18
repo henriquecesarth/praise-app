@@ -46,7 +46,7 @@ describe('Zernio Hosted Onboarding & Verified Callback Integration (Phase 7D2-D4
     await db.collection('ministry_subscriptions').doc(anchorMinistryId).set({
       id: anchorMinistryId,
       ministry_id: anchorMinistryId,
-      plan_id: 'pro',
+      plan_id: 'premium',
       member_addon_blocks: 0,
       billing_status: 'active',
       subscription_mode: 'paid',
@@ -203,7 +203,7 @@ describe('Zernio Hosted Onboarding & Verified Callback Integration (Phase 7D2-D4
 
       await setupTestOrganization(orgId, ministryId, adminUserId);
 
-      // Create an already active connected connection (Pro plan included = 1)
+      // Create an already active connected connection (Premium plan included = 1)
       await connectionRepo.createConnection({
         organization_id: orgId,
         display_name: 'Existing Line',
