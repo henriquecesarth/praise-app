@@ -138,6 +138,18 @@ Funções musicais como Ministro, Vocalista, Violão e Bateria são classificaç
 - endpoints da API com omissão estrita de segredos: `GET /api/v1/organizations/:organizationId/whatsapp/connections` (paginada por cursor determinístico `created_at DESC, __name__ DESC`), `PATCH /api/v1/organizations/:organizationId/whatsapp/connections/:connectionId` e `GET /api/v1/ministries/:ministryId/whatsapp/status` (e alias `/groups/:groupId/whatsapp/status`);
 - pré-requisitos de release declarados: implantação dos índices compostos de `backend/firestore.indexes.json` e configuração da variável `WHATSAPP_TOKEN_ENCRYPTION_KEY` nos ambientes de runtime remoto.
 
+### WhatsApp Commercial Entitlement
+
+- concessão e fiscalização de capacidade comercial WhatsApp por Organização (Phase 7D2-D8);
+- consumo estrito da projeção canônica do Billing V1 (`ministry_subscriptions` do ministério âncora) através de avaliador comercial puro (`evaluateWhatsAppCommercialEntitlement`), sem I/O de rede ou persistência de estados financeiros paralelos;
+- política declarativa V1: plano Premium possui exatamente 1 conexão WhatsApp incluída; todos os outros planos (Free, Lite, Lite+, Essential, Pro) possuem 0 conexões incluídas; conexões adicionais pagas não são suportadas (0 conexões adicionais);
+- carência operacional de 7 dias civis de faturamento (`grace_period_expires_billing_date`) em `America/Sao_Paulo` permitindo operação contínua e retomada de integrações estagiadas durante atrasos transitórios de renovação;
+- contagem de capacidade particionada e limitada no Firestore (`getConsumingConnections`) abrangendo status operacionais (`connecting`, `connected`, `error`, `disabled_by_user` com limit 10) e reservas `pending` ativas não expiradas (`now < pending_expires_at` com limit 25);
+- fiscalização transacional em novo onboarding (`startOnboarding` e `startZernioOnboarding`), rejeitando com 403 `WHATSAPP_CAPACITY_LIMIT_REACHED` ou `WHATSAPP_SUBSCRIPTION_SUSPENDED`;
+- retomada segura de integrações estagiadas autorizadas (`verifyServerOwnedStagedReservation`) com preservação não-destrutiva de segredos estagiados para recuperação regularizada de assinatura;
+- verificação transacional final no Passo 10 de conclusão (`completeOnboarding`) com precedência rigorosa de limite de capacidade sobre suspensão;
+- linearização atômica transacional no repositório de despacho outbound (`WhatsAppOutboundDispatchRepository.acquireDispatchExecution`) com read-before-write, impedindo despachos operacionais sob planos não habilitados ou inadimplência fora do período de carência.
+
 ### PWA
 
 - manifest instalável;

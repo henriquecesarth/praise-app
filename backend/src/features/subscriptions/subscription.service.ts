@@ -36,6 +36,14 @@ import {
 import { AppError } from '../../middleware/error-handler';
 import { getBillingDate, normalizeToBillingDate } from '../../utils/billing-date';
 import { config } from '../../config/unifiedConfig';
+import {
+  evaluateWhatsAppCommercialEntitlement,
+  WhatsAppCommercialEntitlementResult,
+  WhatsAppCommercialFacts,
+  WhatsAppCommercialState,
+} from './whatsapp-commercial-evaluator';
+import { MinistryRepository } from '../../repositories/MinistryRepository';
+import { WhatsAppConnectionRepository } from '../../repositories/WhatsAppConnectionRepository';
 
 /**
  * Correlaciona deterministicamente a fatura exata da obrigação de renovação corrente inadimplente (Phase 4A.6B).
@@ -146,7 +154,9 @@ export class SubscriptionService {
   constructor(
     private readonly subscriptionRepo: SubscriptionRepository = new SubscriptionRepository(),
     private readonly billingRepo: BillingRepository = new BillingRepository(),
-    private readonly orgRepo: OrganizationRepository = new OrganizationRepository()
+    private readonly orgRepo: OrganizationRepository = new OrganizationRepository(),
+    private readonly ministryRepo: MinistryRepository = new MinistryRepository(),
+    private readonly connectionRepo: WhatsAppConnectionRepository = new WhatsAppConnectionRepository()
   ) {}
 
 
@@ -582,100 +592,70 @@ export class SubscriptionService {
   }
 
   /**
-   * Avalia a capacidade comercial de conexões WhatsApp para a organização (Phase 7B / 7D1).
-   * Função de avaliação pura que opera sobre OrganizationRecord e MinistrySubscriptionRecord ou MinistrySubscriptionStatusSummary.
+   * Avalia a capacidade comercial de conexões WhatsApp para a organização (Phase 7B / 7D1 / 7D2-D8).
+   * Função de avaliação pura que delega ao avaliador canônico evaluateWhatsAppCommercialEntitlement.
    */
   static evaluateOrganizationWhatsAppCapacity(
     org: OrganizationRecord,
     subscriptionOrSummary: MinistrySubscriptionRecord | MinistrySubscriptionStatusSummary | null,
     now: Date = new Date()
   ): OrganizationWhatsAppCapacity {
-    // 1. Se o sumário completo já foi resolvido:
-    if (subscriptionOrSummary && 'plan' in subscriptionOrSummary && 'subscription' in subscriptionOrSummary) {
-      const summary = subscriptionOrSummary;
-      const includedConnections = getIncludedWhatsAppConnections(summary.plan.id);
-      const additionalConnections = 0; // Estritamente 0 no runtime da Phase 7B (extensão para Phase 7H)
-      const totalAllowedConnections = includedConnections + additionalConnections;
-
-      let billingAccessMode: BillingAccessMode;
-      switch (summary.subscription.accessMode) {
-        case 'suspended':
-        case 'restricted_over_limit':
-          billingAccessMode = 'suspended';
-          break;
-        case 'grace':
-          billingAccessMode = 'grace';
-          break;
-        case 'normal':
-          billingAccessMode = 'normal';
-          break;
-        default:
-          billingAccessMode = 'suspended';
-          break;
-      }
-
-      const enabled = totalAllowedConnections > 0 && billingAccessMode !== 'suspended';
-
-      return {
-        organizationId: org.id,
-        billingAnchorMinistryId: org.billing_anchor_ministry_id,
-        enabled,
-        includedConnections,
-        additionalConnections,
-        totalAllowedConnections,
-        billingAccessMode,
-      };
-    }
-
-    // 2. Se o registro bruto MinistrySubscriptionRecord ou null foi passado:
-    const sub = subscriptionOrSummary as MinistrySubscriptionRecord | null;
-    let planId = sub ? sub.plan_id : DEFAULT_PLAN_ID;
-
-    if (sub) {
-      const isLegacyCancelExpired = Boolean(
-        sub.cancel_at_period_end &&
-        !sub.active_cancellation_transition_id &&
-        sub.current_period_end &&
-        !isNaN(new Date(sub.current_period_end).getTime()) &&
-        now > new Date(sub.current_period_end)
-      );
-      if (isLegacyCancelExpired) {
-        planId = DEFAULT_PLAN_ID;
-      } else if (sub.subscription_mode === 'complimentary' && sub.expires_at) {
-        const grantExpires = new Date(sub.expires_at);
-        if (!isNaN(grantExpires.getTime()) && now > grantExpires) {
-          planId = DEFAULT_PLAN_ID;
+    let subRecord: MinistrySubscriptionRecord | null = null;
+    let summaryAccessMode: BillingAccessMode | null = null;
+    if (subscriptionOrSummary) {
+      if ('plan' in subscriptionOrSummary && 'subscription' in subscriptionOrSummary) {
+        const s = subscriptionOrSummary;
+        if (s.subscription.accessMode === 'normal') {
+          summaryAccessMode = 'normal';
+        } else if (s.subscription.accessMode === 'grace') {
+          summaryAccessMode = 'grace';
+        } else {
+          summaryAccessMode = 'suspended';
         }
+        subRecord = {
+          id: org.billing_anchor_ministry_id,
+          ministry_id: org.billing_anchor_ministry_id,
+          plan_id: s.plan.id,
+          billing_status: s.subscription.billingStatus,
+          subscription_mode: s.subscription.subscriptionMode,
+          current_period_start: s.subscription.currentPeriodStart,
+          current_period_end: s.subscription.currentPeriodEnd,
+          cancel_at_period_end: s.subscription.cancelAtPeriodEnd,
+          active_cancellation_transition_id: s.subscription.activeCancellationTransitionId,
+          grace_period_expires_at: s.subscription.gracePeriodExpiresAt,
+          administratively_suspended: s.subscription.administrativelySuspended,
+          member_addon_blocks: s.subscription.memberAddonBlocks,
+          created_at: '',
+          updated_at: '',
+        } as any;
+      } else {
+        subRecord = subscriptionOrSummary as MinistrySubscriptionRecord;
       }
     }
 
-    const includedConnections = getIncludedWhatsAppConnections(planId);
+    const anchorMinistry = { id: org.billing_anchor_ministry_id, organization_id: org.id };
+    const entitlement = evaluateWhatsAppCommercialEntitlement({
+      organization: org,
+      anchorMinistry,
+      subscription: subRecord,
+      consumingConnectionsCount: 0,
+      now,
+    });
+
+    let billingAccessMode: BillingAccessMode;
+    if (summaryAccessMode !== null) {
+      billingAccessMode = summaryAccessMode;
+    } else if (entitlement.state === 'healthy') {
+      billingAccessMode = 'normal';
+    } else if (entitlement.state === 'payment_grace') {
+      billingAccessMode = 'grace';
+    } else {
+      billingAccessMode = 'suspended';
+    }
+
+    const includedConnections = entitlement.allowedConnections;
     const additionalConnections = 0;
     const totalAllowedConnections = includedConnections + additionalConnections;
-
-    let billingAccessMode: BillingAccessMode = 'normal';
-    if (sub) {
-      if (sub.administratively_suspended) {
-        billingAccessMode = 'suspended';
-      } else if (sub.billing_status === 'past_due') {
-        const graceEndDate =
-          sub.grace_period_expires_billing_date ||
-          (sub.grace_period_expires_at ? getBillingDate(sub.grace_period_expires_at) : null);
-        if (graceEndDate) {
-          const currentCommercialDate = getBillingDate(now);
-          if (currentCommercialDate < graceEndDate) {
-            billingAccessMode = 'grace';
-          } else {
-            billingAccessMode = 'suspended';
-          }
-        } else {
-          billingAccessMode = 'suspended';
-        }
-      } else if (sub.billing_status !== 'active' && sub.billing_status !== 'trialing') {
-        billingAccessMode = 'suspended';
-      }
-    }
-
     const enabled = totalAllowedConnections > 0 && billingAccessMode !== 'suspended';
 
     return {
@@ -698,9 +678,8 @@ export class SubscriptionService {
   }
 
   /**
-   * Avalia a capacidade comercial de conexões WhatsApp para a organização (Phase 7B).
-   * Deriva a capacidade da assinatura ativa do ministério âncora de faturamento.
-   * Não consulta ou gerencia conexões reais (responsabilidade da Phase 7C).
+   * Avalia a capacidade comercial de conexões WhatsApp para a organização (Phase 7B / 7D2-D8).
+   * Deriva a capacidade da assinatura ativa do ministério âncora de faturamento com validação de integridade.
    */
   async getOrganizationWhatsAppCapacity(organizationId: string): Promise<OrganizationWhatsAppCapacity> {
     const org = await this.orgRepo.getOrganizationById(organizationId);
@@ -708,7 +687,50 @@ export class SubscriptionService {
       throw new AppError(404, 'Organização não encontrada.');
     }
 
+    const anchorMinistry = await this.ministryRepo.findById(org.billing_anchor_ministry_id);
+    if (anchorMinistry && anchorMinistry.organization_id && anchorMinistry.organization_id !== org.id) {
+      return {
+        organizationId: org.id,
+        billingAnchorMinistryId: org.billing_anchor_ministry_id,
+        enabled: false,
+        includedConnections: 0,
+        additionalConnections: 0,
+        totalAllowedConnections: 0,
+        billingAccessMode: 'suspended',
+      };
+    }
+
     const summary = await this.getSubscriptionSummary(org.billing_anchor_ministry_id);
     return SubscriptionService.evaluateOrganizationWhatsAppCapacity(org, summary);
+  }
+
+  /**
+   * Obtém o direito comercial canônico completo de WhatsApp para a organização (Phase 7D2-D8).
+   */
+  async getOrganizationCommercialEntitlement(
+    organizationId: string,
+    now: Date = new Date()
+  ): Promise<WhatsAppCommercialEntitlementResult> {
+    const org = await this.orgRepo.getOrganizationById(organizationId);
+    if (!org) {
+      return evaluateWhatsAppCommercialEntitlement({
+        organization: null,
+        anchorMinistry: null,
+        subscription: null,
+        now,
+      });
+    }
+
+    const anchorMinistry = await this.ministryRepo.findById(org.billing_anchor_ministry_id);
+    const subDoc = await this.subscriptionRepo.getSubscription(org.billing_anchor_ministry_id);
+    const consumingConnectionsCount = await this.connectionRepo.countConsumingConnections(organizationId, now);
+
+    return evaluateWhatsAppCommercialEntitlement({
+      organization: org,
+      anchorMinistry: anchorMinistry ? { id: anchorMinistry.id, organization_id: anchorMinistry.organization_id } : undefined,
+      subscription: subDoc,
+      consumingConnectionsCount,
+      now,
+    });
   }
 }

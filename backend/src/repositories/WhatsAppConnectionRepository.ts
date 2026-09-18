@@ -18,6 +18,7 @@ import {
   parseWhatsAppCursor,
 } from '../features/whatsapp/whatsapp.types';
 import { OrganizationRecord } from '../features/organizations/organization.types';
+import { consumesCommercialCapacity } from '../features/subscriptions/whatsapp-commercial-evaluator';
 
 export class WhatsAppConnectionRepository {
   private readonly connectionsCol = db.collection('whatsapp_connections');
@@ -95,19 +96,63 @@ export class WhatsAppConnectionRepository {
     return { id: doc.id, ...doc.data() } as WhatsAppConnectionRecord;
   }
 
-  async countConfiguredConnections(orgId: string): Promise<number> {
-    const baseQuery = this.connectionsCol
+  async getConsumingConnections(
+    orgId: string,
+    now: Date = new Date(),
+    tx?: FirebaseFirestore.Transaction
+  ): Promise<WhatsAppConnectionRecord[]> {
+    let p1 = this.connectionsCol
       .where('organization_id', '==', orgId)
-      .where('status', 'in', CONFIG_CONSUMING_STATUSES);
-
-    // Support aggregation count query
-    if (typeof (baseQuery as any).count === 'function') {
-      const snap = await (baseQuery as any).count().get();
-      return snap.data().count;
+      .where('status', 'in', ['connecting', 'connected', 'error', 'disabled_by_user']);
+    if (typeof (p1 as any).limit === 'function') {
+      p1 = (p1 as any).limit(10);
     }
 
-    const snap = await baseQuery.get();
-    return snap.size;
+    let p2 = this.connectionsCol
+      .where('organization_id', '==', orgId)
+      .where('status', 'in', ['pending']);
+    if (typeof (p2 as any).orderBy === 'function') {
+      p2 = (p2 as any).orderBy('created_at', 'desc');
+    }
+    if (typeof (p2 as any).limit === 'function') {
+      p2 = (p2 as any).limit(25);
+    }
+
+    const [snap1, snap2] = await Promise.all([
+      tx ? tx.get(p1) : p1.get(),
+      tx ? tx.get(p2) : p2.get(),
+    ]);
+
+    const consuming: WhatsAppConnectionRecord[] = [];
+
+    for (const doc of snap1.docs) {
+      const conn = { id: doc.id, ...doc.data() } as WhatsAppConnectionRecord;
+      if (consumesCommercialCapacity(conn, now)) {
+        consuming.push(conn);
+      }
+    }
+
+    for (const doc of snap2.docs) {
+      const conn = { id: doc.id, ...doc.data() } as WhatsAppConnectionRecord;
+      if (consumesCommercialCapacity(conn, now)) {
+        consuming.push(conn);
+      }
+    }
+
+    return consuming;
+  }
+
+  async countConsumingConnections(
+    orgId: string,
+    now: Date = new Date(),
+    tx?: FirebaseFirestore.Transaction
+  ): Promise<number> {
+    const consuming = await this.getConsumingConnections(orgId, now, tx);
+    return consuming.length;
+  }
+
+  async countConfiguredConnections(orgId: string, now: Date = new Date()): Promise<number> {
+    return await this.countConsumingConnections(orgId, now);
   }
 
   async findByProviderPhoneNumberId(phoneId: string): Promise<WhatsAppConnectionRecord | null> {

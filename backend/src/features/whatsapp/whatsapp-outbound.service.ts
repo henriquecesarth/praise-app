@@ -142,6 +142,21 @@ export class WhatsAppOutboundService {
         );
       }
 
+      const usage = await this.whatsappConnectionService.getOrganizationCapacityUsage(params.organizationId);
+      if (!usage.canSendMessages) {
+        const code =
+          usage.connectionAccessMode === 'suspended'
+            ? 'WHATSAPP_SUSPENDED'
+            : usage.connectionAccessMode === 'restricted_over_limit'
+            ? 'RESTRICTED_OVER_LIMIT'
+            : 'WHATSAPP_SEND_RESTRICTED';
+        throw new AppError(
+          400,
+          `WHATSAPP_SENDER_COMMERCIALLY_RESTRICTED: Envio de WhatsApp não autorizado pela assinatura (${code}).`,
+          { code }
+        );
+      }
+
       return conn;
     }
 

@@ -23,6 +23,11 @@ import { MinistryRepository } from '../../repositories/MinistryRepository';
 import { MinistrySubscriptionRecord } from '../subscriptions/subscription.types';
 import { validateConnectionTransition } from './whatsapp-transition.validator';
 import {
+  evaluateWhatsAppCommercialEntitlement,
+  consumesCommercialCapacity,
+  verifyServerOwnedStagedReservation,
+} from '../subscriptions/whatsapp-commercial-evaluator';
+import {
   WhatsAppConnectionRecord,
   WhatsAppConnectionStatus,
   WhatsAppConnectionDto,
@@ -878,14 +883,44 @@ export class WhatsAppConnectionService {
         const orgDoc = await tx.get(orgRef);
         const org = { id: orgDoc.id, ...orgDoc.data() } as OrganizationRecord;
 
+        const anchorMinistryRef = db.collection('ministries').doc(org.billing_anchor_ministry_id);
+        const anchorMinistryDoc = await tx.get(anchorMinistryRef);
+        const anchorMinistry = anchorMinistryDoc.exists ? ({ id: anchorMinistryDoc.id, ...anchorMinistryDoc.data() } as any) : undefined;
+
         const subRef = db.collection('ministry_subscriptions').doc(org.billing_anchor_ministry_id);
         const subDoc = await tx.get(subRef);
         const sub = subDoc.exists ? ({ id: subDoc.id, ...subDoc.data() } as MinistrySubscriptionRecord) : null;
 
-        const capacity = SubscriptionService.evaluateOrganizationWhatsAppCapacity(org, sub, now);
-        if (!capacity.enabled || capacity.billingAccessMode !== 'normal') {
-          throw new AppError(403, 'A organização não possui capacidade comercial normal disponível.', {
-            code: 'WHATSAPP_CAPACITY_LIMIT_REACHED',
+        let p1 = db.collection('whatsapp_connections')
+          .where('organization_id', '==', orgId)
+          .where('status', 'in', ['connecting', 'connected', 'error', 'disabled_by_user']);
+        if (typeof (p1 as any).limit === 'function') p1 = (p1 as any).limit(10);
+        let p2 = db.collection('whatsapp_connections')
+          .where('organization_id', '==', orgId)
+          .where('status', 'in', ['pending']);
+        if (typeof (p2 as any).orderBy === 'function') p2 = (p2 as any).orderBy('created_at', 'desc');
+        if (typeof (p2 as any).limit === 'function') p2 = (p2 as any).limit(25);
+
+        const [snap1, snap2] = await Promise.all([tx.get(p1), tx.get(p2)]);
+        let consumingCount = 0;
+        for (const d of snap1.docs) {
+          if (consumesCommercialCapacity(d.data() as any, now)) consumingCount++;
+        }
+        for (const d of snap2.docs) {
+          if (consumesCommercialCapacity(d.data() as any, now)) consumingCount++;
+        }
+
+        const entitlement = evaluateWhatsAppCommercialEntitlement({
+          organization: org,
+          anchorMinistry: anchorMinistry ? { id: anchorMinistry.id, organization_id: anchorMinistry.organization_id } : undefined,
+          subscription: sub,
+          consumingConnectionsCount: consumingCount,
+          now,
+        });
+
+        if (!entitlement.canResumeAuthorizedOnboarding) {
+          throw new AppError(403, 'A organização não possui capacidade comercial para retomar onboarding.', {
+            code: 'WHATSAPP_SUBSCRIPTION_SUSPENDED',
           });
         }
 
@@ -929,28 +964,30 @@ export class WhatsAppConnectionService {
         }
         const org = { id: orgDoc.id, ...orgDoc.data() } as OrganizationRecord;
 
+        const anchorMinistryRef = db.collection('ministries').doc(org.billing_anchor_ministry_id);
+        const anchorMinistryDoc = await tx.get(anchorMinistryRef);
+        const anchorMinistry = anchorMinistryDoc.exists ? ({ id: anchorMinistryDoc.id, ...anchorMinistryDoc.data() } as any) : undefined;
+
         const subRef = db.collection('ministry_subscriptions').doc(org.billing_anchor_ministry_id);
         const subDoc = await tx.get(subRef);
         const sub = subDoc.exists ? ({ id: subDoc.id, ...subDoc.data() } as MinistrySubscriptionRecord) : null;
 
-        const capacity = SubscriptionService.evaluateOrganizationWhatsAppCapacity(org, sub, now);
-        if (!capacity.enabled || capacity.billingAccessMode !== 'normal') {
-          throw new AppError(
-            403,
-            'A organização não possui capacidade comercial disponível para WhatsApp no plano atual.',
-            { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED' }
-          );
-        }
-
-        const query = db
-          .collection('whatsapp_connections')
+        let p1 = db.collection('whatsapp_connections')
           .where('organization_id', '==', orgId)
-          .where('status', 'in', ['pending', 'connecting', 'connected', 'error', 'disabled_by_user']);
+          .where('status', 'in', ['connecting', 'connected', 'error', 'disabled_by_user']);
+        if (typeof (p1 as any).limit === 'function') p1 = (p1 as any).limit(10);
+        let p2 = db.collection('whatsapp_connections')
+          .where('organization_id', '==', orgId)
+          .where('status', 'in', ['pending']);
+        if (typeof (p2 as any).orderBy === 'function') p2 = (p2 as any).orderBy('created_at', 'desc');
+        if (typeof (p2 as any).limit === 'function') p2 = (p2 as any).limit(25);
 
-        const snapshot = await tx.get(query);
-
+        const [snap1, snap2] = await Promise.all([tx.get(p1), tx.get(p2)]);
         let activeConfiguredCount = 0;
-        for (const doc of snapshot.docs) {
+        for (const doc of snap1.docs) {
+          if (consumesCommercialCapacity(doc.data() as any, now)) activeConfiguredCount++;
+        }
+        for (const doc of snap2.docs) {
           const conn = doc.data() as WhatsAppConnectionRecord;
           if (conn.status === 'pending') {
             const isExpired = conn.pending_expires_at && new Date(conn.pending_expires_at) <= now;
@@ -965,15 +1002,23 @@ export class WhatsAppConnectionService {
               continue;
             }
           }
-          activeConfiguredCount++;
+          if (consumesCommercialCapacity(conn, now)) activeConfiguredCount++;
         }
 
-        if (activeConfiguredCount >= capacity.totalAllowedConnections) {
-          throw new AppError(
-            403,
-            'Limite de capacidade comercial de conexões WhatsApp atingido para a organização.',
-            { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED' }
-          );
+        const entitlement = evaluateWhatsAppCommercialEntitlement({
+          organization: org,
+          anchorMinistry: anchorMinistry ? { id: anchorMinistry.id, organization_id: anchorMinistry.organization_id } : undefined,
+          subscription: sub,
+          consumingConnectionsCount: activeConfiguredCount,
+          now,
+        });
+
+        if (!entitlement.canCreateConnection) {
+          const msg =
+            entitlement.allowedConnections > 0 && activeConfiguredCount >= entitlement.allowedConnections
+              ? 'Limite de capacidade comercial de conexões WhatsApp atingido para a organização.'
+              : 'A organização não possui capacidade comercial disponível para WhatsApp no plano atual.';
+          throw new AppError(403, msg, { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED' });
         }
 
         tx.update(orgRef, {
@@ -1857,11 +1902,40 @@ export class WhatsAppConnectionService {
         const orgDoc = await tx.get(orgRef);
         const org = { id: orgDoc.id, ...orgDoc.data() } as OrganizationRecord;
 
+        const anchorMinistryRef = db.collection('ministries').doc(org.billing_anchor_ministry_id);
+        const anchorMinistryDoc = await tx.get(anchorMinistryRef);
+        const anchorMinistry = anchorMinistryDoc.exists ? ({ id: anchorMinistryDoc.id, ...anchorMinistryDoc.data() } as any) : undefined;
+
         const subRef = db.collection('ministry_subscriptions').doc(org.billing_anchor_ministry_id);
         const subDoc = await tx.get(subRef);
         const sub = subDoc.exists ? ({ id: subDoc.id, ...subDoc.data() } as MinistrySubscriptionRecord) : null;
 
-        const capacity = SubscriptionService.evaluateOrganizationWhatsAppCapacity(org, sub, now);
+        let p1 = db.collection('whatsapp_connections')
+          .where('organization_id', '==', orgId)
+          .where('status', 'in', ['connecting', 'connected', 'error', 'disabled_by_user']);
+        if (typeof (p1 as any).limit === 'function') p1 = (p1 as any).limit(10);
+        let p2 = db.collection('whatsapp_connections')
+          .where('organization_id', '==', orgId)
+          .where('status', 'in', ['pending']);
+        if (typeof (p2 as any).orderBy === 'function') p2 = (p2 as any).orderBy('created_at', 'desc');
+        if (typeof (p2 as any).limit === 'function') p2 = (p2 as any).limit(25);
+
+        const [snap1, snap2] = await Promise.all([tx.get(p1), tx.get(p2)]);
+        let consumingCount = 0;
+        for (const d of snap1.docs) {
+          if (consumesCommercialCapacity(d.data() as any, now)) consumingCount++;
+        }
+        for (const d of snap2.docs) {
+          if (consumesCommercialCapacity(d.data() as any, now)) consumingCount++;
+        }
+
+        const entitlement = evaluateWhatsAppCommercialEntitlement({
+          organization: org,
+          anchorMinistry: anchorMinistry ? { id: anchorMinistry.id, organization_id: anchorMinistry.organization_id } : undefined,
+          subscription: sub,
+          consumingConnectionsCount: consumingCount,
+          now,
+        });
 
         const secretRef = db.collection('whatsapp_connection_secrets').doc(conn.id);
         const secretDoc = await tx.get(secretRef);
@@ -1875,7 +1949,7 @@ export class WhatsAppConnectionService {
 
         if (!hasStagedSecret) {
           // Sub-Branch B1: Resume Clean Reservation
-          if (!capacity.enabled || capacity.billingAccessMode !== 'normal') {
+          if (!entitlement.canCreateConnection) {
             throw new AppError(403, 'A organização não possui capacidade comercial normal disponível.', {
               code: 'WHATSAPP_CAPACITY_LIMIT_REACHED',
             });
@@ -1922,7 +1996,7 @@ export class WhatsAppConnectionService {
           };
         } else {
           // Sub-Branch B2: Resume Staged Reservation
-          if (!capacity.enabled || capacity.billingAccessMode === 'suspended') {
+          if (!entitlement.canResumeAuthorizedOnboarding) {
             throw new AppError(403, 'A assinatura da organização está suspensa.', {
               code: 'WHATSAPP_SUBSCRIPTION_SUSPENDED',
             });
@@ -1994,26 +2068,26 @@ export class WhatsAppConnectionService {
       const subDoc = await tx.get(subRef);
       const sub = subDoc.exists ? ({ id: subDoc.id, ...subDoc.data() } as MinistrySubscriptionRecord) : null;
 
-      // Evaluate capacity
-      const capacity = SubscriptionService.evaluateOrganizationWhatsAppCapacity(org, sub, now);
-      if (!capacity.enabled || capacity.billingAccessMode !== 'normal') {
-        throw new AppError(
-          403,
-          'A organização não possui capacidade comercial disponível para WhatsApp no plano atual.',
-          { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED' }
-        );
-      }
+      const anchorMinistryRef = db.collection('ministries').doc(org.billing_anchor_ministry_id);
+      const anchorMinistryDoc = await tx.get(anchorMinistryRef);
+      const anchorMinistry = anchorMinistryDoc.exists ? ({ id: anchorMinistryDoc.id, ...anchorMinistryDoc.data() } as any) : undefined;
 
-      // 3. Query whatsapp_connections where organization_id == orgId
-      const query = db
-        .collection('whatsapp_connections')
+      let p1 = db.collection('whatsapp_connections')
         .where('organization_id', '==', orgId)
-        .where('status', 'in', ['pending', 'connecting', 'connected', 'error', 'disabled_by_user']);
+        .where('status', 'in', ['connecting', 'connected', 'error', 'disabled_by_user']);
+      if (typeof (p1 as any).limit === 'function') p1 = (p1 as any).limit(10);
+      let p2 = db.collection('whatsapp_connections')
+        .where('organization_id', '==', orgId)
+        .where('status', 'in', ['pending']);
+      if (typeof (p2 as any).orderBy === 'function') p2 = (p2 as any).orderBy('created_at', 'desc');
+      if (typeof (p2 as any).limit === 'function') p2 = (p2 as any).limit(25);
 
-      const snapshot = await tx.get(query);
-
+      const [snap1, snap2] = await Promise.all([tx.get(p1), tx.get(p2)]);
       let activeConfiguredCount = 0;
-      for (const doc of snapshot.docs) {
+      for (const doc of snap1.docs) {
+        if (consumesCommercialCapacity(doc.data() as any, now)) activeConfiguredCount++;
+      }
+      for (const doc of snap2.docs) {
         const conn = doc.data() as WhatsAppConnectionRecord;
         if (conn.status === 'pending') {
           const isExpired = conn.pending_expires_at && new Date(conn.pending_expires_at) <= now;
@@ -2028,16 +2102,23 @@ export class WhatsAppConnectionService {
             continue;
           }
         }
-        activeConfiguredCount++;
+        if (consumesCommercialCapacity(conn, now)) activeConfiguredCount++;
       }
 
-      // 4. Capacity Gate
-      if (activeConfiguredCount >= capacity.totalAllowedConnections) {
-        throw new AppError(
-          403,
-          'Limite de capacidade comercial de conexões WhatsApp atingido para a organização.',
-          { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED' }
-        );
+      const entitlement = evaluateWhatsAppCommercialEntitlement({
+        organization: org,
+        anchorMinistry: anchorMinistry ? { id: anchorMinistry.id, organization_id: anchorMinistry.organization_id } : undefined,
+        subscription: sub,
+        consumingConnectionsCount: activeConfiguredCount,
+        now,
+      });
+
+      if (!entitlement.canCreateConnection) {
+        const msg =
+          entitlement.allowedConnections > 0 && activeConfiguredCount >= entitlement.allowedConnections
+            ? 'Limite de capacidade comercial de conexões WhatsApp atingido para a organização.'
+            : 'A organização não possui capacidade comercial disponível para WhatsApp no plano atual.';
+        throw new AppError(403, msg, { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED' });
       }
 
       // 5. Shared Write Contention on organizations.doc(orgId) (DEC-7D-07)
@@ -2474,38 +2555,56 @@ export class WhatsAppConnectionService {
         const claimDoc = await tx.get(claimRef);
 
         // 10f. Read configured connections for orgId
-        const connectionsQuery = db
-          .collection('whatsapp_connections')
+        const anchorMinistryRef = db.collection('ministries').doc(org.billing_anchor_ministry_id);
+        const anchorMinistryDoc = await tx.get(anchorMinistryRef);
+        const anchorMinistry = anchorMinistryDoc.exists ? ({ id: anchorMinistryDoc.id, ...anchorMinistryDoc.data() } as any) : undefined;
+
+        let p1 = db.collection('whatsapp_connections')
           .where('organization_id', '==', orgId)
-          .where('status', 'in', ['pending', 'connecting', 'connected', 'error', 'disabled_by_user']);
-        const connectionsSnapshot = await tx.get(connectionsQuery);
+          .where('status', 'in', ['connecting', 'connected', 'error', 'disabled_by_user']);
+        if (typeof (p1 as any).limit === 'function') p1 = (p1 as any).limit(10);
+        let p2 = db.collection('whatsapp_connections')
+          .where('organization_id', '==', orgId)
+          .where('status', 'in', ['pending']);
+        if (typeof (p2 as any).orderBy === 'function') p2 = (p2 as any).orderBy('created_at', 'desc');
+        if (typeof (p2 as any).limit === 'function') p2 = (p2 as any).limit(25);
 
-        // Capacity & Subscription Access Mode Check (DEC-7D-30)
-        const currentCapacity = SubscriptionService.evaluateOrganizationWhatsAppCapacity(org, sub, new Date());
-        if (!currentCapacity.enabled || currentCapacity.billingAccessMode === 'suspended') {
-          throw new AppError(403, 'A assinatura da organização está suspensa ou sem capacidade WhatsApp.', {
-            code: 'WHATSAPP_SUBSCRIPTION_SUSPENDED',
-          });
-        }
-
+        const [snap1, snap2] = await Promise.all([tx.get(p1), tx.get(p2)]);
         let activeConfiguredCount = 0;
-        for (const doc of connectionsSnapshot.docs) {
+        for (const doc of snap1.docs) {
+          if (consumesCommercialCapacity(doc.data() as any, now)) activeConfiguredCount++;
+        }
+        for (const doc of snap2.docs) {
           const c = doc.data() as WhatsAppConnectionRecord;
           if (c.status === 'pending') {
-            const isExpired = c.pending_expires_at && new Date(c.pending_expires_at) <= new Date();
+            const isExpired = c.pending_expires_at && new Date(c.pending_expires_at) <= now;
             if (isExpired && doc.id !== session.connection_id) {
               continue;
             }
           }
-          activeConfiguredCount++;
+          if (consumesCommercialCapacity(c, now)) activeConfiguredCount++;
         }
 
-        if (activeConfiguredCount > currentCapacity.totalAllowedConnections) {
+        const entitlement = evaluateWhatsAppCommercialEntitlement({
+          organization: org,
+          anchorMinistry: anchorMinistry ? { id: anchorMinistry.id, organization_id: anchorMinistry.organization_id } : undefined,
+          subscription: sub,
+          consumingConnectionsCount: activeConfiguredCount,
+          now,
+        });
+
+        if (activeConfiguredCount > entitlement.allowedConnections || entitlement.state === 'restricted_over_limit') {
           throw new AppError(
             403,
             'Limite de capacidade comercial de conexões WhatsApp atingido para a organização.',
             { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED' }
           );
+        }
+
+        if (!entitlement.canResumeAuthorizedOnboarding) {
+          throw new AppError(403, 'A assinatura da organização está suspensa ou sem capacidade WhatsApp.', {
+            code: 'WHATSAPP_SUBSCRIPTION_SUSPENDED',
+          });
         }
 
         // Check Claim Collision (DEC-7D-21)

@@ -10,6 +10,12 @@ import {
   AcquireDispatchExecutionResult,
   buildZernioProviderMessageDocId,
 } from '../features/whatsapp/zernio.types';
+import { OrganizationRecord } from '../features/organizations/organization.types';
+import { MinistrySubscriptionRecord } from '../features/subscriptions/subscription.types';
+import {
+  evaluateWhatsAppCommercialEntitlement,
+  consumesCommercialCapacity,
+} from '../features/subscriptions/whatsapp-commercial-evaluator';
 
 export interface PrepareDispatchParams {
   id: string;
@@ -46,6 +52,10 @@ export interface RecordMessageLifecycleEventParams {
 export class WhatsAppOutboundDispatchRepository {
   private readonly dispatchesCol = db.collection('whatsapp_outbound_dispatches');
   private readonly providerMessagesCol = db.collection('whatsapp_zernio_provider_messages');
+  private readonly organizationsCol = db.collection('organizations');
+  private readonly ministriesCol = db.collection('ministries');
+  private readonly subscriptionsCol = db.collection('ministry_subscriptions');
+  private readonly connectionsCol = db.collection('whatsapp_connections');
 
   async getDispatchById(id: string): Promise<WhatsAppOutboundDispatchRecord | null> {
     const cleanId = id?.trim();
@@ -232,8 +242,98 @@ export class WhatsAppOutboundDispatchRepository {
         }
       }
 
-      // 5. phase === 'prepared' -> Grant execution permission
+      // 5. phase === 'prepared' -> Grant execution permission after linearizing commercial entitlement
       if (existing.phase === 'prepared') {
+        // Read organization
+        const orgDoc = await tx.get(this.organizationsCol.doc(existing.organization_id));
+        if (!orgDoc.exists) {
+          throw new AppError(404, 'Organização do despacho não encontrada.', {
+            code: 'ORGANIZATION_NOT_FOUND',
+          });
+        }
+        const org = { id: orgDoc.id, ...orgDoc.data() } as OrganizationRecord;
+
+        // Read billing anchor ministry
+        const anchorMinistryDoc = await tx.get(this.ministriesCol.doc(org.billing_anchor_ministry_id));
+        if (!anchorMinistryDoc.exists) {
+          throw new AppError(
+            403,
+            'COMMERCIAL_INTEGRITY_VIOLATION: Ministério âncora de faturamento não encontrado.',
+            { code: 'COMMERCIAL_INTEGRITY_VIOLATION' }
+          );
+        }
+        const anchorMinistry = { id: anchorMinistryDoc.id, ...anchorMinistryDoc.data() } as any;
+        if (anchorMinistry.organization_id !== org.id) {
+          throw new AppError(
+            403,
+            'COMMERCIAL_INTEGRITY_VIOLATION: Ministério âncora de faturamento não pertence à organização.',
+            { code: 'COMMERCIAL_INTEGRITY_VIOLATION' }
+          );
+        }
+
+        // Read subscription
+        const subDoc = await tx.get(this.subscriptionsCol.doc(org.billing_anchor_ministry_id));
+        const sub = subDoc.exists ? ({ id: subDoc.id, ...subDoc.data() } as MinistrySubscriptionRecord) : null;
+
+        // Read connections (Partitioned Bounded Queries within transaction)
+        let p1 = this.connectionsCol
+          .where('organization_id', '==', org.id)
+          .where('status', 'in', ['connecting', 'connected', 'error', 'disabled_by_user']);
+        if (typeof (p1 as any).limit === 'function') {
+          p1 = (p1 as any).limit(10);
+        }
+
+        let p2 = this.connectionsCol
+          .where('organization_id', '==', org.id)
+          .where('status', 'in', ['pending']);
+        if (typeof (p2 as any).orderBy === 'function') {
+          p2 = (p2 as any).orderBy('created_at', 'desc');
+        }
+        if (typeof (p2 as any).limit === 'function') {
+          p2 = (p2 as any).limit(25);
+        }
+
+        const [snap1, snap2] = await Promise.all([
+          tx.get(p1),
+          tx.get(p2),
+        ]);
+
+        const txNow = new Date();
+        let consumingCount = 0;
+        for (const doc of snap1.docs) {
+          const conn = doc.data() as any;
+          if (consumesCommercialCapacity(conn, txNow)) {
+            consumingCount++;
+          }
+        }
+        for (const doc of snap2.docs) {
+          const conn = doc.data() as any;
+          if (consumesCommercialCapacity(conn, txNow)) {
+            consumingCount++;
+          }
+        }
+
+        const entitlement = evaluateWhatsAppCommercialEntitlement({
+          organization: org,
+          anchorMinistry: { id: anchorMinistry.id, organization_id: anchorMinistry.organization_id },
+          subscription: sub,
+          consumingConnectionsCount: consumingCount,
+          now: txNow,
+        });
+
+        if (!entitlement.canSendMessages) {
+          throw new AppError(
+            403,
+            `COMMERCIAL_RESTRICTION: Envio não permitido pela assinatura (${entitlement.state}).`,
+            {
+              code: entitlement.restrictionReason || 'COMMERCIAL_RESTRICTION',
+              commercialState: entitlement.state,
+              organizationId: org.id,
+              dispatchId: cleanId,
+            }
+          );
+        }
+
         const leaseDurationMs = params.leaseDurationMs ?? 60000;
         const executionId = `exec_${crypto.randomBytes(16).toString('hex')}`;
         const leaseUntilIso = new Date(nowMs + leaseDurationMs).toISOString();

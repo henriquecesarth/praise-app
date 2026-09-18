@@ -90,31 +90,40 @@ describe('WhatsApp Connection Resolver Hierarchy & Fallback Suite (Phase 7C)', (
           }),
         }),
         where: vi.fn().mockImplementation((field: string, op: string, val: any) => ({
-          where: vi.fn().mockImplementation((field2: string, op2: string, val2: any) => ({
-            limit: vi.fn().mockImplementation((lim: number) => ({
-              get: vi.fn().mockImplementation(async () => {
-                const store = getStore();
-                const matched: any[] = [];
-                for (const [, doc] of store) {
-                  if (doc[field] === val && doc[field2] === val2) {
-                    matched.push({ id: doc.id, data: () => doc });
+          where: vi.fn().mockImplementation((field2: string, op2: string, val2: any) => {
+            const matchDoc = (doc: any) => {
+              const match1 = op === 'in' ? Array.isArray(val) && val.includes(doc[field]) : doc[field] === val;
+              const match2 = op2 === 'in' ? Array.isArray(val2) && val2.includes(doc[field2]) : doc[field2] === val2;
+              return match1 && match2;
+            };
+            const queryObj: any = {
+              orderBy: vi.fn().mockImplementation(() => queryObj),
+              limit: vi.fn().mockImplementation((lim: number) => ({
+                get: vi.fn().mockImplementation(async () => {
+                  const store = getStore();
+                  const matched: any[] = [];
+                  for (const [, doc] of store) {
+                    if (matchDoc(doc)) {
+                      matched.push({ id: doc.id, data: () => doc });
+                    }
                   }
-                }
-                return { docs: matched.slice(0, lim), empty: matched.length === 0 };
-              }),
-            })),
-            count: vi.fn().mockReturnValue({
-              get: vi.fn().mockImplementation(async () => {
-                let count = 0;
-                for (const [, doc] of connectionsStore) {
-                  if ((doc as any)[field] === val && val2.includes((doc as any)[field2])) {
-                    count++;
+                  return { docs: matched.slice(0, lim), empty: matched.length === 0 };
+                }),
+              })),
+              count: vi.fn().mockReturnValue({
+                get: vi.fn().mockImplementation(async () => {
+                  let count = 0;
+                  for (const [, doc] of connectionsStore) {
+                    if (matchDoc(doc)) {
+                      count++;
+                    }
                   }
-                }
-                return { data: () => ({ count }) };
+                  return { data: () => ({ count }) };
+                }),
               }),
-            }),
-          })),
+            };
+            return queryObj;
+          }),
         })),
       };
     });
