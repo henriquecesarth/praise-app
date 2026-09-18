@@ -19,6 +19,17 @@ export class WhatsAppProviderIdentityClaimRepository {
     return { id: doc.id, ...doc.data() } as WhatsAppProviderIdentityClaimRecord;
   }
 
+  async getClaimInTransaction(
+    tx: FirebaseFirestore.Transaction,
+    claimId: string
+  ): Promise<WhatsAppProviderIdentityClaimRecord | null> {
+    const doc = await tx.get(this.claimsCol.doc(claimId));
+    if (!doc.exists) {
+      return null;
+    }
+    return { id: doc.id, ...doc.data() } as WhatsAppProviderIdentityClaimRecord;
+  }
+
   async getZernioAccountClaim(accountId: string): Promise<WhatsAppProviderIdentityClaimRecord | null> {
     return this.getClaim(getZernioAccountClaimId(accountId));
   }

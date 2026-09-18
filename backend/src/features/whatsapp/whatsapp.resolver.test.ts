@@ -6,7 +6,12 @@ import { OrganizationRepository } from '../../repositories/OrganizationRepositor
 import { MinistryRepository } from '../../repositories/MinistryRepository';
 import { SubscriptionService } from '../subscriptions/subscription.service';
 import { WhatsAppConnectionService } from './whatsapp-connection.service';
-import { WhatsAppConnectionRecord, getClaimId } from './whatsapp.types';
+import {
+  WhatsAppConnectionRecord,
+  getClaimId,
+  getZernioAccountClaimId,
+  getZernioPhoneClaimId,
+} from './whatsapp.types';
 import { OrganizationRecord } from '../organizations/organization.types';
 
 describe('WhatsApp Connection Resolver Hierarchy & Fallback Suite (Phase 7C)', () => {
@@ -288,7 +293,41 @@ describe('WhatsApp Connection Resolver Hierarchy & Fallback Suite (Phase 7C)', (
     expect(res.code).toBe('CONNECTION_NOT_ACTIVE');
   });
 
-  it('10. Restricted over limit blocks dispatch with RESTRICTED_OVER_LIMIT', async () => {
+  it('10. D3-style Zernio dual claims resolve without provider_phone_number_id', async () => {
+    const zernioConn = setupValidConnection('conn-zernio', {
+      provider: 'zernio',
+      provider_profile_id: 'profile-zernio',
+      provider_account_id: 'account-zernio',
+      provider_waba_id: null,
+      provider_phone_number_id: null,
+      phone_number: '+5511999990008',
+    });
+    organizationsStore.get(orgId)!.default_whatsapp_connection_id = zernioConn.id;
+
+    const accountClaimId = getZernioAccountClaimId(zernioConn.provider_account_id!);
+    const phoneClaimId = getZernioPhoneClaimId(zernioConn.phone_number!);
+    claimsStore.set(accountClaimId, {
+      id: accountClaimId,
+      provider: 'zernio',
+      provider_phone_number_id: zernioConn.provider_account_id,
+      organization_id: orgId,
+      connection_id: zernioConn.id,
+    });
+    claimsStore.set(phoneClaimId, {
+      id: phoneClaimId,
+      provider: 'zernio',
+      provider_phone_number_id: zernioConn.phone_number,
+      organization_id: orgId,
+      connection_id: zernioConn.id,
+    });
+
+    const res = await service.resolveWhatsAppConnection(ministryId);
+
+    expect(res.success).toBe(true);
+    expect(res.connection?.id).toBe(zernioConn.id);
+  });
+
+  it('11. Restricted over limit blocks dispatch with RESTRICTED_OVER_LIMIT', async () => {
     mockAllowed = 1;
     // Set 2 connections
     setupValidConnection('conn-1');
@@ -301,7 +340,7 @@ describe('WhatsApp Connection Resolver Hierarchy & Fallback Suite (Phase 7C)', (
     expect(res.code).toBe('RESTRICTED_OVER_LIMIT');
   });
 
-  it('11. Suspended mode blocks dispatch with WHATSAPP_SUSPENDED', async () => {
+  it('12. Suspended mode blocks dispatch with WHATSAPP_SUSPENDED', async () => {
     mockAccessMode = 'suspended';
     setupValidConnection('conn-1');
     organizationsStore.get(orgId)!.default_whatsapp_connection_id = 'conn-1';
@@ -312,7 +351,7 @@ describe('WhatsApp Connection Resolver Hierarchy & Fallback Suite (Phase 7C)', (
     expect(res.code).toBe('WHATSAPP_SUSPENDED');
   });
 
-  it('12. Grace mode allows operational resolution of connected line', async () => {
+  it('13. Grace mode allows operational resolution of connected line', async () => {
     mockAccessMode = 'grace';
     const conn = setupValidConnection('conn-1');
     organizationsStore.get(orgId)!.default_whatsapp_connection_id = 'conn-1';
@@ -323,7 +362,7 @@ describe('WhatsApp Connection Resolver Hierarchy & Fallback Suite (Phase 7C)', (
     expect(res.connection?.id).toBe(conn.id);
   });
 
-  it('13. Ministry with organization_id === null returns NO_ORGANIZATION', async () => {
+  it('14. Ministry with organization_id === null returns NO_ORGANIZATION', async () => {
     ministriesStore.set('min-no-org', {
       id: 'min-no-org',
       name: 'Sem Org',

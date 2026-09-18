@@ -18,6 +18,12 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
     return `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
   }
 
+  let phoneCounter = 1;
+  function uniquePhone(): string {
+    const seed = Math.floor(10000000 + Math.random() * 90000000) + (phoneCounter++);
+    return `+55119${String(seed).slice(-8)}`;
+  }
+
   describe('STEP 2 & 3: Profile Binding Persistence & Immutability', () => {
     it('binds a Zernio profile to a pending connection successfully', async () => {
       const orgId = uniqueId('org');
@@ -155,33 +161,37 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
 
       await service.bindZernioProfileToConnection(orgId, conn.id, 'prof_mat_01');
 
+      const basePhone = uniquePhone();
+      const rawPhone = `${basePhone.slice(0, 3)} ${basePhone.slice(3, 5)} ${basePhone.slice(5, 10)}-${basePhone.slice(10)}`;
+      const accId = uniqueId('acc_zernio');
+
       const materialized = await service.materializeZernioProviderIdentity(orgId, conn.id, {
         providerProfileId: 'prof_mat_01',
-        providerAccountId: 'acc_zernio_01',
-        phoneNumber: '+55 11 98888-7777', // raw with formatting
+        providerAccountId: accId,
+        phoneNumber: rawPhone, // raw with formatting
       });
 
-      expect(materialized.provider_account_id).toBe('acc_zernio_01');
-      expect(materialized.phone_number).toBe('+5511988887777'); // normalized E.164
+      expect(materialized.provider_account_id).toBe(accId);
+      expect(materialized.phone_number).toBe(basePhone); // normalized E.164
       expect(materialized.provider_profile_id).toBe('prof_mat_01');
       expect(materialized.provider_waba_id).toBeNull(); // no Meta fields
       expect(materialized.provider_phone_number_id).toBeNull();
 
       // Check account claim record
-      const accClaim = await claimRepo.getZernioAccountClaim('acc_zernio_01');
+      const accClaim = await claimRepo.getZernioAccountClaim(accId);
       expect(accClaim).toBeDefined();
       expect(accClaim?.connection_id).toBe(conn.id);
       expect(accClaim?.organization_id).toBe(orgId);
       expect(accClaim?.provider).toBe('zernio');
-      expect(accClaim?.provider_phone_number_id).toBe('acc_zernio_01');
+      expect(accClaim?.provider_phone_number_id).toBe(accId);
 
       // Check phone claim record
-      const phoneClaim = await claimRepo.getZernioPhoneClaim('+5511988887777');
+      const phoneClaim = await claimRepo.getZernioPhoneClaim(basePhone);
       expect(phoneClaim).toBeDefined();
       expect(phoneClaim?.connection_id).toBe(conn.id);
       expect(phoneClaim?.organization_id).toBe(orgId);
       expect(phoneClaim?.provider).toBe('zernio');
-      expect(phoneClaim?.provider_phone_number_id).toBe('+5511988887777');
+      expect(phoneClaim?.provider_phone_number_id).toBe(basePhone);
     });
 
     it('rejects materialization when profile is not yet bound', async () => {
@@ -196,8 +206,8 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
       await expect(
         service.materializeZernioProviderIdentity(orgId, conn.id, {
           providerProfileId: 'prof_any',
-          providerAccountId: 'acc_any',
-          phoneNumber: '+5511988886666',
+          providerAccountId: uniqueId('acc_any'),
+          phoneNumber: uniquePhone(),
         })
       ).rejects.toThrow(
         expect.objectContaining({
@@ -221,8 +231,8 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
       await expect(
         service.materializeZernioProviderIdentity(orgId, conn.id, {
           providerProfileId: 'prof_fake_divergent',
-          providerAccountId: 'acc_any',
-          phoneNumber: '+5511988886666',
+          providerAccountId: uniqueId('acc_any'),
+          phoneNumber: uniquePhone(),
         })
       ).rejects.toThrow(
         expect.objectContaining({
@@ -242,17 +252,19 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
       });
 
       await service.bindZernioProfileToConnection(orgId, conn.id, 'prof_idem_01');
+      const idemAccId = uniqueId('acc_idem');
+      const idemPhone = uniquePhone();
 
       const mat1 = await service.materializeZernioProviderIdentity(orgId, conn.id, {
         providerProfileId: 'prof_idem_01',
-        providerAccountId: 'acc_idem_01',
-        phoneNumber: '+5511988885555',
+        providerAccountId: idemAccId,
+        phoneNumber: idemPhone,
       });
 
       const mat2 = await service.materializeZernioProviderIdentity(orgId, conn.id, {
         providerProfileId: 'prof_idem_01',
-        providerAccountId: 'acc_idem_01',
-        phoneNumber: '+5511988885555',
+        providerAccountId: idemAccId,
+        phoneNumber: idemPhone,
       });
 
       expect(mat1.provider_account_id).toBe(mat2.provider_account_id);
@@ -268,18 +280,22 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
         provider: 'zernio',
       });
 
+      const originalAcc = uniqueId('acc_original');
+      const divergentAcc = uniqueId('acc_divergent');
+      const phone = uniquePhone();
+
       await service.bindZernioProfileToConnection(orgId, conn.id, 'prof_fixed_acc');
       await service.materializeZernioProviderIdentity(orgId, conn.id, {
         providerProfileId: 'prof_fixed_acc',
-        providerAccountId: 'acc_original',
-        phoneNumber: '+5511988884444',
+        providerAccountId: originalAcc,
+        phoneNumber: phone,
       });
 
       await expect(
         service.materializeZernioProviderIdentity(orgId, conn.id, {
           providerProfileId: 'prof_fixed_acc',
-          providerAccountId: 'acc_divergent',
-          phoneNumber: '+5511988884444',
+          providerAccountId: divergentAcc,
+          phoneNumber: phone,
         })
       ).rejects.toThrow(
         expect.objectContaining({
@@ -298,18 +314,22 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
         provider: 'zernio',
       });
 
+      const acc = uniqueId('acc_original_p');
+      const phone1 = uniquePhone();
+      const phone2 = uniquePhone();
+
       await service.bindZernioProfileToConnection(orgId, conn.id, 'prof_fixed_phone');
       await service.materializeZernioProviderIdentity(orgId, conn.id, {
         providerProfileId: 'prof_fixed_phone',
-        providerAccountId: 'acc_original_p',
-        phoneNumber: '+5511988883333',
+        providerAccountId: acc,
+        phoneNumber: phone1,
       });
 
       await expect(
         service.materializeZernioProviderIdentity(orgId, conn.id, {
           providerProfileId: 'prof_fixed_phone',
-          providerAccountId: 'acc_original_p',
-          phoneNumber: '+5511999992222',
+          providerAccountId: acc,
+          phoneNumber: phone2,
         })
       ).rejects.toThrow(
         expect.objectContaining({
@@ -369,7 +389,7 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
       await service.materializeZernioProviderIdentity(orgId, conn1.id, {
         providerProfileId: 'prof_c1',
         providerAccountId: sharedAccountId,
-        phoneNumber: '+5511977770001',
+        phoneNumber: uniquePhone(),
       });
 
       // Conn 2 attempts to claim sharedAccountId
@@ -377,7 +397,7 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
         service.materializeZernioProviderIdentity(orgId, conn2.id, {
           providerProfileId: 'prof_c2',
           providerAccountId: sharedAccountId,
-          phoneNumber: '+5511977770002',
+          phoneNumber: uniquePhone(),
         })
       ).rejects.toThrow(
         expect.objectContaining({
@@ -412,7 +432,7 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
       await service.materializeZernioProviderIdentity(orgA, connA.id, {
         providerProfileId: 'prof_oa',
         providerAccountId: sharedAccountId,
-        phoneNumber: '+5511977770003',
+        phoneNumber: uniquePhone(),
       });
 
       // Org B attempts to claim account
@@ -420,7 +440,7 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
         service.materializeZernioProviderIdentity(orgB, connB.id, {
           providerProfileId: 'prof_ob',
           providerAccountId: sharedAccountId,
-          phoneNumber: '+5511977770004',
+          phoneNumber: uniquePhone(),
         })
       ).rejects.toThrow(
         expect.objectContaining({
@@ -432,7 +452,7 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
 
     it('rejects phone collision across different connections in the SAME organization', async () => {
       const orgId = uniqueId('org');
-      const sharedPhone = '+5511977770005';
+      const sharedPhone = uniquePhone();
 
       const conn1 = await connectionRepo.createConnection({
         organization_id: orgId,
@@ -473,7 +493,7 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
     it('rejects cross-tenant phone collision (Org B cannot claim Org A phone)', async () => {
       const orgA = uniqueId('org_a');
       const orgB = uniqueId('org_b');
-      const sharedPhone = '+5511977770006';
+      const sharedPhone = uniquePhone();
 
       const connA = await connectionRepo.createConnection({
         organization_id: orgA,
@@ -513,7 +533,7 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
 
     it('MIXED COLLISION: when account is free but phone is occupied, entire tx aborts and NO orphan account claim is written', async () => {
       const orgId = uniqueId('org');
-      const occupiedPhone = '+5511977770007';
+      const occupiedPhone = uniquePhone();
       const freeAccountId = uniqueId('acc_free_test');
 
       // Pre-claim the phone
@@ -555,7 +575,7 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
     it('MIXED COLLISION: when account is occupied but phone is free, entire tx aborts and NO orphan phone claim is written', async () => {
       const orgId = uniqueId('org');
       const occupiedAccountId = uniqueId('acc_occupied_test');
-      const freePhone = '+5511977770008';
+      const freePhone = uniquePhone();
 
       // Pre-claim the account
       const connPre = await connectionRepo.createConnection({
@@ -568,7 +588,7 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
       await service.materializeZernioProviderIdentity(orgId, connPre.id, {
         providerProfileId: 'prof_pre_acc',
         providerAccountId: occupiedAccountId,
-        phoneNumber: '+5511977770099',
+        phoneNumber: uniquePhone(),
       });
 
       // Target connection attempts occupiedAccountId + freePhone
@@ -640,7 +660,7 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
     it('retains both Zernio account and phone claims on disconnect; prevents reacquisition by other connections', async () => {
       const orgId = uniqueId('org');
       const accountId = uniqueId('acc_retained');
-      const phoneNumber = '+5511977770010';
+      const phoneNumber = uniquePhone();
 
       // 1. Create Zernio Connection A
       const connA = await connectionRepo.createConnection({
@@ -695,7 +715,7 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
         service.materializeZernioProviderIdentity(orgId, connB.id, {
           providerProfileId: 'prof_disc_2',
           providerAccountId: accountId,
-          phoneNumber: '+5511977770011',
+          phoneNumber: uniquePhone(),
         })
       ).rejects.toMatchObject({
         statusCode: 409,
@@ -728,7 +748,7 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
         service.materializeZernioProviderIdentity(otherOrgId, connC.id, {
           providerProfileId: 'prof_disc_3',
           providerAccountId: accountId,
-          phoneNumber: '+5511977770012',
+          phoneNumber: uniquePhone(),
         })
       ).rejects.toMatchObject({
         statusCode: 409,
@@ -751,6 +771,8 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
     it('RACE 1: Two connections concurrently claiming the SAME providerAccountId - exactly ONE wins', async () => {
       const orgId = uniqueId('org_race1');
       const sharedAccountId = uniqueId('acc_race1');
+      const phone1 = uniquePhone();
+      const phone2 = uniquePhone();
 
       const conn1 = await connectionRepo.createConnection({
         organization_id: orgId,
@@ -772,12 +794,12 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
         service.materializeZernioProviderIdentity(orgId, conn1.id, {
           providerProfileId: 'prof_race_1a',
           providerAccountId: sharedAccountId,
-          phoneNumber: '+5511977770021',
+          phoneNumber: phone1,
         }),
         service.materializeZernioProviderIdentity(orgId, conn2.id, {
           providerProfileId: 'prof_race_1b',
           providerAccountId: sharedAccountId,
-          phoneNumber: '+5511977770022',
+          phoneNumber: phone2,
         }),
       ]);
 
@@ -800,7 +822,7 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
 
       // Assert losing connection has NO partial claim
       const losingConnId = winningConn.id === conn1.id ? conn2.id : conn1.id;
-      const losingPhone = winningConn.id === conn1.id ? '+5511977770022' : '+5511977770021';
+      const losingPhone = winningConn.id === conn1.id ? phone2 : phone1;
       const orphanPhoneClaim = await claimRepo.getZernioPhoneClaim(losingPhone);
       expect(orphanPhoneClaim).toBeNull();
 
@@ -811,7 +833,7 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
 
     it('RACE 2: Two connections concurrently claiming the SAME phone with different accounts - exactly ONE wins', async () => {
       const orgId = uniqueId('org_race2');
-      const sharedPhone = '+5511977770033';
+      const sharedPhone = uniquePhone();
 
       const conn1 = await connectionRepo.createConnection({
         organization_id: orgId,
@@ -909,7 +931,7 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
   describe('STEP 11: Meta Regression & Namespace Isolation', () => {
     it('Meta and Zernio identity claims with identical raw string IDs do not collide', async () => {
       const orgId = uniqueId('org_meta_iso');
-      const sharedRawId = 'shared_identical_id_9999';
+      const sharedRawId = uniqueId('shared_identical_id');
 
       // 1. Meta connection claims sharedRawId as provider_phone_number_id
       const metaConn = await connectionRepo.createConnection({
@@ -919,7 +941,7 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
         provider: 'meta_cloud_api',
       });
       await service.materializeProviderIdentity(orgId, metaConn.id, {
-        phoneNumber: '+5511988880001',
+        phoneNumber: uniquePhone(),
         providerWabaId: 'waba-meta-iso',
         providerPhoneNumberId: sharedRawId,
       });
@@ -935,15 +957,15 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
       await service.materializeZernioProviderIdentity(orgId, zernioConn.id, {
         providerProfileId: 'prof_meta_iso',
         providerAccountId: sharedRawId,
-        phoneNumber: '+5511988880002',
+        phoneNumber: uniquePhone(),
       });
 
       // Both claims peacefully coexist in whatsapp_provider_identity_claims
       const metaClaimId = getClaimId('meta_cloud_api', sharedRawId);
       const zernioAccountClaimId = getZernioAccountClaimId(sharedRawId);
 
-      expect(metaClaimId).toBe('claim_meta_cloud_api_shared_identical_id_9999');
-      expect(zernioAccountClaimId).toBe('claim_zernio_account_shared_identical_id_9999');
+      expect(metaClaimId).toBe(`claim_meta_cloud_api_${sharedRawId}`);
+      expect(zernioAccountClaimId).toBe(`claim_zernio_account_${sharedRawId}`);
       expect(metaClaimId).not.toBe(zernioAccountClaimId);
 
       const metaClaimDoc = await claimRepo.getClaim(metaClaimId);
@@ -980,6 +1002,7 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
 
     it('rejects providerAccountId containing "/" in materializeZernioProviderIdentity before writes (no partial write)', async () => {
       const orgId = uniqueId('org_slash');
+      const testPhone = uniquePhone();
       const conn = await connectionRepo.createConnection({
         organization_id: orgId,
         display_name: 'Conn Slash Test',
@@ -992,7 +1015,7 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
         service.materializeZernioProviderIdentity(orgId, conn.id, {
           providerProfileId: 'prof_slash',
           providerAccountId: 'invalid/account/id',
-          phoneNumber: '+5511977770088',
+          phoneNumber: testPhone,
         })
       ).rejects.toMatchObject({
         statusCode: 400,
@@ -1004,7 +1027,7 @@ describe('Zernio Persistence & Identity Claims Suite (Phase 7D2-D3)', { timeout:
       expect(checkedConn?.provider_account_id).toBeNull();
       expect(checkedConn?.phone_number).toBeNull();
 
-      const phoneClaim = await claimRepo.getZernioPhoneClaim('+5511977770088');
+      const phoneClaim = await claimRepo.getZernioPhoneClaim(testPhone);
       expect(phoneClaim).toBeNull();
     });
   });

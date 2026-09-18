@@ -28,6 +28,12 @@ describe('Zernio Webhook Ingestion & Lifecycle Repair Suite (Phase 7D2-D5)', { t
     return `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
   }
 
+  let phoneCounter = 1;
+  function uniquePhone(): string {
+    const seed = Math.floor(10000000 + Math.random() * 90000000) + (phoneCounter++);
+    return `+55119${String(seed).slice(-8)}`;
+  }
+
   function signPayload(body: Buffer | string, secret: string = testWebhookSecret): string {
     const buf = Buffer.isBuffer(body) ? body : Buffer.from(body, 'utf8');
     return crypto.createHmac('sha256', secret).update(buf).digest('hex');
@@ -547,7 +553,7 @@ describe('Zernio Webhook Ingestion & Lifecycle Repair Suite (Phase 7D2-D5)', { t
     it('repairs and advances pending connection to connected without active browser session', async () => {
       const profileId = uniqueId('prof_repair');
       const accountId = uniqueId('acc_repair');
-      const testPhone = '+5511999990001';
+      const testPhone = uniquePhone();
 
       const conn = await createTestConnection({
         provider_profile_id: profileId,
@@ -617,7 +623,7 @@ describe('Zernio Webhook Ingestion & Lifecycle Repair Suite (Phase 7D2-D5)', { t
     it('repairs and advances connecting connection to connected', async () => {
       const profileId = uniqueId('prof_connecting');
       const accountId = uniqueId('acc_connecting');
-      const testPhone = '+5511999990002';
+      const testPhone = uniquePhone();
 
       const conn = await createTestConnection({
         provider_profile_id: profileId,
@@ -668,7 +674,7 @@ describe('Zernio Webhook Ingestion & Lifecycle Repair Suite (Phase 7D2-D5)', { t
     it('handles idempotent replay of account.connected for already connected line with same account', async () => {
       const profileId = uniqueId('prof_idempotent');
       const accountId = uniqueId('acc_idempotent');
-      const testPhone = '+5511999990003';
+      const testPhone = uniquePhone();
 
       const conn = await createTestConnection({
         provider_profile_id: profileId,
@@ -812,7 +818,7 @@ describe('Zernio Webhook Ingestion & Lifecycle Repair Suite (Phase 7D2-D5)', { t
     it('handles claim collision gracefully as terminal_error (returns 200 without throwing 500)', async () => {
       const profileId = uniqueId('prof_collision');
       const accountId = uniqueId('acc_collision');
-      const collidingPhone = '+5511999990099';
+      const collidingPhone = uniquePhone();
 
       const conn = await createTestConnection({
         provider_profile_id: profileId,
@@ -937,7 +943,7 @@ describe('Zernio Webhook Ingestion & Lifecycle Repair Suite (Phase 7D2-D5)', { t
     it('transitions connected connection to status="error" and retains provider claims in Firestore (CRITICAL: zero release in D5)', async () => {
       const profileId = uniqueId('prof_disc_connected');
       const accountId = uniqueId('acc_disc_connected');
-      const testPhone = '+5511999990005';
+      const testPhone = uniquePhone();
 
       const conn = await createTestConnection({
         provider_profile_id: profileId,

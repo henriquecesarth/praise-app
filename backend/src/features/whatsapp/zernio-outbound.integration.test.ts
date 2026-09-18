@@ -8,7 +8,7 @@ import { WhatsAppZernioWebhookRepository } from '../../repositories/WhatsAppZern
 import { WhatsAppConnectionService } from './whatsapp-connection.service';
 import { WhatsAppOutboundService } from './whatsapp-outbound.service';
 import { ZernioHttpClient } from './zernio-http-client';
-import { getClaimId } from './whatsapp.types';
+import { getZernioAccountClaimId, getZernioPhoneClaimId } from './whatsapp.types';
 import {
   buildZernioProviderMessageDocId,
   formatZernioParticipantId,
@@ -35,8 +35,7 @@ describe('Zernio Outbound Dispatch & Message Delivery Lifecycle Suite (Phase 7D2
   let testConnId: string;
   let testAccountId: string;
   let testProfileId: string;
-  const testPhoneNumber = '+5511988887777';
-  let testPhoneNumberId: string;
+  let testPhoneNumber: string;
 
   function signPayload(body: Buffer | string, secret: string = testWebhookSecret): string {
     const buf = Buffer.isBuffer(body) ? body : Buffer.from(body, 'utf8');
@@ -57,7 +56,7 @@ describe('Zernio Outbound Dispatch & Message Delivery Lifecycle Suite (Phase 7D2
     testConnId = uniqueId('conn');
     testAccountId = uniqueId('acc_wa');
     testProfileId = uniqueId('prof_zernio');
-    testPhoneNumberId = uniqueId('phone_id');
+    testPhoneNumber = `+55119${`${Date.now()}${Math.floor(Math.random() * 10_000_000)}`.slice(-8)}`;
 
     zernioClient = new ZernioHttpClient({
       apiKey: testApiKey,
@@ -137,7 +136,7 @@ describe('Zernio Outbound Dispatch & Message Delivery Lifecycle Suite (Phase 7D2
       provider_profile_id: testProfileId,
       provider_account_id: testAccountId,
       provider_waba_id: 'waba_123',
-      provider_phone_number_id: testPhoneNumberId,
+      provider_phone_number_id: null,
       status: 'connected',
       status_reason: null,
       assigned_ministry_id: testMinistryId,
@@ -150,11 +149,21 @@ describe('Zernio Outbound Dispatch & Message Delivery Lifecycle Suite (Phase 7D2
       updated_at: new Date().toISOString(),
     });
 
-    const claimId = getClaimId('zernio', testPhoneNumberId);
-    await db.collection('whatsapp_provider_identity_claims').doc(claimId).set({
-      id: claimId,
+    const accountClaimId = getZernioAccountClaimId(testAccountId);
+    await db.collection('whatsapp_provider_identity_claims').doc(accountClaimId).set({
+      id: accountClaimId,
       provider: 'zernio',
-      provider_phone_number_id: testPhoneNumberId,
+      provider_phone_number_id: testAccountId,
+      connection_id: testConnId,
+      organization_id: testOrgId,
+      acquired_at: new Date().toISOString(),
+      expires_at: null,
+    });
+    const phoneClaimId = getZernioPhoneClaimId(testPhoneNumber);
+    await db.collection('whatsapp_provider_identity_claims').doc(phoneClaimId).set({
+      id: phoneClaimId,
+      provider: 'zernio',
+      provider_phone_number_id: testPhoneNumber,
       connection_id: testConnId,
       organization_id: testOrgId,
       acquired_at: new Date().toISOString(),

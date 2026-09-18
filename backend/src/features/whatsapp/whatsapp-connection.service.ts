@@ -14,6 +14,7 @@ import { WhatsAppWabaReconciliationJobRepository } from '../../repositories/What
 import { WhatsAppZernioWebhookRepository } from '../../repositories/WhatsAppZernioWebhookRepository';
 import { WhatsAppOutboundDispatchRepository } from '../../repositories/WhatsAppOutboundDispatchRepository';
 import { WhatsAppWabaCoordinatorService } from './whatsapp-waba-coordinator.service';
+import { WhatsAppProviderIdentityVerificationService } from './whatsapp-provider-identity-verification.service';
 import { MetaWhatsAppProvider } from './meta-whatsapp.provider';
 import { WhatsAppEncryptionService } from './whatsapp-encryption.service';
 import { OrganizationRepository } from '../../repositories/OrganizationRepository';
@@ -80,8 +81,13 @@ export class WhatsAppConnectionService {
     private readonly zernioClient: ZernioHttpClient = new ZernioHttpClient(),
     private readonly webhookRepo: WhatsAppZernioWebhookRepository = new WhatsAppZernioWebhookRepository(),
     private readonly outboundRepo: WhatsAppOutboundDispatchRepository = new WhatsAppOutboundDispatchRepository(),
-    private readonly reconJobRepo: WhatsAppWabaReconciliationJobRepository = new WhatsAppWabaReconciliationJobRepository()
-  ) {}
+    private readonly reconJobRepo: WhatsAppWabaReconciliationJobRepository = new WhatsAppWabaReconciliationJobRepository(),
+    providerIdentityVerifier?: WhatsAppProviderIdentityVerificationService
+  ) {
+    this.providerIdentityVerifier = providerIdentityVerifier ?? new WhatsAppProviderIdentityVerificationService(claimRepo);
+  }
+
+  private readonly providerIdentityVerifier: WhatsAppProviderIdentityVerificationService;
 
   private mapToDto(conn: WhatsAppConnectionRecord, defaultConnectionId: string | null): WhatsAppConnectionDto {
     return {
@@ -239,19 +245,11 @@ export class WhatsAppConnectionService {
           );
         }
 
-        // Validate provider claim ownership
-        const providerClaimId = getClaimId(connData.provider, connData.provider_phone_number_id!);
-        const providerClaimRef = db.collection('whatsapp_provider_identity_claims').doc(providerClaimId);
-        const providerClaimDoc = await tx.get(providerClaimRef);
-        if (
-          !providerClaimDoc.exists ||
-          providerClaimDoc.data()?.connection_id !== connectionId ||
-          providerClaimDoc.data()?.organization_id !== orgId
-        ) {
-          throw new AppError(400, 'INVALID_PROVIDER_CLAIM: Claim de identidade do provedor inválido ou ausente.', {
-            code: 'INVALID_PROVIDER_CLAIM',
-          });
-        }
+        await this.providerIdentityVerifier.verifyProviderIdentityClaims({
+          connection: connData,
+          organizationId: orgId,
+          transaction: tx,
+        });
       }
 
       // If assigning to a ministry: read target ministry and assignment claim
@@ -469,10 +467,7 @@ export class WhatsAppConnectionService {
         return { success: false, code: 'CONNECTION_NOT_ACTIVE' };
       }
 
-      // Claim verification
-      const claimId = getClaimId(assignedConn.provider, assignedConn.provider_phone_number_id!);
-      const claim = await this.claimRepo.getClaim(claimId);
-      if (!claim || claim.connection_id !== assignedConn.id || claim.organization_id !== orgId) {
+      if (!(await this.hasValidProviderIdentityClaims(assignedConn, orgId))) {
         return { success: false, code: 'CONNECTION_NOT_ACTIVE' };
       }
 
@@ -498,13 +493,26 @@ export class WhatsAppConnectionService {
       return { success: false, code: 'CONNECTION_NOT_ACTIVE' };
     }
 
-    const claimId = getClaimId(defaultConn.provider, defaultConn.provider_phone_number_id!);
-    const claim = await this.claimRepo.getClaim(claimId);
-    if (!claim || claim.connection_id !== defaultConn.id || claim.organization_id !== orgId) {
+    if (!(await this.hasValidProviderIdentityClaims(defaultConn, orgId))) {
       return { success: false, code: 'CONNECTION_NOT_ACTIVE' };
     }
 
     return { success: true, connection: defaultConn, source: 'default' };
+  }
+
+  private async hasValidProviderIdentityClaims(
+    connection: WhatsAppConnectionRecord,
+    organizationId: string
+  ): Promise<boolean> {
+    try {
+      await this.providerIdentityVerifier.verifyProviderIdentityClaims({ connection, organizationId });
+      return true;
+    } catch (err) {
+      if (err instanceof AppError && (err.details as { code?: string } | undefined)?.code === 'INVALID_PROVIDER_CLAIM') {
+        return false;
+      }
+      throw err;
+    }
   }
 
   async getMinistryWhatsAppStatus(ministryId: string): Promise<MinistryWhatsAppStatusDto> {
@@ -688,32 +696,10 @@ export class WhatsAppConnectionService {
           code: 'CONNECTION_NOT_MATERIALIZED',
         });
       }
-      if (conn.provider === 'zernio') {
-        const accountClaimId = getZernioAccountClaimId(conn.provider_account_id!);
-        const phoneClaimId = getZernioPhoneClaimId(conn.phone_number!);
-        const [accountClaim, phoneClaim] = await Promise.all([
-          this.claimRepo.getClaim(accountClaimId),
-          this.claimRepo.getClaim(phoneClaimId),
-        ]);
-        if (!accountClaim || accountClaim.connection_id !== conn.id || accountClaim.organization_id !== orgId) {
-          throw new AppError(400, 'Claim de identidade do provedor (conta Zernio) inválido ou ausente.', {
-            code: 'INVALID_PROVIDER_CLAIM',
-          });
-        }
-        if (!phoneClaim || phoneClaim.connection_id !== conn.id || phoneClaim.organization_id !== orgId) {
-          throw new AppError(400, 'Claim de identidade do provedor (telefone Zernio) inválido ou ausente.', {
-            code: 'INVALID_PROVIDER_CLAIM',
-          });
-        }
-      } else {
-        const claimId = getClaimId(conn.provider, conn.provider_phone_number_id!);
-        const claim = await this.claimRepo.getClaim(claimId);
-        if (!claim || claim.connection_id !== conn.id || claim.organization_id !== orgId) {
-          throw new AppError(400, 'Claim de identidade do provedor inválido ou ausente.', {
-            code: 'INVALID_PROVIDER_CLAIM',
-          });
-        }
-      }
+      await this.providerIdentityVerifier.verifyProviderIdentityClaims({
+        connection: conn,
+        organizationId: orgId,
+      });
     }
 
     await this.connectionRepo.setConnectionStatus(orgId, connectionId, targetStatus, reason);
@@ -743,20 +729,18 @@ export class WhatsAppConnectionService {
         throw new AppError(404, 'Conexão não encontrada nesta organização.');
       }
 
-      const accountClaimId = getZernioAccountClaimId(providerAccountId);
-      const phoneClaimId = getZernioPhoneClaimId(phoneNumber);
-      const accountClaimRef = db.collection('whatsapp_provider_identity_claims').doc(accountClaimId);
-      const phoneClaimRef = db.collection('whatsapp_provider_identity_claims').doc(phoneClaimId);
-
-      const [accountClaimDoc, phoneClaimDoc] = await Promise.all([
-        tx.get(accountClaimRef),
-        tx.get(phoneClaimRef),
-      ]);
-
       const reconJobRef = db.collection('whatsapp_waba_reconciliation_jobs').doc(reconJobId);
       const reconJobDoc = await tx.get(reconJobRef);
 
       // 2. VALIDATE CLAIMS
+      const accountClaimId = getZernioAccountClaimId(providerAccountId);
+      const phoneClaimId = getZernioPhoneClaimId(phoneNumber);
+      const accountClaimRef = db.collection('whatsapp_provider_identity_claims').doc(accountClaimId);
+      const phoneClaimRef = db.collection('whatsapp_provider_identity_claims').doc(phoneClaimId);
+      const [accountClaimDoc, phoneClaimDoc] = await Promise.all([
+        tx.get(accountClaimRef),
+        tx.get(phoneClaimRef),
+      ]);
       if (
         !accountClaimDoc.exists ||
         accountClaimDoc.data()?.connection_id !== connectionId ||

@@ -6,10 +6,10 @@ import { WhatsAppOutboundDispatchRepository } from '../../repositories/WhatsAppO
 import { OrganizationRepository } from '../../repositories/OrganizationRepository';
 import { WhatsAppProviderIdentityClaimRepository } from '../../repositories/WhatsAppProviderIdentityClaimRepository';
 import { WhatsAppConnectionService } from './whatsapp-connection.service';
+import { WhatsAppProviderIdentityVerificationService } from './whatsapp-provider-identity-verification.service';
 import {
   normalizeToE164,
   isProviderIdentityMaterialized,
-  getClaimId,
   WhatsAppConnectionRecord,
 } from './whatsapp.types';
 import {
@@ -26,8 +26,13 @@ export class WhatsAppOutboundService {
     private readonly claimRepo: WhatsAppProviderIdentityClaimRepository = new WhatsAppProviderIdentityClaimRepository(),
     private readonly orgRepo: OrganizationRepository = new OrganizationRepository(),
     private readonly zernioClient: ZernioHttpClient = new ZernioHttpClient(),
-    private readonly whatsappConnectionService: WhatsAppConnectionService = new WhatsAppConnectionService()
-  ) {}
+    private readonly whatsappConnectionService: WhatsAppConnectionService = new WhatsAppConnectionService(),
+    providerIdentityVerifier?: WhatsAppProviderIdentityVerificationService
+  ) {
+    this.providerIdentityVerifier = providerIdentityVerifier ?? new WhatsAppProviderIdentityVerificationService(claimRepo);
+  }
+
+  private readonly providerIdentityVerifier: WhatsAppProviderIdentityVerificationService;
 
   async verifyApprovedTemplate(params: {
     accountId: string;
@@ -121,9 +126,15 @@ export class WhatsAppOutboundService {
         );
       }
 
-      const claimId = getClaimId(conn.provider, conn.provider_phone_number_id!);
-      const claim = await this.claimRepo.getClaim(claimId);
-      if (!claim || claim.connection_id !== conn.id || claim.organization_id !== params.organizationId) {
+      try {
+        await this.providerIdentityVerifier.verifyProviderIdentityClaims({
+          connection: conn,
+          organizationId: params.organizationId,
+        });
+      } catch (err) {
+        if (!(err instanceof AppError) || (err.details as { code?: string } | undefined)?.code !== 'INVALID_PROVIDER_CLAIM') {
+          throw err;
+        }
         throw new AppError(
           400,
           'WHATSAPP_CLAIM_INVALID: Claim da conexão inválido ou não pertence à organização.',
