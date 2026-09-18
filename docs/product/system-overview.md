@@ -140,15 +140,17 @@ Funções musicais como Ministro, Vocalista, Violão e Bateria são classificaç
 
 ### WhatsApp Commercial Entitlement
 
-- concessão e fiscalização de capacidade comercial WhatsApp por Organização (Phase 7D2-D8);
+- concessão e fiscalização de capacidade comercial WhatsApp por Organização (Phase 7D2-D8 / 7D2-D8-R1);
 - consumo estrito da projeção canônica do Billing V1 (`ministry_subscriptions` do ministério âncora) através de avaliador comercial puro (`evaluateWhatsAppCommercialEntitlement`), sem I/O de rede ou persistência de estados financeiros paralelos;
 - política declarativa V1: plano Premium possui exatamente 1 conexão WhatsApp incluída; todos os outros planos (Free, Lite, Lite+, Essential, Pro) possuem 0 conexões incluídas; conexões adicionais pagas não são suportadas (0 conexões adicionais);
-- carência operacional de 7 dias civis de faturamento (`grace_period_expires_billing_date`) em `America/Sao_Paulo` permitindo operação contínua e retomada de integrações estagiadas durante atrasos transitórios de renovação;
-- contagem de capacidade particionada e limitada no Firestore (`getConsumingConnections`) abrangendo status operacionais (`connecting`, `connected`, `error`, `disabled_by_user` com limit 10) e reservas `pending` ativas não expiradas (`now < pending_expires_at` com limit 25);
-- fiscalização transacional em novo onboarding (`startOnboarding` e `startZernioOnboarding`), rejeitando com 403 `WHATSAPP_CAPACITY_LIMIT_REACHED` ou `WHATSAPP_SUBSCRIPTION_SUSPENDED`;
-- retomada segura de integrações estagiadas autorizadas (`verifyServerOwnedStagedReservation`) com preservação não-destrutiva de segredos estagiados para recuperação regularizada de assinatura;
-- verificação transacional final no Passo 10 de conclusão (`completeOnboarding`) com precedência rigorosa de limite de capacidade sobre suspensão;
-- linearização atômica transacional no repositório de despacho outbound (`WhatsAppOutboundDispatchRepository.acquireDispatchExecution`) com read-before-write, impedindo despachos operacionais sob planos não habilitados ou inadimplência fora do período de carência.
+- carência operacional de 7 dias civis de faturamento (`grace_period_expires_billing_date`) em `America/Sao_Paulo` permitindo operação contínua e retomada de integrações autorizadas durante atrasos transitórios de renovação;
+- contagem de capacidade exata e limitada via consultas particionadas no Firestore (`getConsumingConnections`): Partição 1 para status operacionais (`connecting`, `connected`, `error`, `disabled_by_user` limit 50); Partição 2 para status `pending` ordenada por `FieldPath.documentId()` em páginas limitadas de 50 registros até 10 páginas (máximo de 500 registros) com saturação fail-closed 429 `CAPACITY_ACCOUNTING_SATURATED`;
+- aplicação estrita da política de expiração malformada (Malformed Pending Policy): apenas datas ISO válidas estritamente no passado deixam de consumir capacidade; datas ausentes, nulas, não-string, whitespace ou inválidas consomem capacidade comercial fail-closed até intervenção operacional;
+- fiscalização transacional em novo onboarding (`startOnboarding` e `startZernioOnboarding`), rejeitando com 403 `WHATSAPP_CAPACITY_LIMIT_REACHED` sob modo normal/grace;
+- admissão comercial durável server-owned (`verifyServerOwnedAdmission`): a admissão comercial é atestada exclusivamente pela prova de 11 pontos dos registros duráveis do servidor, sem exigir progresso ou segredos do provedor, liberando retomada de integrações ativas (estagiadas ou não) dentro de 24h durante carência (`canResumeAuthorizedOnboarding`);
+- limpeza lazy transacional de conexões pendentes expiradas no início do onboarding com obediência estrita à regra do Firestore de precedência total de leituras antes de escritas;
+- verificação transacional final no Passo 10 de conclusão (`completeOnboarding`) com precedência de limite de capacidade e permissão de conclusão durante carência;
+- linearização atômica transacional no repositório de despacho outbound (`WhatsAppOutboundDispatchRepository.acquireDispatchExecution`) com read-before-write e 100% de paridade de fatos com `SubscriptionService` ao reutilizar a contagem centralizada de conexões consumidoras.
 
 ### PWA
 

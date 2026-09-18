@@ -3,11 +3,15 @@ import {
   evaluateWhatsAppCommercialEntitlement,
   consumesCommercialCapacity,
   verifyServerOwnedStagedReservation,
+  verifyServerOwnedAdmission,
   WhatsAppCommercialFacts,
 } from './whatsapp-commercial-evaluator';
 import { OrganizationRecord } from '../organizations/organization.types';
 import { MinistrySubscriptionRecord } from './subscription.types';
-import { WhatsAppConnectionRecord } from '../whatsapp/whatsapp.types';
+import {
+  WhatsAppConnectionRecord,
+  WhatsAppOnboardingSessionRecord,
+} from '../whatsapp/whatsapp.types';
 
 describe('evaluateWhatsAppCommercialEntitlement — Pure Evaluator Suite (Phase 7D2-D8)', () => {
   const orgId = 'org-entitlement-1';
@@ -486,10 +490,60 @@ describe('evaluateWhatsAppCommercialEntitlement — Pure Evaluator Suite (Phase 
         )
       ).toBe(true);
 
+      // Undefined expiration -> fails closed, consumes
+      expect(
+        consumesCommercialCapacity(
+          { status: 'pending', pending_expires_at: undefined as any },
+          now
+        )
+      ).toBe(true);
+
+      // Empty string / whitespace expiration -> fails closed, consumes
+      expect(
+        consumesCommercialCapacity(
+          { status: 'pending', pending_expires_at: '' },
+          now
+        )
+      ).toBe(true);
+      expect(
+        consumesCommercialCapacity(
+          { status: 'pending', pending_expires_at: '   ' },
+          now
+        )
+      ).toBe(true);
+
       // Malformed expiration string -> fails closed, consumes
       expect(
         consumesCommercialCapacity(
           { status: 'pending', pending_expires_at: 'invalid-date-string' },
+          now
+        )
+      ).toBe(true);
+
+      // Non-string runtime types -> fails closed, consumes
+      expect(
+        consumesCommercialCapacity(
+          { status: 'pending', pending_expires_at: 1726660800000 as any },
+          now
+        )
+      ).toBe(true);
+      expect(
+        consumesCommercialCapacity(
+          { status: 'pending', pending_expires_at: true as any },
+          now
+        )
+      ).toBe(true);
+      expect(
+        consumesCommercialCapacity(
+          { status: 'pending', pending_expires_at: {} as any },
+          now
+        )
+      ).toBe(true);
+
+      // Unknown status -> fails closed, consumes
+      expect(
+        consumesCommercialCapacity(
+          { status: 'unknown_status' as any, pending_expires_at: null },
           now
         )
       ).toBe(true);
@@ -597,6 +651,237 @@ describe('evaluateWhatsAppCommercialEntitlement — Pure Evaluator Suite (Phase 
           now: baseNow,
         })
       ).toThrowError(/WHATSAPP_RESTRICTED/);
+    });
+  });
+
+  // --- 11-Point Durable Reservation Proof Suite (Phase 7D2-D8-R1) ---
+  describe('verifyServerOwnedAdmission — 11-Point Durable Proof', () => {
+    const validSessionId = 'wabs-valid-1';
+    const baseConnWithSession: WhatsAppConnectionRecord = {
+      id: 'wac-test-11',
+      organization_id: orgId,
+      display_name: 'Main Line',
+      phone_number: null,
+      provider: 'meta_cloud_api',
+      provider_waba_id: null,
+      provider_phone_number_id: null,
+      status: 'pending',
+      status_reason: null,
+      assigned_ministry_id: null,
+      created_by_user_id: 'user-1',
+      current_onboarding_session_id: validSessionId,
+      pending_expires_at: '2026-09-16T12:00:00.000Z',
+      last_connected_at: null,
+      last_health_check_at: null,
+      created_at: '2026-09-15T12:00:00.000Z',
+      updated_at: '2026-09-15T12:00:00.000Z',
+    };
+
+    const validSession: WhatsAppOnboardingSessionRecord = {
+      id: validSessionId,
+      organization_id: orgId,
+      connection_id: 'wac-test-11',
+      actor_user_id: 'user-1',
+      state_nonce_hash: 'hash-1',
+      status: 'active',
+      provider_progress: 'none',
+      expires_at: '2026-09-15T13:00:00.000Z',
+      retention_expires_at: '2026-10-15T12:00:00.000Z',
+      consumed_at: null,
+      created_at: '2026-09-15T12:00:00.000Z',
+      updated_at: '2026-09-15T12:00:00.000Z',
+    };
+
+    const healthyEntitlement = evaluateWhatsAppCommercialEntitlement({
+      organization: validOrg,
+      anchorMinistry: validAnchorMinistry,
+      subscription: premiumSub,
+      consumingConnectionsCount: 1,
+      now: baseNow,
+    });
+
+    it('Scenario 29a: Valid 11-point proof with linked session passes verification', () => {
+      const result = verifyServerOwnedAdmission({
+        conn: baseConnWithSession,
+        session: validSession,
+        organizationId: orgId,
+        entitlement: healthyEntitlement,
+        now: baseNow,
+      });
+
+      expect(result.valid).toBe(true);
+    });
+
+    it('Scenario 29b: In-flight connecting status reservation passes verification', () => {
+      const result = verifyServerOwnedAdmission({
+        conn: { ...baseConnWithSession, status: 'connecting' },
+        session: validSession,
+        organizationId: orgId,
+        entitlement: healthyEntitlement,
+        now: baseNow,
+      });
+
+      expect(result.valid).toBe(true);
+    });
+
+    it('Scenario 29c: Status not pending and not connecting (e.g. error) throws 400', () => {
+      expect(() =>
+        verifyServerOwnedAdmission({
+          conn: { ...baseConnWithSession, status: 'error' },
+          session: validSession,
+          organizationId: orgId,
+          entitlement: healthyEntitlement,
+          now: baseNow,
+        })
+      ).toThrowError(/INVALID_CONNECTION_STATUS/);
+    });
+
+    it('Scenario 29d: Missing pending_expires_at throws 410', () => {
+      expect(() =>
+        verifyServerOwnedAdmission({
+          conn: { ...baseConnWithSession, pending_expires_at: null },
+          session: validSession,
+          organizationId: orgId,
+          entitlement: healthyEntitlement,
+          now: baseNow,
+        })
+      ).toThrowError(/CONNECTION_RESERVATION_EXPIRED/);
+    });
+
+    it('Scenario 29e: Empty string pending_expires_at throws 410', () => {
+      expect(() =>
+        verifyServerOwnedAdmission({
+          conn: { ...baseConnWithSession, pending_expires_at: '   ' },
+          session: validSession,
+          organizationId: orgId,
+          entitlement: healthyEntitlement,
+          now: baseNow,
+        })
+      ).toThrowError(/CONNECTION_RESERVATION_EXPIRED/);
+    });
+
+    it('Scenario 29f: Unparseable pending_expires_at throws 410', () => {
+      expect(() =>
+        verifyServerOwnedAdmission({
+          conn: { ...baseConnWithSession, pending_expires_at: 'invalid-date' },
+          session: validSession,
+          organizationId: orgId,
+          entitlement: healthyEntitlement,
+          now: baseNow,
+        })
+      ).toThrowError(/CONNECTION_RESERVATION_EXPIRED/);
+    });
+
+    it('Scenario 29g: Session provided but conn.current_onboarding_session_id missing throws 400', () => {
+      expect(() =>
+        verifyServerOwnedAdmission({
+          conn: { ...baseConnWithSession, current_onboarding_session_id: null },
+          session: validSession,
+          organizationId: orgId,
+          entitlement: healthyEntitlement,
+          now: baseNow,
+        })
+      ).toThrowError(/INVALID_ONBOARDING_SESSION/);
+    });
+
+    it('Scenario 29h: Linked session not found (session is null) throws 404', () => {
+      expect(() =>
+        verifyServerOwnedAdmission({
+          conn: baseConnWithSession,
+          session: null,
+          organizationId: orgId,
+          entitlement: healthyEntitlement,
+          now: baseNow,
+        })
+      ).toThrowError(/SESSION_NOT_FOUND/);
+    });
+
+    it('Scenario 29i: Session ID mismatch throws 409', () => {
+      expect(() =>
+        verifyServerOwnedAdmission({
+          conn: baseConnWithSession,
+          session: { ...validSession, id: 'wabs-mismatched-id' },
+          organizationId: orgId,
+          entitlement: healthyEntitlement,
+          now: baseNow,
+        })
+      ).toThrowError(/SESSION_MISMATCH/);
+    });
+
+    it('Scenario 29j: Connection ID mismatch in session throws 409', () => {
+      expect(() =>
+        verifyServerOwnedAdmission({
+          conn: baseConnWithSession,
+          session: { ...validSession, connection_id: 'wac-other-conn' },
+          organizationId: orgId,
+          entitlement: healthyEntitlement,
+          now: baseNow,
+        })
+      ).toThrowError(/SESSION_MISMATCH/);
+    });
+
+    it('Scenario 29k: Organization ID mismatch in session throws 404', () => {
+      expect(() =>
+        verifyServerOwnedAdmission({
+          conn: baseConnWithSession,
+          session: { ...validSession, organization_id: 'other-org' },
+          organizationId: orgId,
+          entitlement: healthyEntitlement,
+          now: baseNow,
+        })
+      ).toThrowError(/SESSION_NOT_FOUND/);
+    });
+
+    it('Scenario 29l: Session status consumed throws 410', () => {
+      expect(() =>
+        verifyServerOwnedAdmission({
+          conn: baseConnWithSession,
+          session: { ...validSession, status: 'consumed' },
+          organizationId: orgId,
+          entitlement: healthyEntitlement,
+          now: baseNow,
+        })
+      ).toThrowError(/SESSION_EXPIRED/);
+    });
+
+    it('Scenario 29m: Session status failed throws 410', () => {
+      expect(() =>
+        verifyServerOwnedAdmission({
+          conn: baseConnWithSession,
+          session: { ...validSession, status: 'failed' },
+          organizationId: orgId,
+          entitlement: healthyEntitlement,
+          now: baseNow,
+        })
+      ).toThrowError(/SESSION_EXPIRED/);
+    });
+
+    it('Scenario 29n: Resumption under payment_grace succeeds when valid reservation is held', () => {
+      const graceEntitlement = evaluateWhatsAppCommercialEntitlement({
+        organization: validOrg,
+        anchorMinistry: validAnchorMinistry,
+        subscription: {
+          ...premiumSub,
+          billing_status: 'past_due',
+          grace_period_expires_billing_date: '2026-09-22',
+        },
+        consumingConnectionsCount: 1,
+        now: baseNow,
+      });
+
+      expect(graceEntitlement.state).toBe('payment_grace');
+      expect(graceEntitlement.canCreateConnection).toBe(false);
+      expect(graceEntitlement.canResumeAuthorizedOnboarding).toBe(true);
+
+      const result = verifyServerOwnedAdmission({
+        conn: baseConnWithSession,
+        session: validSession,
+        organizationId: orgId,
+        entitlement: graceEntitlement,
+        now: baseNow,
+      });
+
+      expect(result.valid).toBe(true);
     });
   });
 });

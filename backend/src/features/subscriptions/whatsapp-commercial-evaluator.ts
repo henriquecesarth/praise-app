@@ -2,7 +2,11 @@ import { OrganizationRecord } from '../organizations/organization.types';
 import { MinistrySubscriptionRecord } from './subscription.types';
 import { getIncludedWhatsAppConnections, DEFAULT_PLAN_ID } from '../../config/plans.config';
 import { getBillingDate } from '../../utils/billing-date';
-import { WhatsAppConnectionRecord, WhatsAppConnectionStatus } from '../whatsapp/whatsapp.types';
+import {
+  WhatsAppConnectionRecord,
+  WhatsAppConnectionStatus,
+  WhatsAppOnboardingSessionRecord,
+} from '../whatsapp/whatsapp.types';
 import { AppError } from '../../middleware/error-handler';
 
 export type WhatsAppCommercialState =
@@ -70,20 +74,37 @@ export function consumesCommercialCapacity(
     return true;
   }
 
+  if (conn.status === 'disconnected') {
+    return false;
+  }
+
   if (conn.status === 'pending') {
-    if (!conn.pending_expires_at) {
-      // Expiry ausente ou nulo: fail-closed (considera ativo para não burlar limites)
+    // Malformed pending policy:
+    // - null or undefined: fail-closed -> true
+    if (conn.pending_expires_at === null || conn.pending_expires_at === undefined) {
       return true;
     }
-    const expires = new Date(conn.pending_expires_at);
+    // - non-string runtime types (e.g. number, boolean, object): fail-closed -> true
+    if (typeof conn.pending_expires_at !== 'string') {
+      return true;
+    }
+    // - empty string or whitespace-only: fail-closed -> true
+    const trimmed = conn.pending_expires_at.trim();
+    if (trimmed.length === 0) {
+      return true;
+    }
+    // - unparseable date string: fail-closed -> true
+    const expires = new Date(trimmed);
     if (isNaN(expires.getTime())) {
-      // Expiry malformado: fail-closed
       return true;
     }
+    // - valid date > now: active reservation -> true
+    // - valid date <= now: validly expired -> false
     return expires.getTime() > now.getTime();
   }
 
-  return false;
+  // Any unknown status: fail-closed -> true
+  return true;
 }
 
 /**
@@ -338,48 +359,138 @@ export function evaluateWhatsAppCommercialEntitlement(
   };
 }
 
-export interface VerifyServerOwnedStagedReservationParams {
+export interface VerifyServerOwnedAdmissionParams {
   conn: WhatsAppConnectionRecord;
+  session?: WhatsAppOnboardingSessionRecord | null;
   organizationId: string;
   entitlement: WhatsAppCommercialEntitlementResult;
   now?: Date;
 }
 
 /**
- * Validador de reserva estagiada para retomada autorizada de onboarding (Phase 7D2-D8).
+ * Validador canônico de prova durável de admissão comercial server-owned (Phase 7D2-D8-R1).
+ *
+ * A admissão comercial ocorre quando a transação de reserva no servidor confirma,
+ * e NÃO depende de progresso no provedor (OAuth Meta, profile Zernio ou staging de secrets).
+ *
+ * Executa a prova durável de 11 pontos:
+ * 1. conn.organization_id === target organization (404)
+ * 2. conn.status in ['pending', 'connecting'] (409 se connected, 410 se disconnected, 400 caso contrário)
+ * 3. conn.pending_expires_at existe (410)
+ * 4. conn.pending_expires_at é analisável (410)
+ * 5. new Date(conn.pending_expires_at) > txNow (410)
+ * 6. conn.current_onboarding_session_id existe (400)
+ * 7. sessão vinculada existe (404)
+ * 8. conn.current_onboarding_session_id === session.id (409)
+ * 9. session.connection_id === conn.id (409)
+ * 10. session.organization_id === target organization (404)
+ * 11. session.status !== 'consumed' && session.status !== 'failed' (410)
  */
-export function verifyServerOwnedStagedReservation(
-  params: VerifyServerOwnedStagedReservationParams
+export function verifyServerOwnedAdmission(
+  params: VerifyServerOwnedAdmissionParams
 ): { valid: true } {
-  const { conn, organizationId, entitlement, now = new Date() } = params;
+  const { conn, session, organizationId, entitlement, now = new Date() } = params;
 
-  if (conn.organization_id !== organizationId) {
+  // Point 1: conn.organization_id === target organization (404)
+  if (!conn || conn.organization_id !== organizationId) {
     throw new AppError(404, 'CONNECTION_NOT_FOUND: Conexão não encontrada nesta organização.', {
       code: 'CONNECTION_NOT_FOUND',
     });
   }
 
+  // Point 2: conn.status in ['pending', 'connecting']
   if (conn.status === 'connected') {
     throw new AppError(409, 'CONNECTION_ALREADY_CONNECTED: Conexão já conectada.', {
       code: 'CONNECTION_ALREADY_CONNECTED',
     });
   }
-
   if (conn.status === 'disconnected') {
     throw new AppError(410, 'CONNECTION_RESERVATION_EXPIRED: Reserva de conexão expirada.', {
       code: 'CONNECTION_RESERVATION_EXPIRED',
     });
   }
+  if (conn.status !== 'pending' && conn.status !== 'connecting') {
+    throw new AppError(400, 'INVALID_CONNECTION_STATUS: Status da conexão inválido para retomada.', {
+      code: 'INVALID_CONNECTION_STATUS',
+    });
+  }
 
-  if (conn.status === 'pending' && conn.pending_expires_at) {
-    const expires = new Date(conn.pending_expires_at);
-    if (!isNaN(expires.getTime()) && expires.getTime() <= now.getTime()) {
-      throw new AppError(410, 'CONNECTION_RESERVATION_EXPIRED: Prazo de 24 horas da reserva expirado.', {
-        code: 'CONNECTION_RESERVATION_EXPIRED',
+  // Point 3: conn.pending_expires_at existe (410)
+  if (
+    !conn.pending_expires_at ||
+    typeof conn.pending_expires_at !== 'string' ||
+    conn.pending_expires_at.trim().length === 0
+  ) {
+    throw new AppError(410, 'CONNECTION_RESERVATION_EXPIRED: Reserva de conexão não possui data de expiração válida.', {
+      code: 'CONNECTION_RESERVATION_EXPIRED',
+    });
+  }
+
+  // Point 4: conn.pending_expires_at é analisável (410)
+  const expires = new Date(conn.pending_expires_at.trim());
+  if (isNaN(expires.getTime())) {
+    throw new AppError(410, 'CONNECTION_RESERVATION_EXPIRED: Data de expiração da reserva inválida.', {
+      code: 'CONNECTION_RESERVATION_EXPIRED',
+    });
+  }
+
+  // Point 5: new Date(conn.pending_expires_at) > txNow (410)
+  if (expires.getTime() <= now.getTime()) {
+    throw new AppError(410, 'CONNECTION_RESERVATION_EXPIRED: Prazo de 24 horas da reserva expirado.', {
+      code: 'CONNECTION_RESERVATION_EXPIRED',
+    });
+  }
+
+  // Pontos 6 a 11: Validação de sessão vinculada quando a sessão é fornecida
+  if (session !== undefined) {
+    // Point 6: conn.current_onboarding_session_id existe (400)
+    if (
+      !conn.current_onboarding_session_id ||
+      typeof conn.current_onboarding_session_id !== 'string' ||
+      conn.current_onboarding_session_id.trim().length === 0
+    ) {
+      throw new AppError(400, 'INVALID_ONBOARDING_SESSION: Conexão não possui sessão de onboarding vinculada.', {
+        code: 'INVALID_ONBOARDING_SESSION',
+      });
+    }
+
+    // Point 7: sessão vinculada existe (404)
+    if (!session) {
+      throw new AppError(404, 'SESSION_NOT_FOUND: Sessão de onboarding vinculada não encontrada.', {
+        code: 'SESSION_NOT_FOUND',
+      });
+    }
+
+    // Point 8: conn.current_onboarding_session_id === session.id (409)
+    if (conn.current_onboarding_session_id !== session.id) {
+      throw new AppError(409, 'SESSION_MISMATCH: Sessão de onboarding divergente da conexão.', {
+        code: 'SESSION_MISMATCH',
+      });
+    }
+
+    // Point 9: session.connection_id === conn.id (409)
+    if (session.connection_id !== conn.id) {
+      throw new AppError(409, 'SESSION_MISMATCH: Sessão de onboarding vinculada a outra conexão.', {
+        code: 'SESSION_MISMATCH',
+      });
+    }
+
+    // Point 10: session.organization_id === target organization (404)
+    if (session.organization_id !== organizationId) {
+      throw new AppError(404, 'SESSION_NOT_FOUND: Sessão de onboarding não encontrada nesta organização.', {
+        code: 'SESSION_NOT_FOUND',
+      });
+    }
+
+    // Point 11: session.status !== 'consumed' && session.status !== 'failed' (410)
+    if (session.status === 'consumed' || session.status === 'failed') {
+      throw new AppError(410, 'SESSION_EXPIRED: Sessão de onboarding encerrada ou inválida para retomada.', {
+        code: 'SESSION_EXPIRED',
       });
     }
   }
 
+  // Barreira comercial: apenas canResumeAuthorizedOnboarding é exigido para retomar reserva admitida
   if (!entitlement.canResumeAuthorizedOnboarding) {
     throw new AppError(
       403,
@@ -391,4 +502,15 @@ export function verifyServerOwnedStagedReservation(
   }
 
   return { valid: true };
+}
+
+export type VerifyServerOwnedStagedReservationParams = VerifyServerOwnedAdmissionParams;
+
+/**
+ * Alias retrocompatível com Phase 7D2-D8.
+ */
+export function verifyServerOwnedStagedReservation(
+  params: VerifyServerOwnedStagedReservationParams
+): { valid: true } {
+  return verifyServerOwnedAdmission(params);
 }

@@ -11,6 +11,7 @@ import { OrganizationRecord } from '../organizations/organization.types';
 import { MinistrySubscriptionRecord } from './subscription.types';
 import { AppError } from '../../middleware/error-handler';
 import { getBillingDate } from '../../utils/billing-date';
+import { verifyServerOwnedAdmission } from './whatsapp-commercial-evaluator';
 
 describe('WhatsApp Commercial Entitlement Integration Suite (Phase 7D2-D8)', { timeout: 30000 }, () => {
   const connectionRepo = new WhatsAppConnectionRepository();
@@ -193,6 +194,414 @@ describe('WhatsApp Commercial Entitlement Integration Suite (Phase 7D2-D8)', { t
       expect(returnedIds).toContain(c6);
       expect(returnedIds).not.toContain(c7);
       expect(returnedIds).not.toContain(c8);
+    });
+
+    it('handles > 25 expired pending + 1 active pending: active pending is correctly accounted for and not hidden', async () => {
+      const orgId = uniqueId('org_adv1');
+      const anchorMinId = uniqueId('min_adv1');
+      await setupTestOrganization({ orgId, anchorMinistryId: anchorMinId });
+
+      const now = new Date('2026-09-18T12:00:00.000Z');
+      const pastExpiry = new Date(now.getTime() - 2 * 3600 * 1000).toISOString();
+      const futureExpiry = new Date(now.getTime() + 2 * 3600 * 1000).toISOString();
+
+      // Create 28 expired pending connections
+      for (let i = 0; i < 28; i++) {
+        const id = uniqueId(`wac_exp_${i}`);
+        await db.collection('whatsapp_connections').doc(id).set({
+          id,
+          organization_id: orgId,
+          display_name: `Expired Pending ${i}`,
+          status: 'pending',
+          pending_expires_at: pastExpiry,
+          created_at: new Date(now.getTime() - 10000 - i * 100).toISOString(),
+          updated_at: new Date(now.getTime() - 10000 - i * 100).toISOString(),
+        });
+      }
+
+      // Create 1 active pending connection
+      const activeId = uniqueId('wac_active');
+      await db.collection('whatsapp_connections').doc(activeId).set({
+        id: activeId,
+        organization_id: orgId,
+        display_name: 'Active Pending',
+        status: 'pending',
+        pending_expires_at: futureExpiry,
+        created_at: new Date(now.getTime() - 5000).toISOString(),
+        updated_at: new Date(now.getTime() - 5000).toISOString(),
+      });
+
+      const count = await connectionRepo.countConsumingConnections(orgId, now);
+      expect(count).toBe(1);
+
+      const consuming = await connectionRepo.getConsumingConnections(orgId, now);
+      expect(consuming.length).toBe(1);
+      expect(consuming[0].id).toBe(activeId);
+    });
+
+    it('handles > 25 expired pending + 1 malformed pending: malformed pending fails closed and is counted', async () => {
+      const orgId = uniqueId('org_adv2');
+      const anchorMinId = uniqueId('min_adv2');
+      await setupTestOrganization({ orgId, anchorMinistryId: anchorMinId });
+
+      const now = new Date('2026-09-18T12:00:00.000Z');
+      const pastExpiry = new Date(now.getTime() - 2 * 3600 * 1000).toISOString();
+
+      for (let i = 0; i < 28; i++) {
+        const id = uniqueId(`wac_exp2_${i}`);
+        await db.collection('whatsapp_connections').doc(id).set({
+          id,
+          organization_id: orgId,
+          display_name: `Expired Pending ${i}`,
+          status: 'pending',
+          pending_expires_at: pastExpiry,
+          created_at: new Date(now.getTime() - 10000 - i * 100).toISOString(),
+          updated_at: new Date(now.getTime() - 10000 - i * 100).toISOString(),
+        });
+      }
+
+      const malformedId = uniqueId('wac_malformed');
+      await db.collection('whatsapp_connections').doc(malformedId).set({
+        id: malformedId,
+        organization_id: orgId,
+        display_name: 'Malformed Pending',
+        status: 'pending',
+        pending_expires_at: 'corrupted-timestamp',
+        created_at: new Date(now.getTime() - 5000).toISOString(),
+        updated_at: new Date(now.getTime() - 5000).toISOString(),
+      });
+
+      const count = await connectionRepo.countConsumingConnections(orgId, now);
+      expect(count).toBe(1);
+
+      const consuming = await connectionRepo.getConsumingConnections(orgId, now);
+      expect(consuming.length).toBe(1);
+      expect(consuming[0].id).toBe(malformedId);
+    });
+
+    it('handles stable connection + many expired pending: stable connection is not hidden', async () => {
+      const orgId = uniqueId('org_adv3');
+      const anchorMinId = uniqueId('min_adv3');
+      await setupTestOrganization({ orgId, anchorMinistryId: anchorMinId });
+
+      const now = new Date('2026-09-18T12:00:00.000Z');
+      const pastExpiry = new Date(now.getTime() - 2 * 3600 * 1000).toISOString();
+
+      for (let i = 0; i < 30; i++) {
+        const id = uniqueId(`wac_exp3_${i}`);
+        await db.collection('whatsapp_connections').doc(id).set({
+          id,
+          organization_id: orgId,
+          display_name: `Expired Pending ${i}`,
+          status: 'pending',
+          pending_expires_at: pastExpiry,
+          created_at: new Date(now.getTime() - 10000 - i * 100).toISOString(),
+          updated_at: new Date(now.getTime() - 10000 - i * 100).toISOString(),
+        });
+      }
+
+      const connectedId = uniqueId('wac_stable');
+      await db.collection('whatsapp_connections').doc(connectedId).set({
+        id: connectedId,
+        organization_id: orgId,
+        display_name: 'Stable Connected Line',
+        status: 'connected',
+        provider: 'meta_cloud_api',
+        created_at: new Date(now.getTime() - 20000).toISOString(),
+        updated_at: new Date(now.getTime() - 20000).toISOString(),
+      });
+
+      const count = await connectionRepo.countConsumingConnections(orgId, now);
+      expect(count).toBe(1);
+
+      const consuming = await connectionRepo.getConsumingConnections(orgId, now);
+      expect(consuming.length).toBe(1);
+      expect(consuming[0].id).toBe(connectedId);
+    });
+
+    it('accounts for document missing created_at field without omitting it', async () => {
+      const orgId = uniqueId('org_adv4');
+      const anchorMinId = uniqueId('min_adv4');
+      await setupTestOrganization({ orgId, anchorMinistryId: anchorMinId });
+
+      const now = new Date('2026-09-18T12:00:00.000Z');
+      const futureExpiry = new Date(now.getTime() + 2 * 3600 * 1000).toISOString();
+
+      const noCreatedDocId = uniqueId('wac_no_created_at');
+      // Document explicitly lacks created_at
+      await db.collection('whatsapp_connections').doc(noCreatedDocId).set({
+        id: noCreatedDocId,
+        organization_id: orgId,
+        display_name: 'No Created At Pending',
+        status: 'pending',
+        pending_expires_at: futureExpiry,
+      });
+
+      const count = await connectionRepo.countConsumingConnections(orgId, now);
+      expect(count).toBe(1);
+
+      const consuming = await connectionRepo.getConsumingConnections(orgId, now);
+      expect(consuming.length).toBe(1);
+      expect(consuming[0].id).toBe(noCreatedDocId);
+    });
+
+    it('accounts for documents with null and undefined expiry by failing closed', async () => {
+      const orgId = uniqueId('org_adv5');
+      const anchorMinId = uniqueId('min_adv5');
+      await setupTestOrganization({ orgId, anchorMinistryId: anchorMinId });
+
+      const now = new Date('2026-09-18T12:00:00.000Z');
+
+      const nullExpiryId = uniqueId('wac_null_exp');
+      await db.collection('whatsapp_connections').doc(nullExpiryId).set({
+        id: nullExpiryId,
+        organization_id: orgId,
+        display_name: 'Null Expiry Pending',
+        status: 'pending',
+        pending_expires_at: null,
+      });
+
+      const missingExpiryId = uniqueId('wac_missing_exp');
+      await db.collection('whatsapp_connections').doc(missingExpiryId).set({
+        id: missingExpiryId,
+        organization_id: orgId,
+        display_name: 'Missing Expiry Pending',
+        status: 'pending',
+      });
+
+      const count = await connectionRepo.countConsumingConnections(orgId, now);
+      expect(count).toBe(2);
+    });
+
+    it('accounts for document with malformed string and runtime number types by failing closed', async () => {
+      const orgId = uniqueId('org_adv6');
+      const anchorMinId = uniqueId('min_adv6');
+      await setupTestOrganization({ orgId, anchorMinistryId: anchorMinId });
+
+      const now = new Date('2026-09-18T12:00:00.000Z');
+
+      const badStringId = uniqueId('wac_bad_str');
+      await db.collection('whatsapp_connections').doc(badStringId).set({
+        id: badStringId,
+        organization_id: orgId,
+        display_name: 'Empty String Expiry',
+        status: 'pending',
+        pending_expires_at: '   ',
+      });
+
+      const numberTypeId = uniqueId('wac_number_type');
+      await db.collection('whatsapp_connections').doc(numberTypeId).set({
+        id: numberTypeId,
+        organization_id: orgId,
+        display_name: 'Number Expiry',
+        status: 'pending',
+        pending_expires_at: 1726660800000,
+      });
+
+      const count = await connectionRepo.countConsumingConnections(orgId, now);
+      expect(count).toBe(2);
+    });
+
+    it('treats exact boundary (expiry == now) as non-consuming (validly expired)', async () => {
+      const orgId = uniqueId('org_adv7');
+      const anchorMinId = uniqueId('min_adv7');
+      await setupTestOrganization({ orgId, anchorMinistryId: anchorMinId });
+
+      const now = new Date('2026-09-18T12:00:00.000Z');
+
+      const exactBoundaryId = uniqueId('wac_exact_bound');
+      await db.collection('whatsapp_connections').doc(exactBoundaryId).set({
+        id: exactBoundaryId,
+        organization_id: orgId,
+        display_name: 'Exact Boundary Pending',
+        status: 'pending',
+        pending_expires_at: now.toISOString(),
+      });
+
+      const count = await connectionRepo.countConsumingConnections(orgId, now);
+      expect(count).toBe(0);
+    });
+
+    it('permits resumption under payment_grace when reservation is held even without provider progress', async () => {
+      const orgId = uniqueId('org_grace_resume');
+      const anchorMinId = uniqueId('min_grace_resume');
+      const now = new Date('2026-09-18T12:00:00.000Z');
+      const futureExpiry = new Date(now.getTime() + 20 * 3600 * 1000).toISOString();
+
+      await setupTestOrganization({
+        orgId,
+        anchorMinistryId: anchorMinId,
+        planId: 'premium',
+        billingStatus: 'past_due',
+        graceDate: '2026-09-24',
+      });
+
+      const connId = uniqueId('wac_grace_hold');
+      const sessionId = uniqueId('wabs_grace_hold');
+
+      const connRecord: WhatsAppConnectionRecord = {
+        id: connId,
+        organization_id: orgId,
+        display_name: 'Grace Admitted Line',
+        phone_number: null,
+        provider: 'meta_cloud_api',
+        provider_waba_id: null,
+        provider_phone_number_id: null,
+        status: 'pending',
+        status_reason: null,
+        assigned_ministry_id: null,
+        created_by_user_id: 'user_1',
+        current_onboarding_session_id: sessionId,
+        pending_expires_at: futureExpiry,
+        last_connected_at: null,
+        last_health_check_at: null,
+        created_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      };
+      await db.collection('whatsapp_connections').doc(connId).set(connRecord);
+
+      const sessionRecord = {
+        id: sessionId,
+        organization_id: orgId,
+        connection_id: connId,
+        actor_user_id: 'user_1',
+        state_nonce_hash: 'dummy_hash',
+        status: 'active',
+        provider_progress: 'none', // NO provider progress!
+        expires_at: new Date(now.getTime() + 15 * 60 * 1000).toISOString(),
+        retention_expires_at: new Date(now.getTime() + 30 * 24 * 3600 * 1000).toISOString(),
+        consumed_at: null,
+        created_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      };
+      await db.collection('whatsapp_onboarding_sessions').doc(sessionId).set(sessionRecord);
+
+      const entitlement = await subService.getOrganizationCommercialEntitlement(orgId, now);
+      expect(entitlement.state).toBe('payment_grace');
+      expect(entitlement.canCreateConnection).toBe(false);
+      expect(entitlement.canResumeAuthorizedOnboarding).toBe(true);
+
+      const admissionResult = verifyServerOwnedAdmission({
+        conn: connRecord,
+        session: sessionRecord as any,
+        organizationId: orgId,
+        entitlement,
+        now,
+      });
+      expect(admissionResult.valid).toBe(true);
+    });
+
+    it('permits in-flight connecting status reservation resumption', async () => {
+      const orgId = uniqueId('org_connecting');
+      const anchorMinId = uniqueId('min_connecting');
+      const now = new Date('2026-09-18T12:00:00.000Z');
+      const futureExpiry = new Date(now.getTime() + 20 * 3600 * 1000).toISOString();
+
+      await setupTestOrganization({ orgId, anchorMinistryId: anchorMinId });
+
+      const connId = uniqueId('wac_connecting');
+      const sessionId = uniqueId('wabs_connecting');
+
+      const connRecord: WhatsAppConnectionRecord = {
+        id: connId,
+        organization_id: orgId,
+        display_name: 'In-Flight Connecting Line',
+        phone_number: null,
+        provider: 'zernio',
+        provider_waba_id: null,
+        provider_phone_number_id: null,
+        status: 'connecting',
+        status_reason: null,
+        assigned_ministry_id: null,
+        created_by_user_id: 'user_1',
+        current_onboarding_session_id: sessionId,
+        pending_expires_at: futureExpiry,
+        last_connected_at: null,
+        last_health_check_at: null,
+        created_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      };
+      await db.collection('whatsapp_connections').doc(connId).set(connRecord);
+
+      const sessionRecord = {
+        id: sessionId,
+        organization_id: orgId,
+        connection_id: connId,
+        actor_user_id: 'user_1',
+        state_nonce_hash: 'dummy_hash',
+        status: 'active',
+        provider_progress: 'none',
+        expires_at: new Date(now.getTime() + 15 * 60 * 1000).toISOString(),
+        retention_expires_at: new Date(now.getTime() + 30 * 24 * 3600 * 1000).toISOString(),
+        consumed_at: null,
+        created_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      };
+      await db.collection('whatsapp_onboarding_sessions').doc(sessionId).set(sessionRecord);
+
+      const entitlement = await subService.getOrganizationCommercialEntitlement(orgId, now);
+      expect(entitlement.canResumeAuthorizedOnboarding).toBe(true);
+
+      const admissionResult = verifyServerOwnedAdmission({
+        conn: connRecord,
+        session: sessionRecord as any,
+        organizationId: orgId,
+        entitlement,
+        now,
+      });
+      expect(admissionResult.valid).toBe(true);
+    });
+
+    it('handles concurrent capacity mutation during D6 dispatch admission with transaction retry', async () => {
+      const orgId = uniqueId('org_tx_concur');
+      const anchorMinId = uniqueId('min_tx_concur');
+      await setupTestOrganization({ orgId, anchorMinistryId: anchorMinId });
+
+      const now = new Date('2026-09-18T12:00:00.000Z');
+      const dispatchId = uniqueId('disp_tx');
+      const connectionId = uniqueId('wac_tx');
+      const fingerprint = crypto.createHash('sha256').update(dispatchId).digest('hex');
+
+      await db.collection('whatsapp_connections').doc(connectionId).set({
+        id: connectionId,
+        organization_id: orgId,
+        display_name: 'Conn 1',
+        status: 'connected',
+        provider: 'zernio',
+        created_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      });
+
+      await db.collection('whatsapp_outbound_dispatches').doc(dispatchId).set({
+        id: dispatchId,
+        organization_id: orgId,
+        connection_id: connectionId,
+        provider_account_id: 'acc_1',
+        recipient_e164: '+5511999999999',
+        recipient_participant_id: 'part_1',
+        dispatch_kind: 'proactive_template',
+        status: 'pending',
+        phase: 'prepared',
+        request_fingerprint: fingerprint,
+        request_execution_id: null,
+        request_lease_until: null,
+        send_started_at: null,
+        retry_count: 0,
+        max_retries: 3,
+        created_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      });
+
+      const acquireResult = await dispatchRepo.acquireDispatchExecution({
+        dispatchId,
+        organizationId: orgId,
+        connectionId,
+        requestFingerprint: fingerprint,
+      });
+      expect(acquireResult.outcome).toBe('acquired');
+      if (acquireResult.outcome === 'acquired') {
+        expect(acquireResult.executionId).toBeDefined();
+      }
     });
   });
 

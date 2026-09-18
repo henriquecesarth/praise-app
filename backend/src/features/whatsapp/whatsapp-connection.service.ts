@@ -24,8 +24,8 @@ import { MinistrySubscriptionRecord } from '../subscriptions/subscription.types'
 import { validateConnectionTransition } from './whatsapp-transition.validator';
 import {
   evaluateWhatsAppCommercialEntitlement,
-  consumesCommercialCapacity,
   verifyServerOwnedStagedReservation,
+  verifyServerOwnedAdmission,
 } from '../subscriptions/whatsapp-commercial-evaluator';
 import {
   WhatsAppConnectionRecord,
@@ -846,41 +846,17 @@ export class WhatsAppConnectionService {
           });
         }
         const conn = connDoc.data() as WhatsAppConnectionRecord;
-        if (conn.organization_id !== orgId) {
-          throw new AppError(404, 'CONNECTION_NOT_FOUND: Conexão não encontrada nesta organização.', {
-            code: 'CONNECTION_NOT_FOUND',
-          });
-        }
         if (conn.provider !== 'zernio') {
           throw new AppError(400, 'Esta conexão não pertence ao provedor Zernio.', {
             code: 'INVALID_PROVIDER',
           });
         }
-        if (conn.status === 'connected') {
-          throw new AppError(409, 'CONNECTION_ALREADY_CONNECTED: Conexão já conectada.', {
-            code: 'CONNECTION_ALREADY_CONNECTED',
-          });
-        }
-        if (conn.status === 'disconnected') {
-          throw new AppError(410, 'CONNECTION_RESERVATION_EXPIRED: Reserva de conexão expirada.', {
-            code: 'CONNECTION_RESERVATION_EXPIRED',
-          });
-        }
-        if (conn.pending_expires_at && new Date(conn.pending_expires_at) <= now) {
-          tx.update(connRef, {
-            status: 'disconnected',
-            status_reason: 'PENDING_EXPIRED',
-            pending_expires_at: null,
-            assigned_ministry_id: null,
-            updated_at: nowIso,
-          });
-          throw new AppError(410, 'CONNECTION_RESERVATION_EXPIRED: Prazo de 24 horas da reserva expirado.', {
-            code: 'CONNECTION_RESERVATION_EXPIRED',
-          });
-        }
 
         const orgRef = db.collection('organizations').doc(orgId);
         const orgDoc = await tx.get(orgRef);
+        if (!orgDoc.exists) {
+          throw new AppError(404, 'Organização não encontrada.');
+        }
         const org = { id: orgDoc.id, ...orgDoc.data() } as OrganizationRecord;
 
         const anchorMinistryRef = db.collection('ministries').doc(org.billing_anchor_ministry_id);
@@ -891,24 +867,7 @@ export class WhatsAppConnectionService {
         const subDoc = await tx.get(subRef);
         const sub = subDoc.exists ? ({ id: subDoc.id, ...subDoc.data() } as MinistrySubscriptionRecord) : null;
 
-        let p1 = db.collection('whatsapp_connections')
-          .where('organization_id', '==', orgId)
-          .where('status', 'in', ['connecting', 'connected', 'error', 'disabled_by_user']);
-        if (typeof (p1 as any).limit === 'function') p1 = (p1 as any).limit(10);
-        let p2 = db.collection('whatsapp_connections')
-          .where('organization_id', '==', orgId)
-          .where('status', 'in', ['pending']);
-        if (typeof (p2 as any).orderBy === 'function') p2 = (p2 as any).orderBy('created_at', 'desc');
-        if (typeof (p2 as any).limit === 'function') p2 = (p2 as any).limit(25);
-
-        const [snap1, snap2] = await Promise.all([tx.get(p1), tx.get(p2)]);
-        let consumingCount = 0;
-        for (const d of snap1.docs) {
-          if (consumesCommercialCapacity(d.data() as any, now)) consumingCount++;
-        }
-        for (const d of snap2.docs) {
-          if (consumesCommercialCapacity(d.data() as any, now)) consumingCount++;
-        }
+        const consumingCount = await this.connectionRepo.countConsumingConnections(orgId, now, tx);
 
         const entitlement = evaluateWhatsAppCommercialEntitlement({
           organization: org,
@@ -918,11 +877,18 @@ export class WhatsAppConnectionService {
           now,
         });
 
-        if (!entitlement.canResumeAuthorizedOnboarding) {
-          throw new AppError(403, 'A organização não possui capacidade comercial para retomar onboarding.', {
-            code: 'WHATSAPP_SUBSCRIPTION_SUSPENDED',
-          });
-        }
+        const sessionDoc = conn.current_onboarding_session_id
+          ? await tx.get(db.collection('whatsapp_onboarding_sessions').doc(conn.current_onboarding_session_id))
+          : null;
+        const priorSession = sessionDoc?.exists ? (sessionDoc.data() as WhatsAppOnboardingSessionRecord) : null;
+
+        verifyServerOwnedAdmission({
+          conn,
+          session: priorSession,
+          organizationId: orgId,
+          entitlement,
+          now,
+        });
 
         if (conn.current_onboarding_session_id) {
           const priorSessionRef = db.collection('whatsapp_onboarding_sessions').doc(conn.current_onboarding_session_id);
@@ -972,38 +938,10 @@ export class WhatsAppConnectionService {
         const subDoc = await tx.get(subRef);
         const sub = subDoc.exists ? ({ id: subDoc.id, ...subDoc.data() } as MinistrySubscriptionRecord) : null;
 
-        let p1 = db.collection('whatsapp_connections')
-          .where('organization_id', '==', orgId)
-          .where('status', 'in', ['connecting', 'connected', 'error', 'disabled_by_user']);
-        if (typeof (p1 as any).limit === 'function') p1 = (p1 as any).limit(10);
-        let p2 = db.collection('whatsapp_connections')
-          .where('organization_id', '==', orgId)
-          .where('status', 'in', ['pending']);
-        if (typeof (p2 as any).orderBy === 'function') p2 = (p2 as any).orderBy('created_at', 'desc');
-        if (typeof (p2 as any).limit === 'function') p2 = (p2 as any).limit(25);
-
-        const [snap1, snap2] = await Promise.all([tx.get(p1), tx.get(p2)]);
-        let activeConfiguredCount = 0;
-        for (const doc of snap1.docs) {
-          if (consumesCommercialCapacity(doc.data() as any, now)) activeConfiguredCount++;
-        }
-        for (const doc of snap2.docs) {
-          const conn = doc.data() as WhatsAppConnectionRecord;
-          if (conn.status === 'pending') {
-            const isExpired = conn.pending_expires_at && new Date(conn.pending_expires_at) <= now;
-            if (isExpired) {
-              tx.update(doc.ref, {
-                status: 'disconnected',
-                status_reason: 'PENDING_EXPIRED',
-                pending_expires_at: null,
-                assigned_ministry_id: null,
-                updated_at: nowIso,
-              });
-              continue;
-            }
-          }
-          if (consumesCommercialCapacity(conn, now)) activeConfiguredCount++;
-        }
+        const activeConfiguredCount = await this.connectionRepo.countConsumingConnections(orgId, now, tx, {
+          disconnectExpired: true,
+          nowIso,
+        });
 
         const entitlement = evaluateWhatsAppCommercialEntitlement({
           organization: org,
@@ -1870,33 +1808,6 @@ export class WhatsAppConnectionService {
           });
         }
         const conn = connDoc.data() as WhatsAppConnectionRecord;
-        if (conn.organization_id !== orgId) {
-          throw new AppError(404, 'CONNECTION_NOT_FOUND: Conexão não encontrada nesta organização.', {
-            code: 'CONNECTION_NOT_FOUND',
-          });
-        }
-        if (conn.status === 'connected') {
-          throw new AppError(409, 'CONNECTION_ALREADY_CONNECTED: Conexão já conectada.', {
-            code: 'CONNECTION_ALREADY_CONNECTED',
-          });
-        }
-        if (conn.status === 'disconnected') {
-          throw new AppError(410, 'CONNECTION_RESERVATION_EXPIRED: Reserva de conexão expirada.', {
-            code: 'CONNECTION_RESERVATION_EXPIRED',
-          });
-        }
-        if (conn.pending_expires_at && new Date(conn.pending_expires_at) <= now) {
-          tx.update(connRef, {
-            status: 'disconnected',
-            status_reason: 'PENDING_EXPIRED',
-            pending_expires_at: null,
-            assigned_ministry_id: null,
-            updated_at: nowIso,
-          });
-          throw new AppError(410, 'CONNECTION_RESERVATION_EXPIRED: Prazo de 24 horas da reserva expirado.', {
-            code: 'CONNECTION_RESERVATION_EXPIRED',
-          });
-        }
 
         const orgRef = db.collection('organizations').doc(orgId);
         const orgDoc = await tx.get(orgRef);
@@ -1910,30 +1821,26 @@ export class WhatsAppConnectionService {
         const subDoc = await tx.get(subRef);
         const sub = subDoc.exists ? ({ id: subDoc.id, ...subDoc.data() } as MinistrySubscriptionRecord) : null;
 
-        let p1 = db.collection('whatsapp_connections')
-          .where('organization_id', '==', orgId)
-          .where('status', 'in', ['connecting', 'connected', 'error', 'disabled_by_user']);
-        if (typeof (p1 as any).limit === 'function') p1 = (p1 as any).limit(10);
-        let p2 = db.collection('whatsapp_connections')
-          .where('organization_id', '==', orgId)
-          .where('status', 'in', ['pending']);
-        if (typeof (p2 as any).orderBy === 'function') p2 = (p2 as any).orderBy('created_at', 'desc');
-        if (typeof (p2 as any).limit === 'function') p2 = (p2 as any).limit(25);
-
-        const [snap1, snap2] = await Promise.all([tx.get(p1), tx.get(p2)]);
-        let consumingCount = 0;
-        for (const d of snap1.docs) {
-          if (consumesCommercialCapacity(d.data() as any, now)) consumingCount++;
-        }
-        for (const d of snap2.docs) {
-          if (consumesCommercialCapacity(d.data() as any, now)) consumingCount++;
-        }
+        const consumingCount = await this.connectionRepo.countConsumingConnections(orgId, now, tx);
 
         const entitlement = evaluateWhatsAppCommercialEntitlement({
           organization: org,
           anchorMinistry: anchorMinistry ? { id: anchorMinistry.id, organization_id: anchorMinistry.organization_id } : undefined,
           subscription: sub,
           consumingConnectionsCount: consumingCount,
+          now,
+        });
+
+        const sessionDoc = conn.current_onboarding_session_id
+          ? await tx.get(db.collection('whatsapp_onboarding_sessions').doc(conn.current_onboarding_session_id))
+          : null;
+        const priorSession = sessionDoc?.exists ? (sessionDoc.data() as WhatsAppOnboardingSessionRecord) : null;
+
+        verifyServerOwnedAdmission({
+          conn,
+          session: priorSession,
+          organizationId: orgId,
+          entitlement,
           now,
         });
 
@@ -1947,22 +1854,16 @@ export class WhatsAppConnectionService {
         const sessionExpiresAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
         const retentionExpiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
+        if (conn.current_onboarding_session_id) {
+          const priorSessionRef = db.collection('whatsapp_onboarding_sessions').doc(conn.current_onboarding_session_id);
+          tx.update(priorSessionRef, {
+            status: 'expired',
+            updated_at: nowIso,
+          });
+        }
+
         if (!hasStagedSecret) {
           // Sub-Branch B1: Resume Clean Reservation
-          if (!entitlement.canCreateConnection) {
-            throw new AppError(403, 'A organização não possui capacidade comercial normal disponível.', {
-              code: 'WHATSAPP_CAPACITY_LIMIT_REACHED',
-            });
-          }
-
-          if (conn.current_onboarding_session_id) {
-            const priorSessionRef = db.collection('whatsapp_onboarding_sessions').doc(conn.current_onboarding_session_id);
-            tx.update(priorSessionRef, {
-              status: 'expired',
-              updated_at: nowIso,
-            });
-          }
-
           const sessionRecord: WhatsAppOnboardingSessionRecord = {
             id: sessionId,
             organization_id: orgId,
@@ -1996,27 +1897,10 @@ export class WhatsAppConnectionService {
           };
         } else {
           // Sub-Branch B2: Resume Staged Reservation
-          if (!entitlement.canResumeAuthorizedOnboarding) {
-            throw new AppError(403, 'A assinatura da organização está suspensa.', {
-              code: 'WHATSAPP_SUBSCRIPTION_SUSPENDED',
-            });
-          }
-
-          let priorProgress: WhatsAppProviderProgress = 'credential_staged';
-          if (conn.current_onboarding_session_id) {
-            const priorSessionRef = db.collection('whatsapp_onboarding_sessions').doc(conn.current_onboarding_session_id);
-            const priorSessionDoc = await tx.get(priorSessionRef);
-            if (priorSessionDoc.exists) {
-              const priorData = priorSessionDoc.data() as WhatsAppOnboardingSessionRecord;
-              if (priorData.provider_progress) {
-                priorProgress = priorData.provider_progress;
-              }
-              tx.update(priorSessionRef, {
-                status: 'expired',
-                updated_at: nowIso,
-              });
-            }
-          }
+          const priorProgress: WhatsAppProviderProgress =
+            priorSession?.provider_progress && priorSession.provider_progress !== 'none'
+              ? priorSession.provider_progress
+              : 'credential_staged';
 
           const sessionRecord: WhatsAppOnboardingSessionRecord = {
             id: sessionId,
@@ -2072,38 +1956,10 @@ export class WhatsAppConnectionService {
       const anchorMinistryDoc = await tx.get(anchorMinistryRef);
       const anchorMinistry = anchorMinistryDoc.exists ? ({ id: anchorMinistryDoc.id, ...anchorMinistryDoc.data() } as any) : undefined;
 
-      let p1 = db.collection('whatsapp_connections')
-        .where('organization_id', '==', orgId)
-        .where('status', 'in', ['connecting', 'connected', 'error', 'disabled_by_user']);
-      if (typeof (p1 as any).limit === 'function') p1 = (p1 as any).limit(10);
-      let p2 = db.collection('whatsapp_connections')
-        .where('organization_id', '==', orgId)
-        .where('status', 'in', ['pending']);
-      if (typeof (p2 as any).orderBy === 'function') p2 = (p2 as any).orderBy('created_at', 'desc');
-      if (typeof (p2 as any).limit === 'function') p2 = (p2 as any).limit(25);
-
-      const [snap1, snap2] = await Promise.all([tx.get(p1), tx.get(p2)]);
-      let activeConfiguredCount = 0;
-      for (const doc of snap1.docs) {
-        if (consumesCommercialCapacity(doc.data() as any, now)) activeConfiguredCount++;
-      }
-      for (const doc of snap2.docs) {
-        const conn = doc.data() as WhatsAppConnectionRecord;
-        if (conn.status === 'pending') {
-          const isExpired = conn.pending_expires_at && new Date(conn.pending_expires_at) <= now;
-          if (isExpired) {
-            tx.update(doc.ref, {
-              status: 'disconnected',
-              status_reason: 'PENDING_EXPIRED',
-              pending_expires_at: null,
-              assigned_ministry_id: null,
-              updated_at: nowIso,
-            });
-            continue;
-          }
-        }
-        if (consumesCommercialCapacity(conn, now)) activeConfiguredCount++;
-      }
+      const activeConfiguredCount = await this.connectionRepo.countConsumingConnections(orgId, now, tx, {
+        disconnectExpired: true,
+        nowIso,
+      });
 
       const entitlement = evaluateWhatsAppCommercialEntitlement({
         organization: org,
@@ -2559,31 +2415,7 @@ export class WhatsAppConnectionService {
         const anchorMinistryDoc = await tx.get(anchorMinistryRef);
         const anchorMinistry = anchorMinistryDoc.exists ? ({ id: anchorMinistryDoc.id, ...anchorMinistryDoc.data() } as any) : undefined;
 
-        let p1 = db.collection('whatsapp_connections')
-          .where('organization_id', '==', orgId)
-          .where('status', 'in', ['connecting', 'connected', 'error', 'disabled_by_user']);
-        if (typeof (p1 as any).limit === 'function') p1 = (p1 as any).limit(10);
-        let p2 = db.collection('whatsapp_connections')
-          .where('organization_id', '==', orgId)
-          .where('status', 'in', ['pending']);
-        if (typeof (p2 as any).orderBy === 'function') p2 = (p2 as any).orderBy('created_at', 'desc');
-        if (typeof (p2 as any).limit === 'function') p2 = (p2 as any).limit(25);
-
-        const [snap1, snap2] = await Promise.all([tx.get(p1), tx.get(p2)]);
-        let activeConfiguredCount = 0;
-        for (const doc of snap1.docs) {
-          if (consumesCommercialCapacity(doc.data() as any, now)) activeConfiguredCount++;
-        }
-        for (const doc of snap2.docs) {
-          const c = doc.data() as WhatsAppConnectionRecord;
-          if (c.status === 'pending') {
-            const isExpired = c.pending_expires_at && new Date(c.pending_expires_at) <= now;
-            if (isExpired && doc.id !== session.connection_id) {
-              continue;
-            }
-          }
-          if (consumesCommercialCapacity(c, now)) activeConfiguredCount++;
-        }
+        const activeConfiguredCount = await this.connectionRepo.countConsumingConnections(orgId, now, tx);
 
         const entitlement = evaluateWhatsAppCommercialEntitlement({
           organization: org,

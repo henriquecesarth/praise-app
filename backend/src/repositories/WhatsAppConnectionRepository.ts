@@ -99,43 +99,117 @@ export class WhatsAppConnectionRepository {
   async getConsumingConnections(
     orgId: string,
     now: Date = new Date(),
-    tx?: FirebaseFirestore.Transaction
+    tx?: FirebaseFirestore.Transaction,
+    maxAllowedConnections?: number | { disconnectExpired?: boolean; nowIso?: string },
+    options?: { disconnectExpired?: boolean; nowIso?: string }
   ): Promise<WhatsAppConnectionRecord[]> {
+    let maxAllowed: number | undefined;
+    let opts: { disconnectExpired?: boolean; nowIso?: string } | undefined;
+
+    if (typeof maxAllowedConnections === 'number') {
+      maxAllowed = maxAllowedConnections;
+      opts = options;
+    } else if (typeof maxAllowedConnections === 'object' && maxAllowedConnections !== null) {
+      opts = maxAllowedConnections;
+      maxAllowed = undefined;
+    } else {
+      opts = options;
+      maxAllowed = undefined;
+    }
+
     let p1 = this.connectionsCol
       .where('organization_id', '==', orgId)
       .where('status', 'in', ['connecting', 'connected', 'error', 'disabled_by_user']);
     if (typeof (p1 as any).limit === 'function') {
-      p1 = (p1 as any).limit(10);
+      p1 = (p1 as any).limit(50);
     }
 
-    let p2 = this.connectionsCol
-      .where('organization_id', '==', orgId)
-      .where('status', 'in', ['pending']);
-    if (typeof (p2 as any).orderBy === 'function') {
-      p2 = (p2 as any).orderBy('created_at', 'desc');
-    }
-    if (typeof (p2 as any).limit === 'function') {
-      p2 = (p2 as any).limit(25);
-    }
-
-    const [snap1, snap2] = await Promise.all([
-      tx ? tx.get(p1) : p1.get(),
-      tx ? tx.get(p2) : p2.get(),
-    ]);
-
+    const snap1 = await (tx ? tx.get(p1) : p1.get());
     const consuming: WhatsAppConnectionRecord[] = [];
 
     for (const doc of snap1.docs) {
       const conn = { id: doc.id, ...doc.data() } as WhatsAppConnectionRecord;
       if (consumesCommercialCapacity(conn, now)) {
         consuming.push(conn);
+        if (maxAllowed !== undefined && consuming.length >= maxAllowed && !opts?.disconnectExpired) {
+          return consuming;
+        }
       }
     }
 
-    for (const doc of snap2.docs) {
-      const conn = { id: doc.id, ...doc.data() } as WhatsAppConnectionRecord;
-      if (consumesCommercialCapacity(conn, now)) {
-        consuming.push(conn);
+    // Partition 2: status == 'pending' ordered by documentId in bounded pages
+    const PAGE_SIZE = 50;
+    const MAX_PAGES = 10;
+    let pageCount = 0;
+    let lastDoc: FirebaseFirestore.DocumentSnapshot | null = null;
+    const expiredDocRefs: FirebaseFirestore.DocumentReference[] = [];
+
+    while (pageCount < MAX_PAGES) {
+      let p2 = this.connectionsCol
+        .where('organization_id', '==', orgId)
+        .where('status', '==', 'pending');
+
+      if (typeof (p2 as any).orderBy === 'function') {
+        p2 = (p2 as any).orderBy(FieldPath.documentId(), 'asc');
+      }
+      if (lastDoc && typeof (p2 as any).startAfter === 'function') {
+        p2 = (p2 as any).startAfter(lastDoc);
+      }
+      if (typeof (p2 as any).limit === 'function') {
+        p2 = (p2 as any).limit(PAGE_SIZE);
+      }
+
+      const snap2 = await (tx ? tx.get(p2) : p2.get());
+      if (snap2.empty || snap2.docs.length === 0) {
+        break;
+      }
+
+      for (const doc of snap2.docs) {
+        const conn = { id: doc.id, ...doc.data() } as WhatsAppConnectionRecord;
+        if (consumesCommercialCapacity(conn, now)) {
+          consuming.push(conn);
+          if (maxAllowed !== undefined && consuming.length >= maxAllowed && !opts?.disconnectExpired) {
+            return consuming;
+          }
+        } else if (
+          opts?.disconnectExpired &&
+          tx &&
+          conn.status === 'pending' &&
+          typeof conn.pending_expires_at === 'string' &&
+          conn.pending_expires_at.trim() !== '' &&
+          !Number.isNaN(new Date(conn.pending_expires_at).getTime()) &&
+          new Date(conn.pending_expires_at).getTime() <= now.getTime()
+        ) {
+          expiredDocRefs.push(doc.ref);
+        }
+      }
+
+      if (snap2.docs.length < PAGE_SIZE) {
+        break;
+      }
+
+      lastDoc = snap2.docs[snap2.docs.length - 1];
+      pageCount++;
+    }
+
+    if (pageCount >= MAX_PAGES) {
+      throw new AppError(
+        429,
+        'CAPACITY_ACCOUNTING_SATURATED: Muitas conexões pendentes para contabilização segura.',
+        { code: 'CAPACITY_ACCOUNTING_SATURATED' }
+      );
+    }
+
+    if (opts?.disconnectExpired && tx && expiredDocRefs.length > 0) {
+      const updatePayload = {
+        status: 'disconnected' as const,
+        status_reason: 'PENDING_EXPIRED',
+        pending_expires_at: null,
+        assigned_ministry_id: null,
+        updated_at: opts.nowIso || now.toISOString(),
+      };
+      for (const ref of expiredDocRefs) {
+        tx.update(ref, updatePayload);
       }
     }
 
@@ -145,9 +219,11 @@ export class WhatsAppConnectionRepository {
   async countConsumingConnections(
     orgId: string,
     now: Date = new Date(),
-    tx?: FirebaseFirestore.Transaction
+    tx?: FirebaseFirestore.Transaction,
+    maxAllowedConnections?: number | { disconnectExpired?: boolean; nowIso?: string },
+    options?: { disconnectExpired?: boolean; nowIso?: string }
   ): Promise<number> {
-    const consuming = await this.getConsumingConnections(orgId, now, tx);
+    const consuming = await this.getConsumingConnections(orgId, now, tx, maxAllowedConnections, options);
     return consuming.length;
   }
 
