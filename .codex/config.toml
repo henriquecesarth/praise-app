@@ -1,0 +1,23 @@
+[agents.product-architect]
+description = "LouvAIO product and domain architect for discovery, technical design, implementation boundaries, and phase planning."
+config_file = "agents/product-architect.toml"
+
+[agents.feature-engineer]
+description = "LouvAIO implementation specialist for product features outside billing, across backend, frontend, Firestore, and tests."
+config_file = "agents/feature-engineer.toml"
+
+[agents.feature-reviewer]
+description = "Independent read-only reviewer for LouvAIO product features outside billing, focused on security, concurrency, contracts, and tests."
+config_file = "agents/feature-reviewer.toml"
+
+[agents.billing-engineer]
+description = "LouvAIO billing implementation specialist for plans, Asaas, subscriptions, transitions, grace, and entitlement projection."
+config_file = "agents/billing-engineer.toml"
+
+[agents.billing-reviewer]
+description = "Independent read-only LouvAIO billing reviewer for monetary, state-machine, webhook, boundary-time, and entitlement correctness."
+config_file = "agents/billing-reviewer.toml"
+
+[agents.sandbox-auditor]
+description = "LouvAIO provider sandbox auditor for controlled Asaas, Meta, and Zernio investigation and homologation."
+config_file = "agents/sandbox-auditor.toml"
