@@ -1,6 +1,6 @@
 import { OrganizationRecord } from '../organizations/organization.types';
 import { MinistrySubscriptionRecord } from './subscription.types';
-import { getIncludedWhatsAppConnections, DEFAULT_PLAN_ID } from '../../config/plans.config';
+import { getIncludedWhatsAppConnections } from '../../config/plans.config';
 import { getBillingDate } from '../../utils/billing-date';
 import {
   WhatsAppConnectionRecord,
@@ -249,22 +249,8 @@ export function evaluateWhatsAppCommercialEntitlement(
 
   // 4. Determinação do Plano Efetivo e Quota Incluída
   // O LouvAIO Billing V1 governa transições de assinatura através do reconciliador durável.
-  // Uma assinatura retém a titularidade do seu plano efetivo até a convergência autoritativa pelo Billing V1.
-  let effectivePlanId = sub.plan_id;
-  if (
-    sub.cancel_at_period_end &&
-    !sub.active_cancellation_transition_id &&
-    sub.current_period_end &&
-    !isNaN(new Date(sub.current_period_end).getTime()) &&
-    now > new Date(sub.current_period_end)
-  ) {
-    effectivePlanId = DEFAULT_PLAN_ID;
-  } else if (sub.subscription_mode === 'complimentary' && sub.expires_at) {
-    const grantExpires = new Date(sub.expires_at);
-    if (!isNaN(grantExpires.getTime()) && now > grantExpires) {
-      effectivePlanId = DEFAULT_PLAN_ID;
-    }
-  }
+  // D8 consome a projeção da assinatura vigente (sub.plan_id) sem atuar como relógio de cancelamento independente.
+  const effectivePlanId = sub.plan_id;
 
   const allowedConnections = getIncludedWhatsAppConnections(effectivePlanId);
 

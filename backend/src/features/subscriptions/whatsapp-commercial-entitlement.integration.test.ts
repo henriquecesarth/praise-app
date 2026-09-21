@@ -661,6 +661,42 @@ describe('WhatsApp Commercial Entitlement Integration Suite (Phase 7D2-D8)', { t
       }
     });
 
+    it('Scenario 21-B: proves physical document write collision in Firestore Emulator without fault injection', async () => {
+      const dispatchId = uniqueId('disp_occ_phys');
+      await db.collection('whatsapp_outbound_dispatches').doc(dispatchId).set({
+        id: dispatchId,
+        retry_count: 0,
+        status: 'pending',
+      });
+
+      let t1Attempts = 0;
+      let t2Attempts = 0;
+
+      const t1 = db.runTransaction(async (tx) => {
+        t1Attempts++;
+        const snap = await tx.get(db.collection('whatsapp_outbound_dispatches').doc(dispatchId));
+        await new Promise((r) => setTimeout(r, 40));
+        tx.update(db.collection('whatsapp_outbound_dispatches').doc(dispatchId), {
+          retry_count: (snap.data()?.retry_count || 0) + 1,
+        });
+      });
+
+      const t2 = db.runTransaction(async (tx) => {
+        t2Attempts++;
+        const snap = await tx.get(db.collection('whatsapp_outbound_dispatches').doc(dispatchId));
+        await new Promise((r) => setTimeout(r, 40));
+        tx.update(db.collection('whatsapp_outbound_dispatches').doc(dispatchId), {
+          retry_count: (snap.data()?.retry_count || 0) + 1,
+        });
+      });
+
+      await Promise.all([t1, t2]);
+
+      expect(t1Attempts + t2Attempts).toBeGreaterThanOrEqual(3);
+      const finalDoc = await db.collection('whatsapp_outbound_dispatches').doc(dispatchId).get();
+      expect(finalDoc.data()?.retry_count).toBe(2);
+    });
+
     it('Scenario 22: T1 commits first -> subsequent subscription restriction does not cancel already-owned execution', async () => {
       const orgId = uniqueId('org_t1_first');
       const anchorMinId = uniqueId('min_t1_first');

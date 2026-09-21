@@ -661,6 +661,9 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
       expect(res.status).toBe('connected');
       expect(res.phoneNumber).toBe('+5511988887771');
       expect(connectionsStore.get(activeConnectionId)?.status).toBe('connected');
+      expect(sessionsStore.get(activeSessionId)?.status).toBe('consumed');
+      expect(secretsStore.get(activeConnectionId)).toBeDefined();
+      expect(mockProvider.exchangeOAuthCode).toHaveBeenCalled();
     });
 
     it('Entitlement Race: downgrade between start and commit rejects completion with 403, acquires zero claims and purges secret', async () => {
@@ -705,11 +708,16 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
       expect(secretsStore.get(activeConnectionId)).toBeUndefined();
 
       // Assert I: Connection did not become connected
-      expect(connectionsStore.get(activeConnectionId)?.status).toBe('error');
+      expect(connectionsStore.get(activeConnectionId)?.status).toBe('disconnected');
       expect(connectionsStore.get(activeConnectionId)?.status_reason).toBe('SUBSCRIPTION_RESTRICTED');
 
       // Assert J: Session did not become consumed
       expect(sessionsStore.get(activeSessionId)?.status).toBe('failed');
+
+      // Assert K (Phase 7D2-D8-R5): 0 provider calls were made before Step 4/8/9
+      expect(mockProvider.exchangeOAuthCode).not.toHaveBeenCalled();
+      expect(mockProvider.registerPhoneNumber).not.toHaveBeenCalled();
+      expect(mockProvider.subscribeMessagingAccountApps).not.toHaveBeenCalled();
     });
 
     it('Case 4: OAuth code exchange failure marks session failed, disconnects pending connection, and releases capacity', async () => {
@@ -937,6 +945,154 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
       expect(claim).toBeDefined();
       expect(claim?.connection_id).toBe(activeConnectionId);
       expect(claim?.organization_id).toBe(orgId);
+    });
+
+    it('Step 10 Commercial Restriction: Meta registration and webhook subscription succeed, commercial restriction occurs -> secret retained, connection connecting, session waba_subscribed, resumption succeeds after plan upgrade', async () => {
+      // Step 8 & Step 9 succeed, but right before Step 10 transaction commits,
+      // subscription is downgraded to Pro (0 whatsapp connections allowed)
+      (mockProvider.subscribeMessagingAccountApps as any).mockImplementationOnce(async () => {
+        subscriptionsStore.set(anchorMinistryId, {
+          ...subscriptionsStore.get(anchorMinistryId),
+          plan_id: 'pro',
+        });
+      });
+
+      // Complete onboarding attempt 1 — hits Step 10 commercial restriction
+      await expect(
+        connectionService.completeOnboarding(orgId, adminUserId, {
+          sessionId: activeSessionId,
+          stateNonce: activeRawNonce,
+          code: 'single_use_code',
+          wabaId: 'waba-001',
+          phoneNumberId: 'phone-001',
+          pin: '123456',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 403,
+        details: { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED' },
+      });
+
+      // Assert: Secret is RETAINED (not deleted)
+      expect(secretsStore.get(activeConnectionId)).toBeDefined();
+
+      // Assert: Connection is in 'connecting' with status_reason 'SUBSCRIPTION_RESTRICTED',
+      // preserving remote provider identifiers
+      const connBeforeUpgrade = connectionsStore.get(activeConnectionId);
+      expect(connBeforeUpgrade?.status).toBe('connecting');
+      expect(connBeforeUpgrade?.status_reason).toBe('SUBSCRIPTION_RESTRICTED');
+      expect(connBeforeUpgrade?.provider_waba_id).toBe('waba-001');
+      expect(connBeforeUpgrade?.provider_phone_number_id).toBe('phone-001');
+      expect(connBeforeUpgrade?.phone_number).toBe('+5511988887771');
+
+      // Assert: Session is NOT failed; provider_progress is 'waba_subscribed'
+      const sessionBeforeUpgrade = sessionsStore.get(activeSessionId);
+      expect(sessionBeforeUpgrade?.status).not.toBe('failed');
+      expect(sessionBeforeUpgrade?.provider_progress).toBe('waba_subscribed');
+
+      // Verify provider call counts for attempt 1
+      expect(mockProvider.exchangeOAuthCode).toHaveBeenCalledTimes(1);
+      expect(mockProvider.registerPhoneNumber).toHaveBeenCalledTimes(1);
+      expect(mockProvider.subscribeMessagingAccountApps).toHaveBeenCalledTimes(1);
+
+      // Now: Organization upgrades plan to Premium (1 WhatsApp connection included)
+      subscriptionsStore.set(anchorMinistryId, {
+        ...subscriptionsStore.get(anchorMinistryId),
+        plan_id: 'premium',
+      });
+
+      // Attempt 2: Resumption after plan upgrade
+      const resumed = await connectionService.completeOnboarding(orgId, adminUserId, {
+        sessionId: activeSessionId,
+        stateNonce: activeRawNonce,
+        code: 'already_used_code',
+        wabaId: 'waba-001',
+        phoneNumberId: 'phone-001',
+        pin: '123456',
+      });
+
+      // Assert: Resumption succeeded
+      expect(resumed.id).toBe(activeConnectionId);
+      expect(resumed.status).toBe('connected');
+
+      const connAfterUpgrade = connectionsStore.get(activeConnectionId);
+      expect(connAfterUpgrade?.status).toBe('connected');
+      expect(connAfterUpgrade?.status_reason).toBeNull();
+      expect(connAfterUpgrade?.last_connected_at).toBeDefined();
+
+      const sessionAfterUpgrade = sessionsStore.get(activeSessionId);
+      expect(sessionAfterUpgrade?.status).toBe('consumed');
+
+      // Assert: Secret is still retained
+      expect(secretsStore.get(activeConnectionId)).toBeDefined();
+
+      // Assert: Provider OAuth exchange and PIN registration were SKIPPED on resumption!
+      expect(mockProvider.exchangeOAuthCode).toHaveBeenCalledTimes(1);
+      expect(mockProvider.registerPhoneNumber).toHaveBeenCalledTimes(1);
+    });
+
+    it('Step 10 Capacity Limit: competing connection created before commit triggers WHATSAPP_CAPACITY_LIMIT_REACHED in Step 10, retains secret and sets connecting', async () => {
+      (mockProvider.subscribeMessagingAccountApps as any).mockImplementationOnce(async () => {
+        // Competing connection created right before Step 10 transaction runs
+        connectionsStore.set('wac_competing_step10', {
+          id: 'wac_competing_step10',
+          organization_id: orgId,
+          display_name: 'Competing Line Step 10',
+          status: 'connected',
+          phone_number: '+5511999990099',
+          provider: 'meta_cloud_api',
+          provider_waba_id: 'waba-001',
+          provider_phone_number_id: 'phone-competing-step10',
+          created_by_user_id: ownerUserId,
+          assigned_ministry_id: null,
+          pending_expires_at: null,
+          last_connected_at: new Date().toISOString(),
+          last_health_check_at: null,
+          status_reason: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      });
+
+      await expect(
+        connectionService.completeOnboarding(orgId, adminUserId, {
+          sessionId: activeSessionId,
+          stateNonce: activeRawNonce,
+          code: 'valid_code',
+          wabaId: 'waba-001',
+          phoneNumberId: 'phone-001',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 403,
+        details: { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED' },
+      });
+
+      expect(secretsStore.get(activeConnectionId)).toBeDefined();
+      expect(connectionsStore.get(activeConnectionId)?.status).toBe('connecting');
+      expect(connectionsStore.get(activeConnectionId)?.status_reason).toBe('SUBSCRIPTION_RESTRICTED');
+      expect(sessionsStore.get(activeSessionId)?.provider_progress).toBe('waba_subscribed');
+    });
+
+    it('Generic Provider 403: provider-side 403 error is NOT misclassified as commercial restriction', async () => {
+      vi.spyOn(connectionRepo, 'countConsumingConnections').mockRejectedValueOnce(
+        new AppError(403, 'Meta permission denied', { code: 'PROVIDER_FORBIDDEN' })
+      );
+
+      await expect(
+        connectionService.completeOnboarding(orgId, adminUserId, {
+          sessionId: activeSessionId,
+          stateNonce: activeRawNonce,
+          code: 'valid_code',
+          wabaId: 'waba-001',
+          phoneNumberId: 'phone-001',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 403,
+        details: { code: 'PROVIDER_FORBIDDEN' },
+      });
+
+      // Should NOT have set status: 'connecting' with status_reason: 'SUBSCRIPTION_RESTRICTED'
+      expect(connectionsStore.get(activeConnectionId)?.status).not.toBe('connecting');
+      expect(connectionsStore.get(activeConnectionId)?.status_reason).not.toBe('SUBSCRIPTION_RESTRICTED');
     });
   });
 });

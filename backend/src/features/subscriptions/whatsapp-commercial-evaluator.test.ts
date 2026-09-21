@@ -262,8 +262,8 @@ describe('evaluateWhatsAppCommercialEntitlement — Pure Evaluator Suite (Phase 
       expect(res.allowedConnections).toBe(0);
     });
 
-    it('Scenario 13: Legacy cancellation period expired on Premium -> reverts to free -> plan_excluded', () => {
-      const expiredCancelSub: MinistrySubscriptionRecord = {
+    it('Scenario 13: Premium subscription with cancel_at_period_end and past current_period_end does NOT independently cut over to Free in D8', () => {
+      const cancelSub: MinistrySubscriptionRecord = {
         ...premiumSub,
         cancel_at_period_end: true,
         current_period_end: '2026-09-10T00:00:00.000Z',
@@ -272,16 +272,17 @@ describe('evaluateWhatsAppCommercialEntitlement — Pure Evaluator Suite (Phase 
       const res = evaluateWhatsAppCommercialEntitlement({
         organization: validOrg,
         anchorMinistry: validAnchorMinistry,
-        subscription: expiredCancelSub,
+        subscription: cancelSub,
         now: new Date('2026-09-15T00:00:00.000Z'),
       });
 
-      expect(res.state).toBe('plan_excluded');
-      expect(res.allowedConnections).toBe(0);
+      // Retains Premium entitlement until Billing V1 reconciler completes cutover
+      expect(res.state).toBe('healthy');
+      expect(res.allowedConnections).toBe(1);
     });
 
-    it('Scenario 14: Expired complimentary grant on Premium -> reverts to free -> plan_excluded', () => {
-      const expiredCompSub: MinistrySubscriptionRecord = {
+    it('Scenario 14: Premium subscription with past expires_at does NOT independently cut over to Free in D8', () => {
+      const compSub: MinistrySubscriptionRecord = {
         ...premiumSub,
         subscription_mode: 'complimentary',
         expires_at: '2026-09-10T00:00:00.000Z',
@@ -290,12 +291,13 @@ describe('evaluateWhatsAppCommercialEntitlement — Pure Evaluator Suite (Phase 
       const res = evaluateWhatsAppCommercialEntitlement({
         organization: validOrg,
         anchorMinistry: validAnchorMinistry,
-        subscription: expiredCompSub,
+        subscription: compSub,
         now: new Date('2026-09-15T00:00:00.000Z'),
       });
 
-      expect(res.state).toBe('plan_excluded');
-      expect(res.allowedConnections).toBe(0);
+      // Retains Premium entitlement until Billing/complimentary service updates effective subscription projection
+      expect(res.state).toBe('healthy');
+      expect(res.allowedConnections).toBe(1);
     });
   });
 
@@ -1120,6 +1122,42 @@ describe('evaluateWhatsAppCommercialEntitlement — Pure Evaluator Suite (Phase 
       expect(res.allowedConnections).toBe(0);
       expect(res.canSendMessages).toBe(false);
       expect(res.canCreateConnection).toBe(false);
+    });
+
+    it('test 21: Scheduled paid-to-paid downgrade follows projected effective plan, not target metadata or clock', () => {
+      // Premium subscription with a scheduled downgrade to Essential
+      const scheduledDowngradeSub: MinistrySubscriptionRecord = {
+        ...premiumSub,
+        cancel_at_period_end: false,
+        current_period_end: '2026-09-15T00:00:00.000Z',
+      };
+
+      // Before Billing V1 converges effective subscription, sub.plan_id is still premium
+      const resBefore = evaluateWhatsAppCommercialEntitlement({
+        organization: validOrg,
+        anchorMinistry: validAnchorMinistry,
+        subscription: scheduledDowngradeSub,
+        now: new Date('2026-09-18T12:00:00.000Z'),
+      });
+
+      expect(resBefore.state).toBe('healthy');
+      expect(resBefore.allowedConnections).toBe(1);
+
+      // Once Billing V1 updates effective subscription projection to Essential (non-Premium)
+      const convergedEssentialSub: MinistrySubscriptionRecord = {
+        ...scheduledDowngradeSub,
+        plan_id: 'essential',
+      };
+
+      const resAfter = evaluateWhatsAppCommercialEntitlement({
+        organization: validOrg,
+        anchorMinistry: validAnchorMinistry,
+        subscription: convergedEssentialSub,
+        now: new Date('2026-09-18T12:00:00.000Z'),
+      });
+
+      expect(resAfter.state).toBe('plan_excluded');
+      expect(resAfter.allowedConnections).toBe(0);
     });
   });
 });

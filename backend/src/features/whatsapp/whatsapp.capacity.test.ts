@@ -61,15 +61,45 @@ describe('WhatsApp Commercial Capacity & Accounting Suite (Phase 7C)', () => {
 
     connectionRepo = new WhatsAppConnectionRepository();
     subService = {
-      getOrganizationWhatsAppCapacity: vi.fn().mockImplementation(async () => ({
-        organizationId: orgId,
-        billingAnchorMinistryId: 'min-1',
-        enabled: mockAllowed > 0,
-        includedConnections: mockAllowed,
-        additionalConnections: 0,
-        totalAllowedConnections: mockAllowed,
-        billingAccessMode: mockAccessMode,
-      })),
+      getOrganizationWhatsAppCapacity: vi.fn().mockImplementation(async () => {
+        const configuredCount = await connectionRepo.countConfiguredConnections(orgId);
+        const isOverLimit = configuredCount > mockAllowed;
+        const commercialState =
+          mockAccessMode === 'suspended'
+            ? 'administratively_suspended'
+            : isOverLimit
+            ? 'restricted_over_limit'
+            : mockAccessMode === 'grace'
+            ? 'payment_grace'
+            : 'healthy';
+        const canSend = mockAccessMode !== 'suspended' && !isOverLimit && mockAllowed > 0;
+        const canCreate = mockAccessMode === 'normal' && configuredCount < mockAllowed;
+        const connectionAccessMode =
+          mockAccessMode === 'suspended'
+            ? 'suspended'
+            : isOverLimit
+            ? 'restricted_over_limit'
+            : mockAccessMode;
+
+        return {
+          organizationId: orgId,
+          billingAnchorMinistryId: 'min-1',
+          totalAllowedConnections: mockAllowed,
+          includedConnections: mockAllowed,
+          additionalConnections: 0,
+          configuredConnectionsCount: configuredCount,
+          remainingCapacity: Math.max(0, mockAllowed - configuredCount),
+          commercialState,
+          canSendMessages: canSend,
+          canCreateConnection: canCreate,
+          canResumeAuthorizedOnboarding: mockAccessMode !== 'suspended',
+          restrictionReason: undefined,
+          gracePeriodExpiresBillingDate: null,
+          enabled: mockAllowed > 0 && canSend,
+          billingAccessMode: mockAccessMode,
+          connectionAccessMode,
+        };
+      }),
     } as unknown as SubscriptionService;
 
     service = new WhatsAppConnectionService(

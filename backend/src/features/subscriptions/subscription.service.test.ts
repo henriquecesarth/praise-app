@@ -1736,4 +1736,110 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
       });
     });
   });
+
+  describe('Phase 7D2-D8-R5: Compatibility Anchor Safety & Scheduled-Transition Authority', () => {
+    const org = {
+      id: 'org-compat-1',
+      name: 'Org Compat',
+      owner_user_id: 'user-1',
+      billing_anchor_ministry_id: 'min-anchor-1',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const validSub: MinistrySubscriptionRecord = {
+      id: 'min-anchor-1',
+      ministry_id: 'min-anchor-1',
+      plan_id: 'premium',
+      member_addon_blocks: 0,
+      billing_status: 'active',
+      subscription_mode: 'paid',
+      current_period_start: '2026-08-01T00:00:00.000Z',
+      current_period_end: '2026-09-01T00:00:00.000Z',
+      grace_period_expires_at: null,
+      grace_period_expires_billing_date: null,
+      administratively_suspended: false,
+      suspended_at: null,
+      suspension_reason: null,
+      cancel_at_period_end: false,
+      created_at: '2026-08-01T00:00:00.000Z',
+      updated_at: '2026-09-01T00:00:00.000Z',
+    };
+
+    it('compatibility API + absent anchor document -> fails closed to integrity_failure (zero synthesis)', () => {
+      // Calling evaluateOrganizationWhatsAppCapacity without providing anchorMinistryDoc
+      const result = SubscriptionService.evaluateOrganizationWhatsAppCapacity(org as any, validSub, new Date());
+
+      expect(result.commercialState).toBe('integrity_failure');
+      expect(result.restrictionReason).toBe('COMMERCIAL_INTEGRITY_VIOLATION');
+      expect(result.canSendMessages).toBe(false);
+      expect(result.canCreateConnection).toBe(false);
+      expect(result.canResumeAuthorizedOnboarding).toBe(false);
+      expect(result.totalAllowedConnections).toBe(0);
+    });
+
+    it('compatibility API + foreign anchor document -> fails closed to integrity_failure', () => {
+      const foreignAnchor = {
+        id: 'min-anchor-1',
+        organization_id: 'different-org-id',
+      };
+
+      const result = SubscriptionService.evaluateOrganizationWhatsAppCapacity(
+        org as any,
+        validSub,
+        new Date(),
+        foreignAnchor
+      );
+
+      expect(result.commercialState).toBe('integrity_failure');
+      expect(result.restrictionReason).toBe('COMMERCIAL_INTEGRITY_VIOLATION');
+      expect(result.totalAllowedConnections).toBe(0);
+    });
+
+    it('compatibility API + valid actual anchor document -> evaluates canonically', () => {
+      const validAnchor = {
+        id: 'min-anchor-1',
+        organization_id: 'org-compat-1',
+      };
+
+      const result = SubscriptionService.evaluateOrganizationWhatsAppCapacity(
+        org as any,
+        validSub,
+        new Date(),
+        validAnchor
+      );
+
+      expect(result.commercialState).toBe('healthy');
+      expect(result.totalAllowedConnections).toBe(1);
+      expect(result.canSendMessages).toBe(true);
+      expect(result.canCreateConnection).toBe(true);
+      expect(result.canResumeAuthorizedOnboarding).toBe(true);
+    });
+
+    it('scheduled cancel_at_period_end does NOT independently cut over to Free in compatibility capacity', () => {
+      const validAnchor = {
+        id: 'min-anchor-1',
+        organization_id: 'org-compat-1',
+      };
+
+      const cancelSub: MinistrySubscriptionRecord = {
+        ...validSub,
+        cancel_at_period_end: true,
+        current_period_end: '2026-08-15T00:00:00.000Z',
+      };
+
+      // Checked on 2026-08-20 (after period end, but Billing V1 has not updated plan_id to free)
+      const result = SubscriptionService.evaluateOrganizationWhatsAppCapacity(
+        org as any,
+        cancelSub,
+        new Date('2026-08-20T00:00:00.000Z'),
+        validAnchor
+      );
+
+      // Remains Premium-entitled until Billing V1 reconciler completes cutover
+      expect(result.commercialState).toBe('healthy');
+      expect(result.totalAllowedConnections).toBe(1);
+      expect(result.canSendMessages).toBe(true);
+    });
+  });
 });

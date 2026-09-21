@@ -31,6 +31,9 @@ describe('WhatsApp Connection Resolver Hierarchy & Fallback Suite (Phase 7C)', (
   const ministryId = 'min-test-1';
   let mockAccessMode: 'normal' | 'grace' | 'suspended' = 'normal';
   let mockAllowed = 5;
+  /** Override connectionAccessMode returned by the capacity mock. When null,
+   *  the mock derives it from mockAccessMode via the backward-compat path. */
+  let mockConnectionAccessMode: string | null = null;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -42,6 +45,7 @@ describe('WhatsApp Connection Resolver Hierarchy & Fallback Suite (Phase 7C)', (
 
     mockAccessMode = 'normal';
     mockAllowed = 5;
+    mockConnectionAccessMode = null;
 
     organizationsStore.set(orgId, {
       id: orgId,
@@ -142,6 +146,7 @@ describe('WhatsApp Connection Resolver Hierarchy & Fallback Suite (Phase 7C)', (
         additionalConnections: 0,
         totalAllowedConnections: mockAllowed,
         billingAccessMode: mockAccessMode,
+        ...(mockConnectionAccessMode !== null ? { connectionAccessMode: mockConnectionAccessMode } : {}),
       })),
     } as unknown as SubscriptionService;
 
@@ -338,6 +343,7 @@ describe('WhatsApp Connection Resolver Hierarchy & Fallback Suite (Phase 7C)', (
 
   it('11. Restricted over limit blocks dispatch with RESTRICTED_OVER_LIMIT', async () => {
     mockAllowed = 1;
+    mockConnectionAccessMode = 'restricted_over_limit';
     // Set 2 connections
     setupValidConnection('conn-1');
     setupValidConnection('conn-2');

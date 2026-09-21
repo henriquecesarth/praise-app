@@ -686,12 +686,7 @@ export class SubscriptionService {
       }
     }
 
-    const anchorMinistry =
-      anchorMinistryDoc !== undefined
-        ? anchorMinistryDoc
-        : org.billing_anchor_ministry_id
-        ? { id: org.billing_anchor_ministry_id, organization_id: org.id }
-        : null;
+    const anchorMinistry = anchorMinistryDoc ?? null;
 
     const entitlement = evaluateWhatsAppCommercialEntitlement({
       organization: org,

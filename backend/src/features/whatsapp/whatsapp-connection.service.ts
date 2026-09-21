@@ -400,37 +400,32 @@ export class WhatsAppConnectionService {
 
   async getOrganizationCapacityUsage(orgId: string): Promise<OrganizationWhatsAppCapacityUsageDto> {
     const capacity = await this.subService.getOrganizationWhatsAppCapacity(orgId);
-    const configuredCount = capacity.configuredConnectionsCount ?? (await this.connectionRepo.countConfiguredConnections(orgId));
-    const isOverLimit = configuredCount > capacity.totalAllowedConnections;
+
+    const connectionAccessMode =
+      capacity.connectionAccessMode ??
+      (capacity.billingAccessMode === 'suspended'
+        ? 'suspended'
+        : capacity.billingAccessMode === 'grace'
+        ? 'grace'
+        : 'normal');
 
     const commercialState =
       capacity.commercialState ??
       (capacity.billingAccessMode === 'suspended'
         ? 'administratively_suspended'
-        : isOverLimit
-        ? 'restricted_over_limit'
         : capacity.billingAccessMode === 'grace'
         ? 'payment_grace'
         : 'healthy');
 
     const canSendMessages =
       capacity.canSendMessages ??
-      (capacity.billingAccessMode !== 'suspended' && !isOverLimit && capacity.totalAllowedConnections > 0);
+      (connectionAccessMode !== 'suspended' && connectionAccessMode !== 'restricted_over_limit' && capacity.totalAllowedConnections > 0);
 
     const canCreateConnection =
-      capacity.canCreateConnection ??
-      (capacity.billingAccessMode === 'normal' && configuredCount < capacity.totalAllowedConnections);
+      capacity.canCreateConnection ?? (connectionAccessMode === 'normal');
 
     const canResumeAuthorizedOnboarding =
-      capacity.canResumeAuthorizedOnboarding ?? (capacity.billingAccessMode !== 'suspended');
-
-    const connectionAccessMode =
-      capacity.connectionAccessMode ??
-      (capacity.billingAccessMode === 'suspended'
-        ? 'suspended'
-        : isOverLimit
-        ? 'restricted_over_limit'
-        : capacity.billingAccessMode);
+      capacity.canResumeAuthorizedOnboarding ?? (connectionAccessMode !== 'suspended');
 
     return {
       organizationId: orgId,
@@ -438,8 +433,8 @@ export class WhatsAppConnectionService {
       totalAllowedConnections: capacity.totalAllowedConnections,
       includedConnections: capacity.includedConnections,
       additionalConnections: capacity.additionalConnections,
-      configuredConnectionsCount: configuredCount,
-      remainingCapacity: capacity.remainingCapacity ?? Math.max(0, capacity.totalAllowedConnections - configuredCount),
+      configuredConnectionsCount: capacity.configuredConnectionsCount ?? 0,
+      remainingCapacity: capacity.remainingCapacity ?? Math.max(0, capacity.totalAllowedConnections - (capacity.configuredConnectionsCount ?? 0)),
       commercialState,
       canSendMessages,
       canCreateConnection,
@@ -2198,12 +2193,15 @@ export class WhatsAppConnectionService {
       });
     }
 
-    // Step 3: Entitlement Downgrade Gate (DEC-7D-16 / Phase 7D2-D8-R3)
+    // Step 3: Entitlement Downgrade Gate (DEC-7D-16 / Phase 7D2-D8-R3 / Phase 7D2-D8-R5)
     const entitlement = await this.subService.getOrganizationCommercialEntitlement(orgId, now);
     const isSuspendedOrNoPlanCapacity =
+      !entitlement.canResumeAuthorizedOnboarding ||
       entitlement.allowedConnections <= 0 ||
+      entitlement.state === 'restricted_over_limit' ||
       entitlement.state === 'administratively_suspended' ||
       entitlement.state === 'post_payment_grace' ||
+      entitlement.state === 'plan_excluded' ||
       entitlement.state === 'integrity_failure';
 
     if (isSuspendedOrNoPlanCapacity) {
@@ -2214,8 +2212,16 @@ export class WhatsAppConnectionService {
         'failed',
         'SUBSCRIPTION_RESTRICTED'
       );
-      throw new AppError(403, 'A assinatura da organização está suspensa ou sem capacidade WhatsApp.', {
-        code: 'WHATSAPP_SUBSCRIPTION_SUSPENDED',
+      const errCode =
+        entitlement.state === 'restricted_over_limit'
+          ? 'WHATSAPP_CAPACITY_LIMIT_REACHED'
+          : 'WHATSAPP_SUBSCRIPTION_SUSPENDED';
+      const errMsg =
+        entitlement.state === 'restricted_over_limit'
+          ? 'Limite de capacidade comercial de conexões WhatsApp atingido para a organização.'
+          : 'A assinatura da organização está suspensa ou sem capacidade WhatsApp.';
+      throw new AppError(403, errMsg, {
+        code: errCode,
       });
     }
 
@@ -2333,7 +2339,11 @@ export class WhatsAppConnectionService {
     const normalizedPhoneNumber = normalizeToE164(displayPhone);
 
     // Step 8: Ephemeral Two-Step PIN Registration (DEC-7D-15)
-    if (input.pin) {
+    if (
+      input.pin &&
+      session.provider_progress !== 'phone_registered' &&
+      session.provider_progress !== 'waba_subscribed'
+    ) {
       try {
         await this.metaProvider.registerPhoneNumber(accessToken, input.phoneNumberId, input.pin);
         await this.onboardingSessionRepo.updateSession(session.id, {
@@ -2528,7 +2538,8 @@ export class WhatsAppConnectionService {
         }
       });
     } catch (err: any) {
-      if (err?.code === 'PROVIDER_PHONE_ALREADY_REGISTERED' || (err instanceof AppError && err.statusCode === 409)) {
+      const errCode = err?.code || (err instanceof AppError && (err.details as any)?.code) || (err as any)?.details?.code;
+      if (errCode === 'PROVIDER_PHONE_ALREADY_REGISTERED' || (err instanceof AppError && err.statusCode === 409)) {
         await this.secretRepo.deleteSecret(orgId, session.connection_id, { wabaId: input.wabaId });
         await this.connectionRepo.updateConnection(orgId, session.connection_id, {
           status: 'error',
@@ -2538,17 +2549,51 @@ export class WhatsAppConnectionService {
         throw err;
       }
       if (
-        err?.code === 'SUBSCRIPTION_RESTRICTED' ||
-        err?.code === 'WHATSAPP_CAPACITY_LIMIT_REACHED' ||
-        err?.code === 'WHATSAPP_SUBSCRIPTION_SUSPENDED' ||
-        (err instanceof AppError && err.statusCode === 403)
+        errCode === 'SUBSCRIPTION_RESTRICTED' ||
+        errCode === 'WHATSAPP_CAPACITY_LIMIT_REACHED' ||
+        errCode === 'WHATSAPP_SUBSCRIPTION_SUSPENDED'
       ) {
-        await this.secretRepo.deleteSecret(orgId, session.connection_id, { wabaId: input.wabaId });
+        // DEC-7D-30 / DEC-7D-31 (Phase 7D2-D8-R5): Commercial restriction AFTER provider mutations have succeeded:
+        // 1. DO NOT delete secret (must be retained for retry, convergence, cleanup, or resumption)
+        // 2. DO NOT set connection to 'error' (which deadlocks capacity and blocks resumption)
+        // 3. DO NOT set session to 'failed'
+        // Preserve recoverable local state: connection becomes 'connecting', retaining commercial capacity
+        // and recording provider IDs so D7/reconciliation and subsequent resumption can converge safely.
         await this.connectionRepo.updateConnection(orgId, session.connection_id, {
-          status: 'error',
+          status: 'connecting',
           status_reason: 'SUBSCRIPTION_RESTRICTED',
+          provider_waba_id: input.wabaId,
+          provider_phone_number_id: input.phoneNumberId,
+          phone_number: normalizedPhoneNumber,
         });
-        await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+        await this.onboardingSessionRepo.updateSession(session.id, {
+          provider_progress: 'waba_subscribed',
+        });
+        if (acquiredWabaLock) {
+          try {
+            await db.runTransaction(async (tx) => {
+              const wabaLockRef = db.collection('whatsapp_waba_lifecycle_locks').doc(`lock_meta_${input.wabaId}`);
+              const wabaLockDoc = await tx.get(wabaLockRef);
+              if (wabaLockDoc.exists) {
+                const lockData = wabaLockDoc.data() as any;
+                if (lockData.lease_token === acquiredWabaLock!.leaseToken) {
+                  tx.update(wabaLockRef, {
+                    operation_status: 'idle',
+                    provider_observed_state: 'subscribed',
+                    provider_observed_at: nowIso,
+                    provider_observed_generation: acquiredWabaLock!.generation,
+                    lease_token: null,
+                    lease_expires_at: null,
+                    last_settled_at: nowIso,
+                    updated_at: nowIso,
+                  });
+                }
+              }
+            });
+          } catch {
+            // Non-blocking; lease expires in 120s anyway
+          }
+        }
         throw err;
       }
       throw err;
