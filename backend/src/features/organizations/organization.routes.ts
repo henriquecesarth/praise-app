@@ -42,7 +42,7 @@ router.get(
   controller.getWhatsAppCapacity
 );
 
-// WhatsApp Connections (Phase 7C)
+// WhatsApp Connections (Phase 7C / Phase 7E-B2)
 router.get(
   '/:organizationId/whatsapp/connections',
   requireOrganizationRole('admin'),
@@ -54,6 +54,11 @@ router.patch(
   requireOrganizationRole('admin'),
   validate(updateWhatsAppConnectionSchema),
   whatsappController.updateConnection
+);
+router.delete(
+  '/:organizationId/whatsapp/connections/:connectionId',
+  requireOrganizationRole('admin'),
+  whatsappController.disconnectConnection
 );
 
 // WhatsApp Onboarding (Phase 7D1)

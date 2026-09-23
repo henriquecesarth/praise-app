@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../../middleware/auth';
 import { WhatsAppConnectionService } from './whatsapp-connection.service';
+import { AppError } from '../../middleware/error-handler';
 
 function getParam(param: string | string[] | undefined): string {
   if (!param) return '';
@@ -54,6 +55,36 @@ export class WhatsAppController {
       );
 
       res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  disconnectConnection = async (
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const organizationId = getParam(req.params.organizationId);
+      const connectionId = getParam(req.params.connectionId);
+      const actorUserId = req.user?.id;
+
+      if (!actorUserId) {
+        throw new AppError(401, 'Usuário não autenticado.');
+      }
+
+      await this.whatsappService.disconnectConnection(
+        organizationId,
+        connectionId,
+        actorUserId
+      );
+
+      res.json({
+        success: true,
+        connectionId,
+        status: 'disconnected',
+      });
     } catch (err) {
       next(err);
     }
