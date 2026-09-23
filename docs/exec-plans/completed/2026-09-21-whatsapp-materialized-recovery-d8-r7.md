@@ -82,13 +82,13 @@ Strong settlement remains authoritative for:
 
 - [x] Read repository operating manual, memory, system status, relevant WhatsApp architecture, ExecPlan convention, git topology, and current candidate diff.
 - [x] Repository-wide authority and D7 machinery search.
-- [ ] Add failing regressions for compatibility authority, repeated remote-materialized restriction/idempotency/recovery, hard-deadline D7 ownership/settlement, and deterministic OCC/inverse race.
-- [ ] Remove summary clock-derived effective-plan authority and route D8 through Billing V1 current effective projection.
-- [ ] Implement durable retry classification and Step 9 progress idempotency.
-- [ ] Integrate remote-materialized hard-deadline handoff with the smallest existing D7 owner without duplicating settlement.
-- [ ] Replace timing-dependent OCC test with a deterministic Firestore Emulator barrier.
-- [ ] Run targeted gates A-N and required serialized/full suites P-R.
-- [ ] Update documentation and ExecPlan, audit static authority hits, review diff, and create exactly one selective local commit.
+- [x] Add failing regressions for compatibility authority, repeated remote-materialized restriction/idempotency/recovery, hard-deadline D7 ownership/settlement, and deterministic OCC/inverse race.
+- [x] Remove summary clock-derived effective-plan authority and route D8 through Billing V1 current effective projection.
+- [x] Implement durable retry classification and Step 9 progress idempotency.
+- [x] Integrate remote-materialized hard-deadline handoff with the smallest existing D7 owner without duplicating settlement.
+- [x] Replace timing-dependent OCC test with a deterministic Firestore Emulator barrier.
+- [x] Run targeted gates A-N and required serialized/full suites P-R.
+- [x] Update documentation and ExecPlan, audit static authority hits, review diff, and create exactly one selective local commit.
 
 ## Files Expected to Change
 

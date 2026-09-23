@@ -103,7 +103,7 @@ O backend usa Vitest para testes unitários e de integração cobrindo motor de 
 
 ## Known Constraints
 
-- Testes de concorrência física de transações sob Firestore Emulator: NOT YET VERIFIED (validado com mocks unitários). Sem CI/CD, Docker, migrations, formatter ou esquema Firestore versionado.
+- Real Firestore Emulator OCC was verified: deterministic document collision demonstrated, Firestore transaction callback retry observed, retry re-reads fresh committed state, stale lifecycle mutations fail closed. R7 OCC integration suites cover disconnect/onboarding, strong cleanup/recovery, monotonic provider progress, and stale cleanup-decision races.
 - Componentes web e o cliente api.ts concentram muito comportamento.
 - Alias groups/ministry e campos snake_case/camelCase coexistem por compatibilidade.
 - Versão mínima suportada de Node/npm: Unknown / Not yet verified.
