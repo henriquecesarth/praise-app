@@ -27,7 +27,7 @@ D8 billing review passed, but feature review found a blocker and four high/mediu
 - Non-materialized and remote-materialized commercial retries have distinct semantics.
 - Persisted `waba_subscribed` is authoritative; Step 9 never repeats subscription.
 - Repeated restrictions are denial-only and cannot repeat provider mutations or terminalize retained progress.
-- The 24h deadline remains non-sliding. Before expiry, billing recovery safely resumes and converges connected. After expiry, an idempotent existing D7 reconciliation/cleanup owner controls remote settlement; only strong D7 settlement releases claims/secret/final lifecycle and capacity.
+- The 24h deadline remains non-sliding. Before expiry, billing recovery safely resumes and converges connected. After expiry, an idempotent existing D7 reconciliation/cleanup owner controls remote settlement. Commercial capacity is released only through a canonical transition to `disconnected`: immediately through explicit user disconnect (when required provider cleanup ownership is atomically established), or through strong D7 settlement when automatic cleanup of a materialized restricted lifecycle completes. Only strong D7 settlement releases claims, secret, final lifecycle state, and capacity after provider strong settlement proof.
 - Physical Firestore OCC collision is deterministic and proves the required read-before-write abort/retry behavior.
 
 ## Scope
@@ -52,6 +52,31 @@ D8 billing review passed, but feature review found a blocker and four high/mediu
 - Onboarding remains route/controller → service → repositories → Firestore, with provider calls outside transactions.
 - D8 may ensure an existing D7 durable owner but may not duplicate D7 provider settlement or cleanup authority.
 - D6 dispatch retains its repository transaction linearization contract.
+
+## Final Authority Trace / Lifecycle Semantics
+
+### Explicit User Disconnect
+
+`disconnectConnection` reads fresh authoritative state transactionally. The connection may transition locally to `disconnected`. If provider cleanup is required, durable cleanup ownership is established atomically with that disconnect. Provider identity claim is retained. Secret is retained while provider cleanup remains outstanding. Provider claim and secret are released only after provider strong settlement.
+
+### Commercial Capacity
+
+Capacity is released only through a canonical transition to `disconnected`. That can occur:
+
+1. Immediately through explicit user disconnect, provided required provider cleanup ownership is atomically established.
+2. Through strong settlement when automatic cleanup of a materialized restricted lifecycle completes.
+
+Commercial capacity is NOT always held until provider strong settlement after an explicit user disconnect — it is released immediately once durable cleanup ownership is atomically established.
+
+### Strong Settlement Authority
+
+Strong settlement remains authoritative for:
+
+- Proving provider-side cleanup.
+- Releasing the exact-owned provider identity claim.
+- Deleting retained provider secret.
+- Finalizing cleanup job state.
+- Settling provider lifecycle/reconciliation state.
 
 ## Implementation Plan
 
@@ -117,7 +142,43 @@ D8 billing review passed, but feature review found a blocker and four high/mediu
 
 - 2026-09-21: Startup complete. Current HEAD is `c55b054` on `main`, one commit ahead of `origin/main`; unrelated `.gitignore` and `.opencode/` changes pre-exist and will not be touched.
 - 2026-09-21: Subagent exploration unavailable because configured subagent depth is already exhausted; repository inspection continues directly.
+- 2026-09-22 (R7-B2.3 — Step 9 Ambiguity + D7 TTL Ownership + Strong Settlement): COMPLETE (uncommitted, execution-only).
+  - Regression tests written FIRST in `backend/src/features/whatsapp/whatsapp.materialized-recovery-r7b23.test.ts` (mock-isolated; no Firestore Emulator). 15 tests A–O.
+  - Pre-fix baseline observed: 11 failed / 4 passed (D, L, N, O already correct).
+  - Step 9 ambiguity: `hasUnresolvedWabaSubscribeAmbiguity` (read-only predicate over the existing WABA lifecycle lock) + `assertNoUnresolvedWabaSubscribeAmbiguity` in `completeOnboarding`. Runs for BOTH the re-subscribe path and the `waba_subscribed` recovery path. Fails closed (409 `WABA_SUBSCRIBE_OUTCOME_UNRESOLVED`) and ensures `recon_meta_${wabaId}` ownership. No second uncertainty system; zero new provider subscribe calls.
+  - Coordinator: only timeouts/aborts record `unknown_outcome`; a definite provider rejection releases the lease as idle (preserves the legacy safe-retry behavior while removing false ambiguity debt).
+  - Deterministic pre-TTL cleanup ownership: `ensureJobScheduled` creates `cleanup_conn_${connectionId}` exactly once with `next_attempt_at` = ORIGINAL `pending_expires_at` (never slid, never duplicated). Pre-TTL guard in the Meta cleanup path refuses destructive settlement before the immutable deadline.
+  - Recovery before TTL: Step 10 atomically cancels the scheduled cleanup job (`cancelled` / `not_needed`).
+  - Strong-settlement-only finalization: `finalizeMetaCleanupOnStrongSettlement` releases only an owned claim, transitions connecting/pending -> disconnected (capacity released because disconnected commits), and settles the job. Foreign-owned claims are never released. Unresolved subscribe debt retains secret/evidence/connection/capacity (`UNRESOLVED_REMOTE_SUBSCRIBE_DEBT`).
+  - Validation: new suite 15/15; `whatsapp.onboarding.test.ts` 34/34; 10 mock-based WhatsApp suites 156/156; `npm --prefix backend run build` clean; `git diff --check` clean. Emulator-dependent suites (`zernio-d7-remediation.integration.test.ts`, `whatsapp.lifecycle-adversarial.test.ts`) NOT_RUN_ENVIRONMENT (port 8080 closed).
+  - Not in this phase (owned elsewhere): Firestore OCC (R7-C), full validation (R7-D), `whatsapp-reconciliation.service.ts` unchanged (D7 evidence semantics already retain historical UNKNOWN).
+- 2026-09-22 (R7-B2.3R — Crash-Safety Remediation): COMPLETE (uncommitted, execution-only).
+  - Regression tests added FIRST to `whatsapp.materialized-recovery-r7b23.test.ts` (A–M, mock-isolated; transactional in-memory Firestore mock with rollback + read-your-writes). Pre-fix failures observed: R7B23R-A/B/D/E/G/I/J/K failed, plus existing M/O (10 failed / 17 passed). Post-fix: 28/28.
+  - BLOCKER 1: `WhatsAppProviderCleanupJobRepository.commitMaterializedDenialOwnershipAtomically` commits connection restricted state + session `waba_subscribed` + deterministic `cleanup_conn_${connectionId}` ownership in ONE Firestore transaction. Existing jobs are never duplicated/slid/resurrected; conflicting org/connection/provider identity fails closed with zero writes.
+  - BLOCKER 2: `finalizeMetaCleanupOnStrongSettlement(jobId, leaseToken, { wabaId, generation, leaseToken })` re-reads job/lease/connection/WABA lock/secret/claim/session before any write, then settles the WABA lifecycle, deletes the secret, releases ONLY the exactly-owned claim, disconnects connecting/pending, clears session linkage and marks the job succeeded/proven in one write phase. Foreign claims never deleted; a live `connected` line is never disconnected; any invariant failure = zero partial settlement.
+  - HIGH 3: `MetaWhatsAppProvider.subscribeMessagingAccountApps` now tags authoritative HTTP rejections (`providerRejection`) vs transport uncertainty (`transportUncertainty`); coordinator `isAuthoritativeProviderRejection` only releases the lease as idle on a proven rejection and otherwise records UNKNOWN + ensures `recon_meta_${wabaId}`.
+  - HIGH 4: `acquireLeaseInTransaction` object form accepts `rejectUnresolvedSubscribeAmbiguity`; the coordinator passes it so the ambiguity decision is linearized with lease acquisition (TOCTOU closed). D7 cleanup/reconciliation callers unchanged.
+  - HIGH 5: the ORIGINAL immutable `pending_expires_at` is the only valid cleanup deadline. Missing/null/malformed fails closed (`ONBOARDING_DEADLINE_INTEGRITY_VIOLATION`) in both the onboarding denial path and the cleanup worker (retry_wait, no destructive settlement), preserving connection/secret/evidence/capacity.
+  - Validation: new suite 28/28; `whatsapp.onboarding.test.ts` 34/34 (3 provider-rejection mocks aligned to the new metadata contract); 12 mock-based WhatsApp suites 218/218; `npm --prefix backend run build` clean; `npx tsc --noEmit` clean; `git diff --check` clean. Emulator-dependent suites NOT_RUN_ENVIRONMENT (port 8080 closed).
+  - Not in this phase: Firestore OCC (R7-C), full backend suite (R7-D).
+
+- 2026-09-23 (R7-B2.3R2 — Final Proof & Classification Remediation): COMPLETE (uncommitted, execution-only).
+  - Tests were added first for HTTP 500/503 and unclassified non-2xx subscribe responses, current/older-generation cleanup proof, proof-to-settlement crash retention, and terminal versus live deterministic cleanup ownership.
+  - The Meta subscribe adapter now treats only existing documented Meta invalid-parameter code `100` as a definite rejection. It preserves HTTP/Meta diagnostics for all non-2xx responses, while 5xx and unclassified outcomes remain UNKNOWN and enter the existing reconciliation path.
+  - Strong cleanup proof is checkpointed non-destructively under the exact WABA lease/generation before settlement. The destructive transaction re-reads the same-generation observation and cannot manufacture it.
+  - Existing `pending`, `retry_wait`, `processing`, and `exhausted` cleanup jobs are live ownership; `cancelled`, `succeeded`, and `abandoned` are inert and fail closed without resurrecting/partially materializing state.
+  - Pre-fix: 10 new regressions failed. Post-fix: focused provider/materialized/onboarding run passed 95/95; prior targeted mock WhatsApp set passed 234/234. Emulator-dependent suites were not started because port 8080 was unavailable.
+- 2026-09-23 (R7-B2.4 — Cross-Invariant Closure & Pre-OCC Validation Gate): COMPLETE (uncommitted, execution + validation only).
+  - Production callsite audit found no unsafe B2 onboarding subscribe bypass: the only onboarding mutation is dispatched through `WhatsAppWabaCoordinatorService`; direct subscribe calls belong to D7 cleanup re-assertion or reconciliation repair under lifecycle leases. `ensureJobScheduled` has zero production consumers and is retained as a deferred superseded helper.
+  - Cross-lifecycle regression exposed two real checkpoint bypasses. On a recovery blocked by D7 ambiguity, Step 6 could regress persisted `provider_progress` from `waba_subscribed` to `assets_verified`; a malformed CSRF completion could terminalize a materialized restricted line outside cleanup ownership. Both were fixed minimally: provider progress is monotonic, and invalid CSRF retains a non-`none` recovery checkpoint while returning 403.
+  - New composed regression proves materialized commercial denial retains the original TTL, secret, capacity and deterministic cleanup job when commercial eligibility returns but D7 subscribe ambiguity blocks recovery; `recon_meta_${wabaId}` owns convergence and no duplicate subscribe is dispatched.
+  - Targeted validation: 13 files / 298 tests passed; backend build and no-emit type-check passed. Port 8080 was unavailable; emulator-dependent suites remain NOT_RUN_ENVIRONMENT. No R7-C OCC implementation or ad-hoc concurrency locking was added.
+- 2026-09-23 (R7 — Documentation Correction & Consolidated Commit): COMPLETE.
+  - Corrected final authority trace / lifecycle wording in this ExecPlan to accurately distinguish explicit user disconnect (durable cleanup ownership atomically established, capacity released immediately) from automatic materialized-denial cleanup / strong settlement (provider claim and secret released only after strong settlement proof).
+  - Added canonical semantics section: Explicit User Disconnect, Commercial Capacity, Strong Settlement Authority.
+  - Firestore index audit verified: all required composite indexes declared in `backend/firestore.indexes.json`. `whatsapp_provider_cleanup_jobs` has `status + next_attempt_at + __name__` and `status + lease_expires_at + __name__`. No speculative indexes added. `status + pending_expires_at` is not a production Firestore composite query (filtered in-memory on `whatsapp_connections`).
+  - Backend build passes. TypeScript noEmit passes. `git diff --check` passes.
 
 ## Final Result
 
-Pending validation.
+R7 documentation corrected, Firestore index declarations verified, static validation passes, all approved R7 work committed in one consolidated commit.

@@ -6,6 +6,33 @@ import {
   WhatsAppUnresolvedRemoteMutation,
 } from '../features/whatsapp/whatsapp.types';
 
+/**
+ * R7-B2.3 — D7 subscribe-ambiguity predicate.
+ *
+ * A WABA lifecycle lock represents an UNRESOLVED remote subscribe attempt when:
+ *  - `operation_status === 'in_flight'` (the process may have dispatched the Meta call and died
+ *    before persisting the local `waba_subscribed` checkpoint), or
+ *  - `operation_status === 'unknown_outcome'` (a timeout/abort left the outcome undetermined), or
+ *  - the bounded ledger still carries an unresolved `subscribe` mutation.
+ *
+ * This is a READ-ONLY predicate over the existing D7 uncertainty representation. It never invents
+ * a second uncertainty system and never settles anything by itself: callers must route convergence
+ * to the existing durable reconciliation job (`recon_meta_${wabaId}`).
+ */
+export function hasUnresolvedWabaSubscribeAmbiguity(
+  lock: WhatsAppWabaLifecycleLockRecord | null | undefined
+): boolean {
+  if (!lock) {
+    return false;
+  }
+  if (lock.operation_status === 'in_flight' || lock.operation_status === 'unknown_outcome') {
+    return true;
+  }
+  return (lock.unresolved_remote_mutations || []).some(
+    (m) => m.operation === 'subscribe' && m.status === 'unknown_outcome'
+  );
+}
+
 export class WhatsAppWabaLifecycleLockRepository {
   private readonly locksCol = db.collection('whatsapp_waba_lifecycle_locks');
 
@@ -44,6 +71,7 @@ export class WhatsAppWabaLifecycleLockRepository {
       let desiredState: 'subscribed' | 'unsubscribed';
       let durationSeconds: number;
       let operationStatus: 'idle' | 'in_flight' | 'unknown_outcome' = 'in_flight';
+      let rejectUnresolvedSubscribeAmbiguity = false;
 
       if (isStandalone) {
         wabaId = arg1 as string;
@@ -57,11 +85,13 @@ export class WhatsAppWabaLifecycleLockRepository {
           holderId: string;
           desiredState: 'subscribed' | 'unsubscribed';
           leaseDurationSeconds?: number;
+          rejectUnresolvedSubscribeAmbiguity?: boolean;
         };
         wabaId = params.wabaId;
         holderId = params.holderId;
         desiredState = params.desiredState;
         durationSeconds = params.leaseDurationSeconds || 120;
+        rejectUnresolvedSubscribeAmbiguity = params.rejectUnresolvedSubscribeAmbiguity === true;
       }
 
       const docRef = this.getLockRef(wabaId);
@@ -86,6 +116,18 @@ export class WhatsAppWabaLifecycleLockRepository {
             }
           );
         }
+      }
+
+      // R7-B2.3R — HIGH 4: linearize the "no unresolved subscribe ambiguity" decision with lease
+      // acquisition. A stale pre-flight read MUST NOT be the sole safety gate. If an unresolved
+      // subscribe attempt exists (in_flight / unknown_outcome / ledger debt), this generation MUST
+      // NOT dispatch a new subscribe mutation. Fail closed into existing D7 reconciliation ownership.
+      if (rejectUnresolvedSubscribeAmbiguity && hasUnresolvedWabaSubscribeAmbiguity(currentLock)) {
+        throw new AppError(
+          409,
+          'WABA_SUBSCRIBE_OUTCOME_UNRESOLVED: Uma tentativa anterior de assinatura da WABA possui resultado remoto não resolvido. A convergência pertence ao reconciliador D7.',
+          { code: 'WABA_SUBSCRIBE_OUTCOME_UNRESOLVED' }
+        );
       }
 
       const nextGeneration = (currentLock?.operation_generation || 0) + 1;
@@ -193,6 +235,78 @@ export class WhatsAppWabaLifecycleLockRepository {
         provider_observed_at: observedState ? nowIso : lock.provider_observed_at,
         provider_observed_generation: observedState ? generation : lock.provider_observed_generation,
         desired_subscription_state: desiredState || lock.desired_subscription_state,
+        updated_at: nowIso,
+      });
+    };
+
+    if (isStandalone) {
+      await db.runTransaction(handler);
+    } else {
+      await handler(arg1 as FirebaseFirestore.Transaction);
+    }
+  }
+
+  /**
+   * Records a provider observation while retaining the exact current WABA lease. This is the D7
+   * non-destructive checkpoint between external proof and later destructive local settlement.
+   */
+  async recordProviderObservedStateInTransaction(
+    arg1: FirebaseFirestore.Transaction | string,
+    arg2: any,
+    arg3?: any,
+    arg4?: any
+  ): Promise<void> {
+    const isStandalone = typeof arg1 === 'string';
+    const handler = async (tx: FirebaseFirestore.Transaction) => {
+      let wabaId: string;
+      let generation: number;
+      let leaseToken: string;
+      let observedState: 'subscribed' | 'unsubscribed';
+
+      if (isStandalone) {
+        wabaId = arg1 as string;
+        leaseToken = arg2 as string;
+        generation = arg3 as number;
+        observedState = arg4 as 'subscribed' | 'unsubscribed';
+      } else {
+        const params = arg2 as {
+          wabaId: string;
+          generation: number;
+          leaseToken: string;
+          observedState: 'subscribed' | 'unsubscribed';
+        };
+        wabaId = params.wabaId;
+        generation = params.generation;
+        leaseToken = params.leaseToken;
+        observedState = params.observedState;
+      }
+
+      const docRef = this.getLockRef(wabaId);
+      const doc = await tx.get(docRef);
+      if (!doc.exists) {
+        throw new AppError(409, 'WABA_SETTLEMENT_EVIDENCE_INVALID: Lock de ciclo de vida da WABA não encontrado.', {
+          code: 'WABA_SETTLEMENT_EVIDENCE_INVALID',
+        });
+      }
+
+      const lock = doc.data() as WhatsAppWabaLifecycleLockRecord;
+      if (
+        lock.provider_waba_id !== wabaId ||
+        lock.operation_generation !== generation ||
+        lock.lease_token !== leaseToken
+      ) {
+        throw new AppError(
+          409,
+          'WABA_LIFECYCLE_LEASE_LOST: Geração ou token de lease da WABA divergente. Observação do provedor rejeitada.',
+          { code: 'WABA_LIFECYCLE_LEASE_LOST' }
+        );
+      }
+
+      const nowIso = new Date().toISOString();
+      tx.update(docRef, {
+        provider_observed_state: observedState,
+        provider_observed_at: nowIso,
+        provider_observed_generation: generation,
         updated_at: nowIso,
       });
     };

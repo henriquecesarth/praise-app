@@ -9,7 +9,7 @@ import { WhatsAppProviderIdentityClaimRepository } from '../../repositories/What
 import { WhatsAppMinistryAssignmentClaimRepository } from '../../repositories/WhatsAppMinistryAssignmentClaimRepository';
 import { WhatsAppOnboardingSessionRepository } from '../../repositories/WhatsAppOnboardingSessionRepository';
 import { WhatsAppProviderCleanupJobRepository } from '../../repositories/WhatsAppProviderCleanupJobRepository';
-import { WhatsAppWabaLifecycleLockRepository } from '../../repositories/WhatsAppWabaLifecycleLockRepository';
+import { WhatsAppWabaLifecycleLockRepository, hasUnresolvedWabaSubscribeAmbiguity } from '../../repositories/WhatsAppWabaLifecycleLockRepository';
 import { WhatsAppWabaReconciliationJobRepository } from '../../repositories/WhatsAppWabaReconciliationJobRepository';
 import { WhatsAppZernioWebhookRepository } from '../../repositories/WhatsAppZernioWebhookRepository';
 import { WhatsAppOutboundDispatchRepository } from '../../repositories/WhatsAppOutboundDispatchRepository';
@@ -53,6 +53,7 @@ import {
   getMinistryAssignmentClaimId,
   WhatsAppMinistryAssignmentClaimRecord,
   WhatsAppProviderCleanupJobRecord,
+  WhatsAppWabaLifecycleLockRecord,
 } from './whatsapp.types';
 import { OrganizationRecord } from '../organizations/organization.types';
 import { ZernioHttpClient } from './zernio-http-client';
@@ -696,28 +697,41 @@ export class WhatsAppConnectionService {
     targetStatus: WhatsAppConnectionStatus,
     reason?: string | null
   ): Promise<void> {
-    const conn = await this.connectionRepo.getConnectionById(connectionId);
-    if (!conn || conn.organization_id !== orgId) {
-      throw new AppError(404, 'Conexão não encontrada nesta organização.');
-    }
+    await db.runTransaction(async (tx) => {
+      const connRef = db.collection('whatsapp_connections').doc(connectionId);
+      const connDoc = await tx.get(connRef);
+      if (!connDoc.exists) {
+        throw new AppError(404, 'Conexão não encontrada nesta organização.');
+      }
+      const conn = { id: connDoc.id, ...connDoc.data() } as WhatsAppConnectionRecord;
+      if (conn.organization_id !== orgId) {
+        throw new AppError(404, 'Conexão não encontrada nesta organização.');
+      }
 
-    validateConnectionTransition(conn, targetStatus);
+      // Idempotency: if already in targetStatus, no-op safely
+      if (conn.status === targetStatus) {
+        return;
+      }
 
-    // If connecting to connected, verify claim ownership
-    if (targetStatus === 'connected') {
-      if (!isProviderIdentityMaterialized(conn)) {
-        throw new AppError(400, 'Conexão deve ter identidade de provedor materializada para conectar.', {
-          code: 'CONNECTION_NOT_MATERIALIZED',
+      validateConnectionTransition(conn, targetStatus);
+
+      // If connecting to connected, verify claim ownership
+      if (targetStatus === 'connected') {
+        if (!isProviderIdentityMaterialized(conn)) {
+          throw new AppError(400, 'Conexão deve ter identidade de provedor materializada para conectar.', {
+            code: 'CONNECTION_NOT_MATERIALIZED',
+          });
+        }
+        await this.providerIdentityVerifier.verifyProviderIdentityClaims({
+          connection: conn,
+          organizationId: orgId,
         });
       }
-      await this.providerIdentityVerifier.verifyProviderIdentityClaims({
-        connection: conn,
-        organizationId: orgId,
-      });
-    }
 
-    await this.connectionRepo.setConnectionStatus(orgId, connectionId, targetStatus, reason);
+      await this.connectionRepo.setConnectionStatus(orgId, connectionId, targetStatus, reason, tx);
+    });
   }
+
 
   async transitionZernioConnectedAtomically(params: {
     orgId: string;
@@ -2074,7 +2088,9 @@ export class WhatsAppConnectionService {
       const sessionRef = db.collection('whatsapp_onboarding_sessions').doc(sessionId);
       const connRef = db.collection('whatsapp_connections').doc(connectionId);
 
+      const sessionDoc = await tx.get(sessionRef);
       const connDoc = await tx.get(connRef);
+
       if (connDoc.exists) {
         const conn = connDoc.data() as WhatsAppConnectionRecord;
         if (conn.organization_id === orgId && (conn.status === 'pending' || conn.status === 'connecting')) {
@@ -2088,12 +2104,132 @@ export class WhatsAppConnectionService {
         }
       }
 
-      tx.update(sessionRef, {
-        status: terminalSessionStatus,
-        updated_at: nowIso,
-      });
+      if (sessionDoc.exists) {
+        const session = sessionDoc.data() as WhatsAppOnboardingSessionRecord;
+        if (session.status !== 'consumed') {
+          tx.update(sessionRef, {
+            status: terminalSessionStatus,
+            updated_at: nowIso,
+          });
+        }
+      }
     });
   }
+
+  /**
+   * R7-C-R1 BLOCKER 2: Stale Provider-Validation Failure Writes.
+   *
+   * Any provider-validation failure that mutates connection/session lifecycle state
+   * after an await MUST re-read authoritative state transactionally before writing.
+   *
+   * Invariants:
+   * 1. Read fresh connection inside transaction.
+   * 2. If connection is already `disconnected`, do NOT overwrite it.
+   * 3. If connection is already `connected`, do NOT overwrite it.
+   * 4. If cleanup job has already succeeded or is processing, do NOT regress it.
+   * 5. If connection is still live (`pending` or `connecting`), update to `error` with reason.
+   * 6. Update session to `failed` (if not already consumed).
+   * 7. Delete secret only when mutating live connection to error.
+   */
+  private async recordProviderValidationFailure(
+    orgId: string,
+    sessionId: string,
+    connectionId: string,
+    failureReason: string
+  ): Promise<void> {
+    const nowIso = new Date().toISOString();
+    await db.runTransaction(async (tx) => {
+      // 1. ALL READS FIRST
+      const connRef = db.collection('whatsapp_connections').doc(connectionId);
+      const sessionRef = db.collection('whatsapp_onboarding_sessions').doc(sessionId);
+      const cleanupJobRef = db.collection('whatsapp_provider_cleanup_jobs').doc(`cleanup_conn_${connectionId}`);
+
+      const connDoc = await tx.get(connRef);
+      const sessionDoc = await tx.get(sessionRef);
+      const cleanupJobDoc = await tx.get(cleanupJobRef);
+
+      if (!connDoc.exists) {
+        return;
+      }
+      const conn = connDoc.data() as WhatsAppConnectionRecord;
+      if (conn.organization_id !== orgId) {
+        return;
+      }
+
+      // If connection has already reached a terminal state (disconnected) or connected,
+      // a stale provider validation failure MUST NOT overwrite or regress it.
+      if (conn.status === 'disconnected' || conn.status === 'connected') {
+        return;
+      }
+
+      // If cleanup job has already reached strong settlement ('succeeded') or is processing,
+      // strong terminal state already won, do NOT regress it.
+      if (cleanupJobDoc.exists) {
+        const job = cleanupJobDoc.data() as WhatsAppProviderCleanupJobRecord;
+        if (job.status === 'succeeded' || job.status === 'processing') {
+          return;
+        }
+      }
+
+      // 2. ALL WRITES AFTER ALL READS
+      // Only mutate connection if it is still live (pending or connecting)
+      if (conn.status === 'pending' || conn.status === 'connecting') {
+        tx.update(connRef, {
+          status: 'error',
+          status_reason: failureReason,
+          updated_at: nowIso,
+        });
+
+        const secretRef = db.collection('whatsapp_connection_secrets').doc(connectionId);
+        tx.delete(secretRef);
+      }
+
+      if (sessionDoc.exists) {
+        const session = sessionDoc.data() as WhatsAppOnboardingSessionRecord;
+        if (session.status !== 'consumed') {
+          tx.update(sessionRef, {
+            status: 'failed',
+            updated_at: nowIso,
+          });
+        }
+      }
+    });
+  }
+
+  /**
+   * R7-B2.3 — Step 9 ambiguity guard (fail closed into existing D7 ownership).
+   *
+   * A remote subscribe attempt may have succeeded while the local `provider_progress=waba_subscribed`
+   * checkpoint was never persisted (crash window), or a timeout/abort left the outcome undetermined.
+   * In that state a retry MUST NOT blindly re-issue `subscribeMessagingAccountApps`. Instead the
+   * deterministic existing reconciliation job (`recon_meta_${wabaId}`) becomes the owner of
+   * convergence. No second uncertainty system is introduced: this reads the existing WABA lifecycle
+   * lock ledger only.
+   */
+  private async assertNoUnresolvedWabaSubscribeAmbiguity(wabaId: string): Promise<void> {
+    const lock = await this.wabaLockRepo.getLock(wabaId);
+    if (!hasUnresolvedWabaSubscribeAmbiguity(lock)) {
+      return;
+    }
+
+    // Route convergence to the existing durable D7 reconciliation owner (idempotent).
+    await this.reconJobRepo.ensureJobPending(wabaId);
+
+    throw new AppError(
+      409,
+      'WABA_SUBSCRIBE_OUTCOME_UNRESOLVED: Uma tentativa anterior de assinatura da WABA possui resultado remoto não resolvido. A convergência pertence ao reconciliador D7.',
+      { code: 'WABA_SUBSCRIBE_OUTCOME_UNRESOLVED' }
+    );
+  }
+
+  /**
+   * R7-B2.3R — BLOCKER 1 / HIGH 5.
+   *
+   * The restricted materialized denial is committed atomically by
+   * `cleanupJobRepo.commitMaterializedDenialOwnershipAtomically`, which in ONE Firestore transaction
+   * establishes the connection restricted state, the session `waba_subscribed` checkpoint and the
+   * deterministic cleanup ownership anchored to the ORIGINAL immutable `pending_expires_at`.
+   */
 
   async completeOnboarding(
     orgId: string,
@@ -2181,13 +2317,20 @@ export class WhatsAppConnectionService {
       incomingBuffer.length === storedBuffer.length && crypto.timingSafeEqual(incomingBuffer, storedBuffer);
 
     if (!isValidNonce) {
-      await this.releaseTerminalPendingReservation(
-        orgId,
-        session.id,
-        session.connection_id,
-        'failed',
-        'INVALID_ONBOARDING_STATE'
-      );
+      // An untrusted client nonce must not become an out-of-band destructive transition after
+      // provider materialization. The request still fails, while B2 recovery/cleanup ownership
+      // remains the authority for a retained progress checkpoint.
+      const hasMaterializedRecoveryProgress =
+        session.provider_progress && session.provider_progress !== 'none';
+      if (!hasMaterializedRecoveryProgress) {
+        await this.releaseTerminalPendingReservation(
+          orgId,
+          session.id,
+          session.connection_id,
+          'failed',
+          'INVALID_ONBOARDING_STATE'
+        );
+      }
       throw new AppError(403, 'Estado de onboarding inválido (falha na validação CSRF).', {
         code: 'INVALID_ONBOARDING_STATE',
       });
@@ -2205,13 +2348,21 @@ export class WhatsAppConnectionService {
       entitlement.state === 'integrity_failure';
 
     if (isSuspendedOrNoPlanCapacity) {
-      await this.releaseTerminalPendingReservation(
-        orgId,
-        session.id,
-        session.connection_id,
-        'failed',
-        'SUBSCRIPTION_RESTRICTED'
-      );
+      // R7-B2.2: Repeated commercial restriction is NOT lifecycle settlement.
+      // If the session has durable provider materialization (credential staged, assets verified,
+      // phone registered, or WABA subscribed), the recoverable state (connecting / SUBSCRIPTION_RESTRICTED,
+      // secret + provider IDs + pending TTL retained) MUST be preserved so Billing recovery can resume.
+      const hasMaterializedRecoveryProgress =
+        session.provider_progress && session.provider_progress !== 'none';
+      if (!hasMaterializedRecoveryProgress) {
+        await this.releaseTerminalPendingReservation(
+          orgId,
+          session.id,
+          session.connection_id,
+          'failed',
+          'SUBSCRIPTION_RESTRICTED'
+        );
+      }
       const errCode =
         entitlement.state === 'restricted_over_limit'
           ? 'WHATSAPP_CAPACITY_LIMIT_REACHED'
@@ -2226,6 +2377,29 @@ export class WhatsAppConnectionService {
     }
 
     // Step 4: Credential Staging / Reuse (DEC-7D-20, DEC-7D-32)
+    // R7-B2.2 — Persisted checkpoint identity validation (FAIL CLOSED):
+    // If this connection already materialized a provider identity (persisted by a prior restricted
+    // attempt), the durable checkpoint belongs to that identity. Reusing it with a DIFFERENT WABA or
+    // phone in the request is a provider identity conflict. Reject BEFORE any provider call so a
+    // checkpoint belonging to another provider identity is never reused.
+    const persistedWabaId = conn.provider_waba_id ?? null;
+    const persistedPhoneNumberId = conn.provider_phone_number_id ?? null;
+    if (persistedWabaId || persistedPhoneNumberId) {
+      if (persistedWabaId && persistedWabaId !== input.wabaId) {
+        throw new AppError(
+          409,
+          `PROVIDER_IDENTITY_CONFLICT: Checkpoint materializado para WABA ${persistedWabaId}, não ${input.wabaId}.`,
+          { code: 'PROVIDER_IDENTITY_CONFLICT' }
+        );
+      }
+      if (persistedPhoneNumberId && persistedPhoneNumberId !== input.phoneNumberId) {
+        throw new AppError(
+          409,
+          `PROVIDER_IDENTITY_CONFLICT: Checkpoint materializado para phone ${persistedPhoneNumberId}, não ${input.phoneNumberId}.`,
+          { code: 'PROVIDER_IDENTITY_CONFLICT' }
+        );
+      }
+    }
     let accessToken: string;
     if (!session.provider_progress || session.provider_progress === 'none') {
       let oauthResult: WhatsAppOAuthResult;
@@ -2262,9 +2436,8 @@ export class WhatsAppConnectionService {
       };
       await this.secretRepo.setSecret(secretRecord);
 
-      await this.onboardingSessionRepo.updateSession(session.id, {
+      await this.onboardingSessionRepo.updateProgressMonotonically(session.id, 'credential_staged', {
         status: 'credential_staged',
-        provider_progress: 'credential_staged',
       });
     } else {
       const existingSecret = await this.secretRepo.getSecret(orgId, session.connection_id);
@@ -2286,12 +2459,12 @@ export class WhatsAppConnectionService {
     }
 
     if (!isWabaAuthorized) {
-      await this.secretRepo.deleteSecret(orgId, session.connection_id, { wabaId: input.wabaId });
-      await this.connectionRepo.updateConnection(orgId, session.connection_id, {
-        status: 'error',
-        status_reason: 'UNAUTHORIZED_WABA_ACCESS',
-      });
-      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      await this.recordProviderValidationFailure(
+        orgId,
+        session.id,
+        session.connection_id,
+        'UNAUTHORIZED_WABA_ACCESS'
+      );
       throw new AppError(403, 'Acesso não autorizado à conta do WhatsApp fornecida.', {
         code: 'UNAUTHORIZED_WABA_ACCESS',
       });
@@ -2302,12 +2475,12 @@ export class WhatsAppConnectionService {
     try {
       phoneNumbers = await this.metaProvider.listAuthorizedPhoneNumbers(accessToken, input.wabaId);
     } catch {
-      await this.secretRepo.deleteSecret(orgId, session.connection_id, { wabaId: input.wabaId });
-      await this.connectionRepo.updateConnection(orgId, session.connection_id, {
-        status: 'error',
-        status_reason: 'PHONE_NOT_IN_WABA',
-      });
-      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      await this.recordProviderValidationFailure(
+        orgId,
+        session.id,
+        session.connection_id,
+        'PHONE_NOT_IN_WABA'
+      );
       throw new AppError(400, 'O número de telefone informado não pertence à conta WhatsApp.', {
         code: 'PHONE_NOT_IN_WABA',
       });
@@ -2315,20 +2488,24 @@ export class WhatsAppConnectionService {
 
     const matchingPhone = phoneNumbers.find((p) => p.id === input.phoneNumberId);
     if (!matchingPhone) {
-      await this.secretRepo.deleteSecret(orgId, session.connection_id, { wabaId: input.wabaId });
-      await this.connectionRepo.updateConnection(orgId, session.connection_id, {
-        status: 'error',
-        status_reason: 'PHONE_NOT_IN_WABA',
-      });
-      await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      await this.recordProviderValidationFailure(
+        orgId,
+        session.id,
+        session.connection_id,
+        'PHONE_NOT_IN_WABA'
+      );
       throw new AppError(400, 'O número de telefone informado não pertence à conta WhatsApp.', {
         code: 'PHONE_NOT_IN_WABA',
       });
     }
 
-    await this.onboardingSessionRepo.updateSession(session.id, {
-      provider_progress: 'assets_verified',
-    });
+    // Provider progress is monotonic. A retained `waba_subscribed` checkpoint may re-enter this
+    // verification path while D7 ambiguity blocks recovery; it must never be degraded back to
+    // `assets_verified`, or a later retry could reopen already-completed provider mutations.
+    await this.onboardingSessionRepo.updateProgressMonotonically(
+      session.id,
+      'assets_verified'
+    );
 
     // Step 7: Phone Normalization
     let displayPhone = matchingPhone.displayPhoneNumber;
@@ -2346,9 +2523,10 @@ export class WhatsAppConnectionService {
     ) {
       try {
         await this.metaProvider.registerPhoneNumber(accessToken, input.phoneNumberId, input.pin);
-        await this.onboardingSessionRepo.updateSession(session.id, {
-          provider_progress: 'phone_registered',
-        });
+        await this.onboardingSessionRepo.updateProgressMonotonically(
+          session.id,
+          'phone_registered'
+        );
       } catch (err: any) {
         throw new AppError(
           502,
@@ -2362,32 +2540,42 @@ export class WhatsAppConnectionService {
     }
 
     // Step 9: Messaging Account Webhook Subscription (DEC-7D-56, DEC-7D-60, DEC-7D-65)
+    // R7-B2.3 — Fail closed into existing D7 ownership when a prior subscribe attempt is unresolved.
+    // This runs for BOTH the re-subscribe path and the `waba_subscribed` recovery path: a durable
+    // `waba_subscribed` checkpoint is only trustworthy when the lifecycle lock is safely settled.
+    await this.assertNoUnresolvedWabaSubscribeAmbiguity(input.wabaId);
+
+    // R7-B2.2 — Step 9 idempotency: a waba_subscribed checkpoint proves
+    // subscribeMessagingAccountApps already succeeded for THIS connection/WABA/phone/secret.
+    // DO NOT call the provider again; continue from the durable checkpoint toward Step 10.
     let acquiredWabaLock: { leaseToken: string; generation: number } | null = null;
-    try {
-      const coordResult = await this.wabaCoordinator.coordinateOnboardingSubscription(
-        input.wabaId,
-        session.id,
-        conn.id,
-        async () => {
-          await this.metaProvider.subscribeMessagingAccountApps(accessToken, input.wabaId);
+    if (session.provider_progress !== 'waba_subscribed') {
+      try {
+        const coordResult = await this.wabaCoordinator.coordinateOnboardingSubscription(
+          input.wabaId,
+          session.id,
+          conn.id,
+          async () => {
+            await this.metaProvider.subscribeMessagingAccountApps(accessToken, input.wabaId);
+          }
+        );
+        acquiredWabaLock = {
+          leaseToken: coordResult.leaseToken,
+          generation: coordResult.generation,
+        };
+      } catch (err: any) {
+        if (err instanceof AppError && err.statusCode === 409) {
+          throw err;
         }
-      );
-      acquiredWabaLock = {
-        leaseToken: coordResult.leaseToken,
-        generation: coordResult.generation,
-      };
-    } catch (err: any) {
-      if (err instanceof AppError && err.statusCode === 409) {
-        throw err;
+        throw new AppError(
+          502,
+          `Falha na assinatura de webhooks da conta no provedor: ${err.message || 'Erro no provedor'}`,
+          {
+            code: 'PROVIDER_SUBSCRIPTION_FAILED',
+            cause: err,
+          }
+        );
       }
-      throw new AppError(
-        502,
-        `Falha na assinatura de webhooks da conta no provedor: ${err.message || 'Erro no provedor'}`,
-        {
-          code: 'PROVIDER_SUBSCRIPTION_FAILED',
-          cause: err,
-        }
-      );
     }
 
     // Step 10: Atomic Materialization Transaction (DEC-7D-21, DEC-7D-30, DEC-7D-60)
@@ -2418,14 +2606,47 @@ export class WhatsAppConnectionService {
         if (currentConn.organization_id !== orgId) {
           throw new AppError(404, 'Conexão não encontrada nesta organização.');
         }
+        if (currentConn.status === 'disconnected') {
+          throw new AppError(409, 'CONNECTION_DISCONNECTED: A conexão foi desconectada antes da conclusão.', {
+            code: 'CONNECTION_DISCONNECTED',
+          });
+        }
+        if (currentConn.status === 'connected') {
+          if (currentConn.provider_phone_number_id === input.phoneNumberId) {
+            return; // Idempotent replay
+          }
+          throw new AppError(409, 'CONNECTION_ALREADY_CONNECTED: A conexão já está conectada.', {
+            code: 'CONNECTION_ALREADY_CONNECTED',
+          });
+        }
         if (currentConn.status !== 'pending' && currentConn.status !== 'connecting') {
-          throw new AppError(400, `Conexão em estado inválido para materialização: ${currentConn.status}`);
+          throw new AppError(409, `Conexão em estado inválido para materialização: ${currentConn.status}`, {
+            code: 'INVALID_CONNECTION_STATUS',
+          });
         }
 
         // Concurrency Guard (DEC-7D-33): Pointer must match
         if (currentConn.current_onboarding_session_id && currentConn.current_onboarding_session_id !== session.id) {
           throw new AppError(409, 'ONBOARDING_SESSION_SUPERSEDED: Sessão de onboarding substituída durante materialização.', {
             code: 'ONBOARDING_SESSION_SUPERSEDED',
+          });
+        }
+
+        // 10c-bis. Read session doc inside transaction (OCC authority)
+        const sessionRef = db.collection('whatsapp_onboarding_sessions').doc(session.id);
+        const sessionDoc = await tx.get(sessionRef);
+        if (!sessionDoc.exists) {
+          throw new AppError(404, 'Sessão de onboarding não encontrada.');
+        }
+        const currentSession = sessionDoc.data() as WhatsAppOnboardingSessionRecord;
+        if (currentSession.status === 'consumed') {
+          throw new AppError(409, 'ONBOARDING_SESSION_ALREADY_CONSUMED: Sessão de onboarding já foi consumida.', {
+            code: 'ONBOARDING_SESSION_ALREADY_CONSUMED',
+          });
+        }
+        if (currentSession.status === 'failed' || currentSession.status === 'expired') {
+          throw new AppError(409, 'ONBOARDING_SESSION_NOT_LIVE: Sessão de onboarding não está ativa.', {
+            code: 'ONBOARDING_SESSION_NOT_LIVE',
           });
         }
 
@@ -2447,6 +2668,13 @@ export class WhatsAppConnectionService {
         // 10e. Read claim doc
         const claimRef = db.collection('whatsapp_provider_identity_claims').doc(claimId);
         const claimDoc = await tx.get(claimRef);
+
+        // 10e-bis. R7-B2.3: read deterministic cleanup ownership so a successful recovery can
+        // durably settle it in the SAME atomic commit (never clean a successfully connected line).
+        const cleanupJobRef = db
+          .collection('whatsapp_provider_cleanup_jobs')
+          .doc(`cleanup_conn_${session.connection_id}`);
+        const cleanupJobDoc = await tx.get(cleanupJobRef);
 
         // 10f. Read configured connections for orgId
         const anchorMinistryRef = db.collection('ministries').doc(org.billing_anchor_ministry_id);
@@ -2513,7 +2741,6 @@ export class WhatsAppConnectionService {
         });
 
         // 10h. Update session to consumed
-        const sessionRef = db.collection('whatsapp_onboarding_sessions').doc(session.id);
         const retentionExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
         tx.update(sessionRef, {
           status: 'consumed',
@@ -2523,7 +2750,25 @@ export class WhatsAppConnectionService {
           updated_at: nowIso,
         });
 
-        // 10i. Release WABA Lifecycle Lock
+        // 10i. R7-B2.3: durably cancel/settle scheduled cleanup ownership on successful recovery.
+        // The original pending TTL is never slid first; the future worker can no longer clean a
+        // successfully connected line.
+        if (cleanupJobDoc.exists) {
+          const existingCleanup = cleanupJobDoc.data() as WhatsAppProviderCleanupJobRecord;
+          if (existingCleanup.status !== 'succeeded' && existingCleanup.status !== 'abandoned') {
+            tx.update(cleanupJobRef, {
+              status: 'cancelled',
+              provider_cleanup_proof: 'not_needed',
+              lease_token: null,
+              lease_expires_at: null,
+              retention_expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+              last_error_code: null,
+              updated_at: nowIso,
+            });
+          }
+        }
+
+        // 10j. Release WABA Lifecycle Lock
         if (wabaLockDoc.exists && acquiredWabaLock) {
           tx.update(wabaLockRef, {
             operation_status: 'idle',
@@ -2539,13 +2784,13 @@ export class WhatsAppConnectionService {
       });
     } catch (err: any) {
       const errCode = err?.code || (err instanceof AppError && (err.details as any)?.code) || (err as any)?.details?.code;
-      if (errCode === 'PROVIDER_PHONE_ALREADY_REGISTERED' || (err instanceof AppError && err.statusCode === 409)) {
-        await this.secretRepo.deleteSecret(orgId, session.connection_id, { wabaId: input.wabaId });
-        await this.connectionRepo.updateConnection(orgId, session.connection_id, {
-          status: 'error',
-          status_reason: 'PHONE_ALREADY_REGISTERED',
-        });
-        await this.onboardingSessionRepo.updateSession(session.id, { status: 'failed' });
+      if (errCode === 'PROVIDER_PHONE_ALREADY_REGISTERED') {
+        await this.recordProviderValidationFailure(
+          orgId,
+          session.id,
+          session.connection_id,
+          'PHONE_ALREADY_REGISTERED'
+        );
         throw err;
       }
       if (
@@ -2557,18 +2802,20 @@ export class WhatsAppConnectionService {
         // 1. DO NOT delete secret (must be retained for retry, convergence, cleanup, or resumption)
         // 2. DO NOT set connection to 'error' (which deadlocks capacity and blocks resumption)
         // 3. DO NOT set session to 'failed'
-        // Preserve recoverable local state: connection becomes 'connecting', retaining commercial capacity
-        // and recording provider IDs so D7/reconciliation and subsequent resumption can converge safely.
-        await this.connectionRepo.updateConnection(orgId, session.connection_id, {
-          status: 'connecting',
-          status_reason: 'SUBSCRIPTION_RESTRICTED',
-          provider_waba_id: input.wabaId,
-          provider_phone_number_id: input.phoneNumberId,
-          phone_number: normalizedPhoneNumber,
+        // R7-B2.3R — BLOCKER 1: the connection restricted state, the session `waba_subscribed`
+        // checkpoint and the deterministic cleanup ownership are committed in ONE Firestore
+        // transaction. There is NO crash window in which the materialized restricted connection is
+        // committed without a durable cleanup owner. HIGH 5: a missing/malformed ORIGINAL
+        // pending_expires_at fails closed (integrity error, zero writes, evidence preserved).
+        await this.cleanupJobRepo.commitMaterializedDenialOwnershipAtomically({
+          organizationId: orgId,
+          connectionId: session.connection_id,
+          sessionId: session.id,
+          wabaId: input.wabaId,
+          phoneNumberId: input.phoneNumberId,
+          normalizedPhoneNumber,
         });
-        await this.onboardingSessionRepo.updateSession(session.id, {
-          provider_progress: 'waba_subscribed',
-        });
+
         if (acquiredWabaLock) {
           try {
             await db.runTransaction(async (tx) => {
@@ -2811,28 +3058,112 @@ export class WhatsAppConnectionService {
       return;
     }
 
-    let shouldEnqueueCleanupJob = false;
-    let wabaClaimGen = 0;
-
-    if (conn.provider_waba_id) {
-      const activeDeps = await this.connectionRepo.findActivePlatformDependencies(
-        conn.provider_waba_id,
-        conn.id
-      );
-
-      if (activeDeps.length === 0) {
-        shouldEnqueueCleanupJob = true;
-        const lock = await this.wabaLockRepo.getLock(conn.provider_waba_id);
-        wabaClaimGen = lock?.operation_generation ?? 0;
-      }
-    }
-
     // Execute atomic local disconnect transaction
+    // R7-B2.4R2A: The local disconnect transition and durable deterministic cleanup ownership
+    // are committed atomically in ONE Firestore transaction. This eliminates the crash window where:
+    //   - local connection = disconnected
+    //   - but NO durable cleanup owner (job missing)
+    // The Meta provider claim is NOT deleted here; it will be released atomically by
+    // finalizeMetaCleanupOnStrongSettlement() after durable provider cleanup proof.
+    // This fixes DEFECT 2: claim released too early.
     await db.runTransaction(async (tx) => {
+      // 1. ALL READS FIRST (Strict Firestore rule: zero reads after any writes)
       const connRef = db.collection('whatsapp_connections').doc(connectionId);
+      const freshConnDoc = await tx.get(connRef);
+      if (!freshConnDoc.exists) {
+        throw new AppError(404, 'Conexão não encontrada nesta organização.');
+      }
+      const freshConn = freshConnDoc.data() as WhatsAppConnectionRecord;
+      if (freshConn.organization_id !== orgId) {
+        throw new AppError(404, 'Conexão não encontrada nesta organização.');
+      }
+      if (freshConn.status === 'disconnected') {
+        return; // Idempotent no-op
+      }
+
       const orgRef = db.collection('organizations').doc(orgId);
       const orgDoc = await tx.get(orgRef);
 
+      let assignmentClaimRef: FirebaseFirestore.DocumentReference | undefined;
+      let assignmentClaimDoc: FirebaseFirestore.DocumentSnapshot | undefined;
+      if (freshConn.assigned_ministry_id) {
+        const assignmentClaimId = getMinistryAssignmentClaimId(orgId, freshConn.assigned_ministry_id);
+        assignmentClaimRef = db.collection('whatsapp_ministry_assignment_claims').doc(assignmentClaimId);
+        assignmentClaimDoc = await tx.get(assignmentClaimRef);
+      }
+
+      // R7-C-R1 BLOCKER 1 FIX:
+      // Authoritative cleanup decision is derived strictly from freshConn read INSIDE the transaction.
+      // Zero reliance on pre-transaction reads.
+      let shouldEnqueueCleanupJob = false;
+      let wabaClaimGen = 0;
+
+      if (freshConn.provider_waba_id) {
+        const activeDeps = await this.connectionRepo.findActivePlatformDependencies(
+          freshConn.provider_waba_id,
+          freshConn.id,
+          tx
+        );
+
+        if (activeDeps.length === 0) {
+          shouldEnqueueCleanupJob = true;
+          const wabaLockRef = db.collection('whatsapp_waba_lifecycle_locks').doc(`lock_meta_${freshConn.provider_waba_id}`);
+          const wabaLockDoc = await tx.get(wabaLockRef);
+          if (wabaLockDoc.exists) {
+            const lockData = wabaLockDoc.data() as WhatsAppWabaLifecycleLockRecord;
+            wabaClaimGen = lockData.operation_generation ?? 0;
+          }
+        }
+      } else if (freshConn.provider_phone_number_id) {
+        // Materialized phone number ID without WABA ID still requires cleanup ownership
+        shouldEnqueueCleanupJob = true;
+      }
+
+      // Read existing cleanup job if present (for ownership validation)
+      const cleanupJobId = `cleanup_conn_${connectionId}`;
+      const cleanupJobRef = db.collection('whatsapp_provider_cleanup_jobs').doc(cleanupJobId);
+      let existingCleanupJobDoc: FirebaseFirestore.DocumentSnapshot | undefined;
+      if (shouldEnqueueCleanupJob) {
+        existingCleanupJobDoc = await tx.get(cleanupJobRef);
+      }
+
+      // 2. VALIDATE EXISTING OWNERSHIP BEFORE ANY WRITES (fail closed on incompatible/terminal)
+      if (shouldEnqueueCleanupJob && existingCleanupJobDoc?.exists) {
+        const existingJob = existingCleanupJobDoc.data() as WhatsAppProviderCleanupJobRecord;
+        // Validate compatible ownership - fail closed if conflicting
+        const conflictingOwnership =
+          existingJob.organization_id !== orgId ||
+          existingJob.connection_id !== freshConn.id ||
+          (existingJob.provider_waba_id != null && existingJob.provider_waba_id !== freshConn.provider_waba_id) ||
+          (existingJob.provider_phone_number_id != null &&
+            existingJob.provider_phone_number_id !== freshConn.provider_phone_number_id);
+
+        if (conflictingOwnership) {
+          throw new AppError(
+            409,
+            'CLEANUP_OWNERSHIP_CONFLICT: Job determinístico de cleanup pertence a outra organização, connection ou identidade de provedor.',
+            { code: 'CLEANUP_OWNERSHIP_CONFLICT' }
+          );
+        }
+
+        // Check if existing job is live (pending/retry_wait/processing) - reuse it
+        // Terminal or inert states ('exhausted', 'cancelled', 'succeeded', 'abandoned') have no
+        // live automated cleanup worker and must NEVER be reused or resurrected.
+        const liveOwnershipStatuses: WhatsAppProviderCleanupJobRecord['status'][] = [
+          'pending',
+          'retry_wait',
+          'processing',
+        ];
+        if (!liveOwnershipStatuses.includes(existingJob.status)) {
+          throw new AppError(
+            409,
+            'CLEANUP_OWNERSHIP_NOT_LIVE: Job determinístico existente está terminal/inativo e não pode representar ownership de uma nova materialização restrita.',
+            { code: 'CLEANUP_OWNERSHIP_NOT_LIVE' }
+          );
+        }
+      }
+
+      // 3. ALL WRITES AFTER ALL READS AND VALIDATIONS
       if (orgDoc.exists) {
         const orgData = orgDoc.data() as OrganizationRecord;
         if (orgData.default_whatsapp_connection_id === connectionId) {
@@ -2843,15 +3174,18 @@ export class WhatsAppConnectionService {
         }
       }
 
-      if (conn.assigned_ministry_id) {
-        const assignmentClaimId = getMinistryAssignmentClaimId(orgId, conn.assigned_ministry_id);
-        tx.delete(db.collection('whatsapp_ministry_assignment_claims').doc(assignmentClaimId));
+      if (
+        assignmentClaimRef &&
+        assignmentClaimDoc?.exists &&
+        assignmentClaimDoc.data()?.connection_id === connectionId &&
+        assignmentClaimDoc.data()?.organization_id === orgId
+      ) {
+        tx.delete(assignmentClaimRef);
       }
 
-      if (conn.provider_phone_number_id) {
-        const claimId = getClaimId(conn.provider, conn.provider_phone_number_id);
-        tx.delete(db.collection('whatsapp_provider_identity_claims').doc(claimId));
-      }
+      // NOTE: Provider claim is NOT deleted here. It will be released atomically by
+      // finalizeMetaCleanupOnStrongSettlement() after strong provider settlement proof.
+      // This fixes DEFECT 2: provider claim released too early.
 
       tx.update(connRef, {
         status: 'disconnected',
@@ -2863,40 +3197,68 @@ export class WhatsAppConnectionService {
       });
 
       if (!shouldEnqueueCleanupJob) {
+        // No surviving dependencies: material was never materialized or still has live lines
+        // Just delete the secret (no cleanup job needed)
         const secretRef = db.collection('whatsapp_connection_secrets').doc(connectionId);
         tx.delete(secretRef);
+      } else {
+        // DEFECT 1 FIX: Create cleanup job INSIDE the same transaction as disconnect.
+        // This ensures atomic ownership: if disconnect commits, cleanup ownership exists.
+        // Existing deterministic cleanup ownership is validated - NEVER blindly overwrite.
+        if (existingCleanupJobDoc?.exists) {
+          const existingJob = existingCleanupJobDoc.data() as WhatsAppProviderCleanupJobRecord;
+          const updates: Partial<WhatsAppProviderCleanupJobRecord> = {
+            organization_id: orgId,
+            connection_id: freshConn.id,
+            provider: 'meta_cloud_api',
+            provider_waba_id: freshConn.provider_waba_id,
+            provider_phone_number_id: freshConn.provider_phone_number_id,
+            phone_number: freshConn.phone_number,
+            updated_at: nowIso,
+          };
+          if (wabaClaimGen > 0) {
+            updates.waba_claim_generation = wabaClaimGen;
+          }
+          if (existingJob.status !== 'processing') {
+            updates.status = 'pending';
+            updates.next_attempt_at = nowIso;
+          }
+          tx.update(cleanupJobRef, updates);
+        } else {
+          // No existing job: create new with deterministic ID
+          const newCleanupJob: WhatsAppProviderCleanupJobRecord = {
+            id: cleanupJobId,
+            organization_id: orgId,
+            connection_id: freshConn.id,
+            provider: 'meta_cloud_api',
+            provider_waba_id: freshConn.provider_waba_id,
+            provider_phone_number_id: freshConn.provider_phone_number_id,
+            provider_account_id: freshConn.provider_account_id,
+            provider_profile_id: freshConn.provider_profile_id,
+            phone_number: freshConn.phone_number,
+            waba_claim_generation: wabaClaimGen,
+            status: 'pending',
+            attempt_count: 0,
+            max_attempts: 5,
+            next_attempt_at: nowIso,
+            lease_token: null,
+            lease_expires_at: null,
+            last_attempt_started_at: null,
+            last_error_code: null,
+            last_error_at: null,
+            provider_cleanup_proof: null,
+            override_reason: null,
+            manual_action_by: null,
+            manual_action_at: null,
+            manual_action_reason: null,
+            created_at: nowIso,
+            updated_at: nowIso,
+            completed_at: null,
+            retention_expires_at: null,
+          };
+          tx.set(cleanupJobRef, newCleanupJob);
+        }
       }
     });
-
-    // If zero surviving dependencies, enqueue durable cleanup job
-    if (shouldEnqueueCleanupJob && conn.provider_waba_id) {
-      await this.cleanupJobRepo.createJob({
-        id: `cleanup_conn_${conn.id}`,
-        organization_id: orgId,
-        connection_id: conn.id,
-        provider: 'meta_cloud_api',
-        provider_waba_id: conn.provider_waba_id,
-        provider_phone_number_id: conn.provider_phone_number_id,
-        waba_claim_generation: wabaClaimGen,
-        status: 'pending',
-        attempt_count: 0,
-        max_attempts: 5,
-        next_attempt_at: nowIso,
-        lease_token: null,
-        lease_expires_at: null,
-        last_attempt_started_at: null,
-        last_error_code: null,
-        last_error_at: null,
-        provider_cleanup_proof: null,
-        override_reason: null,
-        manual_action_by: null,
-        manual_action_at: null,
-        manual_action_reason: null,
-        created_at: nowIso,
-        updated_at: nowIso,
-        completed_at: null,
-        retention_expires_at: null,
-      });
-    }
   }
 }

@@ -227,6 +227,56 @@ describe('MetaWhatsAppProvider Suite (Phase 7D1)', () => {
         /PROVIDER_SUBSCRIPTION_FAILED/
       );
     });
+
+    it.each([500, 503])('fails closed as an unknown remote outcome for HTTP %i', async (status) => {
+      fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+        ok: false,
+        status,
+        json: async () => ({ error: { code: 1, message: 'Transient Meta failure' } }),
+      } as any);
+
+      await expect(provider.subscribeMessagingAccountApps('token-xyz', 'waba-123')).rejects.toMatchObject({
+        details: expect.objectContaining({
+          code: 'PROVIDER_SUBSCRIPTION_FAILED',
+          httpStatus: status,
+          metaCode: 1,
+          providerRejection: false,
+        }),
+      });
+    });
+
+    it('keeps a documented invalid-parameter rejection safely retryable', async () => {
+      fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        json: async () => ({ error: { code: 100, message: 'Invalid parameter' } }),
+      } as any);
+
+      await expect(provider.subscribeMessagingAccountApps('token-xyz', 'waba-123')).rejects.toMatchObject({
+        details: expect.objectContaining({
+          code: 'PROVIDER_SUBSCRIPTION_FAILED',
+          httpStatus: 400,
+          metaCode: 100,
+          providerRejection: true,
+        }),
+      });
+    });
+
+    it('treats an unclassified non-2xx response as unknown, never a safe retry', async () => {
+      fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        json: async () => ({ error: { code: 987654, message: 'Unclassified response' } }),
+      } as any);
+
+      await expect(provider.subscribeMessagingAccountApps('token-xyz', 'waba-123')).rejects.toMatchObject({
+        details: expect.objectContaining({
+          httpStatus: 409,
+          metaCode: 987654,
+          providerRejection: false,
+        }),
+      });
+    });
   });
 
   describe('Two-Tier Error Normalization (DEC-7D-10)', () => {

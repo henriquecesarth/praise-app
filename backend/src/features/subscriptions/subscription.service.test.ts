@@ -669,55 +669,45 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
       expect(overResult.accessMode).toBe('restricted_over_limit');
     });
 
-    it('Cenário L: cancel_at_period_end no futuro mantém plano pago; após vencer transiciona para Free', async () => {
-      const mockRepo = {
-        getSubscription: vi.fn(),
+    it('mantém o Premium persistido após o período cancelado vencer sem transição V1 ativa', async () => {
+      const mockSubscriptionRepo = {
+        getSubscription: vi.fn().mockResolvedValue({
+          id: 'min-premium-cancel',
+          ministry_id: 'min-premium-cancel',
+          plan_id: 'premium',
+          member_addon_blocks: 0,
+          billing_status: 'active',
+          subscription_mode: 'paid',
+          administratively_suspended: false,
+          cancel_at_period_end: true,
+          active_cancellation_transition_id: null,
+          current_period_start: '2026-08-01T00:00:00.000Z',
+          current_period_end: '2026-09-01T00:00:00.000Z', // já encerrou
+          created_at: '2026-08-01T00:00:00.000Z',
+          updated_at: '2026-09-01T00:00:00.000Z',
+        }),
         getUsage: vi.fn().mockResolvedValue({
-          id: 'min-cancel',
-          ministry_id: 'min-cancel',
+          id: 'min-premium-cancel',
+          ministry_id: 'min-premium-cancel',
           members_count: 8,
           songs_count: 30,
         }),
       };
-      const service = new SubscriptionService(mockRepo as any);
+      const mockBillingRepo = {
+        getActiveTransitionForMinistry: vi.fn().mockResolvedValue(null),
+        getSubscription: vi.fn().mockResolvedValue(null),
+      };
+      const service = new SubscriptionService(mockSubscriptionRepo as any, mockBillingRepo as any);
 
-      // 1. Período ainda válido no futuro: continua Pro
-      mockRepo.getSubscription.mockResolvedValue({
-        id: 'min-cancel',
-        ministry_id: 'min-cancel',
-        plan_id: 'pro',
-        member_addon_blocks: 0,
-        billing_status: 'active',
-        subscription_mode: 'paid',
-        cancel_at_period_end: true,
-        current_period_start: '2026-08-01T00:00:00.000Z',
-        current_period_end: new Date(Date.now() + 86400000).toISOString(), // amanhã
-      });
+      const summary = await service.getSubscriptionSummary('min-premium-cancel');
 
-      const summaryFuture = await service.getSubscriptionSummary('min-cancel');
-      expect(summaryFuture.plan.id).toBe('pro');
-      expect(summaryFuture.subscription.subscriptionMode).toBe('paid');
-      expect(summaryFuture.subscription.cancelAtPeriodEnd).toBe(true);
-      expect(summaryFuture.quotas.members).toBe(100);
-
-      // 2. Período vencido no passado: transiciona para Free
-      mockRepo.getSubscription.mockResolvedValue({
-        id: 'min-cancel',
-        ministry_id: 'min-cancel',
-        plan_id: 'pro',
-        member_addon_blocks: 0,
-        billing_status: 'active',
-        subscription_mode: 'paid',
-        cancel_at_period_end: true,
-        current_period_start: '2026-07-01T00:00:00.000Z',
-        current_period_end: '2026-08-01T00:00:00.000Z', // passado
-      });
-
-      const summaryPast = await service.getSubscriptionSummary('min-cancel');
-      expect(summaryPast.plan.id).toBe('free');
-      expect(summaryPast.subscription.subscriptionMode).toBe('free');
-      expect(summaryPast.quotas.members).toBe(10);
-      expect(summaryPast.quotas.songs).toBe(50);
+      expect(summary.plan.id).toBe('premium');
+      expect(summary.subscription.planId).toBe('premium');
+      expect(summary.subscription.subscriptionMode).toBe('paid');
+      expect(summary.subscription.cancelAtPeriodEnd).toBe(true);
+      expect(summary.subscription.activeCancellationTransitionId).toBeNull();
+      expect(summary.quotas.members).toBe(300);
+      expect(summary.quotas.songs).toBe(1500);
     });
 
     it('Cenário V1 (Phase 3D.3 Hardening): cancel_at_period_end no passado com active_cancellation_transition_id NÃO transiciona para Free (mantém plano e cotas pagas)', async () => {

@@ -48,8 +48,16 @@ export class WhatsAppProviderIdentityClaimRepository {
     if (claimDoc.exists) {
       const existingClaim = claimDoc.data() as WhatsAppProviderIdentityClaimRecord;
       if (existingClaim.connection_id !== claim.connection_id) {
-        // For Zernio claims, a disconnected owner connection does NOT make the claim reclaimable.
-        // Identity claims remain exclusive until explicit remote cleanup settlement in D7.
+        // DEFECT 2 FIX: For ALL providers (Meta and Zernio), a claim owned by any
+        // disconnected connection is NOT reclaimable. Claims must be released
+        // atomically by strong settlement (finalizeMetaCleanupOnStrongSettlement for Meta,
+        // settleZernioCleanupInTransaction for Zernio).
+        // This eliminates the crash window where:
+        //   - connection is disconnected
+        //   - provider claim is released
+        //   - NO durable cleanup owner exists
+        //
+        // Zernio claims: disconnected claim requires D7 strong settlement proof
         if (claim.provider === 'zernio' || existingClaim.provider === 'zernio') {
           const isAccountClaim =
             claim.id.startsWith('claim_zernio_account_') ||
@@ -63,25 +71,19 @@ export class WhatsAppProviderIdentityClaimRepository {
           }
           throw new AppError(
             409,
-            'PROVIDER_PHONE_ALREADY_REGISTERED: Este número de telefone já está registrado em outra conexão ativa.',
-            { code: 'PROVIDER_PHONE_ALREADY_REGISTERED' }
-          );
-        }
-
-        // Meta Cloud API: preserve existing behavior (disconnected connection allows reclaim)
-        const connRef = this.connectionsCol.doc(existingClaim.connection_id);
-        const connDoc = await tx.get(connRef);
-
-        if (connDoc.exists) {
-          const connData = connDoc.data() as WhatsAppConnectionRecord;
-          if (connData.status !== 'disconnected') {
-            throw new AppError(
-              409,
               'PROVIDER_PHONE_ALREADY_REGISTERED: Este número de telefone já está registrado em outra conexão ativa.',
               { code: 'PROVIDER_PHONE_ALREADY_REGISTERED' }
             );
-          }
         }
+
+        // Meta Cloud API: claim is retained for D7 cleanup strong settlement
+        // The claim cannot be reclaimed by a new connection until finalizeMetaCleanupOnStrongSettlement()
+        // is called, which verifies durable provider cleanup proof before releasing the claim.
+        throw new AppError(
+          409,
+          'PROVIDER_PHONE_ALREADY_REGISTERED: Este número de telefone já está registrado em outra conexão ativa.',
+          { code: 'PROVIDER_PHONE_ALREADY_REGISTERED' }
+        );
       }
     }
 

@@ -1081,17 +1081,19 @@ describe('Phase 3D.3 — Period-End Cancel-to-Free Cutover & Public V1 Migration
       expect(summary.quotas.members).toBe(40);
     });
 
-    it('H4. legacy cancellation without V1 marker still performs legacy convergence', async () => {
-      // Legacy cancellation: cancel_at_period_end is true, but active_cancellation_transition_id is undefined
+    it('H4. persisted Premium entitlement remains authoritative without an active V1 cancellation marker', async () => {
+      appSubRecord.plan_id = 'premium';
+      appSubRecord.subscription_mode = 'paid';
       appSubRecord.cancel_at_period_end = true;
-      appSubRecord.active_cancellation_transition_id = undefined;
-      appSubRecord.current_period_end = '2026-09-01T00:00:00.000Z'; // in past
+      appSubRecord.active_cancellation_transition_id = null;
+      appSubRecord.current_period_end = '2026-09-01T00:00:00.000Z';
 
       const summary = await realSubscriptionService.getSubscriptionSummary(ministryId);
-      expect(summary.plan.id).toBe('free');
-      expect(summary.subscription.subscriptionMode).toBe('free');
-      expect(summary.quotas.members).toBe(10);
-      expect(summary.quotas.songs).toBe(50);
+
+      expect(summary.plan.id).toBe('premium');
+      expect(summary.subscription.subscriptionMode).toBe('paid');
+      expect(summary.quotas.members).toBe(300);
+      expect(summary.quotas.songs).toBe(1500);
     });
 
     it('H5. V1 cancel_at_period_end flag alone cannot force Free (resolveAccessMode)', () => {

@@ -402,14 +402,23 @@ export class MetaWhatsAppProvider implements WhatsAppProvider {
 
       if (!res.ok) {
         let message = 'Falha na assinatura de webhooks na Meta.';
+        let metaError: any = null;
         try {
           const body = (await res.json()) as any;
-          if (body?.error?.message) message = body.error.message;
+          metaError = body?.error || null;
+          if (metaError?.message) message = metaError.message;
         } catch {
           // ignore
         }
         throw new AppError(502, `PROVIDER_SUBSCRIPTION_FAILED: ${message}`, {
           code: 'PROVIDER_SUBSCRIPTION_FAILED',
+          // A response alone is not proof of a rejected remote mutation. Existing D7 semantics
+          // document Meta code 100 as a request-validation rejection; all other outcomes are UNKNOWN.
+          providerRejection: metaError?.code === 100,
+          httpStatus: res.status,
+          metaCode: typeof metaError?.code === 'number' ? metaError.code : undefined,
+          metaSubcode: typeof metaError?.error_subcode === 'number' ? metaError.error_subcode : undefined,
+          metaType: typeof metaError?.type === 'string' ? metaError.type : undefined,
         });
       }
     } catch (err: any) {
@@ -417,10 +426,14 @@ export class MetaWhatsAppProvider implements WhatsAppProvider {
       if (err.name === 'AbortError') {
         throw new AppError(504, 'WHATSAPP_PROVIDER_TIMEOUT: Tempo limite esgotado ao assinar webhooks.', {
           code: 'WHATSAPP_PROVIDER_TIMEOUT',
+          transportUncertainty: true,
         });
       }
+      // R7-B2.3R — HIGH 3: a transport/network failure may happen AFTER the remote request was
+      // dispatched and even after Meta applied it. The outcome is UNKNOWN, never a confirmed failure.
       throw new AppError(502, `PROVIDER_SUBSCRIPTION_FAILED: ${err.message || 'Erro na assinatura'}`, {
         code: 'PROVIDER_SUBSCRIPTION_FAILED',
+        transportUncertainty: true,
       });
     } finally {
       clearTimeout(timeoutId);

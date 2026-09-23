@@ -311,7 +311,8 @@ export class WhatsAppConnectionRepository {
     orgId: string,
     connectionId: string,
     status: WhatsAppConnectionStatus,
-    reason?: string | null
+    reason?: string | null,
+    tx?: FirebaseFirestore.Transaction
   ): Promise<void> {
     const now = new Date().toISOString();
     const updatePayload: Partial<WhatsAppConnectionRecord> = {
@@ -327,7 +328,12 @@ export class WhatsAppConnectionRepository {
       updatePayload.pending_expires_at = null;
     }
 
-    await this.connectionsCol.doc(connectionId).update(updatePayload);
+    const docRef = this.connectionsCol.doc(connectionId);
+    if (tx) {
+      tx.update(docRef, updatePayload);
+    } else {
+      await docRef.update(updatePayload);
+    }
   }
 
   async disconnectConnection(orgId: string, connectionId: string): Promise<void> {
@@ -398,19 +404,12 @@ export class WhatsAppConnectionRepository {
         updated_at: now,
       });
 
-      // Release Meta provider claim IF AND ONLY IF owned by this connection
-      if (
-        claimRef &&
-        claimDoc?.exists &&
-        claimDoc.data()?.connection_id === connectionId &&
-        claimDoc.data()?.organization_id === orgId &&
-        claimDoc.data()?.provider_phone_number_id === conn.provider_phone_number_id
-      ) {
-        tx.delete(claimRef);
-      }
-
-      // Note: Zernio account and phone claims are intentionally retained upon local disconnect.
-      // Remote cleanup must be strongly proven before Zernio claims can be released (D7).
+      // ARTIFICIAL DISCONNECT: Provider claims are NOT released here.
+      // For Meta: claim must be retained until finalizeMetaCleanupOnStrongSettlement()
+      // after durable provider cleanup proof. This fixes DEFECT 2: claim released too early.
+      // For Zernio: claims are retained for D7 cleanup strong settlement.
+      // The deterministic cleanup job (if materialized) ensures durable ownership that will
+      // be validated and settled atomically when provider cleanup is proven.
 
       // Release assignment claim IF AND ONLY IF owned by this connection
       if (
@@ -471,12 +470,14 @@ export class WhatsAppConnectionRepository {
 
   async findActivePlatformDependencies(
     providerWabaId: string,
-    excludeConnectionId?: string
+    excludeConnectionId?: string,
+    tx?: FirebaseFirestore.Transaction
   ): Promise<WhatsAppConnectionRecord[]> {
-    const snap = await this.connectionsCol
+    const query = this.connectionsCol
       .where('provider_waba_id', '==', providerWabaId)
-      .where('status', 'in', ['pending', 'connecting', 'connected'])
-      .get();
+      .where('status', 'in', ['pending', 'connecting', 'connected']);
+
+    const snap = tx ? await tx.get(query) : await query.get();
 
     const now = new Date();
     const active: WhatsAppConnectionRecord[] = [];

@@ -1033,7 +1033,7 @@ describe('WhatsApp Commercial Entitlement Integration Suite (Phase 7D2-D8)', { t
         actor_user_id: 'user_1',
         state_nonce_hash: stateNonceHash,
         status: 'active',
-        provider_progress: 'credentials_acquired',
+        provider_progress: 'none',
         expires_at: new Date(now.getTime() + 15 * 60 * 1000).toISOString(),
         retention_expires_at: new Date(now.getTime() + 30 * 24 * 3600 * 1000).toISOString(),
         consumed_at: null,

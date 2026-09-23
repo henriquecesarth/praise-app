@@ -257,25 +257,11 @@ export function resolveAccessMode(
   graceDaysRemaining: number | null;
   effectiveQuotas: EffectiveQuotas;
 } {
-  // 0. Se for cancelamento agendado cujo período já expirou, ou cortesia com prazo expirada, o direito de uso volta ao plano Free
-  // CRÍTICO (Phase 3D.3 Hardening): Em cancelamentos V1 gerenciados (com active_cancellation_transition_id),
-  // a flag cancel_at_period_end é meramente informativa para a UI.
-  // O entitlement NÃO pode convergir para Free pelo relógio local antes da prova estrita dos safety gates pelo reconciliador.
-  // Apenas cancelamentos legados (sem active_cancellation_transition_id) mantêm auto-cutover local pelo relógio.
-  const isLegacyCancelExpired = Boolean(
-    subscription.cancel_at_period_end &&
-    !subscription.active_cancellation_transition_id &&
-    subscription.current_period_end &&
-    !isNaN(new Date(subscription.current_period_end).getTime()) &&
-    now > new Date(subscription.current_period_end)
-  );
+  // 0. Persisted ministry_subscriptions entitlement remains authoritative until Billing V1 persists convergence.
 
   let activePlan = plan;
   let activeAddonBlocks = subscription.member_addon_blocks || 0;
-  if (isLegacyCancelExpired) {
-    activePlan = PLANS_CATALOG.free;
-    activeAddonBlocks = 0;
-  } else if (subscription.subscription_mode === 'complimentary' && subscription.expires_at) {
+  if (subscription.subscription_mode === 'complimentary' && subscription.expires_at) {
     const grantExpires = new Date(subscription.expires_at);
     if (!isNaN(grantExpires.getTime()) && now > grantExpires) {
       activePlan = PLANS_CATALOG.free;

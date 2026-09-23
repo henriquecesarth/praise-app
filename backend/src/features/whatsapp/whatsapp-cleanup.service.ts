@@ -138,6 +138,39 @@ export class WhatsAppCleanupService {
     }
     const wabaId = candidate.provider_waba_id;
 
+    // R7-B2.3R — HIGH 5: a connecting/pending line with a missing/null/malformed ORIGINAL deadline
+    // is an integrity violation. Destructive provider cleanup MUST fail closed (no secret purge, no
+    // claim release, no disconnection) and preserve the connection, secret, evidence and capacity.
+    const deadlineConn = await this.connectionRepo.getConnectionById(candidate.connection_id);
+    if (deadlineConn && (deadlineConn.status === 'connecting' || deadlineConn.status === 'pending')) {
+      const ttl = deadlineConn.pending_expires_at;
+      const hasValidTtl =
+        typeof ttl === 'string' && ttl.trim() !== '' && !Number.isNaN(new Date(ttl).getTime());
+
+      if (!hasValidTtl) {
+        await this.cleanupJobRepo.recordRetryWaitInTransaction(
+          candidate.id,
+          jobLeaseToken,
+          new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          'ONBOARDING_DEADLINE_INTEGRITY_VIOLATION'
+        );
+        return 'retry_wait';
+      }
+
+      if (new Date(ttl).getTime() > Date.now()) {
+        // R7-B2.3: Before the immutable onboarding deadline, commercial restriction alone MUST NOT
+        // authorize destructive provider cleanup (unsubscribe / secret purge / claim release /
+        // disconnection). The deterministic cleanup job represents FUTURE D7 ownership only.
+        await this.cleanupJobRepo.recordRetryWaitInTransaction(
+          candidate.id,
+          jobLeaseToken,
+          ttl,
+          'BEFORE_ONBOARDING_DEADLINE'
+        );
+        return 'retry_wait';
+      }
+    }
+
     // 2. Acquire WABA Lifecycle Lock Lease (120 seconds)
     const holderId = `cleanup_conn_${candidate.connection_id}`;
     let wabaLeaseResult;
@@ -164,6 +197,7 @@ export class WhatsAppCleanupService {
     }
 
     const { leaseToken: wabaLeaseToken, generation: acquiredGen, lock } = wabaLeaseResult;
+    let strongProofPersisted = false;
 
     try {
       // 3. Recompute Dependencies Strictly Post-Lock (DEC-7D-56, DEC-7D-68)
@@ -327,6 +361,8 @@ export class WhatsAppCleanupService {
       // If ambiguous, perform authoritative post-condition verification with exhaustive pagination
       let isProvenClean = false;
       if (deleteSuccess) {
+        // DEC-7D-43 defines documented DELETE 200 `{ success: true }` as PROVEN_CLEAN. Any other
+        // response requires the exhaustive subscribed_apps post-condition proof below.
         isProvenClean = true;
       } else if (ambiguousDelete) {
         // Only run verification if deadline allows (Section 8)
@@ -358,6 +394,16 @@ export class WhatsAppCleanupService {
 
       // 7. Post-Provider Writeback & Fencing
       if (isProvenClean) {
+        // Record the external proof non-destructively under the current lease/generation first.
+        // A crash after this write retains secret, claim, connection and cleanup ownership.
+        await this.wabaLockRepo.recordProviderObservedStateInTransaction(
+          wabaId,
+          wabaLeaseToken,
+          acquiredGen,
+          'unsubscribed'
+        );
+        strongProofPersisted = true;
+
         // Check if there is unresolved subscribe debt
         const hasUnresolvedSubscribe = lock.unresolved_remote_mutations.some(
           (m) => m.operation === 'subscribe' && m.status === 'unknown_outcome'
@@ -381,24 +427,16 @@ export class WhatsAppCleanupService {
           return 'exhausted';
         }
 
-        // Clean unsubscription confirmed & zero subscribe debt: Succeeded!
-        await this.wabaLockRepo.releaseLeaseInTransaction(wabaId, wabaLeaseToken, acquiredGen, {
-          desired_subscription_state: 'unsubscribed',
-          provider_observed_state: 'unsubscribed',
-          operation_status: 'idle',
-        });
-
-        await this.cleanupJobRepo.completeJobInTransaction(
+        // Clean unsubscription confirmed & zero subscribe debt: strong settlement.
+        // R7-B2.3R — BLOCKER 2: the secret purge, owned-claim release, WABA lifecycle settlement,
+        // connection disconnection and job success are committed in ONE crash-safe Firestore
+        // transaction that re-validates all durable evidence first. The secret is NEVER deleted and
+        // the job is NEVER marked succeeded outside that transaction.
+        await this.cleanupJobRepo.finalizeMetaCleanupOnStrongSettlement(
           candidate.id,
           jobLeaseToken,
-          'succeeded',
-          'proven'
+          { wabaId, generation: acquiredGen, leaseToken: wabaLeaseToken }
         );
-
-        // Purge secret immediately
-        await this.secretRepo.deleteSecret(candidate.organization_id, candidate.connection_id, {
-          wabaId,
-        });
 
         return 'succeeded';
       } else {
@@ -442,11 +480,15 @@ export class WhatsAppCleanupService {
         }
       }
     } finally {
-      // Ensure WABA lock is not left abandoned if an unhandled error occurred
-      try {
-        await this.wabaLockRepo.releaseLeaseInTransaction(wabaId, wabaLeaseToken, acquiredGen);
-      } catch {
-        // Already released or expired
+      // Before a strong proof checkpoint, an unhandled error may safely release the lease. After
+      // the checkpoint, retaining the lease preserves the exact generation for destructive
+      // settlement; expiry safely fences a later worker, which must obtain fresh proof.
+      if (!strongProofPersisted) {
+        try {
+          await this.wabaLockRepo.releaseLeaseInTransaction(wabaId, wabaLeaseToken, acquiredGen);
+        } catch {
+          // Already released or expired
+        }
       }
     }
   }

@@ -207,25 +207,14 @@ export class SubscriptionService {
       };
     }
 
-    // 3. Resolver término de período cancelado ou cortesia expirada
-    // CRÍTICO (Phase 3D.3 Hardening): Se a assinatura possui cancelamento V1 ativo (active_cancellation_transition_id),
-    // a flag cancel_at_period_end é meramente informativa para a UI.
-    // O entitlement NÃO pode convergir para Free pelo relógio local antes da prova estrita dos safety gates pelo reconciliador.
-    // Apenas cancelamentos legados (sem active_cancellation_transition_id) mantêm auto-cutover local pelo relógio.
-    const isLegacyPeriodEnded = Boolean(
-      subscription.cancel_at_period_end &&
-      !subscription.active_cancellation_transition_id &&
-      subscription.current_period_end &&
-      now > new Date(subscription.current_period_end)
-    );
-
-    const effectivePlanId = isLegacyPeriodEnded ? 'free' : subscription.plan_id;
+    // 3. A assinatura persistida em ministry_subscriptions é a autoridade de entitlement.
+    // O Billing V1 converge o plano persistido somente após concluir atomicamente o cutover na fronteira comercial.
+    // Persisted entitlement remains authoritative until Billing V1 writes the converged entitlement.
+    const effectivePlanId = subscription.plan_id;
     const plan = getPlanDefinition(effectivePlanId);
     const resolvedState = resolveAccessMode(subscription, plan, usage, now);
 
-    const subscriptionMode: SubscriptionMode = isLegacyPeriodEnded
-      ? 'free'
-      : (subscription.subscription_mode || (subscription.plan_id === 'free' ? 'free' : 'paid'));
+    const subscriptionMode: SubscriptionMode = subscription.subscription_mode || (subscription.plan_id === 'free' ? 'free' : 'paid');
 
     // 4. Resolver transição pendente ativa e estado de saúde de pagamento (Phase 4A.1 & Phase 4A.6)
     let pendingTransition: CustomerFacingPendingTransitionDto | null = null;
@@ -299,8 +288,8 @@ export class SubscriptionService {
       plan,
       subscription: {
         planId: effectivePlanId,
-        memberAddonBlocks: isLegacyPeriodEnded ? 0 : (subscription.member_addon_blocks || 0),
-        billingStatus: isLegacyPeriodEnded ? 'canceled' : subscription.billing_status,
+        memberAddonBlocks: subscription.member_addon_blocks || 0,
+        billingStatus: subscription.billing_status,
         billingInterval: subscription.billing_interval || (
           subscription.current_period_end && subscription.current_period_start
             ? ((new Date(subscription.current_period_end).getTime() - new Date(subscription.current_period_start).getTime()) > 60 * 24 * 60 * 60 * 1000 ? 'annual' : 'monthly')

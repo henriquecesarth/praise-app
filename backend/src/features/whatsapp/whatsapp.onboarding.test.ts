@@ -819,7 +819,10 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
 
     it('Case 8: Webhook subscription failure RETAINS staged secret and allows retry', async () => {
       (mockProvider.subscribeMessagingAccountApps as any).mockRejectedValueOnce(
-        new AppError(502, 'Sub error', { code: 'PROVIDER_SUBSCRIPTION_FAILED' })
+        new AppError(502, 'Sub error', {
+          code: 'PROVIDER_SUBSCRIPTION_FAILED',
+          providerRejection: true,
+        })
       );
 
       await expect(
@@ -840,9 +843,12 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
     });
 
     it('Safe Retry: After Case 8 failure, retry decrypts staged token without burning OAuth code', async () => {
-      // First attempt fails at webhook subscription
+      // First attempt fails at webhook subscription (authoritative provider rejection)
       (mockProvider.subscribeMessagingAccountApps as any).mockRejectedValueOnce(
-        new AppError(502, 'Sub error', { code: 'PROVIDER_SUBSCRIPTION_FAILED' })
+        new AppError(502, 'Sub error', {
+          code: 'PROVIDER_SUBSCRIPTION_FAILED',
+          providerRejection: true,
+        })
       );
 
       await expect(
@@ -1093,6 +1099,336 @@ describe('WhatsApp Onboarding, Sessions & Credential Acquisition Suite (Phase 7D
       // Should NOT have set status: 'connecting' with status_reason: 'SUBSCRIPTION_RESTRICTED'
       expect(connectionsStore.get(activeConnectionId)?.status).not.toBe('connecting');
       expect(connectionsStore.get(activeConnectionId)?.status_reason).not.toBe('SUBSCRIPTION_RESTRICTED');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // R7-B2.2 — Repeated Commercial Restriction & Step 9 Idempotency
+  // --------------------------------------------------------------------------
+  describe('R7-B2.2: Repeated Commercial Restriction, Step 9 Idempotency & Commercial Recovery', () => {
+    let activeSessionId: string;
+    let activeConnectionId: string;
+    let activeRawNonce: string;
+
+    beforeEach(async () => {
+      const started = await connectionService.startOnboarding(orgId, adminUserId, {
+        displayName: 'Linha R7-B2.2',
+      });
+      activeSessionId = started.sessionId;
+      activeConnectionId = started.connectionId;
+      activeRawNonce = started.stateNonce!;
+    });
+
+    // Produces the durable recoverable state after provider materialization:
+    //   connection.status = connecting / status_reason = SUBSCRIPTION_RESTRICTED
+    //   session.provider_progress = waba_subscribed
+    //   provider WABA ID, phone ID, normalized phone, encrypted secret retained
+    async function restrictAtStep10() {
+      (mockProvider.subscribeMessagingAccountApps as any).mockImplementationOnce(async () => {
+        subscriptionsStore.set(anchorMinistryId, {
+          ...subscriptionsStore.get(anchorMinistryId),
+          plan_id: 'pro', // 0 included WhatsApp connections
+        });
+      });
+
+      await expect(
+        connectionService.completeOnboarding(orgId, adminUserId, {
+          sessionId: activeSessionId,
+          stateNonce: activeRawNonce,
+          code: 'single_use_code',
+          wabaId: 'waba-001',
+          phoneNumberId: 'phone-001',
+          pin: '123456',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 403,
+        details: { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED' },
+      });
+
+      const conn = connectionsStore.get(activeConnectionId);
+      expect(conn?.status).toBe('connecting');
+      expect(conn?.status_reason).toBe('SUBSCRIPTION_RESTRICTED');
+      const session = sessionsStore.get(activeSessionId);
+      expect(session?.provider_progress).toBe('waba_subscribed');
+      const pendingTtl = conn?.pending_expires_at;
+      expect(pendingTtl).toBeDefined();
+      return pendingTtl;
+    }
+
+    function expectRecoverableStatePreserved(pendingTtl: any) {
+      const conn = connectionsStore.get(activeConnectionId);
+      expect(conn?.status).toBe('connecting');
+      expect(conn?.status_reason).toBe('SUBSCRIPTION_RESTRICTED');
+      expect(conn?.provider_waba_id).toBe('waba-001');
+      expect(conn?.provider_phone_number_id).toBe('phone-001');
+      expect(conn?.phone_number).toBe('+5511988887771');
+      expect(conn?.pending_expires_at).toBe(pendingTtl);
+      const session = sessionsStore.get(activeSessionId);
+      expect(session?.status).not.toBe('failed');
+      expect(session?.provider_progress).toBe('waba_subscribed');
+      // Secret and provider identity retained
+      expect(secretsStore.get(activeConnectionId)).toBeDefined();
+    }
+
+    it('A. second restricted retry after waba_subscribed preserves the recoverable state (no lifecycle settlement)', async () => {
+      const pendingTtl = await restrictAtStep10();
+
+      await expect(
+        connectionService.completeOnboarding(orgId, adminUserId, {
+          sessionId: activeSessionId,
+          stateNonce: activeRawNonce,
+          code: 'already_used_code',
+          wabaId: 'waba-001',
+          phoneNumberId: 'phone-001',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 403,
+        details: { code: 'WHATSAPP_SUBSCRIPTION_SUSPENDED' },
+      });
+
+      expectRecoverableStatePreserved(pendingTtl);
+    });
+
+    it('B. third restricted retry preserves the same recoverable state', async () => {
+      const pendingTtl = await restrictAtStep10();
+
+      for (let attempt = 2; attempt <= 3; attempt++) {
+        await expect(
+          connectionService.completeOnboarding(orgId, adminUserId, {
+            sessionId: activeSessionId,
+            stateNonce: activeRawNonce,
+            code: `already_used_code_${attempt}`,
+            wabaId: 'waba-001',
+            phoneNumberId: 'phone-001',
+          })
+        ).rejects.toMatchObject({
+          statusCode: 403,
+          details: { code: 'WHATSAPP_SUBSCRIPTION_SUSPENDED' },
+        });
+        expectRecoverableStatePreserved(pendingTtl);
+      }
+    });
+
+    it('C. repeated restricted retries perform ZERO additional OAuth/phone-registration/WABA-subscription calls', async () => {
+      const pendingTtl = await restrictAtStep10();
+
+      // Attempts 2 and 3 (still restricted)
+      for (let attempt = 2; attempt <= 3; attempt++) {
+        await expect(
+          connectionService.completeOnboarding(orgId, adminUserId, {
+            sessionId: activeSessionId,
+            stateNonce: activeRawNonce,
+            code: `already_used_code_${attempt}`,
+            wabaId: 'waba-001',
+            phoneNumberId: 'phone-001',
+          })
+        ).rejects.toMatchObject({
+          statusCode: 403,
+          details: { code: 'WHATSAPP_SUBSCRIPTION_SUSPENDED' },
+        });
+      }
+
+      expect(mockProvider.exchangeOAuthCode).toHaveBeenCalledTimes(1);
+      expect(mockProvider.registerPhoneNumber).toHaveBeenCalledTimes(1);
+      expect(mockProvider.subscribeMessagingAccountApps).toHaveBeenCalledTimes(1);
+    });
+
+    it('D. provider_progress=waba_subscribed skips Step 9 subscribeMessagingAccountApps on resumption', async () => {
+      await restrictAtStep10();
+
+      // Entitlement becomes allowed again
+      subscriptionsStore.set(anchorMinistryId, {
+        ...subscriptionsStore.get(anchorMinistryId),
+        plan_id: 'premium',
+      });
+
+      const resumed = await connectionService.completeOnboarding(orgId, adminUserId, {
+        sessionId: activeSessionId,
+        stateNonce: activeRawNonce,
+        code: 'already_used_code',
+        wabaId: 'waba-001',
+        phoneNumberId: 'phone-001',
+      });
+
+      expect(resumed.id).toBe(activeConnectionId);
+      expect(resumed.status).toBe('connected');
+      // Step 9 must NOT be repeated for a waba_subscribed checkpoint
+      expect(mockProvider.subscribeMessagingAccountApps).toHaveBeenCalledTimes(1);
+      // OAuth exchange and PIN registration also not repeated
+      expect(mockProvider.exchangeOAuthCode).toHaveBeenCalledTimes(1);
+      expect(mockProvider.registerPhoneNumber).toHaveBeenCalledTimes(1);
+    });
+
+    it('E. provider_progress=phone_registered may execute Step 9 exactly once and persists waba_subscribed only after provider success', async () => {
+      const nowIso = new Date().toISOString();
+      const session = sessionsStore.get(activeSessionId);
+      sessionsStore.set(activeSessionId, {
+        ...session,
+        status: 'active',
+        provider_progress: 'phone_registered',
+      });
+      const encrypted = encryptionService.encryptToken('EAAG_resume_token_456', orgId, activeConnectionId);
+      secretsStore.set(activeConnectionId, {
+        id: activeConnectionId,
+        organization_id: orgId,
+        connection_id: activeConnectionId,
+        encrypted_access_token: encrypted.encryptedAccessToken,
+        iv: encrypted.iv,
+        auth_tag: encrypted.authTag,
+        key_version: encrypted.keyVersion,
+        token_type: 'business_token',
+        expires_at: new Date(Date.now() + 5184000 * 1000).toISOString(),
+        created_at: nowIso,
+        updated_at: nowIso,
+      });
+
+      const resumed = await connectionService.completeOnboarding(orgId, adminUserId, {
+        sessionId: activeSessionId,
+        stateNonce: activeRawNonce,
+        code: 'already_used_code',
+        wabaId: 'waba-001',
+        phoneNumberId: 'phone-001',
+        pin: '123456',
+      });
+
+      expect(resumed.status).toBe('connected');
+      // Step 9 executed exactly once for the phone_registered checkpoint
+      expect(mockProvider.subscribeMessagingAccountApps).toHaveBeenCalledTimes(1);
+      expect(mockProvider.registerPhoneNumber).not.toHaveBeenCalled();
+      // waba_subscribed only persisted after provider success (session consumed with progress)
+      expect(sessionsStore.get(activeSessionId)?.status).toBe('consumed');
+      expect(sessionsStore.get(activeSessionId)?.provider_progress).toBe('waba_subscribed');
+    });
+
+    it('F. commercial recovery from waba_subscribed reaches connected without repeating completed provider mutations', async () => {
+      await restrictAtStep10();
+
+      subscriptionsStore.set(anchorMinistryId, {
+        ...subscriptionsStore.get(anchorMinistryId),
+        plan_id: 'premium',
+      });
+
+      const resumed = await connectionService.completeOnboarding(orgId, adminUserId, {
+        sessionId: activeSessionId,
+        stateNonce: activeRawNonce,
+        code: 'already_used_code',
+        wabaId: 'waba-001',
+        phoneNumberId: 'phone-001',
+      });
+
+      const conn = connectionsStore.get(activeConnectionId);
+      expect(resumed.status).toBe('connected');
+      expect(conn?.status).toBe('connected');
+      expect(conn?.status_reason).toBeNull();
+      expect(conn?.last_connected_at).toBeDefined();
+      expect(conn?.provider_waba_id).toBe('waba-001');
+      expect(conn?.provider_phone_number_id).toBe('phone-001');
+      expect(conn?.phone_number).toBe('+5511988887771');
+      // Secret retained after connection
+      expect(secretsStore.get(activeConnectionId)).toBeDefined();
+      // No completed provider mutation repeated
+      expect(mockProvider.exchangeOAuthCode).toHaveBeenCalledTimes(1);
+      expect(mockProvider.registerPhoneNumber).toHaveBeenCalledTimes(1);
+      expect(mockProvider.subscribeMessagingAccountApps).toHaveBeenCalledTimes(1);
+    });
+
+    it('G. mismatched persisted WABA/phone checkpoint fails closed instead of being reused', async () => {
+      await restrictAtStep10();
+
+      subscriptionsStore.set(anchorMinistryId, {
+        ...subscriptionsStore.get(anchorMinistryId),
+        plan_id: 'premium',
+      });
+
+      // Wrong WABA identity for the same checkpoint
+      await expect(
+        connectionService.completeOnboarding(orgId, adminUserId, {
+          sessionId: activeSessionId,
+          stateNonce: activeRawNonce,
+          code: 'already_used_code',
+          wabaId: 'waba-002',
+          phoneNumberId: 'phone-001',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        details: { code: 'PROVIDER_IDENTITY_CONFLICT' },
+      });
+
+      // Must not have reused the checkpoint to connect with the wrong identity
+      expect(connectionsStore.get(activeConnectionId)?.status).toBe('connecting');
+      expect(connectionsStore.get(activeConnectionId)?.status_reason).toBe('SUBSCRIPTION_RESTRICTED');
+
+      // Wrong phone identity for the same checkpoint
+      await expect(
+        connectionService.completeOnboarding(orgId, adminUserId, {
+          sessionId: activeSessionId,
+          stateNonce: activeRawNonce,
+          code: 'already_used_code',
+          wabaId: 'waba-001',
+          phoneNumberId: 'phone-999',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        details: { code: 'PROVIDER_IDENTITY_CONFLICT' },
+      });
+
+      expect(connectionsStore.get(activeConnectionId)?.status).toBe('connecting');
+      expect(connectionsStore.get(activeConnectionId)?.status_reason).toBe('SUBSCRIPTION_RESTRICTED');
+      // No additional provider mutation from the rejected attempts
+      expect(mockProvider.exchangeOAuthCode).toHaveBeenCalledTimes(1);
+      expect(mockProvider.registerPhoneNumber).toHaveBeenCalledTimes(1);
+      expect(mockProvider.subscribeMessagingAccountApps).toHaveBeenCalledTimes(1);
+    });
+
+    it('H. generic provider HTTP 403 stays a PROVIDER error and is NOT treated as SUBSCRIPTION_RESTRICTED', async () => {
+      const nowIso = new Date().toISOString();
+      const session = sessionsStore.get(activeSessionId);
+      sessionsStore.set(activeSessionId, {
+        ...session,
+        status: 'active',
+        provider_progress: 'phone_registered',
+      });
+      const encrypted = encryptionService.encryptToken('EAAG_resume_token_789', orgId, activeConnectionId);
+      secretsStore.set(activeConnectionId, {
+        id: activeConnectionId,
+        organization_id: orgId,
+        connection_id: activeConnectionId,
+        encrypted_access_token: encrypted.encryptedAccessToken,
+        iv: encrypted.iv,
+        auth_tag: encrypted.authTag,
+        key_version: encrypted.keyVersion,
+        token_type: 'business_token',
+        expires_at: new Date(Date.now() + 5184000 * 1000).toISOString(),
+        created_at: nowIso,
+        updated_at: nowIso,
+      });
+
+      (mockProvider.subscribeMessagingAccountApps as any).mockRejectedValueOnce(
+        new AppError(403, 'Meta permission denied', {
+          code: 'PROVIDER_FORBIDDEN',
+          providerRejection: true,
+        })
+      );
+
+      await expect(
+        connectionService.completeOnboarding(orgId, adminUserId, {
+          sessionId: activeSessionId,
+          stateNonce: activeRawNonce,
+          code: 'already_used_code',
+          wabaId: 'waba-001',
+          phoneNumberId: 'phone-001',
+          pin: '123456',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 502,
+        details: { code: 'PROVIDER_SUBSCRIPTION_FAILED' },
+      });
+
+      // NOT reclassified as commercial restriction: connection must not flip to connecting/SUBSCRIPTION_RESTRICTED
+      expect(connectionsStore.get(activeConnectionId)?.status).not.toBe('connecting');
+      expect(connectionsStore.get(activeConnectionId)?.status_reason).not.toBe('SUBSCRIPTION_RESTRICTED');
+      // Session did NOT persist waba_subscribed (provider never confirmed)
+      expect(sessionsStore.get(activeSessionId)?.provider_progress).not.toBe('waba_subscribed');
     });
   });
 });

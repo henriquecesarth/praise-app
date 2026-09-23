@@ -202,7 +202,7 @@ describe('WhatsApp Provider Identity Claims Suite (Phase 7C)', () => {
     expect(await claimRepo.getClaim(claimId)).not.toBeNull();
   });
 
-  it('6. Terminal disconnect releases claim, allowing a future connection to reacquire it', async () => {
+  it('6. Meta disconnect retains claim for D7 strong settlement (DEFECT 2 fix)', async () => {
     const conn = await connectionRepo.createConnection({
       organization_id: 'org-1',
       display_name: 'Line to Disconnect',
@@ -221,33 +221,37 @@ describe('WhatsApp Provider Identity Claims Suite (Phase 7C)', () => {
     const claimId = getClaimId('meta_cloud_api', 'phone-400');
     expect(await claimRepo.getClaim(claimId)).not.toBeNull();
 
-    // Terminal disconnect
+    // Terminal disconnect - CLAIM MUST BE RETAINED for D7 strong settlement
+    // The provider claim is NOT deleted here; it will be released atomically by
+    // finalizeMetaCleanupOnStrongSettlement() after durable provider cleanup proof.
     await connectionRepo.disconnectConnection('org-1', conn.id);
 
-    // Claim is deleted
-    expect(await claimRepo.getClaim(claimId)).toBeNull();
+    // Claim is retained (not deleted) - DEFECT 2 fix verification
+    const claimAfterDisconnect = await claimRepo.getClaim(claimId);
+    expect(claimAfterDisconnect).not.toBeNull();
+    expect(claimAfterDisconnect?.connection_id).toBe(conn.id);
+    expect(claimAfterDisconnect?.organization_id).toBe('org-1');
 
-    // A new connection can now acquire phone-400
+    // A new connection cannot immediately reacquire the phone because claim is retained
+    // Ownership transfer only happens during strong settlement (finalizeMetaCleanupOnStrongSettlement)
     const newConn = await connectionRepo.createConnection({
       organization_id: 'org-1',
-      display_name: 'Re-onboarded Line',
+      display_name: 'New Line',
       created_by_user_id: 'user-1',
       status: 'connecting',
     });
 
+    // New connection will NOT be able to claim the same phone while claim is retained
     await expect(
       service.materializeProviderIdentity('org-1', newConn.id, {
         phoneNumber: '+5511999995555',
         providerWabaId: 'waba-400',
         providerPhoneNumberId: 'phone-400',
       })
-    ).resolves.not.toThrow();
-
-    const newClaim = await claimRepo.getClaim(claimId);
-    expect(newClaim?.connection_id).toBe(newConn.id);
+    ).rejects.toThrow(/PROVIDER_PHONE_ALREADY_REGISTERED/);
   });
 
-  it('7. Disconnect replay does not delete reacquired provider claim owned by another connection (F3 remediation)', async () => {
+  it('7. Disconnect replay retains claim owned by original connection (F3 remediation)', async () => {
     // 1. Connection A claims phone-500
     const connA = await connectionRepo.createConnection({
       organization_id: 'org-1',
@@ -266,14 +270,15 @@ describe('WhatsApp Provider Identity Claims Suite (Phase 7C)', () => {
     const claimId = getClaimId('meta_cloud_api', 'phone-500');
     expect(await claimRepo.getClaim(claimId)).not.toBeNull();
 
-    // 2. Disconnect Connection A
+    // 2. Disconnect Connection A - claim is RETAINED (DEFECT 2 fix)
     await connectionRepo.disconnectConnection('org-1', connA.id);
-    expect(await claimRepo.getClaim(claimId)).toBeNull();
+    expect(await claimRepo.getClaim(claimId)).not.toBeNull();
+    expect((await claimRepo.getClaim(claimId))?.connection_id).toBe(connA.id);
 
     const disconnectedA = await connectionRepo.getConnectionById(connA.id);
     expect(disconnectedA?.status).toBe('disconnected');
 
-    // 3. Connection B claims phone-500
+    // 3. Connection B attempts to claim phone-500 - should FAIL because claim is retained
     const connB = await connectionRepo.createConnection({
       organization_id: 'org-1',
       display_name: 'Line B',
@@ -281,23 +286,22 @@ describe('WhatsApp Provider Identity Claims Suite (Phase 7C)', () => {
       status: 'connecting',
     });
 
-    await service.materializeProviderIdentity('org-1', connB.id, {
-      phoneNumber: '+5511999995550',
-      providerWabaId: 'waba-500',
-      providerPhoneNumberId: 'phone-500',
-    });
-    await service.transitionConnectionStatus('org-1', connB.id, 'connected');
+    // Claim is still owned by A, so B cannot claim
+    await expect(
+      service.materializeProviderIdentity('org-1', connB.id, {
+        phoneNumber: '+5511999995550',
+        providerWabaId: 'waba-500',
+        providerPhoneNumberId: 'phone-500',
+      })
+    ).rejects.toThrow(/PROVIDER_PHONE_ALREADY_REGISTERED/);
 
-    const claimB = await claimRepo.getClaim(claimId);
-    expect(claimB?.connection_id).toBe(connB.id);
-
-    // 4. Replay disconnect of Connection A
+    // 4. Replay disconnect of Connection A (idempotent)
     await connectionRepo.disconnectConnection('org-1', connA.id);
 
-    // 5. Assert Connection B's claim remains INTACT
+    // 5. Assert Connection A's claim remains INTACT
     const claimAfterReplay = await claimRepo.getClaim(claimId);
     expect(claimAfterReplay).not.toBeNull();
-    expect(claimAfterReplay?.connection_id).toBe(connB.id);
+    expect(claimAfterReplay?.connection_id).toBe(connA.id);
     expect(claimAfterReplay?.provider_phone_number_id).toBe('phone-500');
   });
 });

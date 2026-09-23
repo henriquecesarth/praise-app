@@ -5,9 +5,13 @@ import {
   WhatsAppProviderCleanupJobRecord,
   WhatsAppUnresolvedRemoteMutation,
   WhatsAppConnectionRecord,
+  WhatsAppWabaLifecycleLockRecord,
+  WhatsAppOnboardingSessionRecord,
+  getClaimId,
   getZernioAccountClaimId,
   getZernioPhoneClaimId,
 } from '../features/whatsapp/whatsapp.types';
+import { hasUnresolvedWabaSubscribeAmbiguity } from './WhatsAppWabaLifecycleLockRepository';
 
 export class WhatsAppProviderCleanupJobRepository {
   private readonly jobsCol = db.collection('whatsapp_provider_cleanup_jobs');
@@ -110,6 +114,273 @@ export class WhatsAppProviderCleanupJobRepository {
     }
 
     return [...jobsA, ...jobsB];
+  }
+
+  /**
+   * R7-B2.3R / R7-C: Commit materialized denial ownership atomically.
+   *
+   * Atomically commits in ONE Firestore transaction:
+   * 1. Re-reads the authoritative connection doc inside the transaction (OCC check).
+   *    Fails closed (409) if status is 'disconnected', 'connected', or not in ['pending', 'connecting'].
+   *    Validates that original pending_expires_at is present and well-formed (HIGH 5).
+   * 2. Re-reads the authoritative session doc inside the transaction (OCC check).
+   *    Fails closed (409) if status is 'consumed', 'failed', or 'expired'.
+   * 3. Re-reads the cleanup job:
+   *    If job exists in terminal/inert state ('cancelled', 'succeeded', 'abandoned', 'exhausted'),
+   *    fails closed (409 CLEANUP_OWNERSHIP_NOT_LIVE) to prevent zombie resurrection.
+   *    If job exists in live state ('pending', 'retry_wait', 'processing'), reuses it without sliding deadline.
+   *    If job does not exist, creates it with next_attempt_at equal to original pending_expires_at.
+   * 4. Updates connection status to 'connecting'.
+   * 5. Updates session provider_progress to 'waba_subscribed'.
+   */
+  async commitMaterializedDenialOwnershipAtomically(params: {
+    organizationId: string;
+    connectionId: string;
+    sessionId: string;
+    wabaId: string;
+    phoneNumberId: string;
+    normalizedPhoneNumber: string;
+  }): Promise<void> {
+    const { organizationId, connectionId, sessionId, wabaId, phoneNumberId, normalizedPhoneNumber } = params;
+    const nowIso = new Date().toISOString();
+
+    await db.runTransaction(async (tx) => {
+      const connRef = db.collection('whatsapp_connections').doc(connectionId);
+      const connDoc = await tx.get(connRef);
+      if (!connDoc.exists) {
+        throw new AppError(404, 'CONNECTION_NOT_FOUND', { code: 'CONNECTION_NOT_FOUND' });
+      }
+      const conn = connDoc.data() as WhatsAppConnectionRecord;
+      if (conn.organization_id !== organizationId) {
+        throw new AppError(404, 'CONNECTION_NOT_FOUND', { code: 'CONNECTION_NOT_FOUND' });
+      }
+
+      // OCC Precondition: Do not overwrite terminal or unexpected status
+      if (conn.status === 'disconnected') {
+        throw new AppError(409, 'CONNECTION_DISCONNECTED', { code: 'CONNECTION_DISCONNECTED' });
+      }
+      if (conn.status === 'connected') {
+        throw new AppError(409, 'CONNECTION_ALREADY_CONNECTED', { code: 'CONNECTION_ALREADY_CONNECTED' });
+      }
+      if (conn.status !== 'pending' && conn.status !== 'connecting') {
+        throw new AppError(409, 'INVALID_CONNECTION_STATUS', { code: 'INVALID_CONNECTION_STATUS' });
+      }
+
+      const sessionRef = db.collection('whatsapp_onboarding_sessions').doc(sessionId);
+      const sessionDoc = await tx.get(sessionRef);
+      if (!sessionDoc.exists) {
+        throw new AppError(404, 'ONBOARDING_SESSION_NOT_FOUND', { code: 'ONBOARDING_SESSION_NOT_FOUND' });
+      }
+      const session = sessionDoc.data() as WhatsAppOnboardingSessionRecord;
+      if (session.organization_id !== organizationId) {
+        throw new AppError(404, 'ONBOARDING_SESSION_NOT_FOUND', { code: 'ONBOARDING_SESSION_NOT_FOUND' });
+      }
+
+      // OCC Precondition: Do not mutate consumed or expired/failed session
+      if (session.status === 'consumed') {
+        throw new AppError(409, 'ONBOARDING_SESSION_ALREADY_CONSUMED', { code: 'ONBOARDING_SESSION_ALREADY_CONSUMED' });
+      }
+      if (session.status === 'failed' || session.status === 'expired') {
+        throw new AppError(409, 'ONBOARDING_SESSION_NOT_LIVE', { code: 'ONBOARDING_SESSION_NOT_LIVE' });
+      }
+
+      // HIGH 5: missing/malformed pending_expires_at fails closed
+      const originalPendingExpiresAt = conn.pending_expires_at;
+      if (
+        !originalPendingExpiresAt ||
+        typeof originalPendingExpiresAt !== 'string' ||
+        isNaN(Date.parse(originalPendingExpiresAt))
+      ) {
+        throw new AppError(500, 'ONBOARDING_DEADLINE_INTEGRITY_VIOLATION', {
+          code: 'ONBOARDING_DEADLINE_INTEGRITY_VIOLATION',
+        });
+      }
+
+      const jobId = `cleanup_conn_${connectionId}`;
+      const jobRef = this.jobsCol.doc(jobId);
+      const jobDoc = await tx.get(jobRef);
+
+      if (jobDoc.exists) {
+        const job = jobDoc.data() as WhatsAppProviderCleanupJobRecord;
+        if (job.organization_id !== organizationId) {
+          throw new AppError(409, 'CLEANUP_OWNERSHIP_CONFLICT', {
+            code: 'CLEANUP_OWNERSHIP_CONFLICT',
+          });
+        }
+        if (['cancelled', 'succeeded', 'abandoned', 'exhausted'].includes(job.status)) {
+          throw new AppError(409, 'CLEANUP_OWNERSHIP_NOT_LIVE', {
+            code: 'CLEANUP_OWNERSHIP_NOT_LIVE',
+          });
+        }
+        // Live job: reuse without sliding deadline or resetting attempt count
+      } else {
+        tx.set(jobRef, {
+          id: jobId,
+          organization_id: organizationId,
+          connection_id: connectionId,
+          provider: 'meta_cloud_api',
+          provider_waba_id: wabaId,
+          provider_phone_number_id: phoneNumberId,
+          phone_number: normalizedPhoneNumber,
+          status: 'pending',
+          attempt_count: 0,
+          max_attempts: 5,
+          next_attempt_at: originalPendingExpiresAt,
+          lease_token: null,
+          lease_expires_at: null,
+          last_attempt_started_at: null,
+          last_error_code: null,
+          last_error_at: null,
+          provider_cleanup_proof: null,
+          override_reason: null,
+          manual_action_by: null,
+          manual_action_at: null,
+          manual_action_reason: null,
+          created_at: nowIso,
+          updated_at: nowIso,
+          completed_at: null,
+          retention_expires_at: null,
+        });
+      }
+
+      tx.update(connRef, {
+        status: 'connecting',
+        status_reason: 'SUBSCRIPTION_RESTRICTED',
+        provider_waba_id: wabaId,
+        provider_phone_number_id: phoneNumberId,
+        phone_number: normalizedPhoneNumber,
+        updated_at: nowIso,
+      });
+
+      tx.update(sessionRef, {
+        provider_progress: 'waba_subscribed',
+        updated_at: nowIso,
+      });
+    });
+  }
+
+  /**
+   * R7-B2.3R / R7-C: Finalize Meta cleanup on strong settlement.
+   *
+   * In ONE crash-safe Firestore transaction:
+   * 1. Re-validates job lease and status === 'processing'.
+   * 2. Re-validates WABA lifecycle lock lease, generation, unsubscribed proof, and zero ambiguity.
+   * 3. Validates connection doc: fails closed if connection is already 'connected' (R7-C invariant).
+   *    Otherwise marks connection 'disconnected' (CLEANUP_COMPLETED).
+   * 4. Deletes secret doc if present.
+   * 5. Deletes phone claim doc if owned by this connection.
+   * 6. Marks cleanup job 'succeeded' with proof 'proven' and 30-day retention.
+   * 7. Releases WABA lock to 'idle'.
+   */
+  async finalizeMetaCleanupOnStrongSettlement(
+    jobId: string,
+    jobLeaseToken: string,
+    wabaLockCheck: {
+      wabaId: string;
+      generation: number;
+      leaseToken: string;
+    }
+  ): Promise<void> {
+    const nowIso = new Date().toISOString();
+
+    await db.runTransaction(async (tx) => {
+      const jobRef = this.jobsCol.doc(jobId);
+      const jobDoc = await tx.get(jobRef);
+      if (!jobDoc.exists) {
+        throw new AppError(404, 'CLEANUP_JOB_NOT_FOUND', { code: 'CLEANUP_JOB_NOT_FOUND' });
+      }
+      const job = jobDoc.data() as WhatsAppProviderCleanupJobRecord;
+      if (job.lease_token !== jobLeaseToken || job.status !== 'processing') {
+        throw new AppError(409, 'JOB_LEASE_LOST', { code: 'JOB_LEASE_LOST' });
+      }
+
+      const wabaLockRef = db.collection('whatsapp_waba_lifecycle_locks').doc(`lock_meta_${wabaLockCheck.wabaId}`);
+      const wabaLockDoc = await tx.get(wabaLockRef);
+      if (!wabaLockDoc.exists) {
+        throw new AppError(404, 'WABA_LOCK_NOT_FOUND', { code: 'WABA_LOCK_NOT_FOUND' });
+      }
+      const wabaLock = wabaLockDoc.data() as WhatsAppWabaLifecycleLockRecord;
+      if (
+        wabaLock.lease_token !== wabaLockCheck.leaseToken ||
+        wabaLock.operation_generation !== wabaLockCheck.generation
+      ) {
+        throw new AppError(409, 'WABA_LEASE_LOST', { code: 'WABA_LEASE_LOST' });
+      }
+
+      // Strong proof verification
+      if (
+        wabaLock.provider_observed_state !== 'unsubscribed' ||
+        wabaLock.provider_observed_generation !== wabaLock.operation_generation
+      ) {
+        throw new AppError(409, 'WABA_STRONG_CLEANUP_PROOF_MISSING', {
+          code: 'WABA_STRONG_CLEANUP_PROOF_MISSING',
+        });
+      }
+
+      // Subscribe ambiguity verification
+      if (hasUnresolvedWabaSubscribeAmbiguity(wabaLock)) {
+        throw new AppError(409, 'WABA_SUBSCRIBE_AMBIGUITY_OUTSTANDING', {
+          code: 'WABA_SUBSCRIBE_AMBIGUITY_OUTSTANDING',
+        });
+      }
+
+      const connRef = db.collection('whatsapp_connections').doc(job.connection_id);
+      const connDoc = await tx.get(connRef);
+      if (connDoc.exists) {
+        const conn = connDoc.data() as WhatsAppConnectionRecord;
+        if (conn.status === 'connected') {
+          throw new AppError(409, 'CONNECTION_ALREADY_CONNECTED', {
+            code: 'CONNECTION_ALREADY_CONNECTED',
+          });
+        }
+      }
+
+      const secretRef = db.collection('whatsapp_connection_secrets').doc(job.connection_id);
+      const secretDoc = await tx.get(secretRef);
+
+      const claimRef = job.provider_phone_number_id
+        ? db.collection('whatsapp_provider_identity_claims').doc(getClaimId('meta_cloud_api', job.provider_phone_number_id))
+        : null;
+      const claimDoc = claimRef ? await tx.get(claimRef) : null;
+
+      if (connDoc.exists) {
+        tx.update(connRef, {
+          status: 'disconnected',
+          disconnect_reason: 'CLEANUP_COMPLETED',
+          pending_expires_at: null,
+          updated_at: nowIso,
+        });
+      }
+
+      if (secretDoc.exists) {
+        tx.delete(secretRef);
+      }
+
+      if (claimRef && claimDoc && claimDoc.exists) {
+        const claim = claimDoc.data() as any;
+        if (claim.connection_id === job.connection_id) {
+          tx.delete(claimRef);
+        }
+      }
+
+      tx.update(jobRef, {
+        status: 'succeeded',
+        provider_cleanup_proof: 'proven',
+        lease_token: null,
+        lease_expires_at: null,
+        completed_at: nowIso,
+        retention_expires_at: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString(),
+        updated_at: nowIso,
+      });
+
+      tx.update(wabaLockRef, {
+        operation_status: 'idle',
+        lease_token: null,
+        lease_expires_at: null,
+        last_settled_at: nowIso,
+        updated_at: nowIso,
+      });
+    });
   }
 
   async acquireJobLeaseInTransaction(

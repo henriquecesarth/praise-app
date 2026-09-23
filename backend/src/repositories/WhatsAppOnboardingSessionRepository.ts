@@ -1,5 +1,16 @@
 import { db } from '../lib/firebase';
-import { WhatsAppOnboardingSessionRecord } from '../features/whatsapp/whatsapp.types';
+import {
+  WhatsAppOnboardingSessionRecord,
+  WhatsAppProviderProgress,
+} from '../features/whatsapp/whatsapp.types';
+
+export const PROVIDER_PROGRESS_RANK: Record<WhatsAppProviderProgress, number> = {
+  none: 0,
+  credential_staged: 1,
+  assets_verified: 2,
+  phone_registered: 3,
+  waba_subscribed: 4,
+};
 
 export class WhatsAppOnboardingSessionRepository {
   private readonly sessionsCol = db.collection('whatsapp_onboarding_sessions');
@@ -44,5 +55,49 @@ export class WhatsAppOnboardingSessionRepository {
     } else {
       await docRef.update(updatePayload);
     }
+  }
+
+  async updateProgressMonotonically(
+    sessionId: string,
+    newProgress: WhatsAppProviderProgress,
+    additionalUpdates?: Partial<WhatsAppOnboardingSessionRecord>,
+    existingTx?: FirebaseFirestore.Transaction
+  ): Promise<WhatsAppOnboardingSessionRecord | null> {
+    const handler = async (tx: FirebaseFirestore.Transaction) => {
+      const docRef = this.sessionsCol.doc(sessionId);
+      const doc = await tx.get(docRef);
+      if (!doc.exists) {
+        return null;
+      }
+      const session = doc.data() as WhatsAppOnboardingSessionRecord;
+      const currentProgress = session.provider_progress || 'none';
+      const currentRank = PROVIDER_PROGRESS_RANK[currentProgress] ?? 0;
+      const targetRank = PROVIDER_PROGRESS_RANK[newProgress] ?? 0;
+
+      // Monotonicity: never regress provider_progress
+      const finalProgress = currentRank > targetRank ? currentProgress : newProgress;
+
+      const now = new Date().toISOString();
+      const updatePayload: Partial<WhatsAppOnboardingSessionRecord> = {
+        ...additionalUpdates,
+        provider_progress: finalProgress,
+        updated_at: now,
+      };
+
+      if (session.status === 'consumed' && additionalUpdates?.status && additionalUpdates.status !== 'consumed') {
+        delete updatePayload.status;
+      }
+
+      tx.update(docRef, updatePayload);
+      return {
+        ...session,
+        ...updatePayload,
+      };
+    };
+
+    if (existingTx) {
+      return await handler(existingTx);
+    }
+    return await db.runTransaction(handler);
   }
 }
