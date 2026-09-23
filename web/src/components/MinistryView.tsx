@@ -12,10 +12,11 @@ import { SubscriptionPlanView } from './SubscriptionPlanView';
 import { MemberAvailabilityView } from './MemberAvailabilityView';
 import { AdminAvailabilityView } from './AdminAvailabilityView';
 import { ManualMemberAvailabilityModal } from './ManualMemberAvailabilityModal';
+import { WhatsAppFoundationView } from './WhatsAppFoundationView';
 import {
   Edit2, Check, X, UserPlus, Users, Info, Link, Shield, Tag,
   Layers, Trash2, LogOut, ChevronRight, MoreVertical, Plus, User,
-  CalendarDays, AtSign, Copy, CheckCircle, Sparkles, BookOpen,
+  CalendarDays, AtSign, Copy, CheckCircle, Sparkles, BookOpen, MessageSquare,
 } from 'lucide-react';
 
 interface MinistryMemberItem {
@@ -89,6 +90,7 @@ export function MinistryView({
   const [showSubscriptionPlan, setShowSubscriptionPlan] = useState(false);
   const [showAvailability, setShowAvailability] = useState(false);
   const [showAdminAvailability, setShowAdminAvailability] = useState(false);
+  const [showWhatsApp, setShowWhatsApp] = useState(false);
 
   // Info tab state
   const [editingName, setEditingName] = useState(false);
@@ -151,6 +153,7 @@ export function MinistryView({
     setShowSubscriptionPlan(section === 'plano' || section === 'assinatura');
     setShowAvailability(section === 'disponibilidade' || section === 'indisponibilidade');
     setShowAdminAvailability(section === 'disponibilidade-equipe' || section === 'disponibilidade-admin');
+    setShowWhatsApp(section === 'whatsapp');
   }, [section, activeMinistry.id]);
 
   const navigateSection = (nextSection?: string) => {
@@ -165,6 +168,7 @@ export function MinistryView({
       setShowSubscriptionPlan(nextSection === 'plano' || nextSection === 'assinatura');
       setShowAvailability(nextSection === 'disponibilidade' || nextSection === 'indisponibilidade');
       setShowAdminAvailability(nextSection === 'disponibilidade-equipe' || nextSection === 'disponibilidade-admin');
+      setShowWhatsApp(nextSection === 'whatsapp');
     }
   };
 
@@ -418,6 +422,18 @@ export function MinistryView({
     return (
       <AdminAvailabilityView
         ministryId={activeMinistry.id}
+        onBack={() => navigateSection()}
+        showToast={showToast}
+      />
+    );
+  }
+
+  // Show WhatsApp foundation sub-page (Phase 7E-F1)
+  if (showWhatsApp) {
+    return (
+      <WhatsAppFoundationView
+        ministryId={activeMinistry.id}
+        isAdmin={userRole === 'admin'}
         onBack={() => navigateSection()}
         showToast={showToast}
       />
@@ -685,6 +701,23 @@ export function MinistryView({
                 <div>
                   <div className="ministry-action-title">Plano e assinatura</div>
                   <div className="ministry-action-desc">Consulte limites, quotas e detalhes do seu plano</div>
+                </div>
+              </div>
+              <ChevronRight size={16} className="ministry-chevron" />
+            </button>
+            {/* WhatsApp — ACTIVE */}
+            <button
+              className="ministry-action-row-btn"
+              onClick={() => navigateSection('whatsapp')}
+              data-testid="navigate-whatsapp-btn"
+            >
+              <div className="ministry-action-row-left">
+                <div className="ministry-action-icon primary">
+                  <MessageSquare size={18} />
+                </div>
+                <div>
+                  <div className="ministry-action-title">WhatsApp</div>
+                  <div className="ministry-action-desc">Status da conexão de notificações via WhatsApp</div>
                 </div>
               </div>
               <ChevronRight size={16} className="ministry-chevron" />

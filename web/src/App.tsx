@@ -22,6 +22,7 @@ import { ScheduleDetailView } from './components/ScheduleDetailView';
 import { CreateScheduleModal, ScheduleItem } from './components/CreateScheduleModal';
 import { MinistryView } from './components/MinistryView';
 import { LiturgiesView } from './components/LiturgiesView';
+import { WhatsAppCallbackPage } from './components/WhatsAppCallbackPage';
 import { RestrictedBanner } from './components/RestrictedBanner';
 import { BottomNav } from './components/BottomNav';
 import { InstallPWAPrompt } from './components/InstallPWAPrompt';
@@ -665,6 +666,15 @@ export default function App() {
         <div className="shimmer auth-loading-mark" />
         <span>Verificando sua sessão…</span>
       </div>
+    );
+  }
+
+  if (routeState.isWhatsAppCallback) {
+    return (
+      <WhatsAppCallbackPage
+        ministryId={activeGroup?.id}
+        onNavigateBack={() => navigate('/ministerio/whatsapp')}
+      />
     );
   }
 

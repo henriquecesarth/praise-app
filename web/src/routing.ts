@@ -6,6 +6,7 @@ export interface AppRouteState {
   folderId?: string;
   scheduleId?: string;
   ministrySection?: string;
+  isWhatsAppCallback?: boolean;
   isKnown: boolean;
 }
 
@@ -36,6 +37,9 @@ export function parseAppRoute(pathname: string): AppRouteState {
   if (normalized === '/cifras') return { module: 'cifrador', isKnown: true };
   if (normalized === '/ministerio') return { module: 'ministry', isKnown: true };
   if (normalized === '/liturgias') return { module: 'liturgies', isKnown: true };
+  if (normalized === '/whatsapp/callback') {
+    return { module: 'ministry', ministrySection: 'whatsapp', isWhatsAppCallback: true, isKnown: true };
+  }
 
   const scheduleMatch = normalized.match(/^\/escalas\/([^/]+)$/);
   if (scheduleMatch) {
@@ -78,4 +82,8 @@ export function pathForMinistrySection(section?: string) {
 
 export function pathForLiturgies() {
   return '/liturgias';
+}
+
+export function pathForWhatsAppCallback() {
+  return '/whatsapp/callback';
 }

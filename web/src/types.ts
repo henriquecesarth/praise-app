@@ -469,3 +469,5 @@ export interface BillingTransactionRecord {
   updated_at: string;
 }
 
+export * from './whatsapp.types';
+

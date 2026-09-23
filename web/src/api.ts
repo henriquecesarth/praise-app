@@ -28,6 +28,21 @@ import {
   ScheduleCivilWindow,
   ConsolidatedAvailabilityItem,
   ConsolidatedAvailabilityResponse,
+  BillingAccessMode,
+  WhatsAppProvider,
+  WhatsAppConnectionStatus,
+  WhatsAppProviderProgress,
+  WhatsAppCommercialState,
+  WhatsAppConnectionAccessMode,
+  WhatsAppConnectionDto,
+  PaginatedWhatsAppConnectionsResponseDto,
+  MinistryWhatsAppStatusDto,
+  OrganizationWhatsAppCapacity,
+  StartWhatsAppOnboardingResponseDto,
+  StartWhatsAppOnboardingInput,
+  CompleteWhatsAppOnboardingInput,
+  UpdateWhatsAppConnectionInput,
+  DisconnectWhatsAppConnectionResponseDto,
 } from './types';
 
 export type {
@@ -44,6 +59,21 @@ export type {
   ScheduleCivilWindow,
   ConsolidatedAvailabilityItem,
   ConsolidatedAvailabilityResponse,
+  BillingAccessMode,
+  WhatsAppProvider,
+  WhatsAppConnectionStatus,
+  WhatsAppProviderProgress,
+  WhatsAppCommercialState,
+  WhatsAppConnectionAccessMode,
+  WhatsAppConnectionDto,
+  PaginatedWhatsAppConnectionsResponseDto,
+  MinistryWhatsAppStatusDto,
+  OrganizationWhatsAppCapacity,
+  StartWhatsAppOnboardingResponseDto,
+  StartWhatsAppOnboardingInput,
+  CompleteWhatsAppOnboardingInput,
+  UpdateWhatsAppConnectionInput,
+  DisconnectWhatsAppConnectionResponseDto,
 };
 
 export function mapConsolidatedAvailabilityItemFromApi(item: any): ConsolidatedAvailabilityItem {
@@ -136,6 +166,79 @@ export function mapSmartChordFromApi(item: any): SmartChord {
     updatedAt: item?.updated_at ?? item?.updatedAt ?? '',
     artist: item?.artist ? { id: item.artist.id, name: item.artist.name } : null,
     song: item?.song ? { id: item.song.id, title: item.song.title } : null,
+  };
+}
+
+export function mapWhatsAppConnectionFromApi(item: any): WhatsAppConnectionDto {
+  return {
+    id: item?.id ?? '',
+    organizationId: item?.organizationId ?? item?.organization_id ?? '',
+    displayName: item?.displayName ?? item?.display_name ?? '',
+    phoneNumber: item?.phoneNumber ?? item?.phone_number ?? null,
+    provider: (item?.provider ?? 'meta_cloud_api') as WhatsAppProvider,
+    status: (item?.status ?? 'disconnected') as WhatsAppConnectionStatus,
+    statusReason: item?.statusReason ?? item?.status_reason ?? null,
+    isOrganizationDefault: Boolean(item?.isOrganizationDefault ?? item?.is_organization_default),
+    assignedMinistryId: item?.assignedMinistryId ?? item?.assigned_ministry_id ?? null,
+    createdAt: item?.createdAt ?? item?.created_at ?? '',
+    updatedAt: item?.updatedAt ?? item?.updated_at ?? '',
+  };
+}
+
+export function mapPaginatedWhatsAppConnectionsFromApi(data: any): PaginatedWhatsAppConnectionsResponseDto {
+  return {
+    items: Array.isArray(data?.items) ? data.items.map(mapWhatsAppConnectionFromApi) : [],
+    nextCursor: data?.nextCursor ?? data?.next_cursor ?? null,
+  };
+}
+
+export function mapOrganizationWhatsAppCapacityFromApi(data: any): OrganizationWhatsAppCapacity {
+  return {
+    organizationId: data?.organizationId ?? data?.organization_id ?? '',
+    billingAnchorMinistryId: data?.billingAnchorMinistryId ?? data?.billing_anchor_ministry_id ?? '',
+    totalAllowedConnections: Number(data?.totalAllowedConnections ?? data?.total_allowed_connections ?? 0),
+    includedConnections: Number(data?.includedConnections ?? data?.included_connections ?? 0),
+    additionalConnections: Number(data?.additionalConnections ?? data?.additional_connections ?? 0),
+    configuredConnectionsCount: Number(data?.configuredConnectionsCount ?? data?.configured_connections_count ?? 0),
+    remainingCapacity: Number(data?.remainingCapacity ?? data?.remaining_capacity ?? 0),
+    commercialState: (data?.commercialState ?? data?.commercial_state ?? 'not_entitled') as WhatsAppCommercialState,
+    canSendMessages: Boolean(data?.canSendMessages ?? data?.can_send_messages),
+    canCreateConnection: Boolean(data?.canCreateConnection ?? data?.can_create_connection),
+    canResumeAuthorizedOnboarding: Boolean(data?.canResumeAuthorizedOnboarding ?? data?.can_resume_authorized_onboarding),
+    restrictionReason: data?.restrictionReason ?? data?.restriction_reason ?? null,
+    gracePeriodExpiresBillingDate: data?.gracePeriodExpiresBillingDate ?? data?.grace_period_expires_billing_date ?? null,
+    billingAccessMode: (data?.billingAccessMode ?? data?.billing_access_mode ?? 'suspended') as BillingAccessMode,
+    connectionAccessMode: (data?.connectionAccessMode ?? data?.connection_access_mode ?? 'suspended') as WhatsAppConnectionAccessMode,
+  };
+}
+
+export function mapMinistryWhatsAppStatusFromApi(data: any): MinistryWhatsAppStatusDto {
+  return {
+    hasOrganization: Boolean(data?.hasOrganization ?? data?.has_organization),
+    organizationId: data?.organizationId ?? data?.organization_id ?? null,
+    isConfigured: Boolean(data?.isConfigured ?? data?.is_configured),
+    isConnected: Boolean(data?.isConnected ?? data?.is_connected),
+    source: (data?.source ?? 'none') as 'exclusive' | 'default' | 'none',
+    connectionId: data?.connectionId ?? data?.connection_id ?? null,
+    displayName: data?.displayName ?? data?.display_name ?? null,
+    phoneNumber: data?.phoneNumber ?? data?.phone_number ?? null,
+    connectionAccessMode: (data?.connectionAccessMode ?? data?.connection_access_mode ?? 'suspended') as WhatsAppConnectionAccessMode,
+    canSendMessages: Boolean(data?.canSendMessages ?? data?.can_send_messages),
+  };
+}
+
+export function mapStartWhatsAppOnboardingResponseFromApi(data: any): StartWhatsAppOnboardingResponseDto {
+  return {
+    sessionId: data?.sessionId ?? data?.session_id ?? '',
+    connectionId: data?.connectionId ?? data?.connection_id ?? '',
+    stateNonce: data?.stateNonce ?? data?.state_nonce,
+    fbAppId: data?.fbAppId ?? data?.fb_app_id,
+    configId: data?.configId ?? data?.config_id,
+    expiresAt: data?.expiresAt ?? data?.expires_at ?? '',
+    mode: data?.mode,
+    providerProgress: data?.providerProgress ?? data?.provider_progress,
+    provider: data?.provider,
+    authUrl: data?.authUrl ?? data?.auth_url,
   };
 }
 
@@ -1609,6 +1712,98 @@ export const api = {
       }
     );
     return handleResponse<EarlyActivationCheckoutResponse>(response);
+  },
+
+  listWhatsAppConnections: async (
+    organizationId: string,
+    options?: { limit?: number; cursor?: string }
+  ): Promise<PaginatedWhatsAppConnectionsResponseDto> => {
+    const params = new URLSearchParams();
+    if (options?.limit) params.set('limit', String(options.limit));
+    if (options?.cursor) params.set('cursor', options.cursor);
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const response = await fetch(`${API_URL}/organizations/${organizationId}/whatsapp/connections${query}`, {
+      headers: getHeaders(),
+    });
+    const raw = await handleResponse<any>(response);
+    return mapPaginatedWhatsAppConnectionsFromApi(raw);
+  },
+
+  getWhatsAppCapacity: async (
+    organizationId: string
+  ): Promise<OrganizationWhatsAppCapacity> => {
+    const response = await fetch(`${API_URL}/organizations/${organizationId}/entitlements/whatsapp`, {
+      headers: getHeaders(),
+    });
+    const raw = await handleResponse<any>(response);
+    return mapOrganizationWhatsAppCapacityFromApi(raw);
+  },
+
+  getMinistryWhatsAppStatus: async (
+    ministryId: string
+  ): Promise<MinistryWhatsAppStatusDto> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/whatsapp/status`, {
+      headers: getHeaders(),
+    });
+    const raw = await handleResponse<any>(response);
+    return mapMinistryWhatsAppStatusFromApi(raw);
+  },
+
+  updateWhatsAppConnection: async (
+    organizationId: string,
+    connectionId: string,
+    data: UpdateWhatsAppConnectionInput
+  ): Promise<WhatsAppConnectionDto> => {
+    const response = await fetch(
+      `${API_URL}/organizations/${organizationId}/whatsapp/connections/${connectionId}`,
+      {
+        method: 'PATCH',
+        headers: getHeaders(),
+        body: JSON.stringify(data),
+      }
+    );
+    const raw = await handleResponse<any>(response);
+    return mapWhatsAppConnectionFromApi(raw);
+  },
+
+  startWhatsAppOnboarding: async (
+    organizationId: string,
+    data?: StartWhatsAppOnboardingInput
+  ): Promise<StartWhatsAppOnboardingResponseDto> => {
+    const response = await fetch(`${API_URL}/organizations/${organizationId}/whatsapp/onboarding/start`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(data || {}),
+    });
+    const raw = await handleResponse<any>(response);
+    return mapStartWhatsAppOnboardingResponseFromApi(raw);
+  },
+
+  completeWhatsAppOnboarding: async (
+    organizationId: string,
+    data: CompleteWhatsAppOnboardingInput
+  ): Promise<WhatsAppConnectionDto> => {
+    const response = await fetch(`${API_URL}/organizations/${organizationId}/whatsapp/onboarding/complete`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(data),
+    });
+    const raw = await handleResponse<any>(response);
+    return mapWhatsAppConnectionFromApi(raw);
+  },
+
+  disconnectWhatsAppConnection: async (
+    organizationId: string,
+    connectionId: string
+  ): Promise<DisconnectWhatsAppConnectionResponseDto> => {
+    const response = await fetch(
+      `${API_URL}/organizations/${organizationId}/whatsapp/connections/${connectionId}`,
+      {
+        method: 'DELETE',
+        headers: getHeaders(),
+      }
+    );
+    return handleResponse<DisconnectWhatsAppConnectionResponseDto>(response);
   },
 };
 
