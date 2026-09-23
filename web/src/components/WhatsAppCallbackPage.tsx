@@ -326,6 +326,28 @@ export function WhatsAppCallbackPage({
               </p>
             )}
 
+            {!isAuthoritativelyConnected && (
+              <div style={{ width: '100%', marginBottom: '16px' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary min-h-[44px]"
+                  data-testid="callback-refresh-btn"
+                  onClick={handleRetry}
+                  style={{
+                    minHeight: '44px',
+                    width: '100%',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                  }}
+                >
+                  <RefreshCw size={16} />
+                  <span>Atualizar status</span>
+                </button>
+              </div>
+            )}
+
             <button
               type="button"
               className="btn btn-primary min-h-[44px]"

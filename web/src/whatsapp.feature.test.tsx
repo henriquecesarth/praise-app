@@ -19,7 +19,18 @@ import {
 } from './whatsapp-errors';
 import { parseAppRoute, pathForWhatsAppCallback } from './routing';
 import { WhatsAppCallbackPage } from './components/WhatsAppCallbackPage';
-import type { MinistryWhatsAppStatusDto, WhatsAppCommercialState } from './whatsapp.types';
+import { WhatsAppFoundationView } from './components/WhatsAppFoundationView';
+import { WhatsAppOnboardingModal } from './components/whatsapp/WhatsAppOnboardingModal';
+import {
+  loadMetaSdk,
+  resetMetaSdkStateForTests,
+} from './components/whatsapp/meta-sdk';
+import type {
+  MinistryWhatsAppStatusDto,
+  WhatsAppCommercialState,
+  OrganizationWhatsAppCapacity,
+  WhatsAppConnectionDto,
+} from './whatsapp.types';
 
 describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation', () => {
   const originalFetch = globalThis.fetch;
@@ -675,6 +686,851 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
       expect(await screen.findByText(/Retorno da Conexão Recebido/i)).toBeInTheDocument();
       expect(screen.getByText(/conn-standalone/i)).toBeInTheDocument();
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+  });
+
+  // ============================================================
+  // PHASE 7E-F2 — WHATSAPP PROVIDER CONNECT / CALLBACK / RESUME UI
+  // ============================================================
+
+  describe('PHASE 7E-F2: WhatsApp Provider Connect, Callback & Resume UI (Tests A-P)', () => {
+    const mockHealthyCapacity: OrganizationWhatsAppCapacity = {
+      organizationId: 'org-test',
+      billingAnchorMinistryId: 'min-test',
+      totalAllowedConnections: 1,
+      includedConnections: 1,
+      additionalConnections: 0,
+      configuredConnectionsCount: 0,
+      remainingCapacity: 1,
+      commercialState: 'healthy',
+      canSendMessages: true,
+      canCreateConnection: true,
+      canResumeAuthorizedOnboarding: true,
+      restrictionReason: null,
+      gracePeriodExpiresBillingDate: null,
+      billingAccessMode: 'normal',
+      connectionAccessMode: 'normal',
+    };
+
+    const mockUnconnectedStatus: MinistryWhatsAppStatusDto = {
+      hasOrganization: true,
+      organizationId: 'org-test',
+      isConfigured: false,
+      isConnected: false,
+      source: 'none',
+      connectionId: null,
+      displayName: null,
+      phoneNumber: null,
+      connectionAccessMode: 'normal',
+      canSendMessages: false,
+    };
+
+    beforeEach(() => {
+      resetMetaSdkStateForTests();
+      localStorage.clear();
+      sessionStorage.clear();
+    });
+
+    afterEach(() => {
+      resetMetaSdkStateForTests();
+    });
+
+    // Test A: connect CTA respects backend canCreateConnection
+    it('A. connect CTA respects backend canCreateConnection', async () => {
+      // 1. When canCreateConnection is false
+      vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue(mockUnconnectedStatus);
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue({
+        ...mockHealthyCapacity,
+        canCreateConnection: false,
+        commercialState: 'restricted_over_limit',
+        restrictionReason: 'Limite de conexões atingido para o plano atual.',
+      });
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({ items: [], nextCursor: null });
+
+      const { unmount } = render(
+        <WhatsAppFoundationView
+          ministryId="min-test"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      const disabledConnectBtn = await screen.findByTestId('connect-whatsapp-btn');
+      expect(disabledConnectBtn).toBeDisabled();
+      expect(screen.getByTestId('connect-whatsapp-disabled-msg')).toHaveTextContent(
+        'Limite de conexões atingido para o plano atual.'
+      );
+
+      unmount();
+
+      // 2. When canCreateConnection is true
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue(mockHealthyCapacity);
+
+      render(
+        <WhatsAppFoundationView
+          ministryId="min-test"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      const enabledConnectBtn = await screen.findByTestId('connect-whatsapp-btn');
+      expect(enabledConnectBtn).not.toBeDisabled();
+    });
+
+    // Test B: provider selection passes exact provider discriminator
+    it('B. provider selection passes exact provider discriminator', async () => {
+      const startSpy = vi.spyOn(api, 'startWhatsAppOnboarding').mockResolvedValue({
+        sessionId: 'sess-test',
+        connectionId: 'conn-test',
+        expiresAt: '2026-09-24T00:00:00Z',
+        mode: 'start',
+        provider: 'meta_cloud_api',
+        fbAppId: 'app-meta',
+        configId: 'cfg-meta',
+        stateNonce: 'nonce-meta',
+      });
+
+      // Default selection is meta_cloud_api
+      const { unmount } = render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      const user = userEvent.setup();
+      await user.type(screen.getByTestId('whatsapp-display-name-input'), 'Linha Teste');
+      await user.click(screen.getByTestId('start-onboarding-btn'));
+
+      expect(startSpy).toHaveBeenCalledWith('org-test', {
+        provider: 'meta_cloud_api',
+        displayName: 'Linha Teste',
+      });
+
+      unmount();
+
+      // Switch to zernio
+      startSpy.mockResolvedValueOnce({
+        sessionId: 'sess-z',
+        connectionId: 'conn-z',
+        expiresAt: '2026-09-24T00:00:00Z',
+        mode: 'start',
+        provider: 'zernio',
+        authUrl: 'https://zernio.example.com/oauth',
+      });
+
+      const originalLocation = window.location;
+      delete (window as any).location;
+      window.location = { ...originalLocation, href: '' } as any;
+
+      try {
+        render(
+          <WhatsAppOnboardingModal
+            isOpen={true}
+            onClose={vi.fn()}
+            organizationId="org-test"
+            ministryId="min-test"
+            canCreateConnection={true}
+            canResumeAuthorizedOnboarding={true}
+            onSuccess={vi.fn()}
+          />
+        );
+
+        await user.click(screen.getByTestId('provider-zernio-radio'));
+        await user.click(screen.getByTestId('start-onboarding-btn'));
+
+        expect(startSpy).toHaveBeenCalledWith('org-test', {
+          provider: 'zernio',
+          displayName: undefined,
+        });
+      } finally {
+        window.location = originalLocation as any;
+      }
+    });
+
+    // Test C: Meta start consumes backend-provided fbAppId/configId/stateNonce
+    it('C. Meta start consumes backend-provided fbAppId/configId/stateNonce', async () => {
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockResolvedValue({
+        sessionId: 'sess-c',
+        connectionId: 'conn-c',
+        fbAppId: 'fb-app-12345',
+        configId: 'cfg-67890',
+        stateNonce: 'nonce-abcdef',
+        expiresAt: '2026-09-24T00:00:00Z',
+        mode: 'start',
+        provider: 'meta_cloud_api',
+      });
+
+      let capturedInitAppId: string | null = null;
+      let capturedConfigId: string | null = null;
+
+      (window as any).FB = {
+        init: vi.fn((opts: any) => {
+          capturedInitAppId = opts.appId;
+        }),
+        login: vi.fn((_cb: any, opts: any) => {
+          capturedConfigId = opts.config_id;
+        }),
+      };
+
+      render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      const user = userEvent.setup();
+      await user.click(screen.getByTestId('start-onboarding-btn'));
+
+      expect(capturedInitAppId).toBe('fb-app-12345');
+      expect(capturedConfigId).toBe('cfg-67890');
+    });
+
+    // Test D: Meta SDK loader initializes once
+    it('D. Meta SDK loader initializes once', async () => {
+      const initSpy = vi.fn();
+      (window as any).FB = {
+        init: initSpy,
+      };
+
+      await loadMetaSdk('app-dup-1');
+      await loadMetaSdk('app-dup-1');
+
+      expect(initSpy).toHaveBeenCalledTimes(1);
+      expect(initSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          appId: 'app-dup-1',
+          version: 'v21.0',
+        })
+      );
+    });
+
+    // Test E: Meta cancellation does not call complete endpoint
+    it('E. Meta cancellation does not call complete endpoint', async () => {
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockResolvedValue({
+        sessionId: 'sess-e',
+        connectionId: 'conn-e',
+        fbAppId: 'fb-app-e',
+        configId: 'cfg-e',
+        stateNonce: 'nonce-e',
+        expiresAt: '2026-09-24T00:00:00Z',
+        mode: 'start',
+        provider: 'meta_cloud_api',
+      });
+
+      const completeSpy = vi.spyOn(api, 'completeWhatsAppOnboarding');
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          // Simulate user cancelling the popup
+          cb({ authResponse: null, status: 'unknown' });
+        }),
+      };
+
+      render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      const user = userEvent.setup();
+      await user.click(screen.getByTestId('start-onboarding-btn'));
+
+      expect(await screen.findByRole('alert')).toBeInTheDocument();
+      expect(completeSpy).not.toHaveBeenCalled();
+      expect(screen.getByText(/cancelada/i)).toBeInTheDocument();
+    });
+
+    // Test F: valid Meta result calls complete endpoint with exact required identifiers
+    it('F. valid Meta result calls complete endpoint with exact required identifiers', async () => {
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockResolvedValue({
+        sessionId: 'sess-f',
+        connectionId: 'conn-f',
+        fbAppId: 'fb-app-f',
+        configId: 'cfg-f',
+        stateNonce: 'nonce-f',
+        expiresAt: '2026-09-24T00:00:00Z',
+        mode: 'start',
+        provider: 'meta_cloud_api',
+      });
+
+      const completeSpy = vi.spyOn(api, 'completeWhatsAppOnboarding').mockResolvedValue({
+        id: 'conn-f',
+        organizationId: 'org-test',
+        displayName: 'Meta Line',
+        phoneNumber: '+5511999991111',
+        provider: 'meta_cloud_api',
+        status: 'connected',
+        statusReason: null,
+        isOrganizationDefault: false,
+        assignedMinistryId: 'min-test',
+        createdAt: '2026-09-23T12:00:00Z',
+        updatedAt: '2026-09-23T12:00:00Z',
+      });
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          // Deliver message event with WABA and phone number
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              origin: 'https://www.facebook.com',
+              data: JSON.stringify({
+                type: 'WA_EMBEDDED_SIGNUP',
+                event: 'FINISH',
+                data: {
+                  phone_number_id: 'phone-meta-123',
+                  waba_id: 'waba-meta-456',
+                },
+              }),
+            })
+          );
+          cb({
+            authResponse: {
+              code: 'auth-code-xyz',
+            },
+          });
+        }),
+      };
+
+      render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      const user = userEvent.setup();
+      await user.click(screen.getByTestId('start-onboarding-btn'));
+
+      expect(completeSpy).toHaveBeenCalledWith('org-test', {
+        sessionId: 'sess-f',
+        stateNonce: 'nonce-f',
+        code: 'auth-code-xyz',
+        wabaId: 'waba-meta-456',
+        phoneNumberId: 'phone-meta-123',
+      });
+      expect(await screen.findByText('WhatsApp Conectado com Sucesso!')).toBeInTheDocument();
+    });
+
+    // Test G: successful Meta completion triggers authoritative refetch
+    it('G. successful Meta completion triggers authoritative refetch', async () => {
+      const getStatusSpy = vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue(mockUnconnectedStatus);
+      const getCapacitySpy = vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue(mockHealthyCapacity);
+      const listConnectionsSpy = vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({ items: [], nextCursor: null });
+
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockResolvedValue({
+        sessionId: 'sess-g',
+        connectionId: 'conn-g',
+        fbAppId: 'app-g',
+        configId: 'cfg-g',
+        stateNonce: 'nonce-g',
+        expiresAt: '2026-09-24T00:00:00Z',
+        mode: 'start',
+        provider: 'meta_cloud_api',
+      });
+
+      vi.spyOn(api, 'completeWhatsAppOnboarding').mockResolvedValue({
+        id: 'conn-g',
+        organizationId: 'org-test',
+        displayName: 'Linha Refetch',
+        phoneNumber: '+5511988880000',
+        provider: 'meta_cloud_api',
+        status: 'connected',
+        statusReason: null,
+        isOrganizationDefault: false,
+        assignedMinistryId: 'min-test',
+        createdAt: '2026-09-23T12:00:00Z',
+        updatedAt: '2026-09-23T12:00:00Z',
+      });
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          cb({
+            authResponse: {
+              code: 'auth-code-g',
+              waba_id: 'waba-g',
+              phone_number_id: 'phone-g',
+            },
+          });
+        }),
+      };
+
+      render(
+        <WhatsAppFoundationView
+          ministryId="min-test"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      const user = userEvent.setup();
+      const connectBtn = await screen.findByTestId('connect-whatsapp-btn');
+      await user.click(connectBtn);
+
+      const startBtn = await screen.findByTestId('start-onboarding-btn');
+      await user.click(startBtn);
+
+      const closeSuccessBtn = await screen.findByTestId('onboarding-success-close-btn');
+      await user.click(closeSuccessBtn);
+
+      // Verify authoritative endpoints were re-invoked
+      expect(getStatusSpy).toHaveBeenCalledTimes(2);
+      expect(getCapacitySpy).toHaveBeenCalledTimes(2);
+      expect(listConnectionsSpy).toHaveBeenCalledTimes(2);
+    });
+
+    // Test H: WABA_SUBSCRIBE_OUTCOME_UNRESOLVED displays provider-pending UI and does not blindly repeat completion
+    it('H. WABA_SUBSCRIBE_OUTCOME_UNRESOLVED displays provider-pending UI and does not blindly repeat completion', async () => {
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockResolvedValue({
+        sessionId: 'sess-h',
+        connectionId: 'conn-h',
+        fbAppId: 'app-h',
+        configId: 'cfg-h',
+        stateNonce: 'nonce-h',
+        expiresAt: '2026-09-24T00:00:00Z',
+        mode: 'start',
+        provider: 'meta_cloud_api',
+      });
+
+      const completeSpy = vi.spyOn(api, 'completeWhatsAppOnboarding').mockRejectedValue({
+        details: { code: 'WABA_SUBSCRIBE_OUTCOME_UNRESOLVED' },
+        message: 'WABA_SUBSCRIBE_OUTCOME_UNRESOLVED',
+      });
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          cb({
+            authResponse: {
+              code: 'code-h',
+              waba_id: 'waba-h',
+              phone_number_id: 'phone-h',
+            },
+          });
+        }),
+      };
+
+      render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      const user = userEvent.setup();
+      await user.click(screen.getByTestId('start-onboarding-btn'));
+
+      expect(await screen.findByText('Finalizando ativação…')).toBeInTheDocument();
+      expect(completeSpy).toHaveBeenCalledTimes(1); // Exactly once, not blindly repeated!
+      expect(screen.getByTestId('refresh-status-btn')).toBeInTheDocument();
+    });
+
+    // Test I: ONBOARDING_SESSION_EXPIRED offers resume
+    it('I. ONBOARDING_SESSION_EXPIRED offers resume', async () => {
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockResolvedValue({
+        sessionId: 'sess-i',
+        connectionId: 'conn-i',
+        fbAppId: 'app-i',
+        configId: 'cfg-i',
+        stateNonce: 'nonce-i',
+        expiresAt: '2026-09-24T00:00:00Z',
+        mode: 'start',
+        provider: 'meta_cloud_api',
+      });
+
+      vi.spyOn(api, 'completeWhatsAppOnboarding').mockRejectedValue({
+        details: { code: 'ONBOARDING_SESSION_EXPIRED' },
+      });
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          cb({
+            authResponse: {
+              code: 'code-i',
+              waba_id: 'waba-i',
+              phone_number_id: 'phone-i',
+            },
+          });
+        }),
+      };
+
+      render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      const user = userEvent.setup();
+      await user.click(screen.getByTestId('start-onboarding-btn'));
+
+      expect(await screen.findByText('Sessão de Conexão Expirada')).toBeInTheDocument();
+      const resumeBtn = screen.getByTestId('resume-onboarding-btn');
+      expect(resumeBtn).toBeInTheDocument();
+      expect(resumeBtn).toHaveTextContent(/Retomar configuração/i);
+    });
+
+    // Test J: CONNECTION_RESERVATION_EXPIRED does NOT offer in-place resume
+    it('J. CONNECTION_RESERVATION_EXPIRED does NOT offer in-place resume', async () => {
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockRejectedValue({
+        details: { code: 'CONNECTION_RESERVATION_EXPIRED' },
+      });
+
+      render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      const user = userEvent.setup();
+      await user.click(screen.getByTestId('start-onboarding-btn'));
+
+      expect(await screen.findByText('Reserva de Conexão Expirada')).toBeInTheDocument();
+      // Crucial: In-place resume button MUST NOT be offered!
+      expect(screen.queryByTestId('resume-onboarding-btn')).not.toBeInTheDocument();
+      expect(screen.getByText(/expirou após 24 horas/i)).toBeInTheDocument();
+    });
+
+    // Test K: staged resume calls start with resumeConnectionId
+    it('K. staged resume calls start with resumeConnectionId', async () => {
+      const startSpy = vi.spyOn(api, 'startWhatsAppOnboarding').mockResolvedValue({
+        sessionId: 'sess-k',
+        connectionId: 'conn-k-resumed',
+        expiresAt: '2026-09-24T00:00:00Z',
+        mode: 'resume_staged',
+        provider: 'meta_cloud_api',
+        fbAppId: 'app-k',
+        configId: 'cfg-k',
+        stateNonce: 'nonce-k',
+      });
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn(),
+      };
+
+      const existingConn: WhatsAppConnectionDto = {
+        id: 'conn-k-resumed',
+        organizationId: 'org-test',
+        displayName: 'Linha Resumível',
+        phoneNumber: null,
+        provider: 'meta_cloud_api',
+        status: 'pending',
+        statusReason: null,
+        isOrganizationDefault: false,
+        assignedMinistryId: 'min-test',
+        createdAt: '2026-09-23T12:00:00Z',
+        updatedAt: '2026-09-23T12:00:00Z',
+      };
+
+      render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          resumeConnection={existingConn}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      expect(startSpy).toHaveBeenCalledWith('org-test', {
+        provider: 'meta_cloud_api',
+        displayName: undefined,
+        resumeConnectionId: 'conn-k-resumed',
+      });
+    });
+
+    // Test L: Zernio start redirects only to backend-provided authUrl
+    it('L. Zernio start redirects only to backend-provided authUrl', async () => {
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockResolvedValue({
+        sessionId: 'sess-l',
+        connectionId: 'conn-l',
+        expiresAt: '2026-09-24T00:00:00Z',
+        mode: 'start',
+        provider: 'zernio',
+        authUrl: 'https://zernio.com/connect/whatsapp?session=sess-1234',
+      });
+
+      const originalLocation = window.location;
+      delete (window as any).location;
+      window.location = { ...originalLocation, href: '' } as any;
+
+      render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      const user = userEvent.setup();
+      await user.click(screen.getByTestId('provider-zernio-radio'));
+      await user.click(screen.getByTestId('start-onboarding-btn'));
+
+      expect(window.location.href).toBe('https://zernio.com/connect/whatsapp?session=sess-1234');
+
+      (window as any).location = originalLocation;
+    });
+
+    // Test M: callback success relies on backend refetch, not query status
+    it('M. callback success relies on backend refetch, not query status', async () => {
+      vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue({
+        ...mockUnconnectedStatus,
+        isConnected: false, // Authoritative backend is still NOT connected
+        connectionId: 'conn-m',
+      });
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({
+        items: [{
+          id: 'conn-m',
+          organizationId: 'org-test',
+          displayName: 'Linha M',
+          phoneNumber: null,
+          provider: 'meta_cloud_api',
+          status: 'connecting', // Still connecting
+          statusReason: null,
+          isOrganizationDefault: false,
+          assignedMinistryId: 'min-test',
+          createdAt: '2026-09-23T12:00:00Z',
+          updatedAt: '2026-09-23T12:00:00Z',
+        }],
+        nextCursor: null,
+      });
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue(mockHealthyCapacity);
+
+      render(
+        <WhatsAppCallbackPage
+          ministryId="min-test"
+          search="?connectionId=conn-m&status=success"
+        />
+      );
+
+      expect(await screen.findByText('Retorno da Conexão Recebido')).toBeInTheDocument();
+      // Must NOT claim WhatsApp Conectado com Sucesso! because authoritative backend isConnected = false
+      expect(screen.queryByText('WhatsApp Conectado com Sucesso!')).not.toBeInTheDocument();
+      expect(screen.getByTestId('callback-refresh-btn')).toBeInTheDocument();
+    });
+
+    // Test N: commercial restriction preserves recoverable UI state
+    it('N. commercial restriction preserves recoverable UI state', async () => {
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockResolvedValue({
+        sessionId: 'sess-n',
+        connectionId: 'conn-n',
+        fbAppId: 'app-n',
+        configId: 'cfg-n',
+        stateNonce: 'nonce-n',
+        expiresAt: '2026-09-24T00:00:00Z',
+        mode: 'start',
+        provider: 'meta_cloud_api',
+      });
+
+      vi.spyOn(api, 'completeWhatsAppOnboarding').mockRejectedValue({
+        details: { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED' },
+        message: 'Limite de conexões atingido para sua organização.',
+      });
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          cb({
+            authResponse: {
+              code: 'code-n',
+              waba_id: 'waba-n',
+              phone_number_id: 'phone-n',
+            },
+          });
+        }),
+      };
+
+      render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      const user = userEvent.setup();
+      await user.click(screen.getByTestId('start-onboarding-btn'));
+
+      expect(await screen.findByText('Limite Comercial Atingido')).toBeInTheDocument();
+      expect(screen.getByText(/retido de forma segura/i)).toBeInTheDocument();
+    });
+
+    // Test O: double click cannot dispatch duplicate onboarding start/completion
+    it('O. double click cannot dispatch duplicate onboarding start/completion', async () => {
+      let startCalls = 0;
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockImplementation(async () => {
+        startCalls += 1;
+        // Introduce simulated latency
+        await new Promise((r) => setTimeout(r, 100));
+        return {
+          sessionId: 'sess-o',
+          connectionId: 'conn-o',
+          expiresAt: '2026-09-24T00:00:00Z',
+          mode: 'start',
+          provider: 'zernio',
+          authUrl: 'https://zernio.com/oauth',
+        };
+      });
+
+      render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      const startBtn = screen.getByTestId('start-onboarding-btn');
+
+      // Dispatch rapid duplicate clicks
+      userEvent.click(startBtn);
+      userEvent.click(startBtn);
+
+      await screen.findByText('Iniciando Conexão…');
+      expect(startCalls).toBe(1);
+    });
+
+    // Test P: no provider credential is written to localStorage/sessionStorage
+    it('P. no provider credential is written to localStorage/sessionStorage', async () => {
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockResolvedValue({
+        sessionId: 'sess-p-secret-123',
+        connectionId: 'conn-p',
+        fbAppId: 'app-p',
+        configId: 'cfg-p',
+        stateNonce: 'nonce-p-supersecret',
+        expiresAt: '2026-09-24T00:00:00Z',
+        mode: 'start',
+        provider: 'meta_cloud_api',
+      });
+
+      vi.spyOn(api, 'completeWhatsAppOnboarding').mockResolvedValue({
+        id: 'conn-p',
+        organizationId: 'org-test',
+        displayName: 'Line P',
+        phoneNumber: '+5511977770000',
+        provider: 'meta_cloud_api',
+        status: 'connected',
+        statusReason: null,
+        isOrganizationDefault: false,
+        assignedMinistryId: 'min-test',
+        createdAt: '2026-09-23T12:00:00Z',
+        updatedAt: '2026-09-23T12:00:00Z',
+      });
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          cb({
+            authResponse: {
+              code: 'code-p-oauth-secret',
+              waba_id: 'waba-p-secret',
+              phone_number_id: 'phone-p-secret',
+            },
+          });
+        }),
+      };
+
+      render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      const user = userEvent.setup();
+      await user.click(screen.getByTestId('start-onboarding-btn'));
+
+      expect(await screen.findByText('WhatsApp Conectado com Sucesso!')).toBeInTheDocument();
+
+      // Audit browser durable storages
+      const localKeys = Object.keys(localStorage);
+      const sessionKeys = Object.keys(sessionStorage);
+
+      const forbiddenValues = [
+        'nonce-p-supersecret',
+        'code-p-oauth-secret',
+        'waba-p-secret',
+        'phone-p-secret',
+        'sess-p-secret-123',
+      ];
+
+      for (const key of localKeys) {
+        const val = localStorage.getItem(key) || '';
+        for (const forbidden of forbiddenValues) {
+          expect(val).not.toContain(forbidden);
+        }
+      }
+
+      for (const key of sessionKeys) {
+        const val = sessionStorage.getItem(key) || '';
+        for (const forbidden of forbiddenValues) {
+          expect(val).not.toContain(forbidden);
+        }
+      }
     });
   });
 });

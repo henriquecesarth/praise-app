@@ -1,8 +1,13 @@
-import { useEffect, useState } from 'react';
-import { ArrowLeft, MessageSquare, AlertCircle, RefreshCw } from 'lucide-react';
+import { useEffect, useState, useMemo } from 'react';
+import { ArrowLeft, MessageSquare, AlertCircle, RefreshCw, PlusCircle } from 'lucide-react';
 import { api } from '../api';
-import type { MinistryWhatsAppStatusDto } from '../whatsapp.types';
-import { classifyWhatsAppError } from '../whatsapp-errors';
+import type {
+  MinistryWhatsAppStatusDto,
+  OrganizationWhatsAppCapacity,
+  WhatsAppConnectionDto,
+} from '../whatsapp.types';
+import { classifyWhatsAppError, getWhatsAppErrorMessage } from '../whatsapp-errors';
+import { WhatsAppOnboardingModal } from './whatsapp/WhatsAppOnboardingModal';
 
 export interface WhatsAppFoundationViewProps {
   ministryId: string;
@@ -20,13 +25,26 @@ export function WhatsAppFoundationView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<MinistryWhatsAppStatusDto | null>(null);
+  const [capacity, setCapacity] = useState<OrganizationWhatsAppCapacity | null>(null);
+  const [connections, setConnections] = useState<WhatsAppConnectionDto[]>([]);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [resumeCandidate, setResumeCandidate] = useState<WhatsAppConnectionDto | null>(null);
 
-  const loadStatus = async () => {
+  const loadData = async () => {
     setLoading(true);
     setError(null);
     try {
       const data = await api.getMinistryWhatsAppStatus(ministryId);
       setStatus(data);
+
+      if (data.hasOrganization && data.organizationId) {
+        const [capRes, connsRes] = await Promise.all([
+          api.getWhatsAppCapacity(data.organizationId).catch(() => null),
+          api.listWhatsAppConnections(data.organizationId).catch(() => null),
+        ]);
+        setCapacity(capRes);
+        setConnections(connsRes?.items || []);
+      }
     } catch (err) {
       const message = classifyWhatsAppError(err).userMessage;
       setError(message);
@@ -38,24 +56,55 @@ export function WhatsAppFoundationView({
 
   useEffect(() => {
     let active = true;
+    setLoading(true);
+    setError(null);
+    setIsModalOpen(false);
+    setResumeCandidate(null);
+
     api
       .getMinistryWhatsAppStatus(ministryId)
-      .then((data) => {
-        if (active) {
-          setStatus(data);
-          setLoading(false);
+      .then(async (data) => {
+        if (!active) return;
+        setStatus(data);
+
+        if (data.hasOrganization && data.organizationId) {
+          const [capRes, connsRes] = await Promise.all([
+            api.getWhatsAppCapacity(data.organizationId).catch(() => null),
+            api.listWhatsAppConnections(data.organizationId).catch(() => null),
+          ]);
+          if (!active) return;
+          setCapacity(capRes);
+          setConnections(connsRes?.items || []);
         }
+        setLoading(false);
       })
       .catch((err) => {
-        if (active) {
-          setError(classifyWhatsAppError(err).userMessage);
-          setLoading(false);
-        }
+        if (!active) return;
+        setError(classifyWhatsAppError(err).userMessage);
+        setLoading(false);
       });
+
     return () => {
       active = false;
     };
   }, [ministryId]);
+
+  const canCreate = Boolean(capacity?.canCreateConnection);
+
+  const resumableConnection = useMemo(() => {
+    if (!capacity?.canResumeAuthorizedOnboarding) return null;
+    return connections.find((c) => c.status === 'pending' || c.status === 'connecting') || null;
+  }, [capacity?.canResumeAuthorizedOnboarding, connections]);
+
+  const handleOpenConnect = () => {
+    setResumeCandidate(null);
+    setIsModalOpen(true);
+  };
+
+  const handleOpenResume = (conn: WhatsAppConnectionDto) => {
+    setResumeCandidate(conn);
+    setIsModalOpen(true);
+  };
 
   return (
     <div
@@ -143,7 +192,7 @@ export function WhatsAppFoundationView({
           <button
             type="button"
             className="btn btn-primary min-h-[44px]"
-            onClick={loadStatus}
+            onClick={loadData}
             style={{
               minHeight: '44px',
               display: 'inline-flex',
@@ -199,12 +248,119 @@ export function WhatsAppFoundationView({
           )}
 
           {!status?.isConnected && (
-            <p style={{ color: 'var(--text-tertiary)', fontSize: '0.88rem', marginTop: '12px', lineHeight: 1.5 }}>
-              Nenhuma linha do WhatsApp está conectada a este ministério no momento.
-              {isAdmin ? ' A gestão completa de conexões e onboarding estará disponível em breve.' : ''}
-            </p>
+            <div>
+              <p style={{ color: 'var(--text-tertiary)', fontSize: '0.88rem', marginTop: '12px', lineHeight: 1.5 }}>
+                Nenhuma linha do WhatsApp está conectada a este ministério no momento.
+              </p>
+
+              {capacity && (
+                <div
+                  style={{
+                    margin: '16px 0',
+                    padding: '12px 14px',
+                    borderRadius: '8px',
+                    background: 'var(--surface-variant, #0f172a)',
+                    fontSize: '0.85rem',
+                    color: 'var(--text-secondary)',
+                  }}
+                >
+                  <span>
+                    Capacidade da organização: {capacity.configuredConnectionsCount} de {capacity.totalAllowedConnections} em uso
+                  </span>
+                </div>
+              )}
+
+              {isAdmin && status?.hasOrganization && status?.organizationId && (
+                <div style={{ marginTop: '20px' }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                    {resumableConnection && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary min-h-[44px]"
+                        data-testid="resume-whatsapp-btn"
+                        onClick={() => handleOpenResume(resumableConnection)}
+                        style={{
+                          minHeight: '44px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          padding: '10px 18px',
+                          fontWeight: 600,
+                        }}
+                      >
+                        <RefreshCw size={16} />
+                        <span>Retomar configuração</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      className="btn btn-primary min-h-[44px]"
+                      data-testid="connect-whatsapp-btn"
+                      disabled={!canCreate}
+                      onClick={handleOpenConnect}
+                      style={{
+                        minHeight: '44px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '10px 20px',
+                        fontWeight: 600,
+                      }}
+                    >
+                      <PlusCircle size={18} />
+                      <span>Conectar WhatsApp</span>
+                    </button>
+                  </div>
+
+                  {!canCreate && (
+                    <div
+                      className="commercial-restriction-msg"
+                      data-testid="connect-whatsapp-disabled-msg"
+                      style={{
+                        marginTop: '10px',
+                        color: 'var(--error-color, #ef4444)',
+                        fontSize: '0.85rem',
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      {capacity?.restrictionReason ||
+                        (capacity?.commercialState
+                          ? getWhatsAppErrorMessage(capacity.commercialState)
+                          : 'Limite de conexões atingido para o plano atual.')}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!isAdmin && (
+                <p style={{ color: 'var(--text-tertiary)', fontSize: '0.84rem', marginTop: '12px' }}>
+                  Apenas administradores podem iniciar ou gerenciar a conexão do WhatsApp.
+                </p>
+              )}
+            </div>
           )}
         </div>
+      )}
+
+      {/* Onboarding Dialog */}
+      {isModalOpen && status?.organizationId && (
+        <WhatsAppOnboardingModal
+          isOpen={isModalOpen}
+          onClose={() => {
+            setIsModalOpen(false);
+            setResumeCandidate(null);
+          }}
+          organizationId={status.organizationId}
+          ministryId={ministryId}
+          canCreateConnection={canCreate}
+          canResumeAuthorizedOnboarding={Boolean(capacity?.canResumeAuthorizedOnboarding)}
+          resumeConnection={resumeCandidate}
+          onSuccess={(_conn) => {
+            loadData();
+          }}
+          showToast={showToast}
+        />
       )}
     </div>
   );
