@@ -14,11 +14,12 @@ import {
   classifyWhatsAppErrorCode,
   getWhatsAppErrorMessage,
   classifyWhatsAppError,
+  isRetryableWhatsAppCategory,
   WHATSAPP_ERROR_CATEGORY_MAP,
 } from './whatsapp-errors';
 import { parseAppRoute, pathForWhatsAppCallback } from './routing';
 import { WhatsAppCallbackPage } from './components/WhatsAppCallbackPage';
-import type { MinistryWhatsAppStatusDto } from './whatsapp.types';
+import type { MinistryWhatsAppStatusDto, WhatsAppCommercialState } from './whatsapp.types';
 
 describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation', () => {
   const originalFetch = globalThis.fetch;
@@ -226,7 +227,7 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
         additional_connections: 3,
         configured_connections_count: 2,
         remaining_capacity: 3,
-        commercial_state: 'active',
+        commercial_state: 'healthy',
         can_send_messages: true,
         can_create_connection: true,
         can_resume_authorized_onboarding: true,
@@ -245,7 +246,7 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
       expect(mapped.additionalConnections).toBe(3);
       expect(mapped.configuredConnectionsCount).toBe(2);
       expect(mapped.remainingCapacity).toBe(3);
-      expect(mapped.commercialState).toBe('active');
+      expect(mapped.commercialState).toBe('healthy');
       expect(mapped.canSendMessages).toBe(true);
       expect(mapped.canCreateConnection).toBe(true);
       expect(mapped.canResumeAuthorizedOnboarding).toBe(true);
@@ -261,15 +262,15 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
       { code: 'WHATSAPP_SUBSCRIPTION_SUSPENDED', category: 'COMMERCIAL_RESTRICTION' },
       { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED', category: 'COMMERCIAL_RESTRICTION' },
       { code: 'ONBOARDING_SESSION_EXPIRED', category: 'RESUME_ONBOARDING' },
-      { code: 'ONBOARDING_SESSION_SUPERSEDED', category: 'RESUME_ONBOARDING' },
-      { code: 'CONNECTION_RESERVATION_EXPIRED', category: 'RESUME_ONBOARDING' },
+      { code: 'ONBOARDING_SESSION_SUPERSEDED', category: 'REFRESH_STATE' },
+      { code: 'CONNECTION_RESERVATION_EXPIRED', category: 'TERMINAL' },
       { code: 'ONBOARDING_SESSION_ALREADY_CONSUMED', category: 'REFRESH_STATE' },
       { code: 'CONNECTION_ALREADY_CONNECTED', category: 'REFRESH_STATE' },
-      { code: 'CONNECTION_DISCONNECTED', category: 'TERMINAL' },
+      { code: 'CONNECTION_DISCONNECTED', category: 'REFRESH_STATE' },
       { code: 'PROVIDER_PHONE_ALREADY_REGISTERED', category: 'TERMINAL' },
       { code: 'PROVIDER_IDENTITY_CONFLICT', category: 'TERMINAL' },
       { code: 'WABA_SUBSCRIBE_OUTCOME_UNRESOLVED', category: 'PROVIDER_PENDING' },
-      { code: 'INVALID_ONBOARDING_STATE', category: 'VALIDATION' },
+      { code: 'INVALID_ONBOARDING_STATE', category: 'TERMINAL' },
       { code: 'MINISTRY_ALREADY_HAS_EXCLUSIVE_CONNECTION', category: 'VALIDATION' },
       { code: 'INVALID_CURSOR', category: 'VALIDATION' },
     ];
@@ -422,6 +423,258 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
       expect(screen.getByText('Igreja Central Louvor')).toBeInTheDocument();
       expect(screen.getByText('+5511999990000')).toBeInTheDocument();
       expect(onStatusLoaded).toHaveBeenCalledWith(mockStatus);
+    });
+  });
+
+  // ============================================================
+  // PHASE 7E-F1-R1 — FRONTEND CONTRACT ALIGNMENT REGRESSIONS
+  // ============================================================
+
+  describe('PHASE 7E-F1-R1: Commercial State Contract Alignment (Tests A-G)', () => {
+    const d8States: Array<WhatsAppCommercialState> = [
+      'healthy',
+      'payment_grace',
+      'post_payment_grace',
+      'plan_excluded',
+      'administratively_suspended',
+      'restricted_over_limit',
+      'integrity_failure',
+    ];
+
+    it('A. healthy maps to healthy', () => {
+      const mapped = mapOrganizationWhatsAppCapacityFromApi({ commercial_state: 'healthy' });
+      expect(mapped.commercialState).toBe('healthy');
+    });
+
+    it('B. payment_grace maps to payment_grace', () => {
+      const mapped = mapOrganizationWhatsAppCapacityFromApi({ commercial_state: 'payment_grace' });
+      expect(mapped.commercialState).toBe('payment_grace');
+    });
+
+    it('C. post_payment_grace remains distinct', () => {
+      const mapped = mapOrganizationWhatsAppCapacityFromApi({ commercial_state: 'post_payment_grace' });
+      expect(mapped.commercialState).toBe('post_payment_grace');
+      expect(mapped.commercialState).not.toBe('payment_grace');
+      expect(mapped.commercialState).not.toBe('administratively_suspended');
+    });
+
+    it('D. plan_excluded remains distinct', () => {
+      const mapped = mapOrganizationWhatsAppCapacityFromApi({ commercial_state: 'plan_excluded' });
+      expect(mapped.commercialState).toBe('plan_excluded');
+      expect(mapped.commercialState).not.toBe('administratively_suspended');
+      expect(mapped.commercialState).not.toBe('post_payment_grace');
+    });
+
+    it('E. administratively_suspended remains distinct', () => {
+      const mapped = mapOrganizationWhatsAppCapacityFromApi({ commercial_state: 'administratively_suspended' });
+      expect(mapped.commercialState).toBe('administratively_suspended');
+      expect(mapped.commercialState).not.toBe('post_payment_grace');
+      expect(mapped.commercialState).not.toBe('plan_excluded');
+    });
+
+    it('F. restricted_over_limit remains distinct', () => {
+      const mapped = mapOrganizationWhatsAppCapacityFromApi({ commercial_state: 'restricted_over_limit' });
+      expect(mapped.commercialState).toBe('restricted_over_limit');
+    });
+
+    it('G. integrity_failure remains distinct', () => {
+      const mapped = mapOrganizationWhatsAppCapacityFromApi({ commercial_state: 'integrity_failure' });
+      expect(mapped.commercialState).toBe('integrity_failure');
+    });
+
+    it('proves every backend D8 commercial state survives API mapping unchanged and distinct', () => {
+      const mappedStates = d8States.map((state) => {
+        const result = mapOrganizationWhatsAppCapacityFromApi({
+          organization_id: 'org-test',
+          commercial_state: state,
+        });
+        return result.commercialState;
+      });
+
+      expect(mappedStates).toEqual(d8States);
+      // Ensure all 7 states are distinct (no collapsing)
+      expect(new Set(mappedStates).size).toBe(7);
+    });
+  });
+
+  describe('PHASE 7E-F1-R1: Public Error Semantic Alignments (Tests H-K)', () => {
+    it('H. reservation-expired is TERMINAL and not retryable', () => {
+      expect(classifyWhatsAppErrorCode('CONNECTION_RESERVATION_EXPIRED')).toBe('TERMINAL');
+      expect(isRetryableWhatsAppCategory('TERMINAL')).toBe(false);
+      const classified = classifyWhatsAppError({ details: { code: 'CONNECTION_RESERVATION_EXPIRED' } });
+      expect(classified.category).toBe('TERMINAL');
+      expect(classified.retryable).toBe(false);
+      expect(classified.userMessage).toContain('expirou após 24 horas');
+    });
+
+    it('I. session-superseded is REFRESH_STATE and retryable', () => {
+      expect(classifyWhatsAppErrorCode('ONBOARDING_SESSION_SUPERSEDED')).toBe('REFRESH_STATE');
+      expect(isRetryableWhatsAppCategory('REFRESH_STATE')).toBe(true);
+      const classified = classifyWhatsAppError({ details: { code: 'ONBOARDING_SESSION_SUPERSEDED' } });
+      expect(classified.category).toBe('REFRESH_STATE');
+      expect(classified.retryable).toBe(true);
+    });
+
+    it('J. disconnected is REFRESH_STATE and retryable', () => {
+      expect(classifyWhatsAppErrorCode('CONNECTION_DISCONNECTED')).toBe('REFRESH_STATE');
+      expect(isRetryableWhatsAppCategory('REFRESH_STATE')).toBe(true);
+      const classified = classifyWhatsAppError({ details: { code: 'CONNECTION_DISCONNECTED' } });
+      expect(classified.category).toBe('REFRESH_STATE');
+      expect(classified.retryable).toBe(true);
+    });
+
+    it('K. invalid onboarding state is TERMINAL and not retryable', () => {
+      expect(classifyWhatsAppErrorCode('INVALID_ONBOARDING_STATE')).toBe('TERMINAL');
+      expect(isRetryableWhatsAppCategory('TERMINAL')).toBe(false);
+      const classified = classifyWhatsAppError({ details: { code: 'INVALID_ONBOARDING_STATE' } });
+      expect(classified.category).toBe('TERMINAL');
+      expect(classified.retryable).toBe(false);
+    });
+
+    it('table-driven validation for the full reachable public error set', () => {
+      const errorTable = [
+        { code: 'WHATSAPP_SUBSCRIPTION_SUSPENDED', category: 'COMMERCIAL_RESTRICTION', retryable: false },
+        { code: 'WHATSAPP_CAPACITY_LIMIT_REACHED', category: 'COMMERCIAL_RESTRICTION', retryable: false },
+        { code: 'ONBOARDING_SESSION_EXPIRED', category: 'RESUME_ONBOARDING', retryable: true },
+        { code: 'ONBOARDING_SESSION_ALREADY_CONSUMED', category: 'REFRESH_STATE', retryable: true },
+        { code: 'ONBOARDING_SESSION_SUPERSEDED', category: 'REFRESH_STATE', retryable: true },
+        { code: 'CONNECTION_RESERVATION_EXPIRED', category: 'TERMINAL', retryable: false },
+        { code: 'CONNECTION_DISCONNECTED', category: 'REFRESH_STATE', retryable: true },
+        { code: 'CONNECTION_ALREADY_CONNECTED', category: 'REFRESH_STATE', retryable: true },
+        { code: 'PROVIDER_PHONE_ALREADY_REGISTERED', category: 'TERMINAL', retryable: false },
+        { code: 'PROVIDER_IDENTITY_CONFLICT', category: 'TERMINAL', retryable: false },
+        { code: 'WABA_SUBSCRIBE_OUTCOME_UNRESOLVED', category: 'PROVIDER_PENDING', retryable: true },
+        { code: 'INVALID_ONBOARDING_STATE', category: 'TERMINAL', retryable: false },
+        { code: 'MINISTRY_ALREADY_HAS_EXCLUSIVE_CONNECTION', category: 'VALIDATION', retryable: false },
+        { code: 'INVALID_CURSOR', category: 'VALIDATION', retryable: false },
+        { code: 'CANNOT_COMBINE_DEFAULT_AND_EXCLUSIVE_ASSIGNMENT', category: 'VALIDATION', retryable: false },
+        { code: 'INVALID_PHONE_E164', category: 'VALIDATION', retryable: false },
+        { code: 'ONBOARDING_SESSION_FAILED', category: 'TERMINAL', retryable: false },
+        { code: 'UNAUTHORIZED_WABA_ACCESS', category: 'TERMINAL', retryable: false },
+        { code: 'PHONE_NOT_IN_WABA', category: 'TERMINAL', retryable: false },
+        { code: 'WHATSAPP_OAUTH_EXCHANGE_FAILED', category: 'TERMINAL', retryable: false },
+        { code: 'PROVIDER_REGISTRATION_FAILED', category: 'TERMINAL', retryable: false },
+        { code: 'PROVIDER_SUBSCRIPTION_FAILED', category: 'TERMINAL', retryable: false },
+        { code: 'WABA_LIFECYCLE_LEASE_LOST', category: 'REFRESH_STATE', retryable: true },
+        { code: 'WABA_LIFECYCLE_CONTENTION', category: 'REFRESH_STATE', retryable: true },
+      ];
+
+      for (const entry of errorTable) {
+        expect(classifyWhatsAppErrorCode(entry.code)).toBe(entry.category);
+        const classified = classifyWhatsAppError({ details: { code: entry.code } });
+        expect(classified.category).toBe(entry.category);
+        expect(classified.retryable).toBe(entry.retryable);
+        expect(classified.userMessage).toBeTruthy();
+        expect(classified.userMessage).not.toBe('Ocorreu um erro na integração com WhatsApp.');
+      }
+    });
+  });
+
+  describe('PHASE 7E-F1-R1: Authoritative Callback Refresh Regressions (Tests L & M)', () => {
+    it('L. callback success performs canonical backend refresh without deriving lifecycle from query parameters', async () => {
+      // Backend returns a pending/not yet connected status
+      const mockPendingStatus: MinistryWhatsAppStatusDto = {
+        hasOrganization: true,
+        organizationId: 'org-abc',
+        isConfigured: true,
+        isConnected: false, // NOT yet connected in authoritative backend
+        source: 'exclusive',
+        connectionId: 'conn-1',
+        displayName: 'Igreja Alpha',
+        phoneNumber: null,
+        connectionAccessMode: 'normal',
+        canSendMessages: false,
+      };
+
+      const getStatusSpy = vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue(mockPendingStatus);
+      const listConnectionsSpy = vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({
+        items: [{
+          id: 'conn-1',
+          organizationId: 'org-abc',
+          displayName: 'Igreja Alpha',
+          phoneNumber: null,
+          provider: 'meta_cloud_api',
+          status: 'connecting',
+          statusReason: null,
+          isOrganizationDefault: false,
+          assignedMinistryId: 'min-abc',
+          createdAt: '2026-09-23T12:00:00Z',
+          updatedAt: '2026-09-23T12:00:00Z',
+        }],
+        nextCursor: null,
+      });
+      const getCapacitySpy = vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue({
+        organizationId: 'org-abc',
+        billingAnchorMinistryId: 'min-abc',
+        totalAllowedConnections: 1,
+        includedConnections: 1,
+        additionalConnections: 0,
+        configuredConnectionsCount: 1,
+        remainingCapacity: 0,
+        commercialState: 'healthy',
+        canSendMessages: true,
+        canCreateConnection: false,
+        canResumeAuthorizedOnboarding: true,
+        restrictionReason: null,
+        gracePeriodExpiresBillingDate: null,
+        billingAccessMode: 'normal',
+        connectionAccessMode: 'normal',
+      });
+
+      render(
+        <WhatsAppCallbackPage
+          ministryId="min-abc"
+          search="?connectionId=conn-1&status=success"
+        />
+      );
+
+      // Verify canonical backend endpoints were queried
+      expect(getStatusSpy).toHaveBeenCalledWith('min-abc');
+      expect(await screen.findByText('Retorno da Conexão Recebido')).toBeInTheDocument();
+      // Must NOT claim WhatsApp Conectado com Sucesso! because authoritative backend isConnected = false
+      expect(screen.queryByText('WhatsApp Conectado com Sucesso!')).not.toBeInTheDocument();
+      expect(listConnectionsSpy).toHaveBeenCalledWith('org-abc');
+      expect(getCapacitySpy).toHaveBeenCalledWith('org-abc');
+    });
+
+    it('M. callback works safely when no ministryId is available after external redirect', async () => {
+      const listConnectionsSpy = vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({
+        items: [],
+        nextCursor: null,
+      });
+      const getCapacitySpy = vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue({
+        organizationId: 'org-direct',
+        billingAnchorMinistryId: 'min-direct',
+        totalAllowedConnections: 1,
+        includedConnections: 1,
+        additionalConnections: 0,
+        configuredConnectionsCount: 0,
+        remainingCapacity: 1,
+        commercialState: 'healthy',
+        canSendMessages: true,
+        canCreateConnection: true,
+        canResumeAuthorizedOnboarding: true,
+        billingAccessMode: 'normal',
+        connectionAccessMode: 'normal',
+      });
+      const getStatusSpy = vi.spyOn(api, 'getMinistryWhatsAppStatus');
+
+      render(
+        <WhatsAppCallbackPage
+          organizationId="org-direct"
+          search="?connectionId=conn-standalone&status=success"
+        />
+      );
+
+      // Does not call getMinistryWhatsAppStatus without a ministryId
+      expect(getStatusSpy).not.toHaveBeenCalled();
+      // Refreshes organization connections and capacity first
+      expect(listConnectionsSpy).toHaveBeenCalledWith('org-direct');
+      expect(getCapacitySpy).toHaveBeenCalledWith('org-direct');
+      // Renders safely without false error
+      expect(await screen.findByText(/Retorno da Conexão Recebido/i)).toBeInTheDocument();
+      expect(screen.getByText(/conn-standalone/i)).toBeInTheDocument();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
   });
 });

@@ -1,4 +1,4 @@
-﻿export type WhatsAppProvider = 'meta_cloud_api' | 'zernio';
+export type WhatsAppProvider = 'meta_cloud_api' | 'zernio';
 
 export type WhatsAppConnectionStatus =
   | 'pending'
@@ -16,11 +16,12 @@ export type WhatsAppProviderProgress =
   | 'waba_subscribed';
 
 export type WhatsAppCommercialState =
-  | 'active'
-  | 'grace_period'
+  | 'healthy'
+  | 'payment_grace'
+  | 'post_payment_grace'
+  | 'plan_excluded'
+  | 'administratively_suspended'
   | 'restricted_over_limit'
-  | 'suspended'
-  | 'not_entitled'
   | 'integrity_failure';
 
 export type WhatsAppConnectionAccessMode =

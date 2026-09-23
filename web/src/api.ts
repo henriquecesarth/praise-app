@@ -201,7 +201,7 @@ export function mapOrganizationWhatsAppCapacityFromApi(data: any): OrganizationW
     additionalConnections: Number(data?.additionalConnections ?? data?.additional_connections ?? 0),
     configuredConnectionsCount: Number(data?.configuredConnectionsCount ?? data?.configured_connections_count ?? 0),
     remainingCapacity: Number(data?.remainingCapacity ?? data?.remaining_capacity ?? 0),
-    commercialState: (data?.commercialState ?? data?.commercial_state ?? 'not_entitled') as WhatsAppCommercialState,
+    commercialState: (data?.commercialState ?? data?.commercial_state ?? 'plan_excluded') as WhatsAppCommercialState,
     canSendMessages: Boolean(data?.canSendMessages ?? data?.can_send_messages),
     canCreateConnection: Boolean(data?.canCreateConnection ?? data?.can_create_connection),
     canResumeAuthorizedOnboarding: Boolean(data?.canResumeAuthorizedOnboarding ?? data?.can_resume_authorized_onboarding),
@@ -1737,6 +1737,12 @@ export const api = {
     });
     const raw = await handleResponse<any>(response);
     return mapOrganizationWhatsAppCapacityFromApi(raw);
+  },
+
+  getOrganizationWhatsAppCapacity: async (
+    organizationId: string
+  ): Promise<OrganizationWhatsAppCapacity> => {
+    return api.getWhatsAppCapacity(organizationId);
   },
 
   getMinistryWhatsAppStatus: async (

@@ -1,25 +1,39 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CheckCircle, AlertCircle, RefreshCw, ArrowLeft } from 'lucide-react';
 import { api } from '../api';
-import type { MinistryWhatsAppStatusDto } from '../whatsapp.types';
+import type {
+  MinistryWhatsAppStatusDto,
+  WhatsAppConnectionDto,
+  OrganizationWhatsAppCapacity,
+} from '../whatsapp.types';
 import { getWhatsAppErrorMessage } from '../whatsapp-errors';
 
 export interface WhatsAppCallbackPageProps {
   ministryId?: string;
+  organizationId?: string;
   search?: string;
   onNavigateBack?: () => void;
   onStatusLoaded?: (status: MinistryWhatsAppStatusDto) => void;
+  onRefreshComplete?: (data: {
+    connections?: WhatsAppConnectionDto[];
+    capacity?: OrganizationWhatsAppCapacity;
+    ministryStatus?: MinistryWhatsAppStatusDto;
+  }) => void;
 }
 
 export function WhatsAppCallbackPage({
   ministryId,
+  organizationId,
   search,
   onNavigateBack,
   onStatusLoaded,
+  onRefreshComplete,
 }: WhatsAppCallbackPageProps) {
   const [state, setState] = useState<'loading' | 'success' | 'error'>('loading');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [verifiedStatus, setVerifiedStatus] = useState<MinistryWhatsAppStatusDto | null>(null);
+  const [verifiedConnections, setVerifiedConnections] = useState<WhatsAppConnectionDto[] | null>(null);
+  const [verifiedCapacity, setVerifiedCapacity] = useState<OrganizationWhatsAppCapacity | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
 
   const query = useMemo(() => {
@@ -33,17 +47,19 @@ export function WhatsAppCallbackPage({
       const code = params.get('code') || '';
       const stateNonce = params.get('state') || '';
 
+      const isSuccessOrConnected = statusParam === 'success' || statusParam === 'connected';
       const hasError = Boolean(
         errorCode ||
         errorDescription ||
-        statusParam === 'error' ||
-        statusParam === 'failed'
+        (statusParam && !isSuccessOrConnected)
       );
+
+      const effectiveErrorCode = errorCode || (hasError && statusParam ? statusParam : '');
 
       return {
         connectionId,
         statusParam,
-        errorCode,
+        errorCode: effectiveErrorCode,
         errorDescription,
         code,
         stateNonce,
@@ -72,32 +88,125 @@ export function WhatsAppCallbackPage({
       return;
     }
 
-    if (!ministryId) {
-      // Sem ministryId disponível, confirma o recebimento dos parâmetros
-      setState('success');
-      return;
-    }
-
     setState('loading');
     setErrorMessage(null);
 
-    api.getMinistryWhatsAppStatus(ministryId)
-      .then((status) => {
-        if (!active) return;
-        setVerifiedStatus(status);
-        onStatusLoaded?.(status);
-        setState('success');
-      })
-      .catch((err) => {
-        if (!active) return;
-        setState('error');
-        setErrorMessage(getWhatsAppErrorMessage(err));
+    async function refreshAuthoritativeState() {
+      let loadedMinistryStatus: MinistryWhatsAppStatusDto | null = null;
+      let loadedConnections: WhatsAppConnectionDto[] | null = null;
+      let loadedCapacity: OrganizationWhatsAppCapacity | null = null;
+
+      let effectiveOrgId = organizationId;
+
+      // 1. If organization context is available but ministry context is not, refresh connections + capacity first
+      if (effectiveOrgId && !ministryId) {
+        try {
+          const [connsRes, capRes] = await Promise.all([
+            api.listWhatsAppConnections(effectiveOrgId).catch(() => null),
+            api.getWhatsAppCapacity(effectiveOrgId).catch(() => null),
+          ]);
+          if (!active) return;
+          if (connsRes) {
+            loadedConnections = connsRes.items;
+            setVerifiedConnections(connsRes.items);
+          }
+          if (capRes) {
+            loadedCapacity = capRes;
+            setVerifiedCapacity(capRes);
+          }
+        } catch {
+          // Non-fatal
+        }
+      }
+
+      // 2. Ministry status may be refreshed only when a valid ministry ID exists
+      if (ministryId) {
+        try {
+          loadedMinistryStatus = await api.getMinistryWhatsAppStatus(ministryId);
+          if (!active) return;
+          setVerifiedStatus(loadedMinistryStatus);
+          onStatusLoaded?.(loadedMinistryStatus);
+
+          if (!effectiveOrgId && loadedMinistryStatus.hasOrganization && loadedMinistryStatus.organizationId) {
+            effectiveOrgId = loadedMinistryStatus.organizationId;
+          }
+        } catch (err: any) {
+          if (!active) return;
+          setState('error');
+          setErrorMessage(getWhatsAppErrorMessage(err));
+          return;
+        }
+
+        // If organization context became available, refresh connections + capacity
+        if (effectiveOrgId) {
+          try {
+            const [connsRes, capRes] = await Promise.all([
+              api.listWhatsAppConnections(effectiveOrgId).catch(() => null),
+              api.getWhatsAppCapacity(effectiveOrgId).catch(() => null),
+            ]);
+            if (!active) return;
+            if (connsRes) {
+              loadedConnections = connsRes.items;
+              setVerifiedConnections(connsRes.items);
+            }
+            if (capRes) {
+              loadedCapacity = capRes;
+              setVerifiedCapacity(capRes);
+            }
+          } catch {
+            // Non-fatal
+          }
+        }
+      }
+
+      if (!active) return;
+
+      onRefreshComplete?.({
+        connections: loadedConnections ?? undefined,
+        capacity: loadedCapacity ?? undefined,
+        ministryStatus: loadedMinistryStatus ?? undefined,
       });
+
+      // Missing optional ministry context must not turn a successful callback into a false error
+      setState('success');
+    }
+
+    refreshAuthoritativeState();
 
     return () => {
       active = false;
     };
-  }, [query, ministryId, retryNonce, onStatusLoaded]);
+  }, [query, ministryId, organizationId, retryNonce, onStatusLoaded, onRefreshComplete]);
+
+  // Authoritative backend data determines whether the line is connected
+  // Neither query parameters nor status=success alone grant lifecycle authority
+  const isAuthoritativelyConnected = useMemo(() => {
+    if (verifiedStatus?.isConnected) return true;
+    if (verifiedConnections && query.connectionId) {
+      const match = verifiedConnections.find((c) => c.id === query.connectionId);
+      if (match && match.status === 'connected') return true;
+    }
+    return false;
+  }, [verifiedStatus, verifiedConnections, query.connectionId]);
+
+  const activeConnectionDetails = useMemo(() => {
+    if (verifiedStatus && (verifiedStatus.displayName || verifiedStatus.phoneNumber)) {
+      return {
+        displayName: verifiedStatus.displayName,
+        phoneNumber: verifiedStatus.phoneNumber,
+      };
+    }
+    if (verifiedConnections && query.connectionId) {
+      const match = verifiedConnections.find((c) => c.id === query.connectionId);
+      if (match && (match.displayName || match.phoneNumber)) {
+        return {
+          displayName: match.displayName,
+          phoneNumber: match.phoneNumber,
+        };
+      }
+    }
+    return null;
+  }, [verifiedStatus, verifiedConnections, query.connectionId]);
 
   const handleBack = () => {
     if (onNavigateBack) {
@@ -171,15 +280,15 @@ export function WhatsAppCallbackPage({
           <div role="status" aria-live="polite" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
             <CheckCircle size={52} style={{ color: 'var(--success-color, #10b981)', marginBottom: '16px' }} />
             <h2 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '8px', color: 'var(--text-primary)' }}>
-              {verifiedStatus?.isConnected ? 'WhatsApp Conectado com Sucesso!' : 'Retorno da Conexão Recebido'}
+              {isAuthoritativelyConnected ? 'WhatsApp Conectado com Sucesso!' : 'Retorno da Conexão Recebido'}
             </h2>
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem', marginBottom: '20px', lineHeight: 1.5 }}>
-              {verifiedStatus?.isConnected
+              {isAuthoritativelyConnected
                 ? 'Sua linha do WhatsApp está ativa e pronta para envio das notificações do ministério.'
                 : 'O processo de autorização foi registrado. Acesse a gestão do WhatsApp para verificar o status final.'}
             </p>
 
-            {verifiedStatus && (
+            {activeConnectionDetails && (
               <div
                 style={{
                   width: '100%',
@@ -191,22 +300,27 @@ export function WhatsAppCallbackPage({
                   textAlign: 'left',
                 }}
               >
-                {verifiedStatus.displayName && (
+                {activeConnectionDetails.displayName && (
                   <div style={{ marginBottom: '4px' }}>
                     <strong style={{ color: 'var(--text-primary)' }}>Nome: </strong>
-                    <span style={{ color: 'var(--text-secondary)' }}>{verifiedStatus.displayName}</span>
+                    <span style={{ color: 'var(--text-secondary)' }}>{activeConnectionDetails.displayName}</span>
                   </div>
                 )}
-                {verifiedStatus.phoneNumber && (
+                {activeConnectionDetails.phoneNumber && (
                   <div>
                     <strong style={{ color: 'var(--text-primary)' }}>Telefone: </strong>
-                    <span style={{ color: 'var(--text-secondary)' }}>{verifiedStatus.phoneNumber}</span>
+                    <span style={{ color: 'var(--text-secondary)' }}>{activeConnectionDetails.phoneNumber}</span>
+                  </div>
+                )}
+                {verifiedCapacity && (
+                  <div style={{ marginTop: '6px', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
+                    <span>Capacidade da organização: {verifiedCapacity.configuredConnectionsCount} de {verifiedCapacity.totalAllowedConnections} em uso</span>
                   </div>
                 )}
               </div>
             )}
 
-            {query.connectionId && !verifiedStatus && (
+            {query.connectionId && !activeConnectionDetails && (
               <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '20px', fontFamily: 'monospace' }}>
                 ID: {query.connectionId}
               </p>
