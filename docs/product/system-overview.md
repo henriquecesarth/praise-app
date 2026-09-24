@@ -175,16 +175,16 @@ Funções musicais como Ministro, Vocalista, Violão e Bateria são classificaç
 - isolamento e segurança RBAC estritos:
   - membros regulares (`isAdmin === false`) têm visualização estritamente somente-leitura e nunca disparam requisições aos endpoints administrativos de listagem (`GET /organizations/:orgId/whatsapp/connections`) ou capacidade (`GET /organizations/:orgId/entitlements/whatsapp`);
   - apenas administradores autenticados podem inspecionar conexões da organização, alterar nomes, modificar defaults e atribuições ou solicitar desconexão;
-- paginação controlada e limitada por cursor determinístico (`limit: 10`, botão "Carregar mais");
+- paginação controlada e limitada por cursor determinístico (`limit: 10`, botão "Carregar mais conexões"), com retenção garantida do `nextCursor` da primeira página autoritativa pelo container e deduplicação estrita de itens pelo ID da conexão (`connection.id`) nos appends subsequentes (Phase 7E-F3-R1);
 - edição inline de nome de exibição (`displayName`) com validação de 1 a 100 caracteres não-espaço e feedback visual imediato;
 - alternância de conexão padrão da organização (`isOrganizationDefault`) com atualização local atômica e desmarcação visual de conexões anteriores;
 - atribuição exclusiva por ministério (`assignedMinistryId`), suportando atribuição ao ministério ativo ou remoção de exclusividade;
 - gating de configuração no frontend: botões de padrão e atribuição são desabilitados para conexões não ativas (`status !== 'connected'`), além da prevenção de conflitos mútuos (padrão não pode ter atribuição exclusiva e vice-versa);
-- fluxo seguro de desconexão: modal acessível (`role="dialog"`, `aria-modal="true"`, fechamento por backdrop e tecla Escape) com proteção contra duplo envio e confirmação explícita de impacto (liberação de capacidade comercial, limpeza de padrão e atribuição e atualização de status para `disconnected`);
+- fluxo seguro de desconexão: modal acessível (`role="dialog"`, `aria-modal="true"`, fechamento por backdrop e tecla Escape) com proteção contra duplo envio e confirmação explícita de impacto (liberação de capacidade comercial, limpeza de padrão e atribuição e atualização de status para `disconnected`), com gating do botão de conexão até que o recarregamento autoritativo de capacidade confirme a liberação da cota;
 - refetch autoritativo dos dados da organização e ministério após mutações;
 - estados de interface explícitos: `loading` com skeleton, `empty` sem conexões, `error` com alerta resiliente e ação de repetição ("Tentar novamente"), e `success` com lista paginada e cards detalhados;
 - touch targets acessíveis com altura mínima de 44px (`min-h-[44px]`);
-- proteção total contra concorrência e alternância de ministério/organização com descarte de respostas assíncronas obsoletas e fechamento de modais abertos.
+- proteção total contra concorrência e alternância de ministério/organização com fencing de geração (`generationRef`), guardas de tenant (`organizationIdRef`, `ministryIdRef`), prevenção de duplo clique in-flight (`inFlightCursorRef`), descarte de respostas assíncronas obsoletas e fechamento de modais abertos (Phase 7E-F3-R1).
 
 ### PWA
 

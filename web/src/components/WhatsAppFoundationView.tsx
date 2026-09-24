@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { ArrowLeft, MessageSquare, AlertCircle, RefreshCw, PlusCircle } from 'lucide-react';
 import { api } from '../api';
 import type {
@@ -32,74 +32,145 @@ export function WhatsAppFoundationView({
   const [status, setStatus] = useState<MinistryWhatsAppStatusDto | null>(null);
   const [capacity, setCapacity] = useState<OrganizationWhatsAppCapacity | null>(null);
   const [connections, setConnections] = useState<WhatsAppConnectionDto[]>([]);
+  const [connectionsNextCursor, setConnectionsNextCursor] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [resumeCandidate, setResumeCandidate] = useState<WhatsAppConnectionDto | null>(null);
 
+  const generationRef = useRef(0);
+  const ministryIdRef = useRef(ministryId);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  ministryIdRef.current = ministryId;
+
   const loadData = async () => {
+    const currentGen = ++generationRef.current;
+    const currentMinistryId = ministryId;
     setLoading(true);
     setError(null);
     try {
-      const data = await api.getMinistryWhatsAppStatus(ministryId);
+      const data = await api.getMinistryWhatsAppStatus(currentMinistryId);
+      if (
+        !isMountedRef.current ||
+        currentGen !== generationRef.current ||
+        currentMinistryId !== ministryIdRef.current
+      ) {
+        return;
+      }
       setStatus(data);
 
       if (isAdmin && data.hasOrganization && data.organizationId) {
         const [capRes, connsRes] = await Promise.all([
           api.getWhatsAppCapacity(data.organizationId).catch(() => null),
-          api.listWhatsAppConnections(data.organizationId).catch(() => null),
+          api.listWhatsAppConnections(data.organizationId, { limit: 10 }).catch(() => null),
         ]);
+        if (
+          !isMountedRef.current ||
+          currentGen !== generationRef.current ||
+          currentMinistryId !== ministryIdRef.current
+        ) {
+          return;
+        }
         setCapacity(capRes);
         setConnections(connsRes?.items || []);
+        setConnectionsNextCursor(connsRes?.nextCursor ?? null);
       } else {
         setCapacity(null);
         setConnections([]);
+        setConnectionsNextCursor(null);
       }
     } catch (err) {
+      if (
+        !isMountedRef.current ||
+        currentGen !== generationRef.current ||
+        currentMinistryId !== ministryIdRef.current
+      ) {
+        return;
+      }
       const message = classifyWhatsAppError(err).userMessage;
       setError(message);
       showToast?.(message, 'error');
     } finally {
-      setLoading(false);
+      if (
+        isMountedRef.current &&
+        currentGen === generationRef.current &&
+        currentMinistryId === ministryIdRef.current
+      ) {
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
-    let active = true;
+    const currentGen = ++generationRef.current;
+    const currentMinistryId = ministryId;
+
     setLoading(true);
     setError(null);
+    setStatus(null);
+    setCapacity(null);
+    setConnections([]);
+    setConnectionsNextCursor(null);
     setIsModalOpen(false);
     setResumeCandidate(null);
 
     api
-      .getMinistryWhatsAppStatus(ministryId)
+      .getMinistryWhatsAppStatus(currentMinistryId)
       .then(async (data) => {
-        if (!active) return;
+        if (
+          !isMountedRef.current ||
+          currentGen !== generationRef.current ||
+          currentMinistryId !== ministryIdRef.current
+        ) {
+          return;
+        }
         setStatus(data);
 
         if (isAdmin && data.hasOrganization && data.organizationId) {
           const [capRes, connsRes] = await Promise.all([
             api.getWhatsAppCapacity(data.organizationId).catch(() => null),
-            api.listWhatsAppConnections(data.organizationId).catch(() => null),
+            api.listWhatsAppConnections(data.organizationId, { limit: 10 }).catch(() => null),
           ]);
-          if (!active) return;
+          if (
+            !isMountedRef.current ||
+            currentGen !== generationRef.current ||
+            currentMinistryId !== ministryIdRef.current
+          ) {
+            return;
+          }
           setCapacity(capRes);
           setConnections(connsRes?.items || []);
+          setConnectionsNextCursor(connsRes?.nextCursor ?? null);
         } else {
-          if (!active) return;
           setCapacity(null);
           setConnections([]);
+          setConnectionsNextCursor(null);
         }
         setLoading(false);
       })
       .catch((err) => {
-        if (!active) return;
+        if (
+          !isMountedRef.current ||
+          currentGen !== generationRef.current ||
+          currentMinistryId !== ministryIdRef.current
+        ) {
+          return;
+        }
         setError(classifyWhatsAppError(err).userMessage);
         setLoading(false);
       });
 
     return () => {
-      active = false;
+      generationRef.current++;
     };
   }, [ministryId, isAdmin]);
+
 
   const canCreate = Boolean(capacity?.canCreateConnection);
 
@@ -363,6 +434,7 @@ export function WhatsAppFoundationView({
               organizationId={status.organizationId}
               ministryId={ministryId}
               initialConnections={connections}
+              initialNextCursor={connectionsNextCursor}
               canCreateConnection={canCreate}
               canResume={Boolean(capacity?.canResumeAuthorizedOnboarding)}
               onOpenConnect={handleOpenConnect}

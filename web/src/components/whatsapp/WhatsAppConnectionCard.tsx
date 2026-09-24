@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Edit2,
   Check,
@@ -45,6 +45,22 @@ export function WhatsAppConnectionCard({
   );
   const [cardError, setCardError] = useState<string | null>(null);
 
+  const orgRef = useRef(organizationId);
+  const connIdRef = useRef(connection.id);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    orgRef.current = organizationId;
+    connIdRef.current = connection.id;
+  }, [organizationId, connection.id]);
+
   // Sync state if props change externally
   useEffect(() => {
     setNameInput(connection.displayName);
@@ -89,55 +105,130 @@ export function WhatsAppConnectionCard({
       return;
     }
 
+    const targetOrg = organizationId;
+    const targetConnId = connection.id;
+
     setSavingName(true);
     setNameError(null);
     setCardError(null);
 
     try {
-      const updated = await api.updateWhatsAppConnection(organizationId, connection.id, {
+      const updated = await api.updateWhatsAppConnection(targetOrg, targetConnId, {
         displayName: trimmed,
       });
+
+      if (
+        !isMountedRef.current ||
+        targetOrg !== orgRef.current ||
+        targetConnId !== connIdRef.current
+      ) {
+        return;
+      }
+
       setIsEditingName(false);
       onConnectionUpdated(updated);
     } catch (err) {
+      if (
+        !isMountedRef.current ||
+        targetOrg !== orgRef.current ||
+        targetConnId !== connIdRef.current
+      ) {
+        return;
+      }
       const msg = classifyWhatsAppError(err).userMessage;
       setNameError(msg);
     } finally {
-      setSavingName(false);
+      if (
+        isMountedRef.current &&
+        targetOrg === orgRef.current &&
+        targetConnId === connIdRef.current
+      ) {
+        setSavingName(false);
+      }
     }
   };
 
   // Handle Toggle Organization Default
   const handleToggleDefault = async (makeDefault: boolean) => {
+    const targetOrg = organizationId;
+    const targetConnId = connection.id;
+
     setSavingDefault(true);
     setCardError(null);
 
     try {
-      const updated = await api.updateWhatsAppConnection(organizationId, connection.id, {
+      const updated = await api.updateWhatsAppConnection(targetOrg, targetConnId, {
         isOrganizationDefault: makeDefault,
       });
+
+      if (
+        !isMountedRef.current ||
+        targetOrg !== orgRef.current ||
+        targetConnId !== connIdRef.current
+      ) {
+        return;
+      }
+
       onConnectionUpdated(updated);
     } catch (err) {
+      if (
+        !isMountedRef.current ||
+        targetOrg !== orgRef.current ||
+        targetConnId !== connIdRef.current
+      ) {
+        return;
+      }
       setCardError(classifyWhatsAppError(err).userMessage);
     } finally {
-      setSavingDefault(false);
+      if (
+        isMountedRef.current &&
+        targetOrg === orgRef.current &&
+        targetConnId === connIdRef.current
+      ) {
+        setSavingDefault(false);
+      }
     }
   };
 
   // Handle Save Ministry Assignment
   const handleSaveAssignment = async () => {
+    const targetOrg = organizationId;
+    const targetConnId = connection.id;
+
     setSavingAssignment(true);
     setCardError(null);
 
     try {
-      const updated = await api.updateWhatsAppConnection(organizationId, connection.id, {
+      const updated = await api.updateWhatsAppConnection(targetOrg, targetConnId, {
         assignedMinistryId: selectedMinistryId ? selectedMinistryId : null,
       });
+
+      if (
+        !isMountedRef.current ||
+        targetOrg !== orgRef.current ||
+        targetConnId !== connIdRef.current
+      ) {
+        return;
+      }
+
       onConnectionUpdated(updated);
     } catch (err) {
+      if (
+        !isMountedRef.current ||
+        targetOrg !== orgRef.current ||
+        targetConnId !== connIdRef.current
+      ) {
+        return;
+      }
       setCardError(classifyWhatsAppError(err).userMessage);
     } finally {
-      setSavingAssignment(false);
+      if (
+        isMountedRef.current &&
+        targetOrg === orgRef.current &&
+        targetConnId === connIdRef.current
+      ) {
+        setSavingAssignment(false);
+      }
     }
   };
 

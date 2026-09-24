@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, act, fireEvent } from '@testing-library/react';
+import { render, screen, act, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   api,
@@ -4076,7 +4076,7 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
       // Connection list is rendered
       const listContainer = await screen.findByTestId('whatsapp-connection-list');
       expect(listContainer).toBeInTheDocument();
-      expect(listSpy).toHaveBeenCalledWith('org-test');
+      expect(listSpy).toHaveBeenCalledWith('org-test', { limit: 10 });
       expect(screen.getByTestId('whatsapp-connection-card-conn-1')).toBeInTheDocument();
     });
 
@@ -4647,6 +4647,806 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
       expect(confirmBtn).toBeDisabled();
       expect(confirmBtn).toHaveTextContent('Desconectando…');
       expect(cancelBtn).toBeDisabled();
+    });
+  });
+
+  describe('PHASE 7E-F3-R1: Pagination & Tenant Async Ownership Remediation (Tests A-R)', () => {
+    const r1MockStatus: MinistryWhatsAppStatusDto = {
+      hasOrganization: true,
+      organizationId: 'org-r1',
+      isConfigured: true,
+      isConnected: true,
+      source: 'exclusive',
+      connectionId: 'conn-r1-1',
+      displayName: 'Linha Principal R1',
+      phoneNumber: '+5511999991111',
+      connectionAccessMode: 'normal',
+      canSendMessages: true,
+    };
+
+    const r1MockCapacity: OrganizationWhatsAppCapacity = {
+      organizationId: 'org-r1',
+      billingAnchorMinistryId: 'min-r1',
+      totalAllowedConnections: 2,
+      includedConnections: 2,
+      additionalConnections: 0,
+      configuredConnectionsCount: 1,
+      remainingCapacity: 1,
+      commercialState: 'healthy',
+      canSendMessages: true,
+      canCreateConnection: false,
+      canResumeAuthorizedOnboarding: false,
+      restrictionReason: null,
+      gracePeriodExpiresBillingDate: null,
+      billingAccessMode: 'normal',
+      connectionAccessMode: 'normal',
+    };
+
+    const r1Conn1: WhatsAppConnectionDto = {
+      id: 'conn-r1-1',
+      organizationId: 'org-r1',
+      displayName: 'Linha Principal R1',
+      phoneNumber: '+5511999991111',
+      provider: 'meta_cloud_api',
+      status: 'connected',
+      statusReason: null,
+      isOrganizationDefault: false,
+      assignedMinistryId: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    const r1Conn2: WhatsAppConnectionDto = {
+      id: 'conn-r1-2',
+      organizationId: 'org-r1',
+      displayName: 'Linha Reserva R1',
+      phoneNumber: '+5511988882222',
+      provider: 'zernio',
+      status: 'connected',
+      statusReason: null,
+      isOrganizationDefault: false,
+      assignedMinistryId: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      vi.spyOn(api, 'getMyMinistries').mockResolvedValue([
+        { id: 'min-r1', name: 'Ministério R1' } as any,
+      ]);
+    });
+
+    // Test A: Foundation passes/retains first-page nextCursor
+    it('Test A: Foundation passes/retains first-page nextCursor', async () => {
+      vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue(r1MockStatus);
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue(r1MockCapacity);
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({
+        items: [r1Conn1],
+        nextCursor: 'cursor-page-2',
+      });
+
+      render(
+        <WhatsAppFoundationView
+          ministryId="min-r1"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      await screen.findByTestId('whatsapp-connection-card-conn-r1-1');
+      expect(screen.getByTestId('load-more-connections-btn')).toBeInTheDocument();
+    });
+
+    // Test B: initial page with nextCursor renders Load More
+    it('Test B: initial page with nextCursor renders Load More', () => {
+      render(
+        <WhatsAppConnectionList
+          organizationId="org-r1"
+          ministryId="min-r1"
+          initialConnections={[r1Conn1]}
+          initialNextCursor="cursor-page-2"
+        />
+      );
+
+      expect(screen.getByTestId('load-more-connections-btn')).toBeInTheDocument();
+    });
+
+    // Test C: nextCursor null hides/disables Load More
+    it('Test C: nextCursor null hides/disables Load More', () => {
+      render(
+        <WhatsAppConnectionList
+          organizationId="org-r1"
+          ministryId="min-r1"
+          initialConnections={[r1Conn1]}
+          initialNextCursor={null}
+        />
+      );
+
+      expect(screen.queryByTestId('load-more-connections-btn')).not.toBeInTheDocument();
+    });
+
+    // Test D: page 2 appends correctly
+    it('Test D: page 2 appends correctly', async () => {
+      const listSpy = vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({
+        items: [r1Conn2],
+        nextCursor: null,
+      });
+
+      render(
+        <WhatsAppConnectionList
+          organizationId="org-r1"
+          ministryId="min-r1"
+          initialConnections={[r1Conn1]}
+          initialNextCursor="cursor-page-2"
+        />
+      );
+
+      const loadMoreBtn = screen.getByTestId('load-more-connections-btn');
+      fireEvent.click(loadMoreBtn);
+
+      expect(listSpy).toHaveBeenCalledWith('org-r1', {
+        limit: 10,
+        cursor: 'cursor-page-2',
+      });
+
+      expect(await screen.findByTestId('whatsapp-connection-card-conn-r1-2')).toBeInTheDocument();
+      expect(screen.getByTestId('whatsapp-connection-card-conn-r1-1')).toBeInTheDocument();
+      expect(screen.queryByTestId('load-more-connections-btn')).not.toBeInTheDocument();
+    });
+
+    // Test E: overlapping page item is deduplicated by connection.id
+    it('Test E: overlapping page item is deduplicated by connection.id', async () => {
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({
+        items: [r1Conn1, r1Conn2],
+        nextCursor: null,
+      });
+
+      render(
+        <WhatsAppConnectionList
+          organizationId="org-r1"
+          ministryId="min-r1"
+          initialConnections={[r1Conn1]}
+          initialNextCursor="cursor-page-2"
+        />
+      );
+
+      const loadMoreBtn = screen.getByTestId('load-more-connections-btn');
+      fireEvent.click(loadMoreBtn);
+
+      expect(await screen.findByTestId('whatsapp-connection-card-conn-r1-2')).toBeInTheDocument();
+      expect(screen.getAllByTestId('whatsapp-connection-card-conn-r1-1')).toHaveLength(1);
+    });
+
+    // Test F: duplicate load-more click dispatches one request for active cursor
+    it('Test F: duplicate load-more click dispatches one request for active cursor', async () => {
+      let resolveList: (val: any) => void;
+      const listPromise = new Promise((resolve) => {
+        resolveList = resolve;
+      });
+      const listSpy = vi.spyOn(api, 'listWhatsAppConnections').mockReturnValue(listPromise as any);
+
+      render(
+        <WhatsAppConnectionList
+          organizationId="org-r1"
+          ministryId="min-r1"
+          initialConnections={[r1Conn1]}
+          initialNextCursor="cursor-page-2"
+        />
+      );
+
+      const loadMoreBtn = screen.getByTestId('load-more-connections-btn');
+      fireEvent.click(loadMoreBtn);
+      fireEvent.click(loadMoreBtn);
+
+      expect(listSpy).toHaveBeenCalledTimes(1);
+
+      resolveList!({ items: [r1Conn2], nextCursor: null });
+      await act(async () => {});
+    });
+
+    // Test G: tenant switch while load-more pending rejects stale append
+    it('Test G: tenant switch while load-more pending rejects stale append', async () => {
+      let resolveList: (val: any) => void;
+      const listPromise = new Promise((resolve) => {
+        resolveList = resolve;
+      });
+      vi.spyOn(api, 'listWhatsAppConnections').mockReturnValue(listPromise as any);
+
+      const { rerender } = render(
+        <WhatsAppConnectionList
+          organizationId="org-A"
+          ministryId="min-A"
+          initialConnections={[r1Conn1]}
+          initialNextCursor="cursor-A"
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('load-more-connections-btn'));
+
+      const connB: WhatsAppConnectionDto = {
+        ...r1Conn1,
+        id: 'conn-B-1',
+        organizationId: 'org-B',
+        displayName: 'Linha Org B',
+      };
+      rerender(
+        <WhatsAppConnectionList
+          organizationId="org-B"
+          ministryId="min-B"
+          initialConnections={[connB]}
+          initialNextCursor={null}
+        />
+      );
+
+      resolveList!({ items: [r1Conn2], nextCursor: null });
+      await act(async () => {});
+
+      expect(screen.getByTestId('whatsapp-connection-card-conn-B-1')).toBeInTheDocument();
+      expect(screen.queryByTestId('whatsapp-connection-card-conn-r1-2')).not.toBeInTheDocument();
+    });
+
+    // Test H: stale load-more cannot change nextCursor of new tenant
+    it('Test H: stale load-more cannot change nextCursor of new tenant', async () => {
+      let resolveList: (val: any) => void;
+      const listPromise = new Promise((resolve) => {
+        resolveList = resolve;
+      });
+      vi.spyOn(api, 'listWhatsAppConnections').mockReturnValue(listPromise as any);
+
+      const { rerender } = render(
+        <WhatsAppConnectionList
+          organizationId="org-A"
+          ministryId="min-A"
+          initialConnections={[r1Conn1]}
+          initialNextCursor="cursor-A"
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('load-more-connections-btn'));
+
+      rerender(
+        <WhatsAppConnectionList
+          organizationId="org-B"
+          ministryId="min-B"
+          initialConnections={[r1Conn1]}
+          initialNextCursor={null}
+        />
+      );
+
+      resolveList!({ items: [], nextCursor: 'stale-cursor-A-page3' });
+      await act(async () => {});
+
+      expect(screen.queryByTestId('load-more-connections-btn')).not.toBeInTheDocument();
+    });
+
+    // Test I: tenant switch while DELETE pending rejects stale completion
+    it('Test I: tenant switch while DELETE pending rejects stale completion', async () => {
+      let resolveDelete: (val: any) => void;
+      const deletePromise = new Promise((resolve) => {
+        resolveDelete = resolve;
+      });
+      vi.spyOn(api, 'disconnectWhatsAppConnection').mockReturnValue(deletePromise as any);
+      const showToastMock = vi.fn();
+      const onMutationMock = vi.fn();
+
+      const { rerender } = render(
+        <WhatsAppConnectionList
+          organizationId="org-A"
+          ministryId="min-A"
+          initialConnections={[r1Conn1]}
+          showToast={showToastMock}
+          onMutationSuccess={onMutationMock}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('disconnect-connection-btn-conn-r1-1'));
+      fireEvent.click(screen.getByTestId('confirm-disconnect-btn'));
+
+      rerender(
+        <WhatsAppConnectionList
+          organizationId="org-B"
+          ministryId="min-B"
+          initialConnections={[]}
+          showToast={showToastMock}
+          onMutationSuccess={onMutationMock}
+        />
+      );
+
+      resolveDelete!({ success: true, connectionId: 'conn-r1-1', status: 'disconnected' });
+      await act(async () => {});
+
+      expect(showToastMock).not.toHaveBeenCalled();
+      expect(onMutationMock).not.toHaveBeenCalled();
+    });
+
+    // Test J: stale DELETE-triggered refetch cannot overwrite new tenant connections
+    it('Test J: stale DELETE-triggered refetch cannot overwrite new tenant connections', async () => {
+      let resolveRefetchConns: (val: any) => void;
+      const refetchPromise = new Promise((resolve) => {
+        resolveRefetchConns = resolve;
+      });
+
+      const connB: WhatsAppConnectionDto = {
+        ...r1Conn1,
+        id: 'conn-B-1',
+        organizationId: 'org-B',
+        displayName: 'Linha Tenant B',
+      };
+
+      vi.spyOn(api, 'getMinistryWhatsAppStatus').mockImplementation(async (mid) => {
+        if (mid === 'min-B') {
+          return {
+            ...r1MockStatus,
+            organizationId: 'org-B',
+            displayName: 'Linha Tenant B',
+          };
+        }
+        return r1MockStatus;
+      });
+
+      vi.spyOn(api, 'getWhatsAppCapacity').mockImplementation(async (orgId) => {
+        if (orgId === 'org-B') {
+          return { ...r1MockCapacity, organizationId: 'org-B' };
+        }
+        return r1MockCapacity;
+      });
+
+      let tenantARefetchTriggered = false;
+      vi.spyOn(api, 'listWhatsAppConnections').mockImplementation(async (orgId) => {
+        if (orgId === 'org-B') {
+          return { items: [connB], nextCursor: null };
+        }
+        if (tenantARefetchTriggered) {
+          return refetchPromise as any;
+        }
+        return { items: [r1Conn1], nextCursor: null };
+      });
+
+      vi.spyOn(api, 'disconnectWhatsAppConnection').mockImplementation(async () => {
+        tenantARefetchTriggered = true;
+        return {
+          success: true,
+          connectionId: 'conn-r1-1',
+          status: 'disconnected',
+        };
+      });
+
+      const { rerender } = render(
+        <WhatsAppFoundationView
+          ministryId="min-A"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      await screen.findByTestId('whatsapp-connection-card-conn-r1-1');
+
+      fireEvent.click(screen.getByTestId('disconnect-connection-btn-conn-r1-1'));
+      fireEvent.click(screen.getByTestId('confirm-disconnect-btn'));
+
+      rerender(
+        <WhatsAppFoundationView
+          ministryId="min-B"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      await screen.findByTestId('whatsapp-connection-card-conn-B-1');
+
+      resolveRefetchConns!({ items: [r1Conn1], nextCursor: null });
+      await act(async () => {});
+
+      expect(screen.getByTestId('whatsapp-connection-card-conn-B-1')).toBeInTheDocument();
+      expect(screen.queryByTestId('whatsapp-connection-card-conn-r1-1')).not.toBeInTheDocument();
+    });
+
+    // Test K: stale DELETE-triggered capacity response cannot alter new tenant F4 state
+    it('Test K: stale DELETE-triggered capacity response cannot alter new tenant F4 state', async () => {
+      let resolveStaleCap: (val: any) => void;
+      const staleCapPromise = new Promise((resolve) => {
+        resolveStaleCap = resolve;
+      });
+
+      vi.spyOn(api, 'getMinistryWhatsAppStatus').mockImplementation(async (mid) => {
+        if (mid === 'min-B') {
+          return {
+            ...r1MockStatus,
+            organizationId: 'org-B',
+          };
+        }
+        return r1MockStatus;
+      });
+
+      let tenantARefetchTriggered = false;
+      vi.spyOn(api, 'getWhatsAppCapacity').mockImplementation(async (orgId) => {
+        if (orgId === 'org-B') {
+          return {
+            ...r1MockCapacity,
+            organizationId: 'org-B',
+            commercialState: 'payment_grace',
+            gracePeriodExpiresBillingDate: '2026-10-01',
+          };
+        }
+        if (tenantARefetchTriggered) {
+          return staleCapPromise as any;
+        }
+        return r1MockCapacity;
+      });
+
+      vi.spyOn(api, 'listWhatsAppConnections').mockImplementation(async (orgId) => {
+        if (orgId === 'org-B') {
+          return { items: [], nextCursor: null };
+        }
+        return { items: [r1Conn1], nextCursor: null };
+      });
+
+      vi.spyOn(api, 'disconnectWhatsAppConnection').mockImplementation(async () => {
+        tenantARefetchTriggered = true;
+        return {
+          success: true,
+          connectionId: 'conn-r1-1',
+          status: 'disconnected',
+        };
+      });
+
+      const { rerender } = render(
+        <WhatsAppFoundationView
+          ministryId="min-A"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      await screen.findByTestId('whatsapp-connection-card-conn-r1-1');
+
+      fireEvent.click(screen.getByTestId('disconnect-connection-btn-conn-r1-1'));
+      fireEvent.click(screen.getByTestId('confirm-disconnect-btn'));
+
+      rerender(
+        <WhatsAppFoundationView
+          ministryId="min-B"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      expect(await screen.findByTestId('commercial-banner-payment-grace')).toBeInTheDocument();
+
+      resolveStaleCap!({ ...r1MockCapacity, commercialState: 'healthy' });
+      await act(async () => {});
+
+      expect(screen.getByTestId('commercial-banner-payment-grace')).toBeInTheDocument();
+      expect(screen.queryByTestId('commercial-banner-healthy-at-capacity')).not.toBeInTheDocument();
+    });
+
+    // Test L: stale DELETE-triggered ministry status cannot alter new tenant status
+    it('Test L: stale DELETE-triggered ministry status cannot alter new tenant status', async () => {
+      let resolveStaleStatus: (val: any) => void;
+      const staleStatusPromise = new Promise((resolve) => {
+        resolveStaleStatus = resolve;
+      });
+
+      let tenantARefetchTriggered = false;
+      vi.spyOn(api, 'getMinistryWhatsAppStatus').mockImplementation(async (mid) => {
+        if (mid === 'min-B') {
+          return {
+            ...r1MockStatus,
+            organizationId: 'org-B',
+            displayName: 'Linha Especial B',
+            phoneNumber: '+5511911112222',
+          };
+        }
+        if (tenantARefetchTriggered) {
+          return staleStatusPromise as any;
+        }
+        return r1MockStatus;
+      });
+
+      vi.spyOn(api, 'getWhatsAppCapacity').mockImplementation(async (orgId) => {
+        if (orgId === 'org-B') {
+          return { ...r1MockCapacity, organizationId: 'org-B' };
+        }
+        return r1MockCapacity;
+      });
+
+      vi.spyOn(api, 'listWhatsAppConnections').mockImplementation(async (orgId) => {
+        if (orgId === 'org-B') {
+          return { items: [], nextCursor: null };
+        }
+        return { items: [r1Conn1], nextCursor: null };
+      });
+
+      vi.spyOn(api, 'disconnectWhatsAppConnection').mockImplementation(async () => {
+        tenantARefetchTriggered = true;
+        return {
+          success: true,
+          connectionId: 'conn-r1-1',
+          status: 'disconnected',
+        };
+      });
+
+      const { rerender } = render(
+        <WhatsAppFoundationView
+          ministryId="min-A"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      await screen.findByTestId('whatsapp-connection-card-conn-r1-1');
+
+      fireEvent.click(screen.getByTestId('disconnect-connection-btn-conn-r1-1'));
+      fireEvent.click(screen.getByTestId('confirm-disconnect-btn'));
+
+      rerender(
+        <WhatsAppFoundationView
+          ministryId="min-B"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      expect(await screen.findByText('Linha Especial B')).toBeInTheDocument();
+
+      resolveStaleStatus!(r1MockStatus);
+      await act(async () => {});
+
+      expect(screen.getByText('Linha Especial B')).toBeInTheDocument();
+      expect(screen.queryByText('Linha Principal R1')).not.toBeInTheDocument();
+    });
+
+    // Test M: successful current-tenant DELETE triggers connections, capacity, and ministry status refetch
+    it('Test M: successful current-tenant DELETE triggers connections, capacity, and ministry status refetch', async () => {
+      const getStatusSpy = vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue(r1MockStatus);
+      const getCapSpy = vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue(r1MockCapacity);
+      const listConnsSpy = vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({
+        items: [r1Conn1],
+        nextCursor: null,
+      });
+      const disconnectSpy = vi.spyOn(api, 'disconnectWhatsAppConnection').mockResolvedValue({
+        success: true,
+        connectionId: 'conn-r1-1',
+        status: 'disconnected',
+      });
+
+      render(
+        <WhatsAppFoundationView
+          ministryId="min-r1"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      await screen.findByTestId('whatsapp-connection-card-conn-r1-1');
+
+      getStatusSpy.mockClear();
+      getCapSpy.mockClear();
+      listConnsSpy.mockClear();
+
+      fireEvent.click(screen.getByTestId('disconnect-connection-btn-conn-r1-1'));
+      fireEvent.click(screen.getByTestId('confirm-disconnect-btn'));
+
+      await waitFor(() => {
+        expect(disconnectSpy).toHaveBeenCalledWith('org-r1', 'conn-r1-1');
+      });
+
+      await waitFor(() => {
+        expect(listConnsSpy).toHaveBeenCalledWith('org-r1', { limit: 10 });
+        expect(getCapSpy).toHaveBeenCalledWith('org-r1');
+        expect(getStatusSpy).toHaveBeenCalledWith('min-r1');
+      });
+    });
+
+    // Test N: connect CTA remains disabled until refreshed backend canCreateConnection says true
+    it('Test N: connect CTA remains disabled until refreshed backend canCreateConnection says true', async () => {
+      const disconnectedStatus: MinistryWhatsAppStatusDto = {
+        ...r1MockStatus,
+        isConnected: false,
+        isConfigured: false,
+        displayName: null,
+        phoneNumber: null,
+      };
+
+      vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue(disconnectedStatus);
+
+      let capacityRefetchTriggered = false;
+      let resolveRefreshedCap: (val: any) => void;
+      const refreshedCapPromise = new Promise((resolve) => {
+        resolveRefreshedCap = resolve;
+      });
+
+      vi.spyOn(api, 'getWhatsAppCapacity').mockImplementation(async () => {
+        if (capacityRefetchTriggered) {
+          return refreshedCapPromise as any;
+        }
+        return {
+          ...r1MockCapacity,
+          canCreateConnection: false,
+        };
+      });
+
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({
+        items: [r1Conn1],
+        nextCursor: null,
+      });
+
+      vi.spyOn(api, 'disconnectWhatsAppConnection').mockImplementation(async () => {
+        capacityRefetchTriggered = true;
+        return {
+          success: true,
+          connectionId: 'conn-r1-1',
+          status: 'disconnected',
+        };
+      });
+
+      render(
+        <WhatsAppFoundationView
+          ministryId="min-r1"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      const connectBtn = await screen.findByTestId('connect-whatsapp-btn');
+      expect(connectBtn).toBeDisabled();
+
+      fireEvent.click(screen.getByTestId('disconnect-connection-btn-conn-r1-1'));
+      fireEvent.click(screen.getByTestId('confirm-disconnect-btn'));
+
+      expect(connectBtn).toBeDisabled();
+
+      resolveRefreshedCap!({
+        ...r1MockCapacity,
+        canCreateConnection: true,
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('connect-whatsapp-btn')).not.toBeDisabled();
+      });
+    });
+
+    // Test O: DELETE failure leaves existing card/state intact
+    it('Test O: DELETE failure leaves existing card/state intact', async () => {
+      vi.spyOn(api, 'disconnectWhatsAppConnection').mockRejectedValue(
+        new Error('Falha no provedor ao desconectar')
+      );
+      const onMutationMock = vi.fn();
+
+      render(
+        <WhatsAppConnectionList
+          organizationId="org-r1"
+          ministryId="min-r1"
+          initialConnections={[r1Conn1]}
+          onMutationSuccess={onMutationMock}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('disconnect-connection-btn-conn-r1-1'));
+      fireEvent.click(screen.getByTestId('confirm-disconnect-btn'));
+
+      expect(await screen.findByText('Falha no provedor ao desconectar')).toBeInTheDocument();
+      expect(onMutationMock).not.toHaveBeenCalled();
+      expect(screen.getByTestId('whatsapp-connection-card-conn-r1-1')).toBeInTheDocument();
+    });
+
+    // Test P: PATCH tenant-switch stale result ignored
+    it('Test P: PATCH tenant-switch stale result ignored', async () => {
+      let resolveUpdate: (val: any) => void;
+      const updatePromise = new Promise((resolve) => {
+        resolveUpdate = resolve;
+      });
+      vi.spyOn(api, 'updateWhatsAppConnection').mockReturnValue(updatePromise as any);
+      const onUpdatedMock = vi.fn();
+
+      const { rerender } = render(
+        <WhatsAppConnectionCard
+          connection={r1Conn1}
+          organizationId="org-A"
+          onConnectionUpdated={onUpdatedMock}
+          onRequestDisconnect={vi.fn()}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('edit-display-name-btn-conn-r1-1'));
+      fireEvent.change(screen.getByTestId('display-name-input-conn-r1-1'), {
+        target: { value: 'Novo Nome A' },
+      });
+      fireEvent.click(screen.getByTestId('save-display-name-btn-conn-r1-1'));
+
+      const connB: WhatsAppConnectionDto = {
+        ...r1Conn1,
+        id: 'conn-B-1',
+        organizationId: 'org-B',
+        displayName: 'Nome B',
+      };
+      rerender(
+        <WhatsAppConnectionCard
+          connection={connB}
+          organizationId="org-B"
+          onConnectionUpdated={onUpdatedMock}
+          onRequestDisconnect={vi.fn()}
+        />
+      );
+
+      resolveUpdate!({ ...r1Conn1, displayName: 'Novo Nome A' });
+      await act(async () => {});
+
+      expect(onUpdatedMock).not.toHaveBeenCalled();
+    });
+
+    // Test Q: pagination reset on organization change
+    it('Test Q: pagination reset on organization change', async () => {
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({
+        items: [r1Conn2],
+        nextCursor: null,
+      });
+
+      const { rerender } = render(
+        <WhatsAppConnectionList
+          organizationId="org-A"
+          ministryId="min-A"
+          initialConnections={[r1Conn1]}
+          initialNextCursor="cursor-page-2"
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('load-more-connections-btn'));
+      expect(await screen.findByTestId('whatsapp-connection-card-conn-r1-2')).toBeInTheDocument();
+
+      const connB: WhatsAppConnectionDto = {
+        ...r1Conn1,
+        id: 'conn-B-1',
+        organizationId: 'org-B',
+        displayName: 'Linha Org B',
+      };
+      rerender(
+        <WhatsAppConnectionList
+          organizationId="org-B"
+          ministryId="min-B"
+          initialConnections={[connB]}
+          initialNextCursor={null}
+        />
+      );
+
+      expect(screen.getByTestId('whatsapp-connection-card-conn-B-1')).toBeInTheDocument();
+      expect(screen.queryByTestId('whatsapp-connection-card-conn-r1-1')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('whatsapp-connection-card-conn-r1-2')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('load-more-connections-btn')).not.toBeInTheDocument();
+    });
+
+    // Test R: open modal belonging to A closes/invalidates after tenant switch
+    it('Test R: open modal belonging to A closes/invalidates after tenant switch', async () => {
+      vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue(r1MockStatus);
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue(r1MockCapacity);
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({
+        items: [r1Conn1],
+        nextCursor: null,
+      });
+
+      const { rerender } = render(
+        <WhatsAppFoundationView
+          ministryId="min-A"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      await screen.findByTestId('whatsapp-connection-card-conn-r1-1');
+
+      fireEvent.click(screen.getByTestId('disconnect-connection-btn-conn-r1-1'));
+      expect(await screen.findByTestId('whatsapp-disconnect-modal')).toBeInTheDocument();
+
+      rerender(
+        <WhatsAppFoundationView
+          ministryId="min-B"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      expect(screen.queryByTestId('whatsapp-disconnect-modal')).not.toBeInTheDocument();
     });
   });
 });

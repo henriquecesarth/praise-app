@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Layers, AlertCircle, RefreshCw, PlusCircle } from 'lucide-react';
 import { api } from '../../api';
 import type { WhatsAppConnectionDto } from '../../whatsapp.types';
@@ -17,6 +17,21 @@ export interface WhatsAppConnectionListProps {
   onResumeConnection?: (connection: WhatsAppConnectionDto) => void;
   onMutationSuccess?: () => void;
   showToast?: (msg: string, type?: 'success' | 'error') => void;
+}
+
+function deduplicateConnections(
+  existing: WhatsAppConnectionDto[],
+  incoming: WhatsAppConnectionDto[]
+): WhatsAppConnectionDto[] {
+  const seen = new Set(existing.map((c) => c.id));
+  const newItems = incoming.filter((c) => {
+    if (seen.has(c.id)) {
+      return false;
+    }
+    seen.add(c.id);
+    return true;
+  });
+  return [...existing, ...newItems];
 }
 
 export function WhatsAppConnectionList({
@@ -49,6 +64,20 @@ export function WhatsAppConnectionList({
   const [disconnectSubmitting, setDisconnectSubmitting] = useState(false);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
 
+  const generationRef = useRef(0);
+  const organizationIdRef = useRef(organizationId);
+  const ministryIdRef = useRef(ministryId);
+  const inFlightCursorRef = useRef<string | null>(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      generationRef.current++;
+    };
+  }, []);
+
   // Sync with initialConnections if updated by parent
   useEffect(() => {
     if (initialConnections !== undefined) {
@@ -63,76 +92,149 @@ export function WhatsAppConnectionList({
   }, [initialNextCursor]);
 
   // Load connections function
-  const fetchConnections = useCallback(async (activeRef: { active: boolean }) => {
+  const fetchConnections = useCallback(async () => {
+    const currentGen = generationRef.current;
+    const currentOrg = organizationId;
     setLoading(true);
     setError(null);
     try {
       const [connsRes, ministriesRes] = await Promise.all([
-        api.listWhatsAppConnections(organizationId, { limit: 10 }),
+        api.listWhatsAppConnections(currentOrg, { limit: 10 }),
         api.getMyMinistries().catch(() => []),
       ]);
 
-      if (!activeRef.active) return;
+      if (
+        !isMountedRef.current ||
+        currentGen !== generationRef.current ||
+        currentOrg !== organizationIdRef.current
+      ) {
+        return;
+      }
       setConnections(connsRes.items || []);
       setNextCursor(connsRes.nextCursor);
       if (Array.isArray(ministriesRes)) {
         setAvailableMinistries(ministriesRes.map((m) => ({ id: m.id, name: m.name })));
       }
     } catch (err) {
-      if (!activeRef.active) return;
+      if (
+        !isMountedRef.current ||
+        currentGen !== generationRef.current ||
+        currentOrg !== organizationIdRef.current
+      ) {
+        return;
+      }
       setError(classifyWhatsAppError(err).userMessage);
     } finally {
-      if (activeRef.active) {
+      if (
+        isMountedRef.current &&
+        currentGen === generationRef.current &&
+        currentOrg === organizationIdRef.current
+      ) {
         setLoading(false);
       }
     }
   }, [organizationId]);
 
+  const fetchMinistries = useCallback(async () => {
+    const currentGen = generationRef.current;
+    const currentOrg = organizationId;
+    try {
+      const mList = await api.getMyMinistries();
+      if (
+        !isMountedRef.current ||
+        currentGen !== generationRef.current ||
+        currentOrg !== organizationIdRef.current
+      ) {
+        return;
+      }
+      if (Array.isArray(mList)) {
+        setAvailableMinistries(mList.map((m) => ({ id: m.id, name: m.name })));
+      }
+    } catch {
+      // Ignored
+    }
+  }, [organizationId]);
+
   // Initial fetch and tenant isolation
   useEffect(() => {
-    const activeRef = { active: true };
+    generationRef.current++;
+    organizationIdRef.current = organizationId;
+    ministryIdRef.current = ministryId;
+    inFlightCursorRef.current = null;
+    setLoadingMore(false);
+    setDisconnectCandidate(null);
+    setDisconnectSubmitting(false);
+    setDisconnectError(null);
+    setError(null);
 
     if (initialConnections === undefined) {
-      fetchConnections(activeRef);
+      setConnections([]);
+      setNextCursor(null);
+      fetchConnections();
     } else {
-      // Just fetch ministries for the dropdown
-      api
-        .getMyMinistries()
-        .then((mList) => {
-          if (activeRef.active && Array.isArray(mList)) {
-            setAvailableMinistries(mList.map((m) => ({ id: m.id, name: m.name })));
-          }
-        })
-        .catch(() => {});
+      setConnections(initialConnections);
+      setNextCursor(initialNextCursor ?? null);
+      fetchMinistries();
     }
 
     return () => {
-      activeRef.active = false;
       setDisconnectCandidate(null);
     };
-  }, [organizationId, fetchConnections, initialConnections]);
+  }, [organizationId, ministryId]);
 
   // Handle Load More (Pagination)
   const handleLoadMore = async () => {
-    if (!nextCursor || loadingMore) return;
+    if (!nextCursor || loadingMore || inFlightCursorRef.current === nextCursor) {
+      return;
+    }
 
+    const currentCursor = nextCursor;
+    const currentGen = generationRef.current;
+    const currentOrg = organizationId;
+
+    inFlightCursorRef.current = currentCursor;
     setLoadingMore(true);
+
     try {
-      const res = await api.listWhatsAppConnections(organizationId, {
+      const res = await api.listWhatsAppConnections(currentOrg, {
         limit: 10,
-        cursor: nextCursor,
+        cursor: currentCursor,
       });
-      setConnections((prev) => [...prev, ...(res.items || [])]);
+
+      if (
+        !isMountedRef.current ||
+        currentGen !== generationRef.current ||
+        currentOrg !== organizationIdRef.current
+      ) {
+        return;
+      }
+
+      setConnections((prev) => deduplicateConnections(prev, res.items || []));
       setNextCursor(res.nextCursor);
     } catch (err) {
+      if (
+        !isMountedRef.current ||
+        currentGen !== generationRef.current ||
+        currentOrg !== organizationIdRef.current
+      ) {
+        return;
+      }
       showToast?.(classifyWhatsAppError(err).userMessage, 'error');
     } finally {
-      setLoadingMore(false);
+      if (
+        isMountedRef.current &&
+        currentGen === generationRef.current &&
+        currentOrg === organizationIdRef.current
+      ) {
+        inFlightCursorRef.current = null;
+        setLoadingMore(false);
+      }
     }
   };
 
   // Handle Connection Updated (Inline edit, Default, Assignment)
   const handleConnectionUpdated = (updated: WhatsAppConnectionDto) => {
+    if (!isMountedRef.current) return;
     setConnections((prev) =>
       prev.map((c) => {
         if (c.id === updated.id) {
@@ -150,34 +252,41 @@ export function WhatsAppConnectionList({
 
   // Handle Disconnect Confirm
   const handleConfirmDisconnect = async () => {
-    if (!disconnectCandidate) return;
+    if (!disconnectCandidate || disconnectSubmitting) return;
+
+    const currentGen = generationRef.current;
+    const currentOrg = organizationId;
+    const candidateId = disconnectCandidate.id;
 
     setDisconnectSubmitting(true);
     setDisconnectError(null);
 
     try {
-      await api.disconnectWhatsAppConnection(organizationId, disconnectCandidate.id);
+      await api.disconnectWhatsAppConnection(currentOrg, candidateId);
+
+      if (
+        !isMountedRef.current ||
+        currentGen !== generationRef.current ||
+        currentOrg !== organizationIdRef.current
+      ) {
+        return;
+      }
+
       showToast?.('Conexão desconectada com sucesso.', 'success');
-
-      // Update locally
-      setConnections((prev) =>
-        prev.map((c) =>
-          c.id === disconnectCandidate.id
-            ? {
-                ...c,
-                status: 'disconnected',
-                isOrganizationDefault: false,
-                assignedMinistryId: null,
-              }
-            : c
-        )
-      );
-
       setDisconnectCandidate(null);
+      setDisconnectSubmitting(false);
+
+      // Trigger authoritative refetch of connections, capacity, and ministry status
       onMutationSuccess?.();
     } catch (err) {
+      if (
+        !isMountedRef.current ||
+        currentGen !== generationRef.current ||
+        currentOrg !== organizationIdRef.current
+      ) {
+        return;
+      }
       setDisconnectError(classifyWhatsAppError(err).userMessage);
-    } finally {
       setDisconnectSubmitting(false);
     }
   };
@@ -291,7 +400,7 @@ export function WhatsAppConnectionList({
             type="button"
             className="btn btn-primary min-h-[44px]"
             data-testid="retry-connections-btn"
-            onClick={() => fetchConnections({ active: true })}
+            onClick={() => fetchConnections()}
             style={{
               minHeight: '44px',
               display: 'inline-flex',
