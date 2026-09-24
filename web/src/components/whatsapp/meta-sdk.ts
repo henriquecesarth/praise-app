@@ -225,6 +225,12 @@ export async function launchMetaEmbeddedSignup(
       if (isTerminated) return;
       isTerminated = true;
 
+      // Ensure window.open is restored if still wrapped
+      if (originalWindowOpen && typeof window !== 'undefined') {
+        window.open = originalWindowOpen;
+        originalWindowOpen = null;
+      }
+
       // 1. Remove message listener immediately
       if (typeof window !== 'undefined') {
         window.removeEventListener('message', messageHandler);
@@ -331,6 +337,14 @@ export async function launchMetaEmbeddedSignup(
             return;
           }
 
+          // Proven source-window binding:
+          // A Meta FINISH event may provide authoritative attempt identifiers ONLY when
+          // the frontend can prove it belongs to the active attempt via source window binding.
+          const isTrustedSource = Boolean(activeAttemptSource && event.source === activeAttemptSource);
+          if (!isTrustedSource) {
+            return;
+          }
+
           const eventData = payload.data;
           if (eventData && typeof eventData === 'object' && !Array.isArray(eventData)) {
             const waba = eventData.waba_id || eventData.wabaId;
@@ -380,33 +394,53 @@ export async function launchMetaEmbeddedSignup(
             return;
           }
 
-          const code = response.authResponse.code;
-          const wabaId =
-            capturedWabaId ||
-            (typeof response.authResponse.waba_id === 'string' ? response.authResponse.waba_id : null) ||
-            (typeof response.authResponse.wabaId === 'string' ? response.authResponse.wabaId : null) ||
-            (typeof response.authResponse.sessionInfo?.waba_id === 'string' ? response.authResponse.sessionInfo.waba_id : null) ||
-            (typeof response.authResponse.sessionInfo?.wabaId === 'string' ? response.authResponse.sessionInfo.wabaId : null);
+          const rawAuth = response.authResponse;
+          const code = typeof rawAuth.code === 'string' ? rawAuth.code.trim() : null;
 
-          const phoneNumberId =
-            capturedPhoneNumberId ||
-            (typeof response.authResponse.phone_number_id === 'string' ? response.authResponse.phone_number_id : null) ||
-            (typeof response.authResponse.phoneNumberId === 'string' ? response.authResponse.phoneNumberId : null) ||
-            (typeof response.authResponse.sessionInfo?.phone_number_id === 'string' ? response.authResponse.sessionInfo.phone_number_id : null) ||
-            (typeof response.authResponse.sessionInfo?.phoneNumberId === 'string' ? response.authResponse.sessionInfo.phoneNumberId : null);
-
-          if (!code || typeof code !== 'string' || code.trim().length === 0) {
+          if (!code) {
             const err = new Error('Operação cancelada: código de autorização ausente.');
             (err as any).cancelled = true;
             finishAttempt({ success: false, error: err });
             return;
           }
 
-          if (!wabaId || !phoneNumberId) {
+          const extractId = (val: any): string | null => {
+            return typeof val === 'string' && val.trim().length > 0 ? val.trim() : null;
+          };
+
+          // Check single-channel callback data from response.authResponse
+          const callbackWabaId =
+            extractId(rawAuth.waba_id) ||
+            extractId(rawAuth.wabaId) ||
+            extractId(rawAuth.sessionInfo?.waba_id) ||
+            extractId(rawAuth.sessionInfo?.wabaId);
+
+          const callbackPhoneNumberId =
+            extractId(rawAuth.phone_number_id) ||
+            extractId(rawAuth.phoneNumberId) ||
+            extractId(rawAuth.sessionInfo?.phone_number_id) ||
+            extractId(rawAuth.sessionInfo?.phoneNumberId);
+
+          let finalWabaId: string | null = null;
+          let finalPhoneNumberId: string | null = null;
+
+          if (callbackWabaId && callbackPhoneNumberId) {
+            // Priority 1: Trusted single-channel callback data (direct from login callback)
+            finalWabaId = callbackWabaId;
+            finalPhoneNumberId = callbackPhoneNumberId;
+          } else if (capturedWabaId && capturedPhoneNumberId && activeAttemptSource) {
+            // Priority 2: Proven source-window binding from message event
+            finalWabaId = capturedWabaId;
+            finalPhoneNumberId = capturedPhoneNumberId;
+          }
+
+          if (!finalWabaId || !finalPhoneNumberId) {
+            // Priority 3: Fail closed - neither single-channel nor proven source window binding exists
             const err = new Error(
-              'Resultado incompleto retornado pelo Meta. Não foi possível identificar a WABA ou o número de telefone.'
+              'Não foi possível correlacionar a sessão do WhatsApp com segurança (origem do popup ou dados de sessão não verificados).'
             );
-            (err as any).incomplete = true;
+            (err as any).code = 'META_SIGNUP_ATTEMPT_CORRELATION_UNAVAILABLE';
+            (err as any).correlationUnavailable = true;
             finishAttempt({ success: false, error: err });
             return;
           }
@@ -414,9 +448,9 @@ export async function launchMetaEmbeddedSignup(
           finishAttempt({
             success: true,
             data: {
-              code: code.trim(),
-              wabaId: wabaId.trim(),
-              phoneNumberId: phoneNumberId.trim(),
+              code: code,
+              wabaId: finalWabaId,
+              phoneNumberId: finalPhoneNumberId,
             },
           });
         },
@@ -435,6 +469,7 @@ export async function launchMetaEmbeddedSignup(
     } finally {
       if (originalWindowOpen && typeof window !== 'undefined') {
         window.open = originalWindowOpen;
+        originalWindowOpen = null;
       }
     }
   });

@@ -335,6 +335,10 @@ export function WhatsAppOnboardingModal({
             setStep('error');
             setErrorMessage(popupErr.message || 'Resultado incompleto retornado pela Meta.');
             setErrorCode('INCOMPLETE_RESULT');
+          } else if (popupErr?.correlationUnavailable || popupErr?.code === 'META_SIGNUP_ATTEMPT_CORRELATION_UNAVAILABLE') {
+            setStep('error');
+            setErrorMessage(popupErr.message || 'Não foi possível correlacionar a sessão do WhatsApp com segurança.');
+            setErrorCode('META_SIGNUP_ATTEMPT_CORRELATION_UNAVAILABLE');
           } else {
             setStep('error');
             setErrorMessage(popupErr.message || 'Falha na comunicação com o popup da Meta.');

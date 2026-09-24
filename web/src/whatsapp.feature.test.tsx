@@ -989,13 +989,18 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
         updatedAt: '2026-09-23T12:00:00Z',
       });
 
+      const mockPopup = {} as unknown as Window;
+      vi.spyOn(window, 'open').mockReturnValue(mockPopup);
+
       (window as any).FB = {
         init: vi.fn(),
         login: vi.fn((cb: any) => {
-          // Deliver message event with WABA and phone number
+          const popup = window.open('https://facebook.com', '_blank');
+          // Deliver message event with WABA and phone number from popup
           window.dispatchEvent(
             new MessageEvent('message', {
               origin: 'https://www.facebook.com',
+              source: popup,
               data: JSON.stringify({
                 type: 'WA_EMBEDDED_SIGNUP',
                 event: 'FINISH',
@@ -1009,6 +1014,10 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
           cb({
             authResponse: {
               code: 'auth-code-xyz',
+              sessionInfo: {
+                waba_id: 'waba-meta-456',
+                phone_number_id: 'phone-meta-123',
+              },
             },
           });
         }),
@@ -2076,6 +2085,7 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
     it('J. success removes message listener', async () => {
       const addSpy = vi.spyOn(window, 'addEventListener');
       const removeSpy = vi.spyOn(window, 'removeEventListener');
+      const mockPopup = {} as unknown as Window;
 
       (window as any).FB = {
         init: vi.fn(),
@@ -2083,6 +2093,7 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
           window.dispatchEvent(
             new MessageEvent('message', {
               origin: 'https://www.facebook.com',
+              source: mockPopup,
               data: JSON.stringify({
                 type: 'WA_EMBEDDED_SIGNUP',
                 event: 'FINISH',
@@ -2094,7 +2105,7 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
         }),
       };
 
-      const result = await launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test' });
+      const result = await launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test', sourceWindow: mockPopup });
       expect(result).toEqual({
         code: 'code-j-1',
         wabaId: 'waba-j-1',
@@ -2173,6 +2184,8 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
       expect(isValidMetaOrigin('https://meta.com')).toBe(true);
       expect(isValidMetaOrigin('https://business.meta.com')).toBe(true);
 
+      const mockPopup = {} as unknown as Window;
+
       (window as any).FB = {
         init: vi.fn(),
         login: vi.fn((cb: any) => {
@@ -2180,6 +2193,7 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
           window.dispatchEvent(
             new MessageEvent('message', {
               origin: 'https://evil-site.com',
+              source: mockPopup,
               data: JSON.stringify({
                 type: 'WA_EMBEDDED_SIGNUP',
                 event: 'FINISH',
@@ -2191,6 +2205,7 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
           window.dispatchEvent(
             new MessageEvent('message', {
               origin: 'https://www.facebook.com',
+              source: mockPopup,
               data: 'not a json',
             })
           );
@@ -2198,13 +2213,15 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
           window.dispatchEvent(
             new MessageEvent('message', {
               origin: 'https://www.facebook.com',
+              source: mockPopup,
               data: JSON.stringify({ type: 'OTHER_TYPE', event: 'FINISH' }),
             })
           );
-          // Legitimate Meta event
+          // Legitimate Meta event from proven source
           window.dispatchEvent(
             new MessageEvent('message', {
               origin: 'https://www.facebook.com',
+              source: mockPopup,
               data: JSON.stringify({
                 type: 'WA_EMBEDDED_SIGNUP',
                 event: 'FINISH',
@@ -2216,7 +2233,7 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
         }),
       };
 
-      const res = await launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test' });
+      const res = await launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test', sourceWindow: mockPopup });
       expect(res.wabaId).toBe('waba-legit');
       expect(res.phoneNumberId).toBe('phone-legit');
     });
@@ -2310,6 +2327,7 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
     // Test N2: FINISH then CANCEL - successful terminal result cannot be rewritten (Section 13)
     it('N2. FINISH then CANCEL - successful terminal result cannot be rewritten', async () => {
       let loginCb: any;
+      const mockPopup = {} as unknown as Window;
       (window as any).FB = {
         init: vi.fn(),
         login: vi.fn((cb: any) => {
@@ -2317,13 +2335,14 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
         }),
       };
 
-      const launchPromise = launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test' });
+      const launchPromise = launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test', sourceWindow: mockPopup });
       await Promise.resolve();
 
-      // FINISH event arrives
+      // FINISH event arrives from verified source
       window.dispatchEvent(
         new MessageEvent('message', {
           origin: 'https://www.facebook.com',
+          source: mockPopup,
           data: JSON.stringify({
             type: 'WA_EMBEDDED_SIGNUP',
             event: 'FINISH',
@@ -2345,6 +2364,7 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
       window.dispatchEvent(
         new MessageEvent('message', {
           origin: 'https://www.facebook.com',
+          source: mockPopup,
           data: JSON.stringify({
             type: 'WA_EMBEDDED_SIGNUP',
             event: 'CANCEL',
@@ -2358,6 +2378,7 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
     // Test N3: duplicate login callback resolves only once (Section 13)
     it('N3. duplicate login callback resolves only once', async () => {
       let loginCb: any;
+      const mockPopup = {} as unknown as Window;
       (window as any).FB = {
         init: vi.fn(),
         login: vi.fn((cb: any) => {
@@ -2365,12 +2386,13 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
         }),
       };
 
-      const launchPromise = launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test' });
+      const launchPromise = launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test', sourceWindow: mockPopup });
       await Promise.resolve();
 
       window.dispatchEvent(
         new MessageEvent('message', {
           origin: 'https://www.facebook.com',
+          source: mockPopup,
           data: JSON.stringify({
             type: 'WA_EMBEDDED_SIGNUP',
             event: 'FINISH',
@@ -2428,13 +2450,15 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
 
     // Test O: duplicate FINISH events in same attempt cannot cause duplicate completion
     it('O. duplicate FINISH events in same attempt cannot cause duplicate completion', async () => {
+      const mockPopup = {} as unknown as Window;
       (window as any).FB = {
         init: vi.fn(),
         login: vi.fn((cb: any) => {
-          // Dispatch duplicate FINISH events
+          // Dispatch duplicate FINISH events from proven source
           window.dispatchEvent(
             new MessageEvent('message', {
               origin: 'https://www.facebook.com',
+              source: mockPopup,
               data: JSON.stringify({
                 type: 'WA_EMBEDDED_SIGNUP',
                 event: 'FINISH',
@@ -2445,6 +2469,7 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
           window.dispatchEvent(
             new MessageEvent('message', {
               origin: 'https://www.facebook.com',
+              source: mockPopup,
               data: JSON.stringify({
                 type: 'WA_EMBEDDED_SIGNUP',
                 event: 'FINISH',
@@ -2456,7 +2481,7 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
         }),
       };
 
-      const res = await launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test' });
+      const res = await launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test', sourceWindow: mockPopup });
       expect(res.wabaId).toBe('waba-first');
       expect(res.phoneNumberId).toBe('phone-first');
     });
@@ -2762,6 +2787,618 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
 
       await screen.findByText('WhatsApp do Ministério');
       expect(screen.queryByTestId('resume-whatsapp-btn')).not.toBeInTheDocument();
+    });
+  });
+
+  // =========================================================================
+  // PHASE 7E-F2-R3: Fail-Closed Meta Correlation Finalization (Regressions A-K)
+  // =========================================================================
+  describe('PHASE 7E-F2-R3: Fail-Closed Meta Correlation Finalization (Regressions A-K)', () => {
+    beforeEach(() => {
+      resetMetaSdkStateForTests();
+    });
+
+    // Test A: launch with captured sourceWindow receives matching FINISH postMessage
+    it('Test A: launch with captured sourceWindow receives matching FINISH postMessage', async () => {
+      const mockPopup = { name: 'popup-a' } as unknown as Window;
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              origin: 'https://www.facebook.com',
+              source: mockPopup,
+              data: JSON.stringify({
+                type: 'WA_EMBEDDED_SIGNUP',
+                event: 'FINISH',
+                data: { waba_id: 'waba-matched-a', phone_number_id: 'phone-matched-a' },
+              }),
+            })
+          );
+          cb({ authResponse: { code: 'code-matched-a' } });
+        }),
+      };
+
+      const res = await launchMetaEmbeddedSignup({
+        fbAppId: 'app-test',
+        configId: 'cfg-test',
+        sourceWindow: mockPopup,
+      });
+
+      expect(res).toEqual({
+        code: 'code-matched-a',
+        wabaId: 'waba-matched-a',
+        phoneNumberId: 'phone-matched-a',
+      });
+    });
+
+    // Test B: launch with captured sourceWindow receives foreign / mismatch postMessage
+    it('Test B: launch with captured sourceWindow receives foreign / mismatch postMessage', async () => {
+      const activePopup = { name: 'active-popup' } as unknown as Window;
+      const foreignPopup = { name: 'foreign-popup' } as unknown as Window;
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          // Foreign popup attempts to inject credentials
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              origin: 'https://www.facebook.com',
+              source: foreignPopup,
+              data: JSON.stringify({
+                type: 'WA_EMBEDDED_SIGNUP',
+                event: 'FINISH',
+                data: { waba_id: 'waba-foreign', phone_number_id: 'phone-foreign' },
+              }),
+            })
+          );
+          cb({ authResponse: { code: 'code-b' } });
+        }),
+      };
+
+      let err: any;
+      try {
+        await launchMetaEmbeddedSignup({
+          fbAppId: 'app-test',
+          configId: 'cfg-test',
+          sourceWindow: activePopup,
+        });
+      } catch (e: any) {
+        err = e;
+      }
+
+      expect(err).toBeDefined();
+      expect(err.code).toBe('META_SIGNUP_ATTEMPT_CORRELATION_UNAVAILABLE');
+      expect(err.correlationUnavailable).toBe(true);
+    });
+
+    // Test C: launch fails closed when sourceWindow cannot be captured AND callback lacks session identifiers
+    it('Test C: launch fails closed when sourceWindow cannot be captured AND callback lacks session identifiers', async () => {
+      const origOpen = window.open;
+      // Simulate popup blocked / sourceWindow not captured
+      window.open = vi.fn().mockReturnValue(null);
+      const removeSpy = vi.spyOn(window, 'removeEventListener');
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          // Message arrives from unverified source
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              origin: 'https://www.facebook.com',
+              data: JSON.stringify({
+                type: 'WA_EMBEDDED_SIGNUP',
+                event: 'FINISH',
+                data: { waba_id: 'waba-uncorrelated', phone_number_id: 'phone-uncorrelated' },
+              }),
+            })
+          );
+          cb({ authResponse: { code: 'code-only' } });
+        }),
+      };
+
+      let err: any;
+      try {
+        await launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test' });
+      } catch (e: any) {
+        err = e;
+      }
+
+      expect(err).toBeDefined();
+      expect(err.code).toBe('META_SIGNUP_ATTEMPT_CORRELATION_UNAVAILABLE');
+      expect(err.correlationUnavailable).toBe(true);
+      expect(err.message).toMatch(/correlacionar a sessão do WhatsApp com segurança/i);
+
+      // Attempt listener is removed immediately
+      expect(removeSpy.mock.calls.some((c) => c[0] === 'message')).toBe(true);
+
+      window.open = origOpen;
+    });
+
+    // Test D: single-channel callback data takes precedence over unverified / disagreeing postMessage
+    it('Test D: single-channel callback data takes precedence over unverified / disagreeing postMessage', async () => {
+      const mockPopup = { name: 'popup-d' } as unknown as Window;
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          // Disagreeing postMessage arrives
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              origin: 'https://www.facebook.com',
+              source: mockPopup,
+              data: JSON.stringify({
+                type: 'WA_EMBEDDED_SIGNUP',
+                event: 'FINISH',
+                data: { waba_id: 'waba-disagreeing', phone_number_id: 'phone-disagreeing' },
+              }),
+            })
+          );
+          // Callback provides authoritative single-channel data
+          cb({
+            authResponse: {
+              code: 'trusted-code',
+              sessionInfo: {
+                waba_id: 'trusted-waba',
+                phone_number_id: 'trusted-phone',
+              },
+            },
+          });
+        }),
+      };
+
+      const res = await launchMetaEmbeddedSignup({
+        fbAppId: 'app-test',
+        configId: 'cfg-test',
+        sourceWindow: mockPopup,
+      });
+
+      expect(res).toEqual({
+        code: 'trusted-code',
+        wabaId: 'trusted-waba',
+        phoneNumberId: 'trusted-phone',
+      });
+      expect(res.wabaId).not.toBe('waba-disagreeing');
+      expect(res.phoneNumberId).not.toBe('phone-disagreeing');
+    });
+
+    // Test E: postMessage identifiers from unverified source are ignored
+    it('Test E: postMessage identifiers from unverified source are ignored', async () => {
+      const verifiedSource = { name: 'verified-e' } as unknown as Window;
+      const unverifiedSource = { name: 'unverified-e' } as unknown as Window;
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              origin: 'https://www.facebook.com',
+              source: unverifiedSource,
+              data: JSON.stringify({
+                type: 'WA_EMBEDDED_SIGNUP',
+                event: 'FINISH',
+                data: { waba_id: 'waba-unverified', phone_number_id: 'phone-unverified' },
+              }),
+            })
+          );
+          cb({ authResponse: { code: 'code-e' } });
+        }),
+      };
+
+      await expect(
+        launchMetaEmbeddedSignup({
+          fbAppId: 'app-test',
+          configId: 'cfg-test',
+          sourceWindow: verifiedSource,
+        })
+      ).rejects.toMatchObject({
+        code: 'META_SIGNUP_ATTEMPT_CORRELATION_UNAVAILABLE',
+        correlationUnavailable: true,
+      });
+    });
+
+    // Test F: WhatsAppOnboardingModal cleanly handles correlation failure
+    it('Test F: WhatsAppOnboardingModal cleanly handles correlation failure', async () => {
+      const completeSpy = vi.spyOn(api, 'completeWhatsAppOnboarding');
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockResolvedValue({
+        sessionId: 'sess-f-modal',
+        connectionId: 'conn-f-modal',
+        fbAppId: 'app-f-modal',
+        configId: 'cfg-f-modal',
+        stateNonce: 'nonce-f-modal',
+        expiresAt: '2026-09-24T00:00:00Z',
+        mode: 'start',
+        provider: 'meta_cloud_api',
+      });
+
+      const origOpen = window.open;
+      window.open = vi.fn().mockReturnValue(null);
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          // Uncorrelated message
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              origin: 'https://www.facebook.com',
+              data: JSON.stringify({
+                type: 'WA_EMBEDDED_SIGNUP',
+                event: 'FINISH',
+                data: { waba_id: 'waba-uncorrelated', phone_number_id: 'phone-uncorrelated' },
+              }),
+            })
+          );
+          cb({ authResponse: { code: 'code-f' } });
+        }),
+      };
+
+      render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('start-onboarding-btn'));
+
+      await screen.findByText('Não Foi Possível Concluir a Operação');
+      expect(screen.getByText('META_SIGNUP_ATTEMPT_CORRELATION_UNAVAILABLE')).toBeInTheDocument();
+      expect(screen.getByTestId('modal-retry-btn')).toBeInTheDocument();
+      expect(completeSpy).not.toHaveBeenCalled();
+
+      window.open = origOpen;
+    });
+
+    // Test G: CANCEL postMessage continues to terminate the attempt immediately and cleanly
+    it('Test G: CANCEL postMessage continues to terminate the attempt immediately and cleanly', async () => {
+      const removeSpy = vi.spyOn(window, 'removeEventListener');
+      const mockPopup = { name: 'popup-g' } as unknown as Window;
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn(),
+      };
+
+      const launchPromise = launchMetaEmbeddedSignup({
+        fbAppId: 'app-test',
+        configId: 'cfg-test',
+        sourceWindow: mockPopup,
+      });
+      await Promise.resolve();
+
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: 'https://www.facebook.com',
+          source: mockPopup,
+          data: JSON.stringify({
+            type: 'WA_EMBEDDED_SIGNUP',
+            event: 'CANCEL',
+          }),
+        })
+      );
+
+      let caughtErr: any;
+      try {
+        await launchPromise;
+      } catch (e: any) {
+        caughtErr = e;
+      }
+
+      expect(caughtErr?.cancelled).toBe(true);
+      expect(removeSpy.mock.calls.some((c) => c[0] === 'message')).toBe(true);
+    });
+
+    // Test H: attempt A terminated before B; late message from A ignored by B
+    it('Test H: attempt A terminated before B; late message from A ignored by B', async () => {
+      const popupA = { name: 'popup-h-a' } as unknown as Window;
+      const popupB = { name: 'popup-h-b' } as unknown as Window;
+      let cbB: any;
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          cbB = cb;
+        }),
+      };
+
+      const ctrlA = new AbortController();
+      const pA = launchMetaEmbeddedSignup({
+        fbAppId: 'app-test',
+        configId: 'cfg-test',
+        signal: ctrlA.signal,
+        sourceWindow: popupA,
+      });
+      await Promise.resolve();
+
+      ctrlA.abort();
+      await pA.catch(() => {});
+
+      const pB = launchMetaEmbeddedSignup({
+        fbAppId: 'app-test',
+        configId: 'cfg-test',
+        sourceWindow: popupB,
+      });
+      await Promise.resolve();
+
+      // Delayed message from attempt A arrives
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: 'https://www.facebook.com',
+          source: popupA,
+          data: JSON.stringify({
+            type: 'WA_EMBEDDED_SIGNUP',
+            event: 'FINISH',
+            data: { waba_id: 'waba-stale-a', phone_number_id: 'phone-stale-a' },
+          }),
+        })
+      );
+
+      // Valid message from attempt B arrives
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: 'https://www.facebook.com',
+          source: popupB,
+          data: JSON.stringify({
+            type: 'WA_EMBEDDED_SIGNUP',
+            event: 'FINISH',
+            data: { waba_id: 'waba-valid-b', phone_number_id: 'phone-valid-b' },
+          }),
+        })
+      );
+
+      cbB({ authResponse: { code: 'code-valid-b' } });
+      const resB = await pB;
+
+      expect(resB).toEqual({
+        code: 'code-valid-b',
+        wabaId: 'waba-valid-b',
+        phoneNumberId: 'phone-valid-b',
+      });
+      expect(resB.wabaId).not.toBe('waba-stale-a');
+      expect(resB.phoneNumberId).not.toBe('phone-stale-a');
+    });
+
+    // Test I: modal unmount during popup cleans listener and ignores delayed events
+    it('Test I: modal unmount during popup cleans listener and ignores delayed events', async () => {
+      const removeSpy = vi.spyOn(window, 'removeEventListener');
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockResolvedValue({
+        sessionId: 'sess-i',
+        connectionId: 'conn-i',
+        fbAppId: 'app-i',
+        configId: 'cfg-i',
+        stateNonce: 'nonce-i',
+        expiresAt: '2026-09-24T00:00:00Z',
+        mode: 'start',
+        provider: 'meta_cloud_api',
+      });
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn(),
+      };
+
+      const { unmount } = render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('start-onboarding-btn'));
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      unmount();
+
+      expect(removeSpy.mock.calls.some((c) => c[0] === 'message')).toBe(true);
+
+      // Delayed message dispatched after unmount causes no errors
+      expect(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            origin: 'https://www.facebook.com',
+            data: JSON.stringify({
+              type: 'WA_EMBEDDED_SIGNUP',
+              event: 'FINISH',
+              data: { waba_id: 'waba-delayed', phone_number_id: 'phone-delayed' },
+            }),
+          })
+        );
+      }).not.toThrow();
+    });
+
+    // Test J: user can retry after correlation failure and succeed with verified session data
+    it('Test J: user can retry after correlation failure and succeed with verified session data', async () => {
+      const completeSpy = vi.spyOn(api, 'completeWhatsAppOnboarding').mockResolvedValue({
+        id: 'conn-j-retry-success',
+        organizationId: 'org-test',
+        displayName: 'WhatsApp Verified Retry',
+        phoneNumber: '+5511999991111',
+        provider: 'meta_cloud_api',
+        status: 'connected',
+        statusReason: null,
+        isOrganizationDefault: false,
+        assignedMinistryId: 'min-test',
+        createdAt: '2026-09-24T00:00:00Z',
+        updatedAt: '2026-09-24T00:00:00Z',
+      });
+
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockResolvedValue({
+        sessionId: 'sess-j-retry',
+        connectionId: 'conn-j-retry',
+        fbAppId: 'app-j-retry',
+        configId: 'cfg-j-retry',
+        stateNonce: 'nonce-j-retry',
+        expiresAt: '2026-09-24T00:00:00Z',
+        mode: 'start',
+        provider: 'meta_cloud_api',
+      });
+
+      let attempt = 0;
+      const origOpen = window.open;
+      window.open = vi.fn().mockReturnValue(null);
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          attempt += 1;
+          if (attempt === 1) {
+            // First attempt: unverified postMessage -> correlation failure
+            window.dispatchEvent(
+              new MessageEvent('message', {
+                origin: 'https://www.facebook.com',
+                data: JSON.stringify({
+                  type: 'WA_EMBEDDED_SIGNUP',
+                  event: 'FINISH',
+                  data: { waba_id: 'waba-unverified', phone_number_id: 'phone-unverified' },
+                }),
+              })
+            );
+            cb({ authResponse: { code: 'code-attempt-1' } });
+          } else {
+            // Second attempt: authoritative single-channel sessionInfo
+            cb({
+              authResponse: {
+                code: 'code-attempt-2',
+                sessionInfo: {
+                  waba_id: 'waba-attempt-2-verified',
+                  phone_number_id: 'phone-attempt-2-verified',
+                },
+              },
+            });
+          }
+        }),
+      };
+
+      const onSuccess = vi.fn();
+      render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={onSuccess}
+        />
+      );
+
+      // Attempt 1: click start -> fails closed
+      fireEvent.click(screen.getByTestId('start-onboarding-btn'));
+      await screen.findByText('META_SIGNUP_ATTEMPT_CORRELATION_UNAVAILABLE');
+      expect(completeSpy).not.toHaveBeenCalled();
+
+      // Click retry
+      fireEvent.click(screen.getByTestId('modal-retry-btn'));
+
+      // Attempt 2: click start -> succeeds with verified data
+      fireEvent.click(screen.getByTestId('start-onboarding-btn'));
+      await screen.findByText('WhatsApp Conectado com Sucesso!');
+
+      expect(completeSpy).toHaveBeenCalledTimes(1);
+      expect(completeSpy).toHaveBeenCalledWith('org-test', {
+        sessionId: 'sess-j-retry',
+        stateNonce: 'nonce-j-retry',
+        code: 'code-attempt-2',
+        wabaId: 'waba-attempt-2-verified',
+        phoneNumberId: 'phone-attempt-2-verified',
+      });
+      expect(onSuccess).toHaveBeenCalledTimes(1);
+
+      window.open = origOpen;
+    });
+
+    // Test K: at-most-once completion dispatch invariant preserved under correlation errors and retries
+    it('Test K: at-most-once completion dispatch invariant preserved under correlation errors and retries', async () => {
+      const completeSpy = vi.spyOn(api, 'completeWhatsAppOnboarding').mockResolvedValue({
+        id: 'conn-k-once',
+        organizationId: 'org-test',
+        displayName: 'WhatsApp Once',
+        phoneNumber: '+5511999992222',
+        provider: 'meta_cloud_api',
+        status: 'connected',
+        statusReason: null,
+        isOrganizationDefault: false,
+        assignedMinistryId: 'min-test',
+        createdAt: '2026-09-24T00:00:00Z',
+        updatedAt: '2026-09-24T00:00:00Z',
+      });
+
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockResolvedValue({
+        sessionId: 'sess-k-once',
+        connectionId: 'conn-k-once',
+        fbAppId: 'app-k-once',
+        configId: 'cfg-k-once',
+        stateNonce: 'nonce-k-once',
+        expiresAt: '2026-09-24T00:00:00Z',
+        mode: 'start',
+        provider: 'meta_cloud_api',
+      });
+
+      let attempt = 0;
+      const origOpen = window.open;
+      window.open = vi.fn().mockReturnValue(null);
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          attempt += 1;
+          if (attempt === 1) {
+            // Correlation error on first attempt
+            cb({ authResponse: { code: 'code-k-1' } });
+          } else {
+            // Success on second attempt
+            cb({
+              authResponse: {
+                code: 'code-k-2',
+                sessionInfo: {
+                  waba_id: 'waba-k-2',
+                  phone_number_id: 'phone-k-2',
+                },
+              },
+            });
+          }
+        }),
+      };
+
+      render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      // Attempt 1 fails
+      fireEvent.click(screen.getByTestId('start-onboarding-btn'));
+      await screen.findByText('META_SIGNUP_ATTEMPT_CORRELATION_UNAVAILABLE');
+      expect(completeSpy).toHaveBeenCalledTimes(0);
+
+      // Retry
+      fireEvent.click(screen.getByTestId('modal-retry-btn'));
+      fireEvent.click(screen.getByTestId('start-onboarding-btn'));
+      await screen.findByText('WhatsApp Conectado com Sucesso!');
+
+      // Complete must have been called exactly once
+      expect(completeSpy).toHaveBeenCalledTimes(1);
+
+      window.open = origOpen;
     });
   });
 });
