@@ -72,18 +72,330 @@ export function WhatsAppOnboardingModal({
   } | null>(null);
 
   const isSubmittingRef = useRef(false);
-  const pollingCountRef = useRef(0);
   const isMountedRef = useRef(true);
 
-  // Reset or initialize on modal open/close or resumeConnection change
+  // Lifecycle generation token for strict async & polling ownership
+  const lifecycleGenerationRef = useRef<number>(0);
+
+  // Owned polling timer reference
+  const pollingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Guard to ensure completeWhatsAppOnboarding is called at most once per active attempt
+  const completionDispatchedRef = useRef<boolean>(false);
+
+  // Abort controller for Meta Embedded Signup popup lifecycle
+  const metaSignupAbortControllerRef = useRef<AbortController | null>(null);
+
+  // Stop any active polling timer cleanly
+  const stopPolling = useCallback(() => {
+    if (pollingTimerRef.current !== null) {
+      clearTimeout(pollingTimerRef.current);
+      pollingTimerRef.current = null;
+    }
+  }, []);
+
+  // Invalidate any active attempt lifecycle (cancels polling, increments generation, resets completion guard)
+  const invalidateActiveAttempt = useCallback(() => {
+    stopPolling();
+    lifecycleGenerationRef.current += 1;
+    completionDispatchedRef.current = false;
+    if (metaSignupAbortControllerRef.current) {
+      metaSignupAbortControllerRef.current.abort();
+      metaSignupAbortControllerRef.current = null;
+    }
+  }, [stopPolling]);
+
+  // Check authoritative backend state for convergence
+  const checkAuthoritativeStatus = useCallback(
+    async (expectedGeneration?: number): Promise<boolean> => {
+      const activeGen = expectedGeneration ?? lifecycleGenerationRef.current;
+      const targetMinistryId = ministryId;
+      const targetOrgId = organizationId;
+      const activeConnId = transientSessionRef.current?.connectionId;
+
+      try {
+        const [ministryStatus, connsRes] = await Promise.all([
+          api.getMinistryWhatsAppStatus(targetMinistryId).catch(() => null),
+          api.listWhatsAppConnections(targetOrgId).catch(() => null),
+        ]);
+
+        // Strict Ownership & Lifecycle Guard:
+        // Do not commit UI state if unmounted, generation invalidated, or tenant switched
+        if (
+          !isMountedRef.current ||
+          lifecycleGenerationRef.current !== activeGen ||
+          ministryId !== targetMinistryId ||
+          organizationId !== targetOrgId
+        ) {
+          return false;
+        }
+
+        const matchedConn = connsRes?.items.find((c) => c.id === activeConnId);
+
+        if (ministryStatus?.isConnected || matchedConn?.status === 'connected') {
+          const found = matchedConn || ({
+            id: activeConnId || 'conn-active',
+            organizationId: targetOrgId,
+            displayName: ministryStatus?.displayName || 'Linha WhatsApp',
+            phoneNumber: ministryStatus?.phoneNumber || null,
+            provider: transientSessionRef.current?.provider || 'meta_cloud_api',
+            status: 'connected',
+            statusReason: null,
+            isOrganizationDefault: false,
+            assignedMinistryId: targetMinistryId,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          } as WhatsAppConnectionDto);
+
+          stopPolling();
+          setCompletedConnection(found);
+          setStep('connected');
+          onSuccess(found);
+          showToast?.('WhatsApp conectado com sucesso!', 'success');
+          return true;
+        }
+        return false;
+      } catch {
+        return false;
+      }
+    },
+    [ministryId, organizationId, onSuccess, showToast, stopPolling]
+  );
+
+  // Bounded polling for finalizing state (up to 3 checks, ~2.5s intervals)
+  const startBoundedPolling = useCallback(() => {
+    stopPolling();
+    const generation = lifecycleGenerationRef.current;
+    let pollCount = 0;
+    const MAX_CHECKS = 3;
+    const INTERVAL_MS = 2500;
+
+    const scheduleNext = () => {
+      pollingTimerRef.current = setTimeout(async () => {
+        // Pre-check guard
+        if (
+          !isMountedRef.current ||
+          lifecycleGenerationRef.current !== generation
+        ) {
+          return;
+        }
+
+        pollCount += 1;
+        const converged = await checkAuthoritativeStatus(generation);
+
+        // Post-check guard
+        if (
+          !isMountedRef.current ||
+          lifecycleGenerationRef.current !== generation
+        ) {
+          return;
+        }
+
+        if (converged) {
+          stopPolling();
+          return;
+        }
+
+        if (pollCount < MAX_CHECKS) {
+          scheduleNext();
+        } else {
+          // Bounded automatic polling exhausted: stop timer ref, maintain stable finalizing state
+          pollingTimerRef.current = null;
+        }
+      }, INTERVAL_MS);
+    };
+
+    scheduleNext();
+  }, [checkAuthoritativeStatus, stopPolling]);
+
+  // Canonical error handler mapping backend categories
+  const handleLifecycleError = useCallback(
+    (err: any) => {
+      const classified = classifyWhatsAppError(err);
+      setErrorCode(classified.code);
+      setErrorMessage(classified.userMessage);
+
+      switch (classified.category) {
+        case 'PROVIDER_PENDING':
+          setStep('finalizing');
+          // Trigger bounded polling (up to 3 attempts, ~2.5s intervals)
+          startBoundedPolling();
+          break;
+
+        case 'COMMERCIAL_RESTRICTION':
+          stopPolling();
+          setStep('commercial_blocked');
+          break;
+
+        case 'RESUME_ONBOARDING':
+          stopPolling();
+          // e.g. ONBOARDING_SESSION_EXPIRED: 15m session expired, but 24h reservation may still be valid
+          setStep('resumable');
+          break;
+
+        case 'TERMINAL':
+          stopPolling();
+          if (classified.code === 'CONNECTION_RESERVATION_EXPIRED') {
+            // 24h reservation expired. In-place resume is prohibited!
+            setStep('reservation_expired');
+          } else {
+            setStep('error');
+          }
+          break;
+
+        case 'REFRESH_STATE':
+          stopPolling();
+          setStep('error');
+          break;
+
+        default:
+          stopPolling();
+          setStep('error');
+          break;
+      }
+    },
+    [startBoundedPolling, stopPolling]
+  );
+
+  // Execute start onboarding on backend
+  const executeStartOnboarding = async (
+    provider: WhatsAppProvider,
+    customDisplayName?: string,
+    resumeConnectionId?: string
+  ) => {
+    if (isSubmittingRef.current) return;
+
+    // Invalidate any prior attempt or polling loop before starting a new one
+    invalidateActiveAttempt();
+    const attemptGen = lifecycleGenerationRef.current;
+
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
+    setStep('starting');
+    setErrorMessage(null);
+    setErrorCode(null);
+
+    try {
+      const res: StartWhatsAppOnboardingResponseDto = await api.startWhatsAppOnboarding(organizationId, {
+        provider,
+        displayName: customDisplayName,
+        resumeConnectionId,
+      });
+
+      if (!isMountedRef.current || lifecycleGenerationRef.current !== attemptGen) return;
+
+      transientSessionRef.current = {
+        sessionId: res.sessionId,
+        connectionId: res.connectionId,
+        stateNonce: res.stateNonce,
+        provider: res.provider || provider,
+      };
+
+      const resolvedProvider = res.provider || provider;
+
+      // Provider Branch: Zernio
+      if (resolvedProvider === 'zernio') {
+        if (!res.authUrl || typeof res.authUrl !== 'string' || (!res.authUrl.startsWith('http') && !res.authUrl.startsWith('/'))) {
+          throw new Error('URL de autenticação inválida retornada pelo servidor para o Zernio.');
+        }
+        setStep('redirecting_zernio');
+        // Authoritative external browser navigation
+        window.location.href = res.authUrl;
+        return;
+      }
+
+      // Provider Branch: Meta Cloud API
+      if (resolvedProvider === 'meta_cloud_api') {
+        if (!res.fbAppId || !res.configId || !res.stateNonce) {
+          throw new Error('Configuração da Meta incompleta retornada pelo servidor (fbAppId/configId/stateNonce).');
+        }
+
+        setStep('awaiting_meta');
+        isSubmittingRef.current = false;
+        setIsSubmitting(false);
+
+        metaSignupAbortControllerRef.current = new AbortController();
+
+        let metaResult;
+        try {
+          metaResult = await launchMetaEmbeddedSignup({
+            fbAppId: res.fbAppId,
+            configId: res.configId,
+            stateNonce: res.stateNonce,
+            sessionId: res.sessionId,
+            signal: metaSignupAbortControllerRef.current.signal,
+          });
+        } catch (popupErr: any) {
+          if (!isMountedRef.current || lifecycleGenerationRef.current !== attemptGen) return;
+          if (popupErr?.cancelled) {
+            setStep('error');
+            setErrorMessage('Autorização cancelada no popup do WhatsApp.');
+            setErrorCode('CANCELLED');
+          } else if (popupErr?.incomplete) {
+            setStep('error');
+            setErrorMessage(popupErr.message || 'Resultado incompleto retornado pela Meta.');
+            setErrorCode('INCOMPLETE_RESULT');
+          } else {
+            setStep('error');
+            setErrorMessage(popupErr.message || 'Falha na comunicação com o popup da Meta.');
+          }
+          return;
+        }
+
+        if (!isMountedRef.current || lifecycleGenerationRef.current !== attemptGen) return;
+
+        // Double-completion protection: dispatch completeWhatsAppOnboarding at most once per active attempt
+        if (completionDispatchedRef.current) {
+          return;
+        }
+        completionDispatchedRef.current = true;
+
+        // Completion on backend
+        isSubmittingRef.current = true;
+        setIsSubmitting(true);
+        setStep('completing_meta');
+
+        try {
+          const conn = await api.completeWhatsAppOnboarding(organizationId, {
+            sessionId: res.sessionId,
+            stateNonce: res.stateNonce,
+            code: metaResult.code,
+            wabaId: metaResult.wabaId,
+            phoneNumberId: metaResult.phoneNumberId,
+          });
+
+          if (!isMountedRef.current || lifecycleGenerationRef.current !== attemptGen) return;
+          stopPolling();
+          setCompletedConnection(conn);
+          setStep('connected');
+          onSuccess(conn);
+          showToast?.('WhatsApp conectado com sucesso!', 'success');
+        } catch (completeErr: any) {
+          if (!isMountedRef.current || lifecycleGenerationRef.current !== attemptGen) return;
+          handleLifecycleError(completeErr);
+        }
+      }
+    } catch (err: any) {
+      if (!isMountedRef.current || lifecycleGenerationRef.current !== attemptGen) return;
+      handleLifecycleError(err);
+    } finally {
+      if (isMountedRef.current && lifecycleGenerationRef.current === attemptGen) {
+        isSubmittingRef.current = false;
+        setIsSubmitting(false);
+      }
+    }
+  };
+
+  // Reset or initialize on modal open/close or tenant/resume change
   useEffect(() => {
     isMountedRef.current = true;
+    invalidateActiveAttempt();
+
     if (isOpen) {
       setErrorMessage(null);
       setErrorCode(null);
       isSubmittingRef.current = false;
       setIsSubmitting(false);
-      pollingCountRef.current = 0;
 
       if (resumeConnection) {
         setSelectedProvider(resumeConnection.provider);
@@ -107,8 +419,9 @@ export function WhatsAppOnboardingModal({
 
     return () => {
       isMountedRef.current = false;
+      invalidateActiveAttempt();
     };
-  }, [isOpen, resumeConnection]);
+  }, [isOpen, organizationId, ministryId, resumeConnection]);
 
   // Keyboard accessibility: Escape to close
   useEffect(() => {
@@ -121,213 +434,6 @@ export function WhatsAppOnboardingModal({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
-
-  // Check authoritative backend state for convergence
-  const checkAuthoritativeStatus = useCallback(async () => {
-    try {
-      const [ministryStatus, connsRes] = await Promise.all([
-        api.getMinistryWhatsAppStatus(ministryId).catch(() => null),
-        api.listWhatsAppConnections(organizationId).catch(() => null),
-      ]);
-
-      if (!isMountedRef.current) return;
-
-      const activeConnId = transientSessionRef.current?.connectionId;
-      const matchedConn = connsRes?.items.find((c) => c.id === activeConnId);
-
-      if (ministryStatus?.isConnected || matchedConn?.status === 'connected') {
-        const found = matchedConn || ({
-          id: activeConnId || 'conn-active',
-          organizationId,
-          displayName: ministryStatus?.displayName || 'Linha WhatsApp',
-          phoneNumber: ministryStatus?.phoneNumber || null,
-          provider: transientSessionRef.current?.provider || 'meta_cloud_api',
-          status: 'connected',
-          statusReason: null,
-          isOrganizationDefault: false,
-          assignedMinistryId: ministryId,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        } as WhatsAppConnectionDto);
-
-        setCompletedConnection(found);
-        setStep('connected');
-        onSuccess(found);
-        showToast?.('WhatsApp conectado com sucesso!', 'success');
-        return true;
-      }
-      return false;
-    } catch {
-      return false;
-    }
-  }, [ministryId, organizationId, onSuccess, showToast]);
-
-  // Execute start onboarding on backend
-  const executeStartOnboarding = async (
-    provider: WhatsAppProvider,
-    customDisplayName?: string,
-    resumeConnectionId?: string
-  ) => {
-    if (isSubmittingRef.current) return;
-    isSubmittingRef.current = true;
-    setIsSubmitting(true);
-    setStep('starting');
-    setErrorMessage(null);
-    setErrorCode(null);
-
-    try {
-      const res: StartWhatsAppOnboardingResponseDto = await api.startWhatsAppOnboarding(organizationId, {
-        provider,
-        displayName: customDisplayName,
-        resumeConnectionId,
-      });
-
-      if (!isMountedRef.current) return;
-
-      transientSessionRef.current = {
-        sessionId: res.sessionId,
-        connectionId: res.connectionId,
-        stateNonce: res.stateNonce,
-        provider: res.provider || provider,
-      };
-
-      const resolvedProvider = res.provider || provider;
-
-      // Provider Branch: Zernio
-      if (resolvedProvider === 'zernio') {
-        if (!res.authUrl || typeof res.authUrl !== 'string' || !res.authUrl.startsWith('http')) {
-          throw new Error('URL de autenticação inválida retornada pelo servidor para o Zernio.');
-        }
-        setStep('redirecting_zernio');
-        // Authoritative external browser navigation
-        window.location.href = res.authUrl;
-        return;
-      }
-
-      // Provider Branch: Meta Cloud API
-      if (resolvedProvider === 'meta_cloud_api') {
-        if (!res.fbAppId || !res.configId || !res.stateNonce) {
-          throw new Error('Configuração da Meta incompleta retornada pelo servidor (fbAppId/configId/stateNonce).');
-        }
-
-        setStep('awaiting_meta');
-        isSubmittingRef.current = false;
-        setIsSubmitting(false);
-
-        let metaResult;
-        try {
-          metaResult = await launchMetaEmbeddedSignup({
-            fbAppId: res.fbAppId,
-            configId: res.configId,
-            stateNonce: res.stateNonce,
-            sessionId: res.sessionId,
-          });
-        } catch (popupErr: any) {
-          if (!isMountedRef.current) return;
-          if (popupErr?.cancelled) {
-            setStep('error');
-            setErrorMessage('Autorização cancelada no popup do WhatsApp.');
-            setErrorCode('CANCELLED');
-          } else if (popupErr?.incomplete) {
-            setStep('error');
-            setErrorMessage(popupErr.message || 'Resultado incompleto retornado pela Meta.');
-            setErrorCode('INCOMPLETE_RESULT');
-          } else {
-            setStep('error');
-            setErrorMessage(popupErr.message || 'Falha na comunicação com o popup da Meta.');
-          }
-          return;
-        }
-
-        if (!isMountedRef.current) return;
-
-        // Completion on backend
-        isSubmittingRef.current = true;
-        setIsSubmitting(true);
-        setStep('completing_meta');
-
-        try {
-          const conn = await api.completeWhatsAppOnboarding(organizationId, {
-            sessionId: res.sessionId,
-            stateNonce: res.stateNonce,
-            code: metaResult.code,
-            wabaId: metaResult.wabaId,
-            phoneNumberId: metaResult.phoneNumberId,
-          });
-
-          if (!isMountedRef.current) return;
-          setCompletedConnection(conn);
-          setStep('connected');
-          onSuccess(conn);
-          showToast?.('WhatsApp conectado com sucesso!', 'success');
-        } catch (completeErr: any) {
-          if (!isMountedRef.current) return;
-          handleLifecycleError(completeErr);
-        }
-      }
-    } catch (err: any) {
-      if (!isMountedRef.current) return;
-      handleLifecycleError(err);
-    } finally {
-      if (isMountedRef.current) {
-        isSubmittingRef.current = false;
-        setIsSubmitting(false);
-      }
-    }
-  };
-
-  // Canonical error handler mapping backend categories
-  const handleLifecycleError = (err: any) => {
-    const classified = classifyWhatsAppError(err);
-    setErrorCode(classified.code);
-    setErrorMessage(classified.userMessage);
-
-    switch (classified.category) {
-      case 'PROVIDER_PENDING':
-        setStep('finalizing');
-        // Trigger bounded polling (up to 3 attempts, 2.5s intervals)
-        startBoundedPolling();
-        break;
-
-      case 'COMMERCIAL_RESTRICTION':
-        setStep('commercial_blocked');
-        break;
-
-      case 'RESUME_ONBOARDING':
-        // e.g. ONBOARDING_SESSION_EXPIRED: 15m session expired, but 24h reservation may still be valid
-        setStep('resumable');
-        break;
-
-      case 'TERMINAL':
-        if (classified.code === 'CONNECTION_RESERVATION_EXPIRED') {
-          // 24h reservation expired. In-place resume is prohibited!
-          setStep('reservation_expired');
-        } else {
-          setStep('error');
-        }
-        break;
-
-      case 'REFRESH_STATE':
-        setStep('error');
-        break;
-
-      default:
-        setStep('error');
-        break;
-    }
-  };
-
-  // Bounded polling for finalizing state
-  const startBoundedPolling = () => {
-    pollingCountRef.current = 0;
-    const interval = setInterval(async () => {
-      pollingCountRef.current += 1;
-      const done = await checkAuthoritativeStatus();
-      if (done || pollingCountRef.current >= 3) {
-        clearInterval(interval);
-      }
-    }, 2500);
-  };
 
   if (!isOpen) return null;
 
@@ -668,7 +774,7 @@ export function WhatsAppOnboardingModal({
                 type="button"
                 className="btn btn-primary min-h-[44px]"
                 data-testid="refresh-status-btn"
-                onClick={checkAuthoritativeStatus}
+                onClick={() => checkAuthoritativeStatus()}
                 style={{
                   minHeight: '44px',
                   display: 'inline-flex',

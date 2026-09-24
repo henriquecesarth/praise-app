@@ -25,6 +25,7 @@ export interface LaunchMetaSignupOptions {
   configId: string;
   stateNonce?: string;
   sessionId?: string;
+  signal?: AbortSignal;
 }
 
 export interface MetaSignupAuthResult {
@@ -37,12 +38,46 @@ export interface MetaSignupAuthResult {
 let sdkLoadingPromise: Promise<any> | null = null;
 let initializedAppId: string | null = null;
 
+interface ActiveMetaAttempt {
+  attemptId: number;
+  cleanup: () => void;
+  reject: (err: any) => void;
+}
+
+let activeMetaAttempt: ActiveMetaAttempt | null = null;
+let attemptIdSequence = 0;
+
+/**
+ * Validates that a message event origin is an authentic Meta / Facebook origin.
+ * Enforces HTTPS and strictly matches facebook.com or meta.com hostnames.
+ */
+export function isValidMetaOrigin(origin: string): boolean {
+  if (!origin || typeof origin !== 'string') return false;
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== 'https:') return false;
+    const host = url.hostname.toLowerCase();
+    return (
+      host === 'facebook.com' ||
+      host.endsWith('.facebook.com') ||
+      host === 'meta.com' ||
+      host.endsWith('.meta.com')
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Resets the Meta SDK loader state. Used exclusively in unit tests.
  */
 export function resetMetaSdkStateForTests(): void {
   sdkLoadingPromise = null;
   initializedAppId = null;
+  if (activeMetaAttempt) {
+    activeMetaAttempt.cleanup();
+    activeMetaAttempt = null;
+  }
   if (typeof window !== 'undefined') {
     delete (window as any).fbAsyncInit;
     const existing = document.getElementById('facebook-jssdk');
@@ -138,32 +173,104 @@ export function loadMetaSdk(fbAppId: string): Promise<any> {
 
 /**
  * Launches the Meta Embedded Signup popup and awaits user authorization and message events.
+ * Scopes each launch to an isolated attempt lifecycle with strictly bounded message listeners.
  */
 export async function launchMetaEmbeddedSignup(
   options: LaunchMetaSignupOptions
 ): Promise<MetaSignupAuthResult> {
-  const { fbAppId, configId } = options;
+  const { fbAppId, configId, signal } = options;
 
   if (!fbAppId || !configId) {
     throw new Error('fbAppId e configId são obrigatórios para iniciar o Meta Embedded Signup.');
   }
 
+  if (signal?.aborted) {
+    const err = new Error('Operação de login cancelada antes do início.');
+    (err as any).cancelled = true;
+    throw err;
+  }
+
+  // Teardown any prior active attempt listener and fail the prior promise cleanly
+  if (activeMetaAttempt) {
+    const prior = activeMetaAttempt;
+    activeMetaAttempt = null;
+    const abortErr = new Error('Nova tentativa de onboarding iniciada; tentativa anterior cancelada.');
+    (abortErr as any).cancelled = true;
+    prior.reject(abortErr);
+    prior.cleanup();
+  }
+
   const FB = await loadMetaSdk(fbAppId);
 
+  if (signal?.aborted) {
+    const err = new Error('Operação de login cancelada antes do início.');
+    (err as any).cancelled = true;
+    throw err;
+  }
+
+  const currentAttemptId = ++attemptIdSequence;
+
   return new Promise<MetaSignupAuthResult>((resolve, reject) => {
+    // Attempt-scoped state: fresh per attempt, never shared across attempts
     let capturedWabaId: string | null = null;
     let capturedPhoneNumberId: string | null = null;
     let userCancelled = false;
+    let finishEventReceived = false;
+    let isTerminated = false;
+
+    const cleanup = () => {
+      if (isTerminated) return;
+      isTerminated = true;
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('message', messageHandler);
+      }
+      if (activeMetaAttempt?.attemptId === currentAttemptId) {
+        activeMetaAttempt = null;
+      }
+    };
+
+    activeMetaAttempt = {
+      attemptId: currentAttemptId,
+      cleanup,
+      reject: (err) => {
+        if (!isTerminated) {
+          cleanup();
+          reject(err);
+        }
+      },
+    };
+
+    if (signal) {
+      signal.addEventListener(
+        'abort',
+        () => {
+          if (!isTerminated) {
+            cleanup();
+            const err = new Error('Operação cancelada pelo chamador.');
+            (err as any).cancelled = true;
+            reject(err);
+          }
+        },
+        { once: true }
+      );
+    }
 
     const messageHandler = (event: MessageEvent) => {
-      // Validate origin loosely to support facebook.com and web.facebook.com
-      if (
-        event.origin &&
-        !event.origin.includes('facebook.com') &&
-        !event.origin.includes('meta.com')
-      ) {
+      if (isTerminated) return;
+
+      // 1. Origin validation: Meta Embedded Signup emits messages from facebook.com / meta.com via HTTPS
+      if (!isValidMetaOrigin(event.origin)) {
         return;
       }
+
+      // NOTE: Source window binding limitation:
+      // FB.login launches the popup internally and does NOT return a window reference or handle
+      // to the opened dialog. Therefore, exact event.source === popupWindow identity check cannot
+      // be enforced by the JS SDK contract. We compensate for this SDK limitation via:
+      // (a) strict origin checking (HTTPS + verified facebook/meta domains);
+      // (b) per-attempt listener isolation and immediate teardown on every terminal path;
+      // (c) strict payload structural validation with WA_EMBEDDED_SIGNUP discriminator;
+      // (d) attempt-scoped closure preventing cross-attempt state pollution.
 
       try {
         let payload = event.data;
@@ -175,29 +282,45 @@ export async function launchMetaEmbeddedSignup(
           }
         }
 
-        if (payload && typeof payload === 'object') {
-          if (payload.type === 'WA_EMBEDDED_SIGNUP') {
-            if (payload.event === 'FINISH' && payload.data) {
-              capturedWabaId =
-                payload.data.waba_id || payload.data.wabaId || capturedWabaId;
-              capturedPhoneNumberId =
-                payload.data.phone_number_id ||
-                payload.data.phoneNumberId ||
-                capturedPhoneNumberId;
-            } else if (payload.event === 'CANCEL') {
-              userCancelled = true;
-            }
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+          return;
+        }
+
+        // Require expected Embedded Signup discriminator
+        if (payload.type !== 'WA_EMBEDDED_SIGNUP') {
+          return;
+        }
+
+        if (payload.event === 'CANCEL') {
+          userCancelled = true;
+          return;
+        }
+
+        if (payload.event === 'FINISH') {
+          // Double-event guard: ignore duplicate FINISH within the same attempt
+          if (finishEventReceived) {
+            return;
           }
 
-          if (payload.waba_id || payload.wabaId) {
-            capturedWabaId = payload.waba_id || payload.wabaId;
-          }
-          if (payload.phone_number_id || payload.phoneNumberId) {
-            capturedPhoneNumberId = payload.phone_number_id || payload.phoneNumberId;
+          const eventData = payload.data;
+          if (eventData && typeof eventData === 'object' && !Array.isArray(eventData)) {
+            const waba = eventData.waba_id || eventData.wabaId;
+            const phone = eventData.phone_number_id || eventData.phoneNumberId;
+
+            if (typeof waba === 'string' && waba.trim().length > 0) {
+              capturedWabaId = waba.trim();
+            }
+            if (typeof phone === 'string' && phone.trim().length > 0) {
+              capturedPhoneNumberId = phone.trim();
+            }
+
+            if (capturedWabaId && capturedPhoneNumberId) {
+              finishEventReceived = true;
+            }
           }
         }
       } catch {
-        // Non-JSON message, safe to ignore
+        // Non-JSON or malformed message, safe to ignore
       }
     };
 
@@ -206,7 +329,8 @@ export async function launchMetaEmbeddedSignup(
     try {
       FB.login(
         (response: any) => {
-          window.removeEventListener('message', messageHandler);
+          // Terminal path: remove listener immediately
+          cleanup();
 
           if (userCancelled || !response || !response.authResponse) {
             const err = new Error('Operação de login cancelada pelo usuário no popup do WhatsApp.');
@@ -217,18 +341,19 @@ export async function launchMetaEmbeddedSignup(
           const code = response.authResponse.code;
           const wabaId =
             capturedWabaId ||
-            response.authResponse.waba_id ||
-            response.authResponse.wabaId ||
-            response.authResponse.sessionInfo?.waba_id ||
-            response.authResponse.sessionInfo?.wabaId;
+            (typeof response.authResponse.waba_id === 'string' ? response.authResponse.waba_id : null) ||
+            (typeof response.authResponse.wabaId === 'string' ? response.authResponse.wabaId : null) ||
+            (typeof response.authResponse.sessionInfo?.waba_id === 'string' ? response.authResponse.sessionInfo.waba_id : null) ||
+            (typeof response.authResponse.sessionInfo?.wabaId === 'string' ? response.authResponse.sessionInfo.wabaId : null);
+
           const phoneNumberId =
             capturedPhoneNumberId ||
-            response.authResponse.phone_number_id ||
-            response.authResponse.phoneNumberId ||
-            response.authResponse.sessionInfo?.phone_number_id ||
-            response.authResponse.sessionInfo?.phoneNumberId;
+            (typeof response.authResponse.phone_number_id === 'string' ? response.authResponse.phone_number_id : null) ||
+            (typeof response.authResponse.phoneNumberId === 'string' ? response.authResponse.phoneNumberId : null) ||
+            (typeof response.authResponse.sessionInfo?.phone_number_id === 'string' ? response.authResponse.sessionInfo.phone_number_id : null) ||
+            (typeof response.authResponse.sessionInfo?.phoneNumberId === 'string' ? response.authResponse.sessionInfo.phoneNumberId : null);
 
-          if (!code) {
+          if (!code || typeof code !== 'string' || code.trim().length === 0) {
             const err = new Error('Operação cancelada: código de autorização ausente.');
             (err as any).cancelled = true;
             return reject(err);
@@ -243,9 +368,9 @@ export async function launchMetaEmbeddedSignup(
           }
 
           resolve({
-            code,
-            wabaId,
-            phoneNumberId,
+            code: code.trim(),
+            wabaId: wabaId.trim(),
+            phoneNumberId: phoneNumberId.trim(),
           });
         },
         {
@@ -259,7 +384,7 @@ export async function launchMetaEmbeddedSignup(
         }
       );
     } catch (err: any) {
-      window.removeEventListener('message', messageHandler);
+      cleanup();
       reject(err);
     }
   });

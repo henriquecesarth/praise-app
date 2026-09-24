@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, act, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   api,
@@ -24,6 +24,8 @@ import { WhatsAppOnboardingModal } from './components/whatsapp/WhatsAppOnboardin
 import {
   loadMetaSdk,
   resetMetaSdkStateForTests,
+  launchMetaEmbeddedSignup,
+  isValidMetaOrigin,
 } from './components/whatsapp/meta-sdk';
 import type {
   MinistryWhatsAppStatusDto,
@@ -1531,6 +1533,995 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
           expect(val).not.toContain(forbidden);
         }
       }
+    });
+  });
+
+  // PHASE 7E-F2-R1 — PROVIDER UI LIFECYCLE & META SDK ISOLATION REGRESSIONS
+  describe('PHASE 7E-F2-R1: Provider UI Lifecycle & Meta SDK Isolation Regressions (Tests A-T)', () => {
+    const mockCapacity: OrganizationWhatsAppCapacity = {
+      organizationId: 'org-test',
+      billingAnchorMinistryId: 'min-test',
+      totalAllowedConnections: 1,
+      includedConnections: 1,
+      additionalConnections: 0,
+      configuredConnectionsCount: 0,
+      remainingCapacity: 1,
+      commercialState: 'healthy',
+      canSendMessages: true,
+      canCreateConnection: true,
+      canResumeAuthorizedOnboarding: true,
+      restrictionReason: null,
+      gracePeriodExpiresBillingDate: null,
+      billingAccessMode: 'normal',
+      connectionAccessMode: 'normal',
+    };
+
+    const mockUnconnectedStatus: MinistryWhatsAppStatusDto = {
+      hasOrganization: true,
+      organizationId: 'org-test',
+      isConfigured: false,
+      isConnected: false,
+      source: 'none',
+      connectionId: null,
+      displayName: null,
+      phoneNumber: null,
+      connectionAccessMode: 'normal',
+      canSendMessages: false,
+    };
+
+    beforeEach(() => {
+      resetMetaSdkStateForTests();
+      localStorage.clear();
+      sessionStorage.clear();
+      vi.restoreAllMocks();
+    });
+
+    afterEach(() => {
+      resetMetaSdkStateForTests();
+      vi.useRealTimers();
+    });
+
+    // Test A: provider-pending poll begins when start/complete/status indicates pending/connecting
+    it('A. provider-pending poll begins when start/complete/status indicates pending/connecting', async () => {
+      vi.useFakeTimers();
+      const statusSpy = vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue(mockUnconnectedStatus);
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue(mockCapacity);
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({ items: [], nextCursor: null });
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockRejectedValue({
+        message: 'Aguardando confirmação do provedor',
+        code: 'WABA_SUBSCRIBE_OUTCOME_UNRESOLVED',
+        details: { code: 'WABA_SUBSCRIBE_OUTCOME_UNRESOLVED' },
+      });
+
+      render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('start-onboarding-btn'));
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // Modal enters 'finalizing' step
+      expect(screen.getAllByText(/Finalizando ativação/i).length).toBeGreaterThan(0);
+
+      // Fast forward ~2.5s interval
+      await act(async () => {
+        vi.advanceTimersByTime(2600);
+      });
+
+      expect(statusSpy).toHaveBeenCalled();
+    });
+
+    // Test B: closing modal cancels future polling ticks immediately
+    it('B. closing modal cancels future polling ticks immediately', async () => {
+      vi.useFakeTimers();
+      const statusSpy = vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue(mockUnconnectedStatus);
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue(mockCapacity);
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({ items: [], nextCursor: null });
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockRejectedValue({
+        message: 'Aguardando confirmação do provedor',
+        code: 'WABA_SUBSCRIBE_OUTCOME_UNRESOLVED',
+        details: { code: 'WABA_SUBSCRIBE_OUTCOME_UNRESOLVED' },
+      });
+
+      const onClose = vi.fn();
+      const { rerender } = render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={onClose}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('start-onboarding-btn'));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getAllByText(/Finalizando ativação/i).length).toBeGreaterThan(0);
+
+      // Close modal
+      rerender(
+        <WhatsAppOnboardingModal
+          isOpen={false}
+          onClose={onClose}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      const callCountBefore = statusSpy.mock.calls.length;
+
+      // Advance by 10 seconds
+      await act(async () => {
+        vi.advanceTimersByTime(10000);
+      });
+
+      // No new polling ticks should have fired
+      expect(statusSpy.mock.calls.length).toBe(callCountBefore);
+    });
+
+    // Test C: component unmount cancels future polling ticks immediately
+    it('C. component unmount cancels future polling ticks immediately', async () => {
+      vi.useFakeTimers();
+      const statusSpy = vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue(mockUnconnectedStatus);
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue(mockCapacity);
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({ items: [], nextCursor: null });
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockRejectedValue({
+        message: 'Aguardando confirmação do provedor',
+        code: 'WABA_SUBSCRIBE_OUTCOME_UNRESOLVED',
+        details: { code: 'WABA_SUBSCRIBE_OUTCOME_UNRESOLVED' },
+      });
+
+      const { unmount } = render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('start-onboarding-btn'));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getAllByText(/Finalizando ativação/i).length).toBeGreaterThan(0);
+
+      unmount();
+
+      const callsAfterUnmount = statusSpy.mock.calls.length;
+      await act(async () => {
+        vi.advanceTimersByTime(10000);
+      });
+
+      expect(statusSpy.mock.calls.length).toBe(callsAfterUnmount);
+    });
+
+    // Test D: ministry switch invalidates old polling generation and halts background work
+    it('D. ministry switch invalidates old polling generation and halts background work', async () => {
+      vi.useFakeTimers();
+      const statusSpy = vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue(mockUnconnectedStatus);
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue(mockCapacity);
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({ items: [], nextCursor: null });
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockRejectedValue({
+        message: 'Aguardando',
+        code: 'WABA_SUBSCRIBE_OUTCOME_UNRESOLVED',
+      });
+
+      const { rerender } = render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-1"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('start-onboarding-btn'));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getAllByText(/Finalizando ativação/i).length).toBeGreaterThan(0);
+
+      // Switch ministry
+      rerender(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-2"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      const callsAfterSwitch = statusSpy.mock.calls.length;
+      await act(async () => {
+        vi.advanceTimersByTime(10000);
+      });
+
+      // Polling for old generation min-1 must have halted
+      expect(statusSpy.mock.calls.filter((call) => call[0] === 'min-1').length).toBe(callsAfterSwitch);
+    });
+
+    // Test E: organization switch invalidates old polling generation and halts background work
+    it('E. organization switch invalidates old polling generation and halts background work', async () => {
+      vi.useFakeTimers();
+      const statusSpy = vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue(mockUnconnectedStatus);
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue(mockCapacity);
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({ items: [], nextCursor: null });
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockRejectedValue({
+        message: 'Aguardando',
+        code: 'WABA_SUBSCRIBE_OUTCOME_UNRESOLVED',
+      });
+
+      const { rerender } = render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-1"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('start-onboarding-btn'));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getAllByText(/Finalizando ativação/i).length).toBeGreaterThan(0);
+
+      // Switch organization
+      rerender(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-2"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      const callsAfterSwitch = statusSpy.mock.calls.length;
+      await act(async () => {
+        vi.advanceTimersByTime(10000);
+      });
+
+      expect(statusSpy.mock.calls.length).toBe(callsAfterSwitch);
+    });
+
+    // Test F: stale delayed response from prior generation cannot update newer tenant / newer attempt UI
+    it('F. stale delayed response from prior generation cannot update newer tenant / newer attempt UI', async () => {
+      vi.useFakeTimers();
+      let resolveDelayedStatus: (val: any) => void;
+      const delayedStatusPromise = new Promise((resolve) => {
+        resolveDelayedStatus = resolve;
+      });
+
+      vi.spyOn(api, 'getMinistryWhatsAppStatus').mockImplementation(() => delayedStatusPromise as any);
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue(mockCapacity);
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({ items: [], nextCursor: null });
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockRejectedValue({
+        message: 'Aguardando',
+        code: 'WABA_SUBSCRIBE_OUTCOME_UNRESOLVED',
+      });
+
+      const onSuccess = vi.fn();
+      const { rerender } = render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-1"
+          ministryId="min-1"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={onSuccess}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('start-onboarding-btn'));
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // Advance timer so polling starts and calls checkAuthoritativeStatus
+      await act(async () => {
+        vi.advanceTimersByTime(2600);
+        await Promise.resolve();
+      });
+
+      // Switch organization while check is in-flight
+      rerender(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-2"
+          ministryId="min-1"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={onSuccess}
+        />
+      );
+
+      // Delayed promise resolves with connected=true for old generation
+      await act(async () => {
+        resolveDelayedStatus!({
+          ...mockUnconnectedStatus,
+          isConnected: true,
+          connectionId: 'conn-stale',
+        });
+        await Promise.resolve();
+      });
+
+      // Stale response must NOT trigger onSuccess for the new generation
+      expect(onSuccess).not.toHaveBeenCalled();
+    });
+
+    // Test G: automatic polling stops after bounded attempt count (3 checks)
+    it('G. automatic polling stops after bounded attempt count (3 checks)', async () => {
+      vi.useFakeTimers();
+      const statusSpy = vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue(mockUnconnectedStatus);
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue(mockCapacity);
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({ items: [], nextCursor: null });
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockRejectedValue({
+        message: 'Aguardando',
+        code: 'WABA_SUBSCRIBE_OUTCOME_UNRESOLVED',
+      });
+
+      render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('start-onboarding-btn'));
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // Check 1: 2.5s
+      await act(async () => {
+        vi.advanceTimersByTime(2600);
+        await Promise.resolve();
+      });
+      expect(statusSpy).toHaveBeenCalledTimes(1);
+
+      // Check 2: 5s
+      await act(async () => {
+        vi.advanceTimersByTime(2600);
+        await Promise.resolve();
+      });
+      expect(statusSpy).toHaveBeenCalledTimes(2);
+
+      // Check 3: 7.5s (exhausts bounded automatic polling)
+      await act(async () => {
+        vi.advanceTimersByTime(2600);
+        await Promise.resolve();
+      });
+      expect(statusSpy).toHaveBeenCalledTimes(3);
+
+      // Further time passage: polling must remain stopped
+      await act(async () => {
+        vi.advanceTimersByTime(10000);
+        await Promise.resolve();
+      });
+      expect(statusSpy).toHaveBeenCalledTimes(3);
+
+      // Step remains stable finalizing and manual refresh is present
+      expect(screen.getAllByText(/Finalizando ativação/i).length).toBeGreaterThan(0);
+      expect(screen.getByTestId('refresh-status-btn')).toBeInTheDocument();
+    });
+
+    // Test H: manual refresh after bounded polling performs exactly one canonical refetch cycle
+    it('H. manual refresh after bounded polling performs exactly one canonical refetch cycle', async () => {
+      vi.useFakeTimers();
+      const statusSpy = vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue(mockUnconnectedStatus);
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue(mockCapacity);
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({ items: [], nextCursor: null });
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockRejectedValue({
+        message: 'Aguardando',
+        code: 'WABA_SUBSCRIBE_OUTCOME_UNRESOLVED',
+      });
+
+      render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('start-onboarding-btn'));
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // Exhaust 3 bounded checks
+      await act(async () => {
+        vi.advanceTimersByTime(2600);
+        await Promise.resolve();
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(2600);
+        await Promise.resolve();
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(2600);
+        await Promise.resolve();
+      });
+      expect(statusSpy).toHaveBeenCalledTimes(3);
+
+      // Manual refresh click
+      const refreshBtn = screen.getByTestId('refresh-status-btn');
+      await act(async () => {
+        fireEvent.click(refreshBtn);
+        await Promise.resolve();
+      });
+
+      // Exactly 1 additional check issued
+      expect(statusSpy).toHaveBeenCalledTimes(4);
+
+      // Timers advance without spawning a new polling loop
+      await act(async () => {
+        vi.advanceTimersByTime(10000);
+        await Promise.resolve();
+      });
+      expect(statusSpy).toHaveBeenCalledTimes(4);
+    });
+
+    // Test I: popup cancellation removes message listener
+    it('I. popup cancellation removes message listener', async () => {
+      const addSpy = vi.spyOn(window, 'addEventListener');
+      const removeSpy = vi.spyOn(window, 'removeEventListener');
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          cb({ authResponse: null });
+        }),
+      };
+
+      let thrownErr: any;
+      try {
+        await launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test' });
+      } catch (err: any) {
+        thrownErr = err;
+      }
+
+      expect(thrownErr).toBeDefined();
+      expect(thrownErr.cancelled).toBe(true);
+
+      const addedHandler = addSpy.mock.calls.find((c) => c[0] === 'message')?.[1];
+      const removedHandler = removeSpy.mock.calls.find((c) => c[0] === 'message')?.[1];
+      expect(addedHandler).toBeDefined();
+      expect(removedHandler).toBe(addedHandler);
+    });
+
+    // Test J: success removes message listener
+    it('J. success removes message listener', async () => {
+      const addSpy = vi.spyOn(window, 'addEventListener');
+      const removeSpy = vi.spyOn(window, 'removeEventListener');
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              origin: 'https://www.facebook.com',
+              data: JSON.stringify({
+                type: 'WA_EMBEDDED_SIGNUP',
+                event: 'FINISH',
+                data: { waba_id: 'waba-j-1', phone_number_id: 'phone-j-1' },
+              }),
+            })
+          );
+          cb({ authResponse: { code: 'code-j-1' } });
+        }),
+      };
+
+      const result = await launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test' });
+      expect(result).toEqual({
+        code: 'code-j-1',
+        wabaId: 'waba-j-1',
+        phoneNumberId: 'phone-j-1',
+      });
+
+      const addedHandler = addSpy.mock.calls.find((c) => c[0] === 'message')?.[1];
+      const removedHandler = removeSpy.mock.calls.find((c) => c[0] === 'message')?.[1];
+      expect(addedHandler).toBeDefined();
+      expect(removedHandler).toBe(addedHandler);
+    });
+
+    // Test K: thrown/failure path in FB.login removes message listener
+    it('K. thrown/failure path in FB.login removes message listener', async () => {
+      const addSpy = vi.spyOn(window, 'addEventListener');
+      const removeSpy = vi.spyOn(window, 'removeEventListener');
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn(() => {
+          throw new Error('Fatal SDK error');
+        }),
+      };
+
+      await expect(
+        launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test' })
+      ).rejects.toThrow('Fatal SDK error');
+
+      const addedHandler = addSpy.mock.calls.find((c) => c[0] === 'message')?.[1];
+      const removedHandler = removeSpy.mock.calls.find((c) => c[0] === 'message')?.[1];
+      expect(addedHandler).toBeDefined();
+      expect(removedHandler).toBe(addedHandler);
+    });
+
+    // Test L: repeated launches do not accumulate message listeners
+    it('L. repeated launches do not accumulate message listeners', async () => {
+      let activeListeners = 0;
+      vi.spyOn(window, 'addEventListener').mockImplementation((event: string) => {
+        if (event === 'message') activeListeners += 1;
+      });
+      vi.spyOn(window, 'removeEventListener').mockImplementation((event: string) => {
+        if (event === 'message') activeListeners -= 1;
+      });
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn(),
+      };
+
+      const ctrl1 = new AbortController();
+      const p1 = launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test', signal: ctrl1.signal });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(activeListeners).toBe(1);
+
+      // Launch attempt 2 without explicit abort (launchMetaEmbeddedSignup cleans up prior attempt automatically)
+      const ctrl2 = new AbortController();
+      const p2 = launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test', signal: ctrl2.signal });
+      await Promise.resolve();
+      await Promise.resolve();
+      await p1.catch(() => {});
+      expect(activeListeners).toBe(1);
+
+      ctrl2.abort();
+      await p2.catch(() => {});
+      expect(activeListeners).toBe(0);
+    });
+
+    // Test M: unrelated window message origin / payload ignored
+    it('M. unrelated window message origin / payload ignored', async () => {
+      expect(isValidMetaOrigin('http://facebook.com')).toBe(false);
+      expect(isValidMetaOrigin('https://evil-site.com')).toBe(false);
+      expect(isValidMetaOrigin('https://facebook.com.evil.com')).toBe(false);
+      expect(isValidMetaOrigin('https://facebook.com')).toBe(true);
+      expect(isValidMetaOrigin('https://connect.facebook.com')).toBe(true);
+      expect(isValidMetaOrigin('https://meta.com')).toBe(true);
+      expect(isValidMetaOrigin('https://business.meta.com')).toBe(true);
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          // Untrusted origin
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              origin: 'https://evil-site.com',
+              data: JSON.stringify({
+                type: 'WA_EMBEDDED_SIGNUP',
+                event: 'FINISH',
+                data: { waba_id: 'waba-evil', phone_number_id: 'phone-evil' },
+              }),
+            })
+          );
+          // Malformed payload
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              origin: 'https://www.facebook.com',
+              data: 'not a json',
+            })
+          );
+          // Unrelated event type
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              origin: 'https://www.facebook.com',
+              data: JSON.stringify({ type: 'OTHER_TYPE', event: 'FINISH' }),
+            })
+          );
+          // Legitimate Meta event
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              origin: 'https://www.facebook.com',
+              data: JSON.stringify({
+                type: 'WA_EMBEDDED_SIGNUP',
+                event: 'FINISH',
+                data: { waba_id: 'waba-legit', phone_number_id: 'phone-legit' },
+              }),
+            })
+          );
+          cb({ authResponse: { code: 'code-legit' } });
+        }),
+      };
+
+      const res = await launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test' });
+      expect(res.wabaId).toBe('waba-legit');
+      expect(res.phoneNumberId).toBe('phone-legit');
+    });
+
+    // Test N: stale FINISH event from attempt A cannot satisfy attempt B
+    it('N. stale FINISH event from attempt A cannot satisfy attempt B', async () => {
+      let loginCallbackB: any;
+
+      let callCount = 0;
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          callCount += 1;
+          if (callCount === 2) loginCallbackB = cb;
+        }),
+      };
+
+      // Launch Attempt A
+      const ctrlA = new AbortController();
+      const pA = launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test', signal: ctrlA.signal });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Stale event arrived during attempt A
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: 'https://www.facebook.com',
+          data: JSON.stringify({
+            type: 'WA_EMBEDDED_SIGNUP',
+            event: 'FINISH',
+            data: { waba_id: 'waba-attempt-A', phone_number_id: 'phone-attempt-A' },
+          }),
+        })
+      );
+
+      // Abort Attempt A
+      ctrlA.abort();
+      await pA.catch(() => {});
+
+      // Launch Attempt B (scoped with fresh state, not inheriting A's identifiers)
+      const pB = launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test' });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Login B completes with code B, but no FINISH event occurred for attempt B
+      expect(loginCallbackB).toBeDefined();
+      loginCallbackB({ authResponse: { code: 'code-attempt-B' } });
+
+      // Attempt B must reject as incomplete because attempt A's identifiers were isolated
+      let errorB: any;
+      try {
+        await pB;
+      } catch (err: any) {
+        errorB = err;
+      }
+
+      expect(errorB).toBeDefined();
+      expect(errorB.incomplete).toBe(true);
+    });
+
+    // Test O: duplicate FINISH events in same attempt cannot cause duplicate completion
+    it('O. duplicate FINISH events in same attempt cannot cause duplicate completion', async () => {
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          // Dispatch duplicate FINISH events
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              origin: 'https://www.facebook.com',
+              data: JSON.stringify({
+                type: 'WA_EMBEDDED_SIGNUP',
+                event: 'FINISH',
+                data: { waba_id: 'waba-first', phone_number_id: 'phone-first' },
+              }),
+            })
+          );
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              origin: 'https://www.facebook.com',
+              data: JSON.stringify({
+                type: 'WA_EMBEDDED_SIGNUP',
+                event: 'FINISH',
+                data: { waba_id: 'waba-second', phone_number_id: 'phone-second' },
+              }),
+            })
+          );
+          cb({ authResponse: { code: 'code-o' } });
+        }),
+      };
+
+      const res = await launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test' });
+      expect(res.wabaId).toBe('waba-first');
+      expect(res.phoneNumberId).toBe('phone-first');
+    });
+
+    // Test P: duplicate user interaction cannot trigger duplicate completeWhatsAppOnboarding
+    it('P. duplicate user interaction cannot trigger duplicate completeWhatsAppOnboarding', async () => {
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockResolvedValue({
+        sessionId: 'sess-p',
+        connectionId: 'conn-p',
+        fbAppId: 'app-p',
+        configId: 'cfg-p',
+        stateNonce: 'nonce-p',
+        expiresAt: '2026-09-24T00:00:00Z',
+        mode: 'start',
+        provider: 'meta_cloud_api',
+      });
+
+      const completeSpy = vi.spyOn(api, 'completeWhatsAppOnboarding').mockResolvedValue({
+        id: 'conn-p',
+        organizationId: 'org-test',
+        displayName: 'Line P',
+        phoneNumber: '+5511977770000',
+        provider: 'meta_cloud_api',
+        status: 'connected',
+        statusReason: null,
+        isOrganizationDefault: false,
+        assignedMinistryId: 'min-test',
+        createdAt: '2026-09-23T12:00:00Z',
+        updatedAt: '2026-09-23T12:00:00Z',
+      });
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          cb({
+            authResponse: {
+              code: 'code-p-oauth-secret',
+              waba_id: 'waba-p-secret',
+              phone_number_id: 'phone-p-secret',
+            },
+          });
+        }),
+      };
+
+      // Credential audit spies
+      const setItemSpy = vi.spyOn(Storage.prototype, 'setItem');
+      const consoleLogSpy = vi.spyOn(console, 'log');
+      const consoleWarnSpy = vi.spyOn(console, 'warn');
+      const consoleErrorSpy = vi.spyOn(console, 'error');
+
+      (window as any).indexedDB = {
+        open: vi.fn(),
+      };
+      const idbOpenSpy = vi.spyOn((window as any).indexedDB, 'open');
+
+      render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={vi.fn()}
+        />
+      );
+
+      const user = userEvent.setup();
+      const startBtn = screen.getByTestId('start-onboarding-btn');
+      await user.click(startBtn);
+
+      expect(await screen.findByText('WhatsApp Conectado com Sucesso!')).toBeInTheDocument();
+      expect(completeSpy).toHaveBeenCalledTimes(1);
+
+      // Verify credentials were never written to storage
+      const sensitiveValues = ['waba-p-secret', 'phone-p-secret', 'code-p-oauth-secret', 'nonce-p'];
+      for (const call of setItemSpy.mock.calls) {
+        for (const sensitive of sensitiveValues) {
+          expect(call[0]).not.toContain(sensitive);
+          expect(call[1]).not.toContain(sensitive);
+        }
+      }
+
+      // Verify indexedDB.open was never called
+      expect(idbOpenSpy).not.toHaveBeenCalled();
+
+      // Verify console never serialized credentials
+      for (const logCalls of [consoleLogSpy.mock.calls, consoleWarnSpy.mock.calls, consoleErrorSpy.mock.calls]) {
+        for (const call of logCalls) {
+          const serialized = JSON.stringify(call);
+          for (const sensitive of sensitiveValues) {
+            expect(serialized).not.toContain(sensitive);
+          }
+        }
+      }
+    });
+
+    // Test Q: status pending exposes resume when canResumeAuthorizedOnboarding is true
+    it('Q. status pending exposes resume when canResumeAuthorizedOnboarding is true', async () => {
+      vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue(mockUnconnectedStatus);
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue({
+        ...mockCapacity,
+        canCreateConnection: false,
+        canResumeAuthorizedOnboarding: true,
+      });
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({
+        items: [
+          {
+            id: 'conn-pending',
+            organizationId: 'org-test',
+            displayName: 'Linha Pendente',
+            phoneNumber: null,
+            provider: 'meta_cloud_api',
+            status: 'pending',
+            statusReason: null,
+            isOrganizationDefault: false,
+            assignedMinistryId: 'min-test',
+            createdAt: '2026-09-24T00:00:00Z',
+            updatedAt: '2026-09-24T00:00:00Z',
+          },
+        ],
+        nextCursor: null,
+      });
+
+      render(<WhatsAppFoundationView ministryId="min-test" isAdmin={true} onBack={vi.fn()} />);
+
+      const resumeBtn = await screen.findByTestId('resume-whatsapp-btn');
+      expect(resumeBtn).toBeInTheDocument();
+      expect(resumeBtn).toHaveTextContent('Retomar configuração');
+    });
+
+    // Test R: status connecting + SUBSCRIPTION_RESTRICTED exposes resume when canResumeAuthorizedOnboarding is true
+    it('R. status connecting + SUBSCRIPTION_RESTRICTED exposes resume when canResumeAuthorizedOnboarding is true', async () => {
+      vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue(mockUnconnectedStatus);
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue({
+        ...mockCapacity,
+        canCreateConnection: false,
+        canResumeAuthorizedOnboarding: true,
+        commercialState: 'payment_grace',
+        restrictionReason: 'SUBSCRIPTION_RESTRICTED',
+      });
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({
+        items: [
+          {
+            id: 'conn-connecting-restricted',
+            organizationId: 'org-test',
+            displayName: 'Linha Em Progresso',
+            phoneNumber: null,
+            provider: 'meta_cloud_api',
+            status: 'connecting',
+            statusReason: 'SUBSCRIPTION_RESTRICTED',
+            isOrganizationDefault: false,
+            assignedMinistryId: 'min-test',
+            createdAt: '2026-09-24T00:00:00Z',
+            updatedAt: '2026-09-24T00:00:00Z',
+          },
+        ],
+        nextCursor: null,
+      });
+
+      render(<WhatsAppFoundationView ministryId="min-test" isAdmin={true} onBack={vi.fn()} />);
+
+      const resumeBtn = await screen.findByTestId('resume-whatsapp-btn');
+      expect(resumeBtn).toBeInTheDocument();
+    });
+
+    // Test S: resume click calls startWhatsAppOnboarding with exact provider and resumeConnectionId
+    it('S. resume click calls startWhatsAppOnboarding with exact provider and resumeConnectionId', async () => {
+      vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue(mockUnconnectedStatus);
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue({
+        ...mockCapacity,
+        canCreateConnection: false,
+        canResumeAuthorizedOnboarding: true,
+      });
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({
+        items: [
+          {
+            id: 'conn-res-123',
+            organizationId: 'org-test',
+            displayName: 'Linha Resumo',
+            phoneNumber: null,
+            provider: 'zernio',
+            status: 'pending',
+            statusReason: null,
+            isOrganizationDefault: false,
+            assignedMinistryId: 'min-test',
+            createdAt: '2026-09-24T00:00:00Z',
+            updatedAt: '2026-09-24T00:00:00Z',
+          },
+        ],
+        nextCursor: null,
+      });
+
+      const originalLocation = window.location;
+      delete (window as any).location;
+      window.location = { ...originalLocation, href: '' } as any;
+
+      const startSpy = vi.spyOn(api, 'startWhatsAppOnboarding').mockResolvedValue({
+        sessionId: 'sess-res',
+        connectionId: 'conn-res-123',
+        expiresAt: '2026-09-24T12:00:00Z',
+        mode: 'resume_staged',
+        provider: 'zernio',
+        authUrl: 'https://zernio.com/oauth/resume',
+      });
+
+      render(<WhatsAppFoundationView ministryId="min-test" isAdmin={true} onBack={vi.fn()} />);
+
+      const user = userEvent.setup();
+      const resumeBtn = await screen.findByTestId('resume-whatsapp-btn');
+      await user.click(resumeBtn);
+
+      expect(startSpy).toHaveBeenCalledWith('org-test', expect.objectContaining({
+        provider: 'zernio',
+        resumeConnectionId: 'conn-res-123',
+      }));
+
+      (window as any).location = originalLocation;
+    });
+
+    // Test T: CONNECTION_RESERVATION_EXPIRED remains non-resumable
+    it('T. CONNECTION_RESERVATION_EXPIRED remains non-resumable', async () => {
+      vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue(mockUnconnectedStatus);
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue({
+        ...mockCapacity,
+        canCreateConnection: false,
+        canResumeAuthorizedOnboarding: false,
+        restrictionReason: 'CONNECTION_RESERVATION_EXPIRED',
+      });
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({
+        items: [
+          {
+            id: 'conn-expired',
+            organizationId: 'org-test',
+            displayName: 'Linha Expirada',
+            phoneNumber: null,
+            provider: 'zernio',
+            status: 'disconnected',
+            statusReason: 'CONNECTION_RESERVATION_EXPIRED',
+            isOrganizationDefault: false,
+            assignedMinistryId: 'min-test',
+            createdAt: '2026-09-24T00:00:00Z',
+            updatedAt: '2026-09-24T00:00:00Z',
+          },
+        ],
+        nextCursor: null,
+      });
+
+      render(<WhatsAppFoundationView ministryId="min-test" isAdmin={true} onBack={vi.fn()} />);
+
+      await screen.findByText('WhatsApp do Ministério');
+      expect(screen.queryByTestId('resume-whatsapp-btn')).not.toBeInTheDocument();
     });
   });
 });
