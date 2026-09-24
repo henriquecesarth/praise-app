@@ -26,6 +26,7 @@ export interface LaunchMetaSignupOptions {
   stateNonce?: string;
   sessionId?: string;
   signal?: AbortSignal;
+  sourceWindow?: MessageEventSource | null;
 }
 
 export interface MetaSignupAuthResult {
@@ -178,7 +179,7 @@ export function loadMetaSdk(fbAppId: string): Promise<any> {
 export async function launchMetaEmbeddedSignup(
   options: LaunchMetaSignupOptions
 ): Promise<MetaSignupAuthResult> {
-  const { fbAppId, configId, signal } = options;
+  const { fbAppId, configId, signal, sourceWindow } = options;
 
   if (!fbAppId || !configId) {
     throw new Error('fbAppId e configId são obrigatórios para iniciar o Meta Embedded Signup.');
@@ -214,45 +215,64 @@ export async function launchMetaEmbeddedSignup(
     // Attempt-scoped state: fresh per attempt, never shared across attempts
     let capturedWabaId: string | null = null;
     let capturedPhoneNumberId: string | null = null;
-    let userCancelled = false;
     let finishEventReceived = false;
     let isTerminated = false;
+    let activeAttemptSource: MessageEventSource | null = sourceWindow || null;
+    let originalWindowOpen: typeof window.open | null = null;
+    let abortHandler: (() => void) | null = null;
 
-    const cleanup = () => {
+    const finishAttempt = (outcome: { success: true; data: MetaSignupAuthResult } | { success: false; error: any }) => {
       if (isTerminated) return;
       isTerminated = true;
+
+      // 1. Remove message listener immediately
       if (typeof window !== 'undefined') {
         window.removeEventListener('message', messageHandler);
       }
+
+      // 2. Remove abort listener if registered
+      if (abortHandler && signal) {
+        signal.removeEventListener('abort', abortHandler);
+        abortHandler = null;
+      }
+
+      // 3. Clear captured identifiers and source reference
+      capturedWabaId = null;
+      capturedPhoneNumberId = null;
+      activeAttemptSource = null;
+
+      // 4. Invalidate module-level attempt tracker
       if (activeMetaAttempt?.attemptId === currentAttemptId) {
         activeMetaAttempt = null;
+      }
+
+      // 5. Settle promise exactly once
+      if (outcome.success) {
+        resolve(outcome.data);
+      } else {
+        reject(outcome.error);
       }
     };
 
     activeMetaAttempt = {
       attemptId: currentAttemptId,
-      cleanup,
+      cleanup: () => {
+        const err = new Error('Tentativa de onboarding cancelada.');
+        (err as any).cancelled = true;
+        finishAttempt({ success: false, error: err });
+      },
       reject: (err) => {
-        if (!isTerminated) {
-          cleanup();
-          reject(err);
-        }
+        finishAttempt({ success: false, error: err });
       },
     };
 
     if (signal) {
-      signal.addEventListener(
-        'abort',
-        () => {
-          if (!isTerminated) {
-            cleanup();
-            const err = new Error('Operação cancelada pelo chamador.');
-            (err as any).cancelled = true;
-            reject(err);
-          }
-        },
-        { once: true }
-      );
+      abortHandler = () => {
+        const err = new Error('Operação cancelada pelo chamador.');
+        (err as any).cancelled = true;
+        finishAttempt({ success: false, error: err });
+      };
+      signal.addEventListener('abort', abortHandler, { once: true });
     }
 
     const messageHandler = (event: MessageEvent) => {
@@ -263,14 +283,11 @@ export async function launchMetaEmbeddedSignup(
         return;
       }
 
-      // NOTE: Source window binding limitation:
-      // FB.login launches the popup internally and does NOT return a window reference or handle
-      // to the opened dialog. Therefore, exact event.source === popupWindow identity check cannot
-      // be enforced by the JS SDK contract. We compensate for this SDK limitation via:
-      // (a) strict origin checking (HTTPS + verified facebook/meta domains);
-      // (b) per-attempt listener isolation and immediate teardown on every terminal path;
-      // (c) strict payload structural validation with WA_EMBEDDED_SIGNUP discriminator;
-      // (d) attempt-scoped closure preventing cross-attempt state pollution.
+      // 2. Source window binding: if activeAttemptSource is established,
+      // strictly reject any event from other sources or stale popups.
+      if (activeAttemptSource && event.source !== activeAttemptSource) {
+        return;
+      }
 
       try {
         let payload = event.data;
@@ -291,8 +308,20 @@ export async function launchMetaEmbeddedSignup(
           return;
         }
 
+        // CANCEL postMessage: terminate attempt immediately and clean resources
         if (payload.event === 'CANCEL') {
-          userCancelled = true;
+          const err = new Error('Operação de login cancelada pelo usuário no popup do WhatsApp.');
+          (err as any).cancelled = true;
+          finishAttempt({ success: false, error: err });
+          return;
+        }
+
+        // ERROR postMessage: terminate attempt immediately and clean resources
+        if (payload.event === 'ERROR') {
+          const errMsg = payload.data?.error_message || 'Erro durante o cadastro no WhatsApp.';
+          const err = new Error(errMsg);
+          (err as any).metaError = true;
+          finishAttempt({ success: false, error: err });
           return;
         }
 
@@ -326,16 +355,29 @@ export async function launchMetaEmbeddedSignup(
 
     window.addEventListener('message', messageHandler);
 
+    // If sourceWindow was not provided explicitly, wrap window.open synchronously around FB.login
+    // to automatically capture the popup WindowProxy opened by Facebook's JS SDK
+    if (!activeAttemptSource && typeof window !== 'undefined' && typeof window.open === 'function') {
+      originalWindowOpen = window.open;
+      window.open = function (...args: any[]) {
+        const popup = originalWindowOpen!.apply(this, args as any);
+        if (popup) {
+          activeAttemptSource = popup;
+        }
+        return popup;
+      };
+    }
+
     try {
       FB.login(
         (response: any) => {
-          // Terminal path: remove listener immediately
-          cleanup();
+          if (isTerminated) return;
 
-          if (userCancelled || !response || !response.authResponse) {
+          if (!response || !response.authResponse) {
             const err = new Error('Operação de login cancelada pelo usuário no popup do WhatsApp.');
             (err as any).cancelled = true;
-            return reject(err);
+            finishAttempt({ success: false, error: err });
+            return;
           }
 
           const code = response.authResponse.code;
@@ -356,7 +398,8 @@ export async function launchMetaEmbeddedSignup(
           if (!code || typeof code !== 'string' || code.trim().length === 0) {
             const err = new Error('Operação cancelada: código de autorização ausente.');
             (err as any).cancelled = true;
-            return reject(err);
+            finishAttempt({ success: false, error: err });
+            return;
           }
 
           if (!wabaId || !phoneNumberId) {
@@ -364,13 +407,17 @@ export async function launchMetaEmbeddedSignup(
               'Resultado incompleto retornado pelo Meta. Não foi possível identificar a WABA ou o número de telefone.'
             );
             (err as any).incomplete = true;
-            return reject(err);
+            finishAttempt({ success: false, error: err });
+            return;
           }
 
-          resolve({
-            code: code.trim(),
-            wabaId: wabaId.trim(),
-            phoneNumberId: phoneNumberId.trim(),
+          finishAttempt({
+            success: true,
+            data: {
+              code: code.trim(),
+              wabaId: wabaId.trim(),
+              phoneNumberId: phoneNumberId.trim(),
+            },
           });
         },
         {
@@ -384,8 +431,11 @@ export async function launchMetaEmbeddedSignup(
         }
       );
     } catch (err: any) {
-      cleanup();
-      reject(err);
+      finishAttempt({ success: false, error: err });
+    } finally {
+      if (originalWindowOpen && typeof window !== 'undefined') {
+        window.open = originalWindowOpen;
+      }
     }
   });
 }

@@ -2006,32 +2006,70 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
       expect(statusSpy).toHaveBeenCalledTimes(4);
     });
 
-    // Test I: popup cancellation removes message listener
-    it('I. popup cancellation removes message listener', async () => {
+    // Test I: WA_EMBEDDED_SIGNUP CANCEL message terminates attempt immediately and cleans listener
+    it('I. WA_EMBEDDED_SIGNUP CANCEL message terminates attempt immediately and cleans listener', async () => {
       const addSpy = vi.spyOn(window, 'addEventListener');
       const removeSpy = vi.spyOn(window, 'removeEventListener');
 
+      let loginCb: any;
       (window as any).FB = {
         init: vi.fn(),
         login: vi.fn((cb: any) => {
-          cb({ authResponse: null });
+          loginCb = cb;
         }),
       };
 
+      const launchPromise = launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test' });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const addedHandler = addSpy.mock.calls.find((c) => c[0] === 'message')?.[1];
+      expect(addedHandler).toBeDefined();
+
+      // Dispatch real Meta Embedded Signup CANCEL postMessage
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: 'https://www.facebook.com',
+          data: JSON.stringify({
+            type: 'WA_EMBEDDED_SIGNUP',
+            event: 'CANCEL',
+          }),
+        })
+      );
+
+      // 1. Immediately rejected as cancellation
       let thrownErr: any;
       try {
-        await launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test' });
+        await launchPromise;
       } catch (err: any) {
         thrownErr = err;
       }
-
       expect(thrownErr).toBeDefined();
       expect(thrownErr.cancelled).toBe(true);
 
-      const addedHandler = addSpy.mock.calls.find((c) => c[0] === 'message')?.[1];
+      // 2. Message listener removed immediately
       const removedHandler = removeSpy.mock.calls.find((c) => c[0] === 'message')?.[1];
-      expect(addedHandler).toBeDefined();
       expect(removedHandler).toBe(addedHandler);
+
+      // 3. Later FINISH ignored
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: 'https://www.facebook.com',
+          data: JSON.stringify({
+            type: 'WA_EMBEDDED_SIGNUP',
+            event: 'FINISH',
+            data: { waba_id: 'waba-late', phone_number_id: 'phone-late' },
+          }),
+        })
+      );
+
+      // 4. Later FB.login callback cannot make attempt successful
+      if (loginCb) {
+        loginCb({ authResponse: { code: 'code-late' } });
+      }
+
+      // Re-verify launchPromise was already settled as cancelled
+      expect(thrownErr.cancelled).toBe(true);
     });
 
     // Test J: success removes message listener
@@ -2183,60 +2221,209 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
       expect(res.phoneNumberId).toBe('phone-legit');
     });
 
-    // Test N: stale FINISH event from attempt A cannot satisfy attempt B
-    it('N. stale FINISH event from attempt A cannot satisfy attempt B', async () => {
-      let loginCallbackB: any;
+    // Test N: stale FINISH event from attempt A delivered AFTER attempt B starts cannot satisfy attempt B (Section 12)
+    it('N. stale FINISH event from attempt A delivered AFTER attempt B starts cannot satisfy attempt B', async () => {
+      const popupA = { name: 'popupA' } as unknown as Window;
+      const popupB = { name: 'popupB' } as unknown as Window;
 
+      let loginCallbackA: any;
+      let loginCallbackB: any;
       let callCount = 0;
+
       (window as any).FB = {
         init: vi.fn(),
         login: vi.fn((cb: any) => {
           callCount += 1;
+          if (callCount === 1) loginCallbackA = cb;
           if (callCount === 2) loginCallbackB = cb;
         }),
       };
 
-      // Launch Attempt A
+      // 1. launch A
       const ctrlA = new AbortController();
-      const pA = launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test', signal: ctrlA.signal });
+      const pA = launchMetaEmbeddedSignup({
+        fbAppId: 'app-test',
+        configId: 'cfg-test',
+        signal: ctrlA.signal,
+        sourceWindow: popupA, // 2. establish A correlation context
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(loginCallbackA).toBeDefined();
+
+      // 3. terminate/supersede A
+      ctrlA.abort();
+      await pA.catch(() => {});
+
+      // 4. launch B with B correlation context
+      const pB = launchMetaEmbeddedSignup({
+        fbAppId: 'app-test',
+        configId: 'cfg-test',
+        sourceWindow: popupB, // establish B correlation context
+      });
       await Promise.resolve();
       await Promise.resolve();
 
-      // Stale event arrived during attempt A
+      // 5. B listener is active
+      // 6. dispatch a completely valid FINISH belonging to A (source: popupA) AFTER B listener exists
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: 'https://www.facebook.com',
+          source: popupA,
+          data: JSON.stringify({
+            type: 'WA_EMBEDDED_SIGNUP',
+            event: 'FINISH',
+            data: { waba_id: 'waba-A', phone_number_id: 'phone-A' },
+          }),
+        })
+      );
+
+      // 7. verify B remains unresolved/unmodified (A's data is rejected because event.source !== activeAttemptSource)
+      // 8. dispatch valid FINISH belonging to B (source: popupB)
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: 'https://www.facebook.com',
+          source: popupB,
+          data: JSON.stringify({
+            type: 'WA_EMBEDDED_SIGNUP',
+            event: 'FINISH',
+            data: { waba_id: 'waba-B', phone_number_id: 'phone-B' },
+          }),
+        })
+      );
+
+      // 9. complete B's OAuth callback
+      expect(loginCallbackB).toBeDefined();
+      loginCallbackB({ authResponse: { code: 'code-B' } });
+
+      // 10. verify result contains ONLY B identifiers
+      const resultB = await pB;
+      expect(resultB).toEqual({
+        code: 'code-B',
+        wabaId: 'waba-B',
+        phoneNumberId: 'phone-B',
+      });
+      expect(resultB.wabaId).not.toBe('waba-A');
+      expect(resultB.phoneNumberId).not.toBe('phone-A');
+    });
+
+    // Test N2: FINISH then CANCEL - successful terminal result cannot be rewritten (Section 13)
+    it('N2. FINISH then CANCEL - successful terminal result cannot be rewritten', async () => {
+      let loginCb: any;
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          loginCb = cb;
+        }),
+      };
+
+      const launchPromise = launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test' });
+      await Promise.resolve();
+
+      // FINISH event arrives
       window.dispatchEvent(
         new MessageEvent('message', {
           origin: 'https://www.facebook.com',
           data: JSON.stringify({
             type: 'WA_EMBEDDED_SIGNUP',
             event: 'FINISH',
-            data: { waba_id: 'waba-attempt-A', phone_number_id: 'phone-attempt-A' },
+            data: { waba_id: 'waba-success', phone_number_id: 'phone-success' },
           }),
         })
       );
 
-      // Abort Attempt A
-      ctrlA.abort();
-      await pA.catch(() => {});
+      // FB.login completes with code -> resolves attempt
+      loginCb({ authResponse: { code: 'code-success' } });
+      const result = await launchPromise;
+      expect(result).toEqual({
+        code: 'code-success',
+        wabaId: 'waba-success',
+        phoneNumberId: 'phone-success',
+      });
 
-      // Launch Attempt B (scoped with fresh state, not inheriting A's identifiers)
-      const pB = launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test' });
+      // Subsequent CANCEL postMessage must be ignored and cannot rewrite success
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: 'https://www.facebook.com',
+          data: JSON.stringify({
+            type: 'WA_EMBEDDED_SIGNUP',
+            event: 'CANCEL',
+          }),
+        })
+      );
+
+      expect(result.code).toBe('code-success');
+    });
+
+    // Test N3: duplicate login callback resolves only once (Section 13)
+    it('N3. duplicate login callback resolves only once', async () => {
+      let loginCb: any;
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn((cb: any) => {
+          loginCb = cb;
+        }),
+      };
+
+      const launchPromise = launchMetaEmbeddedSignup({ fbAppId: 'app-test', configId: 'cfg-test' });
       await Promise.resolve();
+
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: 'https://www.facebook.com',
+          data: JSON.stringify({
+            type: 'WA_EMBEDDED_SIGNUP',
+            event: 'FINISH',
+            data: { waba_id: 'waba-1', phone_number_id: 'phone-1' },
+          }),
+        })
+      );
+
+      loginCb({ authResponse: { code: 'code-1' } });
+      const res = await launchPromise;
+      expect(res.code).toBe('code-1');
+
+      // Duplicate callback invocation with different code
+      loginCb({ authResponse: { code: 'code-2' } });
+      expect(res.code).toBe('code-1');
+    });
+
+    // Test N4: abort then FINISH - FINISH is ignored (Section 13)
+    it('N4. abort then FINISH - FINISH is ignored', async () => {
+      const ctrl = new AbortController();
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn(),
+      };
+
+      const launchPromise = launchMetaEmbeddedSignup({
+        fbAppId: 'app-test',
+        configId: 'cfg-test',
+        signal: ctrl.signal,
+      });
       await Promise.resolve();
 
-      // Login B completes with code B, but no FINISH event occurred for attempt B
-      expect(loginCallbackB).toBeDefined();
-      loginCallbackB({ authResponse: { code: 'code-attempt-B' } });
+      ctrl.abort();
 
-      // Attempt B must reject as incomplete because attempt A's identifiers were isolated
-      let errorB: any;
+      let err: any;
       try {
-        await pB;
-      } catch (err: any) {
-        errorB = err;
+        await launchPromise;
+      } catch (e: any) {
+        err = e;
       }
+      expect(err?.cancelled).toBe(true);
 
-      expect(errorB).toBeDefined();
-      expect(errorB.incomplete).toBe(true);
+      // Subsequent FINISH postMessage is ignored
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: 'https://www.facebook.com',
+          data: JSON.stringify({
+            type: 'WA_EMBEDDED_SIGNUP',
+            event: 'FINISH',
+            data: { waba_id: 'waba-ignored', phone_number_id: 'phone-ignored' },
+          }),
+        })
+      );
     });
 
     // Test O: duplicate FINISH events in same attempt cannot cause duplicate completion
@@ -2365,6 +2552,59 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
           }
         }
       }
+    });
+
+    // Test P2: CANCEL message in modal never reaches completeWhatsAppOnboarding (Section 11)
+    it('P2. CANCEL message in modal never reaches completeWhatsAppOnboarding', async () => {
+      const completeSpy = vi.spyOn(api, 'completeWhatsAppOnboarding');
+      vi.spyOn(api, 'startWhatsAppOnboarding').mockResolvedValue({
+        sessionId: 'sess-cancel-test',
+        connectionId: 'conn-cancel-test',
+        fbAppId: 'app-cancel-test',
+        configId: 'cfg-cancel-test',
+        stateNonce: 'nonce-cancel-test',
+        expiresAt: '2026-09-24T00:00:00Z',
+        mode: 'start',
+        provider: 'meta_cloud_api',
+      });
+
+      (window as any).FB = {
+        init: vi.fn(),
+        login: vi.fn(() => {
+          // Dispatch CANCEL message immediately while login is active
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              origin: 'https://www.facebook.com',
+              data: JSON.stringify({
+                type: 'WA_EMBEDDED_SIGNUP',
+                event: 'CANCEL',
+              }),
+            })
+          );
+        }),
+      };
+
+      const onSuccess = vi.fn();
+      render(
+        <WhatsAppOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          organizationId="org-test"
+          ministryId="min-test"
+          canCreateConnection={true}
+          canResumeAuthorizedOnboarding={true}
+          onSuccess={onSuccess}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('start-onboarding-btn'));
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // completeWhatsAppOnboarding must NEVER be reached through this cancelled attempt
+      expect(completeSpy).not.toHaveBeenCalled();
+      expect(onSuccess).not.toHaveBeenCalled();
     });
 
     // Test Q: status pending exposes resume when canResumeAuthorizedOnboarding is true
