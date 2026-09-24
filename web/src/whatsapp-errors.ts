@@ -96,6 +96,30 @@ export const WHATSAPP_ERROR_MESSAGES: Record<string, string> = {
     'Outra operação do WhatsApp está em processamento para esta conta. Aguarde alguns instantes.',
 };
 
+export const RESTRICTION_REASON_MESSAGES: Record<string, string> = {
+  SUBSCRIPTION_RESTRICTED: 'Acesso restrito devido a pendência na assinatura.',
+  PLAN_EXCLUDED: 'O plano atual da organização não inclui a integração com WhatsApp.',
+  CAPACITY_EXCEEDED: 'Limite de conexões do WhatsApp atingido para o plano atual.',
+  ADMINISTRATIVELY_SUSPENDED: 'Acesso suspenso administrativamente pela plataforma.',
+  INTEGRITY_CHECK_FAILED: 'Inconsistência temporária na validação de assinatura.',
+  CONNECTION_RESERVATION_EXPIRED: 'A reserva desta conexão expirou após 24 horas.',
+  ONBOARDING_SESSION_EXPIRED: 'A sessão de configuração expirou.',
+  POST_GRACE_SUSPENDED: 'Assinatura suspensa por término do período de carência.',
+};
+
+export function formatRestrictionReason(reason?: string | null): string {
+  if (!reason || typeof reason !== 'string') {
+    return 'Ação não permitida pelas condições comerciais do plano.';
+  }
+  if (RESTRICTION_REASON_MESSAGES[reason]) {
+    return RESTRICTION_REASON_MESSAGES[reason];
+  }
+  if (reason.includes(' ')) {
+    return reason;
+  }
+  return 'Ação não permitida pelas condições comerciais do plano.';
+}
+
 export interface ClassifiedWhatsAppError {
   code: string;
   category: WhatsAppErrorCategory;

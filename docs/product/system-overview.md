@@ -152,6 +152,22 @@ Funções musicais como Ministro, Vocalista, Violão e Bateria são classificaç
 - verificação transacional final no Passo 10 de conclusão (`completeOnboarding`) com precedência de limite de capacidade e permissão de conclusão durante carência;
 - linearização atômica transacional no repositório de despacho outbound (`WhatsAppOutboundDispatchRepository.acquireDispatchExecution`) com read-before-write e 100% de paridade de fatos com `SubscriptionService` ao reutilizar a contagem centralizada de conexões consumidoras.
 
+### WhatsApp Commercial-State UX
+
+- experiência do usuário para estado comercial do WhatsApp na PWA baseada estritamente no contrato autoritativo D8 do backend (Phase 7E-F4);
+- componentes especializados `WhatsAppCommercialStatusBanner` e `WhatsAppCapacityCard` integrados em `WhatsAppFoundationView`;
+- cobertura explícita e diferenciada dos 7 estados comerciais canônicos:
+  - `healthy`: conectividade normal, envio ativo, exibição de capacidade e banner de capacidade atingida quando conexões configuradas igualam a cota;
+  - `payment_grace`: carência operacional por pendência de pagamento com envio de notificações ativo, novas conexões bloqueadas, retomada de integrações autorizadas habilitada e exibição da data civil de vencimento (`YYYY-MM-DD` convertida em `DD/MM/AAAA`) sem distorções de fuso horário;
+  - `post_payment_grace`: suspensão pós-carência com envio pausado, criação/retomada bloqueadas e preservação não-destrutiva das configurações existentes;
+  - `plan_excluded`: exclusão de recurso no plano atual com mensagem clara de upgrade e CTA de navegação para a tela de planos;
+  - `administratively_suspended`: suspensão administrativa com linguagem estritamente neutra e distinta de inadimplência (sem menções a faturamento ou pagamento) e CTA de contato com suporte;
+  - `restricted_over_limit`: bloqueio por cota de conexões excedida mantendo dados existentes seguros e CTA para gestão de plano e adicionais;
+  - `integrity_failure`: falha de integridade tratada de forma fail-closed com cópia neutra de suporte sem qualquer vazamento de termos técnicos internos (Firestore, D7/D8, claims ou transações);
+- autoridade de decisão puramente server-side: a interface consome diretamente os booleanos autoritativos `canCreateConnection`, `canResumeAuthorizedOnboarding` e `canSendMessages`, sem cálculo local ou inferência de planos;
+- formatação segura de motivos de restrição com fallback localizado em português para códigos futuros ou desconhecidos (`formatRestrictionReason`);
+- navegação desacoplada para tela de faturamento (`/ministerio/plano`) compatível com execução em ambientes sem contexto de Router React nos testes unitários.
+
 ### PWA
 
 - manifest instalável;

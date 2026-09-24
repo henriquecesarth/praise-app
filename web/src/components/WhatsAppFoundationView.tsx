@@ -6,14 +6,17 @@ import type {
   OrganizationWhatsAppCapacity,
   WhatsAppConnectionDto,
 } from '../whatsapp.types';
-import { classifyWhatsAppError, getWhatsAppErrorMessage } from '../whatsapp-errors';
+import { classifyWhatsAppError, formatRestrictionReason } from '../whatsapp-errors';
 import { WhatsAppOnboardingModal } from './whatsapp/WhatsAppOnboardingModal';
+import { WhatsAppCommercialStatusBanner } from './whatsapp/WhatsAppCommercialStatusBanner';
+import { WhatsAppCapacityCard } from './whatsapp/WhatsAppCapacityCard';
 
 export interface WhatsAppFoundationViewProps {
   ministryId: string;
   isAdmin: boolean;
   onBack: () => void;
   showToast?: (msg: string, type?: 'success' | 'error') => void;
+  onNavigateToBilling?: () => void;
 }
 
 export function WhatsAppFoundationView({
@@ -21,6 +24,7 @@ export function WhatsAppFoundationView({
   isAdmin,
   onBack,
   showToast,
+  onNavigateToBilling,
 }: WhatsAppFoundationViewProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -208,139 +212,132 @@ export function WhatsAppFoundationView({
       )}
 
       {!loading && !error && (
-        <div
-          className="card"
-          style={{
-            padding: '24px',
-            borderRadius: '12px',
-            background: 'var(--surface-color)',
-            border: '1px solid var(--border-color)',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-            <span style={{ fontWeight: 600, fontSize: '1rem', color: 'var(--text-primary)' }}>Status da Conexão</span>
-            <span
-              style={{
-                fontSize: '0.8rem',
-                padding: '4px 10px',
-                borderRadius: '12px',
-                fontWeight: 600,
-                background: status?.isConnected ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                color: status?.isConnected ? 'var(--success-color, #10b981)' : 'var(--error-color, #ef4444)',
-              }}
-            >
-              {status?.isConnected ? 'Conectado' : 'Não Conectado'}
-            </span>
-          </div>
-
-          {status?.displayName && (
-            <p style={{ margin: '4px 0', color: 'var(--text-secondary)' }}>
-              <strong>Nome: </strong>
-              {status.displayName}
-            </p>
+        <>
+          {capacity && (
+            <>
+              <WhatsAppCommercialStatusBanner
+                capacity={capacity}
+                isAdmin={isAdmin}
+                onNavigateToBilling={onNavigateToBilling}
+              />
+              <WhatsAppCapacityCard capacity={capacity} />
+            </>
           )}
 
-          {status?.phoneNumber && (
-            <p style={{ margin: '4px 0', color: 'var(--text-secondary)' }}>
-              <strong>Telefone: </strong>
-              {status.phoneNumber}
-            </p>
-          )}
+          <div
+            className="card"
+            style={{
+              padding: '24px',
+              borderRadius: '12px',
+              background: 'var(--surface-color)',
+              border: '1px solid var(--border-color)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+              <span style={{ fontWeight: 600, fontSize: '1rem', color: 'var(--text-primary)' }}>Status da Conexão</span>
+              <span
+                style={{
+                  fontSize: '0.8rem',
+                  padding: '4px 10px',
+                  borderRadius: '12px',
+                  fontWeight: 600,
+                  background: status?.isConnected ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                  color: status?.isConnected ? 'var(--success-color, #10b981)' : 'var(--error-color, #ef4444)',
+                }}
+              >
+                {status?.isConnected ? 'Conectado' : 'Não Conectado'}
+              </span>
+            </div>
 
-          {!status?.isConnected && (
-            <div>
-              <p style={{ color: 'var(--text-tertiary)', fontSize: '0.88rem', marginTop: '12px', lineHeight: 1.5 }}>
-                Nenhuma linha do WhatsApp está conectada a este ministério no momento.
+            {status?.displayName && (
+              <p style={{ margin: '4px 0', color: 'var(--text-secondary)' }}>
+                <strong>Nome: </strong>
+                {status.displayName}
               </p>
+            )}
 
-              {capacity && (
-                <div
-                  style={{
-                    margin: '16px 0',
-                    padding: '12px 14px',
-                    borderRadius: '8px',
-                    background: 'var(--surface-variant, #0f172a)',
-                    fontSize: '0.85rem',
-                    color: 'var(--text-secondary)',
-                  }}
-                >
-                  <span>
-                    Capacidade da organização: {capacity.configuredConnectionsCount} de {capacity.totalAllowedConnections} em uso
-                  </span>
-                </div>
-              )}
+            {status?.phoneNumber && (
+              <p style={{ margin: '4px 0', color: 'var(--text-secondary)' }}>
+                <strong>Telefone: </strong>
+                {status.phoneNumber}
+              </p>
+            )}
 
-              {isAdmin && status?.hasOrganization && status?.organizationId && (
-                <div style={{ marginTop: '20px' }}>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                    {resumableConnection && (
+            {!status?.isConnected && (
+              <div>
+                <p style={{ color: 'var(--text-tertiary)', fontSize: '0.88rem', marginTop: '12px', lineHeight: 1.5 }}>
+                  Nenhuma linha do WhatsApp está conectada a este ministério no momento.
+                </p>
+
+                {isAdmin && status?.hasOrganization && status?.organizationId && (
+                  <div style={{ marginTop: '20px' }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                      {resumableConnection && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary min-h-[44px]"
+                          data-testid="resume-whatsapp-btn"
+                          onClick={() => handleOpenResume(resumableConnection)}
+                          style={{
+                            minHeight: '44px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            padding: '10px 18px',
+                            fontWeight: 600,
+                          }}
+                        >
+                          <RefreshCw size={16} />
+                          <span>Retomar configuração</span>
+                        </button>
+                      )}
+
                       <button
                         type="button"
-                        className="btn btn-secondary min-h-[44px]"
-                        data-testid="resume-whatsapp-btn"
-                        onClick={() => handleOpenResume(resumableConnection)}
+                        className="btn btn-primary min-h-[44px]"
+                        data-testid="connect-whatsapp-btn"
+                        disabled={!canCreate || !isAdmin || loading}
+                        onClick={handleOpenConnect}
                         style={{
                           minHeight: '44px',
                           display: 'inline-flex',
                           alignItems: 'center',
                           gap: '8px',
-                          padding: '10px 18px',
+                          padding: '10px 20px',
                           fontWeight: 600,
                         }}
                       >
-                        <RefreshCw size={16} />
-                        <span>Retomar configuração</span>
+                        <PlusCircle size={18} />
+                        <span>Conectar WhatsApp</span>
                       </button>
-                    )}
-
-                    <button
-                      type="button"
-                      className="btn btn-primary min-h-[44px]"
-                      data-testid="connect-whatsapp-btn"
-                      disabled={!canCreate}
-                      onClick={handleOpenConnect}
-                      style={{
-                        minHeight: '44px',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        padding: '10px 20px',
-                        fontWeight: 600,
-                      }}
-                    >
-                      <PlusCircle size={18} />
-                      <span>Conectar WhatsApp</span>
-                    </button>
-                  </div>
-
-                  {!canCreate && (
-                    <div
-                      className="commercial-restriction-msg"
-                      data-testid="connect-whatsapp-disabled-msg"
-                      style={{
-                        marginTop: '10px',
-                        color: 'var(--error-color, #ef4444)',
-                        fontSize: '0.85rem',
-                        lineHeight: 1.4,
-                      }}
-                    >
-                      {capacity?.restrictionReason ||
-                        (capacity?.commercialState
-                          ? getWhatsAppErrorMessage(capacity.commercialState)
-                          : 'Limite de conexões atingido para o plano atual.')}
                     </div>
-                  )}
-                </div>
-              )}
 
-              {!isAdmin && (
-                <p style={{ color: 'var(--text-tertiary)', fontSize: '0.84rem', marginTop: '12px' }}>
-                  Apenas administradores podem iniciar ou gerenciar a conexão do WhatsApp.
-                </p>
-              )}
-            </div>
-          )}
-        </div>
+                    {!canCreate && (
+                      <div
+                        className="commercial-restriction-msg"
+                        data-testid="connect-whatsapp-disabled-msg"
+                        style={{
+                          marginTop: '10px',
+                          color: 'var(--error-color, #ef4444)',
+                          fontSize: '0.85rem',
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        {formatRestrictionReason(capacity?.restrictionReason)}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {!isAdmin && (
+                  <p style={{ color: 'var(--text-tertiary)', fontSize: '0.84rem', marginTop: '12px' }}>
+                    Apenas administradores podem iniciar ou gerenciar a conexão do WhatsApp.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        </>
       )}
 
       {/* Onboarding Dialog */}

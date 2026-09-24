@@ -16,7 +16,10 @@ import {
   classifyWhatsAppError,
   isRetryableWhatsAppCategory,
   WHATSAPP_ERROR_CATEGORY_MAP,
+  formatRestrictionReason,
 } from './whatsapp-errors';
+import { formatDatePtBR } from './utils/locale';
+import { WhatsAppCapacityCard } from './components/whatsapp/WhatsAppCapacityCard';
 import { parseAppRoute, pathForWhatsAppCallback } from './routing';
 import { WhatsAppCallbackPage } from './components/WhatsAppCallbackPage';
 import { WhatsAppFoundationView } from './components/WhatsAppFoundationView';
@@ -3399,6 +3402,534 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
       expect(completeSpy).toHaveBeenCalledTimes(1);
 
       window.open = origOpen;
+    });
+  });
+
+  // =========================================================================
+  // PHASE 7E-F4: D8 Commercial-State UX (Tests A-O)
+  // =========================================================================
+  describe('PHASE 7E-F4: D8 Commercial-State UX (Tests A-O)', () => {
+    const mockBaseCapacity: OrganizationWhatsAppCapacity = {
+      organizationId: 'org-test',
+      billingAnchorMinistryId: 'min-test',
+      commercialState: 'healthy',
+      canSendMessages: true,
+      canCreateConnection: true,
+      canResumeAuthorizedOnboarding: true,
+      totalAllowedConnections: 2,
+      configuredConnectionsCount: 1,
+      includedConnections: 2,
+      additionalConnections: 0,
+      remainingCapacity: 1,
+      restrictionReason: null,
+      gracePeriodExpiresBillingDate: null,
+      billingAccessMode: 'normal',
+      connectionAccessMode: 'normal',
+    };
+
+    const mockBaseStatus: MinistryWhatsAppStatusDto = {
+      hasOrganization: true,
+      organizationId: 'org-test',
+      isConfigured: false,
+      isConnected: false,
+      source: 'none',
+      connectionId: null,
+      displayName: null,
+      phoneNumber: null,
+      connectionAccessMode: 'normal',
+      canSendMessages: true,
+    };
+
+    beforeEach(() => {
+      vi.restoreAllMocks();
+      vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue(mockBaseStatus);
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue(mockBaseCapacity);
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({ items: [], nextCursor: null });
+    });
+
+    // Test A: healthy with capacity -> connect enabled
+    it('Test A: healthy with capacity -> connect enabled, usage displayed, banner absent', async () => {
+      render(
+        <WhatsAppFoundationView
+          ministryId="min-test"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      const connectBtn = await screen.findByTestId('connect-whatsapp-btn');
+      expect(connectBtn).toBeEnabled();
+
+      expect(screen.getByTestId('whatsapp-capacity-card')).toBeInTheDocument();
+      expect(screen.getByTestId('capacity-usage-text')).toHaveTextContent('1 de 2 conexões utilizadas');
+      expect(screen.getByTestId('capacity-remaining-badge')).toHaveTextContent('1 disponível(is)');
+      expect(screen.getByTestId('capacity-send-status')).toHaveTextContent('Envio de notificações: Ativo');
+
+      expect(screen.queryByTestId('commercial-banner-healthy-at-capacity')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('commercial-banner-payment-grace')).not.toBeInTheDocument();
+    });
+
+    // Test B: healthy at capacity -> sends active, connect disabled
+    it('Test B: healthy at capacity -> sends active, connect disabled, notice and billing CTA displayed', async () => {
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue({
+        ...mockBaseCapacity,
+        canCreateConnection: false,
+        configuredConnectionsCount: 2,
+        remainingCapacity: 0,
+        restrictionReason: 'CAPACITY_EXCEEDED',
+      });
+
+      render(
+        <WhatsAppFoundationView
+          ministryId="min-test"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      const connectBtn = await screen.findByTestId('connect-whatsapp-btn');
+      expect(connectBtn).toBeDisabled();
+      expect(screen.getByTestId('connect-whatsapp-disabled-msg')).toHaveTextContent(
+        'Limite de conexões do WhatsApp atingido para o plano atual.'
+      );
+
+      expect(screen.getByTestId('commercial-banner-healthy-at-capacity')).toBeInTheDocument();
+      expect(screen.getByTestId('commercial-billing-cta')).toBeInTheDocument();
+      expect(screen.getByTestId('capacity-remaining-badge')).toHaveTextContent('Limite atingido');
+      expect(screen.getByTestId('capacity-send-status')).toHaveTextContent('Envio de notificações: Ativo');
+    });
+
+    // Test C: payment_grace -> sends active, connect disabled, resume available, grace civil date displayed without shift
+    it('Test C: payment_grace -> sends active, connect disabled, resume available, grace civil date displayed without shift', async () => {
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue({
+        ...mockBaseCapacity,
+        commercialState: 'payment_grace',
+        canSendMessages: true,
+        canCreateConnection: false,
+        canResumeAuthorizedOnboarding: true,
+        gracePeriodExpiresBillingDate: '2026-10-15',
+        restrictionReason: 'SUBSCRIPTION_RESTRICTED',
+      });
+
+      const connectingConn: WhatsAppConnectionDto = {
+        id: 'conn-grace',
+        organizationId: 'org-test',
+        displayName: 'Linha em Configuração',
+        phoneNumber: null,
+        provider: 'meta_cloud_api',
+        status: 'connecting',
+        statusReason: 'SUBSCRIPTION_RESTRICTED',
+        isOrganizationDefault: false,
+        assignedMinistryId: 'min-test',
+        createdAt: '2026-09-24T00:00:00Z',
+        updatedAt: '2026-09-24T00:00:00Z',
+      };
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({ items: [connectingConn], nextCursor: null });
+
+      const onNavigateToBilling = vi.fn();
+      render(
+        <WhatsAppFoundationView
+          ministryId="min-test"
+          isAdmin={true}
+          onBack={vi.fn()}
+          onNavigateToBilling={onNavigateToBilling}
+        />
+      );
+
+      const banner = await screen.findByTestId('commercial-banner-payment-grace');
+      expect(banner).toBeInTheDocument();
+      expect(banner).toHaveTextContent('15/10/2026');
+      expect(banner).toHaveTextContent('Envio de mensagens: Ativo');
+
+      const connectBtn = screen.getByTestId('connect-whatsapp-btn');
+      expect(connectBtn).toBeDisabled();
+
+      const resumeBtn = screen.getByTestId('resume-whatsapp-btn');
+      expect(resumeBtn).toBeInTheDocument();
+      expect(resumeBtn).toBeEnabled();
+
+      const billingCta = screen.getByTestId('commercial-billing-cta');
+      fireEvent.click(billingCta);
+      expect(onNavigateToBilling).toHaveBeenCalledTimes(1);
+    });
+
+    // Test D: post_payment_grace -> sends paused, creation/resume blocked, billing CTA visible
+    it('Test D: post_payment_grace -> sends paused, creation/resume blocked, billing CTA visible', async () => {
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue({
+        ...mockBaseCapacity,
+        commercialState: 'post_payment_grace',
+        canSendMessages: false,
+        canCreateConnection: false,
+        canResumeAuthorizedOnboarding: false,
+        restrictionReason: 'POST_GRACE_SUSPENDED',
+      });
+
+      const pendingConn: WhatsAppConnectionDto = {
+        id: 'conn-post-grace',
+        organizationId: 'org-test',
+        displayName: 'Linha Suspensa',
+        phoneNumber: null,
+        provider: 'meta_cloud_api',
+        status: 'pending',
+        statusReason: 'POST_GRACE_SUSPENDED',
+        isOrganizationDefault: false,
+        assignedMinistryId: 'min-test',
+        createdAt: '2026-09-24T00:00:00Z',
+        updatedAt: '2026-09-24T00:00:00Z',
+      };
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({ items: [pendingConn], nextCursor: null });
+
+      render(
+        <WhatsAppFoundationView
+          ministryId="min-test"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      const banner = await screen.findByTestId('commercial-banner-post-payment-grace');
+      expect(banner).toBeInTheDocument();
+      expect(banner).toHaveTextContent('Assinatura Suspensa por Inadimplência');
+
+      expect(screen.getByTestId('connect-whatsapp-btn')).toBeDisabled();
+      expect(screen.queryByTestId('resume-whatsapp-btn')).not.toBeInTheDocument();
+
+      const billingCta = screen.getByTestId('commercial-billing-cta');
+      expect(billingCta).toHaveTextContent('Reativar Assinatura');
+      expect(screen.getByTestId('capacity-send-status')).toHaveTextContent('Envio de notificações: Pausado');
+    });
+
+    // Test E: plan_excluded -> upgrade UX, billing CTA visible
+    it('Test E: plan_excluded -> upgrade UX, billing CTA visible', async () => {
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue({
+        ...mockBaseCapacity,
+        commercialState: 'plan_excluded',
+        canSendMessages: false,
+        canCreateConnection: false,
+        canResumeAuthorizedOnboarding: false,
+        totalAllowedConnections: 0,
+        configuredConnectionsCount: 0,
+        remainingCapacity: 0,
+        restrictionReason: 'PLAN_EXCLUDED',
+      });
+
+      render(
+        <WhatsAppFoundationView
+          ministryId="min-test"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      const banner = await screen.findByTestId('commercial-banner-plan-excluded');
+      expect(banner).toBeInTheDocument();
+      expect(banner).toHaveTextContent('Recurso Não Incluso no Plano Atual');
+
+      const billingCta = screen.getByTestId('commercial-billing-cta');
+      expect(billingCta).toHaveTextContent('Ver Planos de Assinatura');
+
+      expect(screen.getByTestId('connect-whatsapp-btn')).toBeDisabled();
+      expect(screen.getByTestId('connect-whatsapp-disabled-msg')).toHaveTextContent(
+        'O plano atual da organização não inclui a integração com WhatsApp.'
+      );
+    });
+
+    // Test F: administratively_suspended -> distinct from delinquency, support CTA
+    it('Test F: administratively_suspended -> distinct from delinquency, support CTA', async () => {
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue({
+        ...mockBaseCapacity,
+        commercialState: 'administratively_suspended',
+        canSendMessages: false,
+        canCreateConnection: false,
+        canResumeAuthorizedOnboarding: false,
+        restrictionReason: 'ADMINISTRATIVELY_SUSPENDED',
+      });
+
+      render(
+        <WhatsAppFoundationView
+          ministryId="min-test"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      const banner = await screen.findByTestId('commercial-banner-administratively-suspended');
+      expect(banner).toBeInTheDocument();
+      expect(banner).toHaveTextContent('Acesso Suspenso Administrativamente');
+
+      // Crucial: Must NOT contain billing/delinquency text
+      const bannerText = banner.textContent || '';
+      expect(bannerText).not.toMatch(/pagamento/i);
+      expect(bannerText).not.toMatch(/faturamento/i);
+      expect(bannerText).not.toMatch(/inadimplência/i);
+
+      const supportCta = screen.getByTestId('commercial-support-cta');
+      expect(supportCta).toBeInTheDocument();
+      expect(supportCta).toHaveTextContent('Falar com o Suporte');
+
+      expect(screen.getByTestId('connect-whatsapp-btn')).toBeDisabled();
+    });
+
+    // Test G: restricted_over_limit -> over-limit warning, creation blocked, billing CTA
+    it('Test G: restricted_over_limit -> over-limit warning, creation blocked, billing CTA', async () => {
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue({
+        ...mockBaseCapacity,
+        commercialState: 'restricted_over_limit',
+        canSendMessages: true,
+        canCreateConnection: false,
+        configuredConnectionsCount: 3,
+        totalAllowedConnections: 2,
+        remainingCapacity: 0,
+        restrictionReason: 'CAPACITY_EXCEEDED',
+      });
+
+      render(
+        <WhatsAppFoundationView
+          ministryId="min-test"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      const banner = await screen.findByTestId('commercial-banner-restricted-over-limit');
+      expect(banner).toBeInTheDocument();
+      expect(banner).toHaveTextContent('Limite de Conexões Excedido');
+
+      expect(screen.getByTestId('capacity-remaining-badge')).toHaveTextContent('Limite excedido');
+      expect(screen.getByTestId('commercial-billing-cta')).toHaveTextContent('Gerenciar Plano e Adicionais');
+      expect(screen.getByTestId('connect-whatsapp-btn')).toBeDisabled();
+    });
+
+    // Test H: integrity_failure -> neutral support copy, zero internal leaks
+    it('Test H: integrity_failure -> neutral support copy, zero internal leaks', async () => {
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue({
+        ...mockBaseCapacity,
+        commercialState: 'integrity_failure',
+        canSendMessages: false,
+        canCreateConnection: false,
+        canResumeAuthorizedOnboarding: false,
+        restrictionReason: 'INTEGRITY_CHECK_FAILED',
+      });
+
+      render(
+        <WhatsAppFoundationView
+          ministryId="min-test"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      const banner = await screen.findByTestId('commercial-banner-integrity-failure');
+      expect(banner).toBeInTheDocument();
+      expect(banner).toHaveTextContent('Verificação de Direitos Indisponível');
+
+      // Crucial: Must NOT leak internal infrastructure or technical jargon
+      const bannerText = (banner.textContent || '').toLowerCase();
+      expect(bannerText).not.toContain('firestore');
+      expect(bannerText).not.toContain('d7');
+      expect(bannerText).not.toContain('d8');
+      expect(bannerText).not.toContain('claims');
+      expect(bannerText).not.toContain('lock');
+      expect(bannerText).not.toContain('transaction');
+
+      const supportCta = screen.getByTestId('commercial-support-cta');
+      expect(supportCta).toBeInTheDocument();
+      expect(supportCta).toHaveTextContent('Contatar Suporte');
+    });
+
+    // Test I: capacity card values rendered from backend DTO
+    it('Test I: capacity card values rendered from backend DTO', () => {
+      const customCapacity: OrganizationWhatsAppCapacity = {
+        organizationId: 'org-test',
+        billingAnchorMinistryId: 'min-test',
+        commercialState: 'healthy',
+        canSendMessages: true,
+        canCreateConnection: true,
+        canResumeAuthorizedOnboarding: true,
+        totalAllowedConnections: 5,
+        configuredConnectionsCount: 2,
+        includedConnections: 2,
+        additionalConnections: 3,
+        remainingCapacity: 3,
+        restrictionReason: null,
+        gracePeriodExpiresBillingDate: null,
+        billingAccessMode: 'normal',
+        connectionAccessMode: 'normal',
+      };
+
+      render(<WhatsAppCapacityCard capacity={customCapacity} />);
+
+      expect(screen.getByTestId('capacity-usage-text')).toHaveTextContent('2 de 5 conexões utilizadas');
+      expect(screen.getByTestId('capacity-remaining-badge')).toHaveTextContent('3 disponível(is)');
+      expect(screen.getByText('2 inclusa(s) + 3 adicional(is)')).toBeInTheDocument();
+      expect(screen.getByText('40%')).toBeInTheDocument();
+      expect(screen.getByTestId('capacity-send-status')).toHaveTextContent('Envio de notificações: Ativo');
+    });
+
+    // Test J: unknown restriction reason safe fallback
+    it('Test J: unknown restriction reason safe fallback', () => {
+      expect(formatRestrictionReason('SOME_UNSEEN_FUTURE_CODE')).toBe(
+        'Ação não permitida pelas condições comerciais do plano.'
+      );
+      expect(formatRestrictionReason(undefined)).toBe(
+        'Ação não permitida pelas condições comerciais do plano.'
+      );
+      expect(formatRestrictionReason(null)).toBe(
+        'Ação não permitida pelas condições comerciais do plano.'
+      );
+      expect(formatRestrictionReason('')).toBe(
+        'Ação não permitida pelas condições comerciais do plano.'
+      );
+      // Known codes
+      expect(formatRestrictionReason('SUBSCRIPTION_RESTRICTED')).toBe(
+        'Acesso restrito devido a pendência na assinatura.'
+      );
+      expect(formatRestrictionReason('PLAN_EXCLUDED')).toBe(
+        'O plano atual da organização não inclui a integração com WhatsApp.'
+      );
+    });
+
+    // Test K: no local plan/date reconstruction drives eligibility
+    it('Test K: no local plan/date reconstruction drives eligibility', async () => {
+      // Backend claims canCreateConnection is false even if quota math would suggest slots open
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue({
+        ...mockBaseCapacity,
+        totalAllowedConnections: 10,
+        configuredConnectionsCount: 1,
+        remainingCapacity: 9,
+        canCreateConnection: false,
+        canResumeAuthorizedOnboarding: false,
+        commercialState: 'payment_grace',
+      });
+
+      render(
+        <WhatsAppFoundationView
+          ministryId="min-test"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      // Frontend must strictly follow canCreateConnection, never calculating 10 - 1 > 0
+      const connectBtn = await screen.findByTestId('connect-whatsapp-btn');
+      expect(connectBtn).toBeDisabled();
+    });
+
+    // Test L: F2 connecting + SUBSCRIPTION_RESTRICTED resume CTA works under payment_grace when backend boolean is true
+    it('Test L: F2 connecting + SUBSCRIPTION_RESTRICTED resume CTA works under payment_grace when backend boolean is true', async () => {
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue({
+        ...mockBaseCapacity,
+        commercialState: 'payment_grace',
+        canSendMessages: true,
+        canCreateConnection: false,
+        canResumeAuthorizedOnboarding: true,
+        gracePeriodExpiresBillingDate: '2026-10-15',
+        restrictionReason: 'SUBSCRIPTION_RESTRICTED',
+      });
+
+      const connectingConn: WhatsAppConnectionDto = {
+        id: 'conn-resumable',
+        organizationId: 'org-test',
+        displayName: 'Linha Resumível',
+        phoneNumber: null,
+        provider: 'meta_cloud_api',
+        status: 'connecting',
+        statusReason: 'SUBSCRIPTION_RESTRICTED',
+        isOrganizationDefault: false,
+        assignedMinistryId: 'min-test',
+        createdAt: '2026-09-24T00:00:00Z',
+        updatedAt: '2026-09-24T00:00:00Z',
+      };
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({ items: [connectingConn], nextCursor: null });
+
+      const startSpy = vi.spyOn(api, 'startWhatsAppOnboarding').mockResolvedValue({
+        sessionId: 'sess-res-l',
+        connectionId: 'conn-resumable',
+        expiresAt: '2026-09-24T12:00:00Z',
+        mode: 'resume_staged',
+        provider: 'meta_cloud_api',
+        fbAppId: 'app-meta',
+        configId: 'cfg-meta',
+        stateNonce: 'nonce-meta',
+      });
+
+      render(
+        <WhatsAppFoundationView
+          ministryId="min-test"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      const resumeBtn = await screen.findByTestId('resume-whatsapp-btn');
+      expect(resumeBtn).toBeInTheDocument();
+      expect(resumeBtn).toBeEnabled();
+
+      fireEvent.click(resumeBtn);
+
+      expect(startSpy).toHaveBeenCalledWith(
+        'org-test',
+        expect.objectContaining({
+          provider: 'meta_cloud_api',
+          resumeConnectionId: 'conn-resumable',
+        })
+      );
+    });
+
+    // Test M: loading/error refetch state does not temporarily enable connect
+    it('Test M: loading/error refetch state does not temporarily enable connect', async () => {
+      let rejectStatus: (reason: any) => void;
+      const statusPromise = new Promise((_resolve, reject) => {
+        rejectStatus = reject;
+      });
+      vi.spyOn(api, 'getMinistryWhatsAppStatus').mockReturnValue(statusPromise as any);
+
+      render(
+        <WhatsAppFoundationView
+          ministryId="min-test"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      // In loading state, connect button must not be present
+      expect(screen.queryByTestId('connect-whatsapp-btn')).not.toBeInTheDocument();
+      expect(screen.getByText('Carregando status do WhatsApp…')).toBeInTheDocument();
+
+      // Reject with error
+      await act(async () => {
+        rejectStatus!(new Error('Network error'));
+      });
+
+      // Still no connect button enabled
+      expect(screen.queryByTestId('connect-whatsapp-btn')).not.toBeInTheDocument();
+      expect(screen.getByText('Erro ao carregar status')).toBeInTheDocument();
+    });
+
+    // Test N: civil YYYY-MM-DD deadline does not shift day
+    it('Test N: civil YYYY-MM-DD deadline does not shift day', () => {
+      expect(formatDatePtBR('2026-10-15')).toBe('15/10/2026');
+      expect(formatDatePtBR('2026-12-31')).toBe('31/12/2026');
+      expect(formatDatePtBR('2026-01-01')).toBe('01/01/2026');
+      expect(formatDatePtBR('2026-02-28')).toBe('28/02/2026');
+    });
+
+    // Test O: existing F2 onboarding modal interaction still works with healthy capacity
+    it('Test O: existing F2 onboarding modal interaction still works with healthy capacity', async () => {
+      render(
+        <WhatsAppFoundationView
+          ministryId="min-test"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      const connectBtn = await screen.findByTestId('connect-whatsapp-btn');
+      fireEvent.click(connectBtn);
+
+      expect(await screen.findByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: /Conectar WhatsApp/i })).toBeInTheDocument();
+      expect(screen.getByTestId('start-onboarding-btn')).toBeInTheDocument();
     });
   });
 });

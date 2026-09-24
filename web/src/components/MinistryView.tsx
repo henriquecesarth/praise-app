@@ -436,6 +436,7 @@ export function MinistryView({
         isAdmin={userRole === 'admin'}
         onBack={() => navigateSection()}
         showToast={showToast}
+        onNavigateToBilling={() => navigateSection('plano')}
       />
     );
   }
