@@ -24,6 +24,9 @@ import { parseAppRoute, pathForWhatsAppCallback } from './routing';
 import { WhatsAppCallbackPage } from './components/WhatsAppCallbackPage';
 import { WhatsAppFoundationView } from './components/WhatsAppFoundationView';
 import { WhatsAppOnboardingModal } from './components/whatsapp/WhatsAppOnboardingModal';
+import { WhatsAppConnectionList } from './components/whatsapp/WhatsAppConnectionList';
+import { WhatsAppConnectionCard } from './components/whatsapp/WhatsAppConnectionCard';
+import { WhatsAppDisconnectModal } from './components/whatsapp/WhatsAppDisconnectModal';
 import {
   loadMetaSdk,
   resetMetaSdkStateForTests,
@@ -3930,6 +3933,720 @@ describe('PHASE 7E-F1: WhatsApp Typed API Client + Routing/Callback Foundation',
       expect(await screen.findByRole('dialog')).toBeInTheDocument();
       expect(screen.getByRole('heading', { name: /Conectar WhatsApp/i })).toBeInTheDocument();
       expect(screen.getByTestId('start-onboarding-btn')).toBeInTheDocument();
+    });
+  });
+
+  // =========================================================================
+  // PHASE 7E-F3: WhatsApp Connection Management UI (Tests A-V)
+  // =========================================================================
+  describe('PHASE 7E-F3: WhatsApp Connection Management UI (Tests A-V)', () => {
+    const f3MockCapacity: OrganizationWhatsAppCapacity = {
+      organizationId: 'org-test',
+      billingAnchorMinistryId: 'min-test',
+      totalAllowedConnections: 3,
+      includedConnections: 2,
+      additionalConnections: 1,
+      configuredConnectionsCount: 1,
+      remainingCapacity: 2,
+      commercialState: 'healthy',
+      canSendMessages: true,
+      canCreateConnection: true,
+      canResumeAuthorizedOnboarding: false,
+      restrictionReason: null,
+      gracePeriodExpiresBillingDate: null,
+      billingAccessMode: 'normal',
+      connectionAccessMode: 'normal',
+    };
+
+    const f3MockStatus: MinistryWhatsAppStatusDto = {
+      hasOrganization: true,
+      organizationId: 'org-test',
+      isConfigured: true,
+      isConnected: true,
+      source: 'exclusive',
+      connectionId: 'conn-1',
+      displayName: 'Linha Principal',
+      phoneNumber: '+5511999998888',
+      connectionAccessMode: 'normal',
+      canSendMessages: true,
+    };
+
+    const f3Conn1: WhatsAppConnectionDto = {
+      id: 'conn-1',
+      organizationId: 'org-test',
+      displayName: 'Linha Principal',
+      phoneNumber: '+5511999998888',
+      provider: 'meta_cloud_api',
+      status: 'connected',
+      statusReason: null,
+      isOrganizationDefault: false,
+      assignedMinistryId: null,
+      createdAt: '2026-09-24T00:00:00.000Z',
+      updatedAt: '2026-09-24T00:00:00.000Z',
+    };
+
+    const f3Conn2: WhatsAppConnectionDto = {
+      id: 'conn-2',
+      organizationId: 'org-test',
+      displayName: 'Linha de Backup',
+      phoneNumber: '+5511988887777',
+      provider: 'zernio',
+      status: 'connected',
+      statusReason: null,
+      isOrganizationDefault: true,
+      assignedMinistryId: null,
+      createdAt: '2026-09-24T01:00:00.000Z',
+      updatedAt: '2026-09-24T01:00:00.000Z',
+    };
+
+    beforeEach(() => {
+      vi.restoreAllMocks();
+      vi.spyOn(api, 'getMyMinistries').mockResolvedValue([
+        {
+          id: 'min-test',
+          name: 'Ministério Louvor Central',
+          ownerUserId: 'user-1',
+          subscriptionStatus: 'active',
+          role: 'admin',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'min-jovens',
+          name: 'Ministério Jovens',
+          ownerUserId: 'user-1',
+          subscriptionStatus: 'active',
+          role: 'admin',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ]);
+    });
+
+    // Test A: Non-admin members (isAdmin: false) remain read-only and never call api.listWhatsAppConnections or api.getWhatsAppCapacity
+    it('Test A: Non-admin members (isAdmin: false) remain read-only and never call api.listWhatsAppConnections or api.getWhatsAppCapacity', async () => {
+      const getStatusSpy = vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue(f3MockStatus);
+      const listConnsSpy = vi.spyOn(api, 'listWhatsAppConnections');
+      const getCapSpy = vi.spyOn(api, 'getWhatsAppCapacity');
+
+      render(
+        <WhatsAppFoundationView
+          ministryId="min-test"
+          isAdmin={false}
+          onBack={vi.fn()}
+        />
+      );
+
+      // 1. Ministry status is fetched and rendered
+      await screen.findByText('Status da Conexão');
+      expect(getStatusSpy).toHaveBeenCalledWith('min-test');
+      expect(screen.getByText('Linha Principal')).toBeInTheDocument();
+      expect(screen.getByText('+5511999998888')).toBeInTheDocument();
+
+      // 2. Explanatory non-admin message is visible
+      expect(
+        screen.getByText('Apenas administradores podem iniciar ou gerenciar conexões do WhatsApp.')
+      ).toBeInTheDocument();
+
+      // 3. Admin endpoints must NEVER be called
+      expect(listConnsSpy).not.toHaveBeenCalled();
+      expect(getCapSpy).not.toHaveBeenCalled();
+
+      // 4. Connection management section is not rendered
+      expect(screen.queryByTestId('whatsapp-connection-list')).not.toBeInTheDocument();
+    });
+
+    // Test B: Admin users (isAdmin: true) call api.listWhatsAppConnections and render connection management
+    it('Test B: Admin users (isAdmin: true) call api.listWhatsAppConnections and render connection management', async () => {
+      vi.spyOn(api, 'getMinistryWhatsAppStatus').mockResolvedValue(f3MockStatus);
+      vi.spyOn(api, 'getWhatsAppCapacity').mockResolvedValue(f3MockCapacity);
+      const listSpy = vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({
+        items: [f3Conn1],
+        nextCursor: null,
+      });
+
+      render(
+        <WhatsAppFoundationView
+          ministryId="min-test"
+          isAdmin={true}
+          onBack={vi.fn()}
+        />
+      );
+
+      // Connection list is rendered
+      const listContainer = await screen.findByTestId('whatsapp-connection-list');
+      expect(listContainer).toBeInTheDocument();
+      expect(listSpy).toHaveBeenCalledWith('org-test');
+      expect(screen.getByTestId('whatsapp-connection-card-conn-1')).toBeInTheDocument();
+    });
+
+    // Test C: Loading state in WhatsAppConnectionList renders loading spinner
+    it('Test C: Loading state in WhatsAppConnectionList renders loading spinner', () => {
+      vi.spyOn(api, 'listWhatsAppConnections').mockReturnValue(new Promise(() => {}));
+
+      render(
+        <WhatsAppConnectionList
+          organizationId="org-test"
+          ministryId="min-test"
+        />
+      );
+
+      expect(screen.getByTestId('connections-loading')).toBeInTheDocument();
+      expect(screen.getByText('Carregando conexões…')).toBeInTheDocument();
+    });
+
+    // Test D: Empty state renders informative message when organization has 0 connections
+    it('Test D: Empty state renders informative message when organization has 0 connections', async () => {
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({
+        items: [],
+        nextCursor: null,
+      });
+
+      render(
+        <WhatsAppConnectionList
+          organizationId="org-test"
+          ministryId="min-test"
+        />
+      );
+
+      const emptyCard = await screen.findByTestId('connections-empty');
+      expect(emptyCard).toBeInTheDocument();
+      expect(
+        screen.getByText('Nenhuma conexão do WhatsApp configurada para esta organização.')
+      ).toBeInTheDocument();
+    });
+
+    // Test E: Error state in WhatsAppConnectionList displays error message and retry button
+    it('Test E: Error state in WhatsAppConnectionList displays error message and retry button', async () => {
+      const listSpy = vi
+        .spyOn(api, 'listWhatsAppConnections')
+        .mockRejectedValueOnce(new Error('Network failure'));
+
+      render(
+        <WhatsAppConnectionList
+          organizationId="org-test"
+          ministryId="min-test"
+        />
+      );
+
+      const errorAlert = await screen.findByTestId('connections-error');
+      expect(errorAlert).toBeInTheDocument();
+      expect(screen.getByText('Erro ao carregar conexões')).toBeInTheDocument();
+
+      // Retry
+      listSpy.mockResolvedValueOnce({
+        items: [f3Conn1],
+        nextCursor: null,
+      });
+
+      const retryBtn = screen.getByTestId('retry-connections-btn');
+      fireEvent.click(retryBtn);
+
+      expect(await screen.findByTestId('whatsapp-connection-card-conn-1')).toBeInTheDocument();
+    });
+
+    // Test F: Connection details render correctly (displayName, phone, provider, status badge)
+    it('Test F: Connection details render correctly (displayName, phone, provider, status badge)', () => {
+      render(
+        <WhatsAppConnectionCard
+          connection={f3Conn1}
+          organizationId="org-test"
+          onConnectionUpdated={vi.fn()}
+          onRequestDisconnect={vi.fn()}
+        />
+      );
+
+      expect(screen.getByText('Linha Principal')).toBeInTheDocument();
+      expect(screen.getByTestId('connection-phone-conn-1')).toHaveTextContent('+5511999998888');
+      expect(screen.getByTestId('connection-provider-badge-conn-1')).toHaveTextContent('Meta Cloud API');
+      expect(screen.getByTestId('connection-status-badge-conn-1')).toHaveTextContent('Conectado');
+    });
+
+    // Test G: Organization default badge is rendered when isOrganizationDefault: true
+    it('Test G: Organization default badge is rendered when isOrganizationDefault: true', () => {
+      render(
+        <WhatsAppConnectionCard
+          connection={f3Conn2}
+          organizationId="org-test"
+          onConnectionUpdated={vi.fn()}
+          onRequestDisconnect={vi.fn()}
+        />
+      );
+
+      const defaultBadge = screen.getByTestId('connection-default-badge-conn-2');
+      expect(defaultBadge).toBeInTheDocument();
+      expect(defaultBadge).toHaveTextContent('Padrão da Organização');
+    });
+
+    // Test H: Ministry exclusive assignment badge is rendered when assignedMinistryId is set
+    it('Test H: Ministry exclusive assignment badge is rendered when assignedMinistryId is set', () => {
+      const assignedConn: WhatsAppConnectionDto = {
+        ...f3Conn1,
+        id: 'conn-assigned',
+        assignedMinistryId: 'min-jovens',
+      };
+
+      render(
+        <WhatsAppConnectionCard
+          connection={assignedConn}
+          organizationId="org-test"
+          availableMinistries={[{ id: 'min-jovens', name: 'Ministério Jovens' }]}
+          onConnectionUpdated={vi.fn()}
+          onRequestDisconnect={vi.fn()}
+        />
+      );
+
+      const assignedBadge = screen.getByTestId('connection-assigned-badge-conn-assigned');
+      expect(assignedBadge).toBeInTheDocument();
+      expect(assignedBadge).toHaveTextContent('Atribuído ao ministério: Ministério Jovens');
+    });
+
+    // Test I: Pagination: renders load more button when nextCursor is present and appends next page
+    it('Test I: Pagination: renders load more button when nextCursor is present and appends next page', async () => {
+      const listSpy = vi.spyOn(api, 'listWhatsAppConnections')
+        .mockResolvedValueOnce({
+          items: [f3Conn1],
+          nextCursor: 'cur-page-2',
+        })
+        .mockResolvedValueOnce({
+          items: [f3Conn2],
+          nextCursor: null,
+        });
+
+      render(
+        <WhatsAppConnectionList
+          organizationId="org-test"
+          ministryId="min-test"
+        />
+      );
+
+      await screen.findByTestId('whatsapp-connection-card-conn-1');
+      const loadMoreBtn = screen.getByTestId('load-more-connections-btn');
+      expect(loadMoreBtn).toBeInTheDocument();
+
+      fireEvent.click(loadMoreBtn);
+
+      expect(listSpy).toHaveBeenCalledWith('org-test', {
+        limit: 10,
+        cursor: 'cur-page-2',
+      });
+
+      expect(await screen.findByTestId('whatsapp-connection-card-conn-2')).toBeInTheDocument();
+      expect(screen.getByTestId('whatsapp-connection-card-conn-1')).toBeInTheDocument();
+      expect(screen.queryByTestId('load-more-connections-btn')).not.toBeInTheDocument();
+    });
+
+    // Test J: Pagination: does not render load more button when nextCursor is null
+    it('Test J: Pagination: does not render load more button when nextCursor is null', async () => {
+      vi.spyOn(api, 'listWhatsAppConnections').mockResolvedValue({
+        items: [f3Conn1],
+        nextCursor: null,
+      });
+
+      render(
+        <WhatsAppConnectionList
+          organizationId="org-test"
+          ministryId="min-test"
+        />
+      );
+
+      await screen.findByTestId('whatsapp-connection-card-conn-1');
+      expect(screen.queryByTestId('load-more-connections-btn')).not.toBeInTheDocument();
+    });
+
+    // Test K: Display name editing enforces 1..100 trimmed characters
+    it('Test K: Display name editing enforces 1..100 trimmed characters', async () => {
+      const updateSpy = vi.spyOn(api, 'updateWhatsAppConnection');
+
+      render(
+        <WhatsAppConnectionCard
+          connection={f3Conn1}
+          organizationId="org-test"
+          onConnectionUpdated={vi.fn()}
+          onRequestDisconnect={vi.fn()}
+        />
+      );
+
+      // Enter edit mode
+      fireEvent.click(screen.getByTestId('edit-display-name-btn-conn-1'));
+      const input = screen.getByTestId('display-name-input-conn-1');
+
+      // 1. Whitespace / empty string validation
+      fireEvent.change(input, { target: { value: '    ' } });
+      const saveBtn = screen.getByTestId('save-display-name-btn-conn-1');
+      expect(saveBtn).toBeDisabled();
+
+      // Submit attempt with empty string
+      fireEvent.click(saveBtn);
+      expect(updateSpy).not.toHaveBeenCalled();
+
+      // 2. Exceeding 100 characters disables save
+      const excessiveName = 'a'.repeat(101);
+      fireEvent.change(input, { target: { value: excessiveName } });
+      expect(saveBtn).toBeDisabled();
+
+      // 3. Cancel button exits edit mode and restores original name
+      const cancelBtn = screen.getByTestId('cancel-display-name-btn-conn-1');
+      fireEvent.click(cancelBtn);
+
+      expect(screen.queryByTestId('display-name-input-conn-1')).not.toBeInTheDocument();
+      expect(screen.getByText('Linha Principal')).toBeInTheDocument();
+    });
+
+    // Test L: Display name editing calls updateWhatsAppConnection and updates UI
+    it('Test L: Display name editing calls updateWhatsAppConnection and updates UI', async () => {
+      const onUpdatedMock = vi.fn();
+      const updatedConn: WhatsAppConnectionDto = {
+        ...f3Conn1,
+        displayName: 'Novo Nome da Linha',
+      };
+      const updateSpy = vi
+        .spyOn(api, 'updateWhatsAppConnection')
+        .mockResolvedValue(updatedConn);
+
+      render(
+        <WhatsAppConnectionCard
+          connection={f3Conn1}
+          organizationId="org-test"
+          onConnectionUpdated={onUpdatedMock}
+          onRequestDisconnect={vi.fn()}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('edit-display-name-btn-conn-1'));
+      const input = screen.getByTestId('display-name-input-conn-1');
+      fireEvent.change(input, { target: { value: 'Novo Nome da Linha' } });
+
+      const saveBtn = screen.getByTestId('save-display-name-btn-conn-1');
+      fireEvent.click(saveBtn);
+
+      expect(updateSpy).toHaveBeenCalledWith('org-test', 'conn-1', {
+        displayName: 'Novo Nome da Linha',
+      });
+
+      await act(async () => {});
+      expect(onUpdatedMock).toHaveBeenCalledWith(updatedConn);
+    });
+
+    // Test M: Display name editing shows error when update fails
+    it('Test M: Display name editing shows error when update fails', async () => {
+      vi.spyOn(api, 'updateWhatsAppConnection').mockRejectedValue(
+        new Error('Nome de exibição inválido.')
+      );
+
+      render(
+        <WhatsAppConnectionCard
+          connection={f3Conn1}
+          organizationId="org-test"
+          onConnectionUpdated={vi.fn()}
+          onRequestDisconnect={vi.fn()}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('edit-display-name-btn-conn-1'));
+      const input = screen.getByTestId('display-name-input-conn-1');
+      fireEvent.change(input, { target: { value: 'Falha' } });
+
+      fireEvent.click(screen.getByTestId('save-display-name-btn-conn-1'));
+
+      const errorMsg = await screen.findByTestId('display-name-error-conn-1');
+      expect(errorMsg).toBeInTheDocument();
+    });
+
+    // Test N: Organization default toggle calls updateWhatsAppConnection with isOrganizationDefault: true
+    it('Test N: Organization default toggle calls updateWhatsAppConnection with isOrganizationDefault: true', async () => {
+      const onUpdatedMock = vi.fn();
+      const updatedConn: WhatsAppConnectionDto = {
+        ...f3Conn1,
+        isOrganizationDefault: true,
+      };
+      const updateSpy = vi
+        .spyOn(api, 'updateWhatsAppConnection')
+        .mockResolvedValue(updatedConn);
+
+      render(
+        <WhatsAppConnectionCard
+          connection={f3Conn1}
+          organizationId="org-test"
+          onConnectionUpdated={onUpdatedMock}
+          onRequestDisconnect={vi.fn()}
+        />
+      );
+
+      const setDefaultBtn = screen.getByTestId('set-default-btn-conn-1');
+      expect(setDefaultBtn).toBeEnabled();
+      fireEvent.click(setDefaultBtn);
+
+      expect(updateSpy).toHaveBeenCalledWith('org-test', 'conn-1', {
+        isOrganizationDefault: true,
+      });
+
+      await act(async () => {});
+      expect(onUpdatedMock).toHaveBeenCalledWith(updatedConn);
+    });
+
+    // Test O: Organization default toggle calls updateWhatsAppConnection with isOrganizationDefault: false
+    it('Test O: Organization default toggle calls updateWhatsAppConnection with isOrganizationDefault: false', async () => {
+      const onUpdatedMock = vi.fn();
+      const updatedConn: WhatsAppConnectionDto = {
+        ...f3Conn2,
+        isOrganizationDefault: false,
+      };
+      const updateSpy = vi
+        .spyOn(api, 'updateWhatsAppConnection')
+        .mockResolvedValue(updatedConn);
+
+      render(
+        <WhatsAppConnectionCard
+          connection={f3Conn2}
+          organizationId="org-test"
+          onConnectionUpdated={onUpdatedMock}
+          onRequestDisconnect={vi.fn()}
+        />
+      );
+
+      const removeDefaultBtn = screen.getByTestId('remove-default-btn-conn-2');
+      expect(removeDefaultBtn).toBeEnabled();
+      fireEvent.click(removeDefaultBtn);
+
+      expect(updateSpy).toHaveBeenCalledWith('org-test', 'conn-2', {
+        isOrganizationDefault: false,
+      });
+
+      await act(async () => {});
+      expect(onUpdatedMock).toHaveBeenCalledWith(updatedConn);
+    });
+
+    // Test P: Organization default toggle is disabled for non-connected or disconnected status
+    it('Test P: Organization default toggle is disabled for non-connected or disconnected status', () => {
+      // 1. Connecting status
+      const connectingConn: WhatsAppConnectionDto = {
+        ...f3Conn1,
+        status: 'connecting',
+      };
+
+      const { unmount } = render(
+        <WhatsAppConnectionCard
+          connection={connectingConn}
+          organizationId="org-test"
+          onConnectionUpdated={vi.fn()}
+          onRequestDisconnect={vi.fn()}
+        />
+      );
+
+      expect(screen.getByTestId('set-default-btn-conn-1')).toBeDisabled();
+      unmount();
+
+      // 2. Disconnected status: management actions are not rendered
+      const disconnectedConn: WhatsAppConnectionDto = {
+        ...f3Conn1,
+        status: 'disconnected',
+      };
+
+      render(
+        <WhatsAppConnectionCard
+          connection={disconnectedConn}
+          organizationId="org-test"
+          onConnectionUpdated={vi.fn()}
+          onRequestDisconnect={vi.fn()}
+        />
+      );
+
+      expect(screen.queryByTestId('set-default-btn-conn-1')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('edit-display-name-btn-conn-1')).not.toBeInTheDocument();
+    });
+
+    // Test Q: Organization default toggle is disabled for exclusively assigned connection
+    it('Test Q: Organization default toggle is disabled for exclusively assigned connection', () => {
+      const assignedConn: WhatsAppConnectionDto = {
+        ...f3Conn1,
+        assignedMinistryId: 'min-jovens',
+      };
+
+      render(
+        <WhatsAppConnectionCard
+          connection={assignedConn}
+          organizationId="org-test"
+          onConnectionUpdated={vi.fn()}
+          onRequestDisconnect={vi.fn()}
+        />
+      );
+
+      expect(screen.getByTestId('set-default-btn-conn-1')).toBeDisabled();
+    });
+
+    // Test R: Ministry assignment dropdown calls updateWhatsAppConnection with assignedMinistryId
+    it('Test R: Ministry assignment dropdown calls updateWhatsAppConnection with assignedMinistryId', async () => {
+      const onUpdatedMock = vi.fn();
+      const updatedConn: WhatsAppConnectionDto = {
+        ...f3Conn1,
+        assignedMinistryId: 'min-jovens',
+      };
+      const updateSpy = vi
+        .spyOn(api, 'updateWhatsAppConnection')
+        .mockResolvedValue(updatedConn);
+
+      render(
+        <WhatsAppConnectionCard
+          connection={f3Conn1}
+          organizationId="org-test"
+          availableMinistries={[{ id: 'min-jovens', name: 'Ministério Jovens' }]}
+          onConnectionUpdated={onUpdatedMock}
+          onRequestDisconnect={vi.fn()}
+        />
+      );
+
+      const select = screen.getByTestId('assign-ministry-select-conn-1');
+      fireEvent.change(select, { target: { value: 'min-jovens' } });
+
+      const saveBtn = screen.getByTestId('save-assignment-btn-conn-1');
+      expect(saveBtn).toBeEnabled();
+      fireEvent.click(saveBtn);
+
+      expect(updateSpy).toHaveBeenCalledWith('org-test', 'conn-1', {
+        assignedMinistryId: 'min-jovens',
+      });
+
+      await act(async () => {});
+      expect(onUpdatedMock).toHaveBeenCalledWith(updatedConn);
+    });
+
+    // Test S: Ministry assignment dropdown calls updateWhatsAppConnection with null to unassign
+    it('Test S: Ministry assignment dropdown calls updateWhatsAppConnection with null to unassign', async () => {
+      const assignedConn: WhatsAppConnectionDto = {
+        ...f3Conn1,
+        assignedMinistryId: 'min-jovens',
+      };
+      const onUpdatedMock = vi.fn();
+      const updatedConn: WhatsAppConnectionDto = {
+        ...f3Conn1,
+        assignedMinistryId: null,
+      };
+      const updateSpy = vi
+        .spyOn(api, 'updateWhatsAppConnection')
+        .mockResolvedValue(updatedConn);
+
+      render(
+        <WhatsAppConnectionCard
+          connection={assignedConn}
+          organizationId="org-test"
+          availableMinistries={[{ id: 'min-jovens', name: 'Ministério Jovens' }]}
+          onConnectionUpdated={onUpdatedMock}
+          onRequestDisconnect={vi.fn()}
+        />
+      );
+
+      const select = screen.getByTestId('assign-ministry-select-conn-1');
+      fireEvent.change(select, { target: { value: '' } });
+
+      const saveBtn = screen.getByTestId('save-assignment-btn-conn-1');
+      expect(saveBtn).toBeEnabled();
+      fireEvent.click(saveBtn);
+
+      expect(updateSpy).toHaveBeenCalledWith('org-test', 'conn-1', {
+        assignedMinistryId: null,
+      });
+
+      await act(async () => {});
+      expect(onUpdatedMock).toHaveBeenCalledWith(updatedConn);
+    });
+
+    // Test T: Ministry assignment is disabled for organization default connection
+    it('Test T: Ministry assignment is disabled for organization default connection', () => {
+      render(
+        <WhatsAppConnectionCard
+          connection={f3Conn2} // isOrganizationDefault = true
+          organizationId="org-test"
+          availableMinistries={[{ id: 'min-jovens', name: 'Ministério Jovens' }]}
+          onConnectionUpdated={vi.fn()}
+          onRequestDisconnect={vi.fn()}
+        />
+      );
+
+      expect(screen.getByTestId('assign-ministry-select-conn-2')).toBeDisabled();
+      expect(screen.getByTestId('save-assignment-btn-conn-2')).toBeDisabled();
+    });
+
+    // Test U: Disconnect flow opens modal, confirms, calls disconnectWhatsAppConnection, updates status, and shows toast
+    it('Test U: Disconnect flow opens modal, confirms, calls disconnectWhatsAppConnection, updates status, and shows toast', async () => {
+      const showToastMock = vi.fn();
+      const onMutationSuccessMock = vi.fn();
+      const disconnectSpy = vi
+        .spyOn(api, 'disconnectWhatsAppConnection')
+        .mockResolvedValue({
+          success: true,
+          connectionId: 'conn-1',
+          status: 'disconnected',
+        });
+
+      render(
+        <WhatsAppConnectionList
+          organizationId="org-test"
+          ministryId="min-test"
+          initialConnections={[f3Conn1]}
+          onMutationSuccess={onMutationSuccessMock}
+          showToast={showToastMock}
+        />
+      );
+
+      // Open disconnect modal
+      const disconnectBtn = screen.getByTestId('disconnect-connection-btn-conn-1');
+      fireEvent.click(disconnectBtn);
+
+      // Modal is visible
+      const modal = await screen.findByTestId('whatsapp-disconnect-modal');
+      expect(modal).toBeInTheDocument();
+      expect(screen.getByTestId('disconnect-modal-desc')).toHaveTextContent('Linha Principal');
+      expect(screen.getByTestId('disconnect-modal-desc')).toHaveTextContent('+5511999998888');
+
+      // Confirm disconnect
+      const confirmBtn = screen.getByTestId('confirm-disconnect-btn');
+      fireEvent.click(confirmBtn);
+
+      expect(disconnectSpy).toHaveBeenCalledWith('org-test', 'conn-1');
+
+      // Modal closes, toast fired, mutation callback invoked
+      await act(async () => {});
+      expect(screen.queryByTestId('whatsapp-disconnect-modal')).not.toBeInTheDocument();
+      expect(showToastMock).toHaveBeenCalledWith('Conexão desconectada com sucesso.', 'success');
+      expect(onMutationSuccessMock).toHaveBeenCalled();
+    });
+
+    // Test V: Disconnect modal supports cancellation, close, and prevents double-submit while in-flight
+    it('Test V: Disconnect modal supports cancellation, close, and prevents double-submit while in-flight', () => {
+      const onCloseMock = vi.fn();
+      const onConfirmMock = vi.fn();
+
+      // 1. Cancel click
+      const { rerender } = render(
+        <WhatsAppDisconnectModal
+          isOpen={true}
+          connection={f3Conn1}
+          onClose={onCloseMock}
+          onConfirm={onConfirmMock}
+          submitting={false}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('cancel-disconnect-btn'));
+      expect(onCloseMock).toHaveBeenCalled();
+
+      // 2. Submitting state disables buttons and updates label
+      rerender(
+        <WhatsAppDisconnectModal
+          isOpen={true}
+          connection={f3Conn1}
+          onClose={onCloseMock}
+          onConfirm={onConfirmMock}
+          submitting={true}
+        />
+      );
+
+      const confirmBtn = screen.getByTestId('confirm-disconnect-btn');
+      const cancelBtn = screen.getByTestId('cancel-disconnect-btn');
+      expect(confirmBtn).toBeDisabled();
+      expect(confirmBtn).toHaveTextContent('Desconectando…');
+      expect(cancelBtn).toBeDisabled();
     });
   });
 });

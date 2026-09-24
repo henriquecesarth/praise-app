@@ -10,6 +10,7 @@ import { classifyWhatsAppError, formatRestrictionReason } from '../whatsapp-erro
 import { WhatsAppOnboardingModal } from './whatsapp/WhatsAppOnboardingModal';
 import { WhatsAppCommercialStatusBanner } from './whatsapp/WhatsAppCommercialStatusBanner';
 import { WhatsAppCapacityCard } from './whatsapp/WhatsAppCapacityCard';
+import { WhatsAppConnectionList } from './whatsapp/WhatsAppConnectionList';
 
 export interface WhatsAppFoundationViewProps {
   ministryId: string;
@@ -41,13 +42,16 @@ export function WhatsAppFoundationView({
       const data = await api.getMinistryWhatsAppStatus(ministryId);
       setStatus(data);
 
-      if (data.hasOrganization && data.organizationId) {
+      if (isAdmin && data.hasOrganization && data.organizationId) {
         const [capRes, connsRes] = await Promise.all([
           api.getWhatsAppCapacity(data.organizationId).catch(() => null),
           api.listWhatsAppConnections(data.organizationId).catch(() => null),
         ]);
         setCapacity(capRes);
         setConnections(connsRes?.items || []);
+      } else {
+        setCapacity(null);
+        setConnections([]);
       }
     } catch (err) {
       const message = classifyWhatsAppError(err).userMessage;
@@ -71,7 +75,7 @@ export function WhatsAppFoundationView({
         if (!active) return;
         setStatus(data);
 
-        if (data.hasOrganization && data.organizationId) {
+        if (isAdmin && data.hasOrganization && data.organizationId) {
           const [capRes, connsRes] = await Promise.all([
             api.getWhatsAppCapacity(data.organizationId).catch(() => null),
             api.listWhatsAppConnections(data.organizationId).catch(() => null),
@@ -79,6 +83,10 @@ export function WhatsAppFoundationView({
           if (!active) return;
           setCapacity(capRes);
           setConnections(connsRes?.items || []);
+        } else {
+          if (!active) return;
+          setCapacity(null);
+          setConnections([]);
         }
         setLoading(false);
       })
@@ -91,7 +99,7 @@ export function WhatsAppFoundationView({
     return () => {
       active = false;
     };
-  }, [ministryId]);
+  }, [ministryId, isAdmin]);
 
   const canCreate = Boolean(capacity?.canCreateConnection);
 
@@ -263,6 +271,23 @@ export function WhatsAppFoundationView({
               </p>
             )}
 
+            {status?.isConnected && status?.source && (
+              <p data-testid="connection-source-text" style={{ margin: '4px 0', color: 'var(--text-secondary)' }}>
+                <strong>Origem: </strong>
+                {status.source === 'exclusive'
+                  ? 'Conexão exclusiva deste ministério'
+                  : status.source === 'default'
+                  ? 'Conexão padrão da organização'
+                  : 'Nenhuma'}
+              </p>
+            )}
+
+            {!isAdmin && (
+              <p style={{ color: 'var(--text-tertiary)', fontSize: '0.84rem', marginTop: '12px' }}>
+                Apenas administradores podem iniciar ou gerenciar conexões do WhatsApp.
+              </p>
+            )}
+
             {!status?.isConnected && (
               <div>
                 <p style={{ color: 'var(--text-tertiary)', fontSize: '0.88rem', marginTop: '12px', lineHeight: 1.5 }}>
@@ -328,15 +353,24 @@ export function WhatsAppFoundationView({
                     )}
                   </div>
                 )}
-
-                {!isAdmin && (
-                  <p style={{ color: 'var(--text-tertiary)', fontSize: '0.84rem', marginTop: '12px' }}>
-                    Apenas administradores podem iniciar ou gerenciar a conexão do WhatsApp.
-                  </p>
-                )}
               </div>
             )}
           </div>
+
+          {/* Organization Connection Management (Admin Only) */}
+          {isAdmin && status?.hasOrganization && status?.organizationId && (
+            <WhatsAppConnectionList
+              organizationId={status.organizationId}
+              ministryId={ministryId}
+              initialConnections={connections}
+              canCreateConnection={canCreate}
+              canResume={Boolean(capacity?.canResumeAuthorizedOnboarding)}
+              onOpenConnect={handleOpenConnect}
+              onResumeConnection={handleOpenResume}
+              onMutationSuccess={loadData}
+              showToast={showToast}
+            />
+          )}
         </>
       )}
 

@@ -150,9 +150,9 @@ test('admin completes WhatsApp onboarding via mocked Zernio provider boundary', 
   await page.waitForURL('**/ministerio/whatsapp');
 
   // 9. UI converges to connected derived from authoritative backend state
-  await expect(page.getByText('Conectado')).toBeVisible();
-  await expect(page.getByText('Linha Zernio E2E')).toBeVisible();
-  await expect(page.getByText('+5511999990001')).toBeVisible();
+  await expect(page.getByText('Conectado').first()).toBeVisible();
+  await expect(page.getByText('Linha Zernio E2E').first()).toBeVisible();
+  await expect(page.getByText('+5511999990001').first()).toBeVisible();
 
   // 10. Confirm zero real network requests to Meta/Zernio
   expect(providerApiCalls).toBe(0);
