@@ -126,3 +126,39 @@ To allow local HTTP development against the host machine without weakening produ
 - `mobile/android/app/src/debug/res/xml/network_security_config.xml` enables cleartext traffic **strictly** for `10.0.2.2`, `localhost`, and `127.0.0.1`.
 - `mobile/android/app/src/debug/AndroidManifest.xml` attaches this configuration only during debug builds.
 - Production/Release builds merge only `main/AndroidManifest.xml`, maintaining strict HTTPS enforcement.
+
+---
+
+## 7. Ministry Bootstrap & Native Tenant Shell (Mobile V1-M3)
+
+### 7.1 Backend Authority
+- Endpoint: `GET /api/v1/ministries/my-ministries`.
+- This endpoint is the single source of truth for:
+  - Ministries available to the authenticated user.
+  - The effective user role for each ministry (`admin` | `member`).
+- Mobile **never** treats cached ministry data, cached roles, or local storage as authorization authority.
+
+### 7.2 Bootstrap Lifecycle
+State is managed via `MinistryContextNotifier` (`MinistryContextState`):
+- `MinistryBootstrapStatus`: `initializing` → `loading` → `ready` | `needsSelection` | `empty` | `error`.
+- **0 ministries**: transitions to `MinistryBootstrapStatus.empty`. Router renders `MinistryEmptyScreen` with informative message, "Atualizar" button, and "Sair da Conta" action.
+- **1 ministry**: automatically selected and saved to local preference. Transitions to `ready`.
+- **>1 ministries**:
+  - Checks user-scoped preference `selected_ministry_id_<userId>`.
+  - If preferred ID is present and exists in the fresh `my-ministries` list: selected automatically.
+  - If preferred ID is null, unknown, or no longer in `my-ministries`: transitions to `needsSelection`. Router renders `MinistrySelectorScreen`.
+- **Network / server failure**: transitions to `error` with retry action. Never presents false empty states.
+
+### 7.3 Tenant Switching & User Isolation
+- Active ministry context is held in memory by `MinistryContextNotifier`.
+- Switching ministry via `MinistrySwitcherSheet` updates the active selection in memory, saves the preference, and executes **zero backend mutations**.
+- Context is strictly user-isolated: preferences key is partitioned by Firebase user ID (`selected_ministry_id_<userId>`).
+- On logout or user change, `MinistryContextNotifier.reset()` clears all active ministry and role states.
+
+### 7.4 Responsive Navigation Shell
+`AppShell` provides the canonical native UI shell conforming to Material 3:
+- **Responsive breakpoint**: `600dp`.
+  - **Compact (< 600dp, Phone)**: Bottom `NavigationBar` with 4 canonical destinations: *Início*, *Escalas*, *Repertório*, *Perfil*. Top `AppBar` with ministry switcher button and LouvAIO branding.
+  - **Expanded (>= 600dp, Tablet / Large screen)**: Left-aligned `NavigationRail` with LouvAIO logo header, ministry indicator button, navigation destinations, and footer user profile tile.
+- **Touch target accessibility**: All interactive elements (ministry switcher, navigation items, buttons) satisfy minimum `48x48dp` targets.
+- **Clean separation from diagnostics**: Raw UID, token, and backend URL diagnostics are removed from user presentation.

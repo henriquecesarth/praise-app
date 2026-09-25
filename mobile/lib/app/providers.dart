@@ -6,6 +6,8 @@ import '../core/logging/app_logger.dart';
 import '../core/storage/preferences_storage.dart';
 import '../features/auth/data/auth_repository.dart';
 import '../features/auth/presentation/controllers/auth_controller.dart';
+import '../features/ministry_context/data/ministry_repository.dart';
+import '../features/ministry_context/presentation/controllers/ministry_context_controller.dart';
 import 'environment/app_environment.dart';
 import 'router/app_router.dart';
 
@@ -67,6 +69,22 @@ final authRepositoryProvider = Provider<AuthRepository>((ref) {
 final authNotifierProvider =
     StateNotifierProvider<AuthNotifier, AuthState>((ref) {
   return AuthNotifier(ref.watch(authRepositoryProvider));
+});
+
+/// Provider for the ministry repository.
+final ministryRepositoryProvider = Provider<MinistryRepository>((ref) {
+  return HttpMinistryRepository(
+    apiClient: ref.watch(apiClientProvider),
+  );
+});
+
+/// Provider for the ministry context state notifier.
+final ministryContextNotifierProvider =
+    StateNotifierProvider<MinistryContextNotifier, MinistryContextState>((ref) {
+  return MinistryContextNotifier(
+    repository: ref.watch(ministryRepositoryProvider),
+    preferencesStorage: ref.watch(preferencesStorageProvider),
+  );
 });
 
 /// Provider for application routing.

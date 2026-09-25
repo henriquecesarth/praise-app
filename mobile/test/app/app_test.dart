@@ -12,7 +12,18 @@ import 'package:louvaio_mobile/core/storage/preferences_storage.dart';
 import 'package:louvaio_mobile/features/auth/data/auth_repository.dart';
 import 'package:louvaio_mobile/features/auth/domain/auth_user.dart';
 
+import 'package:louvaio_mobile/features/ministry_context/data/ministry_repository.dart';
+import 'package:louvaio_mobile/features/ministry_context/domain/ministry.dart';
+
 class MockUser extends Mock implements User {}
+
+class FakeMinistryRepository implements MinistryRepository {
+  List<Ministry> ministries;
+  FakeMinistryRepository({this.ministries = const []});
+
+  @override
+  Future<List<Ministry>> getMyMinistries() async => ministries;
+}
 
 class FakeAuthRepository implements AuthRepository {
   final StreamController<User?> _controller =
@@ -70,12 +81,14 @@ void main() {
     final prefs = await SharedPreferences.getInstance();
     final storage = SharedPreferencesStorage(prefs);
     final fakeRepo = FakeAuthRepository();
+    final fakeMinistryRepo = FakeMinistryRepository();
 
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           preferencesStorageProvider.overrideWithValue(storage),
           authRepositoryProvider.overrideWithValue(fakeRepo),
+          ministryRepositoryProvider.overrideWithValue(fakeMinistryRepo),
         ],
         child: const LouvAioApp(),
       ),
@@ -113,12 +126,22 @@ void main() {
       name: 'Henrique Hermogenes',
     );
     final fakeRepo = FakeAuthRepository(userToReturn: testUser);
+    final fakeMinistryRepo = FakeMinistryRepository(
+      ministries: [
+        const Ministry(
+          id: 'min_test_1',
+          name: 'Ministério de Louvor',
+          role: 'admin',
+        ),
+      ],
+    );
 
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           preferencesStorageProvider.overrideWithValue(storage),
           authRepositoryProvider.overrideWithValue(fakeRepo),
+          ministryRepositoryProvider.overrideWithValue(fakeMinistryRepo),
         ],
         child: const LouvAioApp(),
       ),
@@ -131,11 +154,12 @@ void main() {
     fakeRepo.emitUser(MockUser());
     await tester.pumpAndSettle();
 
-    // Verify AppShell rendered with user info
+    // Verify AppShell rendered with user info and ministry context
     expect(find.text('LouvAIO'), findsOneWidget);
-    expect(find.text('Henrique Hermogenes'), findsOneWidget);
-    expect(find.text('henrique@louvaio.com'), findsOneWidget);
-    expect(find.text('ID Autenticado: usr_auth_123'), findsOneWidget);
-    expect(find.byTooltip('Sair da conta'), findsOneWidget);
+    expect(find.text('Olá, Henrique Hermogenes'), findsOneWidget);
+    expect(find.text('Ministério de Louvor'), findsWidgets);
+    expect(find.text('Administrador'), findsOneWidget);
+    // Explicitly verify raw UID is NOT exposed as normal UI
+    expect(find.text('ID Autenticado: usr_auth_123'), findsNothing);
   });
 }

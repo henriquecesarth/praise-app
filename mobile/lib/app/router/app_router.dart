@@ -1,31 +1,61 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../features/auth/presentation/controllers/auth_controller.dart';
 import '../../features/auth/presentation/login_screen.dart';
+import '../../features/ministry_context/presentation/controllers/ministry_context_controller.dart';
+import '../../features/ministry_context/presentation/ministry_empty_screen.dart';
+import '../../features/ministry_context/presentation/ministry_selector_screen.dart';
 import '../providers.dart';
 import '../shell/app_shell.dart';
 
 GoRouter createRouter(Ref ref) {
+  final refreshNotifier = _RouterRefreshNotifier(ref);
+
   return GoRouter(
     initialLocation: '/',
-    refreshListenable: _AuthStateListenable(ref),
+    refreshListenable: refreshNotifier,
     redirect: (BuildContext context, GoRouterState state) {
       final auth = ref.read(authNotifierProvider);
-      final isLoggingIn = state.matchedLocation == '/login';
+      final ministry = ref.read(ministryContextNotifierProvider);
+      final loc = state.matchedLocation;
+      final isLoggingIn = loc == '/login';
+      final isNoMinistry = loc == '/no-ministry';
+      final isSelectMinistry = loc == '/select-ministry';
 
       if (auth.isInitializing) {
         return null;
       }
 
-      final isAuthenticated = auth.isAuthenticated;
-
-      if (!isAuthenticated && !isLoggingIn) {
-        return '/login';
+      if (!auth.isAuthenticated) {
+        return isLoggingIn ? null : '/login';
       }
 
-      if (isAuthenticated && isLoggingIn) {
+      // Authenticated users should not be on /login
+      if (isLoggingIn) {
+        if (ministry.isEmpty) return '/no-ministry';
+        if (ministry.needsSelection) return '/select-ministry';
         return '/';
+      }
+
+      // During active loading or error, remain on current screen
+      if (ministry.isInitializing || ministry.isLoading || ministry.hasError) {
+        return null;
+      }
+
+      if (ministry.isEmpty) {
+        return isNoMinistry ? null : '/no-ministry';
+      }
+
+      if (ministry.needsSelection) {
+        return isSelectMinistry ? null : '/select-ministry';
+      }
+
+      if (ministry.isReady) {
+        if (isNoMinistry || isSelectMinistry) {
+          return '/';
+        }
+        return null;
       }
 
       return null;
@@ -57,14 +87,44 @@ GoRouter createRouter(Ref ref) {
         builder: (BuildContext context, GoRouterState state) =>
             const LoginScreen(),
       ),
+      GoRoute(
+        path: '/select-ministry',
+        name: 'select-ministry',
+        builder: (BuildContext context, GoRouterState state) =>
+            const MinistrySelectorScreen(),
+      ),
+      GoRoute(
+        path: '/no-ministry',
+        name: 'no-ministry',
+        builder: (BuildContext context, GoRouterState state) =>
+            const MinistryEmptyScreen(),
+      ),
     ],
   );
 }
 
-class _AuthStateListenable extends ChangeNotifier {
-  _AuthStateListenable(Ref ref) {
-    ref.listen<AuthState>(authNotifierProvider, (_, __) {
+class _RouterRefreshNotifier extends ChangeNotifier {
+  _RouterRefreshNotifier(Ref ref) {
+    ref.listen<AuthState>(authNotifierProvider, (previous, next) {
+      if (next.isAuthenticated && previous?.user?.id != next.user?.id) {
+        ref.read(ministryContextNotifierProvider.notifier).bootstrap();
+      } else if (next.isUnauthenticated) {
+        ref.read(ministryContextNotifierProvider.notifier).reset();
+      }
       notifyListeners();
     });
+
+    ref.listen<MinistryContextState>(ministryContextNotifierProvider, (_, __) {
+      notifyListeners();
+    });
+
+    // Handle case where auth is already authenticated before router initialization
+    final auth = ref.read(authNotifierProvider);
+    final ministry = ref.read(ministryContextNotifierProvider);
+    if (auth.isAuthenticated && ministry.isInitializing) {
+      Future.microtask(() {
+        ref.read(ministryContextNotifierProvider.notifier).bootstrap();
+      });
+    }
   }
 }
