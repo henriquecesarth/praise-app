@@ -1,4 +1,4 @@
-﻿# LouvAIO Mobile — Native Client Architecture (Mobile V1)
+# LouvAIO Mobile — Native Client Architecture (Mobile V1)
 
 ## 1. Overview & Project Placement
 
@@ -29,7 +29,8 @@ Mobile is **a new client of the SAME LouvAIO backend**. It does not introduce a 
 
 | Concern | Solution | Rationale |
 |---|---|---|
-| **Framework** | Flutter (Stable 3.22.2+, Dart 3.4.3+) | High-performance native rendering for mobile. |
+| **Framework** | Flutter (Stable 3.47.5+, Dart 3.13.4+) | High-performance native rendering for mobile. |
+| **Android Toolchain** | Android SDK 36 (build-tools 36.0.0, Gradle 9.3.1, Kotlin 2.4.0) | Modern Android SDK with user-space CLI bootstrap and JDK 21 compatibility. |
 | **State Management & DI** | `flutter_riverpod` (v2) | Single, type-safe, compile-time verified dependency injection and state graph. |
 | **Routing** | `go_router` | Declarative, URL-driven navigation matching modern Flutter standards. |
 | **HTTP Transport** | `dio` (v5) | Robust interceptor pipeline, timeout control, and centralized sanitized logging. |

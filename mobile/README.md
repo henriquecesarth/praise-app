@@ -1,4 +1,4 @@
-﻿# LouvAIO Mobile Client (Flutter Android-First)
+# LouvAIO Mobile Client (Flutter Android-First)
 
 Native mobile application for the LouvAIO platform.
 
@@ -10,9 +10,9 @@ Native mobile application for the LouvAIO platform.
 
 ## Prerequisites
 
-- Flutter SDK 3.22.2+ (Channel stable)
-- Dart SDK 3.4.3+
-- Android Studio / Android SDK (API 34+) for Android builds and emulator
+- Flutter SDK 3.47.5+ (Channel stable)
+- Dart SDK 3.13.4+
+- Android SDK (API 36 / build-tools 36.0.0) with Gradle 9.3.1+ and JDK 21+ for Android builds and emulator
 
 ---
 

@@ -43,7 +43,7 @@ class LoginPlaceholderScreen extends StatelessWidget {
               Text(
                 'A autenticação nativa via Firebase ID Token será ativada na fase Mobile V1-M2.',
                 style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onSurface.withOpacity(0.7),
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
                 ),
                 textAlign: TextAlign.center,
               ),
