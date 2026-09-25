@@ -50,20 +50,11 @@ export class AuthService {
   }
 
   /**
-   * Obter usuário autenticado atual pelo ID de usuário verificado (ou token para retrocompatibilidade)
+   * Obter perfil do usuário autenticado atual pelo ID de usuário verificado
    */
-  async getMe(userIdOrToken: string) {
-    if (!userIdOrToken) {
+  async getMe(userId: string) {
+    if (!userId) {
       throw new AppError(401, 'Sessão inválida ou expirada. Faça login novamente.');
-    }
-
-    let userId = userIdOrToken;
-
-    // Se fornecido um token compacto (3 partes separadas por ponto: header.payload.sig),
-    // decodifica com suporte dual (JWT legado + Firebase ID Token)
-    if (userIdOrToken.split('.').length === 3) {
-      const decoded = await this.userRepository.verifyToken(userIdOrToken);
-      userId = decoded.uid;
     }
 
     const user = await this.userRepository.findById(userId);

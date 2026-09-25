@@ -333,19 +333,39 @@ describe('Auth Feature & Mobile V1-M0 Firebase ID Token Compatibility Suite', ()
       expect(findByIdSpy).toHaveBeenCalledWith('usr-direct-1');
     });
 
-    it('supports dual-verification if passed a compact token (retrocompatibility)', async () => {
-      vi.spyOn(userRepo, 'verifyToken').mockResolvedValue({
-        uid: 'usr-from-token',
-        email: 'token@louvaio.com',
-      });
-      vi.spyOn(userRepo, 'findById').mockResolvedValue({
-        id: 'usr-from-token',
-        email: 'token@louvaio.com',
-        name: 'Token User',
+    it('treats a valid UID containing dots (e.g. user.with.dots) as a UID and passes it directly to findById unchanged', async () => {
+      const verifyTokenSpy = vi.spyOn(userRepo, 'verifyToken');
+      const findByIdSpy = vi.spyOn(userRepo, 'findById').mockResolvedValue({
+        id: 'user.with.dots',
+        email: 'dotted.user@louvaio.com',
+        name: 'Dotted UID User',
       });
 
-      const result = await authService.getMe('header.payload.sig');
-      expect(result.id).toBe('usr-from-token');
+      const result = await authService.getMe('user.with.dots');
+
+      expect(result).toEqual({
+        id: 'user.with.dots',
+        email: 'dotted.user@louvaio.com',
+        name: 'Dotted UID User',
+      });
+      // Crucial: verifyToken must NOT be called; dotted UID must NOT be parsed as token syntax
+      expect(verifyTokenSpy).not.toHaveBeenCalled();
+      expect(findByIdSpy).toHaveBeenCalledWith('user.with.dots');
+    });
+
+    it('treats a 3-part dotted UID (e.g. usr.part1.part2) strictly as a UID without token parsing or cryptographic verification', async () => {
+      const verifyTokenSpy = vi.spyOn(userRepo, 'verifyToken');
+      const findByIdSpy = vi.spyOn(userRepo, 'findById').mockResolvedValue({
+        id: 'usr.part1.part2',
+        email: 'tripart@louvaio.com',
+        name: 'Tripart User',
+      });
+
+      const result = await authService.getMe('usr.part1.part2');
+
+      expect(result.id).toBe('usr.part1.part2');
+      expect(verifyTokenSpy).not.toHaveBeenCalled();
+      expect(findByIdSpy).toHaveBeenCalledWith('usr.part1.part2');
     });
 
     it('throws AppError 404 when user profile does not exist', async () => {
