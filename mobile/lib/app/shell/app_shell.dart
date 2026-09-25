@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../features/dashboard/presentation/dashboard_view.dart';
 import '../../features/ministry_context/domain/ministry.dart';
 import '../../features/ministry_context/presentation/widgets/ministry_switcher_sheet.dart';
+import '../../features/schedules/presentation/views/schedules_view.dart';
 import '../providers.dart';
 
 /// Responsive native application shell for LouvAIO Mobile.
@@ -89,7 +90,7 @@ class _AppShellState extends ConsumerState<AppShell> {
         hasMultipleMinistries: availableMinistries.length > 1,
         onNavigateToTab: (index) => setState(() => _currentIndex = index),
       ),
-      const _SchedulesPlaceholderView(),
+      SchedulesView(ministryId: selectedMinistry?.id),
       const _RepertoirePlaceholderView(),
       _ProfileView(
         selectedMinistry: selectedMinistry,
@@ -262,52 +263,6 @@ class _AppShellState extends ConsumerState<AppShell> {
             label: 'Perfil',
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// Schedules tab placeholder (M5).
-class _SchedulesPlaceholderView extends StatelessWidget {
-  const _SchedulesPlaceholderView();
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircleAvatar(
-              radius: 36,
-              backgroundColor: theme.colorScheme.primary.withValues(alpha: 0.1),
-              child: Icon(
-                Icons.calendar_today_outlined,
-                size: 36,
-                color: theme.colorScheme.primary,
-              ),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              'Escalas de Louvor',
-              style: theme.textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'A visualização detalhada de escalas, confirmação de participação e indisponibilidade de integrantes estarão disponíveis nesta seção no módulo M5.',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
-                height: 1.5,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

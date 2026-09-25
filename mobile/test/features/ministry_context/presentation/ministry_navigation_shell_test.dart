@@ -18,6 +18,9 @@ import 'package:louvaio_mobile/features/dashboard/domain/dashboard_schedule_summ
 import 'package:louvaio_mobile/features/ministry_context/presentation/ministry_empty_screen.dart';
 import 'package:louvaio_mobile/features/ministry_context/presentation/ministry_selector_screen.dart';
 import 'package:louvaio_mobile/features/ministry_context/presentation/widgets/ministry_switcher_sheet.dart';
+import 'package:louvaio_mobile/features/schedules/data/schedule_repository.dart';
+import 'package:louvaio_mobile/features/schedules/domain/schedule.dart';
+import 'package:louvaio_mobile/features/schedules/domain/schedule_comment.dart';
 
 class MockAuthRepository extends Mock implements AuthRepository {}
 
@@ -35,6 +38,49 @@ class FakeDashboardRepo implements DashboardRepository {
   Future<List<Announcement>> getAnnouncements(String ministryId,
           {int limit = 20}) async =>
       [];
+}
+
+class FakeScheduleRepo implements ScheduleRepository {
+  @override
+  Future<List<ScheduleSummary>> listSchedules(String ministryId) async => [];
+
+  @override
+  Future<ScheduleDetail> getScheduleDetail(
+          String ministryId, String scheduleId) async =>
+      const ScheduleDetail(
+        id: 's1',
+        ministryId: 'min_1',
+        title: 'Culto',
+        date: '2026-10-01',
+      );
+
+  @override
+  Future<ScheduleDetail> confirmParticipation(
+          String ministryId, String scheduleId, bool confirmed) async =>
+      const ScheduleDetail(
+        id: 's1',
+        ministryId: 'min_1',
+        title: 'Culto',
+        date: '2026-10-01',
+      );
+
+  @override
+  Future<List<ScheduleComment>> getComments(
+          String ministryId, String scheduleId) async =>
+      [];
+
+  @override
+  Future<ScheduleComment> postComment(
+          String ministryId, String scheduleId, String content) async =>
+      const ScheduleComment(
+        id: 'c1',
+        scheduleId: 's1',
+        ministryId: 'min_1',
+        userId: 'u1',
+        userName: 'User',
+        content: 'content',
+        createdAt: '2026-10-01',
+      );
 }
 
 void main() {
@@ -208,6 +254,7 @@ void main() {
             preferencesStorageProvider.overrideWithValue(preferencesStorage),
             authRepositoryProvider.overrideWithValue(authRepo),
             dashboardRepositoryProvider.overrideWithValue(FakeDashboardRepo()),
+            scheduleRepositoryProvider.overrideWithValue(FakeScheduleRepo()),
             authNotifierProvider.overrideWith((ref) {
               final n = AuthNotifier(authRepo);
               n.state = const AuthState.authenticated(testUser);
@@ -265,6 +312,7 @@ void main() {
             preferencesStorageProvider.overrideWithValue(preferencesStorage),
             authRepositoryProvider.overrideWithValue(authRepo),
             dashboardRepositoryProvider.overrideWithValue(FakeDashboardRepo()),
+            scheduleRepositoryProvider.overrideWithValue(FakeScheduleRepo()),
             authNotifierProvider.overrideWith((ref) {
               final n = AuthNotifier(authRepo);
               n.state = const AuthState.authenticated(testUser);
@@ -296,9 +344,8 @@ void main() {
       // Navigate to Escalas tab
       await tester.tap(find.text('Escalas'));
       await tester.pumpAndSettle();
-      expect(find.text('Escalas do Ministério'),
-          findsNothing); // placeholder title is 'Escalas de Louvor'
-      expect(find.text('Escalas de Louvor'), findsOneWidget);
+      expect(find.text('Próximas'), findsOneWidget);
+      expect(find.text('Anteriores'), findsOneWidget);
 
       // Navigate to Repertório tab
       await tester.tap(find.text('Repertório'));
