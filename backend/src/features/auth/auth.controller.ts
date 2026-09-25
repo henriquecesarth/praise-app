@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { BaseController } from '../../controllers/BaseController';
 import { AuthService } from './auth.service';
 import { AuthenticatedRequest } from '../../middleware/auth';
+import { AppError } from '../../middleware/error-handler';
 
 export class AuthController extends BaseController {
   constructor(private readonly authService: AuthService = new AuthService()) {
@@ -28,9 +29,10 @@ export class AuthController extends BaseController {
 
   getMe = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const authHeader = req.headers.authorization;
-      const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : '';
-      const user = await this.authService.getMe(token);
+      if (!req.user?.id) {
+        throw new AppError(401, 'Sessão inválida ou expirada. Faça login novamente.');
+      }
+      const user = await this.authService.getMe(req.user.id);
       this.handleSuccess(res, user);
     } catch (err) {
       this.handleError(err, res, next);

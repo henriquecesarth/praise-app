@@ -114,14 +114,23 @@ export class UserRepository {
     try {
       const doc = await this.usersCollection.doc(uid).get();
       if (doc.exists) {
-        return doc.data() as UserRecordData;
+        const data = doc.data() as Partial<UserRecordData> | undefined;
+        return {
+          id: data?.id || doc.id,
+          email: data?.email || '',
+          name: data?.name || (data?.email ? data.email.split('@')[0] : 'Usuário'),
+          createdAt: data?.createdAt,
+        };
       }
-      const userRecord = await authAdmin.getUser(uid);
-      return {
-        id: userRecord.uid,
-        email: userRecord.email || '',
-        name: userRecord.displayName || 'Usuário',
-      };
+      if (authAdmin && typeof authAdmin.getUser === 'function') {
+        const userRecord = await authAdmin.getUser(uid);
+        return {
+          id: userRecord.uid,
+          email: userRecord.email || '',
+          name: userRecord.displayName || (userRecord.email ? userRecord.email.split('@')[0] : 'Usuário'),
+        };
+      }
+      return null;
     } catch {
       return null;
     }
@@ -140,6 +149,7 @@ export class UserRepository {
 
   /**
    * Valida e decodifica o token JWT da API de forma síncrona
+   * @deprecated Utilize verifyToken() para suporte dual a JWT legado e Firebase ID Token.
    */
   verifyAuthToken(token: string): { uid: string; email?: string } {
     try {

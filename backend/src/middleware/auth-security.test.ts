@@ -71,6 +71,24 @@ describe('Security Hardening: Auth & RBAC Middlewares', () => {
         email: 'tester@louvaio.com',
       });
     });
+
+    it('deve autenticar com sucesso quando o token é um Firebase ID Token válido', async () => {
+      const validFirebasePayload = {
+        uid: 'fb-user-999',
+        email: 'firebase.mobile@louvaio.com',
+      };
+      mockReq.headers.authorization = 'Bearer valid-firebase-id-token';
+
+      vi.spyOn(UserRepository.prototype, 'verifyToken').mockResolvedValue(validFirebasePayload as any);
+
+      await authenticate(mockReq, mockRes, mockNext);
+
+      expect(mockNext).toHaveBeenCalledWith();
+      expect(mockReq.user).toEqual({
+        id: 'fb-user-999',
+        email: 'firebase.mobile@louvaio.com',
+      });
+    });
   });
 
 

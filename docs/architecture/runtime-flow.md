@@ -28,6 +28,13 @@ sequenceDiagram
 
 App.tsx exibe LoginPage quando currentUser é nulo. O token fica em localStorage; logout remove apenas praise_auth_token e limpa estado local.
 
+### Contrato de Autenticação e `/auth/me` (PWA e Mobile V1)
+
+- **Suporte Dual de Tokens**: O middleware comum `authenticate` aceita tanto o JWT legado emitido no login PWA quanto o Firebase ID Token emitido no fluxo Flutter/Mobile via Firebase Auth.
+- **Cadeia de Autoridade Canônica**:
+  `Firebase ID token` → `common bearer authentication (authenticate)` → `req.user` → `current-user profile lookup (UserRepository.findById)`.
+- **Eliminação de Dupla Verificação**: `/api/v1/auth/me` utiliza `req.user.id` estabelecido pelo middleware de autenticação, eliminando a re-verificação síncrona exclusiva de JWT que bloqueava tokens do Firebase.
+
 ## 2. Signup and Login
 
 Signup:

@@ -50,15 +50,23 @@ export class AuthService {
   }
 
   /**
-   * Obter usuário autenticado atual via token JWT
+   * Obter usuário autenticado atual pelo ID de usuário verificado (ou token para retrocompatibilidade)
    */
-  async getMe(token: string) {
-    if (!token) {
-      throw new AppError(401, 'Token de autenticação não fornecido.');
+  async getMe(userIdOrToken: string) {
+    if (!userIdOrToken) {
+      throw new AppError(401, 'Sessão inválida ou expirada. Faça login novamente.');
     }
 
-    const decoded = this.userRepository.verifyAuthToken(token);
-    const user = await this.userRepository.findById(decoded.uid);
+    let userId = userIdOrToken;
+
+    // Se fornecido um token compacto (3 partes separadas por ponto: header.payload.sig),
+    // decodifica com suporte dual (JWT legado + Firebase ID Token)
+    if (userIdOrToken.split('.').length === 3) {
+      const decoded = await this.userRepository.verifyToken(userIdOrToken);
+      userId = decoded.uid;
+    }
+
+    const user = await this.userRepository.findById(userId);
 
     if (!user) {
       throw new AppError(404, 'Perfil de usuário não encontrado.');
