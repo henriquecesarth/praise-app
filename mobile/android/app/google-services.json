@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "561790102847",
+    "project_id": "praise-app-7a362",
+    "storage_bucket": "praise-app-7a362.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:561790102847:android:03f0df88f33ecb3361b78a",
+        "android_client_info": {
+          "package_name": "com.louvaio.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC4Fbmri7h8V5lhmiOTKcUJvQQeqo2BuwU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

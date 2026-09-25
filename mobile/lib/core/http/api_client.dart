@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import '../../app/environment/app_environment.dart';
 import '../errors/app_failure.dart';
 import '../logging/app_logger.dart';
+import 'auth_interceptor.dart';
 
 /// Central HTTP API client for LouvAIO mobile.
 ///
@@ -15,6 +16,9 @@ class ApiClient {
     required AppEnvironment environment,
     required this.logger,
     Dio? customDio,
+    Interceptor? authInterceptor,
+    TokenProvider? tokenProvider,
+    AuthFailureCallback? onAuthenticationFailed,
   }) : dio = customDio ??
             Dio(
               BaseOptions(
@@ -28,6 +32,17 @@ class ApiClient {
                 },
               ),
             ) {
+    if (authInterceptor != null) {
+      dio.interceptors.add(authInterceptor);
+    } else if (tokenProvider != null) {
+      dio.interceptors.add(
+        AuthInterceptor(
+          tokenProvider: tokenProvider,
+          onAuthenticationFailed: onAuthenticationFailed ?? () async {},
+          dio: dio,
+        ),
+      );
+    }
     if (customDio == null) {
       dio.interceptors.add(_buildLoggingInterceptor());
     }

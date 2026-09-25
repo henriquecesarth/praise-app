@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import '../providers.dart';
 
 /// Minimal, polished application shell for LouvAIO Mobile Foundation (M1).
@@ -13,6 +12,8 @@ class AppShell extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final environment = ref.watch(appEnvironmentProvider);
+    final authState = ref.watch(authNotifierProvider);
+    final user = authState.user;
     final theme = Theme.of(context);
 
     return Scaffold(
@@ -45,6 +46,15 @@ class AppShell extends ConsumerWidget {
             ],
           ],
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Sair da conta',
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              await ref.read(authNotifierProvider.notifier).logout();
+            },
+          ),
+        ],
       ),
       body: SafeArea(
         child: Padding(
@@ -61,25 +71,44 @@ class AppShell extends ConsumerWidget {
                       Row(
                         children: [
                           Icon(
-                            Icons.check_circle,
+                            Icons.account_circle,
                             color: theme.colorScheme.secondary,
-                            size: 28,
+                            size: 32,
                           ),
                           const SizedBox(width: 12),
-                          Text(
-                            'Fundação Mobile Pronta',
-                            style: theme.textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.bold,
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  user?.name.isNotEmpty == true
+                                      ? user!.name
+                                      : 'Usuário LouvAIO',
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                if (user?.email.isNotEmpty == true)
+                                  Text(
+                                    user!.email,
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                      color: theme.colorScheme.onSurface
+                                          .withValues(alpha: 0.7),
+                                    ),
+                                  ),
+                              ],
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'Cliente nativo LouvAIO inicializado com arquitetura Flutter Android-first.',
-                        style: theme.textTheme.bodyMedium,
-                      ),
                       const Divider(height: 24),
+                      Text(
+                        'ID Autenticado: ${user?.id ?? 'Nenhum'}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                      const SizedBox(height: 4),
                       Text(
                         'Ambiente: ${environment.env.name}',
                         style: theme.textTheme.bodySmall,
@@ -96,10 +125,12 @@ class AppShell extends ConsumerWidget {
                 ),
               ),
               const Spacer(),
-              ElevatedButton.icon(
-                onPressed: () => context.go('/login'),
-                icon: const Icon(Icons.login),
-                label: const Text('Ir para Acesso / Login'),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  await ref.read(authNotifierProvider.notifier).logout();
+                },
+                icon: const Icon(Icons.logout),
+                label: const Text('Sair da Conta'),
               ),
             ],
           ),

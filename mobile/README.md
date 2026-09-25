@@ -45,14 +45,23 @@ flutter run \
   --dart-define=API_BASE_URL=http://10.0.2.2:3000/api/v1
 ```
 
-### 5. Build Android Debug APK
+### 5. Run on Physical Android Device (via ADB Reverse)
+Forward host port 3000 to device, then run:
+```bash
+adb reverse tcp:3000 tcp:3000
+flutter run \
+  --dart-define=APP_ENV=development \
+  --dart-define=API_BASE_URL=http://127.0.0.1:3000/api/v1
+```
+
+### 6. Build Android Debug APK
 ```bash
 flutter build apk --debug \
   --dart-define=APP_ENV=development \
-  --dart-define=API_BASE_URL=http://10.0.2.2:3000/api/v1
+  --dart-define=API_BASE_URL=http://127.0.0.1:3000/api/v1
 ```
 
-### 6. Build Android Release APK (Staging / Production)
+### 7. Build Android Release APK (Staging / Production)
 Production requires an explicit HTTPS base URL:
 ```bash
 flutter build apk --release \

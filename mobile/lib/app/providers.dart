@@ -1,8 +1,11 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../core/http/api_client.dart';
 import '../core/logging/app_logger.dart';
 import '../core/storage/preferences_storage.dart';
+import '../features/auth/data/auth_repository.dart';
+import '../features/auth/presentation/controllers/auth_controller.dart';
 import 'environment/app_environment.dart';
 import 'router/app_router.dart';
 
@@ -17,21 +20,56 @@ final appLoggerProvider = Provider<AppLogger>((ref) {
   return AppLogger(isDebug: !environment.isProduction);
 });
 
-/// Provider for the central HTTP API client.
-final apiClientProvider = Provider<ApiClient>((ref) {
-  final environment = ref.watch(appEnvironmentProvider);
-  final logger = ref.watch(appLoggerProvider);
-  return ApiClient(environment: environment, logger: logger);
-});
-
 /// Provider for local preferences storage.
-/// Must be overridden in `bootstrap()` with the initialized SharedPreferences instance.
+/// Must be overridden in ootstrap() with the initialized SharedPreferences instance.
 final preferencesStorageProvider = Provider<PreferencesStorage>((ref) {
   throw UnimplementedError(
       'preferencesStorageProvider must be initialized in bootstrap');
 });
 
+/// Provider for the FirebaseAuth instance.
+final firebaseAuthProvider = Provider<FirebaseAuth>((ref) {
+  return FirebaseAuth.instance;
+});
+
+/// Provider for the central HTTP API client.
+final apiClientProvider = Provider<ApiClient>((ref) {
+  final environment = ref.watch(appEnvironmentProvider);
+  final logger = ref.watch(appLoggerProvider);
+  final auth = ref.watch(firebaseAuthProvider);
+
+  return ApiClient(
+    environment: environment,
+    logger: logger,
+    tokenProvider: ({bool forceRefresh = false}) async {
+      final user = auth.currentUser;
+      if (user == null) return null;
+      return user.getIdToken(forceRefresh);
+    },
+    onAuthenticationFailed: () async {
+      await auth.signOut();
+      final preferences = ref.read(preferencesStorageProvider);
+      await preferences.clear();
+    },
+  );
+});
+
+/// Provider for the authentication repository.
+final authRepositoryProvider = Provider<AuthRepository>((ref) {
+  return FirebaseAuthRepository(
+    firebaseAuth: ref.watch(firebaseAuthProvider),
+    apiClient: ref.watch(apiClientProvider),
+    preferencesStorage: ref.watch(preferencesStorageProvider),
+  );
+});
+
+/// Provider for the authentication state notifier.
+final authNotifierProvider =
+    StateNotifierProvider<AuthNotifier, AuthState>((ref) {
+  return AuthNotifier(ref.watch(authRepositoryProvider));
+});
+
 /// Provider for application routing.
 final routerProvider = Provider<GoRouter>((ref) {
-  return appRouter;
+  return createRouter(ref);
 });

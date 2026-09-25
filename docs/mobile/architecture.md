@@ -55,9 +55,13 @@ LouvAIO Backend (/api/v1)
 ```
 
 1. **Server Authority**: The backend is the sole authority for security, tenancy, permissions, quotas, and business rules. Mobile never implements parallel quota enforcement or offline administrative logic.
-2. **Authentication (M2 Preparation)**:
+2. **Authentication (Mobile V1-M2)**:
    - Mobile V1 uses Firebase Authentication (Firebase ID Token) as verified bearer authority (`Authorization: Bearer <firebase_id_token>`).
-   - ID tokens are managed by the Firebase Auth SDK in M2 and **never stored in local SharedPreferences**.
+   - Android client registered in canonical project `praise-app-7a362` with App ID `1:561790102847:android:03f0df88f33ecb3361b78a`.
+   - ID tokens are managed exclusively by Firebase Auth SDK and **never stored in local SharedPreferences**.
+   - `AuthInterceptor` automatically injects `Bearer <token>` on requests requiring auth (`requiresAuth: true`).
+   - Single-attempt 401 recovery: interceptor forces token refresh (`forceRefresh: true`), replays the request with `auth_retry: true`, and fails closed without looping on persistent 401s, calling `onAuthenticationFailed` to clear the session.
+   - User identity is confirmed authoritatively via backend `GET /api/v1/auth/me`.
 3. **Non-Authoritative Preferences**: `PreferencesStorage` stores only user convenience preferences:
    - `selectedMinistryId`
    - `themeMode`

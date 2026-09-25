@@ -1,49 +1,141 @@
+import 'dart:async';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mocktail/mocktail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:louvaio_mobile/app/app.dart';
 import 'package:louvaio_mobile/app/providers.dart';
+import 'package:louvaio_mobile/core/errors/app_failure.dart';
 import 'package:louvaio_mobile/core/storage/preferences_storage.dart';
+import 'package:louvaio_mobile/features/auth/data/auth_repository.dart';
+import 'package:louvaio_mobile/features/auth/domain/auth_user.dart';
+
+class MockUser extends Mock implements User {}
+
+class FakeAuthRepository implements AuthRepository {
+  final StreamController<User?> _controller =
+      StreamController<User?>.broadcast();
+  AuthUser? userToReturn;
+
+  FakeAuthRepository({this.userToReturn});
+
+  @override
+  Stream<User?> authStateChanges() => _controller.stream;
+
+  void emitUser(User? user) => _controller.add(user);
+
+  @override
+  User? get currentFirebaseUser => null;
+
+  @override
+  Future<String?> getIdToken({bool forceRefresh = false}) async => 'fake-token';
+
+  @override
+  Future<AuthUser> getMe() async {
+    if (userToReturn != null) return userToReturn!;
+    throw const AppFailure(message: 'Not authenticated');
+  }
+
+  @override
+  Future<UserCredential> signInWithEmailAndPassword({
+    required String email,
+    required String password,
+  }) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<AuthUser> signUp({
+    required String name,
+    required String email,
+    required String password,
+  }) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> signOut() async {
+    _controller.add(null);
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('LouvAioApp renders foundation shell and navigates via router',
+  testWidgets('LouvAioApp redirects to LoginScreen when unauthenticated',
       (tester) async {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
     final storage = SharedPreferencesStorage(prefs);
+    final fakeRepo = FakeAuthRepository();
 
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           preferencesStorageProvider.overrideWithValue(storage),
+          authRepositoryProvider.overrideWithValue(fakeRepo),
         ],
         child: const LouvAioApp(),
       ),
     );
 
+    // Initial state is initializing
+    await tester.pump();
+
+    // Emit unauthenticated
+    fakeRepo.emitUser(null);
     await tester.pumpAndSettle();
 
-    // Verify Brand title and foundation shell
+    // Verify Login Screen rendered with real inputs
     expect(find.text('LouvAIO'), findsOneWidget);
-    expect(find.text('DEVELOPMENT'), findsOneWidget);
-    expect(find.text('Fundação Mobile Pronta'), findsOneWidget);
-    expect(find.text('Ir para Acesso / Login'), findsOneWidget);
+    expect(find.text('Acesse seu ministério de louvor'), findsOneWidget);
+    expect(find.widgetWithText(ElevatedButton, 'Entrar'), findsOneWidget);
+    expect(find.text('Cadastrar'), findsOneWidget);
+    expect(find.text('E-mail'), findsOneWidget);
+    expect(find.text('Senha'), findsOneWidget);
 
-    // Navigate to Login placeholder
-    await tester.tap(find.text('Ir para Acesso / Login'));
+    // Explicitly verify obsolete placeholder and shell are NOT rendered
+    expect(find.text('Acesso LouvAIO'), findsNothing);
+    expect(find.text('Fundação Mobile Pronta'), findsNothing);
+    expect(find.text('Voltar ao Início'), findsNothing);
+  });
+
+  testWidgets('LouvAioApp displays AppShell when authenticated',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final storage = SharedPreferencesStorage(prefs);
+    const testUser = AuthUser(
+      id: 'usr_auth_123',
+      email: 'henrique@louvaio.com',
+      name: 'Henrique Hermogenes',
+    );
+    final fakeRepo = FakeAuthRepository(userToReturn: testUser);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          preferencesStorageProvider.overrideWithValue(storage),
+          authRepositoryProvider.overrideWithValue(fakeRepo),
+        ],
+        child: const LouvAioApp(),
+      ),
+    );
+
+    // Initial state is initializing
+    await tester.pump();
+
+    // Emit authenticated user
+    fakeRepo.emitUser(MockUser());
     await tester.pumpAndSettle();
 
-    // Verify Login placeholder screen rendered
-    expect(find.text('Acesso LouvAIO'), findsOneWidget);
-    expect(find.text('Voltar ao Início'), findsOneWidget);
-
-    // Navigate back to AppShell
-    await tester.tap(find.text('Voltar ao Início'));
-    await tester.pumpAndSettle();
-
-    // Verify back on AppShell
-    expect(find.text('Fundação Mobile Pronta'), findsOneWidget);
+    // Verify AppShell rendered with user info
+    expect(find.text('LouvAIO'), findsOneWidget);
+    expect(find.text('Henrique Hermogenes'), findsOneWidget);
+    expect(find.text('henrique@louvaio.com'), findsOneWidget);
+    expect(find.text('ID Autenticado: usr_auth_123'), findsOneWidget);
+    expect(find.byTooltip('Sair da conta'), findsOneWidget);
   });
 }
