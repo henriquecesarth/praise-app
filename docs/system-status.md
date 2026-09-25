@@ -22,6 +22,7 @@ Snapshot do estado operacional e técnico do LouvAIO. Este documento separa fato
 | Mobile navigation | A barra inferior oferece Início, Escalas, Repertório, Cifras e Ministério; o header expõe troca/criação/entrada no ministério e logout. | BottomNav.tsx, MobileAccountMenu.tsx |
 | Authentication bootstrap | Chamadas autenticadas iniciais aguardam authReady e token local válido. | web/src/auth-bootstrap.ts, web/src/App.tsx |
 | PWA | Vite gera service worker versionado com precache apenas de shell/assets estáticos; navegações usam NetworkOnly com fallback offline genérico e não são armazenadas. Atualizações dependem de confirmação; não há runtime cache de API. | web/vite.config.ts, web/src/pwa.ts, web/public/offline.html |
+| Mobile Client | Fundação do cliente nativo Flutter Android-first (`mobile/`), application ID `com.louvaio.app`, Riverpod, GoRouter, Dio, PreferencesStorage, temas M3 e sanitização de logs. | mobile/pubspec.yaml, mobile/lib/, docs/mobile/architecture.md |
 | Web testing | Vitest/Testing Library cobrem helpers/componentes e Playwright cobre jornadas móveis com API mockada em seis combinações de viewport/tema. | web/vitest.config.ts, web/src/**/*.test.*, web/playwright.config.ts, web/e2e/ |
 | API | Express aplica CORS e JSON globalmente, expõe health/diag e monta rotas em /api/v1. | backend/src/app.ts |
 | Authentication | Signup cria usuário em Firebase Auth e perfil users; login emite JWT próprio com duração de sete dias. | AuthService, UserRepository |
