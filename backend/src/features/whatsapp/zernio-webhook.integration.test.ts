@@ -22,7 +22,7 @@ describe('Zernio Webhook Ingestion & Lifecycle Repair Suite (Phase 7D2-D5)', { t
   const claimRepo = new WhatsAppProviderIdentityClaimRepository();
   const webhookRepo = new WhatsAppZernioWebhookRepository();
 
-  const testWebhookSecret = 'test_webhook_secret_d5_secure_key_1234567890';
+  const testWebhookSecret = process.env.ZERNIO_WEBHOOK_SECRET || 'test_webhook_secret_deterministic_d5_d6_key_1234567890';
 
   function uniqueId(prefix: string) {
     return `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;

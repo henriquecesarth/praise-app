@@ -27,7 +27,7 @@ describe('Zernio Outbound Dispatch & Message Delivery Lifecycle Suite (Phase 7D2
   let outboundService: WhatsAppOutboundService;
   let fetchSpy: any;
 
-  const testWebhookSecret = 'test_webhook_secret_d6_secure_key_1234567890';
+  const testWebhookSecret = process.env.ZERNIO_WEBHOOK_SECRET || 'test_webhook_secret_deterministic_d5_d6_key_1234567890';
   const testApiKey = 'test_api_key_d6_val';
 
   let testOrgId: string;
