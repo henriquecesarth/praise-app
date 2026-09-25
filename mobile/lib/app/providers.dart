@@ -6,6 +6,8 @@ import '../core/logging/app_logger.dart';
 import '../core/storage/preferences_storage.dart';
 import '../features/auth/data/auth_repository.dart';
 import '../features/auth/presentation/controllers/auth_controller.dart';
+import '../features/dashboard/data/dashboard_repository.dart';
+import '../features/dashboard/presentation/controllers/dashboard_controller.dart';
 import '../features/ministry_context/data/ministry_repository.dart';
 import '../features/ministry_context/presentation/controllers/ministry_context_controller.dart';
 import 'environment/app_environment.dart';
@@ -84,6 +86,21 @@ final ministryContextNotifierProvider =
   return MinistryContextNotifier(
     repository: ref.watch(ministryRepositoryProvider),
     preferencesStorage: ref.watch(preferencesStorageProvider),
+  );
+});
+
+/// Provider for the dashboard repository.
+final dashboardRepositoryProvider = Provider<DashboardRepository>((ref) {
+  return HttpDashboardRepository(
+    apiClient: ref.watch(apiClientProvider),
+  );
+});
+
+/// Provider for the dashboard state notifier.
+final dashboardNotifierProvider =
+    StateNotifierProvider<DashboardNotifier, DashboardState>((ref) {
+  return DashboardNotifier(
+    repository: ref.watch(dashboardRepositoryProvider),
   );
 });
 

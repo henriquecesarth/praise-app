@@ -12,6 +12,9 @@ import 'package:louvaio_mobile/features/auth/presentation/controllers/auth_contr
 import 'package:louvaio_mobile/features/ministry_context/data/ministry_repository.dart';
 import 'package:louvaio_mobile/features/ministry_context/domain/ministry.dart';
 import 'package:louvaio_mobile/features/ministry_context/presentation/controllers/ministry_context_controller.dart';
+import 'package:louvaio_mobile/features/dashboard/data/dashboard_repository.dart';
+import 'package:louvaio_mobile/features/dashboard/domain/announcement.dart';
+import 'package:louvaio_mobile/features/dashboard/domain/dashboard_schedule_summary.dart';
 import 'package:louvaio_mobile/features/ministry_context/presentation/ministry_empty_screen.dart';
 import 'package:louvaio_mobile/features/ministry_context/presentation/ministry_selector_screen.dart';
 import 'package:louvaio_mobile/features/ministry_context/presentation/widgets/ministry_switcher_sheet.dart';
@@ -21,6 +24,18 @@ class MockAuthRepository extends Mock implements AuthRepository {}
 class MockMinistryRepository extends Mock implements MinistryRepository {}
 
 class MockPreferencesStorage extends Mock implements PreferencesStorage {}
+
+class FakeDashboardRepo implements DashboardRepository {
+  @override
+  Future<List<DashboardScheduleSummary>> getSchedules(
+          String ministryId) async =>
+      [];
+
+  @override
+  Future<List<Announcement>> getAnnouncements(String ministryId,
+          {int limit = 20}) async =>
+      [];
+}
 
 void main() {
   group('Ministry Screens & Shell Presentation', () {
@@ -192,6 +207,7 @@ void main() {
             ),
             preferencesStorageProvider.overrideWithValue(preferencesStorage),
             authRepositoryProvider.overrideWithValue(authRepo),
+            dashboardRepositoryProvider.overrideWithValue(FakeDashboardRepo()),
             authNotifierProvider.overrideWith((ref) {
               final n = AuthNotifier(authRepo);
               n.state = const AuthState.authenticated(testUser);
@@ -225,9 +241,9 @@ void main() {
       expect(find.text('Perfil'), findsOneWidget);
 
       // Home shows greeting and selected ministry
-      expect(find.text('Olá, Membro LouvAIO'), findsOneWidget);
+      expect(find.textContaining('Olá, Membro LouvAIO'), findsOneWidget);
       expect(find.text('Ministério Principal'), findsWidgets);
-      expect(find.text('Administrador'), findsWidgets);
+      expect(find.text('ADMINISTRADOR'), findsOneWidget);
     });
 
     testWidgets(
@@ -248,6 +264,7 @@ void main() {
             ),
             preferencesStorageProvider.overrideWithValue(preferencesStorage),
             authRepositoryProvider.overrideWithValue(authRepo),
+            dashboardRepositoryProvider.overrideWithValue(FakeDashboardRepo()),
             authNotifierProvider.overrideWith((ref) {
               final n = AuthNotifier(authRepo);
               n.state = const AuthState.authenticated(testUser);

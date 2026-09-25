@@ -12,10 +12,25 @@ import 'package:louvaio_mobile/core/storage/preferences_storage.dart';
 import 'package:louvaio_mobile/features/auth/data/auth_repository.dart';
 import 'package:louvaio_mobile/features/auth/domain/auth_user.dart';
 
+import 'package:louvaio_mobile/features/dashboard/data/dashboard_repository.dart';
+import 'package:louvaio_mobile/features/dashboard/domain/announcement.dart';
+import 'package:louvaio_mobile/features/dashboard/domain/dashboard_schedule_summary.dart';
 import 'package:louvaio_mobile/features/ministry_context/data/ministry_repository.dart';
 import 'package:louvaio_mobile/features/ministry_context/domain/ministry.dart';
 
 class MockUser extends Mock implements User {}
+
+class FakeDashboardRepository implements DashboardRepository {
+  @override
+  Future<List<DashboardScheduleSummary>> getSchedules(
+          String ministryId) async =>
+      [];
+
+  @override
+  Future<List<Announcement>> getAnnouncements(String ministryId,
+          {int limit = 20}) async =>
+      [];
+}
 
 class FakeMinistryRepository implements MinistryRepository {
   List<Ministry> ministries;
@@ -136,12 +151,15 @@ void main() {
       ],
     );
 
+    final fakeDashboardRepo = FakeDashboardRepository();
+
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           preferencesStorageProvider.overrideWithValue(storage),
           authRepositoryProvider.overrideWithValue(fakeRepo),
           ministryRepositoryProvider.overrideWithValue(fakeMinistryRepo),
+          dashboardRepositoryProvider.overrideWithValue(fakeDashboardRepo),
         ],
         child: const LouvAioApp(),
       ),
@@ -156,9 +174,9 @@ void main() {
 
     // Verify AppShell rendered with user info and ministry context
     expect(find.text('LouvAIO'), findsOneWidget);
-    expect(find.text('Olá, Henrique Hermogenes'), findsOneWidget);
+    expect(find.textContaining('Olá, Henrique Hermogenes'), findsOneWidget);
     expect(find.text('Ministério de Louvor'), findsWidgets);
-    expect(find.text('Administrador'), findsOneWidget);
+    expect(find.text('ADMINISTRADOR'), findsOneWidget);
     // Explicitly verify raw UID is NOT exposed as normal UI
     expect(find.text('ID Autenticado: usr_auth_123'), findsNothing);
   });
