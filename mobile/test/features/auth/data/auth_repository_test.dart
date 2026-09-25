@@ -132,5 +132,84 @@ void main() {
       verify(() => mockFirebaseAuth.signOut()).called(1);
       verify(() => mockPreferencesStorage.clear()).called(1);
     });
+
+    test(
+        'signUp provisions through backend, discards legacy token, signs in natively, and fetches me',
+        () async {
+      final mockCred = MockUserCredential();
+      when(() => mockFirebaseAuth.signInWithEmailAndPassword(
+            email: 'newuser@louvaio.com',
+            password: 'password123',
+          )).thenAnswer((_) async => mockCred);
+
+      apiClient.dio.httpClientAdapter = MockAdapter((options) async {
+        if (options.path.contains('/auth/signup')) {
+          // Backend responds with legacy token and user data
+          return ResponseBody.fromString(
+            '{"user": {"id": "uid_new", "email": "newuser@louvaio.com", "name": "New User"}, "token": "legacy_hmac_jwt_token"}',
+            200,
+            headers: {
+              Headers.contentTypeHeader: [Headers.jsonContentType],
+            },
+          );
+        }
+        if (options.path.contains('/auth/me')) {
+          return ResponseBody.fromString(
+            '{"id": "uid_new", "email": "newuser@louvaio.com", "name": "New User"}',
+            200,
+            headers: {
+              Headers.contentTypeHeader: [Headers.jsonContentType],
+            },
+          );
+        }
+        return ResponseBody.fromString('Not Found', 404);
+      });
+
+      final user = await repository.signUp(
+        name: 'New User',
+        email: 'newuser@louvaio.com',
+        password: 'password123',
+      );
+
+      expect(user.id, 'uid_new');
+      expect(user.email, 'newuser@louvaio.com');
+      expect(user.name, 'New User');
+
+      // Native Firebase sign-in must be called with provided credentials
+      verify(() => mockFirebaseAuth.signInWithEmailAndPassword(
+            email: 'newuser@louvaio.com',
+            password: 'password123',
+          )).called(1);
+
+      // Mobile repository must never persist legacy token to local preferences
+      verifyNever(() => mockPreferencesStorage.clear());
+      verifyNever(() => mockPreferencesStorage.setSelectedMinistryId(any()));
+    });
+
+    test('signUp maps 400 backend error into AppFailure', () async {
+      apiClient.dio.httpClientAdapter = MockAdapter((options) async {
+        return ResponseBody.fromString(
+          '{"error": {"message": "Este endereço de e-mail já está cadastrado."}}',
+          400,
+          headers: {
+            Headers.contentTypeHeader: [Headers.jsonContentType],
+          },
+        );
+      });
+
+      await expectLater(
+        repository.signUp(
+          name: 'Existing',
+          email: 'exists@louvaio.com',
+          password: 'password123',
+        ),
+        throwsA(
+          isA<AppFailure>()
+              .having((f) => f.statusCode, 'statusCode', 400)
+              .having((f) => f.message, 'message',
+                  'Este endereço de e-mail já está cadastrado.'),
+        ),
+      );
+    });
   });
 }
