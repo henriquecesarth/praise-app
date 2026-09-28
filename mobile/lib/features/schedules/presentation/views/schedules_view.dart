@@ -61,14 +61,16 @@ class _SchedulesViewState extends ConsumerState<SchedulesView>
     final state = ref.watch(scheduleListNotifierProvider);
     final isWide = MediaQuery.sizeOf(context).width >= 600;
 
+    final isMatchingMinistry = state.ministryId == widget.ministryId;
+
     Widget content;
 
-    if (state.ministryId == null) {
+    if (widget.ministryId == null) {
       content = const _CenteredInfo(
         icon: Icons.church_outlined,
         message: 'Selecione um ministério para ver as escalas.',
       );
-    } else if (state.isLoading) {
+    } else if (!isMatchingMinistry || state.isLoading) {
       content = const Center(child: CircularProgressIndicator());
     } else if (state.error != null) {
       content = _ErrorState(
@@ -89,7 +91,8 @@ class _SchedulesViewState extends ConsumerState<SchedulesView>
     return SafeArea(
       child: Column(
         children: [
-          if (state.ministryId != null &&
+          if (widget.ministryId != null &&
+              isMatchingMinistry &&
               !state.isLoading &&
               state.error == null)
             TabBar(

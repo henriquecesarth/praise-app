@@ -4,6 +4,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/app/environment/app_environment.dart';
 import 'package:louvaio_mobile/app/providers.dart';
 import 'package:louvaio_mobile/core/errors/app_failure.dart';
+import 'package:louvaio_mobile/core/storage/preferences_storage.dart';
+import 'package:louvaio_mobile/features/ministry_context/data/ministry_repository.dart';
+import 'package:louvaio_mobile/features/ministry_context/domain/ministry.dart';
+import 'package:louvaio_mobile/features/ministry_context/presentation/controllers/ministry_context_controller.dart';
 import 'package:louvaio_mobile/features/schedules/data/schedule_repository.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule_comment.dart';
@@ -87,6 +91,51 @@ class FakeDetailScheduleRepo implements ScheduleRepository {
   }
 }
 
+class _FakeMinistryRepo implements MinistryRepository {
+  @override
+  Future<List<Ministry>> getMyMinistries() async => [];
+}
+
+class _FakePreferencesStorage implements PreferencesStorage {
+  @override
+  Future<void> clear() async {}
+
+  @override
+  String? getSelectedMinistryId() => null;
+
+  @override
+  String? getThemeMode() => null;
+
+  @override
+  Future<void> setSelectedMinistryId(String? ministryId) async {}
+
+  @override
+  Future<void> setThemeMode(String? themeMode) async {}
+}
+
+class FakeMinistryContextNotifier extends MinistryContextNotifier {
+  FakeMinistryContextNotifier([MinistryContextState? initialState])
+      : super(
+          repository: _FakeMinistryRepo(),
+          preferencesStorage: _FakePreferencesStorage(),
+        ) {
+    state = initialState ??
+        const MinistryContextState(
+          status: MinistryBootstrapStatus.ready,
+          selectedMinistry:
+              Ministry(id: 'min_1', name: 'Min 1', role: 'member'),
+          availableMinistries: [
+            Ministry(id: 'min_1', name: 'Min 1', role: 'member'),
+            Ministry(id: 'min_2', name: 'Min 2', role: 'member'),
+          ],
+        );
+  }
+
+  void switchMinistry(Ministry ministry) {
+    state = state.copyWith(selectedMinistry: ministry);
+  }
+}
+
 void main() {
   late FakeDetailScheduleRepo fakeRepo;
 
@@ -165,6 +214,8 @@ void main() {
         commentsNotifierProvider.overrideWith((ref) {
           return CommentsNotifier(repository: fakeRepo);
         }),
+        ministryContextNotifierProvider
+            .overrideWith((ref) => FakeMinistryContextNotifier()),
       ],
       child: const MaterialApp(
         home: ScheduleDetailView(
@@ -330,6 +381,114 @@ void main() {
 
       expect(find.text('Escala não encontrada.'), findsOneWidget);
       expect(find.text('Voltar à Lista'), findsOneWidget);
+    });
+
+    testWidgets(
+        'does not render stale schedule when detailState ministryId does not match',
+        (tester) async {
+      final subject = ProviderScope(
+        overrides: [
+          appEnvironmentProvider.overrideWithValue(
+            const AppEnvironment(
+              env: AppEnv.development,
+              apiBaseUrl: 'http://localhost:3000/api/v1',
+            ),
+          ),
+          scheduleRepositoryProvider.overrideWithValue(fakeRepo),
+          scheduleDetailNotifierProvider.overrideWith((ref) {
+            final notifier = ScheduleDetailNotifier(repository: fakeRepo);
+            // Pre-seed state with a different ministry
+            notifier.state = const ScheduleDetailState(
+              ministryId: 'min_other',
+              scheduleId: 'sch_other',
+              schedule: ScheduleDetail(
+                id: 'sch_other',
+                ministryId: 'min_other',
+                title: 'Stale Other Ministry Schedule',
+                date: '2099-01-01',
+              ),
+            );
+            return notifier;
+          }),
+          commentsNotifierProvider.overrideWith((ref) {
+            return CommentsNotifier(repository: fakeRepo);
+          }),
+          ministryContextNotifierProvider
+              .overrideWith((ref) => FakeMinistryContextNotifier()),
+        ],
+        child: const MaterialApp(
+          home: ScheduleDetailView(
+            ministryId: 'min_1',
+            scheduleId: 'sch_1',
+          ),
+        ),
+      );
+
+      await tester.pumpWidget(subject);
+      // Stale schedule from min_other must not be shown
+      expect(find.text('Stale Other Ministry Schedule'), findsNothing);
+
+      await tester.pumpAndSettle();
+      // Fresh schedule from min_1 is rendered
+      expect(find.text('Culto de Domingo Especial'), findsWidgets);
+    });
+
+    testWidgets('pops detail screen when active ministry changes',
+        (tester) async {
+      final navKey = GlobalKey<NavigatorState>();
+      final ministryNotifier = FakeMinistryContextNotifier();
+      final container = ProviderContainer(
+        overrides: [
+          appEnvironmentProvider.overrideWithValue(
+            const AppEnvironment(
+              env: AppEnv.development,
+              apiBaseUrl: 'http://localhost:3000/api/v1',
+            ),
+          ),
+          scheduleRepositoryProvider.overrideWithValue(fakeRepo),
+          ministryContextNotifierProvider
+              .overrideWith((ref) => ministryNotifier),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            navigatorKey: navKey,
+            home: const Scaffold(body: Text('Shell Screen')),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Push ScheduleDetailView
+      navKey.currentState!.push(
+        MaterialPageRoute(
+          builder: (_) => const ScheduleDetailView(
+            ministryId: 'min_1',
+            scheduleId: 'sch_1',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Culto de Domingo Especial'), findsWidgets);
+
+      // Now switch active ministry in ministryContextNotifierProvider to min_2
+      ministryNotifier.switchMinistry(
+        const Ministry(
+          id: 'min_2',
+          name: 'Ministério 2',
+          role: 'member',
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      // Detail screen popped back to Shell Screen
+      expect(find.text('Shell Screen'), findsOneWidget);
     });
   });
 }

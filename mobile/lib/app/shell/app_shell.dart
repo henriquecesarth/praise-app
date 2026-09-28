@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../features/dashboard/presentation/dashboard_view.dart';
 import '../../features/ministry_context/domain/ministry.dart';
+import '../../features/ministry_context/presentation/controllers/ministry_context_controller.dart';
 import '../../features/ministry_context/presentation/widgets/ministry_switcher_sheet.dart';
 import '../../features/schedules/presentation/views/schedules_view.dart';
 import '../providers.dart';
@@ -22,6 +23,15 @@ class _AppShellState extends ConsumerState<AppShell> {
 
   @override
   Widget build(BuildContext context) {
+    // Invalidate schedule detail & comments state on ministry switch
+    ref.listen<MinistryContextState>(ministryContextNotifierProvider,
+        (previous, next) {
+      if (previous?.selectedMinistry?.id != next.selectedMinistry?.id) {
+        ref.read(scheduleDetailNotifierProvider.notifier).reset();
+        ref.read(commentsNotifierProvider.notifier).reset();
+      }
+    });
+
     final environment = ref.watch(appEnvironmentProvider);
     final ministryState = ref.watch(ministryContextNotifierProvider);
     final selectedMinistry = ministryState.selectedMinistry;

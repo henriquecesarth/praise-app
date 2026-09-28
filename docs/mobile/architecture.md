@@ -162,3 +162,39 @@ State is managed via `MinistryContextNotifier` (`MinistryContextState`):
   - **Expanded (>= 600dp, Tablet / Large screen)**: Left-aligned `NavigationRail` with LouvAIO logo header, ministry indicator button, navigation destinations, and footer user profile tile.
 - **Touch target accessibility**: All interactive elements (ministry switcher, navigation items, buttons) satisfy minimum `48x48dp` targets.
 - **Clean separation from diagnostics**: Raw UID, token, and backend URL diagnostics are removed from user presentation.
+
+---
+
+## 8. Schedule Member Workflows & Tenant Safety (Mobile V1-M5A)
+
+### 8.1 Civil Date Policy & Sorting
+- Mobile schedules follow a strict civil wall-clock policy:
+  - Date is strictly a civil `DATE_ONLY` (`YYYY-MM-DD`).
+  - Time is local `LOCAL_TIME` (`HH:mm` or `HH:mm:ss`).
+  - Dates and times are never converted through UTC or affected by timezone shifts.
+- List sorting and tabs:
+  - **Próximas**: filters schedules where `date >= today` (or today with time >= now) and sorts nearest first (ascending by date/time).
+  - **Anteriores**: filters schedules where `date < today` (or today with time < now) and sorts latest first (descending by date/time).
+- Pull-to-refresh is supported; read-only member presentation (no admin creation or editing controls).
+
+### 8.2 Detail & Server-Authoritative Confirmation
+- Route and detail state are strictly keyed by `(ministryId, scheduleId)`.
+- Detail displays only fields present in authoritative DTO: title, date/time, duration (fallback support for `duration_minutes` / `durationMinutes`), notes, participants, songs/timeline/clothing.
+- Confirmation sends strictly `{ confirmed: boolean }` via `PATCH /ministries/:ministryId/schedules/:scheduleId/confirmation`.
+  - Backend derives authenticated user identity; client never targets or edits another participant.
+  - On HTTP 200, local authoritative detail is replaced by the returned `ScheduleRecord`.
+  - No optimistic state invention or blind retries.
+  - 403 (not a participant) and 400 (past schedule) errors fail safely with user feedback.
+
+### 8.3 Comments & Commercial Restriction Handling
+- First-page chronological read (`GET /ministries/:ministryId/schedules/:scheduleId/comments`).
+- Composer enforces 1–1000 character length with submit debounce.
+- On `POST`, client waits for HTTP 201 before adding the comment and clearing the composer.
+- Commercial restriction error codes (`SUBSCRIPTION_RESTRICTED`, `SUBSCRIPTION_SUSPENDED`) disable the composer and display an informative restriction banner while preserving read access.
+- In-flight mutations are never blindly retried upon network failure.
+
+### 8.4 Multi-Tenant Isolation & Stale Protection
+- `scheduleDetailNotifierProvider` and `commentsNotifierProvider` are keyed by `(ministryId, scheduleId)`.
+- When the active ministry switches, detail and comments notifiers are immediately cleared.
+- `ScheduleDetailView` listens to `ministryContextNotifierProvider` and automatically pops if the active ministry changes away from `widget.ministryId`.
+- Mismatched states discard stale responses and render loading or refresh, preventing cross-tenant leakage.

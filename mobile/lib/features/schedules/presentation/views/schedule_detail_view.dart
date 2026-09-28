@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../app/providers.dart';
+import '../../../ministry_context/presentation/controllers/ministry_context_controller.dart';
 import '../../domain/schedule.dart';
 import '../../domain/schedule_comment.dart';
 import '../../domain/schedule_participant.dart';
 import '../controllers/schedule_detail_controller.dart';
-import '../controllers/schedule_providers.dart';
 
 /// Full schedule detail screen.
 ///
@@ -57,6 +58,17 @@ class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
 
   @override
   Widget build(BuildContext context) {
+    // Safely pop detail screen if ministry switches away from widget.ministryId
+    ref.listen<MinistryContextState>(ministryContextNotifierProvider,
+        (previous, next) {
+      final newMinistryId = next.selectedMinistry?.id;
+      if (newMinistryId != null && newMinistryId != widget.ministryId) {
+        if (mounted) {
+          Navigator.of(context).maybePop();
+        }
+      }
+    });
+
     final detailState = ref.watch(scheduleDetailNotifierProvider);
     final commentsState = ref.watch(commentsNotifierProvider);
 
@@ -69,9 +81,13 @@ class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
       });
     }
 
+    final isMatchingKey = detailState.ministryId == widget.ministryId &&
+        detailState.scheduleId == widget.scheduleId;
+
     Widget body;
 
-    if (detailState.isLoading && detailState.schedule == null) {
+    if (!isMatchingKey ||
+        (detailState.isLoading && detailState.schedule == null)) {
       body = const Center(child: CircularProgressIndicator());
     } else if (detailState.error != null && detailState.schedule == null) {
       body = _DetailError(
@@ -81,7 +97,7 @@ class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
             .load(widget.ministryId, widget.scheduleId),
         onBack: () => Navigator.of(context).maybePop(),
       );
-    } else if (detailState.schedule != null) {
+    } else if (detailState.schedule != null && isMatchingKey) {
       body = _DetailContent(
         schedule: detailState.schedule!,
         ministryId: widget.ministryId,
@@ -99,7 +115,7 @@ class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          detailState.schedule?.title ??
+          (isMatchingKey ? detailState.schedule?.title : null) ??
               widget.initialTitle ??
               'Detalhes da Escala',
           overflow: TextOverflow.ellipsis,
@@ -679,6 +695,9 @@ class _CommentsSection extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final isMatchingCommentsKey = commentsState.ministryId == ministryId &&
+        commentsState.scheduleId == scheduleId;
+
     return _SectionCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -696,7 +715,7 @@ class _CommentsSection extends ConsumerWidget {
             const _CommercialRestrictionBanner(),
             const SizedBox(height: 8),
           ],
-          if (commentsState.isLoading) ...[
+          if (!isMatchingCommentsKey || commentsState.isLoading) ...[
             const Padding(
                 padding: EdgeInsets.symmetric(vertical: 16),
                 child: Center(child: CircularProgressIndicator())),
@@ -840,6 +859,8 @@ class _CommentComposerState extends ConsumerState<_CommentComposer> {
   }
 
   bool get _canPost =>
+      widget.commentsState.ministryId == widget.ministryId &&
+      widget.commentsState.scheduleId == widget.scheduleId &&
       _text.trim().isNotEmpty &&
       _text.trim().length <= 1000 &&
       !widget.commentsState.isPosting &&
@@ -926,7 +947,9 @@ class _CommentComposerState extends ConsumerState<_CommentComposer> {
                       const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                   isDense: true,
                 ),
-                enabled: !widget.commentsState.isCommerciallyRestricted,
+                enabled: widget.commentsState.ministryId == widget.ministryId &&
+                    widget.commentsState.scheduleId == widget.scheduleId &&
+                    !widget.commentsState.isCommerciallyRestricted,
                 onSubmitted: (_) => _submit(),
               ),
             ),
