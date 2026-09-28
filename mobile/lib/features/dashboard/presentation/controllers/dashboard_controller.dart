@@ -102,6 +102,7 @@ class DashboardState {
 
 class DashboardNotifier extends StateNotifier<DashboardState> {
   final DashboardRepository _repository;
+  int _requestSequence = 0;
 
   DashboardNotifier({required DashboardRepository repository})
       : _repository = repository,
@@ -109,6 +110,8 @@ class DashboardNotifier extends StateNotifier<DashboardState> {
 
   /// Sets ministry context and loads dashboard. If ministry changed, clears old data immediately.
   Future<void> loadForMinistry(String ministryId) async {
+    final seq = ++_requestSequence;
+
     if (state.ministryId != ministryId) {
       state = DashboardState(
         ministryId: ministryId,
@@ -125,8 +128,8 @@ class DashboardNotifier extends StateNotifier<DashboardState> {
     }
 
     await Future.wait([
-      _loadSchedules(ministryId),
-      _loadAnnouncements(ministryId),
+      _loadSchedules(ministryId, seq),
+      _loadAnnouncements(ministryId, seq),
     ]);
   }
 
@@ -135,45 +138,53 @@ class DashboardNotifier extends StateNotifier<DashboardState> {
     final ministryId = state.ministryId;
     if (ministryId == null || state.isRefreshing) return;
 
+    final seq = ++_requestSequence;
     state = state.copyWith(isRefreshing: true);
 
     await Future.wait([
-      _loadSchedules(ministryId, isRefresh: true),
-      _loadAnnouncements(ministryId, isRefresh: true),
+      _loadSchedules(ministryId, seq, isRefresh: true),
+      _loadAnnouncements(ministryId, seq, isRefresh: true),
     ]);
 
-    state = state.copyWith(isRefreshing: false);
+    if (seq == _requestSequence) {
+      state = state.copyWith(isRefreshing: false);
+    }
   }
 
   /// Reloads only schedules (e.g. from section retry button).
   Future<void> retrySchedules() async {
     final ministryId = state.ministryId;
     if (ministryId == null) return;
+    final seq = ++_requestSequence;
     state = state.copyWith(
       isSchedulesLoading: true,
       clearSchedulesError: true,
     );
-    await _loadSchedules(ministryId);
+    await _loadSchedules(ministryId, seq);
   }
 
   /// Reloads only announcements (e.g. from section retry button).
   Future<void> retryAnnouncements() async {
     final ministryId = state.ministryId;
     if (ministryId == null) return;
+    final seq = ++_requestSequence;
     state = state.copyWith(
       isAnnouncementsLoading: true,
       clearAnnouncementsError: true,
     );
-    await _loadAnnouncements(ministryId);
+    await _loadAnnouncements(ministryId, seq);
   }
 
   Future<void> _loadSchedules(
-    String targetMinistryId, {
+    String targetMinistryId,
+    int seq, {
     bool isRefresh = false,
   }) async {
     try {
       final list = await _repository.getSchedules(targetMinistryId);
-      if (state.ministryId != targetMinistryId) return;
+      if (seq != _requestSequence || state.ministryId != targetMinistryId) {
+        return;
+      }
 
       state = state.copyWith(
         schedules: list,
@@ -181,13 +192,17 @@ class DashboardNotifier extends StateNotifier<DashboardState> {
         clearSchedulesError: true,
       );
     } on AppFailure catch (e) {
-      if (state.ministryId != targetMinistryId) return;
+      if (seq != _requestSequence || state.ministryId != targetMinistryId) {
+        return;
+      }
       state = state.copyWith(
         schedulesError: e.message,
         isSchedulesLoading: false,
       );
     } catch (e) {
-      if (state.ministryId != targetMinistryId) return;
+      if (seq != _requestSequence || state.ministryId != targetMinistryId) {
+        return;
+      }
       state = state.copyWith(
         schedulesError: 'Não foi possível carregar as escalas da equipe.',
         isSchedulesLoading: false,
@@ -196,12 +211,15 @@ class DashboardNotifier extends StateNotifier<DashboardState> {
   }
 
   Future<void> _loadAnnouncements(
-    String targetMinistryId, {
+    String targetMinistryId,
+    int seq, {
     bool isRefresh = false,
   }) async {
     try {
       final list = await _repository.getAnnouncements(targetMinistryId);
-      if (state.ministryId != targetMinistryId) return;
+      if (seq != _requestSequence || state.ministryId != targetMinistryId) {
+        return;
+      }
 
       state = state.copyWith(
         announcements: list,
@@ -209,13 +227,17 @@ class DashboardNotifier extends StateNotifier<DashboardState> {
         clearAnnouncementsError: true,
       );
     } on AppFailure catch (e) {
-      if (state.ministryId != targetMinistryId) return;
+      if (seq != _requestSequence || state.ministryId != targetMinistryId) {
+        return;
+      }
       state = state.copyWith(
         announcementsError: e.message,
         isAnnouncementsLoading: false,
       );
     } catch (e) {
-      if (state.ministryId != targetMinistryId) return;
+      if (seq != _requestSequence || state.ministryId != targetMinistryId) {
+        return;
+      }
       state = state.copyWith(
         announcementsError: 'Não foi possível carregar os avisos da equipe.',
         isAnnouncementsLoading: false,
@@ -224,6 +246,7 @@ class DashboardNotifier extends StateNotifier<DashboardState> {
   }
 
   void reset() {
+    ++_requestSequence;
     state = const DashboardState();
   }
 }

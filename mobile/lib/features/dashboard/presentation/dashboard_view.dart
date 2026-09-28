@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app/providers.dart';
 import '../../ministry_context/domain/ministry.dart';
 import '../../ministry_context/presentation/widgets/ministry_switcher_sheet.dart';
+import '../domain/announcement.dart';
+import '../domain/dashboard_schedule_summary.dart';
 import 'controllers/dashboard_controller.dart';
 import 'widgets/announcement_card.dart';
 import 'widgets/upcoming_schedule_card.dart';
@@ -60,9 +62,16 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
     final user = ref.watch(authNotifierProvider).user;
     final userName = user?.name.isNotEmpty == true ? user!.name : 'Músico';
 
-    final upcoming = dashboardState.upcomingSchedules();
+    final isMatchingMinistry = widget.selectedMinistry != null &&
+        dashboardState.ministryId == widget.selectedMinistry!.id;
+
+    final upcoming = isMatchingMinistry
+        ? dashboardState.upcomingSchedules()
+        : const <DashboardScheduleSummary>[];
     final displayedSchedules = upcoming.take(3).toList();
-    final announcements = dashboardState.announcements;
+    final announcements = isMatchingMinistry
+        ? dashboardState.announcements
+        : const <Announcement>[];
 
     final isWide = MediaQuery.of(context).size.width >= 600;
 
@@ -96,6 +105,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                       dashboardState,
                       displayedSchedules,
                       upcoming.length,
+                      isMatchingMinistry: isMatchingMinistry,
                     ),
                   ),
                   const SizedBox(width: 24),
@@ -106,6 +116,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                       context,
                       dashboardState,
                       announcements,
+                      isMatchingMinistry: isMatchingMinistry,
                     ),
                   ),
                 ],
@@ -117,12 +128,14 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                 dashboardState,
                 displayedSchedules,
                 upcoming.length,
+                isMatchingMinistry: isMatchingMinistry,
               ),
               const SizedBox(height: 28),
               _buildAnnouncementsSection(
                 context,
                 dashboardState,
                 announcements,
+                isMatchingMinistry: isMatchingMinistry,
               ),
             ],
             const SizedBox(height: 32),
@@ -266,8 +279,9 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
     BuildContext context,
     DashboardState state,
     List<dynamic> displayedSchedules,
-    int totalUpcoming,
-  ) {
+    int totalUpcoming, {
+    required bool isMatchingMinistry,
+  }) {
     final theme = Theme.of(context);
 
     return Column(
@@ -314,7 +328,8 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
         const SizedBox(height: 10),
 
         // Section Content
-        if (state.isSchedulesLoading && state.schedules.isEmpty)
+        if (!isMatchingMinistry ||
+            (state.isSchedulesLoading && state.schedules.isEmpty))
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 24.0),
             child: Center(child: CircularProgressIndicator()),
@@ -350,8 +365,9 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
   Widget _buildAnnouncementsSection(
     BuildContext context,
     DashboardState state,
-    List<dynamic> announcements,
-  ) {
+    List<dynamic> announcements, {
+    required bool isMatchingMinistry,
+  }) {
     final theme = Theme.of(context);
 
     return Column(
@@ -395,7 +411,8 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
         const SizedBox(height: 12),
 
         // Section Content
-        if (state.isAnnouncementsLoading && announcements.isEmpty)
+        if (!isMatchingMinistry ||
+            (state.isAnnouncementsLoading && announcements.isEmpty))
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 24.0),
             child: Center(child: CircularProgressIndicator()),

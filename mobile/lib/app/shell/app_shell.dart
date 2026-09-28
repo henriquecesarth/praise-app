@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../features/availability/presentation/controllers/availability_providers.dart';
 import '../../features/availability/presentation/views/my_availability_screen.dart';
 import '../../features/dashboard/presentation/dashboard_view.dart';
 import '../../features/ministry_context/domain/ministry.dart';
@@ -25,14 +26,17 @@ class _AppShellState extends ConsumerState<AppShell> {
 
   @override
   Widget build(BuildContext context) {
-    // Invalidate schedule detail & comments and repertoire state on ministry switch
+    // Invalidate all ministry-scoped feature states on ministry switch
     ref.listen<MinistryContextState>(ministryContextNotifierProvider,
         (previous, next) {
       if (previous?.selectedMinistry?.id != next.selectedMinistry?.id) {
-        ref.read(scheduleDetailNotifierProvider.notifier).reset();
-        ref.read(commentsNotifierProvider.notifier).reset();
-        ref.read(repertoireListNotifierProvider.notifier).reset();
-        ref.read(songDetailNotifierProvider.notifier).reset();
+        ref.invalidate(dashboardNotifierProvider);
+        ref.invalidate(scheduleListNotifierProvider);
+        ref.invalidate(scheduleDetailNotifierProvider);
+        ref.invalidate(commentsNotifierProvider);
+        ref.invalidate(availabilityListNotifierProvider);
+        ref.invalidate(repertoireListNotifierProvider);
+        ref.invalidate(songDetailNotifierProvider);
       }
     });
 

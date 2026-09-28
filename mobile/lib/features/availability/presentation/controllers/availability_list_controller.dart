@@ -74,6 +74,7 @@ class AvailabilityListState {
 
 class AvailabilityListNotifier extends StateNotifier<AvailabilityListState> {
   final AvailabilityRepository _repository;
+  int _requestSequence = 0;
 
   AvailabilityListNotifier({required AvailabilityRepository repository})
       : _repository = repository,
@@ -84,6 +85,8 @@ class AvailabilityListNotifier extends StateNotifier<AvailabilityListState> {
   /// Immediately clears old data if [ministryId] is different to prevent
   /// cross-tenant data flashing.
   Future<void> loadForMinistry(String ministryId) async {
+    final seq = ++_requestSequence;
+
     if (state.ministryId != ministryId) {
       state = AvailabilityListState(
         ministryId: ministryId,
@@ -100,7 +103,7 @@ class AvailabilityListNotifier extends StateNotifier<AvailabilityListState> {
       final response = await _repository.listMyAvailabilities(ministryId);
 
       // Stale response guard
-      if (state.ministryId != ministryId) return;
+      if (seq != _requestSequence || state.ministryId != ministryId) return;
 
       state = state.copyWith(
         isLoading: false,
@@ -110,13 +113,13 @@ class AvailabilityListNotifier extends StateNotifier<AvailabilityListState> {
         clearError: true,
       );
     } on AppFailure catch (e) {
-      if (state.ministryId != ministryId) return;
+      if (seq != _requestSequence || state.ministryId != ministryId) return;
       state = state.copyWith(
         isLoading: false,
         error: e.message,
       );
     } catch (e) {
-      if (state.ministryId != ministryId) return;
+      if (seq != _requestSequence || state.ministryId != ministryId) return;
       state = state.copyWith(
         isLoading: false,
         error: 'Erro ao carregar indisponibilidades.',
@@ -129,12 +132,13 @@ class AvailabilityListNotifier extends StateNotifier<AvailabilityListState> {
     final ministryId = state.ministryId;
     if (ministryId == null) return;
 
+    final seq = ++_requestSequence;
     state = state.copyWith(isRefreshing: true, clearError: true);
 
     try {
       final response = await _repository.listMyAvailabilities(ministryId);
 
-      if (state.ministryId != ministryId) return;
+      if (seq != _requestSequence || state.ministryId != ministryId) return;
 
       state = state.copyWith(
         isRefreshing: false,
@@ -144,13 +148,13 @@ class AvailabilityListNotifier extends StateNotifier<AvailabilityListState> {
         clearError: true,
       );
     } on AppFailure catch (e) {
-      if (state.ministryId != ministryId) return;
+      if (seq != _requestSequence || state.ministryId != ministryId) return;
       state = state.copyWith(
         isRefreshing: false,
         error: e.message,
       );
     } catch (e) {
-      if (state.ministryId != ministryId) return;
+      if (seq != _requestSequence || state.ministryId != ministryId) return;
       state = state.copyWith(
         isRefreshing: false,
         error: 'Erro ao atualizar indisponibilidades.',
@@ -170,6 +174,7 @@ class AvailabilityListNotifier extends StateNotifier<AvailabilityListState> {
       return;
     }
 
+    final seq = ++_requestSequence;
     state = state.copyWith(isLoadingMore: true);
 
     try {
@@ -178,7 +183,7 @@ class AvailabilityListNotifier extends StateNotifier<AvailabilityListState> {
         cursor: cursor,
       );
 
-      if (state.ministryId != ministryId) return;
+      if (seq != _requestSequence || state.ministryId != ministryId) return;
 
       // Defensive deduplication by ID
       final existingIds = state.items.map((i) => i.id).toSet();
@@ -192,13 +197,13 @@ class AvailabilityListNotifier extends StateNotifier<AvailabilityListState> {
         clearCursor: response.nextCursor == null,
       );
     } on AppFailure catch (e) {
-      if (state.ministryId != ministryId) return;
+      if (seq != _requestSequence || state.ministryId != ministryId) return;
       state = state.copyWith(
         isLoadingMore: false,
         error: e.message,
       );
     } catch (_) {
-      if (state.ministryId != ministryId) return;
+      if (seq != _requestSequence || state.ministryId != ministryId) return;
       state = state.copyWith(
         isLoadingMore: false,
         error: 'Erro ao carregar mais indisponibilidades.',
@@ -231,6 +236,7 @@ class AvailabilityListNotifier extends StateNotifier<AvailabilityListState> {
 
   /// Resets state completely (e.g. on unauthenticated or explicit reset).
   void reset() {
+    ++_requestSequence;
     state = const AvailabilityListState();
   }
 }

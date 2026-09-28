@@ -81,6 +81,7 @@ class ScheduleDetailState {
 
 class ScheduleDetailNotifier extends StateNotifier<ScheduleDetailState> {
   final ScheduleRepository _repository;
+  int _loadSequence = 0;
 
   ScheduleDetailNotifier({required ScheduleRepository repository})
       : _repository = repository,
@@ -89,6 +90,7 @@ class ScheduleDetailNotifier extends StateNotifier<ScheduleDetailState> {
   /// Loads full detail for [ministryId] + [scheduleId].
   /// Resets state if the key changes (ministry or schedule switch).
   Future<void> load(String ministryId, String scheduleId) async {
+    final seq = ++_loadSequence;
     final keyChanged =
         state.ministryId != ministryId || state.scheduleId != scheduleId;
 
@@ -105,20 +107,20 @@ class ScheduleDetailNotifier extends StateNotifier<ScheduleDetailState> {
     try {
       final detail =
           await _repository.getScheduleDetail(ministryId, scheduleId);
-      if (!_isActive(ministryId, scheduleId)) return;
+      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) return;
       state = state.copyWith(
         schedule: detail,
         isLoading: false,
         clearError: true,
       );
     } on AppFailure catch (e) {
-      if (!_isActive(ministryId, scheduleId)) return;
+      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) return;
       state = state.copyWith(
         error: e.message,
         isLoading: false,
       );
     } catch (e) {
-      if (!_isActive(ministryId, scheduleId)) return;
+      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) return;
       state = state.copyWith(
         error: 'Não foi possível carregar os detalhes da escala.',
         isLoading: false,
@@ -134,6 +136,7 @@ class ScheduleDetailNotifier extends StateNotifier<ScheduleDetailState> {
   Future<void> confirm(
       String ministryId, String scheduleId, bool confirmed) async {
     if (state.isConfirming) return;
+    final seq = ++_loadSequence;
     state = state.copyWith(
       isConfirming: true,
       clearConfirmationError: true,
@@ -142,7 +145,7 @@ class ScheduleDetailNotifier extends StateNotifier<ScheduleDetailState> {
     try {
       final updated = await _repository.confirmParticipation(
           ministryId, scheduleId, confirmed);
-      if (!_isActive(ministryId, scheduleId)) return;
+      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) return;
       // Replace entire schedule with authoritative server state.
       state = state.copyWith(
         schedule: updated,
@@ -150,13 +153,13 @@ class ScheduleDetailNotifier extends StateNotifier<ScheduleDetailState> {
         clearConfirmationError: true,
       );
     } on AppFailure catch (e) {
-      if (!_isActive(ministryId, scheduleId)) return;
+      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) return;
       state = state.copyWith(
         isConfirming: false,
         confirmationError: e.message,
       );
     } catch (e) {
-      if (!_isActive(ministryId, scheduleId)) return;
+      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) return;
       state = state.copyWith(
         isConfirming: false,
         confirmationError: 'Não foi possível confirmar a presença.',
@@ -172,6 +175,7 @@ class ScheduleDetailNotifier extends StateNotifier<ScheduleDetailState> {
       state.ministryId == ministryId && state.scheduleId == scheduleId;
 
   void reset() {
+    ++_loadSequence;
     state = const ScheduleDetailState();
   }
 }
@@ -263,6 +267,7 @@ class CommentsState {
 
 class CommentsNotifier extends StateNotifier<CommentsState> {
   final ScheduleRepository _repository;
+  int _loadSequence = 0;
 
   CommentsNotifier({required ScheduleRepository repository})
       : _repository = repository,
@@ -270,6 +275,7 @@ class CommentsNotifier extends StateNotifier<CommentsState> {
 
   /// Loads first-page comments for [ministryId] + [scheduleId].
   Future<void> load(String ministryId, String scheduleId) async {
+    final seq = ++_loadSequence;
     final keyChanged =
         state.ministryId != ministryId || state.scheduleId != scheduleId;
 
@@ -285,20 +291,20 @@ class CommentsNotifier extends StateNotifier<CommentsState> {
 
     try {
       final list = await _repository.getComments(ministryId, scheduleId);
-      if (!_isActive(ministryId, scheduleId)) return;
+      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) return;
       state = state.copyWith(
         comments: list,
         isLoading: false,
         clearError: true,
       );
     } on AppFailure catch (e) {
-      if (!_isActive(ministryId, scheduleId)) return;
+      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) return;
       state = state.copyWith(
         error: e.message,
         isLoading: false,
       );
     } catch (e) {
-      if (!_isActive(ministryId, scheduleId)) return;
+      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) return;
       state = state.copyWith(
         error: 'Não foi possível carregar os comentários.',
         isLoading: false,
@@ -319,6 +325,7 @@ class CommentsNotifier extends StateNotifier<CommentsState> {
     final trimmed = content.trim();
     if (trimmed.isEmpty || trimmed.length > 1000) return false;
 
+    final seq = ++_loadSequence;
     state = state.copyWith(
       isPosting: true,
       clearPostError: true,
@@ -328,7 +335,9 @@ class CommentsNotifier extends StateNotifier<CommentsState> {
     try {
       final comment =
           await _repository.postComment(ministryId, scheduleId, trimmed);
-      if (!_isActive(ministryId, scheduleId)) return false;
+      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) {
+        return false;
+      }
 
       // Add returned comment at the end (chronological order).
       final updated = [...state.comments, comment];
@@ -339,7 +348,9 @@ class CommentsNotifier extends StateNotifier<CommentsState> {
       );
       return true; // Signal caller to clear composer
     } on AppFailure catch (e) {
-      if (!_isActive(ministryId, scheduleId)) return false;
+      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) {
+        return false;
+      }
 
       final isRestricted = e.code == kSubscriptionRestrictedCode ||
           e.code == kSubscriptionSuspendedCode ||
@@ -352,7 +363,9 @@ class CommentsNotifier extends StateNotifier<CommentsState> {
       );
       return false;
     } catch (e) {
-      if (!_isActive(ministryId, scheduleId)) return false;
+      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) {
+        return false;
+      }
       state = state.copyWith(
         isPosting: false,
         postError: 'Não foi possível enviar o comentário.',
@@ -370,6 +383,7 @@ class CommentsNotifier extends StateNotifier<CommentsState> {
       state.ministryId == ministryId && state.scheduleId == scheduleId;
 
   void reset() {
+    ++_loadSequence;
     state = const CommentsState();
   }
 }

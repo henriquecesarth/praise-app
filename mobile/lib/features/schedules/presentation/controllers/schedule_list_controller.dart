@@ -81,6 +81,7 @@ class ScheduleListState {
 
 class ScheduleListNotifier extends StateNotifier<ScheduleListState> {
   final ScheduleRepository _repository;
+  int _requestSequence = 0;
 
   ScheduleListNotifier({required ScheduleRepository repository})
       : _repository = repository,
@@ -88,6 +89,8 @@ class ScheduleListNotifier extends StateNotifier<ScheduleListState> {
 
   /// Loads schedules for [ministryId]. Clears stale data on ministry switch.
   Future<void> loadForMinistry(String ministryId) async {
+    final seq = ++_requestSequence;
+
     if (state.ministryId != ministryId) {
       state = ScheduleListState(
         ministryId: ministryId,
@@ -100,30 +103,36 @@ class ScheduleListNotifier extends StateNotifier<ScheduleListState> {
       );
     }
 
-    await _fetchSchedules(ministryId);
+    await _fetchSchedules(ministryId, seq);
   }
 
   /// Pull-to-refresh without blanking existing data.
   Future<void> refresh() async {
     final ministryId = state.ministryId;
     if (ministryId == null || state.isRefreshing) return;
+    final seq = ++_requestSequence;
     state = state.copyWith(isRefreshing: true);
-    await _fetchSchedules(ministryId);
-    state = state.copyWith(isRefreshing: false);
+    await _fetchSchedules(ministryId, seq);
+    if (seq == _requestSequence) {
+      state = state.copyWith(isRefreshing: false);
+    }
   }
 
   /// Retry after error.
   Future<void> retry() async {
     final ministryId = state.ministryId;
     if (ministryId == null) return;
+    final seq = ++_requestSequence;
     state = state.copyWith(isLoading: true, clearError: true);
-    await _fetchSchedules(ministryId);
+    await _fetchSchedules(ministryId, seq);
   }
 
-  Future<void> _fetchSchedules(String targetMinistryId) async {
+  Future<void> _fetchSchedules(String targetMinistryId, int seq) async {
     try {
       final list = await _repository.listSchedules(targetMinistryId);
-      if (state.ministryId != targetMinistryId) return; // stale
+      if (seq != _requestSequence || state.ministryId != targetMinistryId) {
+        return; // stale
+      }
       state = state.copyWith(
         schedules: list,
         isLoading: false,
@@ -131,14 +140,18 @@ class ScheduleListNotifier extends StateNotifier<ScheduleListState> {
         clearError: true,
       );
     } on AppFailure catch (e) {
-      if (state.ministryId != targetMinistryId) return;
+      if (seq != _requestSequence || state.ministryId != targetMinistryId) {
+        return;
+      }
       state = state.copyWith(
         error: e.message,
         isLoading: false,
         isRefreshing: false,
       );
     } catch (e) {
-      if (state.ministryId != targetMinistryId) return;
+      if (seq != _requestSequence || state.ministryId != targetMinistryId) {
+        return;
+      }
       state = state.copyWith(
         error: 'Não foi possível carregar as escalas.',
         isLoading: false,
@@ -148,6 +161,7 @@ class ScheduleListNotifier extends StateNotifier<ScheduleListState> {
   }
 
   void reset() {
+    ++_requestSequence;
     state = const ScheduleListState();
   }
 }

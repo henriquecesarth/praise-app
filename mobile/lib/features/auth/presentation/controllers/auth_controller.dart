@@ -11,6 +11,7 @@ enum AuthStatus {
   unauthenticated,
   authenticating,
   authenticated,
+  bootstrapError,
   error,
 }
 
@@ -43,6 +44,9 @@ class AuthState {
       : status = AuthStatus.authenticated,
         failure = null;
 
+  const AuthState.bootstrapError(AppFailure this.failure, {this.user})
+      : status = AuthStatus.bootstrapError;
+
   const AuthState.error(AppFailure this.failure, {this.user})
       : status = AuthStatus.error;
 
@@ -50,7 +54,9 @@ class AuthState {
   bool get isAuthenticated => status == AuthStatus.authenticated;
   bool get isAuthenticating => status == AuthStatus.authenticating;
   bool get isUnauthenticated => status == AuthStatus.unauthenticated;
-  bool get hasError => status == AuthStatus.error;
+  bool get hasBootstrapError => status == AuthStatus.bootstrapError;
+  bool get hasError =>
+      status == AuthStatus.error || status == AuthStatus.bootstrapError;
 
   AuthState copyWith({
     AuthStatus? status,
@@ -93,15 +99,33 @@ class AuthNotifier extends StateNotifier<AuthState> {
           state = const AuthState.unauthenticated();
         }
       } else {
-        try {
-          final authUser = await _repository.getMe();
-          state = AuthState.authenticated(authUser);
-        } catch (e) {
-          final failure = AuthFailureNormalizer.normalize(e);
-          state = AuthState.error(failure);
-        }
+        await _fetchAuthoritativeUser();
       }
     });
+  }
+
+  Future<void> _fetchAuthoritativeUser() async {
+    try {
+      final authUser = await _repository.getMe();
+      state = AuthState.authenticated(authUser);
+    } catch (e) {
+      final failure = AuthFailureNormalizer.normalize(e);
+      if (failure.statusCode == 401) {
+        // Genuine authentication error: fail closed
+        await _repository.signOut();
+        state = const AuthState.unauthenticated();
+      } else {
+        // Transient error (network error, 5xx server error, timeout, backend unavailable)
+        // Firebase session remains intact, user does not need to re-enter credentials
+        state = AuthState.bootstrapError(failure);
+      }
+    }
+  }
+
+  /// Retries fetching authoritative profile when in recoverable bootstrap error state.
+  Future<void> retryBootstrap() async {
+    state = const AuthState.initializing();
+    await _fetchAuthoritativeUser();
   }
 
   Future<void> login({

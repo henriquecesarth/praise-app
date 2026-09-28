@@ -253,3 +253,29 @@ State is managed via `MinistryContextNotifier` (`MinistryContextState`):
 ### 10.5 Responsive Phone & Tablet Layout
 - **Phone (< 600dp)**: full-width list items, bottom navigation bar.
 - **Tablet (>= 600dp)**: left navigation rail, content constrained to responsive max-width (800dp) with center alignment to prevent overly stretched lines and maintain lyrics readability.
+
+---
+
+## 11. Tenant & Session State Hardening (Mobile V1-M7)
+
+### 11.1 Tenant-Switch Isolation Guarantee & Synchronous Guards
+- **Synchronous View-Level Tenant Guard**: To guarantee zero cross-tenant data flashing when switching active ministries, view components enforce strict tenant alignment. For example, `DashboardView` validates:
+  ```dart
+  final isMatchingMinistry = dashboardState.ministryId == widget.selectedMinistry!.id;
+  ```
+  If `isMatchingMinistry` is false, old tenant data is prevented from rendering synchronously and a loading indicator is rendered instead until the fresh tenant state arrives.
+- **In-Flight Request Sequencing**: Controllers (`DashboardNotifier`, `ScheduleListNotifier`, `ScheduleDetailNotifier`, `CommentsNotifier`, `AvailabilityListNotifier`, `RepertoireListNotifier`) maintain an internal monotonically increasing `_requestSequence` / `_loadSequence` counter. Any response whose sequence token does not match the active counter upon completion is silently discarded, preventing race conditions and stale overwrite from lagging network responses across tenant switches.
+- **Reactive Shell Invalidation**: `AppShell` listens to `ministryContextNotifierProvider` changes and immediately invalidates all authenticated feature notifiers (`dashboardNotifierProvider`, `scheduleListNotifierProvider`, `scheduleDetailNotifierProvider`, `commentsNotifierProvider`, `availabilityListNotifierProvider`, `repertoireListNotifierProvider`, `songDetailNotifierProvider`).
+
+### 11.2 Centralized Authenticated Feature Reset & Logout Cleanup
+- **`resetAuthenticatedFeatures(dynamic refOrContainer)`**: A centralized utility function accepted by both Riverpod `Ref` (in widgets/routers) and `ProviderContainer` (in background workers and unit tests) that explicitly invalidates all feature notifiers and resets `ministryContextNotifierProvider`.
+- **User-Change & Logout Isolation**: Invoked whenever the authenticated user logs out or switches accounts (`currentUser.id` change), guaranteeing that User B never inherits or flashes any of User A's in-memory feature state, schedules, availability records, or repertoire caches.
+
+### 11.3 Resilient Cold-Start Bootstrap & Non-Destructive Recovery
+- **Failure Classification**: During authenticated startup (`/auth/me`), failures are classified strictly:
+  - **Authentic Auth Failure (HTTP 401)**: The user session is genuinely invalid; the app clears the Firebase session and fails closed to `unauthenticated`.
+  - **Transient Failure (Network / 5xx / Backend Unavailable)**: The app transitions to `AuthStatus.bootstrapError` with `AuthState.bootstrapError(failure, user)`.
+- **Recoverable Bootstrap Screen**: Renders a dedicated error view with:
+  - An informative connection error message.
+  - A primary "Tentar novamente" action (`retryBootstrap()`) that re-attempts backend profile synchronization without destroying the Firebase session or requiring user credential re-entry.
+  - A secondary "Sair da Conta" action allowing the user to abort and return to the login screen.

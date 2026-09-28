@@ -12,8 +12,24 @@ import '../features/ministry_context/data/ministry_repository.dart';
 import '../features/ministry_context/presentation/controllers/ministry_context_controller.dart';
 import 'environment/app_environment.dart';
 import 'router/app_router.dart';
+import '../features/schedules/presentation/controllers/schedule_providers.dart';
+import '../features/repertoire/presentation/controllers/repertoire_providers.dart';
+import '../features/availability/presentation/controllers/availability_providers.dart';
 export '../features/schedules/presentation/controllers/schedule_providers.dart';
 export '../features/repertoire/presentation/controllers/repertoire_providers.dart';
+
+/// Clears all authenticated feature caches from memory upon logout or user change.
+/// Accepts either [Ref] or [ProviderContainer].
+void resetAuthenticatedFeatures(dynamic refOrContainer) {
+  refOrContainer.read(ministryContextNotifierProvider.notifier).reset();
+  refOrContainer.invalidate(dashboardNotifierProvider);
+  refOrContainer.invalidate(scheduleListNotifierProvider);
+  refOrContainer.invalidate(scheduleDetailNotifierProvider);
+  refOrContainer.invalidate(commentsNotifierProvider);
+  refOrContainer.invalidate(availabilityListNotifierProvider);
+  refOrContainer.invalidate(repertoireListNotifierProvider);
+  refOrContainer.invalidate(songDetailNotifierProvider);
+}
 
 /// Provider for the active runtime environment.
 final appEnvironmentProvider = Provider<AppEnvironment>((ref) {
@@ -27,7 +43,7 @@ final appLoggerProvider = Provider<AppLogger>((ref) {
 });
 
 /// Provider for local preferences storage.
-/// Must be overridden in ootstrap() with the initialized SharedPreferences instance.
+/// Must be overridden in bootstrap() with the initialized SharedPreferences instance.
 final preferencesStorageProvider = Provider<PreferencesStorage>((ref) {
   throw UnimplementedError(
       'preferencesStorageProvider must be initialized in bootstrap');
@@ -56,6 +72,7 @@ final apiClientProvider = Provider<ApiClient>((ref) {
       await auth.signOut();
       final preferences = ref.read(preferencesStorageProvider);
       await preferences.clear();
+      resetAuthenticatedFeatures(ref);
     },
   );
 });
