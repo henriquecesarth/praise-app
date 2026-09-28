@@ -198,3 +198,58 @@ State is managed via `MinistryContextNotifier` (`MinistryContextState`):
 - When the active ministry switches, detail and comments notifiers are immediately cleared.
 - `ScheduleDetailView` listens to `ministryContextNotifierProvider` and automatically pops if the active ministry changes away from `widget.ministryId`.
 - Mismatched states discard stale responses and render loading or refresh, preventing cross-tenant leakage.
+
+---
+
+## 9. Member Availability Self-Service (Mobile V1-M5B)
+
+### 9.1 Endpoints & Data Model
+- `GET /api/v1/ministries/:ministryId/availability/my-records`: returns member's own availability declarations.
+- `POST /api/v1/ministries/:ministryId/availability`: creates an unavailability entry (`type: 'unavailable'`, `date_start`, `date_end`, optional `reason`).
+- `DELETE /api/v1/ministries/:ministryId/availability/:recordId`: deletes an availability declaration.
+
+### 9.2 Authoritative Tenant & User Derivation
+- Backend derives user identity (`req.user.id`) directly from the verified Firebase ID token.
+- Client never passes or alters member ID; requests are strictly member-scoped.
+- Dates are strictly civil wall-clock dates (`YYYY-MM-DD`).
+- Multi-tenant isolation: `availabilityListNotifierProvider` is keyed by `ministryId`. Active entries are purged immediately when ministry changes.
+
+---
+
+## 10. Repertoire Browsing & Song Detail (Mobile V1-M6)
+
+### 10.1 Backend Contract & Endpoints
+- `GET /api/v1/ministries/:ministryId/songs`: list songs with optional query parameters (`search`, `cursor`, `limit`, `classification_id`).
+  - Envelope: `{ data: SongSummary[], total, nextCursor, hasMore, limit, page, totalPages }`.
+- `GET /api/v1/ministries/:ministryId/songs/:songId`: single song detail.
+  - Envelope: `{ data: SongDetail }`.
+- `GET /api/v1/ministries/:ministryId/classifications`: list classification tags.
+  - Envelope: `{ data: Classification[] }`.
+
+### 10.2 List, Search & Pagination
+- **Search**: backend-supported `search` query with 300ms debounce.
+- **Stale Response Protection**: incremental request sequencing token discards out-of-order or stale search responses.
+- **Pagination**: cursor-based (`nextCursor`) continuation with limit clamped to backend defaults (20). Songs are deduplicated by ID on append.
+- **Pull-to-Refresh**: resets pagination, clears cache, and fetches the latest first page.
+- **Classification Filter**: optional horizontal filter chips loaded from backend classifications. Selecting or deselecting resets pagination and triggers a fresh filtered search.
+
+### 10.3 Native Song Detail
+- Read-only presentation of real backend fields:
+  - Title, artist, musical key badge, BPM chip, duration chip.
+  - Classification chip with server-supplied color.
+  - Notes / observations in a styled container.
+  - Selectable lyrics with readable typography (`letterSpacing: 0.2`, `height: 1.5`), respecting system accessibility font scaling.
+  - External links (YouTube, audio, chord sheet, external links) opened safely via `url_launcher` (`LaunchMode.externalApplication`) with URI scheme verification (`http`/`https`).
+- **Zero Admin Controls**: no creation, editing, deletion, or chord transposition authoring controls appear.
+
+### 10.4 Multi-Tenant Isolation
+- `repertoireListNotifierProvider` is keyed strictly by `ministryId`.
+- `songDetailNotifierProvider` is keyed by `(ministryId, songId)`.
+- On ministry switch:
+  - `AppShell` triggers reset of repertoire list and song detail providers.
+  - `SongDetailView` listens to active ministry and automatically pops if the active ministry changes away from the viewed song's ministry.
+  - No song data from Ministry A is ever retained or rendered under Ministry B.
+
+### 10.5 Responsive Phone & Tablet Layout
+- **Phone (< 600dp)**: full-width list items, bottom navigation bar.
+- **Tablet (>= 600dp)**: left navigation rail, content constrained to responsive max-width (800dp) with center alignment to prevent overly stretched lines and maintain lyrics readability.

@@ -21,6 +21,11 @@ import 'package:louvaio_mobile/features/ministry_context/presentation/widgets/mi
 import 'package:louvaio_mobile/features/schedules/data/schedule_repository.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule_comment.dart';
+import 'package:louvaio_mobile/features/repertoire/data/repertoire_repository.dart';
+import 'package:louvaio_mobile/features/repertoire/domain/classification.dart';
+import 'package:louvaio_mobile/features/repertoire/domain/paginated_songs.dart';
+import 'package:louvaio_mobile/features/repertoire/domain/song_detail.dart';
+import 'package:louvaio_mobile/features/repertoire/presentation/views/repertoire_view.dart';
 
 class MockAuthRepository extends Mock implements AuthRepository {}
 
@@ -81,6 +86,31 @@ class FakeScheduleRepo implements ScheduleRepository {
         content: 'content',
         createdAt: '2026-10-01',
       );
+}
+
+class FakeRepertoireRepo implements RepertoireRepository {
+  @override
+  Future<PaginatedSongs> listSongs(
+    String ministryId, {
+    String? search,
+    String? classificationId,
+    String? cursor,
+    int? page,
+    int? limit,
+  }) async =>
+      const PaginatedSongs(songs: [], total: 0);
+
+  @override
+  Future<SongDetail> getSongDetail(String ministryId, String songId) async =>
+      SongDetail(
+        id: songId,
+        ministryId: ministryId,
+        title: 'Música',
+      );
+
+  @override
+  Future<List<Classification>> listClassifications(String ministryId) async =>
+      [];
 }
 
 void main() {
@@ -255,6 +285,8 @@ void main() {
             authRepositoryProvider.overrideWithValue(authRepo),
             dashboardRepositoryProvider.overrideWithValue(FakeDashboardRepo()),
             scheduleRepositoryProvider.overrideWithValue(FakeScheduleRepo()),
+            repertoireRepositoryProvider
+                .overrideWithValue(FakeRepertoireRepo()),
             authNotifierProvider.overrideWith((ref) {
               final n = AuthNotifier(authRepo);
               n.state = const AuthState.authenticated(testUser);
@@ -313,6 +345,8 @@ void main() {
             authRepositoryProvider.overrideWithValue(authRepo),
             dashboardRepositoryProvider.overrideWithValue(FakeDashboardRepo()),
             scheduleRepositoryProvider.overrideWithValue(FakeScheduleRepo()),
+            repertoireRepositoryProvider
+                .overrideWithValue(FakeRepertoireRepo()),
             authNotifierProvider.overrideWith((ref) {
               final n = AuthNotifier(authRepo);
               n.state = const AuthState.authenticated(testUser);
@@ -350,7 +384,7 @@ void main() {
       // Navigate to Repertório tab
       await tester.tap(find.text('Repertório'));
       await tester.pumpAndSettle();
-      expect(find.text('Repertório Musical'), findsOneWidget);
+      expect(find.byType(RepertoireView), findsOneWidget);
 
       // Navigate to Perfil tab
       await tester.tap(find.text('Perfil'));

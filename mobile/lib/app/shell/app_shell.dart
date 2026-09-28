@@ -5,6 +5,7 @@ import '../../features/dashboard/presentation/dashboard_view.dart';
 import '../../features/ministry_context/domain/ministry.dart';
 import '../../features/ministry_context/presentation/controllers/ministry_context_controller.dart';
 import '../../features/ministry_context/presentation/widgets/ministry_switcher_sheet.dart';
+import '../../features/repertoire/presentation/views/repertoire_view.dart';
 import '../../features/schedules/presentation/views/schedules_view.dart';
 import '../providers.dart';
 
@@ -24,12 +25,14 @@ class _AppShellState extends ConsumerState<AppShell> {
 
   @override
   Widget build(BuildContext context) {
-    // Invalidate schedule detail & comments state on ministry switch
+    // Invalidate schedule detail & comments and repertoire state on ministry switch
     ref.listen<MinistryContextState>(ministryContextNotifierProvider,
         (previous, next) {
       if (previous?.selectedMinistry?.id != next.selectedMinistry?.id) {
         ref.read(scheduleDetailNotifierProvider.notifier).reset();
         ref.read(commentsNotifierProvider.notifier).reset();
+        ref.read(repertoireListNotifierProvider.notifier).reset();
+        ref.read(songDetailNotifierProvider.notifier).reset();
       }
     });
 
@@ -102,7 +105,7 @@ class _AppShellState extends ConsumerState<AppShell> {
         onNavigateToTab: (index) => setState(() => _currentIndex = index),
       ),
       SchedulesView(ministryId: selectedMinistry?.id),
-      const _RepertoirePlaceholderView(),
+      RepertoireView(ministryId: selectedMinistry?.id),
       _ProfileView(
         selectedMinistry: selectedMinistry,
         hasMultipleMinistries: availableMinistries.length > 1,
@@ -274,52 +277,6 @@ class _AppShellState extends ConsumerState<AppShell> {
             label: 'Perfil',
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// Repertoire tab placeholder (M6).
-class _RepertoirePlaceholderView extends StatelessWidget {
-  const _RepertoirePlaceholderView();
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircleAvatar(
-              radius: 36,
-              backgroundColor: theme.colorScheme.primary.withValues(alpha: 0.1),
-              child: Icon(
-                Icons.queue_music_outlined,
-                size: 36,
-                color: theme.colorScheme.primary,
-              ),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              'Repertório Musical',
-              style: theme.textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'O catálogo de músicas, versões, cifras inteligentes transponíveis e arranjos estarão disponíveis nesta seção no módulo M6.',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
-                height: 1.5,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

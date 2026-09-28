@@ -13,6 +13,7 @@ import '../features/ministry_context/presentation/controllers/ministry_context_c
 import 'environment/app_environment.dart';
 import 'router/app_router.dart';
 export '../features/schedules/presentation/controllers/schedule_providers.dart';
+export '../features/repertoire/presentation/controllers/repertoire_providers.dart';
 
 /// Provider for the active runtime environment.
 final appEnvironmentProvider = Provider<AppEnvironment>((ref) {
