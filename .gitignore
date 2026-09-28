@@ -19,6 +19,9 @@ mobile/build/
 mobile/.flutter-plugins
 mobile/.flutter-plugins-dependencies
 mobile/*.iml
+key.properties
+*.keystore
+*.jks
 
 # IDE
 .idea/

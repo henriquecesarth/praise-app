@@ -279,3 +279,8 @@ State is managed via `MinistryContextNotifier` (`MinistryContextState`):
   - An informative connection error message.
   - A primary "Tentar novamente" action (`retryBootstrap()`) that re-attempts backend profile synchronization without destroying the Firebase session or requiring user credential re-entry.
   - A secondary "Sair da Conta" action allowing the user to abort and return to the login screen.
+
+---
+
+## 12. Android Release Hardening (Mobile V1-M8)
+Authoritative release signing, versioning policy, toolchain baselines, and verification procedures are detailed in [release.md](release.md).

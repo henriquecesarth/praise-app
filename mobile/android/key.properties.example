@@ -1,0 +1,7 @@
+# LouvAIO Android Release Signing Configuration Example
+# Copy this file to 'key.properties' in mobile/android/ and provide real values.
+# NEVER commit 'key.properties' or keystore files to source control.
+storeFile=upload-keystore.jks
+storePassword=example_store_password
+keyAlias=louvaio-release
+keyPassword=example_key_password
