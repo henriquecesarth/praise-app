@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../availability/presentation/views/my_availability_screen.dart';
 import '../../domain/schedule.dart';
 import '../controllers/schedule_list_controller.dart';
 import '../controllers/schedule_providers.dart';
@@ -95,11 +96,37 @@ class _SchedulesViewState extends ConsumerState<SchedulesView>
               isMatchingMinistry &&
               !state.isLoading &&
               state.error == null)
-            TabBar(
-              controller: _tabController,
-              tabs: const [
-                Tab(text: 'Próximas'),
-                Tab(text: 'Anteriores'),
+            Row(
+              children: [
+                Expanded(
+                  child: TabBar(
+                    controller: _tabController,
+                    tabs: const [
+                      Tab(text: 'Próximas'),
+                      Tab(text: 'Anteriores'),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(right: 8.0),
+                  child: SizedBox(
+                    width: 44,
+                    height: 44,
+                    child: IconButton(
+                      icon: const Icon(Icons.event_busy_outlined),
+                      tooltip: 'Minha Indisponibilidade',
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => MyAvailabilityScreen(
+                              ministryId: widget.ministryId!,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
               ],
             ),
           Expanded(child: content),

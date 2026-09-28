@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../features/availability/presentation/views/my_availability_screen.dart';
 import '../../features/dashboard/presentation/dashboard_view.dart';
 import '../../features/ministry_context/domain/ministry.dart';
 import '../../features/ministry_context/presentation/controllers/ministry_context_controller.dart';
@@ -467,6 +468,29 @@ class _ProfileView extends ConsumerWidget {
           const SizedBox(height: 16),
 
           // Actions
+          if (selectedMinistry != null) ...[
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                Icons.event_busy_outlined,
+                color: theme.colorScheme.primary,
+              ),
+              title: const Text('Minha Indisponibilidade'),
+              subtitle: const Text(
+                  'Informe períodos em que não poderá participar das escalas'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => MyAvailabilityScreen(
+                      ministryId: selectedMinistry!.id,
+                    ),
+                  ),
+                );
+              },
+            ),
+            const Divider(),
+          ],
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.refresh),
