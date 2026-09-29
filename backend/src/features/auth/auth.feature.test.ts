@@ -6,6 +6,7 @@ import { config } from '../../config/unifiedConfig';
 import { authAdmin, db } from '../../lib/firebase';
 import { UserRepository } from '../../repositories/UserRepository';
 import { MinistryRepository } from '../../repositories/MinistryRepository';
+import { AccountDeletionRepository } from '../../repositories/AccountDeletionRepository';
 import { AuthService } from './auth.service';
 import { AppError } from '../../middleware/error-handler';
 
@@ -48,12 +49,17 @@ describe('Auth Feature & Mobile V1-M0 Firebase ID Token Compatibility Suite', ()
 
   afterAll(async () => {
     await new Promise<void>((resolve) => {
+      if (typeof (server as any).closeAllConnections === 'function') {
+        (server as any).closeAllConnections();
+      }
       server.close(() => resolve());
     });
   });
 
   beforeEach(() => {
     vi.restoreAllMocks();
+
+    vi.spyOn(AccountDeletionRepository.prototype, 'isDeletionPending').mockResolvedValue(false);
 
     // Default authAdmin.verifyIdToken spy
     vi.spyOn(authAdmin, 'verifyIdToken').mockImplementation(async (token: string) => {
