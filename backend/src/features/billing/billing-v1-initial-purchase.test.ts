@@ -59,6 +59,21 @@ describe('Phase 3A.1 — Billing Transition V1 Initial Purchase Financial Bounda
       setCustomer: vi.fn().mockImplementation(async (c: any) => {
         customersStore.set(c.id, c);
       }),
+      setBillingContact: vi.fn().mockImplementation(async (ministryId: string, provider: string, userId: string) => {
+        const customerId = `${ministryId}_${provider}`;
+        const customer = customersStore.get(customerId);
+        if (!customer) throw new Error('Expected canonical billing customer');
+        customersStore.set(customerId, { ...customer, billing_contact_user_id: userId });
+
+        const appSubscription = appSubscriptionsStore.get(ministryId) || {
+          id: ministryId,
+          ministry_id: ministryId,
+          plan_id: 'free',
+          subscription_mode: 'free',
+          billing_status: 'active',
+        };
+        appSubscriptionsStore.set(ministryId, { ...appSubscription, billing_contact_user_id: userId });
+      }),
       claimCustomerCreation: vi.fn().mockImplementation(async (ministryId: string, provider: string, lockWorkerId: string) => {
         const existing = customersStore.get(`${ministryId}_${provider}`);
         if (existing) return { acquired: false, customer: existing };
@@ -324,6 +339,7 @@ describe('Phase 3A.1 — Billing Transition V1 Initial Purchase Financial Bounda
     mockProvider = {
       name: 'asaas',
       createCustomer: vi.fn().mockResolvedValue({ providerCustomerId: 'cus_min_test_1' }),
+      updateCustomer: vi.fn().mockResolvedValue(undefined),
       classifyErrorOutcome: vi.fn().mockImplementation((err: any) => {
         if (err instanceof AppError && err.statusCode >= 400 && err.statusCode < 500 && err.statusCode !== 408) {
           return 'DEFINITE_NO_RESOURCE_CREATED';

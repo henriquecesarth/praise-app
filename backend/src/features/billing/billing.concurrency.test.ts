@@ -20,6 +20,7 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
   let mockSubscriptionRepo: any;
   let mockMinistryRepo: any;
   let mockProvider: BillingProvider;
+  let mockUserRepo: any;
 
   const mockEventsStore = new Map<string, BillingWebhookEventRecord>();
   const mockCustomersStore = new Map<string, BillingCustomerRecord>();
@@ -49,6 +50,24 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
       }),
       setCustomer: vi.fn().mockImplementation(async (cust: BillingCustomerRecord) => {
         mockCustomersStore.set(cust.id, cust);
+      }),
+      setBillingContact: vi.fn().mockImplementation(async (ministryId: string, provider: string, userId: string) => {
+        const customerId = `${ministryId}_${provider}`;
+        const customer = mockCustomersStore.get(customerId);
+        if (!customer) throw new Error('Expected canonical billing customer');
+        mockCustomersStore.set(customerId, { ...customer, billing_contact_user_id: userId });
+
+        const appSubscription = mockAppSubscriptionsStore.get(ministryId) || {
+          id: ministryId,
+          ministry_id: ministryId,
+          plan_id: 'free',
+          subscription_mode: 'free',
+          billing_status: 'active',
+        };
+        mockAppSubscriptionsStore.set(
+          ministryId,
+          { ...appSubscription, billing_contact_user_id: userId } as MinistrySubscriptionRecord
+        );
       }),
       claimCustomerCreation: vi.fn().mockImplementation(async (ministryId: string, provider: string, lockWorkerId: string) => {
         const existing = mockCustomersStore.get(`${ministryId}_${provider}`);
@@ -321,9 +340,14 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
       findById: vi.fn().mockResolvedValue({ id: 'min_test', name: 'Igreja Central' }),
     };
 
+    mockUserRepo = {
+      findById: vi.fn().mockResolvedValue({ id: 'user_1', email: 'admin@praiseapp.test', name: 'Admin' }),
+    };
+
     mockProvider = {
       name: 'asaas',
       createCustomer: vi.fn().mockResolvedValue({ providerCustomerId: 'cus_123' }),
+      updateCustomer: vi.fn().mockResolvedValue(undefined),
       createCheckout: vi.fn().mockResolvedValue({
         checkoutUrl: 'https://sandbox.asaas.com/c/chk_123',
         checkoutId: 'chk_123',
@@ -346,7 +370,8 @@ describe('BillingService — Concurrency, Idempotency & Out-of-Order Hardening',
       mockSubscriptionService as unknown as SubscriptionService,
       mockSubscriptionRepo as unknown as SubscriptionRepository,
       mockMinistryRepo as unknown as MinistryRepository,
-      mockProvider
+      mockProvider,
+      mockUserRepo
     );
   });
 

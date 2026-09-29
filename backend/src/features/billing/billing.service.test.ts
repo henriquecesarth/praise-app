@@ -25,6 +25,7 @@ describe('BillingService & Gateway Automation Tests', () => {
   let mockSubscriptionRepo: any;
   let mockMinistryRepo: any;
   let mockProvider: BillingProvider;
+  let mockUserRepo: any;
 
   beforeEach(() => {
     (config as any).billingPublicApiUrl = 'https://tunnel.trycloudflare.com';
@@ -36,6 +37,7 @@ describe('BillingService & Gateway Automation Tests', () => {
       getCustomer: vi.fn(),
       getCustomerByProviderId: vi.fn(),
       setCustomer: vi.fn(),
+      setBillingContact: vi.fn(),
       claimCustomerCreation: vi.fn().mockImplementation(async (ministryId: string, provider: string, lockWorkerId: string) => {
         return { acquired: true, customer: null };
       }),
@@ -160,6 +162,7 @@ describe('BillingService & Gateway Automation Tests', () => {
     mockProvider = {
       name: 'asaas',
       createCustomer: vi.fn().mockResolvedValue({ providerCustomerId: 'cus_asaas_123' }),
+      updateCustomer: vi.fn().mockResolvedValue(undefined),
       createCheckout: vi.fn().mockResolvedValue({
         checkoutUrl: 'https://sandbox.asaas.com/c/chk_123',
         checkoutId: 'chk_123',
@@ -182,7 +185,7 @@ describe('BillingService & Gateway Automation Tests', () => {
       listAllSubscriptionPaymentsStrict: vi.fn().mockResolvedValue({ outcome: 'SUCCESS', payments: [] }),
     };
 
-    const mockUserRepo = {
+    mockUserRepo = {
       findById: vi.fn().mockResolvedValue({ id: 'usr-1', name: 'Admin', email: 'admin@louvaio.local' }),
     };
 
@@ -1667,6 +1670,11 @@ describe('BillingService & Gateway Automation Tests', () => {
           provider_customer_id: 'cus_asaas_123',
         })
       );
+      expect(mockBillingRepo.setBillingContact).toHaveBeenCalledWith('min-100', 'asaas', 'usr-1');
+      expect(mockProvider.updateCustomer).toHaveBeenCalledWith(
+        'cus_asaas_123',
+        expect.objectContaining({ name: 'Ministério Central', email: 'admin@louvaio.local' })
+      );
 
       expect(mockProvider.createCheckout).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1716,6 +1724,32 @@ describe('BillingService & Gateway Automation Tests', () => {
           target_plan_id: 'pro',
         })
       );
+    });
+
+    it('B.1) troca explícita de contato sincroniza o Asaas antes de persistir a referência canônica', async () => {
+      mockBillingRepo.getCustomer.mockResolvedValue({
+        id: 'min-100_asaas',
+        ministry_id: 'min-100',
+        provider: 'asaas',
+        provider_customer_id: 'cus_existing_888',
+        billing_contact_user_id: 'usr-old',
+        created_at: '2026-08-01T00:00:00.000Z',
+        updated_at: '2026-08-01T00:00:00.000Z',
+      });
+      mockUserRepo.findById.mockResolvedValue({
+        id: 'usr-new',
+        name: 'Novo Contato',
+        email: 'novo@louvaio.local',
+      });
+
+      await billingService.setBillingContact('min-100', 'usr-new');
+
+      expect(mockProvider.updateCustomer).toHaveBeenCalledWith('cus_existing_888', {
+        name: 'Ministério Central',
+        email: 'novo@louvaio.local',
+      });
+      expect(mockBillingRepo.setBillingContact).toHaveBeenCalledWith('min-100', 'asaas', 'usr-new');
+      expect(mockMinistryRepo.getMinistryById).toHaveBeenCalledWith('min-100', 'usr-new');
     });
 
     it('C) Dois checkouts sequenciais da mesma Ministry: primeiro cria e segundo reutiliza o mesmo customer', async () => {

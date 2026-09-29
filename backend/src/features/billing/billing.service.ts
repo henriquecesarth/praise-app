@@ -305,7 +305,7 @@ export class BillingService {
   async resolveOrCreateBillingCustomer(
     ministryId: string,
     options?: { email?: string; taxId?: string; phone?: string; pollTimeoutMs?: number }
-  ): Promise<{ providerCustomerId: string; isNew: boolean }> {
+  ): Promise<{ providerCustomerId: string; isNew: boolean; billingContactUserId?: string | null }> {
     const canonicalCustomer = await this.billingRepo.getCustomer(ministryId, this.provider.name);
     const currentBillingSub = await this.billingRepo.getSubscription(ministryId, this.provider.name);
 
@@ -332,7 +332,7 @@ export class BillingService {
           created_at: canonicalCustomer.created_at || now,
           updated_at: now,
         });
-        return { providerCustomerId: activeSubCustomerId, isNew: false };
+        return { providerCustomerId: activeSubCustomerId, isNew: false, billingContactUserId: canonicalCustomer.billing_contact_user_id };
       }
 
       if (!canonicalCustomer) {
@@ -346,7 +346,7 @@ export class BillingService {
           created_at: now,
           updated_at: now,
         });
-        return { providerCustomerId: activeSubCustomerId, isNew: false };
+        return { providerCustomerId: activeSubCustomerId, isNew: false, billingContactUserId: null };
       }
     }
 
@@ -357,7 +357,11 @@ export class BillingService {
       canonicalCustomer.provider_customer_id.trim() &&
       canonicalCustomer.status !== 'creating'
     ) {
-      return { providerCustomerId: canonicalCustomer.provider_customer_id.trim(), isNew: false };
+      return {
+        providerCustomerId: canonicalCustomer.provider_customer_id.trim(),
+        isNew: false,
+        billingContactUserId: canonicalCustomer.billing_contact_user_id,
+      };
     }
 
     // 3. Concorrência no Primeiro Customer: Adquire claim/lease atômico no Firestore
@@ -367,7 +371,11 @@ export class BillingService {
     if (!claim.acquired) {
       // Se já está pronto no Firestore
       if (claim.customer?.provider_customer_id && claim.customer.status !== 'creating') {
-        return { providerCustomerId: claim.customer.provider_customer_id.trim(), isNew: false };
+        return {
+          providerCustomerId: claim.customer.provider_customer_id.trim(),
+          isNew: false,
+          billingContactUserId: claim.customer.billing_contact_user_id,
+        };
       }
 
       // Se está em criação por outra request concorrente, aguarda resolução com polling
@@ -377,13 +385,21 @@ export class BillingService {
         await new Promise((resolve) => setTimeout(resolve, 200));
         const polled = await this.billingRepo.getCustomer(ministryId, this.provider.name);
         if (polled && polled.provider_customer_id && polled.status !== 'creating') {
-          return { providerCustomerId: polled.provider_customer_id.trim(), isNew: false };
+          return {
+            providerCustomerId: polled.provider_customer_id.trim(),
+            isNew: false,
+            billingContactUserId: polled.billing_contact_user_id,
+          };
         }
       }
       // Se expirou o polling, tenta reavaliar o claim
       const retryClaim = await this.billingRepo.claimCustomerCreation(ministryId, this.provider.name, lockWorkerId, 30000);
       if (!retryClaim.acquired && retryClaim.customer?.provider_customer_id) {
-        return { providerCustomerId: retryClaim.customer.provider_customer_id.trim(), isNew: false };
+        return {
+          providerCustomerId: retryClaim.customer.provider_customer_id.trim(),
+          isNew: false,
+          billingContactUserId: retryClaim.customer.billing_contact_user_id,
+        };
       }
     }
 
@@ -438,7 +454,82 @@ export class BillingService {
       updated_at: now,
     });
 
-    return { providerCustomerId, isNew: true };
+    return {
+      providerCustomerId,
+      isNew: true,
+      billingContactUserId: canonicalCustomer?.billing_contact_user_id || null,
+    };
+  }
+
+  /**
+   * O primeiro checkout pago estabelece o contato de cobrança somente quando
+   * ele ainda não existe. Uma relação já identificada nunca é reassociada pelo
+   * simples fato de outro administrador iniciar um checkout.
+   */
+  private async establishInitialBillingContact(
+    ministryId: string,
+    contactUserId: string,
+    contact: { email: string; name: string },
+    resolvedCustomer: { providerCustomerId: string; billingContactUserId?: string | null }
+  ): Promise<void> {
+    if (resolvedCustomer.billingContactUserId) {
+      return;
+    }
+
+    const ministry = await this.ministryRepo.findById(ministryId);
+    await this.syncAsaasBillingContact(
+      resolvedCustomer.providerCustomerId,
+      ministry?.name || `Ministério ${ministryId}`,
+      contact
+    );
+    await this.billingRepo.setBillingContact(ministryId, this.provider.name, contactUserId);
+  }
+
+  /**
+   * Troca explícita, autorizada pela rota administrativa do ministério. A
+   * sincronização remota precede a escrita local para que uma falha do Asaas
+   * não libere a exclusão de uma conta cujo e-mail ainda é o contato ativo.
+   */
+  async setBillingContact(ministryId: string, contactUserId: string): Promise<void> {
+    const contact = await this.userRepo.findById(contactUserId);
+    if (!contact || !contact.email) {
+      throw new AppError(404, 'Usuário escolhido para contato de cobrança não encontrado.', {
+        code: 'BILLING_CONTACT_USER_NOT_FOUND',
+      });
+    }
+
+    const ministry = await this.ministryRepo.getMinistryById(ministryId, contactUserId);
+    const customer = await this.billingRepo.getCustomer(ministryId, this.provider.name);
+    if (!customer?.provider_customer_id) {
+      throw new AppError(409, 'Não há cliente de cobrança ativo para atualizar o contato.', {
+        code: 'BILLING_CUSTOMER_NOT_FOUND',
+      });
+    }
+
+    await this.syncAsaasBillingContact(customer.provider_customer_id, ministry.name, contact);
+    await this.billingRepo.setBillingContact(ministryId, this.provider.name, contactUserId);
+  }
+
+  private async syncAsaasBillingContact(
+    providerCustomerId: string,
+    ministryName: string,
+    contact: { email: string; name: string }
+  ): Promise<void> {
+    if (this.provider.name !== 'asaas') {
+      return;
+    }
+
+    if (typeof this.provider.updateCustomer !== 'function') {
+      throw new AppError(500, 'Gateway de cobrança não suporta atualização segura de contato.', {
+        code: 'BILLING_CONTACT_SYNC_UNAVAILABLE',
+      });
+    }
+
+    await this.provider.updateCustomer(providerCustomerId, {
+      // A identidade exibida do customer pertence ao ministério, não ao usuário.
+      name: ministryName,
+      email: contact.email,
+    });
   }
 
   /**
@@ -660,9 +751,15 @@ export class BillingService {
 
       // 4. Resolver ou criar cliente canônico no gateway
       const requestingUser = userId ? await this.userRepo.findById(userId) : null;
+      if (!requestingUser?.email) {
+        throw new AppError(404, 'Usuário solicitante de cobrança não encontrado.', {
+          code: 'BILLING_CONTACT_USER_NOT_FOUND',
+        });
+      }
       const resolvedCustomer = await this.resolveOrCreateBillingCustomer(ministryId, {
         email: requestingUser?.email,
       });
+      await this.establishInitialBillingContact(ministryId, userId, requestingUser, resolvedCustomer);
 
       // 5. Construir entidade de persistência V1 e travar slot determinístico ANTES de qualquer mutação externa
       const transitionId = `transition_${ministryId}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;

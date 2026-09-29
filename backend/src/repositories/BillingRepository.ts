@@ -135,6 +135,50 @@ export class BillingRepository {
   }
 
   /**
+   * Persiste o contato de cobrança explicitamente escolhido para o customer
+   * canônico e para a projeção de entitlement do ministério. Não cria customer
+   * nem reassocia assinatura: o caller deve ter sincronizado o gateway antes.
+   */
+  async setBillingContact(
+    ministryId: string,
+    provider: BillingProviderName,
+    billingContactUserId: string
+  ): Promise<void> {
+    const customerRef = this.customersCollection.doc(`${ministryId}_${provider}`);
+    const ministrySubRef = this.ministrySubscriptionsCollection.doc(ministryId);
+    const now = new Date().toISOString();
+
+    await db.runTransaction(async (transaction: any) => {
+      const customerDoc = await transaction.get(customerRef);
+      if (!customerDoc.exists) {
+        throw new AppError(409, 'Cliente de cobrança canônico não encontrado para definir o contato.', {
+          code: 'BILLING_CUSTOMER_NOT_FOUND',
+        });
+      }
+
+      const customer = customerDoc.data() as BillingCustomerRecord;
+      if (customer.provider !== provider || !customer.provider_customer_id?.trim()) {
+        throw new AppError(409, 'Cliente de cobrança canônico inválido para definir o contato.', {
+          code: 'BILLING_CUSTOMER_INVALID',
+        });
+      }
+
+      transaction.update(customerRef, {
+        billing_contact_user_id: billingContactUserId,
+        updated_at: now,
+      });
+      transaction.set(
+        ministrySubRef,
+        {
+          billing_contact_user_id: billingContactUserId,
+          updated_at: now,
+        },
+        { merge: true }
+      );
+    });
+  }
+
+  /**
    * Bloqueia/Aluga atomicamente a criação de cliente para evitar múltiplas chamadas concorrentes ao gateway
    */
   async claimCustomerCreation(

@@ -18,6 +18,7 @@ describe('BillingController Tests', () => {
       createCheckout: vi.fn(),
       cancelSubscription: vi.fn(),
       reactivateSubscription: vi.fn(),
+      setBillingContact: vi.fn(),
       getBillingHistory: vi.fn(),
       handleWebhook: vi.fn(),
     };
@@ -132,6 +133,30 @@ describe('BillingController Tests', () => {
           message: 'Cancelamento agendado para o final do período vigente.',
         })
       );
+    });
+  });
+
+  describe('PUT /api/v1/ministries/:ministryId/billing/contact', () => {
+    it('requires an explicit contact user and delegates the authorized replacement', async () => {
+      mockReq.body = { contactUserId: 'usr-new-contact' };
+      mockBillingService.setBillingContact.mockResolvedValue(undefined);
+
+      await controller.setBillingContact(mockReq as AuthenticatedRequest, mockRes as Response, mockNext);
+
+      expect(mockBillingService.setBillingContact).toHaveBeenCalledWith('min-100', 'usr-new-contact');
+      expect(mockRes.json).toHaveBeenCalledWith({
+        success: true,
+        message: 'Contato de cobrança atualizado com sucesso.',
+      });
+    });
+
+    it('rejects an absent contact user', async () => {
+      mockReq.body = {};
+
+      await controller.setBillingContact(mockReq as AuthenticatedRequest, mockRes as Response, mockNext);
+
+      expect(mockNext).toHaveBeenCalledWith(expect.any(AppError));
+      expect(mockBillingService.setBillingContact).not.toHaveBeenCalled();
     });
   });
 

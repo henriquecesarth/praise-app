@@ -132,6 +132,31 @@ export class BillingController {
   };
 
   /**
+   * PUT /api/v1/ministries/:ministryId/billing/contact
+   * Troca explicitamente o contato de cobrança sem transferir propriedade.
+   */
+  setBillingContact = async (
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const ministryId = this.getMinistryId(req);
+      const contactUserId = req.body?.contactUserId;
+      if (typeof contactUserId !== 'string' || !contactUserId.trim()) {
+        throw new AppError(400, 'contactUserId é obrigatório.', {
+          code: 'BILLING_CONTACT_USER_ID_REQUIRED',
+        });
+      }
+
+      await this.billingService.setBillingContact(ministryId, contactUserId.trim());
+      res.json({ success: true, message: 'Contato de cobrança atualizado com sucesso.' });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /**
    * POST /api/v1/ministries/:ministryId/billing/reconcile
    */
   reconcileSubscription = async (

@@ -2,7 +2,8 @@ export type AccountDeletionBlockerCode =
   | 'MINISTRY_OWNER'
   | 'ORGANIZATION_OWNER'
   | 'SOLE_MINISTRY_ADMIN'
-  | 'BILLING_CONTACT_REPLACEMENT_REQUIRED';
+  | 'BILLING_CONTACT_REPLACEMENT_REQUIRED'
+  | 'BILLING_CONTACT_UNKNOWN';
 
 export interface AccountDeletionBlocker {
   code: AccountDeletionBlockerCode;

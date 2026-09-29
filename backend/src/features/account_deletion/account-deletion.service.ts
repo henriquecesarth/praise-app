@@ -51,9 +51,12 @@ export class AccountDeletionService {
     // 4. Billing contact replacement check (canonical billing_contact_user_id, sem inferência por email)
     const billingMinistries = await this.repository.findBillingContactMinistries(userId);
     for (const bm of billingMinistries) {
+      const contactIsUnknown = bm.reason === 'UNKNOWN_LEGACY';
       blockers.push({
-        code: 'BILLING_CONTACT_REPLACEMENT_REQUIRED',
-        message: `Você é o contato de cobrança ativo do ministério "${bm.name}". Atualize o contato de cobrança antes de excluir sua conta.`,
+        code: contactIsUnknown ? 'BILLING_CONTACT_UNKNOWN' : 'BILLING_CONTACT_REPLACEMENT_REQUIRED',
+        message: contactIsUnknown
+          ? `O contato de cobrança ativo do ministério "${bm.name}" ainda não foi identificado. Defina um contato de cobrança explícito antes de excluir a conta.`
+          : `Você é o contato de cobrança ativo do ministério "${bm.name}". Atualize o contato de cobrança antes de excluir sua conta.`,
         details: { ministryId: bm.id, ministryName: bm.name },
       });
     }

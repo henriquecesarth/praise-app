@@ -28,6 +28,7 @@ router.get('/preview', requireMinistryRole('member'), controller.getCheckoutPrev
 router.post('/checkout', requireMinistryRole('admin'), controller.createCheckout);
 router.post('/cancel', requireMinistryRole('admin'), controller.cancelSubscription);
 router.post('/reactivate', requireMinistryRole('admin'), controller.reactivateSubscription);
+router.put('/contact', requireMinistryRole('admin'), controller.setBillingContact);
 router.post('/reconcile', requireMinistryRole('admin'), controller.reconcileSubscription);
 router.get('/history', requireMinistryRole('member'), controller.getBillingHistory);
 

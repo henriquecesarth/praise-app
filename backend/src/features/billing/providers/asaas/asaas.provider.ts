@@ -187,7 +187,9 @@ export class AsaasBillingProvider implements BillingProvider {
     providerCustomerId: string,
     params: { name?: string; email?: string; phone?: string; taxId?: string }
   ): Promise<void> {
-    if (!this.apiKey) return;
+    if (!this.apiKey) {
+      throw new AppError(500, 'Gateway Asaas não configurado.');
+    }
     try {
       const response = await fetch(`${this.apiUrl}/customers/${providerCustomerId}`, {
         method: 'PUT',
@@ -204,10 +206,14 @@ export class AsaasBillingProvider implements BillingProvider {
       });
       if (!response.ok) {
         const errBody = (await response.json().catch(() => ({}))) as any;
-        console.warn(`[ASAAS PROVIDER] Falha ao atualizar customer ${providerCustomerId}:`, errBody);
+        const message = errBody?.errors?.[0]?.description || `Erro ao atualizar cliente no Asaas (HTTP ${response.status})`;
+        throw new AppError(502, message, { code: 'ASAAS_CUSTOMER_UPDATE_FAILED' });
       }
     } catch (err: any) {
-      console.warn(`[ASAAS PROVIDER] Erro ao atualizar customer ${providerCustomerId}:`, err.message);
+      if (err instanceof AppError) throw err;
+      throw new AppError(502, `Falha de comunicação ao atualizar cliente no Asaas: ${err.message}`, {
+        code: 'ASAAS_CUSTOMER_UPDATE_FAILED',
+      });
     }
   }
 

@@ -10,6 +10,12 @@ import { SubscriptionRepository } from './SubscriptionRepository';
 
 export const BATCH_CHUNK_SIZE = 250;
 
+export interface BillingContactDeletionBlocker {
+  id: string;
+  name: string;
+  reason?: 'CURRENT_USER' | 'UNKNOWN_LEGACY';
+}
+
 export async function chunkedBatchDelete(
   refs: FirebaseFirestore.DocumentReference[],
   chunkSize = BATCH_CHUNK_SIZE
@@ -82,6 +88,7 @@ export class AccountDeletionRepository {
   private readonly announcementsCol = db.collection('ministry_announcements');
   private readonly planChangesCol = db.collection('billing_plan_changes');
   private readonly customersCol = db.collection('billing_customers');
+  private readonly billingSubscriptionsCol = db.collection('billing_subscriptions');
   private readonly ministrySubsCol = db.collection('ministry_subscriptions');
   private readonly whatsappConnectionsCol = db.collection('whatsapp_connections');
   private readonly whatsappOnboardingSessionsCol = db.collection('whatsapp_onboarding_sessions');
@@ -184,54 +191,77 @@ export class AccountDeletionRepository {
     return results;
   }
 
-  async findBillingContactMinistries(
-    userId: string
-  ): Promise<Array<{ id: string; name: string }>> {
-    // 1. Identifica associações explícitas de contato de faturamento
-    const [customersSnap, subsSnap] = await Promise.all([
+  async findBillingContactMinistries(userId: string): Promise<BillingContactDeletionBlocker[]> {
+    // Explicit contacts block even if the user has already left the ministry.
+    // Unknown legacy contacts are evaluated only for the user's memberships,
+    // because there is no safe identity correlation outside that boundary.
+    const [customersSnap, appSubsSnap, membershipsSnap] = await Promise.all([
       this.customersCol.where('billing_contact_user_id', '==', userId).get(),
       this.ministrySubsCol.where('billing_contact_user_id', '==', userId).get(),
+      this.membersCol.where('user_id', '==', userId).get(),
     ]);
 
     const candidateMinistryIds = new Set<string>();
+    const memberMinistryIds = new Set<string>();
     for (const doc of customersSnap.docs) {
-      const mId = doc.data()?.ministry_id;
-      if (mId) candidateMinistryIds.add(mId);
+      const ministryId = doc.data()?.ministry_id;
+      if (ministryId) candidateMinistryIds.add(ministryId);
     }
-    for (const doc of subsSnap.docs) {
-      const mId = doc.data()?.ministry_id || doc.id;
-      if (mId) candidateMinistryIds.add(mId);
+    for (const doc of appSubsSnap.docs) {
+      const ministryId = doc.data()?.ministry_id || doc.id;
+      if (ministryId) candidateMinistryIds.add(ministryId);
+    }
+    for (const doc of membershipsSnap.docs) {
+      const ministryId = doc.data()?.ministry_id;
+      if (ministryId) {
+        candidateMinistryIds.add(ministryId);
+        memberMinistryIds.add(ministryId);
+      }
     }
 
-    const results: Array<{ id: string; name: string }> = [];
+    const results: BillingContactDeletionBlocker[] = [];
+    for (const ministryId of candidateMinistryIds) {
+      const [customerDoc, appSubDoc, billingSubDoc, legacyBillingSubDoc] = await Promise.all([
+        this.customersCol.doc(`${ministryId}_asaas`).get(),
+        this.ministrySubsCol.doc(ministryId).get(),
+        this.billingSubscriptionsCol.doc(`${ministryId}_asaas`).get(),
+        this.billingSubscriptionsCol.doc(`asaas_${ministryId}`).get(),
+      ]);
 
-    for (const mId of candidateMinistryIds) {
-      // 2. Valida se a assinatura do ministério é paga e ativa (não bloqueia assinaturas free ou encerradas)
-      const subDoc = await this.ministrySubsCol.doc(mId).get();
-      if (!subDoc.exists) continue;
-      const subData = subDoc.data() as any;
-      const isPaidActive =
-        subData?.subscription_mode === 'paid' &&
-        ['active', 'past_due', 'pending'].includes(subData?.billing_status);
+      const customer = customerDoc.exists ? (customerDoc.data() as any) : null;
+      const appSub = appSubDoc.exists ? (appSubDoc.data() as any) : null;
+      const billingSubscriptions = [billingSubDoc, legacyBillingSubDoc]
+        .filter((doc) => doc.exists)
+        .map((doc) => doc.data() as any);
+      const isPaidAppRelationship =
+        appSub?.subscription_mode === 'paid' &&
+        ['active', 'past_due', 'pending'].includes(appSub?.billing_status);
+      const isLiveAsaasSubscription = billingSubscriptions.some(
+        (billingSub) =>
+          billingSub?.provider === 'asaas' &&
+          ['active', 'pending', 'past_due'].includes(billingSub?.status)
+      );
 
-      if (!isPaidActive) continue;
+      if (!isPaidAppRelationship && !isLiveAsaasSubscription) continue;
 
-      const mDoc = await this.ministriesCol.doc(mId).get();
-      const mName = mDoc.exists ? (mDoc.data()?.name as string) : `Ministério ${mId}`;
-      results.push({ id: mId, name: mName });
+      const explicitContacts = [customer?.billing_contact_user_id, appSub?.billing_contact_user_id]
+        .filter((contact): contact is string => typeof contact === 'string' && contact.trim().length > 0);
+      const reason = explicitContacts.includes(userId)
+        ? 'CURRENT_USER'
+        : explicitContacts.length === 0 && memberMinistryIds.has(ministryId)
+          ? 'UNKNOWN_LEGACY'
+          : null;
+
+      if (!reason) continue;
+
+      const ministryDoc = await this.ministriesCol.doc(ministryId).get();
+      const name = ministryDoc.exists
+        ? (ministryDoc.data()?.name as string)
+        : `Ministério ${ministryId}`;
+      results.push({ id: ministryId, name, reason });
     }
 
     return results;
-  }
-
-  async setBillingContact(ministryId: string, contactUserId: string | null): Promise<void> {
-    const batch = db.batch();
-    const custRef = this.customersCol.doc(`${ministryId}_asaas`);
-    const subRef = this.ministrySubsCol.doc(ministryId);
-
-    batch.set(custRef, { billing_contact_user_id: contactUserId, updated_at: new Date().toISOString() }, { merge: true });
-    batch.set(subRef, { billing_contact_user_id: contactUserId, updated_at: new Date().toISOString() }, { merge: true });
-    await batch.commit();
   }
 
   // --------------------------------------------------------------------------

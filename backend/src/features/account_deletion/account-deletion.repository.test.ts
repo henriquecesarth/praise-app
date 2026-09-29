@@ -272,11 +272,23 @@ describe('AccountDeletionRepository Persistence & Anonymization Suite', () => {
       vi.spyOn((repository as any).ministrySubsCol, 'where').mockReturnValue({
         get: vi.fn().mockResolvedValue({ docs: [] }),
       } as any);
+      vi.spyOn((repository as any).membersCol, 'where').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ docs: [] }),
+      } as any);
+      vi.spyOn((repository as any).customersCol, 'doc').mockReturnValue({
+        get: vi.fn().mockResolvedValue({
+          exists: true,
+          data: () => ({ billing_contact_user_id: testUserId }),
+        }),
+      } as any);
       vi.spyOn((repository as any).ministrySubsCol, 'doc').mockReturnValue({
         get: vi.fn().mockResolvedValue({
           exists: true,
-          data: () => ({ subscription_mode: 'paid', billing_status: 'active' }),
+          data: () => ({ subscription_mode: 'paid', billing_status: 'active', billing_contact_user_id: testUserId }),
         }),
+      } as any);
+      vi.spyOn((repository as any).billingSubscriptionsCol, 'doc').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ exists: false }),
       } as any);
       vi.spyOn((repository as any).ministriesCol, 'doc').mockReturnValue({
         get: vi.fn().mockResolvedValue({
@@ -287,20 +299,121 @@ describe('AccountDeletionRepository Persistence & Anonymization Suite', () => {
 
       const result = await repository.findBillingContactMinistries(testUserId);
       expect(result).toHaveLength(1);
-      expect(result[0]).toEqual({ id: 'min_paid_1', name: 'Ministério Emanuel' });
+      expect(result[0]).toEqual({ id: 'min_paid_1', name: 'Ministério Emanuel', reason: 'CURRENT_USER' });
     });
 
-    it('handles legacy billing contact as UNKNOWN safely: does not block and does NOT infer from email', async () => {
-      // Legacy records without billing_contact_user_id return empty docs
+    it('fails closed for an active legacy relationship with no explicit contact', async () => {
       vi.spyOn((repository as any).customersCol, 'where').mockReturnValue({
         get: vi.fn().mockResolvedValue({ docs: [] }),
       } as any);
       vi.spyOn((repository as any).ministrySubsCol, 'where').mockReturnValue({
         get: vi.fn().mockResolvedValue({ docs: [] }),
       } as any);
+      vi.spyOn((repository as any).membersCol, 'where').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ docs: [{ data: () => ({ ministry_id: 'min_legacy_1' }) }] }),
+      } as any);
+      vi.spyOn((repository as any).customersCol, 'doc').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ exists: true, data: () => ({ provider: 'asaas' }) }),
+      } as any);
+      vi.spyOn((repository as any).ministrySubsCol, 'doc').mockReturnValue({
+        get: vi.fn().mockResolvedValue({
+          exists: true,
+          data: () => ({ subscription_mode: 'paid', billing_status: 'active' }),
+        }),
+      } as any);
+      vi.spyOn((repository as any).billingSubscriptionsCol, 'doc').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ exists: false }),
+      } as any);
+      vi.spyOn((repository as any).ministriesCol, 'doc').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ exists: true, data: () => ({ name: 'Ministério Legado' }) }),
+      } as any);
 
       const result = await repository.findBillingContactMinistries(testUserId);
-      expect(result).toHaveLength(0);
+      expect(result).toEqual([{ id: 'min_legacy_1', name: 'Ministério Legado', reason: 'UNKNOWN_LEGACY' }]);
+    });
+
+    it('fails closed for an active legacy billing subscription stored under the inverted document id', async () => {
+      vi.spyOn((repository as any).customersCol, 'where').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ docs: [] }),
+      } as any);
+      vi.spyOn((repository as any).ministrySubsCol, 'where').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ docs: [] }),
+      } as any);
+      vi.spyOn((repository as any).membersCol, 'where').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ docs: [{ data: () => ({ ministry_id: 'min_legacy_inverted' }) }] }),
+      } as any);
+      vi.spyOn((repository as any).customersCol, 'doc').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ exists: false }),
+      } as any);
+      vi.spyOn((repository as any).ministrySubsCol, 'doc').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ exists: true, data: () => ({ subscription_mode: 'free' }) }),
+      } as any);
+      vi.spyOn((repository as any).billingSubscriptionsCol, 'doc').mockImplementation((id: unknown) => ({
+        get: vi.fn().mockResolvedValue(
+          id === 'asaas_min_legacy_inverted'
+            ? { exists: true, data: () => ({ provider: 'asaas', status: 'active' }) }
+            : { exists: false }
+        ),
+      }) as any);
+      vi.spyOn((repository as any).ministriesCol, 'doc').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ exists: true, data: () => ({ name: 'Ministério Legado' }) }),
+      } as any);
+
+      await expect(repository.findBillingContactMinistries(testUserId)).resolves.toEqual([
+        { id: 'min_legacy_inverted', name: 'Ministério Legado', reason: 'UNKNOWN_LEGACY' },
+      ]);
+    });
+
+    it('does not block a member when a different explicit contact owns the active relationship', async () => {
+      vi.spyOn((repository as any).customersCol, 'where').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ docs: [] }),
+      } as any);
+      vi.spyOn((repository as any).ministrySubsCol, 'where').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ docs: [] }),
+      } as any);
+      vi.spyOn((repository as any).membersCol, 'where').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ docs: [{ data: () => ({ ministry_id: 'min_paid_2' }) }] }),
+      } as any);
+      vi.spyOn((repository as any).customersCol, 'doc').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ exists: true, data: () => ({ billing_contact_user_id: 'usr-other' }) }),
+      } as any);
+      vi.spyOn((repository as any).ministrySubsCol, 'doc').mockReturnValue({
+        get: vi.fn().mockResolvedValue({
+          exists: true,
+          data: () => ({ subscription_mode: 'paid', billing_status: 'active', billing_contact_user_id: 'usr-other' }),
+        }),
+      } as any);
+      vi.spyOn((repository as any).billingSubscriptionsCol, 'doc').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ exists: false }),
+      } as any);
+
+      await expect(repository.findBillingContactMinistries(testUserId)).resolves.toEqual([]);
+    });
+
+    it('does not block when no active paid relationship exists', async () => {
+      vi.spyOn((repository as any).customersCol, 'where').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ docs: [] }),
+      } as any);
+      vi.spyOn((repository as any).ministrySubsCol, 'where').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ docs: [] }),
+      } as any);
+      vi.spyOn((repository as any).membersCol, 'where').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ docs: [{ data: () => ({ ministry_id: 'min_free_1' }) }] }),
+      } as any);
+      vi.spyOn((repository as any).customersCol, 'doc').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ exists: false }),
+      } as any);
+      vi.spyOn((repository as any).ministrySubsCol, 'doc').mockReturnValue({
+        get: vi.fn().mockResolvedValue({
+          exists: true,
+          data: () => ({ subscription_mode: 'free', billing_status: 'active' }),
+        }),
+      } as any);
+      vi.spyOn((repository as any).billingSubscriptionsCol, 'doc').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ exists: false }),
+      } as any);
+
+      await expect(repository.findBillingContactMinistries(testUserId)).resolves.toEqual([]);
     });
   });
 

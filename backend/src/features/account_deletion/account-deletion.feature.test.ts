@@ -209,12 +209,13 @@ describe('Account Deletion Feature & Lifecycle Suite (PLAY-COMPLIANCE-PC1)', () 
       expect(body.blockers[0].details.ministryId).toBe('min_401');
     });
 
-    it('Scenario 1.6: Legacy billing contact with no user reference is treated as UNKNOWN and does NOT block (no email guessing)', async () => {
+    it('Scenario 1.6: Active legacy billing contact with no user reference blocks without email guessing', async () => {
       vi.spyOn(AccountDeletionRepository.prototype, 'findOwnedMinistries').mockResolvedValue([]);
       vi.spyOn(AccountDeletionRepository.prototype, 'findOwnedOrganizations').mockResolvedValue([]);
       vi.spyOn(AccountDeletionRepository.prototype, 'findSoleAdminMinistries').mockResolvedValue([]);
-      // When billing_contact_user_id is missing, findBillingContactMinistries returns [] without guessing by email
-      vi.spyOn(AccountDeletionRepository.prototype, 'findBillingContactMinistries').mockResolvedValue([]);
+      vi.spyOn(AccountDeletionRepository.prototype, 'findBillingContactMinistries').mockResolvedValue([
+        { id: 'min_legacy_billing', name: 'Ministério Legado', reason: 'UNKNOWN_LEGACY' },
+      ]);
 
       const token = createFirebaseToken('usr_legacy_billing', 'billing@legacy.com');
       const res = await fetch(`${baseUrl}/api/v1/auth/account-deletion/preflight`, {
@@ -223,8 +224,8 @@ describe('Account Deletion Feature & Lifecycle Suite (PLAY-COMPLIANCE-PC1)', () 
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
-      expect(body.deletionAllowed).toBe(true);
-      expect(body.blockers).toEqual([]);
+      expect(body.deletionAllowed).toBe(false);
+      expect(body.blockers[0].code).toBe('BILLING_CONTACT_UNKNOWN');
     });
   });
 

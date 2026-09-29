@@ -57,6 +57,21 @@ describe('Phase 3B.1 — Billing Transition V1 Paid -> Paid Target Recurrence Pr
       setCustomer: vi.fn().mockImplementation(async (c: any) => {
         customersStore.set(c.id, c);
       }),
+      setBillingContact: vi.fn().mockImplementation(async (ministryId: string, provider: string, userId: string) => {
+        const customerId = `${ministryId}_${provider}`;
+        const customer = customersStore.get(customerId);
+        if (!customer) throw new Error('Expected canonical billing customer');
+        customersStore.set(customerId, { ...customer, billing_contact_user_id: userId });
+
+        const appSubscription = appSubscriptionsStore.get(ministryId) || {
+          id: ministryId,
+          ministry_id: ministryId,
+          subscription_mode: 'free',
+          plan_id: 'free',
+          billing_status: 'active',
+        };
+        appSubscriptionsStore.set(ministryId, { ...appSubscription, billing_contact_user_id: userId });
+      }),
       claimCustomerCreation: vi.fn().mockImplementation(async (ministryId: string, provider: string) => {
         const existing = customersStore.get(`${ministryId}_${provider}`);
         if (existing) return { acquired: false, customer: existing };
@@ -297,6 +312,7 @@ describe('Phase 3B.1 — Billing Transition V1 Paid -> Paid Target Recurrence Pr
     mockProvider = {
       name: 'asaas',
       createCustomer: vi.fn().mockResolvedValue('cus_canonical_123'),
+      updateCustomer: vi.fn().mockResolvedValue(undefined),
       createCheckout: vi.fn().mockImplementation(async (params: any) => ({
         checkoutUrl: `https://sandbox.asaas.com/checkout/${params.checkoutIntentId}`,
         checkoutId: `chk_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
