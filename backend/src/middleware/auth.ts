@@ -47,12 +47,22 @@ export async function authenticate(
 
     // Access Guard: se a exclusão da conta foi iniciada ou concluída,
     // bloquear acesso a rotas normais da aplicação (exceto rotas de inspeção/status/exclusão).
-    const isAccountDeletionRoute =
-      req.originalUrl?.includes('/auth/account-deletion') ||
-      req.baseUrl?.includes('/auth/account-deletion') ||
-      req.path?.includes('/account-deletion');
+    // Usa semântica estrita de caminho de rota (ignora query strings e previne injeção de parâmetros/rotas).
+    const rawPath = (req.originalUrl || '').split('?')[0].split('#')[0];
+    let normalizedPath: string;
+    try {
+      normalizedPath = decodeURIComponent(rawPath);
+    } catch {
+      normalizedPath = rawPath;
+    }
 
-    if (!isAccountDeletionRoute) {
+    const isExemptAccountDeletion =
+      normalizedPath === '/api/v1/auth/account-deletion' ||
+      normalizedPath.startsWith('/api/v1/auth/account-deletion/') ||
+      normalizedPath === '/auth/account-deletion' ||
+      normalizedPath.startsWith('/auth/account-deletion/');
+
+    if (!isExemptAccountDeletion) {
       const isPending = await accountDeletionRepo.isDeletionPending(decoded.uid);
       if (isPending) {
         throw new AppError(403, 'Sua conta está em processo de exclusão ou foi excluída.', {

@@ -12,6 +12,7 @@ export interface BillingCustomerRecord {
   lease_locked_by?: string | null;
   created_at: string;
   updated_at: string;
+  billing_contact_user_id?: string | null;
 }
 
 export type BillingSubscriptionStatus = 'active' | 'pending' | 'past_due' | 'canceled';

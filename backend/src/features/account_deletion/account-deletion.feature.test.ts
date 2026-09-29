@@ -84,6 +84,20 @@ describe('Account Deletion Feature & Lifecycle Suite (PLAY-COMPLIANCE-PC1)', () 
     vi.spyOn(AccountDeletionRepository.prototype, 'findSoleAdminMinistries').mockResolvedValue([]);
     vi.spyOn(AccountDeletionRepository.prototype, 'findBillingContactMinistries').mockResolvedValue([]);
     vi.spyOn(AccountDeletionRepository.prototype, 'saveJob').mockResolvedValue();
+    vi.spyOn(AccountDeletionRepository.prototype, 'createManifest').mockResolvedValue({
+      created_at: new Date().toISOString(),
+      ministry_member_doc_ids: ['mem_123'],
+      organization_member_doc_ids: [],
+      group_member_doc_ids: [],
+      member_ids: ['mem_123'],
+      ministry_ids: ['min_123'],
+    });
+    vi.spyOn(AccountDeletionRepository.prototype, 'deletePersonalData').mockResolvedValue();
+    vi.spyOn(AccountDeletionRepository.prototype, 'detachMemberships').mockResolvedValue();
+    vi.spyOn(AccountDeletionRepository.prototype, 'cleanFutureSchedulesAndAnonymizeHistorical').mockResolvedValue();
+    vi.spyOn(AccountDeletionRepository.prototype, 'anonymizeHistoricalSharedContent').mockResolvedValue();
+    vi.spyOn(AccountDeletionRepository.prototype, 'anonymizeBillingReferences').mockResolvedValue();
+    vi.spyOn(AccountDeletionRepository.prototype, 'anonymizeWhatsAppReferences').mockResolvedValue();
   });
 
   // ==========================================================================
@@ -194,6 +208,24 @@ describe('Account Deletion Feature & Lifecycle Suite (PLAY-COMPLIANCE-PC1)', () 
       expect(body.blockers[0].code).toBe('BILLING_CONTACT_REPLACEMENT_REQUIRED');
       expect(body.blockers[0].details.ministryId).toBe('min_401');
     });
+
+    it('Scenario 1.6: Legacy billing contact with no user reference is treated as UNKNOWN and does NOT block (no email guessing)', async () => {
+      vi.spyOn(AccountDeletionRepository.prototype, 'findOwnedMinistries').mockResolvedValue([]);
+      vi.spyOn(AccountDeletionRepository.prototype, 'findOwnedOrganizations').mockResolvedValue([]);
+      vi.spyOn(AccountDeletionRepository.prototype, 'findSoleAdminMinistries').mockResolvedValue([]);
+      // When billing_contact_user_id is missing, findBillingContactMinistries returns [] without guessing by email
+      vi.spyOn(AccountDeletionRepository.prototype, 'findBillingContactMinistries').mockResolvedValue([]);
+
+      const token = createFirebaseToken('usr_legacy_billing', 'billing@legacy.com');
+      const res = await fetch(`${baseUrl}/api/v1/auth/account-deletion/preflight`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.deletionAllowed).toBe(true);
+      expect(body.blockers).toEqual([]);
+    });
   });
 
   // ==========================================================================
@@ -231,7 +263,7 @@ describe('Account Deletion Feature & Lifecycle Suite (PLAY-COMPLIANCE-PC1)', () 
       vi.spyOn(AccountDeletionRepository.prototype, 'findSoleAdminMinistries').mockResolvedValue([]);
       vi.spyOn(AccountDeletionRepository.prototype, 'findBillingContactMinistries').mockResolvedValue([]);
       const deletePersonalSpy = vi.spyOn(AccountDeletionRepository.prototype, 'deletePersonalData').mockResolvedValue();
-      vi.spyOn(AccountDeletionRepository.prototype, 'detachMemberships').mockResolvedValue([]);
+      vi.spyOn(AccountDeletionRepository.prototype, 'detachMemberships').mockResolvedValue();
       vi.spyOn(AccountDeletionRepository.prototype, 'cleanFutureSchedulesAndAnonymizeHistorical').mockResolvedValue();
       vi.spyOn(AccountDeletionRepository.prototype, 'anonymizeHistoricalSharedContent').mockResolvedValue();
       vi.spyOn(AccountDeletionRepository.prototype, 'anonymizeWhatsAppReferences').mockResolvedValue();
@@ -294,9 +326,10 @@ describe('Account Deletion Feature & Lifecycle Suite (PLAY-COMPLIANCE-PC1)', () 
       vi.spyOn(AccountDeletionRepository.prototype, 'findSoleAdminMinistries').mockResolvedValue([]);
       vi.spyOn(AccountDeletionRepository.prototype, 'findBillingContactMinistries').mockResolvedValue([]);
       const deletePersonalSpy = vi.spyOn(AccountDeletionRepository.prototype, 'deletePersonalData').mockResolvedValue();
-      const detachSpy = vi.spyOn(AccountDeletionRepository.prototype, 'detachMemberships').mockResolvedValue(['mem_123']);
+      const detachSpy = vi.spyOn(AccountDeletionRepository.prototype, 'detachMemberships').mockResolvedValue();
       const scheduleSpy = vi.spyOn(AccountDeletionRepository.prototype, 'cleanFutureSchedulesAndAnonymizeHistorical').mockResolvedValue();
       const anonymizeSpy = vi.spyOn(AccountDeletionRepository.prototype, 'anonymizeHistoricalSharedContent').mockResolvedValue();
+      const billingSpy = vi.spyOn(AccountDeletionRepository.prototype, 'anonymizeBillingReferences').mockResolvedValue();
       const whatsappSpy = vi.spyOn(AccountDeletionRepository.prototype, 'anonymizeWhatsAppReferences').mockResolvedValue();
       const deleteUserSpy = vi.spyOn(authAdmin, 'deleteUser').mockResolvedValue();
       vi.spyOn(AccountDeletionRepository.prototype, 'getJob').mockResolvedValue(null);
@@ -312,11 +345,16 @@ describe('Account Deletion Feature & Lifecycle Suite (PLAY-COMPLIANCE-PC1)', () 
       const body = (await res.json()) as any;
       expect(body.success).toBe(true);
       expect(body.job.status).toBe('completed');
+      expect(body.job.user_email).toBeNull();
+      expect(body.job.manifest).toBeNull();
+      expect(body.job.blockers).toBeNull();
+      expect(body.job.error_details).toBeNull();
 
       expect(deletePersonalSpy).toHaveBeenCalledWith('user_clean_1');
-      expect(detachSpy).toHaveBeenCalledWith('user_clean_1');
+      expect(detachSpy).toHaveBeenCalledWith('user_clean_1', expect.anything());
       expect(scheduleSpy).toHaveBeenCalledWith('user_clean_1', ['mem_123']);
       expect(anonymizeSpy).toHaveBeenCalledWith('user_clean_1');
+      expect(billingSpy).toHaveBeenCalledWith('user_clean_1');
       expect(whatsappSpy).toHaveBeenCalledWith('user_clean_1');
       expect(deleteUserSpy).toHaveBeenCalledWith('user_clean_1');
       expect(saveJobSpy).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }));
@@ -335,10 +373,12 @@ describe('Account Deletion Feature & Lifecycle Suite (PLAY-COMPLIANCE-PC1)', () 
         user_email: 'done@test.com',
         status: 'completed',
         checkpoints: {
+          manifest_created: true,
           personal_data_deleted: true,
           memberships_detached: true,
           future_schedules_cleaned: true,
           historical_anonymized: true,
+          billing_references_anonymized: true,
           whatsapp_anonymized: true,
           auth_deleted: true,
         },
@@ -366,7 +406,7 @@ describe('Account Deletion Feature & Lifecycle Suite (PLAY-COMPLIANCE-PC1)', () 
       vi.spyOn(AccountDeletionRepository.prototype, 'findBillingContactMinistries').mockResolvedValue([]);
 
       const deletePersonalSpy = vi.spyOn(AccountDeletionRepository.prototype, 'deletePersonalData').mockResolvedValue();
-      const detachSpy = vi.spyOn(AccountDeletionRepository.prototype, 'detachMemberships').mockResolvedValue(['m1']);
+      const detachSpy = vi.spyOn(AccountDeletionRepository.prototype, 'detachMemberships').mockResolvedValue();
       const scheduleSpy = vi.spyOn(AccountDeletionRepository.prototype, 'cleanFutureSchedulesAndAnonymizeHistorical').mockResolvedValue();
       const anonymizeSpy = vi.spyOn(AccountDeletionRepository.prototype, 'anonymizeHistoricalSharedContent').mockResolvedValue();
       const whatsappSpy = vi.spyOn(AccountDeletionRepository.prototype, 'anonymizeWhatsAppReferences').mockResolvedValue();
@@ -379,7 +419,16 @@ describe('Account Deletion Feature & Lifecycle Suite (PLAY-COMPLIANCE-PC1)', () 
         user_id: 'user_resume',
         user_email: 'resume@test.com',
         status: 'cleanup_in_progress',
+        manifest: {
+          created_at: new Date().toISOString(),
+          ministry_member_doc_ids: ['m1'],
+          organization_member_doc_ids: [],
+          group_member_doc_ids: [],
+          member_ids: ['m1'],
+          ministry_ids: ['min_1'],
+        },
         checkpoints: {
+          manifest_created: true,
           personal_data_deleted: true,
           memberships_detached: true,
         },
@@ -394,11 +443,11 @@ describe('Account Deletion Feature & Lifecycle Suite (PLAY-COMPLIANCE-PC1)', () 
       });
 
       expect(res.status).toBe(200);
-      // personal_data_deleted já estava true -> não roda de novo
+      // personal_data_deleted e memberships_detached já estavam true -> não rodam de novo
       expect(deletePersonalSpy).not.toHaveBeenCalled();
       expect(detachSpy).not.toHaveBeenCalled();
       // checkpoints pendentes são executados
-      expect(scheduleSpy).toHaveBeenCalled();
+      expect(scheduleSpy).toHaveBeenCalledWith('user_resume', ['m1']);
       expect(anonymizeSpy).toHaveBeenCalled();
       expect(whatsappSpy).toHaveBeenCalled();
       expect(deleteUserSpy).toHaveBeenCalled();
@@ -416,11 +465,21 @@ describe('Account Deletion Feature & Lifecycle Suite (PLAY-COMPLIANCE-PC1)', () 
         user_id: 'user_not_found',
         user_email: 'nf@test.com',
         status: 'auth_delete_pending',
+        manifest: {
+          created_at: new Date().toISOString(),
+          ministry_member_doc_ids: ['m1'],
+          organization_member_doc_ids: [],
+          group_member_doc_ids: [],
+          member_ids: ['m1'],
+          ministry_ids: ['min_1'],
+        },
         checkpoints: {
+          manifest_created: true,
           personal_data_deleted: true,
           memberships_detached: true,
           future_schedules_cleaned: true,
           historical_anonymized: true,
+          billing_references_anonymized: true,
           whatsapp_anonymized: true,
         },
         requested_at: new Date().toISOString(),
@@ -441,6 +500,202 @@ describe('Account Deletion Feature & Lifecycle Suite (PLAY-COMPLIANCE-PC1)', () 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
       expect(body.job.status).toBe('completed');
+    });
+
+    it('Scenario 3.6: Deletion manifest survives membership detach and preserves schedule cleanup', async () => {
+      vi.spyOn(AccountDeletionRepository.prototype, 'findOwnedMinistries').mockResolvedValue([]);
+      vi.spyOn(AccountDeletionRepository.prototype, 'findOwnedOrganizations').mockResolvedValue([]);
+      vi.spyOn(AccountDeletionRepository.prototype, 'findSoleAdminMinistries').mockResolvedValue([]);
+      vi.spyOn(AccountDeletionRepository.prototype, 'findBillingContactMinistries').mockResolvedValue([]);
+      const scheduleSpy = vi.spyOn(AccountDeletionRepository.prototype, 'cleanFutureSchedulesAndAnonymizeHistorical').mockResolvedValue();
+      vi.spyOn(AccountDeletionRepository.prototype, 'anonymizeHistoricalSharedContent').mockResolvedValue();
+      vi.spyOn(AccountDeletionRepository.prototype, 'anonymizeBillingReferences').mockResolvedValue();
+      vi.spyOn(AccountDeletionRepository.prototype, 'anonymizeWhatsAppReferences').mockResolvedValue();
+      vi.spyOn(authAdmin, 'deleteUser').mockResolvedValue();
+      vi.spyOn(AccountDeletionRepository.prototype, 'saveJob').mockResolvedValue();
+
+      // O manifesto gravado no início continha o member_id 'mem_from_manifest'
+      vi.spyOn(AccountDeletionRepository.prototype, 'getJob').mockResolvedValue({
+        id: 'del_user_manifest_survives',
+        user_id: 'user_manifest_survives',
+        user_email: 'manifest@test.com',
+        status: 'cleanup_in_progress',
+        manifest: {
+          created_at: new Date().toISOString(),
+          ministry_member_doc_ids: ['mem_from_manifest'],
+          organization_member_doc_ids: [],
+          group_member_doc_ids: [],
+          member_ids: ['mem_from_manifest'],
+          ministry_ids: ['min_1'],
+        },
+        checkpoints: {
+          manifest_created: true,
+          personal_data_deleted: true,
+          memberships_detached: true, // Já desvinculado
+        },
+        requested_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      const freshToken = createFirebaseToken('user_manifest_survives', 'manifest@test.com');
+      const res = await fetch(`${baseUrl}/api/v1/auth/account-deletion`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${freshToken}` },
+      });
+
+      expect(res.status).toBe(200);
+      // Confirma que a limpeza de escalas usou os IDs preservados no manifesto, mesmo após desvinculação
+      expect(scheduleSpy).toHaveBeenCalledWith('user_manifest_survives', ['mem_from_manifest']);
+    });
+
+    it('Scenario 3.7: Failure injection between checkpoints resumes from exact uncompleted stage', async () => {
+      vi.spyOn(AccountDeletionRepository.prototype, 'findOwnedMinistries').mockResolvedValue([]);
+      vi.spyOn(AccountDeletionRepository.prototype, 'findOwnedOrganizations').mockResolvedValue([]);
+      vi.spyOn(AccountDeletionRepository.prototype, 'findSoleAdminMinistries').mockResolvedValue([]);
+      vi.spyOn(AccountDeletionRepository.prototype, 'findBillingContactMinistries').mockResolvedValue([]);
+      const deletePersonalSpy = vi.spyOn(AccountDeletionRepository.prototype, 'deletePersonalData').mockResolvedValue();
+      const detachSpy = vi.spyOn(AccountDeletionRepository.prototype, 'detachMemberships').mockResolvedValue();
+      const scheduleSpy = vi.spyOn(AccountDeletionRepository.prototype, 'cleanFutureSchedulesAndAnonymizeHistorical').mockRejectedValueOnce(
+        new Error('Transient Firestore error')
+      );
+      const savedJobs: any[] = [];
+      vi.spyOn(AccountDeletionRepository.prototype, 'saveJob').mockImplementation(async (j) => {
+        savedJobs.push(JSON.parse(JSON.stringify(j)));
+      });
+      vi.spyOn(AccountDeletionRepository.prototype, 'getJob').mockResolvedValue(null);
+
+      const freshToken = createFirebaseToken('user_fail_resume', 'fail@test.com');
+      // 1ª tentativa: falha em cleanFutureSchedulesAndAnonymizeHistorical
+      const res1 = await fetch(`${baseUrl}/api/v1/auth/account-deletion`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${freshToken}` },
+      });
+      expect(res1.status).toBe(500);
+
+      // Checa se checkpoints prévios foram persistidos com sucesso
+      const lastSavedBeforeFail = savedJobs[savedJobs.length - 1];
+      expect(lastSavedBeforeFail.checkpoints.manifest_created).toBe(true);
+      expect(lastSavedBeforeFail.checkpoints.personal_data_deleted).toBe(true);
+      expect(lastSavedBeforeFail.checkpoints.memberships_detached).toBe(true);
+      expect(lastSavedBeforeFail.checkpoints.future_schedules_cleaned).toBeUndefined();
+
+      // Reset dos spies para a 2ª tentativa (retomada)
+      deletePersonalSpy.mockClear();
+      detachSpy.mockClear();
+      scheduleSpy.mockResolvedValueOnce(undefined);
+      vi.spyOn(AccountDeletionRepository.prototype, 'anonymizeHistoricalSharedContent').mockResolvedValue();
+      vi.spyOn(AccountDeletionRepository.prototype, 'anonymizeBillingReferences').mockResolvedValue();
+      vi.spyOn(AccountDeletionRepository.prototype, 'anonymizeWhatsAppReferences').mockResolvedValue();
+      vi.spyOn(authAdmin, 'deleteUser').mockResolvedValue();
+      vi.spyOn(AccountDeletionRepository.prototype, 'getJob').mockResolvedValue(lastSavedBeforeFail);
+
+      const res2 = await fetch(`${baseUrl}/api/v1/auth/account-deletion`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${freshToken}` },
+      });
+      expect(res2.status).toBe(200);
+
+      // Stages 1, 2, 3 NÃO são executados novamente
+      expect(deletePersonalSpy).not.toHaveBeenCalled();
+      expect(detachSpy).not.toHaveBeenCalled();
+      // Stage 4 em diante é executado
+      expect(scheduleSpy).toHaveBeenCalledWith('user_fail_resume', expect.any(Array));
+    });
+
+    it('Scenario 3.8: Post-auth-delete crash recovery via POST /internal/reconcile/:userId completes job and minimizes PII', async () => {
+      const originalCron = process.env.CRON_SECRET;
+      process.env.CRON_SECRET = 'test-recovery-secret-123';
+      try {
+        const authUserNotFoundErr: any = new Error('User does not exist');
+        authUserNotFoundErr.code = 'auth/user-not-found';
+        vi.spyOn(authAdmin, 'deleteUser').mockRejectedValue(authUserNotFoundErr);
+
+        vi.spyOn(AccountDeletionRepository.prototype, 'getJob').mockResolvedValue({
+          id: 'del_crash_user',
+          user_id: 'crash_user',
+          user_email: 'crash@louvaio.com',
+          status: 'auth_delete_pending',
+          blockers: null,
+          manifest: {
+            created_at: new Date().toISOString(),
+            ministry_member_doc_ids: ['m1'],
+            organization_member_doc_ids: [],
+            group_member_doc_ids: [],
+            member_ids: ['m1'],
+            ministry_ids: ['min_1'],
+          },
+          checkpoints: {
+            manifest_created: true,
+            personal_data_deleted: true,
+            memberships_detached: true,
+            future_schedules_cleaned: true,
+            historical_anonymized: true,
+            billing_references_anonymized: true,
+            whatsapp_anonymized: true,
+          },
+          step_progress: 'auth_delete_pending',
+          error_details: null,
+          requested_at: new Date().toISOString(),
+          started_at: new Date().toISOString(),
+          completed_at: null,
+          updated_at: new Date().toISOString(),
+        });
+
+        const saveJobSpy = vi.spyOn(AccountDeletionRepository.prototype, 'saveJob').mockResolvedValue();
+
+        const res = await fetch(`${baseUrl}/api/v1/auth/account-deletion/internal/reconcile/crash_user`, {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer test-recovery-secret-123',
+          },
+        });
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as any;
+        expect(body.success).toBe(true);
+        expect(body.job.status).toBe('completed');
+        // PII Minimizada
+        expect(body.job.user_email).toBeNull();
+        expect(body.job.manifest).toBeNull();
+        expect(body.job.error_details).toBeNull();
+
+        expect(saveJobSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            status: 'completed',
+            user_email: null,
+            manifest: null,
+          })
+        );
+      } finally {
+        process.env.CRON_SECRET = originalCron;
+      }
+    });
+
+    it('Scenario 3.9: Unauthorized caller without valid CRON_SECRET is rejected with 401', async () => {
+      const originalCron = process.env.CRON_SECRET;
+      process.env.CRON_SECRET = 'test-recovery-secret-123';
+      try {
+        // Sem header
+        const res1 = await fetch(`${baseUrl}/api/v1/auth/account-deletion/internal/reconcile/crash_user`, {
+          method: 'POST',
+        });
+        expect(res1.status).toBe(401);
+        const body1 = (await res1.json()) as any;
+        expect(body1.error?.details?.code || body1.error?.code).toBe('UNAUTHORIZED');
+
+        // Com token incorreto
+        const res2 = await fetch(`${baseUrl}/api/v1/auth/account-deletion/internal/reconcile/crash_user`, {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer wrong-secret',
+          },
+        });
+        expect(res2.status).toBe(401);
+        const body2 = (await res2.json()) as any;
+        expect(body2.error?.details?.code || body2.error?.code).toBe('UNAUTHORIZED');
+      } finally {
+        process.env.CRON_SECRET = originalCron;
+      }
     });
   });
 
@@ -489,6 +744,77 @@ describe('Account Deletion Feature & Lifecycle Suite (PLAY-COMPLIANCE-PC1)', () 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
       expect(body.job.status).toBe('cleanup_in_progress');
+    });
+
+    it('Scenario 4.3: Query string injection bypass attempt is rejected by Access Guard', async () => {
+      vi.spyOn(AccountDeletionRepository.prototype, 'isDeletionPending').mockResolvedValue(true);
+      vi.spyOn(UserRepository.prototype, 'verifyToken').mockResolvedValue({
+        uid: 'user_in_progress',
+        email: 'progress@test.com',
+      });
+
+      // 1. Injeção de query param com rota de bypass
+      const res1 = await fetch(`${baseUrl}/api/v1/auth/me?next=/auth/account-deletion`, {
+        headers: { Authorization: `Bearer some_valid_token` },
+      });
+      expect(res1.status).toBe(403);
+      const body1 = (await res1.json()) as any;
+      expect(body1.error?.details?.code || body1.error?.code).toBe('ACCOUNT_DELETION_IN_PROGRESS');
+
+      // 2. Injeção de prefixo com parâmetro
+      const res2 = await fetch(`${baseUrl}/api/v1/auth/me?param=/api/v1/auth/account-deletion`, {
+        headers: { Authorization: `Bearer some_valid_token` },
+      });
+      expect(res2.status).toBe(403);
+
+      // 3. Injeção de query param contendo caminho de status de exclusão
+      const res3 = await fetch(`${baseUrl}/api/v1/auth/me?returnTo=/api/v1/auth/account-deletion/status`, {
+        headers: { Authorization: `Bearer some_valid_token` },
+      });
+      expect(res3.status).toBe(403);
+
+      // 4. Rota legítima com query params não é bloqueada pelo Access Guard
+      vi.spyOn(AccountDeletionRepository.prototype, 'getJob').mockResolvedValue({
+        id: 'del_user_in_progress',
+        user_id: 'user_in_progress',
+        user_email: 'progress@test.com',
+        status: 'cleanup_in_progress',
+        checkpoints: {},
+        requested_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+      const res4 = await fetch(`${baseUrl}/api/v1/auth/account-deletion/status?cacheBust=123`, {
+        headers: { Authorization: `Bearer some_valid_token` },
+      });
+      expect(res4.status).toBe(200);
+    });
+
+    it('Scenario 4.4: Cross-user isolation: user cannot inspect or delete another user data', async () => {
+      const getJobSpy = vi.spyOn(AccountDeletionRepository.prototype, 'getJob').mockResolvedValue({
+        id: 'del_user_alice',
+        user_id: 'user_alice',
+        user_email: 'alice@test.com',
+        status: 'cleanup_in_progress',
+        checkpoints: {},
+        requested_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      vi.spyOn(UserRepository.prototype, 'verifyToken').mockResolvedValue({
+        uid: 'user_alice',
+        email: 'alice@test.com',
+      });
+
+      // Tentativa de passar userId de outro usuário por query params
+      const res = await fetch(`${baseUrl}/api/v1/auth/account-deletion/status?userId=victim_bob`, {
+        headers: { Authorization: `Bearer token_alice` },
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      // Confirma que consultou o job de alice, derivado da sessão autenticada, e não bob
+      expect(getJobSpy).toHaveBeenCalledWith('user_alice');
+      expect(body.job.user_id).toBe('user_alice');
     });
   });
 });

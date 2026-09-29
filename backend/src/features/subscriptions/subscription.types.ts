@@ -39,6 +39,7 @@ export interface MinistrySubscriptionRecord {
   locked_member_quota?: QuotaLimit | null;
   locked_song_quota?: QuotaLimit | null;
   entitlement_snapshot?: any | null;
+  billing_contact_user_id?: string | null;
   created_at: string;
   updated_at: string;
 }

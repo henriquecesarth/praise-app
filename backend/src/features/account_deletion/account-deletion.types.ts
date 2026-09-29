@@ -1,4 +1,4 @@
-﻿export type AccountDeletionBlockerCode =
+export type AccountDeletionBlockerCode =
   | 'MINISTRY_OWNER'
   | 'ORGANIZATION_OWNER'
   | 'SOLE_MINISTRY_ADMIN'
@@ -24,11 +24,22 @@ export type AccountDeletionJobStatus =
   | 'completed'
   | 'attention_required';
 
+export interface DeletionManifest {
+  created_at: string;
+  ministry_member_doc_ids: string[];
+  organization_member_doc_ids: string[];
+  group_member_doc_ids: string[];
+  member_ids: string[];
+  ministry_ids: string[];
+}
+
 export interface AccountDeletionCheckpoints {
+  manifest_created?: boolean;
   personal_data_deleted?: boolean;
   memberships_detached?: boolean;
   future_schedules_cleaned?: boolean;
   historical_anonymized?: boolean;
+  billing_references_anonymized?: boolean;
   whatsapp_anonymized?: boolean;
   legacy_cleaned?: boolean;
   auth_deleted?: boolean;
@@ -40,6 +51,7 @@ export interface AccountDeletionJobRecord {
   user_email: string | null;
   status: AccountDeletionJobStatus;
   blockers?: AccountDeletionBlocker[] | null;
+  manifest?: DeletionManifest | null;
   checkpoints: AccountDeletionCheckpoints;
   step_progress?: string;
   error_details?: string | null;

@@ -4,8 +4,62 @@ import {
   AccountDeletionJobRecord,
   AccountDeletionBlocker,
   AccountDeletionCheckpoints,
+  DeletionManifest,
 } from '../features/account_deletion/account-deletion.types';
 import { SubscriptionRepository } from './SubscriptionRepository';
+
+export const BATCH_CHUNK_SIZE = 250;
+
+export async function chunkedBatchDelete(
+  refs: FirebaseFirestore.DocumentReference[],
+  chunkSize = BATCH_CHUNK_SIZE
+): Promise<void> {
+  if (refs.length === 0) return;
+  for (let i = 0; i < refs.length; i += chunkSize) {
+    const chunk = refs.slice(i, i + chunkSize);
+    const batch = db.batch();
+    for (const ref of chunk) {
+      batch.delete(ref);
+    }
+    await batch.commit();
+  }
+}
+
+export async function chunkedBatchUpdate(
+  items: Array<{ ref: FirebaseFirestore.DocumentReference; data: Record<string, any> }>,
+  chunkSize = BATCH_CHUNK_SIZE
+): Promise<void> {
+  if (items.length === 0) return;
+  for (let i = 0; i < items.length; i += chunkSize) {
+    const chunk = items.slice(i, i + chunkSize);
+    const batch = db.batch();
+    for (const item of chunk) {
+      batch.update(item.ref, item.data);
+    }
+    await batch.commit();
+  }
+}
+
+export async function deleteQueryDocsChunked(
+  query: FirebaseFirestore.Query,
+  chunkSize = BATCH_CHUNK_SIZE
+): Promise<void> {
+  const snap = await query.get();
+  if (snap.empty) return;
+  const refs = snap.docs.map((d) => d.ref);
+  await chunkedBatchDelete(refs, chunkSize);
+}
+
+export async function updateQueryDocsChunked(
+  query: FirebaseFirestore.Query,
+  data: Record<string, any>,
+  chunkSize = BATCH_CHUNK_SIZE
+): Promise<void> {
+  const snap = await query.get();
+  if (snap.empty) return;
+  const items = snap.docs.map((d) => ({ ref: d.ref, data }));
+  await chunkedBatchUpdate(items, chunkSize);
+}
 
 export class AccountDeletionRepository {
   private readonly jobsCol = db.collection('account_deletion_jobs');
@@ -30,6 +84,7 @@ export class AccountDeletionRepository {
   private readonly customersCol = db.collection('billing_customers');
   private readonly ministrySubsCol = db.collection('ministry_subscriptions');
   private readonly whatsappConnectionsCol = db.collection('whatsapp_connections');
+  private readonly whatsappOnboardingSessionsCol = db.collection('whatsapp_onboarding_sessions');
 
   private readonly subscriptionRepo = new SubscriptionRepository();
 
@@ -130,16 +185,28 @@ export class AccountDeletionRepository {
   }
 
   async findBillingContactMinistries(
-    userId: string,
-    userEmail?: string
+    userId: string
   ): Promise<Array<{ id: string; name: string }>> {
-    const membersSnap = await this.membersCol.where('user_id', '==', userId).get();
-    const ministryIds = Array.from(new Set(membersSnap.docs.map((d) => d.data()?.ministry_id).filter(Boolean)));
+    // 1. Identifica associações explícitas de contato de faturamento
+    const [customersSnap, subsSnap] = await Promise.all([
+      this.customersCol.where('billing_contact_user_id', '==', userId).get(),
+      this.ministrySubsCol.where('billing_contact_user_id', '==', userId).get(),
+    ]);
+
+    const candidateMinistryIds = new Set<string>();
+    for (const doc of customersSnap.docs) {
+      const mId = doc.data()?.ministry_id;
+      if (mId) candidateMinistryIds.add(mId);
+    }
+    for (const doc of subsSnap.docs) {
+      const mId = doc.data()?.ministry_id || doc.id;
+      if (mId) candidateMinistryIds.add(mId);
+    }
 
     const results: Array<{ id: string; name: string }> = [];
 
-    for (const mId of ministryIds) {
-      // 1. Verificar se a assinatura é paga e ativa
+    for (const mId of candidateMinistryIds) {
+      // 2. Valida se a assinatura do ministério é paga e ativa (não bloqueia assinaturas free ou encerradas)
       const subDoc = await this.ministrySubsCol.doc(mId).get();
       if (!subDoc.exists) continue;
       const subData = subDoc.data() as any;
@@ -149,42 +216,50 @@ export class AccountDeletionRepository {
 
       if (!isPaidActive) continue;
 
-      // 2. Verificar se o cliente Asaas está associado ao usuário
-      const custDoc = await this.customersCol.doc(`${mId}_asaas`).get();
-      let isUserContact = false;
-      if (custDoc.exists) {
-        const cData = custDoc.data() as any;
-        if (cData?.billing_contact_user_id === userId) {
-          isUserContact = true;
-        } else if (userEmail && cData?.email && cData.email.toLowerCase().trim() === userEmail.toLowerCase().trim()) {
-          isUserContact = true;
-        }
-      }
-
-      // 3. Verificar se há transições vivas iniciadas pelo usuário
-      if (!isUserContact) {
-        const transitionSnap = await this.planChangesCol
-          .where('ministry_id', '==', mId)
-          .where('requested_by_user_id', '==', userId)
-          .get();
-        const nonTerminal = [
-          'pending_initial_purchase',
-          'pending_future_authorization',
-          'future_target_prepared',
-          'awaiting_old_inactivation',
-          'scheduled',
-        ];
-        isUserContact = transitionSnap.docs.some((d) => nonTerminal.includes(d.data()?.transition_status));
-      }
-
-      if (isUserContact) {
-        const mDoc = await this.ministriesCol.doc(mId).get();
-        const mName = mDoc.exists ? (mDoc.data()?.name as string) : `Ministério ${mId}`;
-        results.push({ id: mId, name: mName });
-      }
+      const mDoc = await this.ministriesCol.doc(mId).get();
+      const mName = mDoc.exists ? (mDoc.data()?.name as string) : `Ministério ${mId}`;
+      results.push({ id: mId, name: mName });
     }
 
     return results;
+  }
+
+  async setBillingContact(ministryId: string, contactUserId: string | null): Promise<void> {
+    const batch = db.batch();
+    const custRef = this.customersCol.doc(`${ministryId}_asaas`);
+    const subRef = this.ministrySubsCol.doc(ministryId);
+
+    batch.set(custRef, { billing_contact_user_id: contactUserId, updated_at: new Date().toISOString() }, { merge: true });
+    batch.set(subRef, { billing_contact_user_id: contactUserId, updated_at: new Date().toISOString() }, { merge: true });
+    await batch.commit();
+  }
+
+  // --------------------------------------------------------------------------
+  // Deletion Manifest
+  // --------------------------------------------------------------------------
+
+  async createManifest(userId: string): Promise<DeletionManifest> {
+    const [membersSnap, orgMembersSnap, groupMembersSnap] = await Promise.all([
+      this.membersCol.where('user_id', '==', userId).get(),
+      this.orgMembersCol.where('user_id', '==', userId).get(),
+      this.groupMembersCol.where('user_id', '==', userId).get(),
+    ]);
+
+    const ministryMemberDocIds = membersSnap.docs.map((d) => d.id);
+    const orgMemberDocIds = orgMembersSnap.docs.map((d) => d.id);
+    const groupMemberDocIds = groupMembersSnap.docs.map((d) => d.id);
+    const ministryIds = Array.from(
+      new Set(membersSnap.docs.map((d) => d.data()?.ministry_id).filter(Boolean))
+    );
+
+    return {
+      created_at: new Date().toISOString(),
+      ministry_member_doc_ids: ministryMemberDocIds,
+      organization_member_doc_ids: orgMemberDocIds,
+      group_member_doc_ids: groupMemberDocIds,
+      member_ids: ministryMemberDocIds,
+      ministry_ids: ministryIds,
+    };
   }
 
   // --------------------------------------------------------------------------
@@ -195,96 +270,102 @@ export class AccountDeletionRepository {
     // 1. users profile
     await this.usersCol.doc(userId).delete();
 
-    // Helper para deletar em batches de até 400
-    const deleteQueryDocs = async (query: FirebaseFirestore.Query) => {
-      const snap = await query.get();
-      if (snap.empty) return;
-      const chunks: FirebaseFirestore.DocumentReference[][] = [];
-      let currentChunk: FirebaseFirestore.DocumentReference[] = [];
-      snap.docs.forEach((doc) => {
-        currentChunk.push(doc.ref);
-        if (currentChunk.length >= 400) {
-          chunks.push(currentChunk);
-          currentChunk = [];
-        }
-      });
-      if (currentChunk.length > 0) chunks.push(currentChunk);
-
-      for (const chunk of chunks) {
-        const batch = db.batch();
-        chunk.forEach((ref) => batch.delete(ref));
-        await batch.commit();
-      }
-    };
-
     // 2. smart_chords
-    await deleteQueryDocs(this.smartChordsCol.where('user_id', '==', userId));
+    await deleteQueryDocsChunked(this.smartChordsCol.where('user_id', '==', userId));
 
     // 3. self-service unavailabilities
-    await deleteQueryDocs(this.unavailabilitiesCol.where('user_id', '==', userId));
+    await deleteQueryDocsChunked(this.unavailabilitiesCol.where('user_id', '==', userId));
 
     // 4. schedule_comments
-    await deleteQueryDocs(this.commentsCol.where('user_id', '==', userId));
+    await deleteQueryDocsChunked(this.commentsCol.where('user_id', '==', userId));
 
     // 5. ministry_invites
-    await deleteQueryDocs(this.invitesCol.where('created_by', '==', userId));
+    await deleteQueryDocsChunked(this.invitesCol.where('created_by', '==', userId));
 
     // 6. group_invites (legacy)
-    await deleteQueryDocs(this.groupInvitesCol.where('created_by', '==', userId));
+    await deleteQueryDocsChunked(this.groupInvitesCol.where('created_by', '==', userId));
   }
 
-  async detachMemberships(userId: string): Promise<string[]> {
-    const memberDocIds: string[] = [];
-
-    // 1. ministry_members
-    const membersSnap = await this.membersCol.where('user_id', '==', userId).get();
-    for (const doc of membersSnap.docs) {
-      memberDocIds.push(doc.id);
-      const ministryId = doc.data()?.ministry_id;
-      if (ministryId) {
-        try {
-          await this.subscriptionRepo.removeMemberTransactional({
-            ministryId,
-            memberUserIdOrDocId: doc.id,
-          });
-        } catch {
-          // Se falhar (ex: já deletado ou concorrência), deleta direto
+  async detachMemberships(userId: string, manifest?: DeletionManifest | null): Promise<void> {
+    // 1. ministry_members: decrementa quota e remove documento
+    const ministryMemberDocIds = manifest?.ministry_member_doc_ids || [];
+    if (ministryMemberDocIds.length > 0) {
+      for (const docId of ministryMemberDocIds) {
+        const doc = await this.membersCol.doc(docId).get();
+        if (doc.exists) {
+          const ministryId = doc.data()?.ministry_id;
+          if (ministryId) {
+            try {
+              await this.subscriptionRepo.removeMemberTransactional({
+                ministryId,
+                memberUserIdOrDocId: doc.id,
+              });
+            } catch {
+              await doc.ref.delete().catch(() => {});
+            }
+          } else {
+            await doc.ref.delete().catch(() => {});
+          }
+        }
+      }
+    } else {
+      // Fallback dinâmico se executado sem manifesto
+      const membersSnap = await this.membersCol.where('user_id', '==', userId).get();
+      for (const doc of membersSnap.docs) {
+        const ministryId = doc.data()?.ministry_id;
+        if (ministryId) {
+          try {
+            await this.subscriptionRepo.removeMemberTransactional({
+              ministryId,
+              memberUserIdOrDocId: doc.id,
+            });
+          } catch {
+            await doc.ref.delete().catch(() => {});
+          }
+        } else {
           await doc.ref.delete().catch(() => {});
         }
-      } else {
-        await doc.ref.delete().catch(() => {});
       }
     }
 
-    // 2. organization_members
-    const orgMembersSnap = await this.orgMembersCol.where('user_id', '==', userId).get();
-    const orgBatch = db.batch();
-    orgMembersSnap.docs.forEach((d) => orgBatch.delete(d.ref));
-    if (!orgMembersSnap.empty) await orgBatch.commit();
+    // 2. organization_members (chunked delete)
+    if (manifest?.organization_member_doc_ids && manifest.organization_member_doc_ids.length > 0) {
+      const refs = manifest.organization_member_doc_ids.map((id) => this.orgMembersCol.doc(id));
+      await chunkedBatchDelete(refs);
+    } else {
+      await deleteQueryDocsChunked(this.orgMembersCol.where('user_id', '==', userId));
+    }
 
-    // 3. group_members (legacy)
-    const groupMembersSnap = await this.groupMembersCol.where('user_id', '==', userId).get();
-    const groupBatch = db.batch();
-    groupMembersSnap.docs.forEach((d) => groupBatch.delete(d.ref));
-    if (!groupMembersSnap.empty) await groupBatch.commit();
+    // 3. group_members (legacy chunked delete)
+    if (manifest?.group_member_doc_ids && manifest.group_member_doc_ids.length > 0) {
+      const refs = manifest.group_member_doc_ids.map((id) => this.groupMembersCol.doc(id));
+      await chunkedBatchDelete(refs);
+    } else {
+      await deleteQueryDocsChunked(this.groupMembersCol.where('user_id', '==', userId));
+    }
 
-    // 4. ministry_teams: remover referências em member_ids
-    const allIdsToScrub = [userId, ...memberDocIds];
+    // 4. ministry_teams: remover referências em member_ids (chunked)
+    const allIdsToScrub = [userId, ...(manifest?.member_ids || [])];
     const teamsSnap = await this.teamsCol.get();
+    const teamUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; data: Record<string, any> }> = [];
+
     for (const tDoc of teamsSnap.docs) {
       const data = tDoc.data();
       const memberIds = Array.isArray(data?.member_ids) ? (data.member_ids as string[]) : [];
       const hasMatch = memberIds.some((id) => allIdsToScrub.includes(id));
       if (hasMatch) {
         const cleaned = memberIds.filter((id) => !allIdsToScrub.includes(id));
-        await tDoc.ref.update({
-          member_ids: cleaned,
-          updated_at: new Date().toISOString(),
+        teamUpdates.push({
+          ref: tDoc.ref,
+          data: {
+            member_ids: cleaned,
+            updated_at: new Date().toISOString(),
+          },
         });
       }
     }
 
-    return memberDocIds;
+    await chunkedBatchUpdate(teamUpdates);
   }
 
   async cleanFutureSchedulesAndAnonymizeHistorical(
@@ -302,6 +383,7 @@ export class AccountDeletionRepository {
     };
 
     const snap = await this.schedulesCol.get();
+    const scheduleUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; data: Record<string, any> }> = [];
 
     for (const doc of snap.docs) {
       const s = doc.data() as any;
@@ -321,10 +403,10 @@ export class AccountDeletionRepository {
           if (creatorMatch) {
             updates.created_by = 'DELETED_USER';
           }
-          await doc.ref.update(updates);
+          scheduleUpdates.push({ ref: doc.ref, data: updates });
         }
       } else {
-        // Histórico
+        // Histórico: preserva integridade, anonimiza identificadores
         let updated = false;
         const updates: any = {};
 
@@ -350,78 +432,91 @@ export class AccountDeletionRepository {
         if (updated) {
           updates.participants = anonymized;
           updates.updated_at = new Date().toISOString();
-          await doc.ref.update(updates);
+          scheduleUpdates.push({ ref: doc.ref, data: updates });
         }
       }
     }
+
+    await chunkedBatchUpdate(scheduleUpdates);
   }
 
   async anonymizeHistoricalSharedContent(userId: string): Promise<void> {
-    const anonymizeQuery = async (query: FirebaseFirestore.Query, updateFields: Record<string, any>) => {
-      const snap = await query.get();
-      if (snap.empty) return;
-      const batch = db.batch();
-      snap.docs.forEach((d) => batch.update(d.ref, updateFields));
-      await batch.commit();
-    };
-
     // 1. songs
-    await anonymizeQuery(this.songsCol.where('user_id', '==', userId), {
+    await updateQueryDocsChunked(this.songsCol.where('user_id', '==', userId), {
       user_id: null,
       created_by: 'DELETED_USER',
       updated_at: new Date().toISOString(),
     });
-    await anonymizeQuery(this.songsCol.where('created_by', '==', userId), {
+    await updateQueryDocsChunked(this.songsCol.where('created_by', '==', userId), {
       created_by: 'DELETED_USER',
       updated_at: new Date().toISOString(),
     });
 
     // 2. liturgies
-    await anonymizeQuery(this.liturgiesCol.where('created_by', '==', userId), {
+    await updateQueryDocsChunked(this.liturgiesCol.where('created_by', '==', userId), {
       created_by: 'DELETED_USER',
       updated_at: new Date().toISOString(),
     });
 
     // 3. teams created_by
-    await anonymizeQuery(this.teamsCol.where('created_by', '==', userId), {
+    await updateQueryDocsChunked(this.teamsCol.where('created_by', '==', userId), {
       created_by: 'DELETED_USER',
       updated_at: new Date().toISOString(),
     });
 
     // 4. announcements
-    await anonymizeQuery(this.announcementsCol.where('created_by', '==', userId), {
+    await updateQueryDocsChunked(this.announcementsCol.where('created_by', '==', userId), {
       created_by: 'DELETED_USER',
       author: 'Usuário excluído',
       updated_at: new Date().toISOString(),
     });
 
     // 5. admin_manual member_unavailabilities
-    await anonymizeQuery(this.unavailabilitiesCol.where('created_by_user_id', '==', userId), {
+    await updateQueryDocsChunked(this.unavailabilitiesCol.where('created_by_user_id', '==', userId), {
       created_by_user_id: 'DELETED_USER',
       updated_at: new Date().toISOString(),
     });
-    await anonymizeQuery(this.unavailabilitiesCol.where('updated_by_user_id', '==', userId), {
+    await updateQueryDocsChunked(this.unavailabilitiesCol.where('updated_by_user_id', '==', userId), {
       updated_by_user_id: 'DELETED_USER',
       updated_at: new Date().toISOString(),
     });
+  }
 
-    // 6. billing_plan_changes
-    await anonymizeQuery(this.planChangesCol.where('requested_by_user_id', '==', userId), {
+  async anonymizeBillingReferences(userId: string): Promise<void> {
+    // 1. billing_plan_changes: requested_by_user_id
+    await updateQueryDocsChunked(this.planChangesCol.where('requested_by_user_id', '==', userId), {
       requested_by_user_id: 'DELETED_USER',
+      updated_at: new Date().toISOString(),
+    });
+
+    // 2. billing_plan_changes: cancellation_reversal_requested_by
+    await updateQueryDocsChunked(this.planChangesCol.where('cancellation_reversal_requested_by', '==', userId), {
+      cancellation_reversal_requested_by: 'DELETED_USER',
+      updated_at: new Date().toISOString(),
+    });
+
+    // 3. billing_customers: billing_contact_user_id (se houver histórico)
+    await updateQueryDocsChunked(this.customersCol.where('billing_contact_user_id', '==', userId), {
+      billing_contact_user_id: 'DELETED_USER',
       updated_at: new Date().toISOString(),
     });
   }
 
   async anonymizeWhatsAppReferences(userId: string): Promise<void> {
-    const snap = await this.whatsappConnectionsCol.where('created_by_user_id', '==', userId).get();
-    if (snap.empty) return;
-    const batch = db.batch();
-    snap.docs.forEach((doc) => {
-      batch.update(doc.ref, {
-        created_by_user_id: 'DELETED_USER',
-        updated_at: new Date().toISOString(),
-      });
+    // 1. whatsapp_onboarding_sessions: actor_user_id
+    await updateQueryDocsChunked(this.whatsappOnboardingSessionsCol.where('actor_user_id', '==', userId), {
+      actor_user_id: 'DELETED_USER',
+      updated_at: new Date().toISOString(),
     });
-    await batch.commit();
+
+    // 2. whatsapp_connections: created_by_user_id & claimed_by_user_id
+    await updateQueryDocsChunked(this.whatsappConnectionsCol.where('created_by_user_id', '==', userId), {
+      created_by_user_id: 'DELETED_USER',
+      updated_at: new Date().toISOString(),
+    });
+    await updateQueryDocsChunked(this.whatsappConnectionsCol.where('claimed_by_user_id', '==', userId), {
+      claimed_by_user_id: 'DELETED_USER',
+      updated_at: new Date().toISOString(),
+    });
   }
 }

@@ -1,4 +1,4 @@
-﻿import { authAdmin } from '../../lib/firebase';
+import { authAdmin } from '../../lib/firebase';
 import { AppError } from '../../middleware/error-handler';
 import { AccountDeletionRepository } from '../../repositories/AccountDeletionRepository';
 import {
@@ -12,10 +12,10 @@ export class AccountDeletionService {
     private readonly repository: AccountDeletionRepository = new AccountDeletionRepository()
   ) {}
 
-  async evaluatePreflight(userId: string, userEmail?: string): Promise<AccountDeletionPreflightResponse> {
+  async evaluatePreflight(userId: string): Promise<AccountDeletionPreflightResponse> {
     const blockers: AccountDeletionBlocker[] = [];
 
-    // 1. Ministry owner check
+    // 1. Ministry owner check (canonical owner_user_id)
     const ownedMinistries = await this.repository.findOwnedMinistries(userId);
     for (const m of ownedMinistries) {
       blockers.push({
@@ -25,7 +25,7 @@ export class AccountDeletionService {
       });
     }
 
-    // 2. Organization owner check
+    // 2. Organization owner check (canonical owner_user_id)
     const ownedOrgs = await this.repository.findOwnedOrganizations(userId);
     for (const o of ownedOrgs) {
       blockers.push({
@@ -48,8 +48,8 @@ export class AccountDeletionService {
       }
     }
 
-    // 4. Billing contact replacement check
-    const billingMinistries = await this.repository.findBillingContactMinistries(userId, userEmail);
+    // 4. Billing contact replacement check (canonical billing_contact_user_id, sem inferência por email)
+    const billingMinistries = await this.repository.findBillingContactMinistries(userId);
     for (const bm of billingMinistries) {
       blockers.push({
         code: 'BILLING_CONTACT_REPLACEMENT_REQUIRED',
@@ -79,7 +79,7 @@ export class AccountDeletionService {
     userEmail?: string
   ): Promise<{ success: boolean; message: string; job: AccountDeletionJobRecord }> {
     // 1. Checagem de preflight
-    const preflight = await this.evaluatePreflight(userId, userEmail);
+    const preflight = await this.evaluatePreflight(userId);
     if (!preflight.deletionAllowed) {
       const now = new Date().toISOString();
       const existingJob = await this.repository.getJob(userId);
@@ -140,9 +140,59 @@ export class AccountDeletionService {
       await this.repository.saveJob(job);
     }
 
-    let memberIds: string[] = [];
+    const completedJob = await this.runDeletionSaga(job);
+    return {
+      success: true,
+      message: 'Conta e dados pessoais excluídos com sucesso.',
+      job: completedJob,
+    };
+  }
 
-    // 3. Checkpoint 1: Dados pessoais
+  /**
+   * Trusted Server-Side Recovery / Reconciliation.
+   * Não requer autenticação recente do usuário (já que este pode ter tido seu usuário deletado do Firebase Auth).
+   * Protegido por credencial interna ou invocado diretamente por rotinas do backend.
+   */
+  async reconcileJob(userId: string): Promise<AccountDeletionJobRecord> {
+    const job = await this.repository.getJob(userId);
+    if (!job) {
+      throw new AppError(404, 'Nenhum processo de exclusão encontrado para este usuário.');
+    }
+
+    if (job.status === 'completed') {
+      return job;
+    }
+
+    if (job.status === 'preflight_blocked') {
+      throw new AppError(409, 'Processo de exclusão bloqueado por pré-requisitos de governança ou faturamento.', {
+        code: 'PREFLIGHT_BLOCKED',
+        blockers: job.blockers,
+      });
+    }
+
+    job.status = 'cleanup_in_progress';
+    job.updated_at = new Date().toISOString();
+    await this.repository.saveJob(job);
+
+    return this.runDeletionSaga(job);
+  }
+
+  /**
+   * Executa a saga de exclusão checkpoint por checkpoint de forma determinística e idempotente.
+   */
+  private async runDeletionSaga(job: AccountDeletionJobRecord): Promise<AccountDeletionJobRecord> {
+    const userId = job.user_id;
+
+    // Stage 1: Manifesto de deleção durável (antes de desvincular membros)
+    if (!job.checkpoints.manifest_created) {
+      job.manifest = await this.repository.createManifest(userId);
+      job.checkpoints.manifest_created = true;
+      job.step_progress = 'manifest_created';
+      job.updated_at = new Date().toISOString();
+      await this.repository.saveJob(job);
+    }
+
+    // Stage 2: Exclusão de dados pessoais
     if (!job.checkpoints.personal_data_deleted) {
       await this.repository.deletePersonalData(userId);
       job.checkpoints.personal_data_deleted = true;
@@ -151,17 +201,18 @@ export class AccountDeletionService {
       await this.repository.saveJob(job);
     }
 
-    // 4. Checkpoint 2: Desvincular associações/membros
+    // Stage 3: Desvincular associações/membros
     if (!job.checkpoints.memberships_detached) {
-      memberIds = await this.repository.detachMemberships(userId);
+      await this.repository.detachMemberships(userId, job.manifest);
       job.checkpoints.memberships_detached = true;
       job.step_progress = 'memberships_detached';
       job.updated_at = new Date().toISOString();
       await this.repository.saveJob(job);
     }
 
-    // 5. Checkpoint 3: Limpeza de escalas futuras e anonimização de escalas passadas
+    // Stage 4: Limpeza de escalas futuras e anonimização de escalas passadas (usa member_ids do manifesto)
     if (!job.checkpoints.future_schedules_cleaned) {
+      const memberIds = job.manifest?.member_ids || [];
       await this.repository.cleanFutureSchedulesAndAnonymizeHistorical(userId, memberIds);
       job.checkpoints.future_schedules_cleaned = true;
       job.step_progress = 'future_schedules_cleaned';
@@ -169,7 +220,7 @@ export class AccountDeletionService {
       await this.repository.saveJob(job);
     }
 
-    // 6. Checkpoint 4: Anonimização de conteúdo histórico compartilhado
+    // Stage 5: Anonimização de conteúdo histórico compartilhado (músicas, liturgias, etc.)
     if (!job.checkpoints.historical_anonymized) {
       await this.repository.anonymizeHistoricalSharedContent(userId);
       job.checkpoints.historical_anonymized = true;
@@ -178,7 +229,16 @@ export class AccountDeletionService {
       await this.repository.saveJob(job);
     }
 
-    // 7. Checkpoint 5: Anonimização de referências do WhatsApp
+    // Stage 6: Anonimização de referências de faturamento (requested_by_user_id, cancellation_reversal_requested_by)
+    if (!job.checkpoints.billing_references_anonymized) {
+      await this.repository.anonymizeBillingReferences(userId);
+      job.checkpoints.billing_references_anonymized = true;
+      job.step_progress = 'billing_references_anonymized';
+      job.updated_at = new Date().toISOString();
+      await this.repository.saveJob(job);
+    }
+
+    // Stage 7: Anonimização de referências do WhatsApp (onboarding actor, connections)
     if (!job.checkpoints.whatsapp_anonymized) {
       await this.repository.anonymizeWhatsAppReferences(userId);
       job.checkpoints.whatsapp_anonymized = true;
@@ -187,7 +247,7 @@ export class AccountDeletionService {
       await this.repository.saveJob(job);
     }
 
-    // 8. Checkpoint 6: Exclusão no Firebase Auth
+    // Stage 8: Exclusão no Firebase Auth
     if (!job.checkpoints.auth_deleted) {
       job.status = 'auth_delete_pending';
       job.step_progress = 'auth_delete_pending';
@@ -217,18 +277,21 @@ export class AccountDeletionService {
       }
     }
 
-    // 9. Conclusão terminal
+    // Stage 9: Conclusão terminal e minimização de PII
     job.status = 'completed';
     job.step_progress = 'completed';
     job.completed_at = new Date().toISOString();
     job.updated_at = new Date().toISOString();
+
+    // Minimização de PII no registro concluído
+    job.user_email = null;
+    job.blockers = null;
+    job.error_details = null;
+    job.manifest = null;
+
     await this.repository.saveJob(job);
 
-    return {
-      success: true,
-      message: 'Conta e dados pessoais excluídos com sucesso.',
-      job,
-    };
+    return job;
   }
 
   async getDeletionStatus(userId: string): Promise<AccountDeletionJobRecord | null> {
