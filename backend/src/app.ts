@@ -1,5 +1,5 @@
 import express from 'express';
-import cors from 'cors';
+import { createCorsMiddleware } from './config/cors.config';
 import repertoireRoutes from './features/repertoire/repertoire.routes';
 import smartChordRoutes from './features/smart_chords/smart_chord.routes';
 import ministryRoutes from './features/ministries/ministry.routes';
@@ -24,16 +24,7 @@ const app = express();
 
 
 // ─── Global Security & Parsing Middleware ────────────────────
-const corsOptions: cors.CorsOptions = {
-  origin: config.corsOrigin
-    ? config.corsOrigin.split(',').map((o) => o.trim())
-    : true, // Permite origins em desenvolvimento local / previews controlados
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
-};
-
-app.use(cors(corsOptions));
+app.use(createCorsMiddleware());
 
 // ─── Route-Scoped Raw Body Routes (Must precede global express.json) ─────────
 app.use('/api/v1/whatsapp', publicWhatsAppRoutes);
