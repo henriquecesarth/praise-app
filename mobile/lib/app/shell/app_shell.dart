@@ -8,6 +8,7 @@ import '../../features/ministry_context/presentation/controllers/ministry_contex
 import '../../features/ministry_context/presentation/widgets/ministry_switcher_sheet.dart';
 import '../../features/repertoire/presentation/views/repertoire_view.dart';
 import '../../features/schedules/presentation/views/schedules_view.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../providers.dart';
 
 /// Responsive native application shell for LouvAIO Mobile.
@@ -472,6 +473,25 @@ class _ProfileView extends ConsumerWidget {
               }
             },
           ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(
+              Icons.delete_forever_outlined,
+              color: theme.colorScheme.error,
+            ),
+            title: Text(
+              'Excluir minha conta',
+              style: TextStyle(
+                color: theme.colorScheme.error,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            subtitle: const Text(
+              'Gerenciar encerramento permanente da conta no portal LouvAIO',
+            ),
+            trailing: const Icon(Icons.open_in_new, size: 20),
+            onTap: () => _showAccountDeletionDialog(context),
+          ),
           const Divider(),
           const SizedBox(height: 8),
 
@@ -532,5 +552,59 @@ class _ProfileView extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _showAccountDeletionDialog(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Excluir minha conta'),
+        content: const Text(
+          'O encerramento e a exclusão definitiva da sua conta são gerenciados de forma segura pelo portal web do LouvAIO.\n\n'
+          'Deseja abrir o navegador para gerenciar a exclusão?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Prosseguir no navegador'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && context.mounted) {
+      const urlString = 'https://praise-app-m7tn.vercel.app/exclusao-conta';
+      final uri = Uri.parse(urlString);
+      try {
+        final launched = await launchUrl(
+          uri,
+          mode: LaunchMode.externalApplication,
+        );
+        if (!launched && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Não foi possível abrir o navegador para exclusão de conta.',
+              ),
+            ),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Erro ao abrir o navegador: $e'),
+            ),
+          );
+        }
+      }
+    }
   }
 }

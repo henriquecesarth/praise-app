@@ -44,6 +44,15 @@ import {
   UpdateWhatsAppConnectionInput,
   DisconnectWhatsAppConnectionResponseDto,
 } from './types';
+import type {
+  AccountDeletionBlocker,
+  AccountDeletionBlockerCode,
+  AccountDeletionJobRecord,
+  AccountDeletionJobStatus,
+  AccountDeletionPreflightResponse,
+  AccountDeletionResult,
+} from './types';
+import { COMPLIANCE_CONFIG } from './config/compliance.config';
 
 export type {
   SmartChord,
@@ -74,6 +83,12 @@ export type {
   CompleteWhatsAppOnboardingInput,
   UpdateWhatsAppConnectionInput,
   DisconnectWhatsAppConnectionResponseDto,
+  AccountDeletionBlocker,
+  AccountDeletionBlockerCode,
+  AccountDeletionJobRecord,
+  AccountDeletionJobStatus,
+  AccountDeletionPreflightResponse,
+  AccountDeletionResult,
 };
 
 export function mapConsolidatedAvailabilityItemFromApi(item: any): ConsolidatedAvailabilityItem {
@@ -1810,6 +1825,109 @@ export const api = {
       }
     );
     return handleResponse<DisconnectWhatsAppConnectionResponseDto>(response);
+  },
+
+  // Exclusão de Conta (Google Play compliance PC1-PC3)
+  reauthenticateAndGetFreshToken: async (email: string, password: string): Promise<string> => {
+    const apiKey = COMPLIANCE_CONFIG.firebaseWebApiKey;
+    if (!apiKey) {
+      throw new ApiError('Chave da API de autenticação não configurada.', 500);
+    }
+
+    // 1. Reautenticação via Firebase Auth REST API (signInWithPassword)
+    const signInRes = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email,
+          password,
+          returnSecureToken: true,
+        }),
+      }
+    );
+
+    const signInData = await signInRes.json().catch(() => ({}));
+    if (!signInRes.ok) {
+      const fbError = signInData?.error?.message;
+      if (
+        fbError === 'INVALID_PASSWORD' ||
+        fbError === 'EMAIL_NOT_FOUND' ||
+        fbError === 'INVALID_LOGIN_CREDENTIALS'
+      ) {
+        throw new ApiError('Senha incorreta. Verifique sua senha e tente novamente.', 401, {
+          code: 'INVALID_CREDENTIALS',
+        });
+      }
+      if (fbError === 'USER_DISABLED') {
+        throw new ApiError('Esta conta foi desativada.', 403, { code: 'USER_DISABLED' });
+      }
+      if (fbError === 'TOO_MANY_ATTEMPTS_TRY_LATER') {
+        throw new ApiError('Muitas tentativas consecutivas. Tente novamente mais tarde.', 429, {
+          code: 'TOO_MANY_ATTEMPTS',
+        });
+      }
+      throw new ApiError(
+        'Falha na reautenticação. Verifique os dados e tente novamente.',
+        signInRes.status,
+        signInData
+      );
+    }
+
+    const refreshToken = signInData.refreshToken;
+    const initialIdToken = signInData.idToken;
+
+    if (!refreshToken) {
+      if (initialIdToken) return initialIdToken;
+      throw new ApiError('Não foi possível obter o token de segurança para reautenticação.', 500);
+    }
+
+    // 2. Force-refresh do Firebase ID Token para assegurar auth_time fresco
+    const refreshRes = await fetch(`https://securetoken.googleapis.com/v1/token?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}`,
+    });
+
+    const refreshData = await refreshRes.json().catch(() => ({}));
+    if (!refreshRes.ok) {
+      if (initialIdToken) return initialIdToken;
+      throw new ApiError('Falha ao atualizar token de segurança.', refreshRes.status, refreshData);
+    }
+
+    const freshIdToken = refreshData.id_token || refreshData.access_token || initialIdToken;
+    if (!freshIdToken) {
+      throw new ApiError('Token de autenticação atualizado não encontrado.', 500);
+    }
+
+    return freshIdToken;
+  },
+
+  getAccountDeletionPreflight: async (): Promise<AccountDeletionPreflightResponse> => {
+    const response = await fetch(`${API_URL}/auth/account-deletion/preflight`, {
+      headers: getHeaders(),
+    });
+    return handleResponse<AccountDeletionPreflightResponse>(response);
+  },
+
+  executeAccountDeletion: async (freshIdToken: string): Promise<AccountDeletionResult> => {
+    const response = await fetch(`${API_URL}/auth/account-deletion`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Authorization: `Bearer ${freshIdToken}`,
+      },
+    });
+    return handleResponse<AccountDeletionResult>(response);
+  },
+
+  getAccountDeletionStatus: async (): Promise<{ job: AccountDeletionJobRecord | null }> => {
+    const response = await fetch(`${API_URL}/auth/account-deletion/status`, {
+      headers: getHeaders(),
+    });
+    return handleResponse<{ job: AccountDeletionJobRecord | null }>(response);
   },
 };
 

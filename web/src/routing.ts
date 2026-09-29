@@ -7,6 +7,8 @@ export interface AppRouteState {
   scheduleId?: string;
   ministrySection?: string;
   isWhatsAppCallback?: boolean;
+  isPrivacy?: boolean;
+  isAccountDeletion?: boolean;
   isKnown: boolean;
 }
 
@@ -37,6 +39,8 @@ export function parseAppRoute(pathname: string): AppRouteState {
   if (normalized === '/cifras') return { module: 'cifrador', isKnown: true };
   if (normalized === '/ministerio') return { module: 'ministry', isKnown: true };
   if (normalized === '/liturgias') return { module: 'liturgies', isKnown: true };
+  if (normalized === '/privacidade') return { module: 'dashboard', isPrivacy: true, isKnown: true };
+  if (normalized === '/exclusao-conta') return { module: 'dashboard', isAccountDeletion: true, isKnown: true };
   if (normalized === '/whatsapp/callback') {
     return { module: 'ministry', ministrySection: 'whatsapp', isWhatsAppCallback: true, isKnown: true };
   }
@@ -82,6 +86,14 @@ export function pathForMinistrySection(section?: string) {
 
 export function pathForLiturgies() {
   return '/liturgias';
+}
+
+export function pathForPrivacy() {
+  return '/privacidade';
+}
+
+export function pathForAccountDeletion() {
+  return '/exclusao-conta';
 }
 
 export function pathForWhatsAppCallback() {

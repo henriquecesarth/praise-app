@@ -104,6 +104,17 @@ Funções musicais como Ministro, Vocalista, Violão e Bateria são classificaç
 - privacidade absoluta: o motivo (`reason`) e metadados internos de usuário são omitidos das respostas da API e da interface administrativa;
 - interface `AdminAvailabilityView` integrada à área de ministério sob "Planejamento de Escalas" com presets rápidos (7d, 15d, 30d, mês atual), seletor customizado, dropdown de integrante, touch targets >= 44px e proteção contra race conditions.
 
+### Privacy and Account Deletion (Google Play Compliance)
+
+- política de privacidade pública factual acessível em `/privacidade` sem necessidade de login e sem shell administrativo;
+- página pública informativa e solicitação de exclusão de conta em `/exclusao-conta`;
+- fluxo autenticado de exclusão com preflight de bloqueadores (`MINISTRY_OWNER`, `ORGANIZATION_OWNER`, `SOLE_MINISTRY_ADMIN`, `BILLING_CONTACT_REPLACEMENT_REQUIRED`, `BILLING_CONTACT_UNKNOWN`);
+- reautenticação obrigatória e verificação recente via Firebase Auth antes da confirmação destrutiva;
+- acompanhamento de saga e status não destrutivo em `/api/v1/auth/account-deletion/status`;
+- encerramento e limpeza de sessão local com tela neutra de conclusão ("Conta excluída");
+- ponto de entrada no aplicativo mobile (Perfil -> "Excluir minha conta") direcionando com segurança para o fluxo web autoritativo via navegador externo;
+- proteção contra sessões obsoletas no mobile (fail-closed com logout imediato e limpeza de cache de features).
+
 ### Manual Member Availability Management
 
 - gestão administrativa delegada de períodos de indisponibilidade exclusivamente para integrantes manuais (`is_manual === true` e `user_id == null`) do ministério (Phase 6D-2);

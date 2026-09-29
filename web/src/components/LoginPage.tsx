@@ -259,8 +259,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
       </main>
 
       {/* Footer */}
-      <footer className="login-footer">
-        &copy; {new Date().getFullYear()} LouvAIO. Música e gestão para ministérios de louvor.
+      <footer className="login-footer" style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center' }}>
+        <div>&copy; {new Date().getFullYear()} LouvAIO. Música e gestão para ministérios de louvor.</div>
+        <div style={{ display: 'flex', gap: '16px', fontSize: '0.85rem' }}>
+          <a href="/privacidade" style={{ color: 'var(--text-tertiary)', textDecoration: 'underline' }}>
+            Política de Privacidade
+          </a>
+          <span>•</span>
+          <a href="/exclusao-conta" style={{ color: 'var(--text-tertiary)', textDecoration: 'underline' }}>
+            Exclusão de Conta
+          </a>
+        </div>
       </footer>
     </div>
   );

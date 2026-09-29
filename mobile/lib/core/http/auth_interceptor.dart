@@ -100,6 +100,18 @@ class AuthInterceptor extends Interceptor {
       }
     }
 
+    final responseData = err.response?.data;
+    final isDeletionInProgress = statusCode == 403 &&
+        (responseData is Map &&
+            (responseData['code'] == 'ACCOUNT_DELETION_IN_PROGRESS' ||
+                responseData['error']?['code'] == 'ACCOUNT_DELETION_IN_PROGRESS' ||
+                responseData['error']?['details']?['code'] == 'ACCOUNT_DELETION_IN_PROGRESS'));
+
+    if (isDeletionInProgress) {
+      await onAuthenticationFailed();
+      return handler.next(err);
+    }
+
     return handler.next(err);
   }
 }

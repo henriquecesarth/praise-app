@@ -110,8 +110,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
       state = AuthState.authenticated(authUser);
     } catch (e) {
       final failure = AuthFailureNormalizer.normalize(e);
-      if (failure.statusCode == 401) {
-        // Genuine authentication error: fail closed
+      if (failure.statusCode == 401 ||
+          failure.statusCode == 403 ||
+          failure.code == 'ACCOUNT_DELETION_IN_PROGRESS') {
+        // Genuine authentication error or account deleted/disabled: fail closed
         await _repository.signOut();
         state = const AuthState.unauthenticated();
       } else {

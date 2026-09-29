@@ -23,6 +23,8 @@ import { CreateScheduleModal, ScheduleItem } from './components/CreateScheduleMo
 import { MinistryView } from './components/MinistryView';
 import { LiturgiesView } from './components/LiturgiesView';
 import { WhatsAppCallbackPage } from './components/WhatsAppCallbackPage';
+import { PrivacyPolicyView } from './components/PrivacyPolicyView';
+import { AccountDeletionView } from './components/AccountDeletionView';
 import { RestrictedBanner } from './components/RestrictedBanner';
 import { BottomNav } from './components/BottomNav';
 import { InstallPWAPrompt } from './components/InstallPWAPrompt';
@@ -69,6 +71,7 @@ export default function App() {
   // User Auth State
   const [currentUser, setCurrentUser] = useState<UserState | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [showLoginForDeletion, setShowLoginForDeletion] = useState(false);
 
   // Groups & Role States
   const [groups, setGroups] = useState<Group[]>([]);
@@ -660,6 +663,15 @@ export default function App() {
 
   const hasActiveFilters = filters.originalKey !== null || filters.hasYoutube !== null;
 
+  if (routeState.isPrivacy) {
+    return (
+      <PrivacyPolicyView
+        onNavigateHome={() => navigate('/')}
+        onNavigateDeletion={() => navigate('/exclusao-conta')}
+      />
+    );
+  }
+
   if (!authReady) {
     return (
       <div className="auth-loading-screen" role="status" aria-live="polite">
@@ -674,6 +686,29 @@ export default function App() {
       <WhatsAppCallbackPage
         ministryId={activeGroup?.id}
         onNavigateBack={() => navigate('/ministerio/whatsapp')}
+      />
+    );
+  }
+
+  if (routeState.isAccountDeletion) {
+    if (!currentUser && showLoginForDeletion) {
+      return (
+        <LoginPage
+          onLoginSuccess={(user) => {
+            setCurrentUser(user);
+            setShowLoginForDeletion(false);
+            loadUserGroups();
+            showToast(`Bem-vindo, ${user.name}!`);
+          }}
+        />
+      );
+    }
+    return (
+      <AccountDeletionView
+        currentUser={currentUser}
+        onRequireLogin={() => setShowLoginForDeletion(true)}
+        onAccountDeleted={handleLogout}
+        onNavigateHome={() => navigate('/')}
       />
     );
   }
