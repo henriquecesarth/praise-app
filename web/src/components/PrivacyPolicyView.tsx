@@ -161,9 +161,9 @@ export const PrivacyPolicyView: React.FC<PrivacyPolicyViewProps> = ({
               </div>
 
               <div className="p-4 rounded-xl bg-[var(--surface-variant,#1e293b)]/40 border border-[var(--border-color)]">
-                <h3 className="font-semibold text-sm text-[var(--text-primary)] mb-1">Mensageria WhatsApp (Meta / Zernio)</h3>
+                <h3 className="font-semibold text-sm text-[var(--text-primary)] mb-1">Mensageria WhatsApp (Integração Condicional: Meta / Zernio)</h3>
                 <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-                  Quando configurado pela organização, o envio de avisos e escalas via WhatsApp utiliza a API oficial Cloud da Meta Platforms / Zernio.
+                  O envio de notificações operacionais via WhatsApp é um recurso estritamente condicional: só ocorre quando ativado e configurado pela liderança da organização (conforme plano contratado). Conforme as credenciais e provedores homologados habilitados no ambiente, o disparo pode utilizar a API oficial WhatsApp Cloud (Meta Platforms) ou o provedor parceiro Zernio. Se a organização não ativar a integração, nenhum dado é transmitido ou processado por esses provedores.
                 </p>
               </div>
             </div>
@@ -176,13 +176,14 @@ export const PrivacyPolicyView: React.FC<PrivacyPolicyViewProps> = ({
               3. Práticas de Segurança e Proteção
             </h2>
             <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
-              Adotamos medidas rigorosas para manter suas informações protegidas:
+              Adotamos práticas técnicas comprovadas para manter suas informações protegidas:
             </p>
             <ul className="list-disc pl-5 space-y-2 text-sm text-[var(--text-secondary)]">
-              <li>Tráfego de rede 100% criptografado através de conexões HTTPS / TLS.</li>
-              <li>Isolamento estrito entre ministérios (multi-tenant boundary), impedindo que dados de uma igreja sejam acessados por outra.</li>
-              <li>Controle de acesso por permissões (administradores e integrantes) e validação server-side com bloqueio preventivo a requisições indevidas.</li>
-              <li>Criptografia de ponta (AES-256-GCM) para segredos de conexão de mensageria externa.</li>
+              <li>Tráfego de rede com o backend em produção protegido por conexões criptografadas HTTPS / TLS.</li>
+              <li>Autenticação de usuários gerenciada via Firebase Authentication com verificação criptográfica de identidade.</li>
+              <li>Controle de acesso por permissões (administradores e integrantes) e isolamento estrito entre ministérios e organizações (multi-tenant boundary) no servidor.</li>
+              <li>No aplicativo móvel, tokens de acesso não são persistidos intencionalmente no armazenamento de preferências (SharedPreferences) do app.</li>
+              <li>Criptografia simétrica robusta (AES-256-GCM) para credenciais e segredos de integração externa armazenados no servidor.</li>
             </ul>
           </section>
 
@@ -228,13 +229,16 @@ export const PrivacyPolicyView: React.FC<PrivacyPolicyViewProps> = ({
             </p>
             <ul className="list-disc pl-5 space-y-2 text-sm text-[var(--text-secondary)]">
               <li>
-                <strong className="text-[var(--text-primary)]">Dados pessoais:</strong> Seu perfil, credenciais de acesso, dados de contato e preferências são permanentemente eliminados.
+                <strong className="text-[var(--text-primary)]">Dados pessoais e comentários:</strong> Seu perfil, credenciais de acesso, dados de contato, indisponibilidades cadastradas e todos os comentários de escalas de louvor de sua autoria são permanentemente excluídos.
               </li>
               <li>
-                <strong className="text-[var(--text-primary)]">Conteúdo compartilhado da igreja:</strong> Músicas, cifras, liturgias e escalas cadastradas em benefício do ministério permanecem na comunidade para não prejudicar o culto, mas sua autoria é totalmente anonimizada.
+                <strong className="text-[var(--text-primary)]">Participação em escalas:</strong> Suas confirmações e escalações em eventos futuros são canceladas e removidas. Nas escalas passadas já executadas, sua identidade é anonimizada (&ldquo;Usuário excluído&rdquo;).
               </li>
               <li>
-                <strong className="text-[var(--text-primary)]">Registros financeiros e operacionais:</strong> Transações fiscais, faturas e registros contábeis no provedor de pagamento (Asaas) podem ser retidos nos termos e prazos estritamente exigidos pela legislação contábil e fiscal aplicável.
+                <strong className="text-[var(--text-primary)]">Conteúdo compartilhado da igreja:</strong> Recursos criados para a equipe (músicas cadastradas, versões, cifras inteligentes, liturgias/roteiros e avisos) permanecem preservados em benefício do ministério para não prejudicar o culto, tendo a autoria pessoal desassociada do seu nome e anonimizada.
+              </li>
+              <li>
+                <strong className="text-[var(--text-primary)]">Registros fiscais e contábeis:</strong> Transações financeiras e faturas processadas pelo provedor de pagamento (Asaas) podem ser retidas nos termos e prazos estritamente exigidos pela legislação contábil e fiscal aplicável.
               </li>
             </ul>
           </section>

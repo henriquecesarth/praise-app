@@ -268,7 +268,6 @@ void main() {
       );
 
       var nextCalled = false;
-      final handler = ErrorInterceptorHandler();
 
       // Run onError
       await interceptor.onError(

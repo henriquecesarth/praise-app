@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { AccountDeletionView } from './AccountDeletionView';
 import { api, ApiError } from '../api';
 import { AccountDeletionPreflightResponse, AccountDeletionBlocker } from '../types';
@@ -35,6 +35,10 @@ const mockCurrentUser = {
 describe('AccountDeletionView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe('Unauthenticated Mode', () => {
@@ -365,6 +369,319 @@ describe('AccountDeletionView', () => {
         expect(onAccountDeleted).toHaveBeenCalledTimes(1);
         expect(screen.getByText('Conta excluída')).toBeInTheDocument();
       });
+    });
+
+    it('describes authored schedule comments as deleted and does not claim they are merely anonymized', () => {
+      render(
+        <AccountDeletionView
+          currentUser={null}
+          onRequireLogin={vi.fn()}
+          onAccountDeleted={vi.fn()}
+          onNavigateHome={vi.fn()}
+        />
+      );
+
+      // Authored schedule comments must be described as definitively deleted
+      expect(screen.getByText(/comentários de escalas de louvor de sua autoria/i)).toBeInTheDocument();
+      expect(screen.queryByText(/comentários.*anonimizados/i)).not.toBeInTheDocument();
+
+      // Historical shared schedule identity and shared resources are anonymized
+      expect(screen.getByText(/Anonimização de histórico compartilhado/i)).toBeInTheDocument();
+      expect(screen.getByText(/Participações em escalas históricas já realizadas têm a identidade do integrante substituída por identificador anônimo/i)).toBeInTheDocument();
+    });
+
+    it('does not make unsupported claims about generic audit logs', () => {
+      render(
+        <AccountDeletionView
+          currentUser={null}
+          onRequireLogin={vi.fn()}
+          onAccountDeleted={vi.fn()}
+          onNavigateHome={vi.fn()}
+        />
+      );
+
+      // Operational and fiscal records may remain where legally required, but generic "audit logs" are not claimed
+      expect(screen.getByText(/Retenção operacional e fiscal/i)).toBeInTheDocument();
+      expect(screen.queryByText(/logs de auditoria/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/registros de auditoria/i)).not.toBeInTheDocument();
+    });
+
+    it('stops polling and displays safe support intervention message when status is attention_required', async () => {
+      vi.mocked(api.getAccountDeletionPreflight).mockResolvedValue({
+        deletionAllowed: false,
+        blockers: [],
+        activeJob: {
+          id: 'del_attn_999',
+          status: 'attention_required',
+          step_progress: 'attention_required',
+          requested_at: new Date().toISOString(),
+        },
+      });
+
+      render(
+        <AccountDeletionView
+          currentUser={mockCurrentUser}
+          onRequireLogin={vi.fn()}
+          onAccountDeleted={vi.fn()}
+          onNavigateHome={vi.fn()}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Atenção necessária no processamento')).toBeInTheDocument();
+      });
+
+      expect(screen.getByText(/Intervenção necessária para conclusão segura da exclusão/i)).toBeInTheDocument();
+      expect(screen.getByText(/Não foi possível concluir automaticamente todas as etapas/i)).toBeInTheDocument();
+
+      // Verify support link contains job id
+      const supportLink = screen.getByRole('link', { name: /test-privacy/i });
+      expect(supportLink).toHaveAttribute('href', expect.stringContaining('del_attn_999'));
+
+      // attention_required is NOT a processing state, so no polling should be triggered
+      expect(api.getAccountDeletionStatus).not.toHaveBeenCalled();
+    });
+
+    it('stops polling and falls back to preflight blockers if job returns preflight_blocked', async () => {
+      vi.useFakeTimers();
+
+      vi.mocked(api.getAccountDeletionPreflight)
+        .mockResolvedValueOnce({
+          deletionAllowed: true,
+          blockers: [],
+          activeJob: {
+            id: 'del_blocked_101',
+            status: 'requested',
+            requested_at: new Date().toISOString(),
+          },
+        })
+        .mockResolvedValueOnce({
+          deletionAllowed: false,
+          blockers: [
+            {
+              code: 'MINISTRY_OWNER',
+              message: 'Você é proprietário do ministério "Alpha".',
+            },
+          ],
+          activeJob: null,
+        });
+
+      vi.mocked(api.getAccountDeletionStatus).mockResolvedValueOnce({
+        job: {
+          id: 'del_blocked_101',
+          user_id: 'usr-100',
+          user_email: 'usuario@louvaio.test',
+          status: 'preflight_blocked',
+          requested_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      });
+
+      await act(async () => {
+        render(
+          <AccountDeletionView
+            currentUser={mockCurrentUser}
+            onRequireLogin={vi.fn()}
+            onAccountDeleted={vi.fn()}
+            onNavigateHome={vi.fn()}
+          />
+        );
+      });
+
+      // Initially in processing screen
+      expect(screen.getByText('Exclusão em processamento')).toBeInTheDocument();
+
+      // Advance timer for poll
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2600);
+      });
+
+      // Verify preflight was re-queried to fetch the blockers
+      expect(api.getAccountDeletionStatus).toHaveBeenCalledTimes(1);
+      expect(api.getAccountDeletionPreflight).toHaveBeenCalledTimes(2);
+
+      // Verify blockers are rendered and polling has stopped
+      expect(screen.getByText('Exclusão não permitida no momento')).toBeInTheDocument();
+      expect(screen.getByText('Você é proprietário do ministério "Alpha".')).toBeInTheDocument();
+
+      // Advancing timer further does NOT trigger getAccountDeletionStatus again
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+      expect(api.getAccountDeletionStatus).toHaveBeenCalledTimes(1);
+
+      vi.useRealTimers();
+    });
+
+    it('processing states (requested, cleanup_in_progress, auth_delete_pending) continue polling until completed', async () => {
+      vi.useFakeTimers();
+      const onAccountDeleted = vi.fn();
+
+      vi.mocked(api.getAccountDeletionPreflight).mockResolvedValueOnce({
+        deletionAllowed: true,
+        blockers: [],
+        activeJob: {
+          id: 'del_poll_200',
+          status: 'requested',
+          requested_at: new Date().toISOString(),
+        },
+      });
+
+      vi.mocked(api.getAccountDeletionStatus)
+        .mockResolvedValueOnce({
+          job: {
+            id: 'del_poll_200',
+            user_id: 'usr-100',
+            user_email: 'usuario@louvaio.test',
+            status: 'cleanup_in_progress',
+            requested_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        })
+        .mockResolvedValueOnce({
+          job: {
+            id: 'del_poll_200',
+            user_id: 'usr-100',
+            user_email: 'usuario@louvaio.test',
+            status: 'auth_delete_pending',
+            requested_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        })
+        .mockResolvedValueOnce({
+          job: {
+            id: 'del_poll_200',
+            user_id: 'usr-100',
+            user_email: 'usuario@louvaio.test',
+            status: 'completed',
+            requested_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        });
+
+      await act(async () => {
+        render(
+          <AccountDeletionView
+            currentUser={mockCurrentUser}
+            onRequireLogin={vi.fn()}
+            onAccountDeleted={onAccountDeleted}
+            onNavigateHome={vi.fn()}
+          />
+        );
+      });
+
+      expect(screen.getByText('Exclusão em processamento')).toBeInTheDocument();
+
+      // Poll 1: requested -> cleanup_in_progress
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2600);
+      });
+      expect(api.getAccountDeletionStatus).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(/Desvinculação e limpeza em andamento/i)).toBeInTheDocument();
+
+      // Poll 2: cleanup_in_progress -> auth_delete_pending
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2600);
+      });
+      expect(api.getAccountDeletionStatus).toHaveBeenCalledTimes(2);
+      expect(screen.getByText(/Encerramento de credenciais pendente/i)).toBeInTheDocument();
+
+      // Poll 3: auth_delete_pending -> completed
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2600);
+      });
+      expect(api.getAccountDeletionStatus).toHaveBeenCalledTimes(3);
+
+      // Completed terminates polling, shows success screen, and calls onAccountDeleted
+      expect(screen.getByText('Conta excluída')).toBeInTheDocument();
+      expect(onAccountDeleted).toHaveBeenCalledTimes(1);
+
+      // Advancing timer further should NOT trigger any more polls
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+      expect(api.getAccountDeletionStatus).toHaveBeenCalledTimes(3);
+
+      vi.useRealTimers();
+    });
+
+    it('terminates polling immediately if preflight already returns completed status', async () => {
+      const onAccountDeleted = vi.fn();
+
+      vi.mocked(api.getAccountDeletionPreflight).mockResolvedValue({
+        deletionAllowed: true,
+        blockers: [],
+        activeJob: {
+          id: 'del_already_done',
+          status: 'completed',
+          requested_at: new Date().toISOString(),
+        },
+      });
+
+      await act(async () => {
+        render(
+          <AccountDeletionView
+            currentUser={mockCurrentUser}
+            onRequireLogin={vi.fn()}
+            onAccountDeleted={onAccountDeleted}
+            onNavigateHome={vi.fn()}
+          />
+        );
+      });
+
+      expect(screen.getByText('Conta excluída')).toBeInTheDocument();
+      expect(onAccountDeleted).toHaveBeenCalledTimes(1);
+      expect(api.getAccountDeletionStatus).not.toHaveBeenCalled();
+    });
+
+    it('enforces maximum polling limit (MAX_POLLS = 30) without infinite loop', async () => {
+      vi.useFakeTimers();
+
+      vi.mocked(api.getAccountDeletionPreflight).mockResolvedValueOnce({
+        deletionAllowed: true,
+        blockers: [],
+        activeJob: {
+          id: 'del_long_300',
+          status: 'cleanup_in_progress',
+          requested_at: new Date().toISOString(),
+        },
+      });
+
+      vi.mocked(api.getAccountDeletionStatus).mockImplementation(async () => ({
+        job: {
+          id: 'del_long_300',
+          user_id: 'usr-100',
+          user_email: 'usuario@louvaio.test',
+          status: 'cleanup_in_progress',
+          requested_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      }));
+
+      await act(async () => {
+        render(
+          <AccountDeletionView
+            currentUser={mockCurrentUser}
+            onRequireLogin={vi.fn()}
+            onAccountDeleted={vi.fn()}
+            onNavigateHome={vi.fn()}
+          />
+        );
+      });
+
+      expect(screen.getByText('Exclusão em processamento')).toBeInTheDocument();
+
+      // Advance timers for 35 cycles (each 2600ms)
+      for (let i = 0; i < 35; i++) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2600);
+        });
+      }
+
+      // Should be clamped at exactly 30 calls
+      expect(api.getAccountDeletionStatus).toHaveBeenCalledTimes(30);
+
+      vi.useRealTimers();
     });
   });
 });

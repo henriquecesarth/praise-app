@@ -17,16 +17,55 @@ describe('PrivacyPolicyView', () => {
     expect(screen.getByText(/6\. Canal de Atendimento e Privacidade/i)).toBeInTheDocument();
   });
 
-  it('displays factual providers and architecture components', () => {
+  it('displays factual providers and conditional architecture components', () => {
     render(<PrivacyPolicyView />);
 
     expect(screen.getByText(/Firebase & Google Cloud/i)).toBeInTheDocument();
     expect(screen.getByText(/Processamento de Faturamento \(Asaas\)/i)).toBeInTheDocument();
-    expect(screen.getByText(/Mensageria WhatsApp \(Meta \/ Zernio\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/Mensageria WhatsApp \(Integração Condicional: Meta \/ Zernio\)/i)).toBeInTheDocument();
     expect(screen.getByText(/Hospedagem & Execução Web/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/O envio de notificações operacionais via WhatsApp é um recurso estritamente condicional/i)
+    ).toBeInTheDocument();
   });
 
-  it('does not expose fake legal entity or placeholder values', () => {
+  it('describes comments as deleted and shared resources as anonymized', () => {
+    render(<PrivacyPolicyView />);
+
+    // Comments must be described as permanently deleted
+    expect(
+      screen.getByText(/todos os comentários de escalas de louvor de sua autoria são permanentemente excluídos/i)
+    ).toBeInTheDocument();
+
+    // Shared resources are anonymized
+    expect(
+      screen.getByText(/tendo a autoria pessoal desassociada do seu nome e anonimizada/i)
+    ).toBeInTheDocument();
+  });
+
+  it('contains no unsupported audit-log claims', () => {
+    const { container } = render(<PrivacyPolicyView />);
+    const text = container.textContent || '';
+
+    expect(text).not.toMatch(/audit log/i);
+    expect(text).not.toMatch(/logs? de auditoria/i);
+  });
+
+  it('describes security practices factually without absolute cleartext token claims', () => {
+    const { container } = render(<PrivacyPolicyView />);
+    const text = container.textContent || '';
+
+    // Factual security measures
+    expect(screen.getByText(/Tráfego de rede com o backend em produção protegido por conexões criptografadas HTTPS \/ TLS/i)).toBeInTheDocument();
+    expect(screen.getByText(/Firebase Authentication com verificação criptográfica de identidade/i)).toBeInTheDocument();
+    expect(screen.getByText(/No aplicativo móvel, tokens de acesso não são persistidos intencionalmente no armazenamento de preferências/i)).toBeInTheDocument();
+
+    // Must NOT make universal "zero cleartext token persistence" claim
+    expect(text).not.toMatch(/zero cleartext token persistence/i);
+    expect(text).not.toMatch(/persistência zero de tokens em texto claro/i);
+  });
+
+  it('does not expose fake legal entity, fabricated defaults, or placeholder values', () => {
     const { container } = render(<PrivacyPolicyView />);
     const html = container.innerHTML;
 
@@ -34,6 +73,9 @@ describe('PrivacyPolicyView', () => {
     expect(html).not.toContain('CNPJ:');
     expect(html).not.toContain('DPO: Fulano');
     expect(html).not.toContain('placeholder');
+    expect(html).not.toContain('suporte@louvaio.com.br');
+    expect(html).not.toContain('privacidade@louvaio.com.br');
+    expect(html).not.toContain('LouvAIO Tecnologia');
   });
 
   it('displays configured support and privacy contact information', () => {

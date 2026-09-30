@@ -50,6 +50,8 @@ export const AccountDeletionView: React.FC<AccountDeletionViewProps> = ({
   // In-progress job status
   const [activeJob, setActiveJob] = useState<AccountDeletionJobRecord | null>(null);
   const [checkingStatus, setCheckingStatus] = useState(false);
+  const pollCountRef = useRef(0);
+  const MAX_POLLS = 30;
 
   const onAccountDeletedRef = useRef(onAccountDeleted);
   useEffect(() => {
@@ -68,6 +70,7 @@ export const AccountDeletionView: React.FC<AccountDeletionViewProps> = ({
           setIsDeleted(true);
           onAccountDeletedRef.current();
         } else if (
+          data.activeJob.status === 'requested' ||
           data.activeJob.status === 'cleanup_in_progress' ||
           data.activeJob.status === 'auth_delete_pending' ||
           data.activeJob.status === 'attention_required'
@@ -81,6 +84,8 @@ export const AccountDeletionView: React.FC<AccountDeletionViewProps> = ({
             step_progress: data.activeJob.step_progress,
             updated_at: new Date().toISOString(),
           });
+        } else if (data.activeJob.status === 'preflight_blocked') {
+          setActiveJob(null);
         }
       }
     } catch (err: any) {
@@ -96,6 +101,67 @@ export const AccountDeletionView: React.FC<AccountDeletionViewProps> = ({
     }
   }, [currentUser, loadPreflight]);
 
+  // Polling for processing deletion states (requested, cleanup_in_progress, auth_delete_pending)
+  // Stops immediately on preflight_blocked, attention_required, completed, or MAX_POLLS ceiling
+  useEffect(() => {
+    if (!currentUser || !activeJob) {
+      pollCountRef.current = 0;
+      return;
+    }
+
+    const isProcessing =
+      activeJob.status === 'requested' ||
+      activeJob.status === 'cleanup_in_progress' ||
+      activeJob.status === 'auth_delete_pending';
+
+    if (!isProcessing) {
+      return;
+    }
+
+    if (pollCountRef.current >= MAX_POLLS) {
+      return;
+    }
+
+    let active = true;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await api.getAccountDeletionStatus();
+        if (!active) return;
+        pollCountRef.current += 1;
+
+        if (res.job) {
+          const nextStatus = res.job.status;
+          if (nextStatus === 'completed') {
+            setActiveJob(res.job);
+            setIsDeleted(true);
+            onAccountDeletedRef.current();
+          } else if (nextStatus === 'preflight_blocked') {
+            setActiveJob(null);
+            await loadPreflight();
+          } else {
+            setActiveJob(res.job);
+          }
+        } else {
+          setActiveJob(null);
+          await loadPreflight();
+        }
+      } catch (err: any) {
+        if (!active) return;
+        if (err instanceof ApiError && err.statusCode === 401) {
+          setIsDeleted(true);
+          onAccountDeletedRef.current();
+        } else {
+          setSubmitError(err.message || 'Falha ao consultar status da exclusão.');
+        }
+      }
+    }, 2500);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [currentUser, activeJob, loadPreflight]);
+
   const handleRefreshJobStatus = async () => {
     setCheckingStatus(true);
     try {
@@ -104,7 +170,10 @@ export const AccountDeletionView: React.FC<AccountDeletionViewProps> = ({
         setActiveJob(res.job);
         if (res.job.status === 'completed') {
           setIsDeleted(true);
-          onAccountDeleted();
+          onAccountDeletedRef.current();
+        } else if (res.job.status === 'preflight_blocked') {
+          setActiveJob(null);
+          await loadPreflight();
         }
       } else {
         setActiveJob(null);
@@ -114,7 +183,7 @@ export const AccountDeletionView: React.FC<AccountDeletionViewProps> = ({
       if (err instanceof ApiError && err.statusCode === 401) {
         // Session already ended because user was deleted
         setIsDeleted(true);
-        onAccountDeleted();
+        onAccountDeletedRef.current();
       } else {
         setSubmitError(err.message || 'Falha ao consultar status da exclusão.');
       }
@@ -145,18 +214,23 @@ export const AccountDeletionView: React.FC<AccountDeletionViewProps> = ({
       // 2. Destructive POST para backend
       const result = await api.executeAccountDeletion(freshToken);
 
-      if (result.success || result.job?.status === 'completed') {
+      if (result.success && result.job?.status === 'completed') {
         setIsDeleted(true);
-        onAccountDeleted();
+        onAccountDeletedRef.current();
       } else if (
+        result.job?.status === 'requested' ||
         result.job?.status === 'cleanup_in_progress' ||
         result.job?.status === 'auth_delete_pending' ||
         result.job?.status === 'attention_required'
       ) {
+        pollCountRef.current = 0;
         setActiveJob(result.job);
+      } else if (result.job?.status === 'preflight_blocked') {
+        setActiveJob(null);
+        await loadPreflight();
       } else {
         setIsDeleted(true);
-        onAccountDeleted();
+        onAccountDeletedRef.current();
       }
     } catch (err: any) {
       if (err instanceof ApiError) {
@@ -260,7 +334,7 @@ export const AccountDeletionView: React.FC<AccountDeletionViewProps> = ({
             </p>
 
             <p style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem', lineHeight: 1.5, marginBottom: '32px' }}>
-              Registros compartilhados do ministério (como histórico de cultos e escalas) foram anonimizados. Se desejar
+              Registros compartilhados do ministério (como histórico de cultos e escalas) foram anonimizados e seus comentários foram excluídos. Se desejar
               utilizar a plataforma novamente, será necessário criar um novo cadastro.
             </p>
 
@@ -320,58 +394,129 @@ export const AccountDeletionView: React.FC<AccountDeletionViewProps> = ({
               background: 'var(--surface-color)',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '16px' }}>
-              <div
-                style={{
-                  width: '48px',
-                  height: '48px',
-                  borderRadius: '12px',
-                  background: 'rgba(184, 90, 60, 0.12)',
-                  color: 'var(--louvaio-terracotta)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0,
-                }}
-              >
-                <Clock size={26} />
-              </div>
+            {activeJob.status === 'attention_required' ? (
               <div>
-                <h1 style={{ fontSize: '1.3rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>
-                  Exclusão em processamento
-                </h1>
-                <p style={{ margin: '4px 0 0', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                  Sua solicitação de exclusão foi registrada e está em execução segura.
-                </p>
-              </div>
-            </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '16px' }}>
+                  <div
+                    style={{
+                      width: '48px',
+                      height: '48px',
+                      borderRadius: '12px',
+                      background: 'rgba(220, 38, 38, 0.12)',
+                      color: 'var(--error-color)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <AlertTriangle size={26} />
+                  </div>
+                  <div>
+                    <h1 style={{ fontSize: '1.3rem', fontWeight: 700, margin: 0, color: 'var(--error-color)' }}>
+                      Atenção necessária no processamento
+                    </h1>
+                    <p style={{ margin: '4px 0 0', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                      Intervenção necessária para conclusão segura da exclusão.
+                    </p>
+                  </div>
+                </div>
 
-            <div
-              style={{
-                background: 'var(--surface-variant)',
-                padding: '16px',
-                borderRadius: '10px',
-                marginBottom: '20px',
-                fontSize: '0.9rem',
-                color: 'var(--text-secondary)',
-                lineHeight: 1.6,
-              }}
-            >
-              <p style={{ margin: '0 0 8px' }}>
-                Os serviços da plataforma estão realizando a desvinculação de participações, anonimização de registros
-                históricos e encerramento seguro das credenciais.
-              </p>
-              <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>
-                Status atual:{' '}
-                <strong style={{ color: 'var(--text-primary)' }}>
-                  {activeJob.status === 'cleanup_in_progress'
-                    ? 'Desvinculação e limpeza em andamento'
-                    : activeJob.status === 'auth_delete_pending'
-                    ? 'Encerramento de credenciais pendente'
-                    : 'Aguardando sincronização final'}
-                </strong>
-              </p>
-            </div>
+                <div
+                  style={{
+                    border: '1px solid rgba(220, 38, 38, 0.25)',
+                    background: 'rgba(220, 38, 38, 0.05)',
+                    padding: '18px',
+                    borderRadius: '10px',
+                    marginBottom: '20px',
+                    fontSize: '0.9rem',
+                    color: 'var(--text-secondary)',
+                    lineHeight: 1.6,
+                  }}
+                >
+                  <p style={{ margin: '0 0 10px', color: 'var(--text-primary)', fontWeight: 600 }}>
+                    Não foi possível concluir automaticamente todas as etapas de encerramento da sua conta.
+                  </p>
+                  <p style={{ margin: '0 0 12px' }}>
+                    Seus dados pessoais já foram parcialmente desvinculados com segurança. Para que as etapas restantes
+                    sejam concluídas de forma assistida sem risco à integridade dos seus dados, entre em contato com nosso
+                    canal de privacidade:
+                  </p>
+                  <div style={{ fontSize: '0.9rem' }}>
+                    <a
+                      href={`mailto:${COMPLIANCE_CONFIG.privacyContactEmail}?subject=Aux%C3%ADlio%20na%20Exclus%C3%A3o%20de%20Conta%20(ID:%20${activeJob.id})`}
+                      style={{
+                        color: 'var(--louvaio-terracotta)',
+                        fontWeight: 700,
+                        textDecoration: 'underline',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                      }}
+                    >
+                      {COMPLIANCE_CONFIG.privacyContactEmail}
+                    </a>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '16px' }}>
+                  <div
+                    style={{
+                      width: '48px',
+                      height: '48px',
+                      borderRadius: '12px',
+                      background: 'rgba(184, 90, 60, 0.12)',
+                      color: 'var(--louvaio-terracotta)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Clock size={26} />
+                  </div>
+                  <div>
+                    <h1 style={{ fontSize: '1.3rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>
+                      Exclusão em processamento
+                    </h1>
+                    <p style={{ margin: '4px 0 0', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                      Sua solicitação de exclusão foi registrada e está em execução segura.
+                    </p>
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    background: 'var(--surface-variant)',
+                    padding: '16px',
+                    borderRadius: '10px',
+                    marginBottom: '20px',
+                    fontSize: '0.9rem',
+                    color: 'var(--text-secondary)',
+                    lineHeight: 1.6,
+                  }}
+                >
+                  <p style={{ margin: '0 0 8px' }}>
+                    Os serviços da plataforma estão realizando a desvinculação de participações, exclusão de comentários e dados pessoais, anonimização de registros
+                    históricos e encerramento seguro das credenciais.
+                  </p>
+                  <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>
+                    Status atual:{' '}
+                    <strong style={{ color: 'var(--text-primary)' }}>
+                      {activeJob.status === 'requested'
+                        ? 'Solicitação registrada, aguardando início do processamento'
+                        : activeJob.status === 'cleanup_in_progress'
+                        ? 'Desvinculação e limpeza em andamento'
+                        : activeJob.status === 'auth_delete_pending'
+                        ? 'Encerramento de credenciais pendente'
+                        : 'Aguardando sincronização final'}
+                    </strong>
+                  </p>
+                </div>
+              </div>
+            )}
 
             {submitError && (
               <div
@@ -544,8 +689,8 @@ export const AccountDeletionView: React.FC<AccountDeletionViewProps> = ({
                   O que é excluído definitivamente:
                 </strong>
                 <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: 1.5 }}>
-                  Suas credenciais de login (e-mail, senha e Firebase UID), nome de exibição, preferências individuais,
-                  indisponibilidades cadastradas e registros de vinculação aos ministérios.
+                  Suas credenciais de login e dados cadastrais (e-mail, senha e Firebase UID), nome de exibição, preferências individuais,
+                  comentários de escalas de louvor de sua autoria, períodos de indisponibilidade autodeclarados e participações em escalas futuras.
                 </span>
               </div>
             </div>
@@ -557,9 +702,9 @@ export const AccountDeletionView: React.FC<AccountDeletionViewProps> = ({
                   Anonimização de histórico compartilhado:
                 </strong>
                 <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: 1.5 }}>
-                  Itens compartilhados criados no ministério (músicas, comentários de escala, ordens de culto) são
-                  preservados para a continuidade do ministério, mas têm sua autoria desassociada do seu nome e
-                  atribuída a um identificador anônimo (&ldquo;Ex-integrante&rdquo;).
+                  Participações em escalas históricas já realizadas têm a identidade do integrante substituída por identificador anônimo (&ldquo;Usuário excluído&rdquo;).
+                  Recursos compartilhados criados no ministério (músicas, versões, liturgias e ordens de culto, equipes e avisos) permanecem preservados para a continuidade do culto,
+                  com as referências pessoais de criação desassociadas do seu nome e atribuídas a um identificador anônimo (&ldquo;Usuário excluído&rdquo;).
                 </span>
               </div>
             </div>
@@ -571,7 +716,7 @@ export const AccountDeletionView: React.FC<AccountDeletionViewProps> = ({
                   Retenção operacional e fiscal:
                 </strong>
                 <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: 1.5 }}>
-                  Registros financeiros de assinaturas processados através de parceiros autorizados (ex: Asaas) podem ser
+                  Registros fiscais e contábeis de faturamento processados através de parceiros autorizados (como a plataforma Asaas) podem ser
                   mantidos pelo período estritamente exigido por legislações fiscais e regulatórias vigentes.
                 </span>
               </div>
@@ -828,9 +973,9 @@ export const AccountDeletionView: React.FC<AccountDeletionViewProps> = ({
                       }}
                     >
                       <li>Seu acesso ao LouvAIO será permanentemente encerrado.</li>
-                      <li>Você será removido de todos os ministérios e escalas ativas.</li>
-                      <li>Seus dados pessoais de perfil e login serão excluídos definitivamente.</li>
-                      <li>Registros compartilhados do culto serão desvinculados do seu nome.</li>
+                      <li>Você será removido de todos os ministérios e participações em escalas futuras.</li>
+                      <li>Seus dados de perfil, credenciais e comentários de escalas de sua autoria serão excluídos definitivamente.</li>
+                      <li>Registros compartilhados do culto (como músicas e liturgias) terão sua autoria desvinculada.</li>
                       <li>Esta ação é definitiva e não poderá ser desfeita.</li>
                     </ul>
 

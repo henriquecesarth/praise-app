@@ -573,4 +573,126 @@ describe('API Client & Structured Error Handling', () => {
       expect(result.unresolvedParticipantIds).toEqual(['p-unresolved']);
     });
   });
+
+  describe('Account Deletion & Reauthentication (PC2/PC3 Compliance)', () => {
+    it('reauthenticateAndGetFreshToken chama Identity Toolkit e retorna fresh idToken sem vazar segredos em logs', async () => {
+      const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const mockSignInResponse = {
+        idToken: 'initial-fresh-id-token',
+        refreshToken: 'refresh-token-xyz',
+        expiresIn: '3600',
+      };
+
+      const mockRefreshResponse = {
+        id_token: 'fresh-id-token-with-recent-auth-time',
+        refresh_token: 'new-refresh-token',
+        expires_in: '3600',
+      };
+
+      const fetchSpy = vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: vi.fn().mockResolvedValue(mockSignInResponse),
+        } as any)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: vi.fn().mockResolvedValue(mockRefreshResponse),
+        } as any);
+
+      global.fetch = fetchSpy;
+
+      const secretPassword = 'MySecretPassword#123';
+      const userEmail = 'integrante@louvaio.test';
+
+      const token = await api.reauthenticateAndGetFreshToken(userEmail, secretPassword);
+
+      expect(token).toBe('fresh-id-token-with-recent-auth-time');
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+      const [signInUrl, signInOpts] = fetchSpy.mock.calls[0];
+      expect(signInUrl).toContain('identitytoolkit.googleapis.com/v1/accounts:signInWithPassword');
+      expect(signInOpts.method).toBe('POST');
+      expect(JSON.parse(signInOpts.body)).toEqual({
+        email: userEmail,
+        password: secretPassword,
+        returnSecureToken: true,
+      });
+
+      const [refreshUrl, refreshOpts] = fetchSpy.mock.calls[1];
+      expect(refreshUrl).toContain('securetoken.googleapis.com/v1/token');
+      expect(refreshOpts.method).toBe('POST');
+      expect(refreshOpts.body).toContain('grant_type=refresh_token');
+      expect(refreshOpts.body).toContain(encodeURIComponent('refresh-token-xyz'));
+
+      const allLoggedText = [
+        ...consoleLogSpy.mock.calls.flat(),
+        ...consoleErrorSpy.mock.calls.flat(),
+        ...consoleWarnSpy.mock.calls.flat(),
+      ].join(' ');
+      expect(allLoggedText).not.toContain(secretPassword);
+      expect(allLoggedText).not.toContain('fresh-id-token-with-recent-auth-time');
+      expect(allLoggedText).not.toContain('refresh-token-xyz');
+
+      consoleLogSpy.mockRestore();
+      consoleErrorSpy.mockRestore();
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('executeAccountDeletion envia Authorization Bearer com token recente sem vazar segredos', async () => {
+      const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const mockResult = {
+        success: true,
+        message: 'Conta excluída com sucesso.',
+        job: {
+          id: 'del_100',
+          user_id: 'usr-100',
+          user_email: 'integrante@louvaio.test',
+          status: 'completed',
+          requested_at: '2026-09-30T10:00:00.000Z',
+          updated_at: '2026-09-30T10:00:01.000Z',
+        },
+      };
+
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify(mockResult)),
+      } as any);
+      global.fetch = fetchSpy;
+
+      const freshIdToken = 'jwt-token-with-recent-auth-time-300s';
+      const result = await api.executeAccountDeletion(freshIdToken);
+
+      expect(result).toEqual(mockResult);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      const [url, opts] = fetchSpy.mock.calls[0];
+      expect(url).toMatch(/\/auth\/account-deletion$/);
+      expect(opts.method).toBe('POST');
+      expect(opts.headers).toMatchObject({
+        'Authorization': `Bearer ${freshIdToken}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      });
+
+      const allLoggedText = [
+        ...consoleLogSpy.mock.calls.flat(),
+        ...consoleErrorSpy.mock.calls.flat(),
+        ...consoleWarnSpy.mock.calls.flat(),
+      ].join(' ');
+      expect(allLoggedText).not.toContain(freshIdToken);
+
+      consoleLogSpy.mockRestore();
+      consoleErrorSpy.mockRestore();
+      consoleWarnSpy.mockRestore();
+    });
+  });
 });
