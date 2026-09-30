@@ -35,6 +35,20 @@ void main() {
       expect(notifier.state.token, isNull);
     });
 
+    test('initializeEarly initializes service without token sync', () async {
+      when(() => mockService.initialize()).thenAnswer((_) async {});
+
+      await notifier.initializeEarly();
+
+      expect(notifier.state.isInitialized, isTrue);
+      expect(notifier.state.isRegisteredWithBackend, isFalse);
+      verify(() => mockService.initialize()).called(1);
+      verifyNever(() => mockService.syncTokenWithBackend(
+            appVersion: any(named: 'appVersion'),
+            deviceModel: any(named: 'deviceModel'),
+          ));
+    });
+
     test('initializeAndSync initializes service and registers token', () async {
       when(() => mockService.initialize()).thenAnswer((_) async {});
       when(() => mockService.syncTokenWithBackend(

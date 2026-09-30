@@ -166,6 +166,13 @@ GoRouter createRouter(Ref ref) {
 
 class _RouterRefreshNotifier extends ChangeNotifier {
   _RouterRefreshNotifier(Ref ref) {
+    // Early initialize push listeners so pre-auth notification taps and foreground handlers are active
+    Future.microtask(() {
+      try {
+        ref.read(pushNotificationNotifierProvider.notifier).initializeEarly();
+      } catch (_) {}
+    });
+
     ref.listen<AuthState>(authNotifierProvider, (previous, next) {
       if (next.isAuthenticated && previous?.user?.id != next.user?.id) {
         resetAuthenticatedFeatures(ref);

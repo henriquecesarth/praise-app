@@ -54,6 +54,17 @@ class PushNotificationNotifier extends StateNotifier<PushNotificationState> {
     });
   }
 
+  /// Early bootstrap to listen for foreground messages and cold-start notification taps
+  /// prior to user authentication. Does not call backend sync.
+  Future<void> initializeEarly() async {
+    try {
+      await _service.initialize();
+      state = state.copyWith(isInitialized: true);
+    } catch (_) {
+      // Non-fatal early initialization error
+    }
+  }
+
   /// Bootstrap push notification service and synchronize device token with backend.
   Future<void> initializeAndSync({
     String? appVersion,
