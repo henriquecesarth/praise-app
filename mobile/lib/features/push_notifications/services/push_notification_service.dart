@@ -29,15 +29,19 @@ class PushNotificationService {
   static const String notificationChannelDescription =
       'Notificações de escalas, comentários e avisos do ministério';
 
+  final int? _androidSdkVersion;
+
   PushNotificationService({
     FirebaseMessaging? messaging,
     FlutterLocalNotificationsPlugin? localNotifications,
     required PushDeviceRepository pushDeviceRepo,
     required AppLogger logger,
+    int? androidSdkVersion,
   })  : _customMessaging = messaging,
         _customLocalNotifications = localNotifications,
         _pushDeviceRepo = pushDeviceRepo,
-        _logger = logger;
+        _logger = logger,
+        _androidSdkVersion = androidSdkVersion;
 
   FirebaseMessaging? get _messaging {
     if (_customMessaging != null) return _customMessaging;
@@ -136,8 +140,15 @@ class PushNotificationService {
   }
 
   /// Requests notification permission on Android 13+ / iOS.
-  /// On Android <= 12, returns authorized immediately without prompting the user.
+  /// On Android <= 12 (API <= 32), runtime POST_NOTIFICATIONS prompt is not required.
   Future<bool> requestPermission() async {
+    if (_androidSdkVersion != null && _androidSdkVersion <= 32) {
+      _logger.debug(
+        'Android API $_androidSdkVersion <= 32: runtime permission prompt not required.',
+      );
+      return true;
+    }
+
     try {
       final messaging = _messaging;
       if (messaging == null) return false;
@@ -204,20 +215,34 @@ class PushNotificationService {
     }
   }
 
-  /// Unregisters current push token from backend (best-effort on logout).
+  /// Unregisters current push token from backend and deletes the local FCM token on logout.
   Future<bool> unregisterCurrentToken() async {
-    if (_currentToken == null) return true;
+    final tokenToUnregister = _currentToken;
+    bool backendSuccess = true;
 
-    try {
-      final tokenToUnregister = _currentToken!;
-      final success = await _pushDeviceRepo.unregisterDevice(fcmToken: tokenToUnregister);
-      _currentToken = null;
-      _isRegisteredWithBackend = false;
-      return success;
-    } catch (e) {
-      _logger.warning('Non-fatal error unregistering device token: $e');
-      return false;
+    if (tokenToUnregister != null) {
+      try {
+        backendSuccess = await _pushDeviceRepo.unregisterDevice(fcmToken: tokenToUnregister);
+      } catch (e) {
+        _logger.warning('Non-fatal error unregistering device token on backend: $e');
+        backendSuccess = false;
+      }
     }
+
+    // Always invalidate local FCM token so logged-out device stops receiving pushes
+    try {
+      final messaging = _messaging;
+      if (messaging != null) {
+        await messaging.deleteToken();
+        _logger.debug('FCM token deleted and invalidated locally.');
+      }
+    } catch (e) {
+      _logger.warning('Non-fatal error deleting FCM token locally: $e');
+    }
+
+    _currentToken = null;
+    _isRegisteredWithBackend = false;
+    return backendSuccess;
   }
 
   /// Handles incoming messages while the app is in the foreground.

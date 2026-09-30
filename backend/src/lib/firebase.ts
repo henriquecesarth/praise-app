@@ -62,7 +62,19 @@ if (getApps().length === 0) {
 
 export const db: Firestore = getFirestore(firebaseApp);
 export const authAdmin: Auth = getAuth(firebaseApp);
-export const messagingAdmin: Messaging = getMessaging(firebaseApp);
+
+let _messagingAdmin: Messaging | null = null;
+export function getMessagingAdmin(): Messaging {
+  if (!_messagingAdmin) {
+    _messagingAdmin = getMessaging(firebaseApp);
+  }
+  return _messagingAdmin;
+}
+export const messagingAdmin: Messaging = new Proxy({} as Messaging, {
+  get(_target, prop) {
+    return (getMessagingAdmin() as any)[prop];
+  }
+});
 
 try {
   db.settings({ ignoreUndefinedProperties: true });

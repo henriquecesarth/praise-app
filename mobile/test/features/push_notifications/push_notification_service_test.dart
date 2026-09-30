@@ -45,6 +45,7 @@ void main() {
       localNotifications: mockLocalNotifications,
       pushDeviceRepo: mockRepo,
       logger: logger,
+      androidSdkVersion: 33,
     );
   });
 
@@ -104,7 +105,26 @@ void main() {
           ));
     });
 
-    test('requestPermission returns true when authorized (Android 13+ / iOS)', () async {
+    test('requestPermission returns true immediately on Android <= 32 without prompting', () async {
+      final serviceLegacy = PushNotificationService(
+        messaging: mockMessaging,
+        localNotifications: mockLocalNotifications,
+        pushDeviceRepo: mockRepo,
+        logger: logger,
+        androidSdkVersion: 31,
+      );
+
+      final granted = await serviceLegacy.requestPermission();
+      expect(granted, isTrue);
+      verifyNever(() => mockMessaging.requestPermission(
+            alert: any(named: 'alert'),
+            badge: any(named: 'badge'),
+            sound: any(named: 'sound'),
+            provisional: any(named: 'provisional'),
+          ));
+    });
+
+    test('requestPermission prompts and returns true when authorized on Android 13+ (API 33+)', () async {
       final mockSettings = MockNotificationSettings();
       when(() => mockSettings.authorizationStatus)
           .thenReturn(AuthorizationStatus.authorized);
@@ -117,9 +137,15 @@ void main() {
 
       final granted = await service.requestPermission();
       expect(granted, isTrue);
+      verify(() => mockMessaging.requestPermission(
+            alert: any(named: 'alert'),
+            badge: any(named: 'badge'),
+            sound: any(named: 'sound'),
+            provisional: any(named: 'provisional'),
+          )).called(1);
     });
 
-    test('requestPermission returns false when denied', () async {
+    test('requestPermission returns false when denied on Android 13+ (API 33+)', () async {
       final mockSettings = MockNotificationSettings();
       when(() => mockSettings.authorizationStatus)
           .thenReturn(AuthorizationStatus.denied);
@@ -134,9 +160,10 @@ void main() {
       expect(granted, isFalse);
     });
 
-    test('unregisterCurrentToken removes token from backend and clears local state', () async {
+    test('unregisterCurrentToken removes token from backend, invalidates FCM token and clears local state', () async {
       when(() => mockMessaging.getToken())
           .thenAnswer((_) async => 'token-to-be-removed');
+      when(() => mockMessaging.deleteToken()).thenAnswer((_) async {});
       when(() => mockRepo.registerDevice(
             fcmToken: any(named: 'fcmToken'),
             platform: any(named: 'platform'),
@@ -153,6 +180,30 @@ void main() {
       expect(service.isRegisteredWithBackend, isFalse);
       verify(() => mockRepo.unregisterDevice(fcmToken: 'token-to-be-removed'))
           .called(1);
+      verify(() => mockMessaging.deleteToken()).called(1);
+    });
+
+    test('unregisterCurrentToken deletes FCM token and clears local state even if backend unregister fails', () async {
+      when(() => mockMessaging.getToken())
+          .thenAnswer((_) async => 'token-to-be-removed');
+      when(() => mockMessaging.deleteToken()).thenAnswer((_) async {});
+      when(() => mockRepo.registerDevice(
+            fcmToken: any(named: 'fcmToken'),
+            platform: any(named: 'platform'),
+          )).thenAnswer((_) async => true);
+      when(() => mockRepo.unregisterDevice(fcmToken: 'token-to-be-removed'))
+          .thenAnswer((_) async => false);
+
+      await service.syncTokenWithBackend();
+      expect(service.currentToken, 'token-to-be-removed');
+
+      final success = await service.unregisterCurrentToken();
+      expect(success, isFalse);
+      expect(service.currentToken, isNull);
+      expect(service.isRegisteredWithBackend, isFalse);
+      verify(() => mockRepo.unregisterDevice(fcmToken: 'token-to-be-removed'))
+          .called(1);
+      verify(() => mockMessaging.deleteToken()).called(1);
     });
 
     test('setNotificationTapHandler receives tapped payloads', () {

@@ -1,8 +1,10 @@
-﻿import crypto from 'crypto';
+import crypto from 'crypto';
 import { db } from '../lib/firebase';
+import { AppError } from '../middleware/error-handler';
 import {
   PushDeviceRecord,
   RegisterPushDeviceInput,
+  isPushDeviceActive,
 } from '../features/push_notifications/push-notifications.types';
 
 export class PushDeviceRepository {
@@ -20,8 +22,8 @@ export class PushDeviceRepository {
 
   /**
    * Idempotently upserts a device registration for a user.
-   * If the token was previously registered by another user (e.g. device handover or relogin),
-   * ownership is safely updated to the current authenticated user.
+   * If the token was previously registered by another user, rejects with 409 PUSH_TOKEN_CONFLICT.
+   * Cross-user token hijacking is forbidden; normal account switching relies on logout token invalidation.
    */
   async upsertDevice(
     userId: string,
@@ -34,9 +36,16 @@ export class PushDeviceRepository {
     const existingSnap = await docRef.get();
     if (existingSnap.exists) {
       const data = existingSnap.data() as PushDeviceRecord;
+      if (data.user_id !== userId) {
+        throw new AppError(
+          409,
+          'Este token FCM já está associado a outro usuário. O usuário anterior deve invalidar o token ao sair.',
+          'PUSH_TOKEN_CONFLICT'
+        );
+      }
+
       const updatedRecord: PushDeviceRecord = {
         ...data,
-        user_id: userId,
         platform: input.platform,
         app_version: input.app_version ?? data.app_version,
         device_model: input.device_model ?? data.device_model,
@@ -95,10 +104,18 @@ export class PushDeviceRepository {
 
   /**
    * Retrieves all registered devices for a specific user.
+   * If onlyActive is true, devices inactive beyond the lease threshold are omitted.
    */
-  async getDevicesByUserId(userId: string): Promise<PushDeviceRecord[]> {
+  async getDevicesByUserId(
+    userId: string,
+    options?: { onlyActive?: boolean; now?: Date }
+  ): Promise<PushDeviceRecord[]> {
     const snap = await this.collection.where('user_id', '==', userId).get();
-    return snap.docs.map((doc) => doc.data() as PushDeviceRecord);
+    const records = snap.docs.map((doc) => doc.data() as PushDeviceRecord);
+    if (options?.onlyActive) {
+      return records.filter((r) => isPushDeviceActive(r, options.now));
+    }
+    return records;
   }
 
   /**

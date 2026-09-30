@@ -73,15 +73,52 @@ describe('Push Notifications Backend Feature Suite', () => {
       );
     });
 
-    it('upsertDevice reassigns ownership when device was previously registered by another user', async () => {
+    it('upsertDevice rejects cross-user token registration with 409 PUSH_TOKEN_CONFLICT', async () => {
       const existingData: PushDeviceRecord = {
         id: 'dev_123',
-        user_id: 'user-old',
+        user_id: 'user-original-owner',
         fcm_token: 'shared-fcm-token',
         platform: 'android',
         created_at: '2026-09-01T10:00:00Z',
         updated_at: '2026-09-01T10:00:00Z',
         last_seen_at: '2026-09-01T10:00:00Z',
+      };
+
+      const mockSet = vi.fn();
+      const mockGet = vi.fn().mockResolvedValue({
+        exists: true,
+        data: () => existingData,
+      });
+
+      (repo as any).collection = {
+        doc: vi.fn().mockReturnValue({
+          get: mockGet,
+          set: mockSet,
+        }),
+      };
+
+      await expect(
+        repo.upsertDevice('user-attacker', {
+          fcm_token: 'shared-fcm-token',
+          platform: 'android',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        details: 'PUSH_TOKEN_CONFLICT',
+      });
+
+      expect(mockSet).not.toHaveBeenCalled();
+    });
+
+    it('upsertDevice updates last_seen_at and metadata when token is re-registered by same user', async () => {
+      const existingData: PushDeviceRecord = {
+        id: 'dev_123',
+        user_id: 'user-owner',
+        fcm_token: 'my-fcm-token',
+        platform: 'android',
+        created_at: '2026-08-01T10:00:00Z',
+        updated_at: '2026-08-01T10:00:00Z',
+        last_seen_at: '2026-08-01T10:00:00Z',
       };
 
       const mockSet = vi.fn().mockResolvedValue(undefined);
@@ -97,16 +134,18 @@ describe('Push Notifications Backend Feature Suite', () => {
         }),
       };
 
-      const result = await repo.upsertDevice('user-new', {
-        fcm_token: 'shared-fcm-token',
+      const result = await repo.upsertDevice('user-owner', {
+        fcm_token: 'my-fcm-token',
         platform: 'android',
+        app_version: '1.2.0',
       });
 
-      expect(result.user_id).toBe('user-new');
-      expect(result.created_at).toBe('2026-09-01T10:00:00Z');
+      expect(result.user_id).toBe('user-owner');
+      expect(result.created_at).toBe('2026-08-01T10:00:00Z');
       expect(mockSet).toHaveBeenCalledWith(
         expect.objectContaining({
-          user_id: 'user-new',
+          user_id: 'user-owner',
+          app_version: '1.2.0',
         }),
         { merge: true }
       );
@@ -157,10 +196,25 @@ describe('Push Notifications Backend Feature Suite', () => {
       expect(mockDelete).toHaveBeenCalled();
     });
 
-    it('getDevicesByUserId queries push_devices filtered by user_id', async () => {
+    it('getDevicesByUserId queries push_devices filtered by user_id and can filter active lease', async () => {
+      const now = new Date('2026-09-30T12:00:00Z');
       const mockDocs = [
-        { data: () => ({ id: 'd1', user_id: 'user-1', fcm_token: 't1' }) },
-        { data: () => ({ id: 'd2', user_id: 'user-1', fcm_token: 't2' }) },
+        {
+          data: () => ({
+            id: 'd1',
+            user_id: 'user-1',
+            fcm_token: 't1',
+            last_seen_at: '2026-09-29T12:00:00Z',
+          }),
+        },
+        {
+          data: () => ({
+            id: 'd2',
+            user_id: 'user-1',
+            fcm_token: 't2',
+            last_seen_at: '2026-06-01T12:00:00Z', // stale (> 60 days)
+          }),
+        },
       ];
 
       (repo as any).collection = {
@@ -169,9 +223,12 @@ describe('Push Notifications Backend Feature Suite', () => {
         }),
       };
 
-      const devices = await repo.getDevicesByUserId('user-1');
-      expect(devices).toHaveLength(2);
-      expect(devices[0].fcm_token).toBe('t1');
+      const allDevices = await repo.getDevicesByUserId('user-1');
+      expect(allDevices).toHaveLength(2);
+
+      const activeDevices = await repo.getDevicesByUserId('user-1', { onlyActive: true, now });
+      expect(activeDevices).toHaveLength(1);
+      expect(activeDevices[0].fcm_token).toBe('t1');
     });
   });
 
@@ -230,7 +287,7 @@ describe('Push Notifications Backend Feature Suite', () => {
       );
     });
 
-    it('unregisterDevice rejects missing token with 400', async () => {
+    it('unregisterDevice rejects missing body token with 400', async () => {
       const req: any = {
         user: { id: 'auth-user-id' },
         params: {},
@@ -249,8 +306,7 @@ describe('Push Notifications Backend Feature Suite', () => {
     it('unregisterDevice returns 404 when device not found or belongs to another user', async () => {
       const req: any = {
         user: { id: 'auth-user-id' },
-        params: { token: 'victim-token' },
-        body: {},
+        body: { fcm_token: 'victim-token' },
       };
       const res: any = { status: vi.fn().mockReturnThis(), json: vi.fn() };
       const next = vi.fn();
@@ -267,11 +323,10 @@ describe('Push Notifications Backend Feature Suite', () => {
       );
     });
 
-    it('unregisterDevice unregisters successfully via params or body', async () => {
+    it('unregisterDevice unregisters successfully via body token (fcmToken or fcm_token)', async () => {
       const req: any = {
         user: { id: 'auth-user-id' },
-        params: { token: 'my-token' },
-        body: {},
+        body: { fcmToken: 'my-token' },
       };
       const res: any = { status: vi.fn().mockReturnThis(), json: vi.fn() };
       const next = vi.fn();
@@ -288,7 +343,7 @@ describe('Push Notifications Backend Feature Suite', () => {
     });
   });
 
-  describe('3. PushNotificationService Multicast & Dead Token Pruning', () => {
+  describe('3. PushNotificationService Multicast Chunking & Dead Token Pruning', () => {
     let service: PushNotificationService;
     let mockRepo: PushDeviceRepository;
     let mockMessaging: any;
@@ -315,7 +370,7 @@ describe('Push Notifications Backend Feature Suite', () => {
       expect(mockMessaging.sendEachForMulticast).not.toHaveBeenCalled();
     });
 
-    it('sends multicast notification to all user devices successfully', async () => {
+    it('sends multicast notification to active user devices successfully', async () => {
       const devices: PushDeviceRecord[] = [
         {
           id: 'dev-1',
@@ -324,7 +379,7 @@ describe('Push Notifications Backend Feature Suite', () => {
           platform: 'android',
           created_at: '',
           updated_at: '',
-          last_seen_at: '',
+          last_seen_at: new Date().toISOString(),
         },
         {
           id: 'dev-2',
@@ -333,7 +388,7 @@ describe('Push Notifications Backend Feature Suite', () => {
           platform: 'android',
           created_at: '',
           updated_at: '',
-          last_seen_at: '',
+          last_seen_at: new Date().toISOString(),
         },
       ];
 
@@ -359,6 +414,44 @@ describe('Push Notifications Backend Feature Suite', () => {
       });
     });
 
+    it('chunks multicast sends when total devices exceed 500 chunk limit', async () => {
+      const devices: PushDeviceRecord[] = [];
+      for (let i = 0; i < 505; i++) {
+        devices.push({
+          id: `dev-${i}`,
+          user_id: 'user-popular',
+          fcm_token: `token-${i}`,
+          platform: 'android',
+          created_at: '',
+          updated_at: '',
+          last_seen_at: new Date().toISOString(),
+        });
+      }
+
+      vi.spyOn(mockRepo, 'getDevicesByUserId').mockResolvedValue(devices);
+
+      mockMessaging.sendEachForMulticast
+        .mockResolvedValueOnce({
+          responses: new Array(500).fill({ success: true }),
+        })
+        .mockResolvedValueOnce({
+          responses: new Array(5).fill({ success: true }),
+        });
+
+      const result = await service.sendToUser('user-popular', {
+        title: 'Anúncio Geral',
+        body: 'Muitos dispositivos',
+        data: { type: 'announcement' },
+      });
+
+      expect(result.totalDevices).toBe(505);
+      expect(result.successCount).toBe(505);
+      expect(result.failureCount).toBe(0);
+      expect(mockMessaging.sendEachForMulticast).toHaveBeenCalledTimes(2);
+      expect(mockMessaging.sendEachForMulticast.mock.calls[0][0].tokens).toHaveLength(500);
+      expect(mockMessaging.sendEachForMulticast.mock.calls[1][0].tokens).toHaveLength(5);
+    });
+
     it('automatically prunes invalid/unregistered FCM tokens when provider reports registration error', async () => {
       const devices: PushDeviceRecord[] = [
         {
@@ -368,7 +461,7 @@ describe('Push Notifications Backend Feature Suite', () => {
           platform: 'android',
           created_at: '',
           updated_at: '',
-          last_seen_at: '',
+          last_seen_at: new Date().toISOString(),
         },
         {
           id: 'dev-stale',
@@ -377,7 +470,7 @@ describe('Push Notifications Backend Feature Suite', () => {
           platform: 'android',
           created_at: '',
           updated_at: '',
-          last_seen_at: '',
+          last_seen_at: new Date().toISOString(),
         },
       ];
 
@@ -405,6 +498,44 @@ describe('Push Notifications Backend Feature Suite', () => {
       expect(result.failureCount).toBe(1);
       expect(result.invalidTokensRemoved).toBe(1);
       expect(deleteByIdSpy).toHaveBeenCalledWith('dev-stale');
+    });
+
+    it('does NOT prune tokens on transient FCM errors', async () => {
+      const devices: PushDeviceRecord[] = [
+        {
+          id: 'dev-transient',
+          user_id: 'user-1',
+          fcm_token: 'token-transient',
+          platform: 'android',
+          created_at: '',
+          updated_at: '',
+          last_seen_at: new Date().toISOString(),
+        },
+      ];
+
+      vi.spyOn(mockRepo, 'getDevicesByUserId').mockResolvedValue(devices);
+      const deleteByIdSpy = vi.spyOn(mockRepo, 'deleteDeviceById');
+
+      mockMessaging.sendEachForMulticast.mockResolvedValue({
+        responses: [
+          {
+            success: false,
+            error: { code: 'messaging/server-unavailable' },
+          },
+        ],
+      });
+
+      const result = await service.sendToUser('user-1', {
+        title: 'Alerta',
+        body: 'Teste',
+        data: { type: 'announcement' },
+      });
+
+      expect(result.totalDevices).toBe(1);
+      expect(result.successCount).toBe(0);
+      expect(result.failureCount).toBe(1);
+      expect(result.invalidTokensRemoved).toBe(0);
+      expect(deleteByIdSpy).not.toHaveBeenCalled();
     });
 
     it('handles unexpected messaging client exceptions without corrupting registrations', async () => {

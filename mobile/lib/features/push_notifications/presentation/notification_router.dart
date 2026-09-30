@@ -36,16 +36,22 @@ class NotificationRouter {
   }
 
   /// Handles an incoming notification tap payload.
-  void handlePayload(PushNotificationPayload payload, [BuildContext? context]) {
+  Future<void> handlePayload(PushNotificationPayload payload, [BuildContext? context]) async {
     final ctx = context ?? navigatorKey.currentContext;
     _logger.debug('NotificationRouter handling payload: $payload');
 
     final authState = _ref.read(authNotifierProvider);
 
-    // 1. Session verification: If not authenticated, store as pending intent.
+    // 1. Session verification: If not authenticated, store sanitized routing payload pending login.
     if (!authState.isAuthenticated) {
       _logger.debug('User unauthenticated; holding notification payload pending login.');
-      _pendingPayload = payload;
+      // Persist ONLY safe routing fields; discard title, body, and raw business content
+      _pendingPayload = PushNotificationPayload(
+        type: payload.type,
+        ministryId: payload.ministryId,
+        resourceId: payload.resourceId,
+        notificationId: payload.notificationId,
+      );
       return;
     }
 
@@ -79,23 +85,37 @@ class NotificationRouter {
           return;
         }
 
-        // Switch to target ministry cleanly (this resets other feature caches via AppShell listener)
+        // Switch to target ministry cleanly and AWAIT convergence
         _logger.debug('Switching ministry context to: ${targetMinistry.name}');
-        _ref
+        await _ref
             .read(ministryContextNotifierProvider.notifier)
             .selectMinistry(targetMinistry);
+
+        // Confirm selected/current ministry is correct before navigating
+        final updatedMinistryState = _ref.read(ministryContextNotifierProvider);
+        if (updatedMinistryState.selectedMinistry?.id != payload.ministryId) {
+          _logger.warning(
+            'Ministry context failed to converge to ${payload.ministryId}. Halting navigation to prevent stale render.',
+          );
+          return;
+        }
       }
     }
 
-    // 3. Resource navigation
-    _navigateToTargetResource(payload, ctx);
+    // 3. Resource navigation with confirmed tenant context
+    final targetContext = navigatorKey.currentContext;
+    if (targetContext == null || !targetContext.mounted) {
+      _logger.warning('Cannot navigate: context is null or unmounted.');
+      return;
+    }
+    _navigateToTargetResource(payload, targetContext);
   }
 
   void _navigateToTargetResource(
     PushNotificationPayload payload,
-    BuildContext? context,
+    BuildContext context,
   ) {
-    if (context == null || !context.mounted) {
+    if (!context.mounted) {
       _logger.warning('Cannot navigate: context is null or unmounted.');
       return;
     }
@@ -144,7 +164,7 @@ class NotificationRouter {
   }
 
   /// Dispatches any pending notification payload held before login/bootstrap.
-  void dispatchPendingIfReady([BuildContext? context]) {
+  Future<void> dispatchPendingIfReady([BuildContext? context]) async {
     if (_pendingPayload == null) return;
 
     final authState = _ref.read(authNotifierProvider);
@@ -154,7 +174,7 @@ class NotificationRouter {
       _logger.debug('Dispatching pending notification payload after authentication: $_pendingPayload');
       final payload = _pendingPayload!;
       _pendingPayload = null;
-      handlePayload(payload, context);
+      await handlePayload(payload, context);
     }
   }
 }

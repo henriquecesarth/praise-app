@@ -86,11 +86,21 @@ void main() {
         type: PushNotificationType.schedule,
         ministryId: 'min-1',
         resourceId: 'sch-100',
+        notificationId: 'notif-1',
+        title: 'Sensitive Title',
+        body: 'Sensitive Body',
+        rawData: {'secret': 'token-or-key'},
       );
 
-      router.handlePayload(payload);
+      await router.handlePayload(payload);
 
-      expect(router.pendingPayload, equals(payload));
+      expect(router.pendingPayload?.title, isNull);
+      expect(router.pendingPayload?.body, isNull);
+      expect(router.pendingPayload?.rawData, isEmpty);
+      expect(router.pendingPayload?.type, PushNotificationType.schedule);
+      expect(router.pendingPayload?.ministryId, 'min-1');
+      expect(router.pendingPayload?.resourceId, 'sch-100');
+      expect(router.pendingPayload?.notificationId, 'notif-1');
       expect(find.text('Home'), findsOneWidget);
       expect(find.byType(ScheduleDetailView), findsNothing);
     });
@@ -145,7 +155,7 @@ void main() {
         resourceId: 'sch-999',
       );
 
-      router.handlePayload(payload);
+      await router.handlePayload(payload);
       await tester.pumpAndSettle();
 
       expect(
@@ -205,7 +215,7 @@ void main() {
         ministryId: 'min-2',
       );
 
-      router.handlePayload(payload);
+      await router.handlePayload(payload);
       await tester.pumpAndSettle();
 
       expect(ministryNotifier.state.selectedMinistry?.id, 'min-2');
@@ -253,8 +263,9 @@ void main() {
         type: PushNotificationType.announcement,
         ministryId: 'min-1',
       );
-      router.handlePayload(payload);
-      expect(router.pendingPayload, equals(payload));
+      await router.handlePayload(payload);
+      expect(router.pendingPayload?.type, equals(payload.type));
+      expect(router.pendingPayload?.ministryId, equals(payload.ministryId));
 
       // User logs in and bootstrap completes
       authNotifier.state = const AuthState.authenticated(user);
@@ -264,7 +275,7 @@ void main() {
         selectedMinistry: ministry1,
       );
 
-      router.dispatchPendingIfReady();
+      await router.dispatchPendingIfReady();
       await tester.pumpAndSettle();
 
       expect(router.pendingPayload, isNull);

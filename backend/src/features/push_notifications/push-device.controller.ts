@@ -48,12 +48,7 @@ export class PushDeviceController {
         throw new AppError(401, 'Autenticação necessária.');
       }
 
-      const rawParam = req.params.token;
-      const paramToken = Array.isArray(rawParam) ? rawParam[0] : rawParam;
-      const rawToken =
-        (paramToken && decodeURIComponent(paramToken)) ||
-        req.body?.fcm_token ||
-        req.body?.token;
+      const rawToken = req.body?.fcmToken || req.body?.fcm_token;
 
       if (!rawToken || typeof rawToken !== 'string' || !rawToken.trim()) {
         throw new AppError(400, 'Token FCM não informado.');
@@ -62,7 +57,7 @@ export class PushDeviceController {
 
       const deleted = await this.pushDeviceRepo.deleteDeviceByToken(
         userId,
-        token.trim()
+        token
       );
 
       if (!deleted) {
