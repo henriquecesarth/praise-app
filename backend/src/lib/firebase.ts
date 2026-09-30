@@ -1,6 +1,7 @@
 import { initializeApp, cert, getApps, App } from 'firebase-admin/app';
 import { getFirestore, Firestore } from 'firebase-admin/firestore';
 import { getAuth, Auth } from 'firebase-admin/auth';
+import { getMessaging, Messaging } from 'firebase-admin/messaging';
 import { config } from '../config/unifiedConfig';
 
 export function assertTestIsolationGuard(options?: {
@@ -61,6 +62,7 @@ if (getApps().length === 0) {
 
 export const db: Firestore = getFirestore(firebaseApp);
 export const authAdmin: Auth = getAuth(firebaseApp);
+export const messagingAdmin: Messaging = getMessaging(firebaseApp);
 
 try {
   db.settings({ ignoreUndefinedProperties: true });

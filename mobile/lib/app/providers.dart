@@ -15,8 +15,10 @@ import 'router/app_router.dart';
 import '../features/schedules/presentation/controllers/schedule_providers.dart';
 import '../features/repertoire/presentation/controllers/repertoire_providers.dart';
 import '../features/availability/presentation/controllers/availability_providers.dart';
+import '../features/push_notifications/presentation/controllers/push_notification_providers.dart';
 export '../features/schedules/presentation/controllers/schedule_providers.dart';
 export '../features/repertoire/presentation/controllers/repertoire_providers.dart';
+export '../features/push_notifications/presentation/controllers/push_notification_providers.dart';
 
 /// Clears all authenticated feature caches from memory upon logout or user change.
 /// Accepts either [Ref] or [ProviderContainer].
@@ -50,8 +52,12 @@ final preferencesStorageProvider = Provider<PreferencesStorage>((ref) {
 });
 
 /// Provider for the FirebaseAuth instance.
-final firebaseAuthProvider = Provider<FirebaseAuth>((ref) {
-  return FirebaseAuth.instance;
+final firebaseAuthProvider = Provider<FirebaseAuth?>((ref) {
+  try {
+    return FirebaseAuth.instance;
+  } catch (_) {
+    return null;
+  }
 });
 
 /// Provider for the central HTTP API client.
@@ -64,12 +70,15 @@ final apiClientProvider = Provider<ApiClient>((ref) {
     environment: environment,
     logger: logger,
     tokenProvider: ({bool forceRefresh = false}) async {
+      if (auth == null) return null;
       final user = auth.currentUser;
       if (user == null) return null;
       return user.getIdToken(forceRefresh);
     },
     onAuthenticationFailed: () async {
-      await auth.signOut();
+      if (auth != null) {
+        await auth.signOut();
+      }
       final preferences = ref.read(preferencesStorageProvider);
       await preferences.clear();
       resetAuthenticatedFeatures(ref);
@@ -79,8 +88,12 @@ final apiClientProvider = Provider<ApiClient>((ref) {
 
 /// Provider for the authentication repository.
 final authRepositoryProvider = Provider<AuthRepository>((ref) {
+  final auth = ref.watch(firebaseAuthProvider);
+  if (auth == null) {
+    throw StateError('FirebaseAuth is not initialized');
+  }
   return FirebaseAuthRepository(
-    firebaseAuth: ref.watch(firebaseAuthProvider),
+    firebaseAuth: auth,
     apiClient: ref.watch(apiClientProvider),
     preferencesStorage: ref.watch(preferencesStorageProvider),
   );
@@ -89,7 +102,14 @@ final authRepositoryProvider = Provider<AuthRepository>((ref) {
 /// Provider for the authentication state notifier.
 final authNotifierProvider =
     StateNotifierProvider<AuthNotifier, AuthState>((ref) {
-  return AuthNotifier(ref.watch(authRepositoryProvider));
+  return AuthNotifier(
+    ref.watch(authRepositoryProvider),
+    onBeforeSignOut: () async {
+      try {
+        await ref.read(pushNotificationNotifierProvider.notifier).unregisterOnLogout();
+      } catch (_) {}
+    },
+  );
 });
 
 /// Provider for the ministry repository.

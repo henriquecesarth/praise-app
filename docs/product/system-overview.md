@@ -197,6 +197,18 @@ Funções musicais como Ministro, Vocalista, Violão e Bateria são classificaç
 - touch targets acessíveis com altura mínima de 44px (`min-h-[44px]`);
 - proteção total contra concorrência e alternância de ministério/organização com fencing de geração (`generationRef`), guardas de tenant (`organizationIdRef`, `ministryIdRef`), prevenção de duplo clique in-flight (`inFlightCursorRef`), descarte de respostas assíncronas obsoletas e fechamento de modais abertos (Phase 7E-F3-R1).
 
+### Push Notifications Foundation (Mobile V1.1 / M10A)
+
+- infraestrutura de notificações push para o aplicativo mobile Android baseada em Firebase Cloud Messaging (FCM);
+- registro centralizado de dispositivos no backend na coleção `push_devices` com chave determinística `dev_${sha256(token)}`, suporte a múltiplos dispositivos por usuário e auditoria de timestamp/versão sem expor identificadores invasivos de hardware;
+- endpoints autenticados `POST /api/v1/auth/push-devices` e `DELETE /api/v1/auth/push-devices/:token` com derivação estrita do `user_id` a partir da sessão e proteção anti-IDOR;
+- ciclo de vida não-bloqueante no mobile: falha na sincronização ou rede não impede inicialização do app;
+- suporte a Android 13+ (solicitação de permissão em tempo de execução) e compatibilidade com Android <= 12 sem interrupção;
+- desregistro best-effort do token durante o logout antes da destruição do estado local;
+- tratamento de mensagens em primeiro plano via notificações locais heads-up sem sequestro forçado de navegação;
+- contrato tipado de payload com roteamento seguro e blindado contra acessos cross-tenant, permitindo links profundos pendentes em caso de sessão deslogada;
+- painel diagnóstico técnico não-produtivo para validação de status, sincronização manual e inspeção de token sanitizado.
+
 ### PWA
 
 

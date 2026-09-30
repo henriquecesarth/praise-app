@@ -85,9 +85,14 @@ class AuthState {
 
 class AuthNotifier extends StateNotifier<AuthState> {
   final AuthRepository _repository;
+  final Future<void> Function()? _onBeforeSignOut;
   StreamSubscription<User?>? _authSubscription;
 
-  AuthNotifier(this._repository) : super(const AuthState.initializing()) {
+  AuthNotifier(
+    this._repository, {
+    Future<void> Function()? onBeforeSignOut,
+  })  : _onBeforeSignOut = onBeforeSignOut,
+        super(const AuthState.initializing()) {
     _init();
   }
 
@@ -170,6 +175,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   Future<void> logout() async {
+    if (_onBeforeSignOut != null) {
+      try {
+        await _onBeforeSignOut();
+      } catch (_) {
+        // Non-fatal: push cleanup error must never trap user in session
+      }
+    }
     try {
       await _repository.signOut();
       state = const AuthState.unauthenticated();

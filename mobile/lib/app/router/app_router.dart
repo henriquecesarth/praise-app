@@ -11,8 +11,10 @@ import '../shell/app_shell.dart';
 
 GoRouter createRouter(Ref ref) {
   final refreshNotifier = _RouterRefreshNotifier(ref);
+  final rootNavKey = ref.watch(rootNavigatorKeyProvider);
 
   return GoRouter(
+    navigatorKey: rootNavKey,
     initialLocation: '/',
     refreshListenable: refreshNotifier,
     redirect: (BuildContext context, GoRouterState state) {
@@ -170,11 +172,20 @@ class _RouterRefreshNotifier extends ChangeNotifier {
         ref.read(ministryContextNotifierProvider.notifier).bootstrap();
       } else if (next.isUnauthenticated) {
         resetAuthenticatedFeatures(ref);
+        ref.read(notificationRouterProvider).clearPendingPayload();
       }
       notifyListeners();
     });
 
-    ref.listen<MinistryContextState>(ministryContextNotifierProvider, (_, __) {
+    ref.listen<MinistryContextState>(ministryContextNotifierProvider, (previous, next) {
+      if (next.isReady) {
+        // Trigger push notification sync upon authenticated bootstrap
+        try {
+          ref.read(pushNotificationNotifierProvider.notifier).initializeAndSync();
+          // Dispatch any pending notification intent
+          ref.read(notificationRouterProvider).dispatchPendingIfReady();
+        } catch (_) {}
+      }
       notifyListeners();
     });
 
@@ -184,6 +195,13 @@ class _RouterRefreshNotifier extends ChangeNotifier {
     if (auth.isAuthenticated && ministry.isInitializing) {
       Future.microtask(() {
         ref.read(ministryContextNotifierProvider.notifier).bootstrap();
+      });
+    } else if (auth.isAuthenticated && ministry.isReady) {
+      Future.microtask(() {
+        try {
+          ref.read(pushNotificationNotifierProvider.notifier).initializeAndSync();
+          ref.read(notificationRouterProvider).dispatchPendingIfReady();
+        } catch (_) {}
       });
     }
   }

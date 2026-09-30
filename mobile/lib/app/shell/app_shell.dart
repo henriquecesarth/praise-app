@@ -23,10 +23,9 @@ class AppShell extends ConsumerStatefulWidget {
 }
 
 class _AppShellState extends ConsumerState<AppShell> {
-  int _currentIndex = 0;
-
   @override
   Widget build(BuildContext context) {
+    final currentIndex = ref.watch(appShellTabProvider);
     // Invalidate all ministry-scoped feature states on ministry switch
     ref.listen<MinistryContextState>(ministryContextNotifierProvider,
         (previous, next) {
@@ -107,7 +106,8 @@ class _AppShellState extends ConsumerState<AppShell> {
       DashboardView(
         selectedMinistry: selectedMinistry,
         hasMultipleMinistries: availableMinistries.length > 1,
-        onNavigateToTab: (index) => setState(() => _currentIndex = index),
+        onNavigateToTab: (index) =>
+            ref.read(appShellTabProvider.notifier).state = index,
       ),
       SchedulesView(ministryId: selectedMinistry?.id),
       RepertoireView(ministryId: selectedMinistry?.id),
@@ -214,9 +214,9 @@ class _AppShellState extends ConsumerState<AppShell> {
         body: Row(
           children: [
             NavigationRail(
-              selectedIndex: _currentIndex,
+              selectedIndex: currentIndex,
               onDestinationSelected: (index) {
-                setState(() => _currentIndex = index);
+                ref.read(appShellTabProvider.notifier).state = index;
               },
               labelType: NavigationRailLabelType.all,
               destinations: const [
@@ -244,7 +244,7 @@ class _AppShellState extends ConsumerState<AppShell> {
             ),
             const VerticalDivider(thickness: 1, width: 1),
             Expanded(
-              child: views[_currentIndex],
+              child: views[currentIndex],
             ),
           ],
         ),
@@ -254,11 +254,11 @@ class _AppShellState extends ConsumerState<AppShell> {
     // Phone layout: Body + Bottom NavigationBar
     return Scaffold(
       appBar: appBar,
-      body: views[_currentIndex],
+      body: views[currentIndex],
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
+        selectedIndex: currentIndex,
         onDestinationSelected: (index) {
-          setState(() => _currentIndex = index);
+          ref.read(appShellTabProvider.notifier).state = index;
         },
         destinations: const [
           NavigationDestination(
@@ -303,6 +303,7 @@ class _ProfileView extends ConsumerWidget {
     final authState = ref.watch(authNotifierProvider);
     final user = authState.user;
     final environment = ref.watch(appEnvironmentProvider);
+    final pushState = ref.watch(pushNotificationNotifierProvider);
 
     return SafeArea(
       child: ListView(
@@ -531,17 +532,82 @@ class _ProfileView extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'UID: ',
+                        'UID: ${user?.id ?? "N/A"}',
                         style: theme.textTheme.bodySmall?.copyWith(
                           fontFamily: 'monospace',
                         ),
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'API: ',
+                        'API: ${environment.apiBaseUrl}',
                         style: theme.textTheme.bodySmall?.copyWith(
                           fontFamily: 'monospace',
                         ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Push Token: ${pushState.token != null ? (pushState.token!.length > 12 ? "${pushState.token!.substring(0, 6)}...${pushState.token!.substring(pushState.token!.length - 4)}" : "***") : "Nenhum"}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Push Backend: ${pushState.isRegisteredWithBackend ? "Registrado" : "Não registrado"}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Push Permissão: ${pushState.isPermissionGranted ? "Concedida" : "Não concedida"}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          OutlinedButton(
+                            onPressed: pushState.isLoading
+                                ? null
+                                : () async {
+                                    final granted = await ref
+                                        .read(pushNotificationNotifierProvider.notifier)
+                                        .requestPermission();
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text(granted
+                                              ? 'Permissão concedida!'
+                                              : 'Permissão negada.'),
+                                          duration: const Duration(seconds: 2),
+                                        ),
+                                      );
+                                    }
+                                  },
+                            child: const Text('Pedir Permissão'),
+                          ),
+                          OutlinedButton(
+                            onPressed: pushState.isLoading
+                                ? null
+                                : () async {
+                                    await ref
+                                        .read(pushNotificationNotifierProvider.notifier)
+                                        .initializeAndSync();
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Token sincronizado com backend.'),
+                                          duration: Duration(seconds: 2),
+                                        ),
+                                      );
+                                    }
+                                  },
+                            child: const Text('Sincronizar Token'),
+                          ),
+                        ],
                       ),
                     ],
                   ),
