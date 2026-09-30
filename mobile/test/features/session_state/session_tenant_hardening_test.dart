@@ -36,6 +36,11 @@ import 'package:louvaio_mobile/features/schedules/domain/schedule.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule_comment.dart';
 import 'package:louvaio_mobile/features/schedules/presentation/controllers/schedule_detail_controller.dart';
 import 'package:louvaio_mobile/features/schedules/presentation/controllers/schedule_list_controller.dart';
+import 'package:louvaio_mobile/features/notifications/data/notification_repository.dart';
+import 'package:louvaio_mobile/features/notifications/domain/user_notification.dart';
+import 'package:louvaio_mobile/features/notifications/presentation/controllers/notification_controller.dart';
+import 'package:louvaio_mobile/features/notifications/presentation/controllers/notification_providers.dart';
+import 'package:louvaio_mobile/features/push_notifications/domain/push_notification_payload.dart';
 
 MemberAvailability createDummyAvailability({
   required String id,
@@ -206,6 +211,36 @@ class FakeMinistryRepo implements MinistryRepository {
 
   @override
   Future<List<Ministry>> getMyMinistries() async => ministries;
+}
+
+class FakeNotificationRepo implements NotificationRepository {
+  Future<NotificationPageResult> Function({int limit, String? cursor})?
+      getNotificationsHandler;
+  Future<int> Function()? getUnreadCountHandler;
+
+  @override
+  Future<NotificationPageResult> getNotifications({
+    int limit = 20,
+    String? cursor,
+  }) async {
+    if (getNotificationsHandler != null) {
+      return getNotificationsHandler!(limit: limit, cursor: cursor);
+    }
+    return const NotificationPageResult(items: []);
+  }
+
+  @override
+  Future<int> getUnreadCount() async {
+    if (getUnreadCountHandler != null) return getUnreadCountHandler!();
+    return 0;
+  }
+
+  @override
+  Future<UserNotification> markAsRead(String notificationId) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<int> markAllAsRead() async => 0;
 }
 
 class FakeAuthRepo implements AuthRepository {
@@ -599,6 +634,8 @@ void main() {
           availabilityRepositoryProvider
               .overrideWithValue(FakeAvailabilityRepo()),
           repertoireRepositoryProvider.overrideWithValue(FakeRepertoireRepo()),
+          notificationRepositoryProvider
+              .overrideWithValue(FakeNotificationRepo()),
         ],
       );
       addTearDown(container.dispose);
@@ -654,6 +691,31 @@ void main() {
         ],
       );
 
+      container.read(unreadNotificationCountProvider.notifier).state = 4;
+      container.read(notificationListProvider.notifier).state =
+          NotificationListState(
+        items: [
+          UserNotification(
+            id: 'n1',
+            userId: 'u1',
+            ministryId: 'min_a',
+            type: UserNotificationType.scheduleAssigned,
+            resourceId: 's1',
+            title: 'Notif 1',
+            body: 'Body 1',
+            createdAt: DateTime.now(),
+          ),
+        ],
+        nextCursor: 'cursor_123',
+      );
+      container.read(notificationRouterProvider).handlePayload(
+        const PushNotificationPayload(
+          type: PushNotificationType.schedule,
+          ministryId: 'min_a',
+          resourceId: 's1',
+        ),
+      );
+
       // Verify states are populated
       expect(container.read(dashboardNotifierProvider).schedules, isNotEmpty);
       expect(
@@ -661,6 +723,11 @@ void main() {
       expect(
           container.read(availabilityListNotifierProvider).items, isNotEmpty);
       expect(container.read(repertoireListNotifierProvider).songs, isNotEmpty);
+      expect(container.read(unreadNotificationCountProvider), 4);
+      expect(container.read(notificationListProvider).items, isNotEmpty);
+      expect(container.read(notificationListProvider).nextCursor, 'cursor_123');
+      expect(
+          container.read(notificationRouterProvider).pendingPayload, isNotNull);
 
       // Execute logout cleanup
       resetAuthenticatedFeatures(container);
@@ -675,6 +742,83 @@ void main() {
       expect(container.read(availabilityListNotifierProvider).items, isEmpty);
       expect(container.read(repertoireListNotifierProvider).ministryId, isNull);
       expect(container.read(repertoireListNotifierProvider).songs, isEmpty);
+      expect(container.read(unreadNotificationCountProvider), 0);
+      expect(container.read(notificationListProvider).items, isEmpty);
+      expect(container.read(notificationListProvider).nextCursor, isNull);
+      expect(
+          container.read(notificationRouterProvider).pendingPayload, isNull);
+    });
+
+    test('User A logout -> User B login -> notification state is completely isolated',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final storage = SharedPreferencesStorage(prefs);
+
+      const userA =
+          AuthUser(id: 'user_a', email: 'a@louvaio.com', name: 'User Alpha');
+      const userB =
+          AuthUser(id: 'user_b', email: 'b@louvaio.com', name: 'User Beta');
+
+      final authRepo = FakeAuthRepo(userToReturn: userA);
+      final notificationRepo = FakeNotificationRepo();
+
+      final notifA = UserNotification(
+        id: 'n_a',
+        userId: 'user_a',
+        ministryId: 'min_a',
+        type: UserNotificationType.scheduleAssigned,
+        resourceId: 's_a',
+        title: 'Escala User Alpha',
+        body: 'Você foi escalado(a)',
+        createdAt: DateTime.now(),
+      );
+
+      final container = ProviderContainer(
+        overrides: [
+          preferencesStorageProvider.overrideWithValue(storage),
+          authRepositoryProvider.overrideWithValue(authRepo),
+          notificationRepositoryProvider.overrideWithValue(notificationRepo),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      // 1. User A is active and has notifications + unread count
+      container.read(authNotifierProvider.notifier).state =
+          const AuthState.authenticated(userA);
+      container.read(unreadNotificationCountProvider.notifier).state = 3;
+      container.read(notificationListProvider.notifier).state =
+          NotificationListState(
+        items: [notifA],
+        nextCursor: 'cursor_user_a',
+      );
+
+      expect(container.read(unreadNotificationCountProvider), 3);
+      expect(container.read(notificationListProvider).items.first.title,
+          'Escala User Alpha');
+      expect(
+          container.read(notificationListProvider).nextCursor, 'cursor_user_a');
+
+      // 2. User A logs out
+      resetAuthenticatedFeatures(container);
+      await container.read(authNotifierProvider.notifier).logout();
+
+      // State is immediately cleared
+      expect(container.read(unreadNotificationCountProvider), 0);
+      expect(container.read(notificationListProvider).items, isEmpty);
+      expect(container.read(notificationListProvider).nextCursor, isNull);
+
+      // 3. User B logs in
+      authRepo.userToReturn = userB;
+      container.read(authNotifierProvider.notifier).state =
+          const AuthState.authenticated(userB);
+
+      // User B sees clean state with zero trace of User A
+      expect(container.read(unreadNotificationCountProvider), 0);
+      expect(container.read(notificationListProvider).items, isEmpty);
+      expect(container.read(notificationListProvider).nextCursor, isNull);
+      expect(
+          container.read(notificationRouterProvider).pendingPayload, isNull);
     });
 
     test('User A logout -> User B login -> no User A data reused', () async {

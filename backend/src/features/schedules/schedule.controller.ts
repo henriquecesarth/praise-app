@@ -112,7 +112,8 @@ export class ScheduleController extends BaseController {
       const ministryId = (req.params.groupId || req.params.ministryId) as string;
       const scheduleId = req.params.scheduleId as string;
       const userId = req.user!.id;
-      const userName = (req.user as any)?.name || req.user!.email || 'Usuário';
+      const rawName = ((req.user as any)?.name || (req.user as any)?.displayName || '').trim();
+      const userName = rawName && !rawName.includes('@') ? rawName : 'Um integrante';
 
       const comment = await this.scheduleService.addScheduleComment(
         ministryId,

@@ -16,6 +16,7 @@ import '../features/schedules/presentation/controllers/schedule_providers.dart';
 import '../features/repertoire/presentation/controllers/repertoire_providers.dart';
 import '../features/availability/presentation/controllers/availability_providers.dart';
 import '../features/push_notifications/presentation/controllers/push_notification_providers.dart';
+import '../features/notifications/presentation/controllers/notification_providers.dart';
 export '../features/schedules/presentation/controllers/schedule_providers.dart';
 export '../features/repertoire/presentation/controllers/repertoire_providers.dart';
 export '../features/push_notifications/presentation/controllers/push_notification_providers.dart';
@@ -31,6 +32,12 @@ void resetAuthenticatedFeatures(dynamic refOrContainer) {
   refOrContainer.invalidate(availabilityListNotifierProvider);
   refOrContainer.invalidate(repertoireListNotifierProvider);
   refOrContainer.invalidate(songDetailNotifierProvider);
+
+  refOrContainer.invalidate(unreadNotificationCountProvider);
+  refOrContainer.invalidate(notificationListProvider);
+  try {
+    refOrContainer.read(notificationRouterProvider).clearPendingPayload();
+  } catch (_) {}
 }
 
 /// Provider for the active runtime environment.

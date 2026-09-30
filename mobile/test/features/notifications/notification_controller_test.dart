@@ -176,5 +176,76 @@ void main() {
       expect(listNotifier.state.hasError, isTrue);
       expect(listNotifier.state.errorMessage, isNotNull);
     });
+
+    test('reset clears state back to default empty state', () async {
+      when(() => mockRepo.getNotifications(limit: any(named: 'limit')))
+          .thenAnswer((_) async => NotificationPageResult(
+                items: [testNotification1],
+                nextCursor: 'cursor_123',
+              ));
+      when(() => mockRepo.getUnreadCount()).thenAnswer((_) async => 1);
+
+      final listNotifier = NotificationListNotifier(repository: mockRepo);
+      await pumpEventQueue();
+
+      expect(listNotifier.state.items.isNotEmpty, isTrue);
+      expect(listNotifier.state.nextCursor, isNotNull);
+
+      listNotifier.reset();
+
+      expect(listNotifier.state.items, isEmpty);
+      expect(listNotifier.state.nextCursor, isNull);
+      expect(listNotifier.state.hasMore, isFalse);
+      expect(listNotifier.state.errorMessage, isNull);
+      expect(listNotifier.state.loadMoreErrorMessage, isNull);
+    });
+
+    test('loadMore handles failure: sets loadMoreErrorMessage without clearing existing items', () async {
+      when(() => mockRepo.getNotifications(limit: any(named: 'limit')))
+          .thenAnswer((_) async => NotificationPageResult(
+                items: [testNotification1],
+                nextCursor: 'cursor_page_2',
+              ));
+      when(() => mockRepo.getNotifications(
+            limit: any(named: 'limit'),
+            cursor: 'cursor_page_2',
+          )).thenThrow(Exception('Transient network failure'));
+      when(() => mockRepo.getUnreadCount()).thenAnswer((_) async => 1);
+
+      final listNotifier = NotificationListNotifier(repository: mockRepo);
+      await pumpEventQueue();
+
+      expect(listNotifier.state.items.length, 1);
+      expect(listNotifier.state.hasMore, isTrue);
+
+      await listNotifier.loadMore();
+
+      // Existing items are preserved
+      expect(listNotifier.state.items.length, 1);
+      expect(listNotifier.state.items.first.id, 'n1');
+      // Still has more (cursor preserved for retry)
+      expect(listNotifier.state.hasMore, isTrue);
+      expect(listNotifier.state.nextCursor, 'cursor_page_2');
+      // Has pagination error
+      expect(listNotifier.state.hasLoadMoreError, isTrue);
+      expect(listNotifier.state.loadMoreErrorMessage, isNotNull);
+      expect(listNotifier.state.isLoadingMore, isFalse);
+
+      // Now mock successful retry
+      when(() => mockRepo.getNotifications(
+            limit: any(named: 'limit'),
+            cursor: 'cursor_page_2',
+          )).thenAnswer((_) async => NotificationPageResult(
+            items: [testNotification2],
+            nextCursor: null,
+          ));
+
+      await listNotifier.loadMore();
+
+      expect(listNotifier.state.items.length, 2);
+      expect(listNotifier.state.hasLoadMoreError, isFalse);
+      expect(listNotifier.state.loadMoreErrorMessage, isNull);
+      expect(listNotifier.state.hasMore, isFalse);
+    });
   });
 }

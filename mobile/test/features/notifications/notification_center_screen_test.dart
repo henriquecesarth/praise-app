@@ -92,4 +92,70 @@ void main() {
     expect(find.text('Não foi possível carregar as notificações.'), findsOneWidget);
     expect(find.text('Tentar novamente'), findsOneWidget);
   });
+
+  testWidgets('displays pagination error and retry button when loadMore fails', (tester) async {
+    final notif1 = UserNotification(
+      id: 'n1',
+      userId: 'u1',
+      ministryId: 'm1',
+      type: UserNotificationType.scheduleAssigned,
+      resourceId: 's1',
+      title: 'Notif 1',
+      body: 'Corpo 1',
+      createdAt: DateTime.now(),
+    );
+    final notif2 = UserNotification(
+      id: 'n2',
+      userId: 'u1',
+      ministryId: 'm1',
+      type: UserNotificationType.scheduleAssigned,
+      resourceId: 's2',
+      title: 'Notif 2',
+      body: 'Corpo 2',
+      createdAt: DateTime.now(),
+    );
+
+    when(() => mockRepo.getNotifications(limit: any(named: 'limit')))
+        .thenAnswer((_) async => NotificationPageResult(
+              items: [notif1],
+              nextCursor: 'cursor_page_2',
+            ));
+    when(() => mockRepo.getNotifications(
+          limit: any(named: 'limit'),
+          cursor: 'cursor_page_2',
+        )).thenThrow(Exception('Falha de paginação'));
+    when(() => mockRepo.getUnreadCount()).thenAnswer((_) async => 1);
+
+    await tester.pumpWidget(createSubject());
+    await tester.pumpAndSettle();
+
+    expect(find.text('Notif 1'), findsOneWidget);
+    expect(find.text('Carregar mais antigas'), findsOneWidget);
+
+    // Tap 'Carregar mais antigas'
+    await tester.tap(find.text('Carregar mais antigas'));
+    await tester.pumpAndSettle();
+
+    // Still shows existing item
+    expect(find.text('Notif 1'), findsOneWidget);
+    // Shows load more error message and retry button
+    expect(find.text('Não foi possível carregar mais notificações.'), findsOneWidget);
+    expect(find.text('Tentar novamente'), findsOneWidget);
+
+    // Now set up success for retry
+    when(() => mockRepo.getNotifications(
+          limit: any(named: 'limit'),
+          cursor: 'cursor_page_2',
+        )).thenAnswer((_) async => NotificationPageResult(
+          items: [notif2],
+          nextCursor: null,
+        ));
+
+    await tester.tap(find.text('Tentar novamente'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Notif 1'), findsOneWidget);
+    expect(find.text('Notif 2'), findsOneWidget);
+    expect(find.text('Tentar novamente'), findsNothing);
+  });
 }

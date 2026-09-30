@@ -11,6 +11,7 @@ import {
   UserNotificationRecord,
 } from './notification.types';
 import { AppError } from '../../middleware/error-handler';
+import { db } from '../../lib/firebase';
 import * as controller from './notification.controller';
 
 describe('Notification Feature Suite (M10B)', () => {
@@ -93,8 +94,20 @@ describe('Notification Feature Suite (M10B)', () => {
       repo = new NotificationRepository();
     });
 
-    it('createNotification returns isNew: true on first creation, isNew: false on duplicate dedupe_key', async () => {
-      const mockSet = vi.fn().mockResolvedValue(undefined);
+    it('generates collision-safe sha256 document IDs avoiding truncation or sanitization collisions', () => {
+      const id1 = (repo as any).generateDocId('sched_update_123_userA_' + 'a'.repeat(150) + '_version1');
+      const id2 = (repo as any).generateDocId('sched_update_123_userA_' + 'a'.repeat(150) + '_version2');
+      expect(id1).not.toBe(id2);
+      expect(id1).toMatch(/^notif_[a-f0-9]{64}$/);
+      expect(id2).toMatch(/^notif_[a-f0-9]{64}$/);
+
+      // Special characters do not cause collision
+      const idSpecial1 = (repo as any).generateDocId('key:foo/bar@baz');
+      const idSpecial2 = (repo as any).generateDocId('key_foo_bar_baz');
+      expect(idSpecial1).not.toBe(idSpecial2);
+    });
+
+    it('createNotification is atomic and returns isNew: true on first creation, isNew: false on duplicate dedupe_key', async () => {
       let docExists = false;
       const storedData: any = {};
 
@@ -115,6 +128,14 @@ describe('Notification Feature Suite (M10B)', () => {
       }));
 
       (repo as any).col = { doc: mockDoc };
+
+      vi.spyOn(db, 'runTransaction').mockImplementation(async (callback: any) => {
+        const tx = {
+          get: vi.fn().mockImplementation((ref: any) => ref.get()),
+          set: vi.fn().mockImplementation((ref: any, data: any) => ref.set(data)),
+        };
+        return callback(tx);
+      });
 
       const res1 = await repo.createNotification({
         user_id: 'user_1',
@@ -143,6 +164,65 @@ describe('Notification Feature Suite (M10B)', () => {
 
       expect(res2.isNew).toBe(false);
       expect(res2.notification.id).toBe(res1.notification.id);
+    });
+
+    it('concurrent same-event creation produces exactly one isNew: true and one isNew: false', async () => {
+      let docExists = false;
+      const storedData: any = {};
+
+      const mockDoc = vi.fn().mockImplementation((docId: string) => ({
+        id: docId,
+        get: vi.fn().mockImplementation(() =>
+          Promise.resolve({
+            id: docId,
+            exists: docExists,
+            data: () => (docExists ? storedData : undefined),
+          })
+        ),
+        set: vi.fn().mockImplementation((data) => {
+          docExists = true;
+          Object.assign(storedData, data);
+          return Promise.resolve();
+        }),
+      }));
+
+      (repo as any).col = { doc: mockDoc };
+
+      let txQueue = Promise.resolve();
+      vi.spyOn(db, 'runTransaction').mockImplementation(async (callback: any) => {
+        return new Promise((resolve, reject) => {
+          txQueue = txQueue.then(async () => {
+            try {
+              const tx = {
+                get: vi.fn().mockImplementation((ref: any) => ref.get()),
+                set: vi.fn().mockImplementation((ref: any, data: any) => ref.set(data)),
+              };
+              const result = await callback(tx);
+              resolve(result);
+            } catch (err) {
+              reject(err);
+            }
+          });
+        });
+      });
+
+      const payload = {
+        user_id: 'user_1',
+        ministry_id: 'min_1',
+        type: 'schedule_assigned' as const,
+        resource_id: 'sched_1',
+        title: 'Nova escala',
+        body: 'Você foi escalado(a)',
+        dedupe_key: 'sched_assign_sched_1_user_1_occurrence1',
+      };
+
+      const [res1, res2] = await Promise.all([
+        repo.createNotification(payload),
+        repo.createNotification(payload),
+      ]);
+
+      const newCount = [res1.isNew, res2.isNew].filter(Boolean).length;
+      expect(newCount).toBe(1);
     });
 
     it('getNotificationsByUser returns paginated items with nextCursor', async () => {
@@ -287,7 +367,46 @@ describe('Notification Feature Suite (M10B)', () => {
       expect(firstCall[1].data.resourceId).toBe('sched_100');
     });
 
-    it('notifyScheduleUpdated triggers notifications only for material field changes', async () => {
+    it('assignment occurrence semantics: reassigning after removal produces new notification, while retry dedupes', async () => {
+      const scheduleInitial: any = {
+        id: 'sched_100',
+        title: 'Culto',
+        date: '2026-10-18',
+        created_at: '2026-10-01T10:00:00.000Z',
+        updated_at: '2026-10-01T10:00:00.000Z',
+        participants: [{ id: 'user_p1', assigned_at: '2026-10-01T10:00:00.000Z' }],
+      };
+
+      // 1. Initial assignment
+      await service.notifyScheduleAssigned('min_1', scheduleInitial, ['user_p1'], 'actor');
+      expect(mockRepo.createNotification).toHaveBeenCalledTimes(1);
+      const call1Key = mockRepo.createNotification.mock.calls[0][0].dedupe_key;
+      expect(call1Key).toBe('sched_assign_sched_100_user_p1_2026-10-01T10:00:00.000Z');
+
+      // 2. Retry of SAME assignment mutation (same occurrence) -> same dedupe key
+      await service.notifyScheduleAssigned('min_1', scheduleInitial, ['user_p1'], 'actor');
+      expect(mockRepo.createNotification).toHaveBeenCalledTimes(2);
+      const call2Key = mockRepo.createNotification.mock.calls[1][0].dedupe_key;
+      expect(call2Key).toBe(call1Key);
+
+      // 3. User was removed and later re-assigned in Update 2 at T2
+      const scheduleReassigned: any = {
+        id: 'sched_100',
+        title: 'Culto',
+        date: '2026-10-18',
+        created_at: '2026-10-01T10:00:00.000Z',
+        updated_at: '2026-10-05T15:00:00.000Z',
+        participants: [{ id: 'user_p1', assigned_at: '2026-10-05T15:00:00.000Z' }],
+      };
+
+      await service.notifyScheduleAssigned('min_1', scheduleReassigned, ['user_p1'], 'actor');
+      expect(mockRepo.createNotification).toHaveBeenCalledTimes(3);
+      const call3Key = mockRepo.createNotification.mock.calls[2][0].dedupe_key;
+      expect(call3Key).toBe('sched_assign_sched_100_user_p1_2026-10-05T15:00:00.000Z');
+      expect(call3Key).not.toBe(call1Key);
+    });
+
+    it('notifyScheduleUpdated triggers notifications only for material field changes with distinct mutation keys', async () => {
       const prevSchedule: any = {
         id: 'sched_100',
         title: 'Culto de Domingo',
@@ -304,48 +423,84 @@ describe('Notification Feature Suite (M10B)', () => {
       await service.notifyScheduleUpdated('min_1', prevSchedule, nonMaterialUpdated, 'user_editor');
       expect(mockRepo.createNotification).not.toHaveBeenCalled();
 
-      // 2. Material update (time changed)
-      const materialUpdated = { ...prevSchedule, time: '20:00', updated_at: '2026-09-30T12:00:00Z' };
-      await service.notifyScheduleUpdated('min_1', prevSchedule, materialUpdated, 'user_editor');
+      // 2. Material update (time changed) at T1
+      const materialUpdated1 = { ...prevSchedule, time: '20:00', updated_at: '2026-10-02T10:00:00Z' };
+      await service.notifyScheduleUpdated('min_1', prevSchedule, materialUpdated1, 'user_editor');
 
       expect(mockRepo.createNotification).toHaveBeenCalledTimes(1);
-      const callData = mockRepo.createNotification.mock.calls[0][0];
-      expect(callData.type).toBe('schedule_updated');
-      expect(callData.user_id).toBe('user_p1');
-      expect(mockPushService.sendToUser).toHaveBeenCalledTimes(1);
+      const key1 = mockRepo.createNotification.mock.calls[0][0].dedupe_key;
+      expect(key1).toBe('sched_update_sched_100_user_p1_2026-10-02T10:00:00Z');
+
+      // 3. Retry of Update 1 produces identical dedupe key
+      await service.notifyScheduleUpdated('min_1', prevSchedule, materialUpdated1, 'user_editor');
+      expect(mockRepo.createNotification).toHaveBeenCalledTimes(2);
+      const key1Retry = mockRepo.createNotification.mock.calls[1][0].dedupe_key;
+      expect(key1Retry).toBe(key1);
+
+      // 4. Genuine subsequent update 2 at T2 produces new dedupe key
+      const materialUpdated2 = { ...materialUpdated1, time: '21:00', updated_at: '2026-10-03T12:00:00Z' };
+      await service.notifyScheduleUpdated('min_1', materialUpdated1, materialUpdated2, 'user_editor');
+      expect(mockRepo.createNotification).toHaveBeenCalledTimes(3);
+      const key2 = mockRepo.createNotification.mock.calls[2][0].dedupe_key;
+      expect(key2).toBe('sched_update_sched_100_user_p1_2026-10-03T12:00:00Z');
+      expect(key2).not.toBe(key1);
     });
 
-    it('notifyScheduleComment excludes author and maintains privacy (no comment text in push)', async () => {
+    it('sanitizeAuthorDisplayName never falls back to email, phone, or raw UID in notification copy', async () => {
       const schedule: any = {
         id: 'sched_100',
-        title: 'Ensaio Geral',
-        participants: [{ id: 'user_p1' }, { id: 'user_comment_author' }],
+        title: 'Culto',
+        participants: [{ id: 'user_p1' }],
+      };
+      const comment: any = { id: 'comm_1' };
+      vi.spyOn(service, 'resolveParticipantUserIds').mockResolvedValue(['user_p1']);
+
+      // 1. Author with email fallback
+      await service.notifyScheduleComment('min_1', schedule, comment, 'author_id', 'author@louvaio.test');
+      expect(mockPushService.sendToUser.mock.calls[0][1].body).toBe('Um integrante comentou na escala "Culto".');
+
+      // 2. Author with raw Firebase UID
+      mockPushService.sendToUser.mockClear();
+      await service.notifyScheduleComment('min_1', schedule, comment, 'author_id', 'lE4nsN3uC2Za2S68XkKnfy9pw0n1');
+      expect(mockPushService.sendToUser.mock.calls[0][1].body).toBe('Um integrante comentou na escala "Culto".');
+
+      // 3. Author with phone number
+      mockPushService.sendToUser.mockClear();
+      await service.notifyScheduleComment('min_1', schedule, comment, 'author_id', '+5585991234567');
+      expect(mockPushService.sendToUser.mock.calls[0][1].body).toBe('Um integrante comentou na escala "Culto".');
+
+      // 4. Author with empty string
+      mockPushService.sendToUser.mockClear();
+      await service.notifyScheduleComment('min_1', schedule, comment, 'author_id', '');
+      expect(mockPushService.sendToUser.mock.calls[0][1].body).toBe('Um integrante comentou na escala "Culto".');
+
+      // 5. Author with valid display name
+      mockPushService.sendToUser.mockClear();
+      await service.notifyScheduleComment('min_1', schedule, comment, 'author_id', 'Ana Paula');
+      expect(mockPushService.sendToUser.mock.calls[0][1].body).toBe('Ana Paula comentou na escala "Culto".');
+    });
+
+    it('persisted data contains ONLY routing fields (type, ministryId, resourceId)', async () => {
+      const schedule: any = {
+        id: 'sched_1',
+        title: 'Culto de Adoração',
+        date: '2026-10-18',
+        participants: [{ id: 'user_p1' }],
       };
 
-      const comment: any = {
-        id: 'comm_55',
-        content: 'Este é um texto confidencial que não pode vazar na tela de bloqueio',
-      };
+      await service.notifyScheduleAssigned('min_1', schedule, ['user_p1'], 'actor');
 
-      vi.spyOn(service, 'resolveParticipantUserIds').mockResolvedValue(['user_p1', 'user_comment_author']);
-
-      await service.notifyScheduleComment(
-        'min_1',
-        schedule,
-        comment,
-        'user_comment_author',
-        'Lucas Silva'
-      );
-
-      // Only user_p1 is notified
-      expect(mockRepo.createNotification).toHaveBeenCalledTimes(1);
-      expect(mockPushService.sendToUser).toHaveBeenCalledTimes(1);
-
-      const pushPayload = mockPushService.sendToUser.mock.calls[0][1];
-      expect(pushPayload.title).toBe('Novo comentário na escala');
-      expect(pushPayload.body).toBe('Lucas Silva comentou na escala "Ensaio Geral".');
-      // Verify raw comment content is NOT included in push
-      expect(pushPayload.body).not.toContain(comment.content);
+      const record = mockRepo.createNotification.mock.calls[0][0];
+      expect(record.data).toEqual({
+        type: 'schedule',
+        ministryId: 'min_1',
+        resourceId: 'sched_1',
+      });
+      // Zero redundant titles, dates, comments, emails, or phone numbers
+      expect(record.data.scheduleTitle).toBeUndefined();
+      expect(record.data.date).toBeUndefined();
+      expect(record.data.commentContent).toBeUndefined();
+      expect(record.data.email).toBeUndefined();
     });
 
     it('notifyAnnouncementCreated dispatches announcement notification to members excluding author', async () => {

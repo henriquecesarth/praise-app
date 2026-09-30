@@ -45,7 +45,7 @@ export interface ScheduleRecord {
   colorPalette?: string;
   clothingPieces?: any[];
   requireConfirmation?: boolean;
-  participants: Array<{ id: string; name: string; role: string; confirmed?: boolean }>;
+  participants: Array<{ id: string; name: string; role: string; confirmed?: boolean; assigned_at?: string; user_id?: string }>;
   songs: any[];
   timeline: Array<{ id: string; title: string; time?: string; type: string }>;
   created_at: string;
@@ -124,7 +124,10 @@ export class ScheduleRepository {
       colorPalette: data.colorPalette || '#7C3AED',
       clothingPieces: data.clothingPieces || [],
       requireConfirmation: data.requireConfirmation || false,
-      participants: data.participants || [],
+      participants: (data.participants || []).map((p: any) => ({
+        ...p,
+        assigned_at: p.assigned_at || now,
+      })),
       songs: data.songs || [],
       timeline: data.timeline || [],
       created_at: now,
@@ -144,6 +147,19 @@ export class ScheduleRepository {
       ...data,
       updated_at: now,
     };
+
+    if (data.participants !== undefined) {
+      const existingParticipants = existing.participants || [];
+      updatePayload.participants = data.participants.map((p: any) => {
+        const prev = existingParticipants.find(
+          (ep: any) => (ep.id && ep.id === p.id) || (ep.user_id && ep.user_id === p.user_id)
+        );
+        return {
+          ...p,
+          assigned_at: prev?.assigned_at || now,
+        };
+      });
+    }
 
     if ((data as any).durationMinutes !== undefined && data.duration_minutes === undefined) {
       updatePayload.duration_minutes = (data as any).durationMinutes;

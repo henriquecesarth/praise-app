@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { FieldPath } from 'firebase-admin/firestore';
 import { db } from '../lib/firebase';
 import { AppError } from '../middleware/error-handler';
@@ -12,16 +13,18 @@ export class NotificationRepository {
   private readonly col = db.collection('user_notifications');
 
   /**
-   * Generates a deterministic document ID for a deduplication key.
+   * Generates a collision-safe, deterministic document ID using SHA-256 of the full canonical dedupe key.
    */
   private generateDocId(dedupeKey: string): string {
-    const cleanKey = dedupeKey.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 100);
-    return `notif_${cleanKey}`;
+    const hash = createHash('sha256').update(dedupeKey, 'utf8').digest('hex');
+    return `notif_${hash}`;
   }
 
   /**
-   * Persists a notification deterministically.
-   * If a notification with the dedupe_key already exists, returns the existing record.
+   * Persists a notification deterministically and atomically.
+   * If a notification with the dedupe_key already exists, returns the existing record and isNew: false.
+   * Uses Firestore transactions to guarantee that concurrent executions of the same event
+   * produce exactly one persisted notification and one push trigger.
    */
   async createNotification(data: {
     user_id: string;
@@ -36,32 +39,35 @@ export class NotificationRepository {
   }): Promise<{ notification: UserNotificationRecord; isNew: boolean }> {
     const docId = this.generateDocId(data.dedupe_key);
     const ref = this.col.doc(docId);
-    const existing = await ref.get();
 
-    if (existing.exists) {
-      return {
-        notification: { id: existing.id, ...(existing.data() as any) } as UserNotificationRecord,
-        isNew: false,
+    return await db.runTransaction(async (tx) => {
+      const existing = await tx.get(ref);
+
+      if (existing.exists) {
+        return {
+          notification: { id: existing.id, ...(existing.data() as any) } as UserNotificationRecord,
+          isNew: false,
+        };
+      }
+
+      const now = data.created_at || new Date().toISOString();
+      const record: UserNotificationRecord = {
+        id: docId,
+        user_id: data.user_id,
+        ministry_id: data.ministry_id,
+        type: data.type,
+        resource_id: data.resource_id,
+        title: data.title,
+        body: data.body,
+        data: data.data || {},
+        dedupe_key: data.dedupe_key,
+        created_at: now,
+        read_at: null,
       };
-    }
 
-    const now = data.created_at || new Date().toISOString();
-    const record: UserNotificationRecord = {
-      id: docId,
-      user_id: data.user_id,
-      ministry_id: data.ministry_id,
-      type: data.type,
-      resource_id: data.resource_id,
-      title: data.title,
-      body: data.body,
-      data: data.data || {},
-      dedupe_key: data.dedupe_key,
-      created_at: now,
-      read_at: null,
-    };
-
-    await ref.set(record);
-    return { notification: record, isNew: true };
+      tx.set(ref, record);
+      return { notification: record, isNew: true };
+    });
   }
 
   /**

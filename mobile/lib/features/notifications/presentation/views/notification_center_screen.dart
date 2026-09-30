@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/utils/date_utils.dart';
 import '../../../push_notifications/domain/push_notification_payload.dart';
@@ -135,19 +135,45 @@ class NotificationCenterScreen extends ConsumerWidget {
       onRefresh: () => notifier.refresh(),
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(vertical: 8),
-        itemCount: state.items.length + (state.hasMore ? 1 : 0),
+        itemCount: state.items.length + (state.hasMore || state.hasLoadMoreError ? 1 : 0),
         separatorBuilder: (_, __) => const Divider(height: 1),
         itemBuilder: (ctx, index) {
           if (index == state.items.length) {
+            if (state.isLoadingMore) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16.0),
+                child: Center(child: CircularProgressIndicator()),
+              );
+            }
+            if (state.hasLoadMoreError) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16.0, horizontal: 24.0),
+                child: Column(
+                  children: [
+                    Text(
+                      state.loadMoreErrorMessage ?? 'Erro ao carregar mais notificações.',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.error,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: () => notifier.loadMore(),
+                      icon: const Icon(Icons.refresh, size: 18),
+                      label: const Text('Tentar novamente'),
+                    ),
+                  ],
+                ),
+              );
+            }
             return Padding(
               padding: const EdgeInsets.symmetric(vertical: 16.0, horizontal: 24.0),
               child: Center(
-                child: state.isLoadingMore
-                    ? const CircularProgressIndicator()
-                    : OutlinedButton(
-                        onPressed: () => notifier.loadMore(),
-                        child: const Text('Carregar mais antigas'),
-                      ),
+                child: OutlinedButton(
+                  onPressed: () => notifier.loadMore(),
+                  child: const Text('Carregar mais antigas'),
+                ),
               ),
             );
           }

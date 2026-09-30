@@ -1,4 +1,4 @@
-﻿import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/notification_repository.dart';
 import '../../domain/user_notification.dart';
 
@@ -13,6 +13,7 @@ class UnreadNotificationCountNotifier extends StateNotifier<int> {
   Future<void> refresh() async {
     try {
       final count = await _repository.getUnreadCount();
+      if (!mounted) return;
       state = count;
     } catch (_) {
       // Non-fatal
@@ -41,6 +42,7 @@ class NotificationListState {
   final bool isLoading;
   final bool isLoadingMore;
   final String? errorMessage;
+  final String? loadMoreErrorMessage;
 
   const NotificationListState({
     this.items = const [],
@@ -48,9 +50,11 @@ class NotificationListState {
     this.isLoading = false,
     this.isLoadingMore = false,
     this.errorMessage,
+    this.loadMoreErrorMessage,
   });
 
   bool get hasError => errorMessage != null;
+  bool get hasLoadMoreError => loadMoreErrorMessage != null;
   bool get hasMore => nextCursor != null && nextCursor!.isNotEmpty;
   bool get isEmpty => !isLoading && items.isEmpty && !hasError;
 
@@ -60,7 +64,9 @@ class NotificationListState {
     bool? isLoading,
     bool? isLoadingMore,
     String? errorMessage,
+    String? loadMoreErrorMessage,
     bool clearError = false,
+    bool clearLoadMoreError = false,
     bool clearCursor = false,
   }) {
     return NotificationListState(
@@ -69,6 +75,9 @@ class NotificationListState {
       isLoading: isLoading ?? this.isLoading,
       isLoadingMore: isLoadingMore ?? this.isLoadingMore,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
+      loadMoreErrorMessage: clearLoadMoreError
+          ? null
+          : (loadMoreErrorMessage ?? this.loadMoreErrorMessage),
     );
   }
 }
@@ -86,19 +95,28 @@ class NotificationListNotifier extends StateNotifier<NotificationListState> {
     loadInitial();
   }
 
+  void reset() {
+    state = const NotificationListState();
+  }
+
   Future<void> loadInitial() async {
-    state = state.copyWith(isLoading: true, clearError: true);
+    state = state.copyWith(isLoading: true, clearError: true, clearLoadMoreError: true);
 
     try {
       final result = await _repository.getNotifications(limit: 20);
+      if (!mounted) return;
       state = state.copyWith(
         items: result.items,
         nextCursor: result.nextCursor,
         clearCursor: result.nextCursor == null,
         isLoading: false,
+        clearLoadMoreError: true,
       );
-      _unreadCountNotifier?.refresh();
+      if (mounted) {
+        _unreadCountNotifier?.refresh();
+      }
     } catch (e) {
+      if (!mounted) return;
       state = state.copyWith(
         isLoading: false,
         errorMessage: 'Não foi possível carregar as notificações.',
@@ -109,13 +127,17 @@ class NotificationListNotifier extends StateNotifier<NotificationListState> {
   Future<void> refresh() async {
     try {
       final result = await _repository.getNotifications(limit: 20);
+      if (!mounted) return;
       state = state.copyWith(
         items: result.items,
         nextCursor: result.nextCursor,
         clearCursor: result.nextCursor == null,
         clearError: true,
+        clearLoadMoreError: true,
       );
-      _unreadCountNotifier?.refresh();
+      if (mounted) {
+        _unreadCountNotifier?.refresh();
+      }
     } catch (_) {
       // Keep existing items on refresh failure
     }
@@ -124,13 +146,14 @@ class NotificationListNotifier extends StateNotifier<NotificationListState> {
   Future<void> loadMore() async {
     if (state.isLoadingMore || !state.hasMore) return;
 
-    state = state.copyWith(isLoadingMore: true);
+    state = state.copyWith(isLoadingMore: true, clearLoadMoreError: true);
 
     try {
       final result = await _repository.getNotifications(
         limit: 20,
         cursor: state.nextCursor,
       );
+      if (!mounted) return;
 
       final combined = [...state.items, ...result.items];
       state = state.copyWith(
@@ -138,9 +161,14 @@ class NotificationListNotifier extends StateNotifier<NotificationListState> {
         nextCursor: result.nextCursor,
         clearCursor: result.nextCursor == null,
         isLoadingMore: false,
+        clearLoadMoreError: true,
       );
     } catch (e) {
-      state = state.copyWith(isLoadingMore: false);
+      if (!mounted) return;
+      state = state.copyWith(
+        isLoadingMore: false,
+        loadMoreErrorMessage: 'Não foi possível carregar mais notificações.',
+      );
     }
   }
 
@@ -162,6 +190,7 @@ class NotificationListNotifier extends StateNotifier<NotificationListState> {
     try {
       await _repository.markAsRead(notificationId);
     } catch (e) {
+      if (!mounted) return;
       // Revert on error
       final revertedList = List<UserNotification>.from(state.items);
       revertedList[index] = target;
@@ -186,6 +215,7 @@ class NotificationListNotifier extends StateNotifier<NotificationListState> {
     try {
       await _repository.markAllAsRead();
     } catch (e) {
+      if (!mounted) return;
       // Revert on error
       state = state.copyWith(items: previousItems);
       _unreadCountNotifier?.refresh();

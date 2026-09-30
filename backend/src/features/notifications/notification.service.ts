@@ -1,4 +1,4 @@
-﻿import { db } from '../../lib/firebase';
+import { db } from '../../lib/firebase';
 import { NotificationRepository } from '../../repositories/NotificationRepository';
 import { PushNotificationService } from '../push_notifications/push-notification.service';
 import { ScheduleRecord, ScheduleCommentRecord } from '../../repositories/ScheduleRepository';
@@ -49,11 +49,30 @@ export function formatDateBr(isoDate: string): string {
   return isoDate;
 }
 
+export function sanitizeAuthorDisplayName(rawName?: string): string {
+  if (!rawName) return 'Um integrante';
+  const trimmed = rawName.trim();
+  // Reject email, phone patterns, or raw UIDs/hashes
+  if (
+    !trimmed ||
+    trimmed.includes('@') ||
+    /^[0-9+() -]{8,}$/.test(trimmed) ||
+    /^[a-zA-Z0-9_-]{24,}$/.test(trimmed)
+  ) {
+    return 'Um integrante';
+  }
+  return trimmed;
+}
+
 export class NotificationService {
   constructor(
     private readonly repo: NotificationRepository = new NotificationRepository(),
     private readonly pushService: PushNotificationService = new PushNotificationService()
   ) {}
+
+  sanitizeAuthorDisplayName(rawName?: string): string {
+    return sanitizeAuthorDisplayName(rawName);
+  }
 
   async listUserNotifications(
     userId: string,
@@ -166,7 +185,7 @@ export class NotificationService {
    * Dispatches persistent notification and sends FCM push notification.
    * Never throws or bubbles errors to caller.
    */
-  private async dispatchToUser(params: {
+  async dispatchToUser(params: {
     userId: string;
     ministryId: string;
     type: UserNotificationType;
@@ -178,6 +197,13 @@ export class NotificationService {
     data?: Record<string, any>;
   }): Promise<void> {
     try {
+      // Minimize persisted data: store only navigation routing metadata
+      const routingData: Record<string, any> = {
+        type: params.pushType,
+        ministryId: params.ministryId,
+        resourceId: params.resourceId,
+      };
+
       const { notification, isNew } = await this.repo.createNotification({
         user_id: params.userId,
         ministry_id: params.ministryId,
@@ -185,7 +211,7 @@ export class NotificationService {
         resource_id: params.resourceId,
         title: params.title,
         body: params.body,
-        data: params.data,
+        data: routingData,
         dedupe_key: params.dedupeKey,
       });
 
@@ -216,6 +242,9 @@ export class NotificationService {
 
   /**
    * Triggers schedule_assigned notifications for newly assigned participants.
+   * Employs assignment occurrence timestamps to ensure that if a member is
+   * removed and re-assigned in a subsequent mutation, a new notification is delivered,
+   * while concurrent duplicates or retries of the same mutation are deduped.
    */
   async notifyScheduleAssigned(
     ministryId: string,
@@ -231,7 +260,13 @@ export class NotificationService {
     for (const userId of participantUserIds) {
       if (actorId && userId === actorId) continue;
 
-      const dedupeKey = `sched_assign_${schedule.id}_${userId}`;
+      const participant = schedule.participants?.find(
+        (p: any) => p.user_id === userId || p.id === userId
+      );
+      const occurrence =
+        participant?.assigned_at || schedule.updated_at || schedule.created_at || 'initial';
+      const dedupeKey = `sched_assign_${schedule.id}_${userId}_${occurrence}`;
+
       await this.dispatchToUser({
         userId,
         ministryId,
@@ -241,11 +276,6 @@ export class NotificationService {
         body,
         dedupeKey,
         pushType: 'schedule',
-        data: {
-          scheduleId: schedule.id,
-          scheduleTitle: schedule.title,
-          date: schedule.date,
-        },
       });
     }
   }
@@ -296,11 +326,6 @@ export class NotificationService {
           body,
           dedupeKey,
           pushType: 'schedule',
-          data: {
-            scheduleId: updatedSchedule.id,
-            scheduleTitle: updatedSchedule.title,
-            date: updatedSchedule.date,
-          },
         });
       }
     }
@@ -308,6 +333,7 @@ export class NotificationService {
 
   /**
    * Triggers schedule_comment notifications to participants (excluding comment author).
+   * Displays safe member name, never exposing email, phone, or raw UID in notification copy.
    */
   async notifyScheduleComment(
     ministryId: string,
@@ -324,8 +350,9 @@ export class NotificationService {
     const recipientUserIds = participantUserIds.filter((id) => id !== authorId);
     if (recipientUserIds.length === 0) return;
 
+    const safeAuthor = this.sanitizeAuthorDisplayName(authorName);
     const title = 'Novo comentário na escala';
-    const body = `${authorName || 'Um participante'} comentou na escala "${schedule.title}".`;
+    const body = `${safeAuthor} comentou na escala "${schedule.title}".`;
 
     for (const userId of recipientUserIds) {
       const dedupeKey = `sched_comm_${schedule.id}_${comment.id}_${userId}`;
@@ -338,11 +365,6 @@ export class NotificationService {
         body,
         dedupeKey,
         pushType: 'schedule_comment',
-        data: {
-          scheduleId: schedule.id,
-          scheduleTitle: schedule.title,
-          commentId: comment.id,
-        },
       });
     }
   }
@@ -372,10 +394,6 @@ export class NotificationService {
         body,
         dedupeKey,
         pushType: 'announcement',
-        data: {
-          announcementId: announcement.id,
-          announcementTitle: announcement.title,
-        },
       });
     }
   }
