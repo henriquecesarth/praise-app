@@ -72,7 +72,9 @@ export function getMessagingAdmin(): Messaging {
 }
 export const messagingAdmin: Messaging = new Proxy({} as Messaging, {
   get(_target, prop) {
-    return (getMessagingAdmin() as any)[prop];
+    const instance = getMessagingAdmin() as any;
+    const value = instance[prop];
+    return typeof value === 'function' ? value.bind(instance) : value;
   }
 });
 
