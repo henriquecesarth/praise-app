@@ -6,6 +6,7 @@ import { authenticate } from '../../middleware/auth';
 
 import accountDeletionRoutes from '../account_deletion/account-deletion.routes';
 import pushDeviceRoutes from '../push_notifications/push-device.routes';
+import notificationRoutes from '../notifications/notification.routes';
 
 const router = Router();
 
@@ -14,5 +15,6 @@ router.post('/login', validate(loginSchema), controller.login);
 router.get('/me', authenticate, controller.getMe);
 router.use('/account-deletion', accountDeletionRoutes);
 router.use('/push-devices', pushDeviceRoutes);
+router.use('/notifications', authenticate, notificationRoutes);
 
 export default router;

@@ -1,4 +1,5 @@
 import { AnnouncementRepository, AnnouncementRecord } from '../../repositories/AnnouncementRepository';
+import { NotificationService } from '../notifications/notification.service';
 
 export interface CreateAnnouncementDTO {
   title: string;
@@ -15,7 +16,10 @@ export interface UpdateAnnouncementDTO {
 }
 
 export class AnnouncementService {
-  constructor(private readonly repo: AnnouncementRepository = new AnnouncementRepository()) {}
+  constructor(
+    private readonly repo: AnnouncementRepository = new AnnouncementRepository(),
+    private readonly notificationService: NotificationService = new NotificationService()
+  ) {}
 
   async getAnnouncements(ministryId: string, limitCount = 20): Promise<AnnouncementRecord[]> {
     return this.repo.getAnnouncementsByMinistry(ministryId, limitCount);
@@ -33,7 +37,7 @@ export class AnnouncementService {
   ): Promise<AnnouncementRecord> {
     const author = input.author?.trim() || fallbackAuthorName?.trim() || 'Liderança';
 
-    return this.repo.createAnnouncement({
+    const created = await this.repo.createAnnouncement({
       ministry_id: ministryId,
       title: input.title,
       content: input.content,
@@ -41,6 +45,18 @@ export class AnnouncementService {
       important: Boolean(input.important),
       created_by: userId,
     });
+
+    try {
+      await this.notificationService.notifyAnnouncementCreated(
+        ministryId,
+        created,
+        userId
+      );
+    } catch (err) {
+      console.warn('Falha não-bloqueante ao notificar membros sobre comunicado:', err);
+    }
+
+    return created;
   }
 
   async updateAnnouncement(

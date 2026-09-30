@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../domain/push_notification_payload.dart';
 import '../../services/push_notification_service.dart';
 import '../notification_router.dart';
 
@@ -46,12 +47,16 @@ class PushNotificationNotifier extends StateNotifier<PushNotificationState> {
   PushNotificationNotifier({
     required PushNotificationService service,
     required NotificationRouter router,
+    void Function(PushNotificationPayload payload)? onForegroundMessage,
   })  : _service = service,
         _router = router,
         super(const PushNotificationState()) {
     _service.setNotificationTapHandler((payload) {
       _router.handlePayload(payload);
     });
+    if (onForegroundMessage != null) {
+      _service.setForegroundMessageHandler(onForegroundMessage);
+    }
   }
 
   /// Early bootstrap to listen for foreground messages and cold-start notification taps

@@ -23,6 +23,7 @@ class PushNotificationService {
   bool _isInitialized = false;
   bool _isRegisteredWithBackend = false;
   NotificationTapCallback? _onNotificationTap;
+  void Function(PushNotificationPayload payload)? _onForegroundMessage;
 
   static const String notificationChannelId = 'louvaio_notifications';
   static const String notificationChannelName = 'LouvAIO Notificações';
@@ -62,6 +63,10 @@ class PushNotificationService {
 
   void setNotificationTapHandler(NotificationTapCallback handler) {
     _onNotificationTap = handler;
+  }
+
+  void setForegroundMessageHandler(void Function(PushNotificationPayload payload) handler) {
+    _onForegroundMessage = handler;
   }
 
   /// Initializes local notifications and FCM listeners.
@@ -279,6 +284,8 @@ class PushNotificationService {
         notificationDetails: notificationDetails,
         payload: payload.toJsonString(),
       );
+
+      _onForegroundMessage?.call(payload);
     } catch (e) {
       _logger.warning('Error displaying foreground notification: $e');
     }

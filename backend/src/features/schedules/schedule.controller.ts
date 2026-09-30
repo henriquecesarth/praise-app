@@ -44,7 +44,12 @@ export class ScheduleController extends BaseController {
     try {
       const ministryId = (req.params.groupId || req.params.ministryId) as string;
       const scheduleId = req.params.scheduleId as string;
-      const schedule = await this.scheduleService.updateSchedule(scheduleId, ministryId, req.body);
+      const schedule = await this.scheduleService.updateSchedule(
+        scheduleId,
+        ministryId,
+        req.body,
+        req.user?.id
+      );
       this.handleSuccess(res, schedule);
     } catch (err) {
       this.handleError(err, res, next);

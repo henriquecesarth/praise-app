@@ -11,6 +11,8 @@ enum PushNotificationType {
     if (value == null) return PushNotificationType.unknown;
     switch (value.trim().toLowerCase()) {
       case 'schedule':
+      case 'schedule_assigned':
+      case 'schedule_updated':
         return PushNotificationType.schedule;
       case 'schedule_comment':
         return PushNotificationType.scheduleComment;

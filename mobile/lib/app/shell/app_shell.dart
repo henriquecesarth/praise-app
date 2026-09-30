@@ -8,6 +8,8 @@ import '../../features/ministry_context/presentation/controllers/ministry_contex
 import '../../features/ministry_context/presentation/widgets/ministry_switcher_sheet.dart';
 import '../../features/repertoire/presentation/views/repertoire_view.dart';
 import '../../features/schedules/presentation/views/schedules_view.dart';
+import '../../features/notifications/presentation/controllers/notification_providers.dart';
+import '../../features/notifications/presentation/views/notification_center_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../providers.dart';
 
@@ -37,6 +39,8 @@ class _AppShellState extends ConsumerState<AppShell> {
         ref.invalidate(availabilityListNotifierProvider);
         ref.invalidate(repertoireListNotifierProvider);
         ref.invalidate(songDetailNotifierProvider);
+        ref.invalidate(notificationListProvider);
+        ref.read(unreadNotificationCountProvider.notifier).refresh();
       }
     });
 
@@ -118,11 +122,16 @@ class _AppShellState extends ConsumerState<AppShell> {
     ];
 
     final appBar = AppBar(
+      titleSpacing: 12,
       title: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const Text(
-            'LouvAIO',
-            style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 0.5),
+          const Flexible(
+            child: Text(
+              'LouvAIO',
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 0.5),
+            ),
           ),
           if (!environment.isProduction) ...[
             const SizedBox(width: 8),
@@ -147,6 +156,21 @@ class _AppShellState extends ConsumerState<AppShell> {
         ],
       ),
       actions: [
+        Consumer(
+          builder: (context, ref, _) {
+            final unreadCount = ref.watch(unreadNotificationCountProvider);
+            return IconButton(
+              icon: unreadCount > 0
+                  ? Badge.count(
+                      count: unreadCount,
+                      child: const Icon(Icons.notifications_outlined),
+                    )
+                  : const Icon(Icons.notifications_outlined),
+              tooltip: 'Notificações',
+              onPressed: () => NotificationCenterScreen.show(context),
+            );
+          },
+        ),
         if (selectedMinistry != null)
           Padding(
             padding: const EdgeInsets.only(right: 8.0),

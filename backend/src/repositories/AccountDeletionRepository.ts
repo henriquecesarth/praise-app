@@ -92,6 +92,8 @@ export class AccountDeletionRepository {
   private readonly ministrySubsCol = db.collection('ministry_subscriptions');
   private readonly whatsappConnectionsCol = db.collection('whatsapp_connections');
   private readonly whatsappOnboardingSessionsCol = db.collection('whatsapp_onboarding_sessions');
+  private readonly pushDevicesCol = db.collection('push_devices');
+  private readonly userNotificationsCol = db.collection('user_notifications');
 
   private readonly subscriptionRepo = new SubscriptionRepository();
 
@@ -314,6 +316,12 @@ export class AccountDeletionRepository {
 
     // 6. group_invites (legacy)
     await deleteQueryDocsChunked(this.groupInvitesCol.where('created_by', '==', userId));
+
+    // 7. push_devices
+    await deleteQueryDocsChunked(this.pushDevicesCol.where('user_id', '==', userId));
+
+    // 8. user_notifications
+    await deleteQueryDocsChunked(this.userNotificationsCol.where('user_id', '==', userId));
   }
 
   async detachMemberships(userId: string, manifest?: DeletionManifest | null): Promise<void> {

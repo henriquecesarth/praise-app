@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/providers.dart';
 import '../../data/push_device_repository.dart';
 import '../../services/push_notification_service.dart';
+import '../../../notifications/presentation/controllers/notification_providers.dart';
 
 export 'push_notification_controller.dart';
 export '../notification_router.dart';
@@ -45,5 +46,11 @@ final pushNotificationNotifierProvider =
   return PushNotificationNotifier(
     service: ref.watch(pushNotificationServiceProvider),
     router: ref.watch(notificationRouterProvider),
+    onForegroundMessage: (_) {
+      try {
+        ref.read(unreadNotificationCountProvider.notifier).refresh();
+        ref.read(notificationListProvider.notifier).refresh();
+      } catch (_) {}
+    },
   );
 });
