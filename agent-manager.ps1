@@ -116,22 +116,48 @@ $GLOBAL_logDirRoot = $cfg.LogDir
 
 function Initialize-Am2Env() {
     if ($repo -eq '') {
-        $rRemote = Git-Run @('remote','get-url','origin')
-        $remote = $rRemote.out
-        if ($remote -match 'github\.com[:/]([^/]+)/([^/\.]+)(\.git)?') {
-            Set-Variable -Name 'repo' -Value "$($Matches[1])/$($Matches[2])" -Scope Global
-        } else {
-            Write-Host "ERROR: cannot derive GitHub repo from remote: $remote"
-            exit 1
+        $remoteResult = Git-Run @('remote', 'get-url', 'origin')
+
+        if ($remoteResult.exit -ne 0) {
+            throw "Nao foi possivel obter o remote origin."
+        }
+
+        $remoteUrl = Safe-Trim $remoteResult.out
+
+        # Suporta:
+        # https://github.com/owner/repo.git
+        # git@github.com:owner/repo.git
+        if ($remoteUrl -match 'github\.com[/:](?<owner>[^/]+)/(?<name>[^/]+?)(?:\.git)?$') {
+            $script:repo = "$($Matches.owner)/$($Matches.name)"
+        }
+        else {
+            throw "Nao foi possivel extrair owner/repo do remote origin: $remoteUrl"
         }
     }
+
     if ($instanceId -eq '') {
-        Set-Variable -Name 'instanceId' -Value ("am2-$(hostname)-" + (Get-Date -Format 'yyyyMMddHHmmss') + '-' + (Get-Random -Maximum 99999)) -Scope Global
+        $script:instanceId = "am2-$(hostname)-$(Get-Date -Format 'yyyyMMddHHmmss')-$(Get-Random -Maximum 99999)"
     }
-    $rr = Git-Run @('rev-parse','--show-toplevel')
-    Set-Variable -Name 'repoRoot' -Value (Safe-Trim $rr.out) -Scope Global
-    if ($worktreesDir -eq '') { Set-Variable -Name 'worktreesDir' -Value (Join-Path $repoRoot '.worktrees') -Scope Global }
-    if ($GLOBAL_logDirRoot -eq '') { Set-Variable -Name 'GLOBAL_logDirRoot' -Value (Join-Path $repoRoot '.logs') -Scope Global }
+
+    $rr = Git-Run @('rev-parse', '--show-toplevel')
+
+    if ($rr.exit -ne 0) {
+        throw "Nao foi possivel determinar a raiz do repositorio Git."
+    }
+
+    $script:repoRoot = Safe-Trim $rr.out
+
+    if ([string]::IsNullOrWhiteSpace($script:repoRoot)) {
+        throw "A raiz do repositorio retornada pelo Git esta vazia."
+    }
+
+    if ($worktreesDir -eq '') {
+        $script:worktreesDir = Join-Path $script:repoRoot '.worktrees'
+    }
+
+    if ($GLOBAL_logDirRoot -eq '') {
+        $script:GLOBAL_logDirRoot = Join-Path $script:repoRoot '.logs'
+    }
 }
 
 function Write-AsciiFile([string]$path, [string]$text) {
