@@ -1,10 +1,10 @@
 # REL-2 — Android release verification / REL-1 correction addendum
 
-Date: 2026-10-01. Ticket: #11. Source baseline: `8f95627`.
+Date: 2026-10-01. Ticket: #11. Application source baseline: `8f95627`; resumed from audit commit `eca9ed4` after signing files were provisioned in the worktree.
 
-**Verdict: REMEDIATION_REQUIRED.** Signed AAB verification is blocked by missing release signing configuration in the issue worktree. This is not approval for production integration.
+**Verdict: REMEDIATION_REQUIRED.** Signed release AAB build, artifact metadata checks and Flutter tests now pass. The previous missing-signing blocker is resolved without source changes. Production approval still requires Play history, approved upload certificate comparison and production environment confirmation. This is not approval for production integration.
 
-## Android metadata: configuration evidence, not artifact evidence
+## Android metadata: resolved configuration and resulting artifact
 
 Inspected `mobile/android/app/build.gradle.kts`, `mobile/android/settings.gradle.kts`, `mobile/android/gradle/wrapper/gradle-wrapper.properties` and `mobile/pubspec.yaml`. SDK values are delegated to Flutter, not literal values in the app Gradle script.
 
@@ -16,12 +16,12 @@ An ephemeral, ignored Gradle init script in `mobile/build/rel2-metadata.gradle` 
 
 | Property | Resolved Gradle value | Verified from resulting AAB? |
 | --- | --- | --- |
-| compileSdk | 36 | No artifact produced |
-| targetSdk | 36 | No artifact produced |
-| minSdk | 24 | No artifact produced |
-| applicationId | `com.louvaio.app` | No artifact produced |
-| versionName | `1.0.0` | No artifact produced |
-| versionCode | `1` | No artifact produced |
+| compileSdk | 36 | Manifest also records `compileSdkVersion="36"` |
+| targetSdk | 36 | Yes: `targetSdkVersion="36"` |
+| minSdk | 24 | Yes: `minSdkVersion="24"` |
+| applicationId | `com.louvaio.app` | Yes: `package="com.louvaio.app"` |
+| versionName | `1.0.0` | Yes: `versionName="1.0.0"` |
+| versionCode | `1` | Yes: `versionCode="1"` |
 
 Toolchain: `flutter --version` returned Flutter 3.47.5 stable / Dart 3.13.4; checked-in AGP 9.1.0, Gradle 9.3.1, Kotlin 2.4.0. Gradle emitted warnings about future incompatibility of the Kotlin Gradle Plugin; no dependency/toolchain migration was attempted.
 
@@ -35,26 +35,36 @@ Ran the exact requested command from `mobile`:
 flutter build appbundle --release
 ```
 
-Exit 1 at the existing fail-closed signing guard:
+Exit 0; Gradle build completed in 429.5 seconds. The earlier attempt recorded in `eca9ed4` failed for missing signing configuration. On this resumed run, ignored `mobile/android/key.properties` and `mobile/android/app/upload-keystore.jks` were already present. No signing files were created, edited or substituted by this run, and no secret values were printed. The existing Gradle release signing guard remains unchanged; debug signing was not used.
 
-> Release build failed: Missing or incomplete release signing configuration in android/key.properties.
+- AAB: `mobile/build/app/outputs/bundle/release/app-release.aab` (ignored, not committed).
+- Size: **57,404,137 bytes** (54.7 MiB; Flutter reports 54.7MB).
+- SHA-256: `62a99eb2a345c18090016d025be639c5b550e843883ea3c5ef789c508554070b`.
+- Bundle structure: Google bundletool **1.18.3** `validate` passed, exit 0.
+- Artifact metadata: `dump manifest --module=base` passed, exit 0; decoded XML retained locally in `mobile/build/rel2-aab-manifest.xml`. Values are in the table above, not inferred from `pubspec.yaml`.
+- Tool provenance: downloaded `bundletool-all-1.18.3.jar` from `google/bundletool` GitHub release into ignored `mobile/build/`; SHA-256 matched the release asset API digest: `a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29`.
+- Signing: `jarsigner -verify -verbose -certs` returned **jar verified**, exit 0. Public signer subject: `CN=LouvAIO, OU=Mobile, O=LouvAIO, L=Sao Paulo, ST=SP, C=BR` (not the Android Debug subject). Bundle signature: SHA256withRSA, 2048-bit key.
+- Public signer certificate SHA-256, read from the AAB using `keytool -printcert -jarfile`: `4E:5B:70:85:7C:B9:9D:8F:52:2E:C6:B7:B7:3B:64:1C:62:54:F8:8A:AA:E5:0A:09:49:52:25:A8:83:45:A8:C1`. Match to the Play-approved upload certificate: **Unknown / Not yet verified**.
+- JDK verification warnings: self-signed/untrusted certificate chain, absent timestamp (certificate expiry reported as 2054-02-13), POSIX attributes not signature-protected, and JarFile/JarInputStream inconsistency (manifest unavailable to the streaming reader, entries verified by JarFile but not JarInputStream). These warnings are retained in `mobile/build/rel2-signature-verification.txt`; they were not suppressed or represented as warning-free verification. Bundletool validates the bundle structure, not Play acceptance. Do not re-sign/repackage the artifact just to hide a warning.
+- Production endpoint/runtime validation: **Unknown / Not yet verified**. This exact bare build command uses development defaults from `mobile/lib/app/environment/app_environment.dart`, not production defines. This is a signed **metadata-verification artifact**, not an approved production candidate. The eventual production candidate needs `--dart-define=APP_ENV=production` and an explicitly approved HTTPS `API_BASE_URL`; do not infer endpoint health from documentation.
 
-`mobile/android/key.properties` is absent. No credentials or private keystore contents were read, printed, created or substituted; debug signing was not used as a workaround.
+Reproduction (from repository root, with the verified bundletool already present):
 
-- Expected output: `mobile/build/app/outputs/bundle/release/app-release.aab`.
-- Actual output: no AAB found under `mobile/`; no tracked AAB exists.
-- AAB size: not available (not produced).
-- AAB signature, certificate identity and artifact metadata: **Unknown / Not yet verified**.
-- Production endpoint/runtime validation: **Unknown / Not yet verified**. The exact bare build command does not select production: `AppEnvironment.fromDartDefines` defaults to development. The eventual production candidate needs `--dart-define=APP_ENV=production` and an explicitly approved HTTPS `API_BASE_URL`; do not infer endpoint health from documentation.
+```powershell
+java -jar mobile/build/bundletool-all-1.18.3.jar validate --bundle=mobile/build/app/outputs/bundle/release/app-release.aab
+java -jar mobile/build/bundletool-all-1.18.3.jar dump manifest --bundle=mobile/build/app/outputs/bundle/release/app-release.aab --module=base
+jarsigner -verify -verbose -certs mobile/build/app/outputs/bundle/release/app-release.aab
+keytool -printcert -jarfile mobile/build/app/outputs/bundle/release/app-release.aab
+Get-FileHash mobile/build/app/outputs/bundle/release/app-release.aab -Algorithm SHA256
+```
 
 ### Required release-owner follow-up
 
-1. Securely provision the approved upload keystore and ignored `mobile/android/key.properties` inside this worktree. Relative `storeFile` paths resolve from `mobile/android/app`; do not paste credentials into reports or commit them.
-2. Confirm Play history and the approved production API endpoint before choosing build parameters. Preserve `1.0.0+1` unless evidence requires a new version code.
-3. Rebuild the release AAB with the production defines, without bypassing the signing guard.
-4. Use a trusted bundletool to `validate --bundle=<AAB>` and `dump manifest --bundle=<AAB> --module=base`. Verify package `com.louvaio.app`, minSdk, targetSdk >= 36, versionName and versionCode directly from that artifact. Record artifact byte size and SHA-256.
-5. Use JDK `jarsigner -verify -verbose -certs <AAB>` to check AAB/JAR signature integrity and compare the signer certificate SHA-256 to the release owner's approved upload certificate. A self-signed certificate warning is not by itself an invalid Android upload key; signature verification does not establish Play certificate identity. `apksigner` and `aapt dump badging` in the older release guide are APK-only checks, not AAB proof.
-6. Record evidence and close the active ExecPlan only after the outstanding checks pass. No upload is authorized by this ticket.
+1. Provide authoritative Play version history and the approved upload certificate fingerprint; compare the latter with the artifact fingerprint above. Do not provide private keys/passwords in reports.
+2. Confirm the production API endpoint and whether a new version code is necessary. Preserve `1.0.0+1` unless evidence requires a change.
+3. Build the actual production candidate with approved production defines, without bypassing the signing guard. Repeat bundletool manifest/structure verification, signature checks, byte size and SHA-256 for that new artifact; this artifact's hash does not apply to a future rebuild.
+4. Review the JDK streaming-reader warnings with the release tooling owner before production acceptance. A self-signed certificate warning alone is not an invalid Android upload key; local signature verification does not prove Play acceptance. `apksigner` and `aapt dump badging` in the older release guide are APK-only checks, not AAB proof.
+5. Provide the original REL-1 manifest for direct report correction if it exists outside this checkout. Close the active ExecPlan only after the outstanding release checks pass. No upload is authorized by this ticket.
 
 ## Version / Play history
 
@@ -94,9 +104,11 @@ Important report distinctions:
 ## Validation and changes
 
 - `flutter analyze`: PASS, no issues.
-- `flutter test --reporter compact`: PASS, 395 tests, exit 0 (2m24s). Initial `flutter test` invocation exceeded the 120-second harness timeout; the longer rerun completed successfully.
-- `flutter build appbundle --release`: FAIL, missing signing configuration, no AAB.
-- Gradle metadata probe: PASS after correcting the temporary init script to skip included builds without `:app`.
+- `flutter test`: PASS, 395 tests, exit 0 (2m02s) on the resumed run.
+- `flutter build appbundle --release`: PASS, signed AAB produced, exit 0 (429.5s Gradle task). Kotlin migration/deprecated Java API warnings remain; no unrelated toolchain upgrade was attempted.
+- Gradle metadata probe: PASS, re-run confirmed all six values above.
+- Bundletool validation and manifest dump: PASS, exit 0 each.
+- JDK signature verification: `jar verified`, exit 0, with the warnings documented above. Play certificate approval/acceptance remains unverified.
 - Backend/web tests: not run; their source and behavior are unchanged. Notification audit is source inspection, not a live API/FCM test.
 - Changes: this report, release-guide corrections (API 36 naming and evidence-based version policy), and the active REL-2 ExecPlan. No tracked application source, dependency or version changes.
 - No push, deploy or Play upload performed.
