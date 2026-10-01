@@ -1,7 +1,9 @@
 ﻿# LouvAIO Mobile — Android Release Guide (Mobile V1-M8)
 
 ## 1. Overview
-This document specifies the authoritative Android release configuration, signing procedures, version policy, and environment parameters for LouvAIO Mobile (`com.louvaio.app`).
+This document specifies the Android release procedures, version policy, and environment parameters for LouvAIO Mobile (`com.louvaio.app`). Current Gradle configuration and inspected artifacts take precedence over this guide.
+
+For the issue #11 audit, see [REL-2 verification](rel-2-verification.md): evaluated compileSdk/targetSdk 36 and minSdk 24, but signed AAB verification is blocked by missing signing configuration. The APK examples below do not constitute AAB verification evidence.
 
 ---
 
@@ -48,7 +50,7 @@ Flutter maps:
 - `1` → `versionCode` in Android (monotonically increasing integer).
 
 ### 3.2 Monotonic Release Rules
-- For every production release candidate or store build, `versionCode` MUST be incremented by at least 1.
+- Before a new Play upload, confirm the highest previously used `versionCode` across all tracks and select a greater value. A local rebuild alone does not require a version bump; do not guess store history.
 - `versionName` follows Semantic Versioning 2.0.0 (`MAJOR.MINOR.PATCH`).
 - Current baseline for Mobile V1: `versionName: 1.0.0`, `versionCode: 1`.
 
@@ -86,7 +88,7 @@ flutter build apk --release \
 
 | Component | Target Version |
 |---|---|
-| **compileSdk** | 36 (Android 16 preview / Android 15 toolchain) |
+| **compileSdk** | 36 (Android 16) |
 | **targetSdk** | 36 |
 | **minSdk** | 24 (Android 7.0 Nougat) |
 | **Android Gradle Plugin (AGP)** | 9.1.0 |
