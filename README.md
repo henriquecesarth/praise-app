@@ -61,6 +61,7 @@ O script backend `npm run lint` está declarado, mas a configuração/dependênc
 ## Documentação
 
 - [Manual para agentes](AGENTS.md)
+- [Agent Manager V2 (pipeline autonomo Issue -> Engineer -> Reviewer)](docs/agent-manager.md)
 - [Memória durável](MEMORY.md)
 - [Arquitetura](docs/architecture/overview.md)
 - [Estrutura do projeto](docs/architecture/project-structure.md)
