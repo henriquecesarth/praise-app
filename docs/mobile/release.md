@@ -1,7 +1,7 @@
 ﻿# LouvAIO Mobile — Android Release Guide (Mobile V1-M8)
 
 ## 1. Overview
-This document specifies the Android release configuration, signing procedures, version policy, and environment parameters for LouvAIO Mobile (`com.louvaio.app`). For the current configuration-versus-artifact evidence, signing blocker and REL-1 notification corrections, see [REL-2 verification](rel2-verification.md). The APK checks below do not establish AAB release readiness.
+This document specifies the Android release configuration, signing procedures, version policy, and environment parameters for LouvAIO Mobile (`com.louvaio.app`). For current signed AAB metadata evidence, outstanding production approval checks and REL-1 notification corrections, see [REL-2 verification](rel2-verification.md). The APK checks below do not establish AAB release readiness.
 
 ---
 
