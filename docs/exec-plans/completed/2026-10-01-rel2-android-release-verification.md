@@ -1,6 +1,6 @@
 # REL-2 — Android release blocker verification (#11)
 
-Status: BLOCKED — signed AAB rebuilt and metadata verified; Play history, approved upload certificate and production environment confirmation remain required.
+Status: COMPLETE — production AAB rebuilt with the ticket-approved parameters; artifact metadata, structure, signature and approved signer fingerprint verified. Authoritative human decisions resolve the previous approval gaps.
 
 Resumed on 2026-10-01 from `eca9ed4`: ignored signing configuration and keystore were already provisioned inside the worktree. Re-run all three requested Flutter commands, verify the actual AAB with bundletool/JDK tools, and replace the obsolete signing blocker with current artifact evidence. No application behavior or version changes are planned.
 
@@ -22,9 +22,9 @@ Resumed on 2026-10-01 from `eca9ed4`: ignored signing configuration and keystore
 - [x] Signing files present inside worktree on resumption, ignored by Git; no credential changes or secret disclosure.
 - [x] Rebuild signed AAB; bundletool 1.18.3 validates structure and artifact metadata; record 57,404,137-byte size, SHA-256 and public certificate fingerprint.
 - [x] `jarsigner -verify -verbose -certs`: jar verified, exit 0; document self-signed, timestamp, POSIX and streaming-reader warnings rather than suppress them.
-- [ ] Compare artifact signer to approved Play upload certificate and review verification warnings with release owner.
-- [ ] Obtain approved production environment parameters; build and reverify the production candidate (bare requested command uses development defaults).
-- [ ] Obtain authoritative Play version history, then decide whether a versionCode change is required.
+- [x] Compare production artifact signer to the ticket-approved SHA-256 fingerprint: exact match. Owner acceptance of the recorded JDK warnings is authoritative.
+- [x] Build with `APP_ENV=production` and `API_BASE_URL=https://praise-app-gray.vercel.app/api/v1`; repeat bundletool validation/manifest dump and JDK signature/certificate checks.
+- [x] Apply authoritative owner history: no AAB uploaded, code 1 unconsumed; preserve `1.0.0+1`.
 
 ## Independent rerun from `ddd6f0e`
 
@@ -34,4 +34,10 @@ On 2026-10-01, re-ran analysis (no issues), all 395 Flutter tests (2m21s), and t
 
 See `docs/mobile/rel2-verification.md`. The original REL-1 manifest is not present in this checkout; the report contains an evidence-backed correction addendum, not a claim that an unavailable report was edited.
 
-This plan remains active because Play history, certificate approval and production build parameters require release-owner evidence. Signed metadata-verification artifact is now available and verified locally; do not convert those checks into production runtime or Play acceptance claims. Updated only this plan, `docs/mobile/rel2-verification.md` and the release-guide cross-reference; application source, SDK baselines, dependencies and version are unchanged.
+## Final production verification from `9e01ee0`
+
+The updated ticket supplied all authoritative approvals; no further human decision was requested. Re-ran `flutter analyze` (no issues, 14.6s), `flutter test` (395 passed, 6m31s), and `flutter build appbundle --release` with both approved production dart-defines (exit 0, 304.1s Gradle task). Re-resolved Gradle values: compileSdk/targetSdk 36, minSdk 24, package `com.louvaio.app`, version `1.0.0+1`.
+
+Production AAB: `mobile/build/app/outputs/bundle/release/app-release.aab`, 57,403,920 bytes, SHA-256 `b79cf56cfad056f4b65cc28d59c3d687ab5b28cf9639554ebcdccaf5b40e9219`. Bundletool validation/manifest dump passed; jarsigner returned `jar verified` with accepted warnings; artifact signer exactly matches the approved fingerprint. Approved URL appears in all three compiled ABI libraries; an exploratory absence check for the development fallback URL failed because fallback constants also remain compiled (not proof of runtime selection). Physical production runtime and Play acceptance remain Unknown / Not yet verified and were not claimed.
+
+Rechecked notification producers and PATCH read-all contract; preserved report-only correction addendum. Updated only this plan, `docs/mobile/rel2-verification.md` and `docs/mobile/release.md`. Application source, SDK baselines, dependencies, credentials and version are unchanged. Plan finalized and archived under `completed/`. No push, deployment, Play upload or production mutation.

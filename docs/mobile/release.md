@@ -1,7 +1,7 @@
 ﻿# LouvAIO Mobile — Android Release Guide (Mobile V1-M8)
 
 ## 1. Overview
-This document specifies the Android release configuration, signing procedures, version policy, and environment parameters for LouvAIO Mobile (`com.louvaio.app`). For current signed AAB metadata evidence, outstanding production approval checks and REL-1 notification corrections, see [REL-2 verification](rel2-verification.md). The APK checks below do not establish AAB release readiness.
+This document specifies the Android release configuration, signing procedures, version policy, and environment parameters for LouvAIO Mobile (`com.louvaio.app`). For the verified REL-2 production AAB, release-owner approvals and REL-1 notification corrections, see [REL-2 verification](rel2-verification.md). The APK checks below do not establish AAB release readiness.
 
 ---
 
@@ -57,12 +57,13 @@ Flutter maps:
 ## 4. Production Environment Configuration
 
 ### 4.1 Dart Defines
-Production builds require explicit parameters:
+REL-2 production AAB parameters approved by the release owner:
 ```bash
-flutter build apk --release \
+flutter build appbundle --release \
   --dart-define=APP_ENV=production \
-  --dart-define=API_BASE_URL=https://<CANONICAL_PROD_URL>/api/v1
+  --dart-define=API_BASE_URL=https://praise-app-gray.vercel.app/api/v1
 ```
+A bare release build uses development defaults; it is not the production candidate. The owner confirms no AAB has been uploaded to Play and code 1 is unconsumed for REL-2; preserve `1.0.0+1`.
 
 ### 4.2 Security Guards
 - In `production`, `API_BASE_URL` MUST use the `https://` protocol. The application rejects cleartext `http://` at startup with an `ArgumentError`.
@@ -111,12 +112,13 @@ Authoritative device properties verified via `adb shell getprop`:
 ### 8.1 Release Build
 ```bash
 cd mobile
-flutter build apk --release \
+flutter build appbundle --release \
   --dart-define=APP_ENV=production \
-  --dart-define=API_BASE_URL=https://api.louvaio.com/api/v1
+  --dart-define=API_BASE_URL=https://praise-app-gray.vercel.app/api/v1
 ```
+For this AAB, use the bundletool validation/manifest dump, jarsigner and public certificate checks in [REL-2 verification](rel2-verification.md). APK commands below apply only to a separately built APK and are not substitutes for AAB verification.
 
-### 8.2 Signature Verification
+### 8.2 APK Signature Verification
 ```bash
 "$env:LOCALAPPDATA\Android\Sdk\build-tools\36.0.0\apksigner.bat" verify --verbose --print-certs \
   mobile/build/app/outputs/flutter-apk/app-release.apk
