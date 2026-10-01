@@ -20,6 +20,8 @@ class ScheduleFormState {
   final List<ScheduleParticipant> participants;
   final List<ScheduleSong> songs;
   final List<ScheduleTimelineItem> timeline;
+  final List<ScheduleClothingPiece> clothingPieces;
+  final String? colorPalette;
   final List<MinistryMember> availableMembers;
   final List<MinistryRole> availableRoles;
   final bool isLoadingMembers;
@@ -40,6 +42,8 @@ class ScheduleFormState {
     this.participants = const [],
     this.songs = const [],
     this.timeline = const [],
+    this.clothingPieces = const [],
+    this.colorPalette,
     this.availableMembers = const [],
     this.availableRoles = const [],
     this.isLoadingMembers = false,
@@ -65,6 +69,11 @@ class ScheduleFormState {
     });
   }
 
+  /// Check whether a song with [songId] is already added to the schedule.
+  bool isSongSelected(String songId) {
+    return songs.any((s) => s.id == songId);
+  }
+
   ScheduleFormState copyWith({
     String? scheduleId,
     String? ministryId,
@@ -77,6 +86,9 @@ class ScheduleFormState {
     List<ScheduleParticipant>? participants,
     List<ScheduleSong>? songs,
     List<ScheduleTimelineItem>? timeline,
+    List<ScheduleClothingPiece>? clothingPieces,
+    String? colorPalette,
+    bool clearColorPalette = false,
     List<MinistryMember>? availableMembers,
     List<MinistryRole>? availableRoles,
     bool? isLoadingMembers,
@@ -98,6 +110,9 @@ class ScheduleFormState {
       participants: participants ?? this.participants,
       songs: songs ?? this.songs,
       timeline: timeline ?? this.timeline,
+      clothingPieces: clothingPieces ?? this.clothingPieces,
+      colorPalette:
+          clearColorPalette ? null : (colorPalette ?? this.colorPalette),
       availableMembers: availableMembers ?? this.availableMembers,
       availableRoles: availableRoles ?? this.availableRoles,
       isLoadingMembers: isLoadingMembers ?? this.isLoadingMembers,
@@ -138,6 +153,8 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
         participants: List.of(initialSchedule.participants),
         songs: List.of(initialSchedule.songs),
         timeline: List.of(initialSchedule.timeline),
+        clothingPieces: List.of(initialSchedule.clothingPieces),
+        colorPalette: initialSchedule.colorPalette,
         isLoadingMembers: true,
         isDirty: false,
       );
@@ -153,6 +170,8 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
         participants: const [],
         songs: const [],
         timeline: const [],
+        clothingPieces: const [],
+        colorPalette: null,
         isLoadingMembers: true,
         isDirty: false,
       );
@@ -267,6 +286,167 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
     );
   }
 
+  // ─── Repertoire / Songs Management ─────────────────────────────────────
+
+  /// Adds a song to the schedule songs list.
+  /// Returns `false` if the song is already added (duplicate prevented).
+  bool addSong(ScheduleSong song) {
+    if (state.isSongSelected(song.id)) {
+      return false;
+    }
+    state = state.copyWith(
+      songs: [...state.songs, song],
+      isDirty: true,
+      clearError: true,
+    );
+    return true;
+  }
+
+  /// Removes the song at [index].
+  void removeSong(int index) {
+    if (index < 0 || index >= state.songs.length) return;
+    final updated = List<ScheduleSong>.from(state.songs)..removeAt(index);
+    state = state.copyWith(
+      songs: updated,
+      isDirty: true,
+      clearError: true,
+    );
+  }
+
+  /// Reorders songs from [oldIndex] to [newIndex].
+  void reorderSongs(int oldIndex, int newIndex) {
+    if (oldIndex < 0 || oldIndex >= state.songs.length) return;
+    var target = newIndex;
+    if (oldIndex < target) {
+      target -= 1;
+    }
+    if (target < 0 || target >= state.songs.length) return;
+    final updated = List<ScheduleSong>.from(state.songs);
+    final item = updated.removeAt(oldIndex);
+    updated.insert(target, item);
+    state = state.copyWith(
+      songs: updated,
+      isDirty: true,
+      clearError: true,
+    );
+  }
+
+  /// Updates the musical key of the song at [index].
+  void updateSongKey(int index, String? newKey) {
+    if (index < 0 || index >= state.songs.length) return;
+    final updated = List<ScheduleSong>.from(state.songs);
+    final trimmed = newKey?.trim();
+    updated[index] = updated[index].copyWith(
+      key: trimmed?.isEmpty == true ? null : trimmed,
+    );
+    state = state.copyWith(
+      songs: updated,
+      isDirty: true,
+      clearError: true,
+    );
+  }
+
+  // ─── Timeline / Roteiro Management ─────────────────────────────────────
+
+  /// Adds a timeline item to the schedule.
+  void addTimelineItem(ScheduleTimelineItem item) {
+    state = state.copyWith(
+      timeline: [...state.timeline, item],
+      isDirty: true,
+      clearError: true,
+    );
+  }
+
+  /// Updates the timeline item at [index].
+  void updateTimelineItem(int index, ScheduleTimelineItem item) {
+    if (index < 0 || index >= state.timeline.length) return;
+    final updated = List<ScheduleTimelineItem>.from(state.timeline);
+    updated[index] = item;
+    state = state.copyWith(
+      timeline: updated,
+      isDirty: true,
+      clearError: true,
+    );
+  }
+
+  /// Removes the timeline item at [index].
+  void removeTimelineItem(int index) {
+    if (index < 0 || index >= state.timeline.length) return;
+    final updated = List<ScheduleTimelineItem>.from(state.timeline)
+      ..removeAt(index);
+    state = state.copyWith(
+      timeline: updated,
+      isDirty: true,
+      clearError: true,
+    );
+  }
+
+  /// Reorders timeline items from [oldIndex] to [newIndex].
+  void reorderTimeline(int oldIndex, int newIndex) {
+    if (oldIndex < 0 || oldIndex >= state.timeline.length) return;
+    var target = newIndex;
+    if (oldIndex < target) {
+      target -= 1;
+    }
+    if (target < 0 || target >= state.timeline.length) return;
+    final updated = List<ScheduleTimelineItem>.from(state.timeline);
+    final item = updated.removeAt(oldIndex);
+    updated.insert(target, item);
+    state = state.copyWith(
+      timeline: updated,
+      isDirty: true,
+      clearError: true,
+    );
+  }
+
+  // ─── Clothing / Vestimenta Management ──────────────────────────────────
+
+  /// Adds a clothing piece.
+  void addClothingPiece(ScheduleClothingPiece piece) {
+    state = state.copyWith(
+      clothingPieces: [...state.clothingPieces, piece],
+      isDirty: true,
+      clearError: true,
+    );
+  }
+
+  /// Updates the clothing piece at [index].
+  void updateClothingPiece(int index, ScheduleClothingPiece piece) {
+    if (index < 0 || index >= state.clothingPieces.length) return;
+    final updated = List<ScheduleClothingPiece>.from(state.clothingPieces);
+    updated[index] = piece;
+    state = state.copyWith(
+      clothingPieces: updated,
+      isDirty: true,
+      clearError: true,
+    );
+  }
+
+  /// Removes the clothing piece at [index].
+  void removeClothingPiece(int index) {
+    if (index < 0 || index >= state.clothingPieces.length) return;
+    final updated = List<ScheduleClothingPiece>.from(state.clothingPieces)
+      ..removeAt(index);
+    state = state.copyWith(
+      clothingPieces: updated,
+      isDirty: true,
+      clearError: true,
+    );
+  }
+
+  /// Sets the color palette name or description.
+  void setColorPalette(String? palette) {
+    final trimmed = palette?.trim();
+    state = state.copyWith(
+      colorPalette: trimmed,
+      clearColorPalette: trimmed == null || trimmed.isEmpty,
+      isDirty: true,
+      clearError: true,
+    );
+  }
+
+  // ─── Form Submission ───────────────────────────────────────────────────
+
   /// Submits the form to create or update the schedule.
   /// Returns the saved [ScheduleDetail] on success, or `null` on failure.
   Future<ScheduleDetail?> submit() async {
@@ -308,24 +488,11 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
           if (p.confirmed != null) 'confirmed': p.confirmed,
         };
       }).toList(),
-      if (state.songs.isNotEmpty)
-        'songs': state.songs.map((s) {
-          return {
-            'id': s.id,
-            if (s.title != null) 'title': s.title,
-            if (s.artist != null) 'artist': s.artist,
-            if (s.key != null) 'key': s.key,
-          };
-        }).toList(),
-      if (state.timeline.isNotEmpty)
-        'timeline': state.timeline.map((t) {
-          return {
-            'id': t.id,
-            'title': t.title,
-            if (t.time != null) 'time': t.time,
-            'type': t.type,
-          };
-        }).toList(),
+      'songs': state.songs.map((s) => s.toJson()).toList(),
+      'timeline': state.timeline.map((t) => t.toJson()).toList(),
+      'clothingPieces': state.clothingPieces.map((p) => p.toJson()).toList(),
+      if (state.colorPalette != null && state.colorPalette!.trim().isNotEmpty)
+        'colorPalette': state.colorPalette!.trim(),
     };
 
     try {

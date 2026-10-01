@@ -207,8 +207,13 @@ class _DetailContent extends ConsumerWidget {
                     _TimelineSection(items: schedule.timeline),
                     const SizedBox(height: 16),
                   ],
-                  if (schedule.clothingPieces.isNotEmpty) ...[
-                    _ClothingSection(pieces: schedule.clothingPieces),
+                  if (schedule.clothingPieces.isNotEmpty ||
+                      (schedule.colorPalette != null &&
+                          schedule.colorPalette!.trim().isNotEmpty)) ...[
+                    _ClothingSection(
+                      pieces: schedule.clothingPieces,
+                      palette: schedule.colorPalette,
+                    ),
                     const SizedBox(height: 16),
                   ],
                   if (schedule.notes?.isNotEmpty == true) ...[
@@ -616,7 +621,9 @@ class _TimelineSection extends StatelessWidget {
 
 class _ClothingSection extends StatelessWidget {
   final List<ScheduleClothingPiece> pieces;
-  const _ClothingSection({required this.pieces});
+  final String? palette;
+
+  const _ClothingSection({required this.pieces, this.palette});
 
   Color? _parseColor(String hex) {
     try {
@@ -631,6 +638,8 @@ class _ClothingSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final hasPalette = palette != null && palette!.trim().isNotEmpty;
+
     return _SectionCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -642,30 +651,58 @@ class _ClothingSection extends StatelessWidget {
             Text('Vestimenta',
                 style: theme.textTheme.titleSmall
                     ?.copyWith(fontWeight: FontWeight.w600)),
+            if (hasPalette) ...[
+              const Spacer(),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  palette!.trim(),
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
           ]),
-          const SizedBox(height: 10),
-          ...pieces.map((piece) => Padding(
-                padding: const EdgeInsets.symmetric(vertical: 3),
-                child: Row(children: [
-                  if (piece.colorHex != null)
-                    Container(
-                      width: 14,
-                      height: 14,
-                      margin: const EdgeInsets.only(right: 8),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: _parseColor(piece.colorHex!) ??
-                            theme.colorScheme.primary,
-                        border:
-                            Border.all(color: theme.colorScheme.outlineVariant),
+          if (pieces.isEmpty && hasPalette)
+            Padding(
+              padding: const EdgeInsets.only(top: 8.0),
+              child: Text(
+                'Paleta definida: ${palette!.trim()}',
+                style: theme.textTheme.bodyMedium,
+              ),
+            ),
+          if (pieces.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            ...pieces.map((piece) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Row(children: [
+                    if (piece.colorHex != null)
+                      Container(
+                        width: 14,
+                        height: 14,
+                        margin: const EdgeInsets.only(right: 8),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: _parseColor(piece.colorHex!) ??
+                              theme.colorScheme.primary,
+                          border: Border.all(
+                              color: theme.colorScheme.outlineVariant),
+                        ),
                       ),
-                    ),
-                  if (piece.description != null)
-                    Expanded(
-                        child: Text(piece.description!,
-                            style: theme.textTheme.bodyMedium)),
-                ]),
-              )),
+                    if (piece.description != null)
+                      Expanded(
+                          child: Text(piece.description!,
+                              style: theme.textTheme.bodyMedium)),
+                  ]),
+                )),
+          ],
         ],
       ),
     );

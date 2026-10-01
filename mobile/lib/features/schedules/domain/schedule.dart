@@ -26,6 +26,27 @@ class ScheduleSong {
     );
   }
 
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        if (title != null) 'title': title,
+        if (artist != null) 'artist': artist,
+        if (key != null) 'key': key,
+      };
+
+  ScheduleSong copyWith({
+    String? id,
+    String? title,
+    String? artist,
+    String? key,
+  }) {
+    return ScheduleSong(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      artist: artist ?? this.artist,
+      key: key ?? this.key,
+    );
+  }
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -62,6 +83,27 @@ class ScheduleTimelineItem {
     );
   }
 
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        if (time != null) 'time': time,
+        'type': type,
+      };
+
+  ScheduleTimelineItem copyWith({
+    String? id,
+    String? title,
+    String? time,
+    String? type,
+  }) {
+    return ScheduleTimelineItem(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      time: time ?? this.time,
+      type: type ?? this.type,
+    );
+  }
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -82,11 +124,46 @@ class ScheduleClothingPiece {
   const ScheduleClothingPiece({this.description, this.colorHex});
 
   factory ScheduleClothingPiece.fromJson(Map<String, dynamic> json) {
+    final rawColors = json['colors'];
+    String? firstColor;
+    if (rawColors is List && rawColors.isNotEmpty) {
+      firstColor = rawColors.first.toString();
+    }
     return ScheduleClothingPiece(
-      description: json['description'] as String?,
-      colorHex: json['colorHex'] as String? ?? json['color'] as String?,
+      description: json['description'] as String? ?? json['name'] as String?,
+      colorHex: json['colorHex'] as String? ??
+          json['color'] as String? ??
+          firstColor,
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        if (description != null) 'description': description,
+        if (colorHex != null) 'colorHex': colorHex,
+        if (description != null) 'name': description,
+        if (colorHex != null) 'colors': [colorHex!],
+      };
+
+  ScheduleClothingPiece copyWith({
+    String? description,
+    String? colorHex,
+  }) {
+    return ScheduleClothingPiece(
+      description: description ?? this.description,
+      colorHex: colorHex ?? this.colorHex,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ScheduleClothingPiece &&
+          runtimeType == other.runtimeType &&
+          description == other.description &&
+          colorHex == other.colorHex;
+
+  @override
+  int get hashCode => description.hashCode ^ colorHex.hashCode;
 }
 
 /// Full schedule detail model for the member-facing detail screen.

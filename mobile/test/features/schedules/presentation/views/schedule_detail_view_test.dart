@@ -202,6 +202,7 @@ void main() {
             description: 'Camisa Preta e Calça Jeans Escura',
             colorHex: '#000000'),
       ],
+      colorPalette: 'Tons Terrosos',
     );
     fakeRepo.comments = [
       const ScheduleComment(
@@ -289,8 +290,9 @@ void main() {
       expect(find.text('Abertura e Oração'), findsOneWidget);
       expect(find.text('Louvor Congregacional'), findsOneWidget);
 
-      // Clothing
+      // Clothing & Palette
       expect(find.text('Camisa Preta e Calça Jeans Escura'), findsOneWidget);
+      expect(find.text('Tons Terrosos'), findsOneWidget);
 
       // Comments
       expect(find.text('Qual o tom da primeira música?'), findsOneWidget);

@@ -7,6 +7,11 @@ import 'package:louvaio_mobile/core/storage/preferences_storage.dart';
 import 'package:louvaio_mobile/features/ministry_context/data/ministry_repository.dart';
 import 'package:louvaio_mobile/features/ministry_context/domain/ministry.dart';
 import 'package:louvaio_mobile/features/ministry_context/presentation/controllers/ministry_context_controller.dart';
+import 'package:louvaio_mobile/features/repertoire/data/repertoire_repository.dart';
+import 'package:louvaio_mobile/features/repertoire/domain/classification.dart';
+import 'package:louvaio_mobile/features/repertoire/domain/paginated_songs.dart';
+import 'package:louvaio_mobile/features/repertoire/domain/song_detail.dart';
+import 'package:louvaio_mobile/features/repertoire/domain/song_summary.dart';
 import 'package:louvaio_mobile/features/schedules/data/schedule_repository.dart';
 import 'package:louvaio_mobile/features/schedules/domain/ministry_member.dart';
 import 'package:louvaio_mobile/features/schedules/domain/ministry_role.dart';
@@ -14,6 +19,42 @@ import 'package:louvaio_mobile/features/schedules/domain/schedule.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule_comment.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule_participant.dart';
 import 'package:louvaio_mobile/features/schedules/presentation/views/schedule_form_screen.dart';
+
+class _FakeRepertoireRepo implements RepertoireRepository {
+  List<SongSummary> songsToReturn = [];
+
+  @override
+  Future<PaginatedSongs> listSongs(
+    String ministryId, {
+    String? search,
+    String? classificationId,
+    String? cursor,
+    int? page,
+    int? limit,
+  }) async {
+    final filtered = search != null && search.isNotEmpty
+        ? songsToReturn
+            .where((s) =>
+                s.title.toLowerCase().contains(search.toLowerCase()) ||
+                (s.artistName?.toLowerCase().contains(search.toLowerCase()) ??
+                    false))
+            .toList()
+        : songsToReturn;
+    return PaginatedSongs(
+      songs: filtered,
+      total: filtered.length,
+    );
+  }
+
+  @override
+  Future<SongDetail> getSongDetail(String ministryId, String songId) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<List<Classification>> listClassifications(String ministryId) async =>
+      [];
+}
 
 class _FakeMinistryRepo implements MinistryRepository {
   @override
@@ -134,6 +175,7 @@ class FakeMinistryContextNotifier extends MinistryContextNotifier {
 
 void main() {
   late _FakeScheduleRepo fakeRepo;
+  late _FakeRepertoireRepo fakeRepertoireRepo;
   late FakeMinistryContextNotifier ministryNotifier;
 
   setUp(() {
@@ -145,6 +187,23 @@ void main() {
     fakeRepo.roles = [
       const MinistryRole(id: 'r1', name: 'Vocal'),
       const MinistryRole(id: 'r2', name: 'Bateria'),
+    ];
+    fakeRepertoireRepo = _FakeRepertoireRepo();
+    fakeRepertoireRepo.songsToReturn = [
+      const SongSummary(
+        id: 'song_1',
+        ministryId: 'min_1',
+        title: 'Porque Ele Vive',
+        artistName: 'Harpa Cristã',
+        originalKey: 'G',
+      ),
+      const SongSummary(
+        id: 'song_2',
+        ministryId: 'min_1',
+        title: 'Vitorioso És',
+        artistName: 'Gabriel Guedes',
+        originalKey: 'A',
+      ),
     ];
     ministryNotifier = FakeMinistryContextNotifier();
   });
@@ -162,6 +221,7 @@ void main() {
         ministryRepositoryProvider.overrideWithValue(_FakeMinistryRepo()),
         ministryContextNotifierProvider.overrideWith((ref) => ministryNotifier),
         scheduleRepositoryProvider.overrideWithValue(fakeRepo),
+        repertoireRepositoryProvider.overrideWithValue(fakeRepertoireRepo),
       ],
       child: MaterialApp(
         home: ScheduleFormScreen(
@@ -229,8 +289,8 @@ void main() {
       await tester.pumpWidget(createSubject());
       await tester.pumpAndSettle();
 
-      // Tap "Adicionar" button
-      await tester.tap(find.text('Adicionar'));
+      // Tap "Adicionar" button for participants
+      await tester.tap(find.byKey(const ValueKey('add_participant_button')));
       await tester.pumpAndSettle();
 
       // Member picker sheet is open
@@ -329,6 +389,154 @@ void main() {
 
       // Screen was popped
       expect(find.text('Previous Screen'), findsOneWidget);
+    });
+
+    testWidgets('renders content sections: songs, timeline, clothing, and palette',
+        (tester) async {
+      tester.view.physicalSize = const Size(1024, 2048);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Músicas (0)'), findsOneWidget);
+      expect(find.text('Nenhuma música adicionada à escala.'), findsOneWidget);
+      expect(find.text('Roteiro (0)'), findsOneWidget);
+      expect(find.text('Nenhum momento adicionado ao roteiro.'), findsOneWidget);
+      expect(find.text('Vestimenta & Cores'), findsOneWidget);
+      expect(find.text('Paleta de Cores / Tema'), findsOneWidget);
+      expect(find.text('Tons Terrosos'), findsOneWidget);
+    });
+
+    testWidgets('adding song via song picker sheet adds song to schedule',
+        (tester) async {
+      tester.view.physicalSize = const Size(1024, 2048);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('add_song_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Selecionar Música do Repertório'), findsOneWidget);
+      expect(find.text('Porque Ele Vive'), findsOneWidget);
+
+      await tester.tap(find.text('Porque Ele Vive'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Músicas (1)'), findsOneWidget);
+      expect(find.text('Porque Ele Vive'), findsOneWidget);
+      expect(find.text('Tom: G'), findsOneWidget);
+    });
+
+    testWidgets('adding timeline moment via timeline dialog adds item to schedule',
+        (tester) async {
+      tester.view.physicalSize = const Size(1024, 2048);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('add_timeline_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Novo Momento'), findsOneWidget);
+
+      await tester.enterText(
+          find.widgetWithText(TextField, 'Título do momento *'),
+          'Louvor de Abertura');
+      await tester.enterText(
+          find.widgetWithText(TextField, 'Horário previsto (opcional)'),
+          '19:15');
+
+      await tester.tap(find.text('Salvar'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Roteiro (1)'), findsOneWidget);
+      expect(find.text('Louvor de Abertura'), findsOneWidget);
+      expect(find.text('19:15'), findsOneWidget);
+    });
+
+    testWidgets('adding clothing piece and selecting palette preset',
+        (tester) async {
+      tester.view.physicalSize = const Size(1024, 2048);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+
+      // Tap preset chip
+      await tester.tap(find.text('Tons Terrosos'));
+      await tester.pumpAndSettle();
+
+      // Open clothing dialog
+      await tester.tap(find.byKey(const ValueKey('add_clothing_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Adicionar Peça de Vestimenta'), findsOneWidget);
+      await tester.enterText(
+          find.widgetWithText(TextField, 'Descrição da peça *'),
+          'Camisa Terracota');
+
+      await tester.tap(find.byKey(const ValueKey('confirm_add_clothing_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Camisa Terracota'), findsOneWidget);
+      expect(find.text('Peças (1)'), findsOneWidget);
+    });
+
+    testWidgets('save button submits songs, timeline, clothing, and palette',
+        (tester) async {
+      tester.view.physicalSize = const Size(1024, 2048);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+
+      // Add song
+      await tester.tap(find.byKey(const ValueKey('add_song_button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Porque Ele Vive'));
+      await tester.pumpAndSettle();
+
+      // Add timeline
+      await tester.tap(find.byKey(const ValueKey('add_timeline_button')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.widgetWithText(TextField, 'Título do momento *'),
+          'Boas-vindas');
+      await tester.tap(find.text('Salvar'));
+      await tester.pumpAndSettle();
+
+      // Add clothing piece
+      await tester.tap(find.byKey(const ValueKey('add_clothing_button')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.widgetWithText(TextField, 'Descrição da peça *'),
+          'Camisa Preta');
+      await tester.tap(find.byKey(const ValueKey('confirm_add_clothing_button')));
+      await tester.pumpAndSettle();
+
+      // Set palette
+      await tester.tap(find.text('Preto e Branco'));
+      await tester.pumpAndSettle();
+
+      // Submit
+      await tester.tap(find.text('Criar Escala'));
+      await tester.pumpAndSettle();
+
+      expect(fakeRepo.lastCreatedData, isNotNull);
+      final data = fakeRepo.lastCreatedData!;
+      expect(data['colorPalette'], equals('Preto e Branco'));
+      expect((data['songs'] as List).length, equals(1));
+      expect((data['timeline'] as List).length, equals(1));
+      expect((data['clothingPieces'] as List).length, equals(1));
     });
   });
 }

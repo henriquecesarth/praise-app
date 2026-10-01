@@ -720,5 +720,149 @@ void main() {
       expect(notifier.state.isSubmitting, isFalse);
       expect(notifier.state.submitSuccess, isFalse);
     });
+
+    test('song management: addSong, prevent duplicates, updateSongKey, removeSong, reorderSongs', () {
+      notifier.init(ministryId: 'min_test');
+      expect(notifier.state.songs, isEmpty);
+
+      const song1 = ScheduleSong(id: 's1', title: 'Porque Ele Vive', artist: 'Harpa', key: 'G');
+      const song2 = ScheduleSong(id: 's2', title: 'Vitorioso és', artist: 'Gabriel Guedes', key: 'A');
+      const song3 = ScheduleSong(id: 's3', title: 'Bondade de Deus', artist: 'Isaias Saad', key: 'C');
+
+      // Add song 1
+      final added1 = notifier.addSong(song1);
+      expect(added1, isTrue);
+      expect(notifier.state.songs.length, equals(1));
+      expect(notifier.state.isSongSelected('s1'), isTrue);
+
+      // Duplicate prevention
+      final addedDuplicate = notifier.addSong(song1);
+      expect(addedDuplicate, isFalse);
+      expect(notifier.state.songs.length, equals(1));
+
+      // Add song 2 and 3
+      notifier.addSong(song2);
+      notifier.addSong(song3);
+      expect(notifier.state.songs.length, equals(3));
+      expect(notifier.state.songs[0].id, equals('s1'));
+      expect(notifier.state.songs[1].id, equals('s2'));
+      expect(notifier.state.songs[2].id, equals('s3'));
+
+      // Update key
+      notifier.updateSongKey(0, 'Ab');
+      expect(notifier.state.songs[0].key, equals('Ab'));
+
+      // Reorder: move index 2 to index 0
+      notifier.reorderSongs(2, 0);
+      expect(notifier.state.songs[0].id, equals('s3'));
+      expect(notifier.state.songs[1].id, equals('s1'));
+      expect(notifier.state.songs[2].id, equals('s2'));
+
+      // Remove song at index 1
+      notifier.removeSong(1);
+      expect(notifier.state.songs.length, equals(2));
+      expect(notifier.state.songs[0].id, equals('s3'));
+      expect(notifier.state.songs[1].id, equals('s2'));
+      expect(notifier.state.isSongSelected('s1'), isFalse);
+    });
+
+    test('timeline management: addTimelineItem, updateTimelineItem, reorderTimeline, removeTimelineItem', () {
+      notifier.init(ministryId: 'min_test');
+      expect(notifier.state.timeline, isEmpty);
+
+      const t1 = ScheduleTimelineItem(id: 't1', title: 'Abertura', time: '19:00', type: 'prayer');
+      const t2 = ScheduleTimelineItem(id: 't2', title: 'Louvor', time: '19:15', type: 'worship');
+      const t3 = ScheduleTimelineItem(id: 't3', title: 'Palavra', time: '19:45', type: 'word');
+
+      notifier.addTimelineItem(t1);
+      notifier.addTimelineItem(t2);
+      notifier.addTimelineItem(t3);
+      expect(notifier.state.timeline.length, equals(3));
+
+      // Update item
+      notifier.updateTimelineItem(0, t1.copyWith(title: 'Oração Inicial'));
+      expect(notifier.state.timeline[0].title, equals('Oração Inicial'));
+
+      // Reorder timeline: move 0 to after 1
+      notifier.reorderTimeline(0, 2);
+      expect(notifier.state.timeline[0].id, equals('t2'));
+      expect(notifier.state.timeline[1].id, equals('t1'));
+      expect(notifier.state.timeline[2].id, equals('t3'));
+
+      // Remove item
+      notifier.removeTimelineItem(1);
+      expect(notifier.state.timeline.length, equals(2));
+      expect(notifier.state.timeline[0].id, equals('t2'));
+      expect(notifier.state.timeline[1].id, equals('t3'));
+    });
+
+    test('clothing & palette management: addClothingPiece, updateClothingPiece, removeClothingPiece, setColorPalette', () {
+      notifier.init(ministryId: 'min_test');
+      expect(notifier.state.clothingPieces, isEmpty);
+      expect(notifier.state.colorPalette, isNull);
+
+      notifier.setColorPalette('Tons Terrosos');
+      expect(notifier.state.colorPalette, equals('Tons Terrosos'));
+
+      const piece1 = ScheduleClothingPiece(description: 'Camisa preta', colorHex: '#000000');
+      const piece2 = ScheduleClothingPiece(description: 'Calça jeans', colorHex: '#1E3A8A');
+
+      notifier.addClothingPiece(piece1);
+      notifier.addClothingPiece(piece2);
+      expect(notifier.state.clothingPieces.length, equals(2));
+
+      notifier.updateClothingPiece(0, piece1.copyWith(description: 'Camisa social preta'));
+      expect(notifier.state.clothingPieces[0].description, equals('Camisa social preta'));
+
+      notifier.removeClothingPiece(1);
+      expect(notifier.state.clothingPieces.length, equals(1));
+      expect(notifier.state.clothingPieces[0].description, equals('Camisa social preta'));
+
+      notifier.setColorPalette(null);
+      expect(notifier.state.colorPalette, isNull);
+    });
+
+    test('submit serializes content fields (songs, timeline, clothing, palette) into create payload', () async {
+      repo.detailToReturn = const ScheduleDetail(
+        id: 'sch_content_test',
+        ministryId: 'min_test',
+        title: 'Culto de Celebração',
+        date: '2026-10-15',
+      );
+
+      notifier.init(ministryId: 'min_test');
+      notifier.setTitle('Culto de Celebração');
+      notifier.setDate('2026-10-15');
+      notifier.setTime('19:00');
+
+      notifier.addSong(const ScheduleSong(id: 'song_1', title: 'Graça', key: 'E'));
+      notifier.addTimelineItem(const ScheduleTimelineItem(id: 'tl_1', title: 'Momento de Louvor', type: 'worship'));
+      notifier.addClothingPiece(const ScheduleClothingPiece(description: 'Branco', colorHex: '#FFFFFF'));
+      notifier.setColorPalette('Preto e Branco');
+
+      final result = await notifier.submit();
+      expect(result, isNotNull);
+
+      final payload = repo.lastCreatedData!;
+      expect(payload['title'], equals('Culto de Celebração'));
+      expect(payload['colorPalette'], equals('Preto e Branco'));
+
+      final songs = payload['songs'] as List;
+      expect(songs.length, equals(1));
+      expect(songs.first['id'], equals('song_1'));
+      expect(songs.first['title'], equals('Graça'));
+      expect(songs.first['key'], equals('E'));
+
+      final timeline = payload['timeline'] as List;
+      expect(timeline.length, equals(1));
+      expect(timeline.first['id'], equals('tl_1'));
+      expect(timeline.first['title'], equals('Momento de Louvor'));
+      expect(timeline.first['type'], equals('worship'));
+
+      final clothing = payload['clothingPieces'] as List;
+      expect(clothing.length, equals(1));
+      expect(clothing.first['description'], equals('Branco'));
+      expect(clothing.first['colorHex'], equals('#FFFFFF'));
+    });
   });
 }

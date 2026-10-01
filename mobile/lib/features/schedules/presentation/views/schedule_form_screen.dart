@@ -7,6 +7,7 @@ import '../../domain/ministry_member.dart';
 import '../../domain/ministry_role.dart';
 import '../../domain/schedule.dart';
 import '../../domain/schedule_participant.dart';
+import '../../../repertoire/domain/song_summary.dart';
 import '../controllers/schedule_form_controller.dart';
 
 /// Screen for creating and editing schedules in LouvAIO Mobile.
@@ -39,6 +40,7 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _titleController;
   late final TextEditingController _notesController;
+  late final TextEditingController _paletteController;
 
   @override
   void initState() {
@@ -47,6 +49,8 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen> {
         TextEditingController(text: widget.initialSchedule?.title ?? 'Culto');
     _notesController =
         TextEditingController(text: widget.initialSchedule?.notes ?? '');
+    _paletteController = TextEditingController(
+        text: widget.initialSchedule?.colorPalette ?? '');
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(scheduleFormNotifierProvider.notifier).init(
@@ -60,6 +64,7 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen> {
   void dispose() {
     _titleController.dispose();
     _notesController.dispose();
+    _paletteController.dispose();
     super.dispose();
   }
 
@@ -269,6 +274,350 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen> {
         ),
       ),
     );
+  }
+
+  // ─── Content Management Handlers ──────────────────────────────────────────
+
+  void _openSongPicker(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => _SongPickerSheet(
+        ministryId: widget.ministryId,
+        onSongSelected: (song) {
+          final added = ref
+              .read(scheduleFormNotifierProvider.notifier)
+              .addSong(ScheduleSong(
+                id: song.id,
+                title: song.title,
+                artist: song.artistName,
+                key: song.originalKey,
+              ));
+          if (added && mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Música "${song.title}" adicionada à escala'),
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          }
+        },
+      ),
+    );
+  }
+
+  void _editSongKey(
+    BuildContext context,
+    int index,
+    ScheduleSong song,
+  ) {
+    final controller = TextEditingController(text: song.key ?? '');
+    final commonKeys = [
+      'C', 'C#', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B',
+      'Cm', 'C#m', 'Dm', 'Ebm', 'Em', 'Fm', 'F#m', 'Gm', 'Abm', 'Am', 'Bbm', 'Bm',
+    ];
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text('Tom da música: ${song.title ?? "Sem título"}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Tons mais comuns:'),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: commonKeys.take(12).map((k) {
+                  final isSelected = controller.text.trim() == k;
+                  return ChoiceChip(
+                    label: Text(k),
+                    selected: isSelected,
+                    onSelected: (selected) {
+                      if (selected) {
+                        setDialogState(() {
+                          controller.text = k;
+                        });
+                      }
+                    },
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'Tom (ex: G, Em, F#m)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final newKey = controller.text.trim();
+                ref
+                    .read(scheduleFormNotifierProvider.notifier)
+                    .updateSongKey(index, newKey.isEmpty ? null : newKey);
+                Navigator.of(ctx).pop();
+              },
+              child: const Text('Salvar'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _openTimelineDialog(
+    BuildContext context, {
+    int? index,
+    ScheduleTimelineItem? item,
+  }) {
+    final titleController = TextEditingController(text: item?.title ?? '');
+    final timeController = TextEditingController(text: item?.time ?? '');
+    var selectedType = item?.type ?? 'worship';
+
+    final types = <String, String>{
+      'worship': 'Louvor',
+      'word': 'Palavra',
+      'prayer': 'Oração',
+      'transition': 'Transição',
+      'other': 'Outro',
+    };
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text(item == null ? 'Novo Momento' : 'Editar Momento'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: titleController,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Título do momento *',
+                    hintText: 'ex: Oração Inicial, Louvor, Palavra',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: timeController,
+                  decoration: const InputDecoration(
+                    labelText: 'Horário previsto (opcional)',
+                    hintText: 'ex: 19:15',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Tipo de momento:',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: types.entries.map((e) {
+                    final isSelected = selectedType == e.key;
+                    return ChoiceChip(
+                      label: Text(e.value),
+                      selected: isSelected,
+                      onSelected: (selected) {
+                        if (selected) {
+                          setDialogState(() {
+                            selectedType = e.key;
+                          });
+                        }
+                      },
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final trimmedTitle = titleController.text.trim();
+                if (trimmedTitle.isEmpty) return;
+
+                final newItem = ScheduleTimelineItem(
+                  id: item?.id ??
+                      DateTime.now().millisecondsSinceEpoch.toString(),
+                  title: trimmedTitle,
+                  time: timeController.text.trim().isEmpty
+                      ? null
+                      : timeController.text.trim(),
+                  type: selectedType,
+                );
+
+                if (index != null) {
+                  ref
+                      .read(scheduleFormNotifierProvider.notifier)
+                      .updateTimelineItem(index, newItem);
+                } else {
+                  ref
+                      .read(scheduleFormNotifierProvider.notifier)
+                      .addTimelineItem(newItem);
+                }
+                Navigator.of(ctx).pop();
+              },
+              child: const Text('Salvar'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _openClothingDialog(BuildContext context) {
+    final descController = TextEditingController();
+    String? selectedColorHex = '#1E3A8A';
+
+    final presetColors = <Map<String, String>>[
+      {'name': 'Preto', 'hex': '#000000'},
+      {'name': 'Branco', 'hex': '#FFFFFF'},
+      {'name': 'Azul Marinho', 'hex': '#1E3A8A'},
+      {'name': 'Azul Claro', 'hex': '#3B82F6'},
+      {'name': 'Verde Oliva', 'hex': '#065F46'},
+      {'name': 'Vinho', 'hex': '#991B1B'},
+      {'name': 'Mostarda', 'hex': '#D97706'},
+      {'name': 'Marrom', 'hex': '#78350F'},
+      {'name': 'Cinza', 'hex': '#6B7280'},
+    ];
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Adicionar Peça de Vestimenta'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: descController,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Descrição da peça *',
+                    hintText: 'ex: Camisa social, Vestido, Calça jeans',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Cor predominante:',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: presetColors.map((c) {
+                    final hex = c['hex']!;
+                    final isSelected = selectedColorHex == hex;
+                    final colorVal =
+                        int.parse('FF${hex.replaceAll('#', '')}', radix: 16);
+                    return GestureDetector(
+                      onTap: () {
+                        setDialogState(() {
+                          selectedColorHex = hex;
+                        });
+                      },
+                      child: Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Color(colorVal),
+                          border: Border.all(
+                            color: isSelected
+                                ? Theme.of(ctx).colorScheme.primary
+                                : Colors.grey.shade400,
+                            width: isSelected ? 3 : 1,
+                          ),
+                        ),
+                        child: isSelected
+                            ? Icon(
+                                Icons.check,
+                                size: 18,
+                                color: colorVal == 0xFFFFFFFF
+                                    ? Colors.black
+                                    : Colors.white,
+                              )
+                            : null,
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              key: const ValueKey('confirm_add_clothing_button'),
+              onPressed: () {
+                final trimmedDesc = descController.text.trim();
+                if (trimmedDesc.isEmpty) return;
+
+                ref.read(scheduleFormNotifierProvider.notifier).addClothingPiece(
+                      ScheduleClothingPiece(
+                        description: trimmedDesc,
+                        colorHex: selectedColorHex,
+                      ),
+                    );
+                Navigator.of(ctx).pop();
+              },
+              child: const Text('Adicionar'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _getTimelineTypeLabel(String type) {
+    switch (type) {
+      case 'worship':
+        return 'Louvor';
+      case 'word':
+        return 'Palavra';
+      case 'prayer':
+        return 'Oração';
+      case 'transition':
+        return 'Transição';
+      case 'other':
+      default:
+        return 'Outro';
+    }
   }
 
   @override
@@ -524,6 +873,7 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen> {
                                   ),
                                 ),
                                 FilledButton.tonalIcon(
+                                  key: const ValueKey('add_participant_button'),
                                   onPressed: () => _openMemberPicker(context),
                                   icon: const Icon(Icons.person_add_outlined,
                                       size: 18),
@@ -618,6 +968,502 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen> {
                                               notifier.removeParticipant(index),
                                         ),
                                       ],
+                                    ),
+                                  );
+                                },
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // ─── Songs / Repertoire Section ───────────────────────
+                    Card(
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(
+                          color: theme.dividerColor.withValues(alpha: 0.2),
+                        ),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  'Músicas (${formState.songs.length})',
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                FilledButton.tonalIcon(
+                                  key: const ValueKey('add_song_button'),
+                                  onPressed: () => _openSongPicker(context),
+                                  icon: const Icon(Icons.playlist_add, size: 18),
+                                  label: const Text('Adicionar'),
+                                  style: FilledButton.styleFrom(
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            if (formState.songs.isEmpty)
+                              Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 24.0),
+                                child: Center(
+                                  child: Column(
+                                    children: [
+                                      Icon(
+                                        Icons.library_music_outlined,
+                                        size: 40,
+                                        color: theme.colorScheme.onSurface
+                                            .withValues(alpha: 0.3),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'Nenhuma música adicionada à escala.',
+                                        style: theme.textTheme.bodyMedium
+                                            ?.copyWith(
+                                          color: theme.colorScheme.onSurface
+                                              .withValues(alpha: 0.5),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'Toque em "Adicionar" para selecionar do repertório.',
+                                        style: theme.textTheme.bodySmall
+                                            ?.copyWith(
+                                          color: theme.colorScheme.onSurface
+                                              .withValues(alpha: 0.4),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              )
+                            else
+                              ListView.separated(
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                itemCount: formState.songs.length,
+                                separatorBuilder: (_, __) =>
+                                    const Divider(height: 1),
+                                itemBuilder: (ctx, index) {
+                                  final song = formState.songs[index];
+                                  return ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    leading: CircleAvatar(
+                                      child: Text('${index + 1}'),
+                                    ),
+                                    title: Text(
+                                      song.title ?? 'Sem título',
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w600),
+                                    ),
+                                    subtitle: song.artist != null
+                                        ? Text(song.artist!)
+                                        : null,
+                                    trailing: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        InkWell(
+                                          onTap: () => _editSongKey(
+                                              context, index, song),
+                                          borderRadius:
+                                              BorderRadius.circular(6),
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 8, vertical: 4),
+                                            decoration: BoxDecoration(
+                                              color: theme.colorScheme
+                                                  .surfaceContainerHighest,
+                                              borderRadius:
+                                                  BorderRadius.circular(6),
+                                              border: Border.all(
+                                                color: theme
+                                                    .colorScheme.outlineVariant,
+                                              ),
+                                            ),
+                                            child: Text(
+                                              song.key != null &&
+                                                      song.key!.isNotEmpty
+                                                  ? 'Tom: ${song.key}'
+                                                  : 'Tom: —',
+                                              style: theme.textTheme.labelSmall
+                                                  ?.copyWith(
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(
+                                              Icons.arrow_upward,
+                                              size: 18),
+                                          tooltip: 'Subir',
+                                          onPressed: index > 0
+                                              ? () => notifier.reorderSongs(
+                                                  index, index - 1)
+                                              : null,
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(
+                                              Icons.arrow_downward,
+                                              size: 18),
+                                          tooltip: 'Descer',
+                                          onPressed: index <
+                                                  formState.songs.length - 1
+                                              ? () => notifier.reorderSongs(
+                                                  index, index + 2)
+                                              : null,
+                                        ),
+                                        IconButton(
+                                          icon: Icon(
+                                            Icons.remove_circle_outline,
+                                            size: 20,
+                                            color: theme.colorScheme.error,
+                                          ),
+                                          tooltip: 'Remover música',
+                                          onPressed: () =>
+                                              notifier.removeSong(index),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // ─── Timeline / Roteiro Section ───────────────────────
+                    Card(
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(
+                          color: theme.dividerColor.withValues(alpha: 0.2),
+                        ),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  'Roteiro (${formState.timeline.length})',
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                FilledButton.tonalIcon(
+                                  key: const ValueKey('add_timeline_button'),
+                                  onPressed: () => _openTimelineDialog(context),
+                                  icon: const Icon(Icons.add_circle_outline,
+                                      size: 18),
+                                  label: const Text('Adicionar'),
+                                  style: FilledButton.styleFrom(
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            if (formState.timeline.isEmpty)
+                              Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 24.0),
+                                child: Center(
+                                  child: Column(
+                                    children: [
+                                      Icon(
+                                        Icons.view_timeline_outlined,
+                                        size: 40,
+                                        color: theme.colorScheme.onSurface
+                                            .withValues(alpha: 0.3),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'Nenhum momento adicionado ao roteiro.',
+                                        style: theme.textTheme.bodyMedium
+                                            ?.copyWith(
+                                          color: theme.colorScheme.onSurface
+                                              .withValues(alpha: 0.5),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'Toque em "Adicionar" para definir a liturgia do culto.',
+                                        style: theme.textTheme.bodySmall
+                                            ?.copyWith(
+                                          color: theme.colorScheme.onSurface
+                                              .withValues(alpha: 0.4),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              )
+                            else
+                              ListView.separated(
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                itemCount: formState.timeline.length,
+                                separatorBuilder: (_, __) =>
+                                    const Divider(height: 1),
+                                itemBuilder: (ctx, index) {
+                                  final item = formState.timeline[index];
+                                  return ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    leading: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: theme.colorScheme
+                                            .surfaceContainerHighest,
+                                        borderRadius:
+                                            BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        item.time?.isNotEmpty == true
+                                            ? item.time!
+                                            : '—',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontFamily: 'monospace',
+                                        ),
+                                      ),
+                                    ),
+                                    title: Text(
+                                      item.title,
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w600),
+                                    ),
+                                    subtitle:
+                                        Text(_getTimelineTypeLabel(item.type)),
+                                    trailing: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                          icon: const Icon(
+                                              Icons.arrow_upward,
+                                              size: 18),
+                                          tooltip: 'Subir',
+                                          onPressed: index > 0
+                                              ? () => notifier.reorderTimeline(
+                                                  index, index - 1)
+                                              : null,
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(
+                                              Icons.arrow_downward,
+                                              size: 18),
+                                          tooltip: 'Descer',
+                                          onPressed: index <
+                                                  formState.timeline.length - 1
+                                              ? () => notifier.reorderTimeline(
+                                                  index, index + 2)
+                                              : null,
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(
+                                              Icons.edit_outlined,
+                                              size: 20),
+                                          tooltip: 'Editar momento',
+                                          onPressed: () => _openTimelineDialog(
+                                            context,
+                                            index: index,
+                                            item: item,
+                                          ),
+                                        ),
+                                        IconButton(
+                                          icon: Icon(
+                                            Icons.remove_circle_outline,
+                                            size: 20,
+                                            color: theme.colorScheme.error,
+                                          ),
+                                          tooltip: 'Remover momento',
+                                          onPressed: () => notifier
+                                              .removeTimelineItem(index),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // ─── Clothing / Vestimenta Section ────────────────────
+                    Card(
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(
+                          color: theme.dividerColor.withValues(alpha: 0.2),
+                        ),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  'Vestimenta & Cores',
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                FilledButton.tonalIcon(
+                                  key: const ValueKey('add_clothing_button'),
+                                  onPressed: () => _openClothingDialog(context),
+                                  icon: const Icon(Icons.add_circle_outline,
+                                      size: 18),
+                                  label: const Text('Adicionar Peça'),
+                                  style: FilledButton.styleFrom(
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: _paletteController,
+                              decoration: InputDecoration(
+                                labelText: 'Paleta de Cores / Tema',
+                                hintText:
+                                    'ex: Tons Terrosos, Preto Básico, Azul e Branco',
+                                border: const OutlineInputBorder(),
+                                prefixIcon: const Icon(Icons.palette_outlined),
+                                suffixIcon: _paletteController.text.isNotEmpty
+                                    ? IconButton(
+                                        icon: const Icon(Icons.clear, size: 18),
+                                        onPressed: () {
+                                          _paletteController.clear();
+                                          notifier.setColorPalette(null);
+                                        },
+                                      )
+                                    : null,
+                              ),
+                              onChanged: (val) => notifier.setColorPalette(val),
+                            ),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 6,
+                              runSpacing: 4,
+                              children: [
+                                'Tons Terrosos',
+                                'Preto e Branco',
+                                'Azul Marinho',
+                                'Verde Oliva',
+                                'Monocromático',
+                              ].map((preset) {
+                                final isSelected =
+                                    formState.colorPalette == preset;
+                                return ChoiceChip(
+                                  label: Text(preset),
+                                  selected: isSelected,
+                                  onSelected: (selected) {
+                                    if (selected) {
+                                      _paletteController.text = preset;
+                                      notifier.setColorPalette(preset);
+                                    } else {
+                                      _paletteController.clear();
+                                      notifier.setColorPalette(null);
+                                    }
+                                  },
+                                );
+                              }).toList(),
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'Peças (${formState.clothingPieces.length})',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            if (formState.clothingPieces.isEmpty)
+                              Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 12.0),
+                                child: Text(
+                                  'Nenhuma peça de vestimenta adicionada.',
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: theme.colorScheme.onSurface
+                                        .withValues(alpha: 0.5),
+                                  ),
+                                ),
+                              )
+                            else
+                              ListView.separated(
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                itemCount: formState.clothingPieces.length,
+                                separatorBuilder: (_, __) =>
+                                    const Divider(height: 1),
+                                itemBuilder: (ctx, index) {
+                                  final piece = formState.clothingPieces[index];
+                                  final colorVal = piece.colorHex != null
+                                      ? int.tryParse(
+                                          'FF${piece.colorHex!.replaceAll('#', '').trim()}',
+                                          radix: 16)
+                                      : null;
+
+                                  return ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    leading: Container(
+                                      width: 22,
+                                      height: 22,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: colorVal != null
+                                            ? Color(colorVal)
+                                            : theme.colorScheme.primary,
+                                        border: Border.all(
+                                          color: theme
+                                              .colorScheme.outlineVariant,
+                                        ),
+                                      ),
+                                    ),
+                                    title: Text(
+                                      piece.description ?? 'Peça de roupa',
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w500),
+                                    ),
+                                    subtitle: piece.colorHex != null
+                                        ? Text(piece.colorHex!)
+                                        : null,
+                                    trailing: IconButton(
+                                      icon: Icon(
+                                        Icons.remove_circle_outline,
+                                        size: 20,
+                                        color: theme.colorScheme.error,
+                                      ),
+                                      tooltip: 'Remover peça',
+                                      onPressed: () => notifier
+                                          .removeClothingPiece(index),
                                     ),
                                   );
                                 },
@@ -905,6 +1751,237 @@ class _MemberPickerSheetState extends ConsumerState<_MemberPickerSheet> {
                               member,
                               formState.availableRoles,
                             ),
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Modal bottom sheet for searching and selecting a repertoire song.
+class _SongPickerSheet extends ConsumerStatefulWidget {
+  final String ministryId;
+  final void Function(SongSummary song) onSongSelected;
+
+  const _SongPickerSheet({
+    required this.ministryId,
+    required this.onSongSelected,
+  });
+
+  @override
+  ConsumerState<_SongPickerSheet> createState() => _SongPickerSheetState();
+}
+
+class _SongPickerSheetState extends ConsumerState<_SongPickerSheet> {
+  final _searchController = TextEditingController();
+  List<SongSummary> _songs = [];
+  bool _isLoading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchSongs();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _fetchSongs([String? query]) async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      final result = await ref
+          .read(repertoireRepositoryProvider)
+          .listSongs(widget.ministryId, search: query, limit: 50);
+      if (!mounted) return;
+      setState(() {
+        _songs = result.songs;
+        _isLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Não foi possível carregar as músicas.';
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final formState = ref.watch(scheduleFormNotifierProvider);
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: EdgeInsets.only(
+        top: 16,
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Selecionar Música do Repertório',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Buscar por título, artista ou tom...',
+                prefixIcon: const Icon(Icons.search),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                isDense: true,
+              ),
+              onSubmitted: (v) => _fetchSongs(v.trim()),
+              onChanged: (v) {
+                if (v.trim().isEmpty) {
+                  _fetchSongs();
+                }
+              },
+            ),
+          ),
+          if (_isLoading)
+            const Padding(
+              padding: EdgeInsets.all(32.0),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_error != null)
+            Padding(
+              padding: const EdgeInsets.all(32.0),
+              child: Center(
+                child: Column(
+                  children: [
+                    Text(
+                      _error!,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.error,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton(
+                      onPressed: () =>
+                          _fetchSongs(_searchController.text.trim()),
+                      child: const Text('Tentar novamente'),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else if (_songs.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(32.0),
+              child: Center(
+                child: Text(
+                  _searchController.text.trim().isEmpty
+                      ? 'Nenhuma música no repertório do ministério.'
+                      : 'Nenhuma música encontrada para "${_searchController.text.trim()}".',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                  ),
+                ),
+              ),
+            )
+          else
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                itemCount: _songs.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (ctx, index) {
+                  final song = _songs[index];
+                  final isAlreadySelected = formState.isSongSelected(song.id);
+
+                  return ListTile(
+                    enabled: !isAlreadySelected,
+                    leading: CircleAvatar(
+                      backgroundColor: isAlreadySelected
+                          ? theme.disabledColor.withValues(alpha: 0.1)
+                          : theme.colorScheme.primaryContainer,
+                      child: Icon(
+                        Icons.music_note,
+                        color: isAlreadySelected
+                            ? theme.disabledColor
+                            : theme.colorScheme.onPrimaryContainer,
+                      ),
+                    ),
+                    title: Text(
+                      song.title,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: isAlreadySelected ? theme.disabledColor : null,
+                      ),
+                    ),
+                    subtitle: Text(
+                      song.artistName ?? 'Artista não informado',
+                      style: TextStyle(
+                        color: isAlreadySelected ? theme.disabledColor : null,
+                      ),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (song.originalKey != null &&
+                            song.originalKey!.isNotEmpty)
+                          Container(
+                            margin: const EdgeInsets.only(right: 8),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.surfaceContainerHighest,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              song.originalKey!,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        if (isAlreadySelected)
+                          const Chip(
+                            label: Text('Já escalada'),
+                            visualDensity: VisualDensity.compact,
+                          )
+                        else
+                          const Icon(Icons.add_circle_outline),
+                      ],
+                    ),
+                    onTap: isAlreadySelected
+                        ? null
+                        : () {
+                            Navigator.of(context).pop();
+                            widget.onSongSelected(song);
+                          },
                   );
                 },
               ),
