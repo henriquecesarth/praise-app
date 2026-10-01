@@ -49,7 +49,7 @@ function Sanitize-Ascii([string]$text) {
     $out = New-Object System.Text.StringBuilder
     foreach ($ch in $chars) {
         $code = [int][char]$ch
-        if ($code -ge 32 -and $code -le 126) { [void]$out.Append($ch) }
+        if (($code -ge 32 -and $code -le 126) -or $code -eq 10 -or $code -eq 13 -or $code -eq 9) { [void]$out.Append($ch) }
         else { [void]$out.Append('?') }
     }
     return $out.ToString()
@@ -244,6 +244,88 @@ function Parse-ReviewerOutput([string]$text) {
         $res.blocker = [string](Sanitize-Secrets $Matches[1]).Trim()
     }
     return $res
+}
+
+# ---------------------------------------------------------------------------
+# Human decision comments (AM2-HUMAN-DECISION marker)
+# ---------------------------------------------------------------------------
+# Chronological list of all AM2-HUMAN-DECISION values from issue comments.
+function Get-Am2HumanDecisions($comments) {
+    $out = @()
+    if ($null -eq $comments) { return $out }
+    $sorted = @($comments | Sort-Object { [string]$_.createdAt })
+    foreach ($c in $sorted) {
+        $body = ''
+        if ($c -is [object]) { try { $body = [string]$c.body } catch { } } elseif ($c -is [string]) { $body = $c }
+        foreach ($m in [regex]::Matches($body, '(?im)^\s*AM2-HUMAN-DECISION:\s*(.+?)\s*$')) {
+            $out += [string](Sanitize-Secrets ($m.Groups[1].Value.Trim()))
+        }
+    }
+    return $out
+}
+
+# True when any comment after $iso carries a decision marker.
+function Test-Am2AnyDecisionAfter($comments, [string]$iso) {
+    if ($null -eq $comments) { return $false }
+    foreach ($c in $comments) {
+        $body = ''
+        $created = ''
+        if ($c -is [object]) {
+            try { $body = [string]$c.body } catch { }
+            try { $created = [string]$c.createdAt } catch { }
+        } elseif ($c -is [string]) { $body = $c }
+        if ($body -notmatch '(?im)^\s*AM2-HUMAN-DECISION:') { continue }
+        if ($iso -eq '') { return $true }
+        if ($created -ne '' -and $created -gt $iso) { return $true }
+    }
+    return $false
+}
+
+# Normalized comparison key for blocker texts (case/punctuation/whitespace insensitive).
+function Get-Am2BlockerFingerprint([string]$text) {
+    if ($null -eq $text) { return '' }
+    $t = [string](Sanitize-Secrets $text).ToLower()
+    $t = $t -replace '[^a-z0-9]+', ' '
+    return $t.Trim()
+}
+
+# Chronological @{ iso; fingerprint } for each manager 'human decision required' comment.
+function Get-Am2BlockerHistory($comments) {
+    $out = @()
+    if ($null -eq $comments) { return $out }
+    $sorted = @($comments | Sort-Object { [string]$_.createdAt })
+    foreach ($c in $sorted) {
+        $body = ''
+        $created = ''
+        if ($c -is [object]) {
+            try { $body = [string]$c.body } catch { }
+            try { $created = [string]$c.createdAt } catch { }
+        } elseif ($c -is [string]) { $body = $c }
+        if ($body -notmatch '(?i)human decision required') { continue }
+        $idx = $body.IndexOf([char]10)
+        $blockerText = ''
+        if ($idx -ge 0) { $blockerText = $body.Substring($idx + 1) }
+        $out += @{ iso = $created; fingerprint = (Get-Am2BlockerFingerprint $blockerText) }
+    }
+    return $out
+}
+
+# True when the SAME blocker was already requested before and a human decision
+# exists after that request: re-asking is a worker failure, not a new blocker.
+function Test-Am2BlockerAlreadyAnswered($comments, [string]$newBlockerText) {
+    $fp = Get-Am2BlockerFingerprint $newBlockerText
+    if ($fp -eq '') { return $false }
+    foreach ($b in (Get-Am2BlockerHistory $comments)) {
+        if ($b.fingerprint -ne $fp) { continue }
+        if (Test-Am2AnyDecisionAfter $comments $b.iso) { return $true }
+    }
+    return $false
+}
+
+function Build-Am2HumanContext([string[]]$decisions) {
+    if ($null -eq $decisions -or $decisions.Count -eq 0) { return '' }
+    $lines = $decisions | ForEach-Object { "- $_" }
+    return "HUMAN DECISIONS (binding, provided by the repository owner after blockers):`n" + ($lines -join [char]10)
 }
 
 # ---------------------------------------------------------------------------

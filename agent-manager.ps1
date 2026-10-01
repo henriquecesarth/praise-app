@@ -13,7 +13,7 @@
 #
 # Flags:
 #   -Repo <owner/repo>       GitHub repository (default: from git remote)
-#   -BaseBranch <name>       worktree base branch (default: main)
+#   -BaseBranch <name>       local base branch (default: current active branch)
 #   -WorktreesDir <path>     worktrees root (default: <repo>/.worktrees)
 #   -LogDir <path>           logs root (default: <repo>/.logs)
 #   -EngineerModel <model>   opencode model for the engineer worker
@@ -69,7 +69,7 @@ $cfg = @{
     PollInterval = $AM2_POLL_INTERVAL_DEFAULT
     Target = $null
     Repo = ''
-    BaseBranch = 'main'
+    BaseBranch = ''
     WorktreesDir = ''
     LogDir = ''
     EngineerModel = ''
@@ -91,7 +91,10 @@ while ($i -lt $args.Count) {
         '-target' { $cfg.Target = [int]$val; $i += 2 }
         '-issue' { $cfg.Target = [int]$val; $i += 2 }
         '-repo' { $cfg.Repo = $val; $i += 2 }
-        '-basebranch' { $cfg.BaseBranch = $val; $i += 2 }
+        '-basebranch' {
+            if ([string]::IsNullOrWhiteSpace($val) -or $val.StartsWith('-')) { throw '-BaseBranch requires a local branch name' }
+            $cfg.BaseBranch = $val; $i += 2
+        }
         '-worktreesdir' { $cfg.WorktreesDir = $val; $i += 2 }
         '-logdir' { $cfg.LogDir = $val; $i += 2 }
         '-engineermodel' { $cfg.EngineerModel = $val; $i += 2 }
@@ -106,32 +109,61 @@ while ($i -lt $args.Count) {
 }
 
 # ---------------------------------------------------------------------------
-# Repo resolution / paths (deferred: see Initialize-Am2Env below)
+# Repo resolution / paths (deferred: see Initialize-Am2Env below).
+# All runtime values live in $script: scope so script-local shadows and child
+# scope assignments cannot detach them from the pipeline functions.
 # ---------------------------------------------------------------------------
-$repo = $cfg.Repo
-$instanceId = $cfg.InstanceId
-$repoRoot = ''
-$worktreesDir = $cfg.WorktreesDir
-$GLOBAL_logDirRoot = $cfg.LogDir
+$script:repo = $cfg.Repo
+$script:instanceId = $cfg.InstanceId
+$script:repoRoot = ''
+$script:worktreesDir = $cfg.WorktreesDir
+$script:logDirRoot = $cfg.LogDir
+$script:baseSha = ''
 
 function Initialize-Am2Env() {
-    if ($repo -eq '') {
-        $rRemote = Git-Run @('remote','get-url','origin')
-        $remote = $rRemote.out
-        if ($remote -match 'github\.com[:/]([^/]+)/([^/\.]+)(\.git)?') {
-            Set-Variable -Name 'repo' -Value "$($Matches[1])/$($Matches[2])" -Scope Global
-        } else {
-            Write-Host "ERROR: cannot derive GitHub repo from remote: $remote"
-            exit 1
-        }
-    }
-    if ($instanceId -eq '') {
-        Set-Variable -Name 'instanceId' -Value ("am2-$(hostname)-" + (Get-Date -Format 'yyyyMMddHHmmss') + '-' + (Get-Random -Maximum 99999)) -Scope Global
-    }
+    # Re-read CLI config at init time so harnesses/tests may adjust $cfg after
+    # loading this file as a library (AM2_NO_ENTRY=1).
+    if ($script:repo -eq '') { $script:repo = $cfg.Repo }
+    if ($script:instanceId -eq '') { $script:instanceId = $cfg.InstanceId }
+    # Bootstrap capture files inside the starting directory, before git resolves root.
+    if ($script:logDirRoot -eq '') { $script:logDirRoot = Join-Path (Get-Location).Path '.logs' }
     $rr = Git-Run @('rev-parse','--show-toplevel')
-    Set-Variable -Name 'repoRoot' -Value (Safe-Trim $rr.out) -Scope Global
-    if ($worktreesDir -eq '') { Set-Variable -Name 'worktreesDir' -Value (Join-Path $repoRoot '.worktrees') -Scope Global }
-    if ($GLOBAL_logDirRoot -eq '') { Set-Variable -Name 'GLOBAL_logDirRoot' -Value (Join-Path $repoRoot '.logs') -Scope Global }
+    if ($rr.exit -ne 0 -or [string]::IsNullOrWhiteSpace($rr.out)) { throw 'cannot resolve repository root' }
+    $script:repoRoot = Safe-Trim $rr.out
+    if ($script:worktreesDir -eq '') { $script:worktreesDir = Join-Path $script:repoRoot '.worktrees' }
+    if ($cfg.LogDir -eq '') { $script:logDirRoot = Join-Path $script:repoRoot '.logs' }
+    if ($script:repo -eq '') {
+        $rRemote = Git-Run @('remote','get-url','origin')
+        if ($rRemote.exit -eq 0 -and $rRemote.out -match 'github\.com[:/]([^/]+)/([^/\.]+)(\.git)?') {
+            $script:repo = "$($Matches[1])/$($Matches[2])"
+        } else {
+            throw 'cannot derive GitHub repo from origin; pass -Repo owner/repo'
+        }
+    }    if ($script:instanceId -eq '') {
+        $script:instanceId = "am2-$([Environment]::MachineName)-" + (Get-Date -Format 'yyyyMMddHHmmss') + '-' + (Get-Random -Maximum 99999)
+    }
+    $base = Resolve-Am2Base $cfg.BaseBranch
+    $script:cfg.BaseBranch = $base.branch
+    $script:baseSha = $base.sha
+    Log-Write (Join-Path $script:logDirRoot 'manager.log') "selected base branch=$($base.branch) sha=$($base.sha)"
+}
+
+function Resolve-Am2Base([string]$requested) {
+    $branch = $requested
+    if ([string]::IsNullOrWhiteSpace($branch)) {
+        $r = Git-Run @('symbolic-ref','--quiet','--short','HEAD')
+        if ($r.exit -ne 0 -or [string]::IsNullOrWhiteSpace($r.out)) { throw 'detached HEAD: pass -BaseBranch explicitly' }
+        $branch = Safe-Trim $r.out
+    }
+    if ($branch -match '[\s&|<>^%"()]') { throw 'unsupported characters in base branch name' }
+    $valid = Git-Run @('check-ref-format',"refs/heads/$branch")
+    if ($valid.exit -ne 0) { throw 'invalid base branch name' }
+    $r = Git-Run @('show-ref','--verify','--hash',"refs/heads/$branch")
+    $sha = Safe-Trim $r.out
+    if ($r.exit -ne 0 -or $sha -notmatch '^[0-9a-fA-F]{40}$') {
+        throw "base branch $branch cannot be resolved locally; no fallback is allowed"
+    }
+    return @{ branch = $branch; sha = $sha }
 }
 
 function Write-AsciiFile([string]$path, [string]$text) {
@@ -207,12 +239,12 @@ function Invoke-GhNative($argsArr) {
 }
 
 function Get-TempFile([string]$ext) {
-    if ($null -eq $GLOBAL_logDirRoot -or $GLOBAL_logDirRoot -eq '') {
-        $GLOBAL_logDirRoot = Join-Path (Split-Path -Parent $PSScriptRoot) '.logs'
+    if ($null -eq $logDirRoot -or $logDirRoot -eq '') {
+        $script:logDirRoot = Join-Path (Get-Location).Path '.logs'
     }
-    if (-not (Test-Path $GLOBAL_logDirRoot)) { New-Item -ItemType Directory -Force -Path $GLOBAL_logDirRoot | Out-Null }
+    if (-not (Test-Path $logDirRoot)) { New-Item -ItemType Directory -Force -Path $logDirRoot | Out-Null }
     $name = ".am2-" + (Get-Random -Maximum 99999999) + "$ext"
-    return Join-Path $GLOBAL_logDirRoot $name
+    return Join-Path $logDirRoot $name
 }
 
 function Safe-Trim($v) {
@@ -344,7 +376,9 @@ function Build-PushGuardHook() {
 }
 
 function Ensure-Worktree([int]$issue) {
+    if ($baseSha -notmatch '^[0-9a-fA-F]{40}$') { throw 'base SHA not initialized' }
     $path = Get-WorktreePath $issue
+    Log-Write (Join-Path $logDirRoot "issue-$issue\manager.log") "worktree base branch=$($cfg.BaseBranch) sha=$baseSha path=$path"
     $branch = Get-Am2BranchName $issue
     $exists = $false
     if (Test-Path (Join-Path $path '.git')) {
@@ -356,11 +390,6 @@ function Ensure-Worktree([int]$issue) {
         return $path
     }
     if (-not (Test-Path $worktreesDir)) { New-Item -ItemType Directory -Force -Path $worktreesDir | Out-Null }
-    $base = $cfg.BaseBranch
-    $r = Git-Run @('show-ref','--verify','--quiet',"refs/heads/$base")
-    if ($r.exit -ne 0) {
-        throw "base branch $base not found locally; run `git fetch` or pass -BaseBranch"
-    }
     # Clean any stale path where branch/file-state is ambiguous
     if (Test-Path $path) { $null = Git-Run @('worktree','remove','--force',$path) }
     $r2 = Git-Run @('show-ref','--verify','--quiet',"refs/heads/$branch")
@@ -368,7 +397,7 @@ function Ensure-Worktree([int]$issue) {
         # branch exists but worktree missing
         $r3 = Git-Run @('worktree','add','-f',$path,$branch)
     } else {
-        $r3 = Git-Run @('worktree','add','-f','-b',$branch,$path,$base)
+        $r3 = Git-Run @('worktree','add','-f','-b',$branch,$path,$baseSha)
     }
     if ($r3.exit -ne 0) { throw "could not create worktree: $($r3.out)" }
     $verify = (Git-C $path @('rev-parse','--abbrev-ref','HEAD') | Out-String).Trim()
@@ -379,7 +408,7 @@ function Ensure-Worktree([int]$issue) {
 
 function Install-PushGuard([int]$issue, [string]$worktree) {
     # Hooks live OUTSIDE the worktree so git status stays clean.
-    $hooksBase = Join-Path $GLOBAL_logDirRoot 'hooks'
+    $hooksBase = Join-Path $logDirRoot 'hooks'
     $hooksDir = Join-Path $hooksBase "issue-$issue"
     if (-not (Test-Path $hooksDir)) { New-Item -ItemType Directory -Force -Path $hooksDir | Out-Null }
     $hookPath = Join-Path $hooksDir 'pre-push'
@@ -456,7 +485,7 @@ function Parse-OpencodeJsonText([string]$stdout) {
 }
 
 function Run-Engineer([int]$issue, [string]$worktree, [string]$promptFile, [string]$logPrefix) {
-    $issueDir = Join-Path $GLOBAL_logDirRoot "issue-$issue"
+    $issueDir = Join-Path $logDirRoot "issue-$issue"
     $outLog = Join-Path $issueDir "$logPrefix-stdout.log"
     $errLog = Join-Path $issueDir "$logPrefix-stderr.log"
     $modelArgs = ''
@@ -480,7 +509,7 @@ function Run-Engineer([int]$issue, [string]$worktree, [string]$promptFile, [stri
 }
 
 function Run-Reviewer([int]$issue, [string]$worktree, [string]$promptFile, [string]$logPrefix) {
-    $issueDir = Join-Path $GLOBAL_logDirRoot "issue-$issue"
+    $issueDir = Join-Path $logDirRoot "issue-$issue"
     $outLog = Join-Path $issueDir "$logPrefix-stdout.log"
     $errLog = Join-Path $issueDir "$logPrefix-stderr.log"
     $outLast = Join-Path $issueDir "$logPrefix-last.txt"
@@ -508,7 +537,7 @@ function Load-Permanent([string]$name) {
     return Get-Content -Raw -Encoding UTF8 $p
 }
 
-function Build-EngineerPrompt([int]$issueNumber, [string]$title, [string]$body, [string]$stage, $perms, $remediation) {
+function Build-EngineerPrompt([int]$issueNumber, [string]$title, [string]$body, [string]$stage, $perms, $remediation, [string]$humanContext) {
     $eng = Load-Permanent 'feature-engineer.md'
     $pol = Load-Permanent 'policies.md'
     $wf  = Load-Permanent 'workflow.md'
@@ -520,6 +549,9 @@ function Build-EngineerPrompt([int]$issueNumber, [string]$title, [string]$body, 
     }
     $stageText = "STAGE: $stage"
     if ($stage -eq 'remediation') { $stageText += " - re-engaging in the SAME worktree (branch agent/issue-$issueNumber). Do not create a new branch." }
+    if ($humanContext -ne '') {
+        $stageText += "`n`nHUMAN DECISIONS (binding, provided by the repository owner after blockers):`n$humanContext"
+    }
 
     $prompt = @"
 TICKET: issue #$issueNumber
@@ -548,10 +580,12 @@ $wf
     return (Sanitize-Ascii $prompt)
 }
 
-function Build-ReviewerPrompt([int]$issueNumber, [string]$title, [string]$body, $perms, [string]$diffStat) {
+function Build-ReviewerPrompt([int]$issueNumber, [string]$title, [string]$body, $perms, [string]$diffStat, [string]$humanContext) {
     $rev = Load-Permanent 'feature-reviewer.md'
     $pol = Load-Permanent 'policies.md'
     $permText = "PERMISSIONS FOR THIS TICKET (label-derived):`npush allowed:   $($perms.pushAllowed)`ndeploy allowed: $($perms.deployAllowed)"
+    $humanText = ''
+    if ($humanContext -ne '') { $humanText = "`nHUMAN DECISIONS (binding, provided by the repository owner after blockers):`n$humanContext" }
     $prompt = @"
 TICKET: issue #$issueNumber
 TITLE: $title
@@ -564,6 +598,7 @@ $permText
 CURRENT DIFF AGAINST BASELINE (git diff --stat):
 $diffStat
 
+$humanText
 PERMANENT REVIEWER INSTRUCTIONS
 ===============================
 $rev
@@ -629,7 +664,7 @@ function Claim-Am2Issue([int]$issue, $currentLabels, [string]$logFile) {
 # ---------------------------------------------------------------------------
 function Process-Am2Issue($issueObj, $origState) {
     $number = [int]$issueObj.number
-    $issueDir = Join-Path $GLOBAL_logDirRoot "issue-$number"
+    $issueDir = Join-Path $logDirRoot "issue-$number"
     if (-not (Test-Path $issueDir)) { New-Item -ItemType Directory -Force -Path $issueDir | Out-Null }
     $issueLog = Join-Path $issueDir 'manager.log'
 
@@ -652,7 +687,7 @@ function Process-Am2Issue($issueObj, $origState) {
         # ahead of base, engineering is considered complete -> send to review.
         $path = Get-WorktreePath $number
         if (Test-Path $path) {
-            if (Git-HasCommits $path $cfg.BaseBranch) { $stage = 'review' }
+            if (Git-HasCommits $path $baseSha) { $stage = 'review' }
         }
     }
 
@@ -660,6 +695,11 @@ function Process-Am2Issue($issueObj, $origState) {
     $cycle = 0
     $latestCommit = ''
     $remediation = @()
+    $humanDecisions = Get-Am2HumanDecisions $issueObj.comments
+    $humanContext = Build-Am2HumanContext $humanDecisions
+    if ($humanDecisions.Count -gt 0) {
+        Log-Write $issueLog "human decisions included in prompts: $($humanDecisions.Count)"
+    }
 
     Log-Write $issueLog "processing issue=$number state=$state stage=$stage maxCycles=$($cfg.MaxReviewCycles)"
 
@@ -673,7 +713,7 @@ function Process-Am2Issue($issueObj, $origState) {
                 $worktree = Ensure-Worktree $number
             }
             $promptFile = Join-Path $issueDir "engineer-$($cycle + 1)-prompt.txt"
-            $prompt = Build-EngineerPrompt $number $title $body $stage $perms $remediation
+            $prompt = Build-EngineerPrompt $number $title $body $stage $perms $remediation $humanContext
             Write-AsciiFile $promptFile $prompt
             Log-Write $issueLog "engineer started (cycle $($cycle + 1), stage $stage)"
             Post-Comment $number 'AGENT MANAGER - engineering started.'
@@ -704,10 +744,20 @@ function Process-Am2Issue($issueObj, $origState) {
                 continue
             }
             if ($parsed.human -or $parsed.result -eq 'BLOCKED') {
-                $cur = Get-Am2Issue $number
-                Apply-Am2State $number $AM2_LABEL_BLOCKED_HUMAN $cur.labels
                 $blocker = $parsed.blocker
                 if ($blocker -eq '') { $blocker = "AGENT_RESULT: $($parsed.result)" }
+                $cur = Get-Am2Issue $number
+                if (Test-Am2BlockerAlreadyAnswered $cur.comments $blocker) {
+                    # The human already answered this exact request; re-asking is a
+                    # worker failure. Preserve context; do not re-block the human.
+                    Log-Write $issueLog 'duplicate answered blocker: treating as worker failure'
+                    $cur = Get-Am2Issue $number
+                    Apply-Am2State $number $AM2_LABEL_FAILED $cur.labels
+                    Post-Comment $number "AGENT MANAGER - agent failed: worker re-requested an already answered human decision without applying it. Existing decision remains binding. See logs: .logs/issue-$number/"
+                    return
+                }
+                $cur = Get-Am2Issue $number
+                Apply-Am2State $number $AM2_LABEL_BLOCKED_HUMAN $cur.labels
                 Post-Comment $number "AGENT MANAGER - human decision required.`n$(Sanitize-Ascii $blocker)"
                 return
             }
@@ -726,10 +776,13 @@ function Process-Am2Issue($issueObj, $origState) {
                 Remove-Worktree $number
                 $worktree = Ensure-Worktree $number
             }
-            $base = $cfg.BaseBranch
+            $cur = Get-Am2Issue $number
+            $humanDecisions = Get-Am2HumanDecisions $cur.comments
+            $humanContext = Build-Am2HumanContext $humanDecisions
+            $base = $baseSha
             $diffStat = (Git-C $worktree @('diff','--stat',"$base...HEAD",'--no-color') | Out-String).Trim()
             $promptFile = Join-Path $issueDir "reviewer-$($cycle + 1)-prompt.txt"
-            $prompt = Build-ReviewerPrompt $number $title $body $perms $diffStat
+            $prompt = Build-ReviewerPrompt $number $title $body $perms $diffStat $humanContext
             Write-AsciiFile $promptFile $prompt
             Log-Write $issueLog "reviewer started (cycle $($cycle + 1))"
             Post-Comment $number 'REVIEW STARTED'
@@ -758,10 +811,19 @@ function Process-Am2Issue($issueObj, $origState) {
                 return
             }
             if ($parsed.verdict -eq 'BLOCKED') {
-                $cur = Get-Am2Issue $number
-                Apply-Am2State $number $AM2_LABEL_BLOCKED_HUMAN $cur.labels
                 $blocker = $parsed.blocker
                 if ($blocker -eq '') { $blocker = 'reviewer BLOCKED without explanation' }
+                if (Test-Am2BlockerAlreadyAnswered $issueObj.comments $blocker) {
+                    # The human already answered this exact request; re-asking is a
+                    # reviewer failure. Preserve context; do not re-block the human.
+                    Log-Write $issueLog 'duplicate answered blocker (reviewer): treating as worker failure'
+                    $cur = Get-Am2Issue $number
+                    Apply-Am2State $number $AM2_LABEL_FAILED $cur.labels
+                    Post-Comment $number "AGENT MANAGER - agent failed: reviewer re-requested an already answered human decision without applying it. Existing decision remains binding. See logs: .logs/issue-$number/"
+                    return
+                }
+                $cur = Get-Am2Issue $number
+                Apply-Am2State $number $AM2_LABEL_BLOCKED_HUMAN $cur.labels
                 Post-Comment $number "AGENT MANAGER - human decision required.`n$(Sanitize-Ascii $blocker)"
                 return
             }
@@ -859,7 +921,7 @@ Constraints:
         $issueObj = Get-Am2Issue $smokeIssue
         $claimState = Get-Am2StateFromLabels $issueObj.labels
         if ($claimState -eq $AM2_LABEL_READY) {
-            $claimed = Claim-Am2Issue $smokeIssue $issueObj.labels (Join-Path $GLOBAL_logDirRoot "issue-$smokeIssue\manager.log")
+            $claimed = Claim-Am2Issue $smokeIssue $issueObj.labels (Join-Path $logDirRoot "issue-$smokeIssue\manager.log")
             $issueObj = Get-Am2Issue $smokeIssue
         }
         Process-Am2Issue $issueObj $AM2_LABEL_READY
@@ -877,11 +939,16 @@ Constraints:
 }
 
 # ---------------------------------------------------------------------------
-# Main
+# Entry point. Library-mode loading: tests/harnesses set AM2_NO_ENTRY=1 before
+# dot-sourcing; both the call-site guard and the in-function guard honor it.
+# Interactive execution (.\agent-manager.ps1, powershell -File) always runs.
 # ---------------------------------------------------------------------------
 function Main() {
+    # Hard suppression layer 2: when AM2_NO_ENTRY=1 this file is being loaded
+    # as a library (tests/harness). Never execute the pipeline in that case.
+    if ([Environment]::GetEnvironmentVariable('AM2_NO_ENTRY') -eq '1') { return }
     Initialize-Am2Env
-    if (-not (Test-Path $GLOBAL_logDirRoot)) { New-Item -ItemType Directory -Force -Path $GLOBAL_logDirRoot | Out-Null }
+    if (-not (Test-Path $logDirRoot)) { New-Item -ItemType Directory -Force -Path $logDirRoot | Out-Null }
 
     $requirements = @('git', 'gh', 'opencode', 'codex')
     foreach ($req in $requirements) {
@@ -903,7 +970,7 @@ function Main() {
         exit 0
     }
 
-    $mainLog = Join-Path $GLOBAL_logDirRoot 'manager.log'
+    $mainLog = Join-Path $logDirRoot 'manager.log'
     Log-Write $mainLog "manager started repo=$repo instance=$instanceId maxCycles=$($cfg.MaxReviewCycles)"
 
     while ($true) {
@@ -928,7 +995,7 @@ function Main() {
                 break
             }
             if ($state -eq $AM2_LABEL_READY -or $state -eq $AM2_LABEL_CHANGES_REQUESTED) {
-                $claimed = Claim-Am2Issue $num $issue.labels (Join-Path $GLOBAL_logDirRoot "issue-$num\manager.log")
+                $claimed = Claim-Am2Issue $num $issue.labels (Join-Path $logDirRoot "issue-$num\manager.log")
                 if (-not $claimed) {
                     Write-Host "Claim lost for #$num (another manager active)."
                     $processed = $true
