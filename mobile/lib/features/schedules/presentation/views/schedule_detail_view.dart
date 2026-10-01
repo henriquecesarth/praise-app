@@ -114,7 +114,10 @@ class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
     }
 
     final ministryContext = ref.watch(ministryContextNotifierProvider);
-    final isAdmin = ministryContext.selectedMinistry?.isAdmin ?? false;
+    final activeMinistry = ministryContext.selectedMinistry;
+    final isMatchingTenant =
+        activeMinistry != null && activeMinistry.id == widget.ministryId;
+    final isAdmin = isMatchingTenant && activeMinistry.isAdmin;
 
     return Scaffold(
       appBar: AppBar(
@@ -683,7 +686,25 @@ class _ClothingSection extends StatelessWidget {
             ...pieces.map((piece) => Padding(
                   padding: const EdgeInsets.symmetric(vertical: 3),
                   child: Row(children: [
-                    if (piece.colorHex != null)
+                    if (piece.colors.isNotEmpty)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: piece.colors.map((c) {
+                          return Container(
+                            width: 14,
+                            height: 14,
+                            margin: const EdgeInsets.only(right: 4),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: _parseColor(c) ??
+                                  theme.colorScheme.primary,
+                              border: Border.all(
+                                  color: theme.colorScheme.outlineVariant),
+                            ),
+                          );
+                        }).toList(),
+                      )
+                    else if (piece.colorHex != null)
                       Container(
                         width: 14,
                         height: 14,
@@ -696,10 +717,13 @@ class _ClothingSection extends StatelessWidget {
                               color: theme.colorScheme.outlineVariant),
                         ),
                       ),
-                    if (piece.description != null)
+                    if (piece.description.isNotEmpty)
                       Expanded(
-                          child: Text(piece.description!,
-                              style: theme.textTheme.bodyMedium)),
+                        child: Text(
+                          piece.description,
+                          style: theme.textTheme.bodyMedium,
+                        ),
+                      ),
                   ]),
                 )),
           ],

@@ -1,11 +1,27 @@
 import { ScheduleRepository, ScheduleRecord, ScheduleCommentRecord } from '../../repositories/ScheduleRepository';
 import { NotificationService } from '../notifications/notification.service';
+import { AppError } from '../../middleware/error-handler';
 
 export class ScheduleService {
   constructor(
     private readonly scheduleRepository: ScheduleRepository = new ScheduleRepository(),
     private readonly notificationService: NotificationService = new NotificationService()
   ) {}
+
+  private validateParticipantUniqueness(participants?: Array<{ id: string }>): void {
+    if (!participants || participants.length <= 1) return;
+    const seen = new Set<string>();
+    for (const p of participants) {
+      const id = p.id?.trim();
+      if (!id) continue;
+      if (seen.has(id)) {
+        throw new AppError(400, 'Não é permitido adicionar o mesmo participante mais de uma vez na escala.', {
+          code: 'DUPLICATE_PARTICIPANT',
+        });
+      }
+      seen.add(id);
+    }
+  }
 
   async listSchedules(ministryId: string): Promise<ScheduleRecord[]> {
     return this.scheduleRepository.getSchedulesByMinistry(ministryId);
@@ -16,6 +32,7 @@ export class ScheduleService {
   }
 
   async createSchedule(ministryId: string, userId: string, data: Partial<ScheduleRecord>): Promise<ScheduleRecord> {
+    this.validateParticipantUniqueness(data.participants);
     const created = await this.scheduleRepository.createSchedule(ministryId, userId, data);
 
     if (created.participants && created.participants.length > 0) {
@@ -44,6 +61,9 @@ export class ScheduleService {
     data: Partial<ScheduleRecord>,
     actorId?: string
   ): Promise<ScheduleRecord> {
+    if (data.participants !== undefined) {
+      this.validateParticipantUniqueness(data.participants);
+    }
     let previous: ScheduleRecord | null = null;
     try {
       previous = await this.scheduleRepository.getScheduleById(scheduleId, ministryId);

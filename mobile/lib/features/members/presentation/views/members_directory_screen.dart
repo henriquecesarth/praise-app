@@ -4,7 +4,6 @@ import 'package:louvaio_mobile/app/providers.dart';
 import 'package:louvaio_mobile/features/ministry_context/presentation/controllers/ministry_context_controller.dart';
 import 'package:louvaio_mobile/features/schedules/domain/ministry_member.dart';
 import 'package:louvaio_mobile/features/members/presentation/controllers/members_controller.dart';
-import 'package:louvaio_mobile/features/members/presentation/controllers/members_providers.dart';
 import 'package:louvaio_mobile/features/members/presentation/widgets/member_card.dart';
 import 'package:louvaio_mobile/features/members/presentation/widgets/member_detail_sheet.dart';
 
@@ -62,11 +61,16 @@ class _MembersDirectoryScreenState
         .loadForMinistry(widget.ministryId);
   }
 
-  void _onMemberTapped(MinistryMember member, MembersDirectoryState state) {
+  void _onMemberTapped(
+    MinistryMember member,
+    MembersDirectoryState state,
+    bool isViewerAdmin,
+  ) {
     MemberDetailSheet.show(
       context: context,
       member: member,
       rolesById: state.rolesById,
+      isViewerAdmin: isViewerAdmin,
     );
   }
 
@@ -87,6 +91,12 @@ class _MembersDirectoryScreenState
     final state = ref.watch(membersDirectoryNotifierProvider);
     final isMatchingMinistry = state.ministryId == widget.ministryId;
     final filtered = isMatchingMinistry ? state.filteredMembers : <MinistryMember>[];
+
+    final ministryContext = ref.watch(ministryContextNotifierProvider);
+    final activeMinistry = ministryContext.selectedMinistry;
+    final isMatchingTenant =
+        activeMinistry != null && activeMinistry.id == widget.ministryId;
+    final isViewerAdmin = isMatchingTenant && activeMinistry.isAdmin;
 
     return Scaffold(
       appBar: AppBar(
@@ -257,7 +267,13 @@ class _MembersDirectoryScreenState
 
             // Content Body: Loading / Error / Empty / List
             Expanded(
-              child: _buildBody(context, state, isMatchingMinistry, filtered),
+              child: _buildBody(
+                context,
+                state,
+                isMatchingMinistry,
+                filtered,
+                isViewerAdmin,
+              ),
             ),
           ],
         ),
@@ -270,6 +286,7 @@ class _MembersDirectoryScreenState
     MembersDirectoryState state,
     bool isMatchingMinistry,
     List<MinistryMember> filtered,
+    bool isViewerAdmin,
   ) {
     final theme = Theme.of(context);
 
@@ -410,7 +427,8 @@ class _MembersDirectoryScreenState
             key: ValueKey('member_card_${member.id}'),
             member: member,
             rolesById: state.rolesById,
-            onTap: () => _onMemberTapped(member, state),
+            isViewerAdmin: isViewerAdmin,
+            onTap: () => _onMemberTapped(member, state, isViewerAdmin),
           );
         },
       ),

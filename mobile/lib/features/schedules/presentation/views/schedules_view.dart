@@ -73,7 +73,11 @@ class _SchedulesViewState extends ConsumerState<SchedulesView>
   Widget build(BuildContext context) {
     final state = ref.watch(scheduleListNotifierProvider);
     final ministryContext = ref.watch(ministryContextNotifierProvider);
-    final isAdmin = ministryContext.selectedMinistry?.isAdmin ?? false;
+    final activeMinistry = ministryContext.selectedMinistry;
+    final isMatchingTenant = widget.ministryId != null &&
+        activeMinistry != null &&
+        activeMinistry.id == widget.ministryId;
+    final isAdmin = isMatchingTenant && activeMinistry.isAdmin;
     final isWide = MediaQuery.sizeOf(context).width >= 600;
 
     final isMatchingMinistry = state.ministryId == widget.ministryId;

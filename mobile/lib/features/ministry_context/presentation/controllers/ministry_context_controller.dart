@@ -201,6 +201,7 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
   /// Resets state and clears stored preference (called on logout or user switch).
   Future<void> reset() async {
     await _preferencesStorage.setSelectedMinistryId(null);
+    if (!mounted) return;
     state = const MinistryContextState.initial();
   }
 

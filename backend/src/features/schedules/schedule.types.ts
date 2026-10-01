@@ -1,5 +1,28 @@
 import { z } from 'zod';
 
+export const scheduleParticipantSchema = z
+  .object({
+    id: z.string().min(1, 'O ID do participante é obrigatório.'),
+    name: z.string(),
+    role: z.string(),
+    confirmed: z.boolean().optional(),
+    userId: z.string().optional(),
+    user_id: z.string().optional(),
+  })
+  .passthrough();
+
+export const scheduleParticipantsListSchema = z
+  .array(scheduleParticipantSchema)
+  .refine(
+    (participants) => {
+      const ids = participants.map((p) => p.id?.trim()).filter(Boolean);
+      return new Set(ids).size === ids.length;
+    },
+    {
+      message: 'Não é permitido adicionar o mesmo participante mais de uma vez na escala.',
+    }
+  );
+
 export const createScheduleSchema = z.object({
   title: z.string().min(1, 'O título da escala é obrigatório.'),
   date: z.string(),
@@ -16,14 +39,7 @@ export const createScheduleSchema = z.object({
   colorPalette: z.string().optional(),
   clothingPieces: z.array(z.any()).optional(),
   requireConfirmation: z.boolean().optional(),
-  participants: z.array(
-    z.object({
-      id: z.string(),
-      name: z.string(),
-      role: z.string(),
-      confirmed: z.boolean().optional(),
-    })
-  ).optional(),
+  participants: scheduleParticipantsListSchema.optional(),
   songs: z.array(z.any()).optional(),
   timeline: z.array(
     z.object({
@@ -35,7 +51,17 @@ export const createScheduleSchema = z.object({
   ).optional(),
 });
 
-export const updateScheduleSchema = createScheduleSchema.partial();
+export const updateScheduleSchema = createScheduleSchema.partial().refine(
+  (data) => {
+    if (!data.participants) return true;
+    const ids = data.participants.map((p) => p.id?.trim()).filter(Boolean);
+    return new Set(ids).size === ids.length;
+  },
+  {
+    message: 'Não é permitido adicionar o mesmo participante mais de uma vez na escala.',
+    path: ['participants'],
+  }
+);
 
 export const createScheduleCommentSchema = z.object({
   content: z.string().min(1, 'O comentário não pode ser vazio.').max(1000),

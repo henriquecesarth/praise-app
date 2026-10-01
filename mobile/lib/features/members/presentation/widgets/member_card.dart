@@ -1,18 +1,24 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:louvaio_mobile/features/schedules/domain/ministry_member.dart';
 import 'package:louvaio_mobile/features/schedules/domain/ministry_role.dart';
 
 /// Presentation card for a ministry member item in the directory list.
+///
+/// TEMPORARY_DATA_MINIMIZATION_POLICY:
+/// Ordinary members do not see email, phone, birthDate, or joinedAt.
+/// Only authenticated admins of the active matching ministry see authorized email.
 class MemberCard extends StatelessWidget {
   final MinistryMember member;
   final Map<String, MinistryRole> rolesById;
   final VoidCallback onTap;
+  final bool isViewerAdmin;
 
   const MemberCard({
     super.key,
     required this.member,
     required this.rolesById,
     required this.onTap,
+    this.isViewerAdmin = false,
   });
 
   @override
@@ -105,7 +111,7 @@ class MemberCard extends StatelessWidget {
                       ],
                     ),
 
-                    if (member.email.isNotEmpty) ...[
+                    if (isViewerAdmin && member.email.isNotEmpty) ...[
                       const SizedBox(height: 2),
                       Text(
                         member.email,

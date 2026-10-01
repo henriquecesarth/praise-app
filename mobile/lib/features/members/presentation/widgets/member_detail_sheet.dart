@@ -1,23 +1,33 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:louvaio_mobile/features/schedules/domain/ministry_member.dart';
 import 'package:louvaio_mobile/features/schedules/domain/ministry_role.dart';
 
 /// Modal bottom sheet displaying detailed profile of a ministry member.
+///
+/// TEMPORARY_DATA_MINIMIZATION_POLICY:
+/// Conservative data minimization baseline until an explicit product privacy policy exists.
+/// - Ordinary member viewers see: display name, ministry role label, musical roles.
+///   Must NOT prominently expose: email, phone, birthDate, or joinedAt.
+/// - Admin viewers see: authorized email and existing backend phone data.
+///   Must NOT invent phone data or expose birthDate/joinedAt.
 class MemberDetailSheet extends StatelessWidget {
   final MinistryMember member;
   final Map<String, MinistryRole> rolesById;
+  final bool isViewerAdmin;
 
   const MemberDetailSheet({
     super.key,
     required this.member,
     required this.rolesById,
+    this.isViewerAdmin = false,
   });
 
   static Future<void> show({
     required BuildContext context,
     required MinistryMember member,
     required Map<String, MinistryRole> rolesById,
+    bool isViewerAdmin = false,
   }) {
     return showModalBottomSheet<void>(
       context: context,
@@ -29,6 +39,7 @@ class MemberDetailSheet extends StatelessWidget {
       builder: (_) => MemberDetailSheet(
         member: member,
         rolesById: rolesById,
+        isViewerAdmin: isViewerAdmin,
       ),
     );
   }
@@ -131,8 +142,8 @@ class MemberDetailSheet extends StatelessWidget {
                   padding: const EdgeInsets.all(16.0),
                   child: Column(
                     children: [
-                      // Email
-                      if (member.email.isNotEmpty)
+                      // Email (Admin only under TEMPORARY_DATA_MINIMIZATION_POLICY)
+                      if (isViewerAdmin && member.email.isNotEmpty)
                         ListTile(
                           dense: true,
                           contentPadding: EdgeInsets.zero,
@@ -154,8 +165,8 @@ class MemberDetailSheet extends StatelessWidget {
                           ),
                         ),
 
-                      // Phone
-                      if (member.phone.isNotEmpty) ...[
+                      // Phone (Admin only under TEMPORARY_DATA_MINIMIZATION_POLICY)
+                      if (isViewerAdmin && member.phone.isNotEmpty) ...[
                         if (member.email.isNotEmpty) const Divider(height: 1),
                         ListTile(
                           dense: true,
@@ -167,7 +178,7 @@ class MemberDetailSheet extends StatelessWidget {
                       ],
 
                       // Account Type
-                      if (member.email.isNotEmpty || member.phone.isNotEmpty)
+                      if (isViewerAdmin && (member.email.isNotEmpty || member.phone.isNotEmpty))
                         const Divider(height: 1),
                       ListTile(
                         dense: true,

@@ -5,6 +5,7 @@ import '../core/http/api_client.dart';
 import '../core/logging/app_logger.dart';
 import '../core/storage/preferences_storage.dart';
 import '../features/auth/data/auth_repository.dart';
+import '../features/auth/domain/auth_user.dart';
 import '../features/auth/presentation/controllers/auth_controller.dart';
 import '../features/dashboard/data/dashboard_repository.dart';
 import '../features/dashboard/presentation/controllers/dashboard_controller.dart';
@@ -16,19 +17,38 @@ import '../features/schedules/presentation/controllers/schedule_providers.dart';
 import '../features/repertoire/presentation/controllers/repertoire_providers.dart';
 import '../features/availability/presentation/controllers/availability_providers.dart';
 import '../features/push_notifications/presentation/controllers/push_notification_providers.dart';
+import '../features/members/presentation/controllers/members_providers.dart';
 import '../features/notifications/presentation/controllers/notification_providers.dart';
 export '../features/schedules/presentation/controllers/schedule_providers.dart';
 export '../features/repertoire/presentation/controllers/repertoire_providers.dart';
 export '../features/push_notifications/presentation/controllers/push_notification_providers.dart';
+export '../features/members/presentation/controllers/members_providers.dart';
 
 /// Clears all authenticated feature caches from memory upon logout or user change.
 /// Accepts either [Ref] or [ProviderContainer].
 void resetAuthenticatedFeatures(dynamic refOrContainer) {
-  refOrContainer.read(ministryContextNotifierProvider.notifier).reset();
+  try {
+    refOrContainer.read(ministryContextNotifierProvider.notifier).reset();
+  } catch (_) {}
+  try {
+    refOrContainer.read(dashboardNotifierProvider.notifier).reset();
+  } catch (_) {}
+  try {
+    refOrContainer.read(scheduleListNotifierProvider.notifier).reset();
+  } catch (_) {}
+  try {
+    refOrContainer.read(scheduleFormNotifierProvider.notifier).invalidateTenant();
+  } catch (_) {}
+  try {
+    refOrContainer.read(membersDirectoryNotifierProvider.notifier).reset();
+  } catch (_) {}
+
   refOrContainer.invalidate(dashboardNotifierProvider);
   refOrContainer.invalidate(scheduleListNotifierProvider);
   refOrContainer.invalidate(scheduleDetailNotifierProvider);
+  refOrContainer.invalidate(scheduleFormNotifierProvider);
   refOrContainer.invalidate(commentsNotifierProvider);
+  refOrContainer.invalidate(membersDirectoryNotifierProvider);
   refOrContainer.invalidate(availabilityListNotifierProvider);
   refOrContainer.invalidate(repertoireListNotifierProvider);
   refOrContainer.invalidate(songDetailNotifierProvider);
@@ -52,11 +72,43 @@ final appLoggerProvider = Provider<AppLogger>((ref) {
 });
 
 /// Provider for local preferences storage.
-/// Must be overridden in bootstrap() with the initialized SharedPreferences instance.
+/// Overridden in bootstrap() with the initialized SharedPreferences instance.
 final preferencesStorageProvider = Provider<PreferencesStorage>((ref) {
-  throw UnimplementedError(
-      'preferencesStorageProvider must be initialized in bootstrap');
+  return InMemoryPreferencesStorage();
 });
+
+class InMemoryPreferencesStorage implements PreferencesStorage {
+  final Map<String, String> _data = {};
+
+  @override
+  Future<void> setSelectedMinistryId(String? ministryId) async {
+    if (ministryId == null) {
+      _data.remove('selectedMinistryId');
+    } else {
+      _data['selectedMinistryId'] = ministryId;
+    }
+  }
+
+  @override
+  String? getSelectedMinistryId() => _data['selectedMinistryId'];
+
+  @override
+  Future<void> setThemeMode(String? themeMode) async {
+    if (themeMode == null) {
+      _data.remove('themeMode');
+    } else {
+      _data['themeMode'] = themeMode;
+    }
+  }
+
+  @override
+  String? getThemeMode() => _data['themeMode'];
+
+  @override
+  Future<void> clear() async {
+    _data.clear();
+  }
+}
 
 /// Provider for the FirebaseAuth instance.
 final firebaseAuthProvider = Provider<FirebaseAuth?>((ref) {
@@ -97,7 +149,7 @@ final apiClientProvider = Provider<ApiClient>((ref) {
 final authRepositoryProvider = Provider<AuthRepository>((ref) {
   final auth = ref.watch(firebaseAuthProvider);
   if (auth == null) {
-    throw StateError('FirebaseAuth is not initialized');
+    return const _NoopAuthRepository();
   }
   return FirebaseAuthRepository(
     firebaseAuth: auth,
@@ -105,6 +157,38 @@ final authRepositoryProvider = Provider<AuthRepository>((ref) {
     preferencesStorage: ref.watch(preferencesStorageProvider),
   );
 });
+
+class _NoopAuthRepository implements AuthRepository {
+  const _NoopAuthRepository();
+
+  @override
+  Stream<User?> authStateChanges() => const Stream.empty();
+
+  @override
+  User? get currentFirebaseUser => null;
+
+  @override
+  Future<String?> getIdToken({bool forceRefresh = false}) async => null;
+
+  @override
+  Future<UserCredential> signInWithEmailAndPassword({
+    required String email,
+    required String password,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<AuthUser> signUp({
+    required String name,
+    required String email,
+    required String password,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<AuthUser> getMe() => throw UnimplementedError();
+
+  @override
+  Future<void> signOut() async {}
+}
 
 /// Provider for the authentication state notifier.
 final authNotifierProvider =

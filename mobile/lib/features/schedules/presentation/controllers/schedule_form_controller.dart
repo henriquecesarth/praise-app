@@ -7,16 +7,87 @@ import '../../domain/ministry_role.dart';
 import '../../domain/schedule.dart';
 import '../../domain/schedule_participant.dart';
 
+/// Snapshot of editable schedule form values used for pristine/dirty state comparison.
+@immutable
+class ScheduleFormSnapshot {
+  final String title;
+  final String date;
+  final String time;
+  final int durationMinutes;
+  final String notes;
+  final bool requireConfirmation;
+  final bool isVisible;
+  final String? colorPalette;
+  final List<ScheduleParticipant> participants;
+  final List<ScheduleSong> songs;
+  final List<ScheduleTimelineItem> timeline;
+  final List<ScheduleClothingPiece> clothingPieces;
+
+  const ScheduleFormSnapshot({
+    required this.title,
+    required this.date,
+    required this.time,
+    required this.durationMinutes,
+    required this.notes,
+    required this.requireConfirmation,
+    required this.isVisible,
+    this.colorPalette,
+    required this.participants,
+    required this.songs,
+    required this.timeline,
+    required this.clothingPieces,
+  });
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    if (other is! ScheduleFormSnapshot || runtimeType != other.runtimeType) {
+      return false;
+    }
+    return title.trim() == other.title.trim() &&
+        date == other.date &&
+        time == other.time &&
+        durationMinutes == other.durationMinutes &&
+        notes.trim() == other.notes.trim() &&
+        requireConfirmation == other.requireConfirmation &&
+        isVisible == other.isVisible &&
+        (colorPalette?.trim() ?? '') == (other.colorPalette?.trim() ?? '') &&
+        listEquals(participants, other.participants) &&
+        listEquals(songs, other.songs) &&
+        listEquals(timeline, other.timeline) &&
+        listEquals(clothingPieces, other.clothingPieces);
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        title.trim(),
+        date,
+        time,
+        durationMinutes,
+        notes.trim(),
+        requireConfirmation,
+        isVisible,
+        colorPalette?.trim() ?? '',
+        Object.hashAll(participants),
+        Object.hashAll(songs),
+        Object.hashAll(timeline),
+        Object.hashAll(clothingPieces),
+      );
+}
+
 @immutable
 class ScheduleFormState {
   final String? scheduleId;
   final String ministryId;
+  final String boundUserId;
+  final bool isInvalidated;
   final String title;
   final String date; // YYYY-MM-DD civil date
   final String time; // HH:mm local time
   final int durationMinutes;
   final String notes;
   final bool requireConfirmation;
+  final bool isVisible;
   final List<ScheduleParticipant> participants;
   final List<ScheduleSong> songs;
   final List<ScheduleTimelineItem> timeline;
@@ -26,19 +97,22 @@ class ScheduleFormState {
   final List<MinistryRole> availableRoles;
   final bool isLoadingMembers;
   final bool isSubmitting;
-  final bool isDirty;
+  final ScheduleFormSnapshot? initialSnapshot;
   final String? error;
   final bool submitSuccess;
 
   const ScheduleFormState({
     this.scheduleId,
     this.ministryId = '',
+    this.boundUserId = '',
+    this.isInvalidated = false,
     this.title = '',
     this.date = '',
     this.time = '19:00',
     this.durationMinutes = 120,
     this.notes = '',
     this.requireConfirmation = false,
+    this.isVisible = true,
     this.participants = const [],
     this.songs = const [],
     this.timeline = const [],
@@ -48,12 +122,36 @@ class ScheduleFormState {
     this.availableRoles = const [],
     this.isLoadingMembers = false,
     this.isSubmitting = false,
-    this.isDirty = false,
+    this.initialSnapshot,
     this.error,
     this.submitSuccess = false,
   });
 
   bool get isEditing => scheduleId != null;
+
+  ScheduleFormSnapshot get currentSnapshot => ScheduleFormSnapshot(
+        title: title,
+        date: date,
+        time: time,
+        durationMinutes: durationMinutes,
+        notes: notes,
+        requireConfirmation: requireConfirmation,
+        isVisible: isVisible,
+        colorPalette: colorPalette,
+        participants: participants,
+        songs: songs,
+        timeline: timeline,
+        clothingPieces: clothingPieces,
+      );
+
+  /// Dynamic dirty check using snapshot comparison.
+  /// When changes are reverted to initial values, state returns to pristine (false).
+  /// If the form is invalidated due to tenant mismatch, returns false to bypass discard dialogs.
+  bool get isDirty {
+    if (isInvalidated) return false;
+    if (initialSnapshot == null) return false;
+    return currentSnapshot != initialSnapshot;
+  }
 
   /// Check whether [memberId] or [userId] is already assigned as a participant.
   bool isMemberSelected(String memberId, [String? userId]) {
@@ -77,12 +175,15 @@ class ScheduleFormState {
   ScheduleFormState copyWith({
     String? scheduleId,
     String? ministryId,
+    String? boundUserId,
+    bool? isInvalidated,
     String? title,
     String? date,
     String? time,
     int? durationMinutes,
     String? notes,
     bool? requireConfirmation,
+    bool? isVisible,
     List<ScheduleParticipant>? participants,
     List<ScheduleSong>? songs,
     List<ScheduleTimelineItem>? timeline,
@@ -94,6 +195,7 @@ class ScheduleFormState {
     bool? isLoadingMembers,
     bool? isSubmitting,
     bool? isDirty,
+    ScheduleFormSnapshot? initialSnapshot,
     String? error,
     bool clearError = false,
     bool? submitSuccess,
@@ -101,12 +203,15 @@ class ScheduleFormState {
     return ScheduleFormState(
       scheduleId: scheduleId ?? this.scheduleId,
       ministryId: ministryId ?? this.ministryId,
+      boundUserId: boundUserId ?? this.boundUserId,
+      isInvalidated: isInvalidated ?? this.isInvalidated,
       title: title ?? this.title,
       date: date ?? this.date,
       time: time ?? this.time,
       durationMinutes: durationMinutes ?? this.durationMinutes,
       notes: notes ?? this.notes,
       requireConfirmation: requireConfirmation ?? this.requireConfirmation,
+      isVisible: isVisible ?? this.isVisible,
       participants: participants ?? this.participants,
       songs: songs ?? this.songs,
       timeline: timeline ?? this.timeline,
@@ -117,7 +222,7 @@ class ScheduleFormState {
       availableRoles: availableRoles ?? this.availableRoles,
       isLoadingMembers: isLoadingMembers ?? this.isLoadingMembers,
       isSubmitting: isSubmitting ?? this.isSubmitting,
-      isDirty: isDirty ?? this.isDirty,
+      initialSnapshot: initialSnapshot ?? this.initialSnapshot,
       error: clearError ? null : (error ?? this.error),
       submitSuccess: submitSuccess ?? this.submitSuccess,
     );
@@ -126,6 +231,7 @@ class ScheduleFormState {
 
 class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
   final ScheduleRepository _repository;
+  int _requestSequence = 0;
 
   ScheduleFormNotifier({required ScheduleRepository repository})
       : _repository = repository,
@@ -134,60 +240,110 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
   /// Initializes the form for creation or editing.
   void init({
     required String ministryId,
+    String boundUserId = '',
     ScheduleDetail? initialSchedule,
   }) {
+    final generation = ++_requestSequence;
     final now = DateTime.now();
     final todayCivil =
         '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
 
+    final ScheduleFormSnapshot snapshot;
     if (initialSchedule != null) {
-      state = ScheduleFormState(
-        scheduleId: initialSchedule.id,
-        ministryId: ministryId,
+      snapshot = ScheduleFormSnapshot(
         title: initialSchedule.title,
         date: initialSchedule.date,
         time: initialSchedule.time,
         durationMinutes: initialSchedule.durationMinutes ?? 120,
         notes: initialSchedule.notes ?? '',
         requireConfirmation: initialSchedule.requireConfirmation,
+        isVisible: initialSchedule.isVisible,
+        colorPalette: initialSchedule.colorPalette,
+        participants: List.of(initialSchedule.participants),
+        songs: List.of(initialSchedule.songs),
+        timeline: List.of(initialSchedule.timeline),
+        clothingPieces: List.of(initialSchedule.clothingPieces),
+      );
+
+      state = ScheduleFormState(
+        scheduleId: initialSchedule.id,
+        ministryId: ministryId,
+        boundUserId: boundUserId,
+        isInvalidated: false,
+        title: initialSchedule.title,
+        date: initialSchedule.date,
+        time: initialSchedule.time,
+        durationMinutes: initialSchedule.durationMinutes ?? 120,
+        notes: initialSchedule.notes ?? '',
+        requireConfirmation: initialSchedule.requireConfirmation,
+        isVisible: initialSchedule.isVisible,
         participants: List.of(initialSchedule.participants),
         songs: List.of(initialSchedule.songs),
         timeline: List.of(initialSchedule.timeline),
         clothingPieces: List.of(initialSchedule.clothingPieces),
         colorPalette: initialSchedule.colorPalette,
         isLoadingMembers: true,
-        isDirty: false,
+        initialSnapshot: snapshot,
       );
     } else {
-      state = ScheduleFormState(
-        ministryId: ministryId,
+      snapshot = ScheduleFormSnapshot(
         title: 'Culto',
         date: todayCivil,
         time: '19:00',
         durationMinutes: 120,
         notes: '',
         requireConfirmation: false,
+        isVisible: true,
+        colorPalette: null,
+        participants: const [],
+        songs: const [],
+        timeline: const [],
+        clothingPieces: const [],
+      );
+
+      state = ScheduleFormState(
+        ministryId: ministryId,
+        boundUserId: boundUserId,
+        isInvalidated: false,
+        title: 'Culto',
+        date: todayCivil,
+        time: '19:00',
+        durationMinutes: 120,
+        notes: '',
+        requireConfirmation: false,
+        isVisible: true,
         participants: const [],
         songs: const [],
         timeline: const [],
         clothingPieces: const [],
         colorPalette: null,
         isLoadingMembers: true,
-        isDirty: false,
+        initialSnapshot: snapshot,
       );
     }
 
-    _loadMembersAndRoles(ministryId);
+    _loadMembersAndRoles(ministryId, generation);
   }
 
-  Future<void> _loadMembersAndRoles(String ministryId) async {
+  /// Invalidates the form permanently when a tenant mismatch or session logout occurs.
+  void invalidateTenant() {
+    _requestSequence++;
+    state = state.copyWith(
+      isInvalidated: true,
+      error: 'Sessão ou ministério alterado. A edição foi cancelada.',
+    );
+  }
+
+  Future<void> _loadMembersAndRoles(String ministryId, int generation) async {
     try {
       final results = await Future.wait([
         _repository.getMinistryMembers(ministryId),
         _repository.getMinistryRoles(ministryId),
       ]);
 
-      if (!mounted) return;
+      if (!mounted || generation != _requestSequence || state.isInvalidated) {
+        return;
+      }
 
       state = state.copyWith(
         availableMembers: results[0] as List<MinistryMember>,
@@ -195,8 +351,9 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
         isLoadingMembers: false,
       );
     } catch (e) {
-      if (!mounted) return;
-      // Do not block form editing if member/role fetch fails; user can retry or enter custom role
+      if (!mounted || generation != _requestSequence || state.isInvalidated) {
+        return;
+      }
       state = state.copyWith(
         isLoadingMembers: false,
       );
@@ -234,6 +391,15 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
     if (state.requireConfirmation == value) return;
     state = state.copyWith(
       requireConfirmation: value,
+      isDirty: true,
+      clearError: true,
+    );
+  }
+
+  void setIsVisible(bool value) {
+    if (state.isVisible == value) return;
+    state = state.copyWith(
+      isVisible: value,
       isDirty: true,
       clearError: true,
     );
@@ -449,8 +615,33 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
 
   /// Submits the form to create or update the schedule.
   /// Returns the saved [ScheduleDetail] on success, or `null` on failure.
-  Future<ScheduleDetail?> submit() async {
+  Future<ScheduleDetail?> submit({
+    String? currentMinistryId,
+    String? currentUserId,
+  }) async {
     if (state.isSubmitting) return null;
+
+    if (state.isInvalidated) {
+      state = state.copyWith(
+        error: 'Sessão ou ministério alterado. A edição foi cancelada.',
+      );
+      return null;
+    }
+
+    if (currentMinistryId != null &&
+        currentMinistryId.isNotEmpty &&
+        currentMinistryId != state.ministryId) {
+      invalidateTenant();
+      return null;
+    }
+
+    if (currentUserId != null &&
+        currentUserId.isNotEmpty &&
+        state.boundUserId.isNotEmpty &&
+        currentUserId != state.boundUserId) {
+      invalidateTenant();
+      return null;
+    }
 
     final trimmedTitle = state.title.trim();
     if (trimmedTitle.isEmpty) {
@@ -479,6 +670,8 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
       'durationMinutes': duration,
       'notes': state.notes.trim(),
       'requireConfirmation': state.requireConfirmation,
+      'isVisible': state.isVisible,
+      'is_visible': state.isVisible,
       'participants': state.participants.map((p) {
         return {
           'id': p.id,
@@ -513,7 +706,7 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
       state = state.copyWith(
         isSubmitting: false,
         submitSuccess: true,
-        isDirty: false,
+        initialSnapshot: state.currentSnapshot,
         clearError: true,
       );
       return result;

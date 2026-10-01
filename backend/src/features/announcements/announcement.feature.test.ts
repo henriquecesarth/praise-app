@@ -10,11 +10,15 @@ describe('Announcement Feature Test Suite', () => {
   let repo: AnnouncementRepository;
   let service: AnnouncementService;
   let controller: AnnouncementController;
+  let mockNotificationService: any;
 
   beforeEach(() => {
     vi.clearAllMocks();
     repo = new AnnouncementRepository();
-    service = new AnnouncementService(repo);
+    mockNotificationService = {
+      notifyAnnouncementCreated: vi.fn().mockResolvedValue(undefined),
+    };
+    service = new AnnouncementService(repo, mockNotificationService);
     controller = new AnnouncementController(service);
   });
 

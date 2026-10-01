@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/providers.dart';
 import '../../../../core/errors/app_failure.dart';
+import '../../../auth/presentation/controllers/auth_controller.dart';
+import '../../../ministry_context/presentation/controllers/ministry_context_controller.dart';
 
 /// Dialog allowing ministry leaders to publish a new announcement.
 class AnnouncementFormDialog extends ConsumerStatefulWidget {
@@ -23,15 +25,18 @@ class _AnnouncementFormDialogState
   final _titleController = TextEditingController();
   final _contentController = TextEditingController();
   final _authorController = TextEditingController();
+  late final String _boundUserId;
   bool _important = false;
   bool _isSubmitting = false;
+  bool _isInvalidated = false;
   String? _errorMessage;
 
   @override
   void initState() {
     super.initState();
-    // Default author to authenticated user's name if available
     final user = ref.read(authNotifierProvider).user;
+    _boundUserId = user?.id ?? '';
+    // Default author to authenticated user's name if available
     if (user != null && user.name.trim().isNotEmpty) {
       _authorController.text = user.name.trim();
     }
@@ -46,7 +51,34 @@ class _AnnouncementFormDialogState
   }
 
   Future<void> _submit() async {
-    if (_isSubmitting) return;
+    if (_isSubmitting || _isInvalidated) return;
+
+    final activeMinistryId =
+        ref.read(ministryContextNotifierProvider).selectedMinistry?.id;
+    final currentUserId = ref.read(authNotifierProvider).user?.id;
+
+    // Security guard: fail closed if tenant or authenticated UID no longer match dialog binding
+    if (activeMinistryId != null &&
+        activeMinistryId.isNotEmpty &&
+        activeMinistryId != widget.ministryId) {
+      _isInvalidated = true;
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+      return;
+    }
+
+    if (currentUserId != null &&
+        currentUserId.isNotEmpty &&
+        _boundUserId.isNotEmpty &&
+        currentUserId != _boundUserId) {
+      _isInvalidated = true;
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+      return;
+    }
+
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
     setState(() {
@@ -86,6 +118,34 @@ class _AnnouncementFormDialogState
 
   @override
   Widget build(BuildContext context) {
+    // Tenant switch race safety: invalidate and close immediately on ministry change
+    ref.listen<MinistryContextState>(ministryContextNotifierProvider,
+        (previous, next) {
+      final newMinistryId = next.selectedMinistry?.id;
+      if (newMinistryId != null &&
+          newMinistryId.isNotEmpty &&
+          newMinistryId != widget.ministryId) {
+        _isInvalidated = true;
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+      }
+    });
+
+    // Session switch protection: invalidate and close if authenticated user changes
+    ref.listen<AuthState>(authNotifierProvider, (previous, next) {
+      final currentUid = next.user?.id;
+      if (currentUid != null &&
+          currentUid.isNotEmpty &&
+          _boundUserId.isNotEmpty &&
+          currentUid != _boundUserId) {
+        _isInvalidated = true;
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+      }
+    });
+
     final theme = Theme.of(context);
 
     return AlertDialog(

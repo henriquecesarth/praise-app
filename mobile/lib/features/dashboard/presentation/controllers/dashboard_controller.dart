@@ -245,17 +245,49 @@ class DashboardNotifier extends StateNotifier<DashboardState> {
     }
   }
 
-  /// Creates an announcement and prepends it to the list for immediate authoritative feedback.
+  /// Creates an announcement, then refetches from server to converge with authoritative state
+  /// while strictly preventing duplicate announcement entries.
   Future<Announcement> createAnnouncement(
     String ministryId,
     Map<String, dynamic> data,
   ) async {
     final created = await _repository.createAnnouncement(ministryId, data);
     if (state.ministryId == ministryId) {
-      state = state.copyWith(
-        announcements: [created, ...state.announcements],
-        clearAnnouncementsError: true,
-      );
+      final seq = ++_requestSequence;
+      try {
+        final authoritativeList =
+            await _repository.getAnnouncements(ministryId);
+        if (seq == _requestSequence && state.ministryId == ministryId) {
+          final seen = <String>{};
+          final merged = <Announcement>[];
+          if (seen.add(created.id)) {
+            merged.add(created);
+          }
+          for (final a in authoritativeList) {
+            if (seen.add(a.id)) {
+              merged.add(a);
+            }
+          }
+          for (final a in state.announcements) {
+            if (seen.add(a.id)) {
+              merged.add(a);
+            }
+          }
+          state = state.copyWith(
+            announcements: merged,
+            clearAnnouncementsError: true,
+          );
+        }
+      } catch (_) {
+        if (seq == _requestSequence && state.ministryId == ministryId) {
+          final existing =
+              state.announcements.where((a) => a.id != created.id).toList();
+          state = state.copyWith(
+            announcements: [created, ...existing],
+            clearAnnouncementsError: true,
+          );
+        }
+      }
     }
     return created;
   }

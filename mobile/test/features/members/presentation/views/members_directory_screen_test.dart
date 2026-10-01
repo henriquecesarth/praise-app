@@ -5,7 +5,6 @@ import 'package:louvaio_mobile/app/environment/app_environment.dart';
 import 'package:louvaio_mobile/app/providers.dart';
 import 'package:louvaio_mobile/core/errors/app_failure.dart';
 import 'package:louvaio_mobile/features/members/data/members_repository.dart';
-import 'package:louvaio_mobile/features/members/presentation/controllers/members_providers.dart';
 import 'package:louvaio_mobile/features/members/presentation/views/members_directory_screen.dart';
 import 'package:louvaio_mobile/features/ministry_context/domain/ministry.dart';
 import 'package:louvaio_mobile/features/ministry_context/presentation/controllers/ministry_context_controller.dart';

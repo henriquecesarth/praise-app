@@ -3,18 +3,22 @@ import '../../../../core/utils/date_utils.dart';
 import 'schedule_participant.dart';
 
 /// Song summary embedded in schedule payload.
+///
+/// Preserves unknown/opaque fields from backend/web losslessly via [rawJson].
 @immutable
 class ScheduleSong {
   final String id;
   final String? title;
   final String? artist;
   final String? key;
+  final Map<String, dynamic> rawJson;
 
   const ScheduleSong({
     required this.id,
     this.title,
     this.artist,
     this.key,
+    this.rawJson = const {},
   });
 
   factory ScheduleSong.fromJson(Map<String, dynamic> json) {
@@ -23,27 +27,40 @@ class ScheduleSong {
       title: json['title'] as String?,
       artist: json['artist'] as String?,
       key: json['key'] as String?,
+      rawJson: Map<String, dynamic>.unmodifiable(json),
     );
   }
 
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        if (title != null) 'title': title,
-        if (artist != null) 'artist': artist,
-        if (key != null) 'key': key,
-      };
+  Map<String, dynamic> toJson() {
+    if (rawJson.isNotEmpty) {
+      final map = Map<String, dynamic>.from(rawJson);
+      map['id'] = id;
+      if (title != null) map['title'] = title;
+      if (artist != null) map['artist'] = artist;
+      if (key != null) map['key'] = key;
+      return map;
+    }
+    return {
+      'id': id,
+      if (title != null) 'title': title,
+      if (artist != null) 'artist': artist,
+      if (key != null) 'key': key,
+    };
+  }
 
   ScheduleSong copyWith({
     String? id,
     String? title,
     String? artist,
     String? key,
+    Map<String, dynamic>? rawJson,
   }) {
     return ScheduleSong(
       id: id ?? this.id,
       title: title ?? this.title,
       artist: artist ?? this.artist,
       key: key ?? this.key,
+      rawJson: rawJson ?? this.rawJson,
     );
   }
 
@@ -53,10 +70,13 @@ class ScheduleSong {
       other is ScheduleSong &&
           runtimeType == other.runtimeType &&
           id == other.id &&
-          title == other.title;
+          title == other.title &&
+          artist == other.artist &&
+          key == other.key &&
+          mapEquals(rawJson, other.rawJson);
 
   @override
-  int get hashCode => id.hashCode ^ title.hashCode;
+  int get hashCode => id.hashCode ^ title.hashCode ^ artist.hashCode ^ key.hashCode;
 }
 
 /// Timeline item embedded in schedule payload.
@@ -109,61 +129,142 @@ class ScheduleTimelineItem {
       identical(this, other) ||
       other is ScheduleTimelineItem &&
           runtimeType == other.runtimeType &&
-          id == other.id;
+          id == other.id &&
+          title == other.title &&
+          time == other.time &&
+          type == other.type;
 
   @override
-  int get hashCode => id.hashCode;
+  int get hashCode =>
+      id.hashCode ^ title.hashCode ^ time.hashCode ^ type.hashCode;
 }
 
-/// Clothing piece embedded in schedule payload.
+/// Clothing piece embedded in schedule payload matching web/canonical structure:
+/// { id, name, description, colors: [...] }
 @immutable
 class ScheduleClothingPiece {
-  final String? description;
+  final String id;
+  final String name;
+  final String description;
+  final List<String> colors;
   final String? colorHex;
 
-  const ScheduleClothingPiece({this.description, this.colorHex});
+  const ScheduleClothingPiece({
+    this.id = '',
+    this.name = '',
+    this.description = '',
+    this.colors = const [],
+    this.colorHex,
+  });
 
   factory ScheduleClothingPiece.fromJson(Map<String, dynamic> json) {
     final rawColors = json['colors'];
-    String? firstColor;
-    if (rawColors is List && rawColors.isNotEmpty) {
-      firstColor = rawColors.first.toString();
+    final List<String> parsedColors = [];
+    if (rawColors is List) {
+      for (final c in rawColors) {
+        if (c != null) {
+          final s = c.toString().trim();
+          if (s.isNotEmpty) parsedColors.add(s);
+        }
+      }
     }
+    final singleColor = json['colorHex'] as String? ?? json['color'] as String?;
+    if (parsedColors.isEmpty && singleColor != null && singleColor.trim().isNotEmpty) {
+      parsedColors.add(singleColor.trim());
+    }
+
+    final rawName = json['name'] as String? ?? '';
+    final rawDesc = json['description'] as String? ?? '';
+    final resolvedName = rawName.isNotEmpty ? rawName : rawDesc;
+    final resolvedDesc = rawDesc.isNotEmpty ? rawDesc : rawName;
+
     return ScheduleClothingPiece(
-      description: json['description'] as String? ?? json['name'] as String?,
-      colorHex: json['colorHex'] as String? ??
-          json['color'] as String? ??
-          firstColor,
+      id: json['id']?.toString() ?? '',
+      name: resolvedName,
+      description: resolvedDesc,
+      colors: List.unmodifiable(parsedColors),
+      colorHex: parsedColors.isNotEmpty ? parsedColors.first : singleColor,
     );
   }
 
-  Map<String, dynamic> toJson() => {
-        if (description != null) 'description': description,
-        if (colorHex != null) 'colorHex': colorHex,
-        if (description != null) 'name': description,
-        if (colorHex != null) 'colors': [colorHex!],
-      };
+  Map<String, dynamic> toJson() {
+    final effectiveColors = colors.isNotEmpty
+        ? colors
+        : (colorHex != null && colorHex!.trim().isNotEmpty
+            ? [colorHex!.trim()]
+            : const <String>[]);
+    final effectiveName = name.isNotEmpty
+        ? name
+        : (description.isNotEmpty ? description : 'Peça de roupa');
+    final effectiveDesc = description.isNotEmpty
+        ? description
+        : (name.isNotEmpty ? name : 'Peça de roupa');
+
+    return {
+      if (id.isNotEmpty) 'id': id,
+      'name': effectiveName,
+      'description': effectiveDesc,
+      'colors': effectiveColors,
+      if (effectiveColors.isNotEmpty) 'colorHex': effectiveColors.first,
+    };
+  }
 
   ScheduleClothingPiece copyWith({
+    String? id,
+    String? name,
     String? description,
+    List<String>? colors,
     String? colorHex,
   }) {
+    List<String>? resolvedColors = colors;
+    if (resolvedColors == null && colorHex != null) {
+      if (this.colors.length > 1) {
+        resolvedColors = [colorHex, ...this.colors.skip(1)];
+      } else {
+        resolvedColors = [colorHex];
+      }
+    }
+    final newColorHex = colorHex ??
+        (resolvedColors != null && resolvedColors.isNotEmpty
+            ? resolvedColors.first
+            : this.colorHex);
+
     return ScheduleClothingPiece(
+      id: id ?? this.id,
+      name: name ?? this.name,
       description: description ?? this.description,
-      colorHex: colorHex ?? this.colorHex,
+      colors: resolvedColors ?? this.colors,
+      colorHex: newColorHex,
     );
   }
 
   @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ScheduleClothingPiece &&
-          runtimeType == other.runtimeType &&
-          description == other.description &&
-          colorHex == other.colorHex;
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    if (other is! ScheduleClothingPiece || runtimeType != other.runtimeType) {
+      return false;
+    }
+    final effectiveColorsThis = colors.isNotEmpty
+        ? colors
+        : (colorHex != null ? [colorHex!] : const <String>[]);
+    final effectiveColorsOther = other.colors.isNotEmpty
+        ? other.colors
+        : (other.colorHex != null ? [other.colorHex!] : const <String>[]);
+
+    return id == other.id &&
+        (name == other.name || name.isEmpty || other.name.isEmpty) &&
+        (description == other.description ||
+            description.isEmpty ||
+            other.description.isEmpty) &&
+        listEquals(effectiveColorsThis, effectiveColorsOther);
+  }
 
   @override
-  int get hashCode => description.hashCode ^ colorHex.hashCode;
+  int get hashCode =>
+      id.hashCode ^
+      name.hashCode ^
+      description.hashCode ^
+      (colors.isNotEmpty ? colors.first.hashCode : (colorHex?.hashCode ?? 0));
 }
 
 /// Full schedule detail model for the member-facing detail screen.

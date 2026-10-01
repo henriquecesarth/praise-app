@@ -67,6 +67,9 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
     final isMatchingMinistry = widget.selectedMinistry != null &&
         dashboardState.ministryId == widget.selectedMinistry!.id;
 
+    final isAdmin =
+        isMatchingMinistry && (widget.selectedMinistry?.isAdmin ?? false);
+
     final upcoming = isMatchingMinistry
         ? dashboardState.upcomingSchedules()
         : const <DashboardScheduleSummary>[];
@@ -119,7 +122,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                       dashboardState,
                       announcements,
                       isMatchingMinistry: isMatchingMinistry,
-                      isAdmin: widget.selectedMinistry?.role == 'admin',
+                      isAdmin: isAdmin,
                     ),
                   ),
                 ],
@@ -139,7 +142,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                 dashboardState,
                 announcements,
                 isMatchingMinistry: isMatchingMinistry,
-                isAdmin: widget.selectedMinistry?.role == 'admin',
+                isAdmin: isAdmin,
               ),
             ],
             const SizedBox(height: 32),

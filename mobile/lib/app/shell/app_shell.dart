@@ -10,7 +10,6 @@ import '../../features/repertoire/presentation/views/repertoire_view.dart';
 import '../../features/schedules/presentation/views/schedules_view.dart';
 import '../../features/notifications/presentation/controllers/notification_providers.dart';
 import '../../features/notifications/presentation/views/notification_center_screen.dart';
-import '../../features/members/presentation/controllers/members_providers.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../providers.dart';
 

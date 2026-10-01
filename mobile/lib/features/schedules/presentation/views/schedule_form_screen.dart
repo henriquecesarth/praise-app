@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/providers.dart';
 import '../../../../core/utils/date_utils.dart';
+import '../../../auth/presentation/controllers/auth_controller.dart';
 import '../../../ministry_context/presentation/controllers/ministry_context_controller.dart';
 import '../../domain/ministry_member.dart';
 import '../../domain/ministry_role.dart';
@@ -53,8 +54,10 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen> {
         text: widget.initialSchedule?.colorPalette ?? '');
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      final currentUserId = ref.read(authNotifierProvider).user?.id ?? '';
       ref.read(scheduleFormNotifierProvider.notifier).init(
             ministryId: widget.ministryId,
+            boundUserId: currentUserId,
             initialSchedule: widget.initialSchedule,
           );
     });
@@ -150,8 +153,14 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen> {
   Future<void> _save() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    final schedule =
-        await ref.read(scheduleFormNotifierProvider.notifier).submit();
+    final activeMinistryId =
+        ref.read(ministryContextNotifierProvider).selectedMinistry?.id;
+    final currentUserId = ref.read(authNotifierProvider).user?.id;
+
+    final schedule = await ref.read(scheduleFormNotifierProvider.notifier).submit(
+          currentMinistryId: activeMinistryId,
+          currentUserId: currentUserId,
+        );
     if (schedule != null && mounted) {
       ref.read(scheduleListNotifierProvider.notifier).refresh();
       if (widget.initialSchedule != null) {
@@ -590,7 +599,12 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen> {
 
                 ref.read(scheduleFormNotifierProvider.notifier).addClothingPiece(
                       ScheduleClothingPiece(
+                        id: DateTime.now().millisecondsSinceEpoch.toString(),
+                        name: trimmedDesc,
                         description: trimmedDesc,
+                        colors: selectedColorHex != null
+                            ? [selectedColorHex!]
+                            : const [],
                         colorHex: selectedColorHex,
                       ),
                     );
@@ -622,13 +636,31 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Tenant switch race safety: pop if active ministry changes away from widget.ministryId
+    // Tenant switch race safety: permanently invalidate and pop if active ministry changes
     ref.listen<MinistryContextState>(ministryContextNotifierProvider,
         (previous, next) {
       final newMinistryId = next.selectedMinistry?.id;
-      if (newMinistryId != null && newMinistryId != widget.ministryId) {
+      if (newMinistryId != null &&
+          newMinistryId.isNotEmpty &&
+          newMinistryId != widget.ministryId) {
+        ref.read(scheduleFormNotifierProvider.notifier).invalidateTenant();
         if (mounted) {
-          Navigator.of(context).maybePop();
+          Navigator.of(context).pop();
+        }
+      }
+    });
+
+    // Session switch protection: if active user changes away from bound user
+    ref.listen<AuthState>(authNotifierProvider, (previous, next) {
+      final currentUid = next.user?.id;
+      final boundUid = ref.read(scheduleFormNotifierProvider).boundUserId;
+      if (boundUid.isNotEmpty &&
+          currentUid != null &&
+          currentUid.isNotEmpty &&
+          currentUid != boundUid) {
+        ref.read(scheduleFormNotifierProvider.notifier).invalidateTenant();
+        if (mounted) {
+          Navigator.of(context).pop();
         }
       }
     });
@@ -638,9 +670,13 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen> {
     final theme = Theme.of(context);
 
     return PopScope(
-      canPop: !formState.isDirty || formState.submitSuccess,
+      canPop: formState.isInvalidated || !formState.isDirty || formState.submitSuccess,
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
+        if (formState.isInvalidated) {
+          Navigator.of(context).pop();
+          return;
+        }
         final shouldLeave = await _showDiscardDialog(context);
         if (shouldLeave && context.mounted) {
           Navigator.of(context).pop();
@@ -829,6 +865,17 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen> {
                               value: formState.requireConfirmation,
                               onChanged: (val) =>
                                   notifier.setRequireConfirmation(val),
+                            ),
+                            SwitchListTile(
+                              key: const Key('schedule_is_visible_switch'),
+                              contentPadding: EdgeInsets.zero,
+                              title: const Text('Visível para a equipe'),
+                              subtitle: const Text(
+                                'Quando desativado, apenas administradores visualizam a escala',
+                              ),
+                              value: formState.isVisible,
+                              onChanged: (val) =>
+                                  notifier.setIsVisible(val),
                             ),
                             const SizedBox(height: 8),
                             TextFormField(
@@ -1433,28 +1480,57 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen> {
 
                                   return ListTile(
                                     contentPadding: EdgeInsets.zero,
-                                    leading: Container(
-                                      width: 22,
-                                      height: 22,
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        color: colorVal != null
-                                            ? Color(colorVal)
-                                            : theme.colorScheme.primary,
-                                        border: Border.all(
-                                          color: theme
-                                              .colorScheme.outlineVariant,
-                                        ),
-                                      ),
-                                    ),
+                                    leading: piece.colors.length > 1
+                                        ? Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: piece.colors.take(3).map((hex) {
+                                              final cVal = int.tryParse(
+                                                  'FF${hex.replaceAll('#', '').trim()}',
+                                                  radix: 16);
+                                              return Container(
+                                                width: 14,
+                                                height: 14,
+                                                margin: const EdgeInsets.only(right: 3),
+                                                decoration: BoxDecoration(
+                                                  shape: BoxShape.circle,
+                                                  color: cVal != null
+                                                      ? Color(cVal)
+                                                      : theme.colorScheme.primary,
+                                                  border: Border.all(
+                                                    color: theme.colorScheme.outlineVariant,
+                                                  ),
+                                                ),
+                                              );
+                                            }).toList(),
+                                          )
+                                        : Container(
+                                            width: 22,
+                                            height: 22,
+                                            decoration: BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              color: colorVal != null
+                                                  ? Color(colorVal)
+                                                  : theme.colorScheme.primary,
+                                              border: Border.all(
+                                                color: theme
+                                                    .colorScheme.outlineVariant,
+                                              ),
+                                            ),
+                                          ),
                                     title: Text(
-                                      piece.description ?? 'Peça de roupa',
+                                      piece.description.isNotEmpty
+                                          ? piece.description
+                                          : (piece.name.isNotEmpty
+                                              ? piece.name
+                                              : 'Peça de roupa'),
                                       style: const TextStyle(
                                           fontWeight: FontWeight.w500),
                                     ),
-                                    subtitle: piece.colorHex != null
-                                        ? Text(piece.colorHex!)
-                                        : null,
+                                    subtitle: piece.colors.length > 1
+                                        ? Text(piece.colors.join(', '))
+                                        : (piece.colorHex != null
+                                            ? Text(piece.colorHex!)
+                                            : null),
                                     trailing: IconButton(
                                       icon: Icon(
                                         Icons.remove_circle_outline,
