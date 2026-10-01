@@ -27,6 +27,29 @@ class FakeDashboardRepository implements DashboardRepository {
     if (announcementsException != null) throw announcementsException!;
     return announcementsToReturn;
   }
+
+  Map<String, dynamic>? lastCreatedData;
+  String? lastCreatedMinistryId;
+  Announcement? createdToReturn;
+  Exception? createException;
+
+  @override
+  Future<Announcement> createAnnouncement(
+    String ministryId,
+    Map<String, dynamic> data,
+  ) async {
+    lastCreatedMinistryId = ministryId;
+    lastCreatedData = data;
+    if (createException != null) throw createException!;
+    return createdToReturn ??
+        Announcement(
+          id: 'ann_new',
+          ministryId: ministryId,
+          title: data['title'] as String? ?? '',
+          content: data['content'] as String? ?? '',
+          important: data['important'] as bool? ?? false,
+        );
+  }
 }
 
 void main() {
@@ -286,5 +309,64 @@ void main() {
       expect(notifier.state.schedules.first.title, equals('Recuperado'));
       expect(notifier.state.announcements.length, equals(1));
     });
+
+    test('createAnnouncement delegates to repository and prepends to state',
+        () async {
+      notifier.state = notifier.state.copyWith(
+        ministryId: 'm1',
+        announcements: [
+          const Announcement(
+            id: 'a_existing',
+            ministryId: 'm1',
+            title: 'Existente',
+            content: 'Corpo',
+          ),
+        ],
+      );
+
+      final result = await notifier.createAnnouncement(
+        'm1',
+        {
+          'title': 'Novo Aviso Urgente',
+          'content': 'Detalhes do ensaio geral',
+          'author': 'Líder',
+          'important': true,
+        },
+      );
+
+      expect(result.title, equals('Novo Aviso Urgente'));
+      expect(result.important, isTrue);
+      expect(repository.lastCreatedMinistryId, equals('m1'));
+      expect(repository.lastCreatedData?['title'], equals('Novo Aviso Urgente'));
+      expect(repository.lastCreatedData?['content'],
+          equals('Detalhes do ensaio geral'));
+      expect(repository.lastCreatedData?['important'], isTrue);
+
+      // Verify prepended to notifier state
+      expect(notifier.state.announcements.length, equals(2));
+      expect(notifier.state.announcements.first.title,
+          equals('Novo Aviso Urgente'));
+      expect(notifier.state.announcements[1].id, equals('a_existing'));
+    });
+
+    test('createAnnouncement throws AppFailure when repository fails',
+        () async {
+      notifier.state = notifier.state.copyWith(ministryId: 'm1');
+      repository.createException =
+          const AppFailure(message: 'Sem permissão de admin');
+
+      expect(
+        () => notifier.createAnnouncement(
+          'm1',
+          {
+            'title': 'Aviso Teste',
+            'content': 'Conteúdo Teste',
+          },
+        ),
+        throwsA(isA<AppFailure>()),
+      );
+    });
   });
 }
+
+

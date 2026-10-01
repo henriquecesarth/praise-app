@@ -31,6 +31,29 @@ class FakeDashboardRepo implements DashboardRepository {
     if (announcementsError != null) throw announcementsError!;
     return announcements;
   }
+
+  Map<String, dynamic>? lastCreatedData;
+  String? lastCreatedMinistryId;
+  Announcement? createdToReturn;
+  Exception? createError;
+
+  @override
+  Future<Announcement> createAnnouncement(
+    String ministryId,
+    Map<String, dynamic> data,
+  ) async {
+    lastCreatedMinistryId = ministryId;
+    lastCreatedData = data;
+    if (createError != null) throw createError!;
+    return createdToReturn ??
+        Announcement(
+          id: 'ann_new',
+          ministryId: ministryId,
+          title: data['title'] as String? ?? '',
+          content: data['content'] as String? ?? '',
+          important: data['important'] as bool? ?? false,
+        );
+  }
 }
 
 class FakeAuthRepo implements AuthRepository {
@@ -256,5 +279,95 @@ void main() {
       expect(find.textContaining('http://'), findsNothing);
       expect(find.textContaining('https://'), findsNothing);
     });
+
+    testWidgets('shows "Novo Aviso" button for admin role, hides for member role',
+        (tester) async {
+      // 1. Admin role -> button visible
+      await tester.pumpWidget(createWidget(
+        repo: repo,
+        ministry: const Ministry(
+          id: 'min_test_1',
+          name: 'Ministério Admin',
+          slug: 'min-admin',
+          role: 'admin',
+          ownerUserId: 'user_1',
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('create_announcement_button')),
+          findsOneWidget);
+      expect(find.text('Novo Aviso'), findsOneWidget);
+
+      // 2. Member role -> button hidden
+      await tester.pumpWidget(createWidget(
+        repo: repo,
+        ministry: const Ministry(
+          id: 'min_test_2',
+          name: 'Ministério Membro',
+          slug: 'min-membro',
+          role: 'member',
+          ownerUserId: 'user_other',
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('create_announcement_button')),
+          findsNothing);
+    });
+
+    testWidgets('admin can tap "Novo Aviso", fill form and publish announcement',
+        (tester) async {
+      await tester.pumpWidget(createWidget(
+        repo: repo,
+        ministry: testMinistry,
+      ));
+      await tester.pumpAndSettle();
+
+      // Tap Novo Aviso
+      final btn = find.byKey(const Key('create_announcement_button'));
+      expect(btn, findsOneWidget);
+      await tester.tap(btn);
+      await tester.pumpAndSettle();
+
+      // Dialog is open
+      expect(find.text('Novo Comunicado'), findsOneWidget);
+      expect(find.text('Publicar'), findsOneWidget);
+
+      // Fill title and content
+      await tester.enterText(
+        find.byKey(const ValueKey('announcement_title_input')),
+        'Reunião de Alinhamento',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('announcement_content_input')),
+        'Domingo após o culto no auditório menor.',
+      );
+
+      // Toggle important switch
+      await tester.tap(find.byKey(const ValueKey('announcement_important_switch')));
+      await tester.pumpAndSettle();
+
+      // Submit
+      await tester.tap(find.text('Publicar'));
+      await tester.pumpAndSettle();
+
+      // Dialog should close
+      expect(find.text('Novo Comunicado'), findsNothing);
+
+      // Success message shown
+      expect(find.textContaining('publicado com sucesso'), findsOneWidget);
+
+      // Backend was called with expected data
+      expect(repo.lastCreatedMinistryId, equals('min_test_1'));
+      expect(repo.lastCreatedData?['title'], equals('Reunião de Alinhamento'));
+      expect(repo.lastCreatedData?['content'],
+          equals('Domingo após o culto no auditório menor.'));
+      expect(repo.lastCreatedData?['important'], isTrue);
+
+      // Announcement is visible on dashboard
+      expect(find.text('Reunião de Alinhamento'), findsOneWidget);
+    });
   });
 }
+

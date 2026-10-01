@@ -245,6 +245,21 @@ class DashboardNotifier extends StateNotifier<DashboardState> {
     }
   }
 
+  /// Creates an announcement and prepends it to the list for immediate authoritative feedback.
+  Future<Announcement> createAnnouncement(
+    String ministryId,
+    Map<String, dynamic> data,
+  ) async {
+    final created = await _repository.createAnnouncement(ministryId, data);
+    if (state.ministryId == ministryId) {
+      state = state.copyWith(
+        announcements: [created, ...state.announcements],
+        clearAnnouncementsError: true,
+      );
+    }
+    return created;
+  }
+
   void reset() {
     ++_requestSequence;
     state = const DashboardState();

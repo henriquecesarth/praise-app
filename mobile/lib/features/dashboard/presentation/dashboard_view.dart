@@ -7,6 +7,7 @@ import '../domain/announcement.dart';
 import '../domain/dashboard_schedule_summary.dart';
 import 'controllers/dashboard_controller.dart';
 import 'widgets/announcement_card.dart';
+import 'widgets/announcement_form_dialog.dart';
 import 'widgets/upcoming_schedule_card.dart';
 
 /// Full native Dashboard view (Início tab) with real backend data.
@@ -117,6 +118,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                       dashboardState,
                       announcements,
                       isMatchingMinistry: isMatchingMinistry,
+                      isAdmin: widget.selectedMinistry?.role == 'admin',
                     ),
                   ),
                 ],
@@ -136,6 +138,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                 dashboardState,
                 announcements,
                 isMatchingMinistry: isMatchingMinistry,
+                isAdmin: widget.selectedMinistry?.role == 'admin',
               ),
             ],
             const SizedBox(height: 32),
@@ -362,11 +365,31 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
     );
   }
 
+  Future<void> _openCreateAnnouncement(
+    BuildContext context,
+    String ministryId,
+  ) async {
+    final created = await showDialog<Announcement?>(
+      context: context,
+      builder: (ctx) => AnnouncementFormDialog(ministryId: ministryId),
+    );
+
+    if (created != null && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Aviso "${created.title}" publicado com sucesso!'),
+          backgroundColor: Colors.green.shade700,
+        ),
+      );
+    }
+  }
+
   Widget _buildAnnouncementsSection(
     BuildContext context,
     DashboardState state,
     List<dynamic> announcements, {
     required bool isMatchingMinistry,
+    required bool isAdmin,
   }) {
     final theme = Theme.of(context);
 
@@ -375,34 +398,64 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
       children: [
         // Section Header
         Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Icon(
-              Icons.campaign_outlined,
-              size: 20,
-              color: Colors.amber.shade700,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              'Avisos da Equipe',
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
+            Expanded(
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.campaign_outlined,
+                    size: 20,
+                    color: Colors.amber.shade700,
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      'Avisos da Equipe',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (announcements.isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        '${announcements.length}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.amber.shade800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
-            if (announcements.isNotEmpty) ...[
+            if (isAdmin && widget.selectedMinistry != null) ...[
               const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.amber.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(10),
+              FilledButton.tonalIcon(
+                key: const ValueKey('create_announcement_button'),
+                onPressed: () => _openCreateAnnouncement(
+                  context,
+                  widget.selectedMinistry!.id,
                 ),
-                child: Text(
-                  '${announcements.length}',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.amber.shade800,
-                  ),
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Novo Aviso'),
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 ),
               ),
             ],

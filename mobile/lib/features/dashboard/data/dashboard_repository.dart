@@ -8,6 +8,10 @@ abstract class DashboardRepository {
   Future<List<DashboardScheduleSummary>> getSchedules(String ministryId);
   Future<List<Announcement>> getAnnouncements(String ministryId,
       {int limit = 20});
+  Future<Announcement> createAnnouncement(
+    String ministryId,
+    Map<String, dynamic> data,
+  );
 }
 
 class HttpDashboardRepository implements DashboardRepository {
@@ -61,6 +65,31 @@ class HttpDashboardRepository implements DashboardRepository {
     } catch (e) {
       if (e is AppFailure) rethrow;
       throw AppFailure(message: 'Erro ao carregar avisos: $e');
+    }
+  }
+
+  @override
+  Future<Announcement> createAnnouncement(
+    String ministryId,
+    Map<String, dynamic> data,
+  ) async {
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '/ministries/$ministryId/announcements',
+        data: data,
+      );
+
+      final responseData = response.data;
+      if (responseData == null) {
+        throw const AppFailure(message: 'Resposta vazia do servidor.');
+      }
+
+      return Announcement.fromJson(responseData);
+    } on DioException catch (e) {
+      throw _apiClient.mapDioException(e);
+    } catch (e) {
+      if (e is AppFailure) rethrow;
+      throw AppFailure(message: 'Erro ao criar aviso: $e');
     }
   }
 }

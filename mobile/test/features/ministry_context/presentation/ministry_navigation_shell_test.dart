@@ -45,6 +45,20 @@ class FakeDashboardRepo implements DashboardRepository {
   Future<List<Announcement>> getAnnouncements(String ministryId,
           {int limit = 20}) async =>
       [];
+
+  @override
+  Future<Announcement> createAnnouncement(
+    String ministryId,
+    Map<String, dynamic> data,
+  ) async {
+    return Announcement(
+      id: 'ann_new',
+      ministryId: ministryId,
+      title: data['title'] as String? ?? '',
+      content: data['content'] as String? ?? '',
+      important: data['important'] as bool? ?? false,
+    );
+  }
 }
 
 class FakeScheduleRepo implements ScheduleRepository {
