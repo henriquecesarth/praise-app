@@ -101,6 +101,12 @@ Important report distinctions:
 - Recipient resolution queries ministry membership and linked `user_id`; despite comments saying “active”, it does not explicitly filter a membership status field. Manual members without a linked user ID are not recipients.
 - Persistent notification creation is deduplicated; FCM is best-effort for newly created records. Do not claim guaranteed push delivery, durable retry or new physical-device validation from this audit.
 
+## Independent rerun from `ddd6f0e` (2026-10-01)
+
+The worktree started clean with the previous audit already committed. Re-ran `flutter analyze` (no issues, 18.2s), `flutter test` (395 passed, 2m21s), and `flutter build appbundle --release` (exit 0, Gradle task 63.2s). The incremental rebuild produced the same 57,404,137-byte AAB and SHA-256 recorded above. No signing configuration was read manually, changed or regenerated.
+
+Re-ran the resolved Gradle metadata probe, bundletool validation and manifest dump, JDK signature verification, and public certificate fingerprint extraction against that resulting AAB. All metadata and fingerprint values above were reproduced; `jarsigner` again returned `jar verified` with the documented warnings. Rechecked notification route/type/dispatch source and development environment defaults. No new Play history, approved upload certificate or production endpoint approval was available, so the verdict and release-owner follow-up remain unchanged. This rerun changes documentation only; it does not authorize production integration.
+
 ## Validation and changes
 
 - `flutter analyze`: PASS, no issues.
