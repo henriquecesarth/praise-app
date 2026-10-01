@@ -10,6 +10,9 @@ class MinistryMember {
   final String role;
   final List<String> roleIds;
   final bool isManual;
+  final String phone;
+  final String? birthDate;
+  final String? joinedAt;
 
   const MinistryMember({
     required this.id,
@@ -19,7 +22,20 @@ class MinistryMember {
     this.role = 'member',
     this.roleIds = const [],
     this.isManual = false,
+    this.phone = '',
+    this.birthDate,
+    this.joinedAt,
   });
+
+  bool get isAdmin => role == 'admin';
+  String get roleLabel => isAdmin ? 'Administrador' : 'Membro';
+
+  String get initials {
+    final parts = name.trim().split(RegExp(r'\s+'));
+    if (parts.isEmpty || parts[0].isEmpty) return '?';
+    if (parts.length == 1) return parts[0][0].toUpperCase();
+    return '${parts[0][0]}${parts[parts.length - 1][0]}'.toUpperCase();
+  }
 
   factory MinistryMember.fromJson(Map<String, dynamic> json) {
     final rawRoleIds = json['role_ids'] ?? json['roleIds'];
@@ -34,6 +50,9 @@ class MinistryMember {
           : const [],
       isManual:
           json['is_manual'] as bool? ?? json['isManual'] as bool? ?? false,
+      phone: json['phone'] as String? ?? '',
+      birthDate: (json['birth_date'] ?? json['birthDate']) as String?,
+      joinedAt: (json['joined_at'] ?? json['created_at']) as String?,
     );
   }
 
@@ -45,6 +64,9 @@ class MinistryMember {
         'role': role,
         'role_ids': roleIds,
         'is_manual': isManual,
+        if (phone.isNotEmpty) 'phone': phone,
+        if (birthDate != null) 'birth_date': birthDate,
+        if (joinedAt != null) 'joined_at': joinedAt,
       };
 
   @override

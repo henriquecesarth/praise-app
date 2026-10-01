@@ -9,6 +9,7 @@ import 'controllers/dashboard_controller.dart';
 import 'widgets/announcement_card.dart';
 import 'widgets/announcement_form_dialog.dart';
 import 'widgets/upcoming_schedule_card.dart';
+import '../../members/presentation/views/members_directory_screen.dart';
 
 /// Full native Dashboard view (Início tab) with real backend data.
 class DashboardView extends ConsumerStatefulWidget {
@@ -261,6 +262,21 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                 ),
               ],
             ),
+          ),
+          IconButton(
+            key: const ValueKey('dashboard_members_button'),
+            tooltip: 'Integrantes',
+            icon: const Icon(Icons.people_outline, size: 20),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => MembersDirectoryScreen(
+                    ministryId: ministry.id,
+                    ministryName: ministry.name,
+                  ),
+                ),
+              );
+            },
           ),
           if (widget.hasMultipleMinistries)
             TextButton.icon(
