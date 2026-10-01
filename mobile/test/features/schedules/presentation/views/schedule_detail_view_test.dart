@@ -9,6 +9,8 @@ import 'package:louvaio_mobile/features/ministry_context/data/ministry_repositor
 import 'package:louvaio_mobile/features/ministry_context/domain/ministry.dart';
 import 'package:louvaio_mobile/features/ministry_context/presentation/controllers/ministry_context_controller.dart';
 import 'package:louvaio_mobile/features/schedules/data/schedule_repository.dart';
+import 'package:louvaio_mobile/features/schedules/domain/ministry_member.dart';
+import 'package:louvaio_mobile/features/schedules/domain/ministry_role.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule_comment.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule_participant.dart';
@@ -89,6 +91,22 @@ class FakeDetailScheduleRepo implements ScheduleRepository {
       createdAt: '2026-09-25T14:30:00Z',
     );
   }
+
+  @override
+  Future<ScheduleDetail> createSchedule(
+          String ministryId, Map<String, dynamic> data) async =>
+      detail!;
+
+  @override
+  Future<ScheduleDetail> updateSchedule(String ministryId, String scheduleId,
+          Map<String, dynamic> data) async =>
+      detail!;
+
+  @override
+  Future<List<MinistryMember>> getMinistryMembers(String ministryId) async => [];
+
+  @override
+  Future<List<MinistryRole>> getMinistryRoles(String ministryId) async => [];
 }
 
 class _FakeMinistryRepo implements MinistryRepository {
@@ -198,7 +216,7 @@ void main() {
     ];
   });
 
-  Widget createSubject() {
+  Widget createSubject({String role = 'member'}) {
     return ProviderScope(
       overrides: [
         appEnvironmentProvider.overrideWithValue(
@@ -207,6 +225,8 @@ void main() {
             apiBaseUrl: 'http://localhost:3000/api/v1',
           ),
         ),
+        preferencesStorageProvider.overrideWithValue(_FakePreferencesStorage()),
+        ministryRepositoryProvider.overrideWithValue(_FakeMinistryRepo()),
         scheduleRepositoryProvider.overrideWithValue(fakeRepo),
         scheduleDetailNotifierProvider.overrideWith((ref) {
           return ScheduleDetailNotifier(repository: fakeRepo);
@@ -214,8 +234,18 @@ void main() {
         commentsNotifierProvider.overrideWith((ref) {
           return CommentsNotifier(repository: fakeRepo);
         }),
-        ministryContextNotifierProvider
-            .overrideWith((ref) => FakeMinistryContextNotifier()),
+        ministryContextNotifierProvider.overrideWith(
+          (ref) => FakeMinistryContextNotifier(
+            MinistryContextState(
+              status: MinistryBootstrapStatus.ready,
+              selectedMinistry:
+                  Ministry(id: 'min_1', name: 'Min 1', role: role),
+              availableMinistries: [
+                Ministry(id: 'min_1', name: 'Min 1', role: role),
+              ],
+            ),
+          ),
+        ),
       ],
       child: const MaterialApp(
         home: ScheduleDetailView(
@@ -489,6 +519,30 @@ void main() {
 
       // Detail screen popped back to Shell Screen
       expect(find.text('Shell Screen'), findsOneWidget);
+    });
+
+    testWidgets('ordinary member does not see edit schedule button',
+        (tester) async {
+      await tester.pumpWidget(createSubject(role: 'member'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('edit_schedule_button')), findsNothing);
+    });
+
+    testWidgets(
+        'admin sees edit schedule button and clicking opens ScheduleFormScreen',
+        (tester) async {
+      await tester.pumpWidget(createSubject(role: 'admin'));
+      await tester.pumpAndSettle();
+
+      final editBtn = find.byKey(const ValueKey('edit_schedule_button'));
+      expect(editBtn, findsOneWidget);
+
+      await tester.tap(editBtn);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Editar Escala'), findsOneWidget);
+      expect(find.text('Culto de Domingo Especial'), findsWidgets);
     });
   });
 }

@@ -1,9 +1,13 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/core/errors/app_failure.dart';
 import 'package:louvaio_mobile/features/schedules/data/schedule_repository.dart';
+import 'package:louvaio_mobile/features/schedules/domain/ministry_member.dart';
+import 'package:louvaio_mobile/features/schedules/domain/ministry_role.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule_comment.dart';
+import 'package:louvaio_mobile/features/schedules/domain/schedule_participant.dart';
 import 'package:louvaio_mobile/features/schedules/presentation/controllers/schedule_detail_controller.dart';
+import 'package:louvaio_mobile/features/schedules/presentation/controllers/schedule_form_controller.dart';
 import 'package:louvaio_mobile/features/schedules/presentation/controllers/schedule_list_controller.dart';
 
 // ─── Fake repository ──────────────────────────────────────────────────────────
@@ -61,6 +65,43 @@ class FakeScheduleRepository implements ScheduleRepository {
     if (postCommentException != null) throw postCommentException!;
     return commentToReturn!;
   }
+
+  Map<String, dynamic>? lastCreatedData;
+  String? lastCreatedMinistryId;
+  Map<String, dynamic>? lastUpdatedData;
+  String? lastUpdatedMinistryId;
+  String? lastUpdatedScheduleId;
+  Exception? createException;
+  Exception? updateException;
+  List<MinistryMember> membersToReturn = [];
+  List<MinistryRole> rolesToReturn = [];
+
+  @override
+  Future<ScheduleDetail> createSchedule(
+      String ministryId, Map<String, dynamic> data) async {
+    lastCreatedMinistryId = ministryId;
+    lastCreatedData = data;
+    if (createException != null) throw createException!;
+    return detailToReturn!;
+  }
+
+  @override
+  Future<ScheduleDetail> updateSchedule(
+      String ministryId, String scheduleId, Map<String, dynamic> data) async {
+    lastUpdatedMinistryId = ministryId;
+    lastUpdatedScheduleId = scheduleId;
+    lastUpdatedData = data;
+    if (updateException != null) throw updateException!;
+    return detailToReturn!;
+  }
+
+  @override
+  Future<List<MinistryMember>> getMinistryMembers(String ministryId) async =>
+      membersToReturn;
+
+  @override
+  Future<List<MinistryRole>> getMinistryRoles(String ministryId) async =>
+      rolesToReturn;
 }
 
 ScheduleSummary makeSummary({
@@ -479,6 +520,205 @@ void main() {
       expect(notifier.state.scheduleId, equals('s2'));
       expect(notifier.state.comments, isEmpty);
       await future;
+    });
+  });
+
+  group('ScheduleFormNotifier', () {
+    late FakeScheduleRepository repo;
+    late ScheduleFormNotifier notifier;
+
+    setUp(() {
+      repo = FakeScheduleRepository();
+      repo.membersToReturn = [
+        const MinistryMember(id: 'm1', userId: 'u1', name: 'Alice'),
+        const MinistryMember(id: 'm2', userId: 'u2', name: 'Bob'),
+      ];
+      repo.rolesToReturn = [
+        const MinistryRole(id: 'r1', name: 'Vocal'),
+        const MinistryRole(id: 'r2', name: 'Bateria'),
+      ];
+      notifier = ScheduleFormNotifier(repository: repo);
+    });
+
+    test('init for new schedule sets default values and loads members/roles', () async {
+      notifier.init(ministryId: 'min_test');
+
+      expect(notifier.state.isEditing, isFalse);
+      expect(notifier.state.ministryId, equals('min_test'));
+      expect(notifier.state.title, equals('Culto'));
+      expect(notifier.state.time, equals('19:00'));
+      expect(notifier.state.durationMinutes, equals(120));
+      expect(notifier.state.requireConfirmation, isFalse);
+      expect(notifier.state.isDirty, isFalse);
+
+      await Future.delayed(Duration.zero);
+
+      expect(notifier.state.availableMembers.length, equals(2));
+      expect(notifier.state.availableRoles.length, equals(2));
+      expect(notifier.state.isLoadingMembers, isFalse);
+    });
+
+    test('init with initialSchedule populates existing data', () async {
+      const existing = ScheduleDetail(
+        id: 'sch_42',
+        ministryId: 'min_test',
+        title: 'Ensaio Geral',
+        date: '2026-11-15',
+        time: '20:00',
+        durationMinutes: 90,
+        notes: 'Trazer partituras',
+        requireConfirmation: true,
+        participants: [
+          ScheduleParticipant(id: 'p1', userId: 'u1', name: 'Alice', role: 'Vocal'),
+        ],
+      );
+
+      notifier.init(ministryId: 'min_test', initialSchedule: existing);
+
+      expect(notifier.state.isEditing, isTrue);
+      expect(notifier.state.scheduleId, equals('sch_42'));
+      expect(notifier.state.title, equals('Ensaio Geral'));
+      expect(notifier.state.date, equals('2026-11-15'));
+      expect(notifier.state.time, equals('20:00'));
+      expect(notifier.state.durationMinutes, equals(90));
+      expect(notifier.state.notes, equals('Trazer partituras'));
+      expect(notifier.state.requireConfirmation, isTrue);
+      expect(notifier.state.participants.length, equals(1));
+      expect(notifier.state.isDirty, isFalse);
+    });
+
+    test('setters update state and mark form dirty', () {
+      notifier.init(ministryId: 'min_test');
+
+      notifier.setTitle('Vigília');
+      expect(notifier.state.title, equals('Vigília'));
+      expect(notifier.state.isDirty, isTrue);
+
+      notifier.setDate('2026-12-31');
+      expect(notifier.state.date, equals('2026-12-31'));
+
+      notifier.setTime('22:00');
+      expect(notifier.state.time, equals('22:00'));
+
+      notifier.setDurationMinutes(240);
+      expect(notifier.state.durationMinutes, equals(240));
+
+      notifier.setNotes('Trazer agasalho');
+      expect(notifier.state.notes, equals('Trazer agasalho'));
+
+      notifier.setRequireConfirmation(true);
+      expect(notifier.state.requireConfirmation, isTrue);
+    });
+
+    test('addParticipant prevents duplicates and returns false', () {
+      notifier.init(ministryId: 'min_test');
+
+      const member = MinistryMember(id: 'm1', userId: 'u1', name: 'Alice');
+      final firstAdded = notifier.addParticipant(member, 'Vocal');
+      expect(firstAdded, isTrue);
+      expect(notifier.state.participants.length, equals(1));
+      expect(notifier.state.participants.first.name, equals('Alice'));
+      expect(notifier.state.participants.first.role, equals('Vocal'));
+
+      // Try adding same member again
+      final secondAdded = notifier.addParticipant(member, 'Backing');
+      expect(secondAdded, isFalse);
+      expect(notifier.state.participants.length, equals(1));
+    });
+
+    test('removeParticipant and updateParticipantRole modify list', () {
+      notifier.init(ministryId: 'min_test');
+      const member1 = MinistryMember(id: 'm1', userId: 'u1', name: 'Alice');
+      const member2 = MinistryMember(id: 'm2', userId: 'u2', name: 'Bob');
+
+      notifier.addParticipant(member1, 'Vocal');
+      notifier.addParticipant(member2, 'Baixo');
+      expect(notifier.state.participants.length, equals(2));
+
+      notifier.updateParticipantRole(0, 'Ministro de Louvor');
+      expect(notifier.state.participants[0].role, equals('Ministro de Louvor'));
+
+      notifier.removeParticipant(0);
+      expect(notifier.state.participants.length, equals(1));
+      expect(notifier.state.participants.first.name, equals('Bob'));
+    });
+
+    test('submit rejects empty title with validation error', () async {
+      notifier.init(ministryId: 'min_test');
+      notifier.setTitle('   ');
+
+      final result = await notifier.submit();
+      expect(result, isNull);
+      expect(notifier.state.error, contains('título da escala é obrigatório'));
+      expect(notifier.state.isSubmitting, isFalse);
+    });
+
+    test('submit creates schedule via repository and returns result', () async {
+      repo.detailToReturn = const ScheduleDetail(
+        id: 'sch_created',
+        ministryId: 'min_test',
+        title: 'Culto Noturno',
+        date: '2026-10-10',
+      );
+
+      notifier.init(ministryId: 'min_test');
+      notifier.setTitle('Culto Noturno');
+      notifier.setDate('2026-10-10');
+      notifier.setTime('18:00');
+
+      final result = await notifier.submit();
+
+      expect(result, isNotNull);
+      expect(result!.id, equals('sch_created'));
+      expect(repo.lastCreatedMinistryId, equals('min_test'));
+      expect(repo.lastCreatedData?['title'], equals('Culto Noturno'));
+      expect(repo.lastCreatedData?['date'], equals('2026-10-10'));
+      expect(notifier.state.submitSuccess, isTrue);
+      expect(notifier.state.isDirty, isFalse);
+    });
+
+    test('submit updates existing schedule via updateSchedule', () async {
+      const initial = ScheduleDetail(
+        id: 'sch_existing',
+        ministryId: 'min_test',
+        title: 'Culto Original',
+        date: '2026-10-10',
+      );
+      repo.detailToReturn = const ScheduleDetail(
+        id: 'sch_existing',
+        ministryId: 'min_test',
+        title: 'Culto Editado',
+        date: '2026-10-10',
+      );
+
+      notifier.init(ministryId: 'min_test', initialSchedule: initial);
+      notifier.setTitle('Culto Editado');
+
+      final result = await notifier.submit();
+
+      expect(result, isNotNull);
+      expect(repo.lastUpdatedMinistryId, equals('min_test'));
+      expect(repo.lastUpdatedScheduleId, equals('sch_existing'));
+      expect(repo.lastUpdatedData?['title'], equals('Culto Editado'));
+      expect(notifier.state.submitSuccess, isTrue);
+    });
+
+    test('submit stores AppFailure message when repository fails', () async {
+      repo.createException = const AppFailure(
+        message: 'Acesso negado: apenas líderes podem criar escalas.',
+        statusCode: 403,
+      );
+
+      notifier.init(ministryId: 'min_test');
+      notifier.setTitle('Culto');
+      notifier.setDate('2026-10-10');
+
+      final result = await notifier.submit();
+
+      expect(result, isNull);
+      expect(notifier.state.error, contains('Acesso negado'));
+      expect(notifier.state.isSubmitting, isFalse);
+      expect(notifier.state.submitSuccess, isFalse);
     });
   });
 }

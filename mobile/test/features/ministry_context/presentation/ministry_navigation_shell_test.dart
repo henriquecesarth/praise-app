@@ -19,6 +19,8 @@ import 'package:louvaio_mobile/features/ministry_context/presentation/ministry_e
 import 'package:louvaio_mobile/features/ministry_context/presentation/ministry_selector_screen.dart';
 import 'package:louvaio_mobile/features/ministry_context/presentation/widgets/ministry_switcher_sheet.dart';
 import 'package:louvaio_mobile/features/schedules/data/schedule_repository.dart';
+import 'package:louvaio_mobile/features/schedules/domain/ministry_member.dart';
+import 'package:louvaio_mobile/features/schedules/domain/ministry_role.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule_comment.dart';
 import 'package:louvaio_mobile/features/repertoire/data/repertoire_repository.dart';
@@ -86,6 +88,32 @@ class FakeScheduleRepo implements ScheduleRepository {
         content: 'content',
         createdAt: '2026-10-01',
       );
+
+  @override
+  Future<ScheduleDetail> createSchedule(
+          String ministryId, Map<String, dynamic> data) async =>
+      const ScheduleDetail(
+        id: 's_new',
+        ministryId: 'min_1',
+        title: 'Culto',
+        date: '2026-10-01',
+      );
+
+  @override
+  Future<ScheduleDetail> updateSchedule(String ministryId, String scheduleId,
+          Map<String, dynamic> data) async =>
+      const ScheduleDetail(
+        id: 's1',
+        ministryId: 'min_1',
+        title: 'Culto',
+        date: '2026-10-01',
+      );
+
+  @override
+  Future<List<MinistryMember>> getMinistryMembers(String ministryId) async => [];
+
+  @override
+  Future<List<MinistryRole>> getMinistryRoles(String ministryId) async => [];
 }
 
 class FakeRepertoireRepo implements RepertoireRepository {

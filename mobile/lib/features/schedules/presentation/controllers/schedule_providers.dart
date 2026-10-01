@@ -3,6 +3,7 @@ import '../../../../app/providers.dart';
 import '../../data/schedule_repository.dart';
 import '../controllers/schedule_list_controller.dart';
 import '../controllers/schedule_detail_controller.dart';
+import '../controllers/schedule_form_controller.dart';
 
 /// Provider for the schedule HTTP repository.
 final scheduleRepositoryProvider = Provider<ScheduleRepository>((ref) {
@@ -34,6 +35,15 @@ final scheduleDetailNotifierProvider =
 final commentsNotifierProvider =
     StateNotifierProvider<CommentsNotifier, CommentsState>((ref) {
   return CommentsNotifier(
+    repository: ref.watch(scheduleRepositoryProvider),
+  );
+});
+
+/// Schedule form provider for create and edit workflows.
+/// Auto-disposed when the form screen closes.
+final scheduleFormNotifierProvider = StateNotifierProvider.autoDispose<
+    ScheduleFormNotifier, ScheduleFormState>((ref) {
+  return ScheduleFormNotifier(
     repository: ref.watch(scheduleRepositoryProvider),
   );
 });

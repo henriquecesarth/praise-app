@@ -32,6 +32,8 @@ import 'package:louvaio_mobile/features/repertoire/domain/song_detail.dart';
 import 'package:louvaio_mobile/features/repertoire/domain/song_summary.dart';
 import 'package:louvaio_mobile/features/repertoire/presentation/controllers/repertoire_list_controller.dart';
 import 'package:louvaio_mobile/features/schedules/data/schedule_repository.dart';
+import 'package:louvaio_mobile/features/schedules/domain/ministry_member.dart';
+import 'package:louvaio_mobile/features/schedules/domain/ministry_role.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule_comment.dart';
 import 'package:louvaio_mobile/features/schedules/presentation/controllers/schedule_detail_controller.dart';
@@ -146,6 +148,32 @@ class FakeScheduleRepo implements ScheduleRepository {
       createdAt: DateTime.now().toIso8601String(),
     );
   }
+
+  @override
+  Future<ScheduleDetail> createSchedule(
+          String ministryId, Map<String, dynamic> data) async =>
+      ScheduleDetail(
+        id: 's_new',
+        ministryId: ministryId,
+        title: 'Schedule',
+        date: '2026-10-01',
+      );
+
+  @override
+  Future<ScheduleDetail> updateSchedule(String ministryId, String scheduleId,
+          Map<String, dynamic> data) async =>
+      ScheduleDetail(
+        id: scheduleId,
+        ministryId: ministryId,
+        title: 'Schedule',
+        date: '2026-10-01',
+      );
+
+  @override
+  Future<List<MinistryMember>> getMinistryMembers(String ministryId) async => [];
+
+  @override
+  Future<List<MinistryRole>> getMinistryRoles(String ministryId) async => [];
 }
 
 class FakeAvailabilityRepo implements AvailabilityRepository {

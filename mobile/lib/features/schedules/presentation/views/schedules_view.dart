@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../app/providers.dart';
 import '../../../availability/presentation/views/my_availability_screen.dart';
 import '../../domain/schedule.dart';
 import '../controllers/schedule_list_controller.dart';
-import '../controllers/schedule_providers.dart';
 import '../widgets/schedule_card.dart';
 import 'schedule_detail_view.dart';
+import 'schedule_form_screen.dart';
 
 /// Member-facing Escalas list screen with Próximas / Anteriores tabs.
 ///
@@ -57,9 +58,22 @@ class _SchedulesViewState extends ConsumerState<SchedulesView>
     super.dispose();
   }
 
+  void _openCreateSchedule(BuildContext context) {
+    if (widget.ministryId == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ScheduleFormScreen(
+          ministryId: widget.ministryId!,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(scheduleListNotifierProvider);
+    final ministryContext = ref.watch(ministryContextNotifierProvider);
+    final isAdmin = ministryContext.selectedMinistry?.isAdmin ?? false;
     final isWide = MediaQuery.sizeOf(context).width >= 600;
 
     final isMatchingMinistry = state.ministryId == widget.ministryId;
@@ -89,49 +103,74 @@ class _SchedulesViewState extends ConsumerState<SchedulesView>
       );
     }
 
-    return SafeArea(
-      child: Column(
-        children: [
-          if (widget.ministryId != null &&
-              isMatchingMinistry &&
-              !state.isLoading &&
-              state.error == null)
-            Row(
-              children: [
-                Expanded(
-                  child: TabBar(
-                    controller: _tabController,
-                    tabs: const [
-                      Tab(text: 'Próximas'),
-                      Tab(text: 'Anteriores'),
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(right: 8.0),
-                  child: SizedBox(
-                    width: 44,
-                    height: 44,
-                    child: IconButton(
-                      icon: const Icon(Icons.event_busy_outlined),
-                      tooltip: 'Minha Indisponibilidade',
-                      onPressed: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => MyAvailabilityScreen(
-                              ministryId: widget.ministryId!,
-                            ),
-                          ),
-                        );
-                      },
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: SafeArea(
+        child: Column(
+          children: [
+            if (widget.ministryId != null &&
+                isMatchingMinistry &&
+                !state.isLoading &&
+                state.error == null)
+              Row(
+                children: [
+                  Expanded(
+                    child: TabBar(
+                      controller: _tabController,
+                      tabs: const [
+                        Tab(text: 'Próximas'),
+                        Tab(text: 'Anteriores'),
+                      ],
                     ),
                   ),
-                ),
-              ],
-            ),
-          Expanded(child: content),
-        ],
+                  Padding(
+                    padding: const EdgeInsets.only(right: 4.0),
+                    child: SizedBox(
+                      width: 44,
+                      height: 44,
+                      child: IconButton(
+                        icon: const Icon(Icons.event_busy_outlined),
+                        tooltip: 'Minha Indisponibilidade',
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => MyAvailabilityScreen(
+                                ministryId: widget.ministryId!,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                  if (isAdmin)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8.0),
+                      child: SizedBox(
+                        width: 44,
+                        height: 44,
+                        child: IconButton(
+                          key: const ValueKey('create_schedule_header_button'),
+                          icon: const Icon(Icons.add),
+                          tooltip: 'Nova escala',
+                          onPressed: () => _openCreateSchedule(context),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            Expanded(child: content),
+          ],
+        ),
       ),
+      floatingActionButton: isAdmin && widget.ministryId != null
+          ? FloatingActionButton.extended(
+              key: const ValueKey('create_schedule_fab'),
+              onPressed: () => _openCreateSchedule(context),
+              icon: const Icon(Icons.add),
+              label: const Text('Nova escala'),
+            )
+          : null,
     );
   }
 }

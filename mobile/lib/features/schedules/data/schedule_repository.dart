@@ -1,6 +1,8 @@
 import 'package:dio/dio.dart';
 import '../../../../core/errors/app_failure.dart';
 import '../../../../core/http/api_client.dart';
+import '../domain/ministry_member.dart';
+import '../domain/ministry_role.dart';
 import '../domain/schedule.dart';
 import '../domain/schedule_comment.dart';
 
@@ -27,6 +29,22 @@ abstract class ScheduleRepository {
   /// Posts a comment (1–1000 chars). Returns HTTP 201 ScheduleComment.
   Future<ScheduleComment> postComment(
       String ministryId, String scheduleId, String content);
+
+  /// Creates a new schedule for [ministryId]. Requires admin role.
+  /// Returns the newly created ScheduleDetail.
+  Future<ScheduleDetail> createSchedule(
+      String ministryId, Map<String, dynamic> data);
+
+  /// Updates an existing schedule. Requires admin role.
+  /// Returns the updated ScheduleDetail.
+  Future<ScheduleDetail> updateSchedule(
+      String ministryId, String scheduleId, Map<String, dynamic> data);
+
+  /// Lists all members of [ministryId] available to be scheduled.
+  Future<List<MinistryMember>> getMinistryMembers(String ministryId);
+
+  /// Lists all musical/ministerial roles defined for [ministryId].
+  Future<List<MinistryRole>> getMinistryRoles(String ministryId);
 }
 
 class HttpScheduleRepository implements ScheduleRepository {
@@ -138,6 +156,90 @@ class HttpScheduleRepository implements ScheduleRepository {
     } catch (e) {
       if (e is AppFailure) rethrow;
       throw AppFailure(message: 'Erro ao enviar comentário: $e');
+    }
+  }
+
+  @override
+  Future<ScheduleDetail> createSchedule(
+      String ministryId, Map<String, dynamic> data) async {
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '/ministries/$ministryId/schedules',
+        data: data,
+      );
+      final responseData = response.data;
+      if (responseData == null) {
+        throw const AppFailure(
+            message: 'Resposta inesperada do servidor ao criar escala.');
+      }
+      return ScheduleDetail.fromJson(responseData);
+    } on DioException catch (e) {
+      throw _apiClient.mapDioException(e);
+    } catch (e) {
+      if (e is AppFailure) rethrow;
+      throw AppFailure(message: 'Erro ao criar escala: $e');
+    }
+  }
+
+  @override
+  Future<ScheduleDetail> updateSchedule(
+      String ministryId, String scheduleId, Map<String, dynamic> data) async {
+    try {
+      final response = await _apiClient.dio.put<Map<String, dynamic>>(
+        '/ministries/$ministryId/schedules/$scheduleId',
+        data: data,
+      );
+      final responseData = response.data;
+      if (responseData == null) {
+        throw const AppFailure(
+            message: 'Resposta inesperada do servidor ao atualizar escala.');
+      }
+      return ScheduleDetail.fromJson(responseData);
+    } on DioException catch (e) {
+      throw _apiClient.mapDioException(e);
+    } catch (e) {
+      if (e is AppFailure) rethrow;
+      throw AppFailure(message: 'Erro ao atualizar escala: $e');
+    }
+  }
+
+  @override
+  Future<List<MinistryMember>> getMinistryMembers(String ministryId) async {
+    try {
+      final response = await _apiClient.dio.get<List<dynamic>>(
+        '/ministries/$ministryId/members',
+      );
+      final data = response.data;
+      if (data == null) return [];
+      return data
+          .whereType<Map<String, dynamic>>()
+          .map(MinistryMember.fromJson)
+          .toList();
+    } on DioException catch (e) {
+      throw _apiClient.mapDioException(e);
+    } catch (e) {
+      if (e is AppFailure) rethrow;
+      throw AppFailure(message: 'Erro ao carregar integrantes: $e');
+    }
+  }
+
+  @override
+  Future<List<MinistryRole>> getMinistryRoles(String ministryId) async {
+    try {
+      final response = await _apiClient.dio.get<List<dynamic>>(
+        '/ministries/$ministryId/roles',
+      );
+      final data = response.data;
+      if (data == null) return [];
+      return data
+          .whereType<Map<String, dynamic>>()
+          .map(MinistryRole.fromJson)
+          .toList();
+    } on DioException catch (e) {
+      throw _apiClient.mapDioException(e);
+    } catch (e) {
+      if (e is AppFailure) rethrow;
+      throw AppFailure(message: 'Erro ao carregar funções ministeriais: $e');
     }
   }
 }

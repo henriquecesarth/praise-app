@@ -6,6 +6,7 @@ import '../../domain/schedule.dart';
 import '../../domain/schedule_comment.dart';
 import '../../domain/schedule_participant.dart';
 import '../controllers/schedule_detail_controller.dart';
+import 'schedule_form_screen.dart';
 
 /// Full schedule detail screen.
 ///
@@ -112,6 +113,9 @@ class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
       body = const Center(child: CircularProgressIndicator());
     }
 
+    final ministryContext = ref.watch(ministryContextNotifierProvider);
+    final isAdmin = ministryContext.selectedMinistry?.isAdmin ?? false;
+
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -120,6 +124,24 @@ class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
               'Detalhes da Escala',
           overflow: TextOverflow.ellipsis,
         ),
+        actions: [
+          if (isAdmin && detailState.schedule != null)
+            IconButton(
+              key: const ValueKey('edit_schedule_button'),
+              icon: const Icon(Icons.edit_outlined),
+              tooltip: 'Editar escala',
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => ScheduleFormScreen(
+                      ministryId: widget.ministryId,
+                      initialSchedule: detailState.schedule,
+                    ),
+                  ),
+                );
+              },
+            ),
+        ],
       ),
       body: SafeArea(child: body),
     );
