@@ -26,6 +26,10 @@ Resumed on 2026-10-01 from `eca9ed4`: ignored signing configuration and keystore
 - [ ] Obtain approved production environment parameters; build and reverify the production candidate (bare requested command uses development defaults).
 - [ ] Obtain authoritative Play version history, then decide whether a versionCode change is required.
 
+## Independent rerun from `ddd6f0e`
+
+On 2026-10-01, re-ran analysis (no issues), all 395 Flutter tests (2m21s), and the signed release AAB build (63.2s Gradle task). Reverified resolved Gradle metadata, bundletool structure/manifest, signature and certificate fingerprint. Artifact size/hash are unchanged; signature warnings and human evidence gaps remain. No application, SDK baseline, signing or version changes were needed. This rerun only updates this plan and the verification report.
+
 ## Evidence and handoff
 
 See `docs/mobile/rel2-verification.md`. The original REL-1 manifest is not present in this checkout; the report contains an evidence-backed correction addendum, not a claim that an unavailable report was edited.
