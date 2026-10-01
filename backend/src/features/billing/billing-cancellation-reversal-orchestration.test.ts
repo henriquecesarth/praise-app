@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BillingService } from './billing.service';
 import { BillingReconcilerWorker } from './billing-reconciler.worker';
 import {
@@ -93,6 +93,8 @@ describe('Phase 4A.4.2 — V1 Cancellation Reversal Provider Orchestration', () 
   }
 
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(beforeBoundaryDate);
     (config as any).billingTimezone = 'America/Sao_Paulo';
 
     activeRecord = createScheduledCancelRecord();
@@ -355,6 +357,10 @@ describe('Phase 4A.4.2 — V1 Cancellation Reversal Provider Orchestration', () 
       mockProvider,
       mockUserRepo
     );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe('1. validateReversalPaymentSafety', () => {

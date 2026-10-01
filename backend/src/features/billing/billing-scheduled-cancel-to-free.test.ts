@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BillingService } from './billing.service';
 import {
   BillingTransitionV1Record,
@@ -27,6 +27,8 @@ describe('Phase 3D.1 — Scheduled Cancel-to-Free V1 Domain, Persistence & Inter
   const providerName = 'asaas';
 
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-15T12:00:00.000Z'));
     (config as any).billingTimezone = 'America/Sao_Paulo';
 
     mockProvider = {
@@ -73,6 +75,10 @@ describe('Phase 3D.1 — Scheduled Cancel-to-Free V1 Domain, Persistence & Inter
       mockProvider,
       mockUserRepo
     );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   // --------------------------------------------------------------------------
@@ -1065,5 +1071,69 @@ describe('Phase 3D.1 — Scheduled Cancel-to-Free V1 Domain, Persistence & Inter
     expect(res.transition_status).toBe('financial_attention_required');
     expect(res.financial_safety_status).toBe('attention_required');
     expect(mockBillingRepo.releaseSlotIfOwnedAndSafe).not.toHaveBeenCalled();
+  });
+
+  // --------------------------------------------------------------------------
+  // 36. Deterministic Clock Boundary Semantics (BILLING-TIME-1 Regression Guard)
+  // --------------------------------------------------------------------------
+  describe('36. Deterministic Clock Boundary Semantics (BILLING-TIME-1 Regression Guard)', () => {
+    const periodStart = '2026-09-01T00:00:00.000Z';
+    const periodEnd = '2026-10-01T00:00:00.000Z';
+    const endMs = new Date(periodEnd).getTime();
+
+    beforeEach(() => {
+      mockBillingRepo.getActiveTransitionForMinistry.mockResolvedValue(null);
+      mockBillingRepo.getSubscription.mockResolvedValue({
+        id: `${ministryId}_asaas`,
+        ministry_id: ministryId,
+        plan_id: 'essential',
+        interval: 'monthly',
+        status: 'active',
+        provider_subscription_id: 'sub_boundary_regression',
+        current_period_start: periodStart,
+        current_period_end: periodEnd,
+      });
+      mockBillingRepo.createTransitionAndClaimSlot.mockResolvedValue({
+        slot: { id: buildActiveTransitionSlotId(ministryId, providerName), plan_change_id: 'tr_boundary_test' },
+        transition: {
+          id: 'tr_boundary_test',
+          policy_version: 'billing_transition_v1',
+          ministry_id: ministryId,
+          execution_strategy: 'scheduled_cancel_to_free',
+          transition_status: 'awaiting_old_inactivation',
+        },
+      });
+    });
+
+    it('36.1 Immediately before period end (end - 1ms): preparation is PERMITTED ([start, end) rule)', async () => {
+      vi.setSystemTime(new Date(endMs - 1));
+      const res = await billingService.prepareScheduledCancelToFreeTransition(ministryId);
+      expect(res.id).toMatch(/^tr_cancel_/);
+      expect(mockBillingRepo.createTransitionAndClaimSlot).toHaveBeenCalled();
+    });
+
+    it('36.2 At exact period end (end): preparation is REJECTED with PAID_PERIOD_EXPIRED (>= rule)', async () => {
+      vi.setSystemTime(new Date(endMs));
+      await expect(
+        billingService.prepareScheduledCancelToFreeTransition(ministryId)
+      ).rejects.toThrow(
+        expect.objectContaining({
+          statusCode: 400,
+          details: expect.objectContaining({ code: 'PAID_PERIOD_EXPIRED' }),
+        })
+      );
+    });
+
+    it('36.3 Immediately after period end (end + 1ms): preparation is REJECTED with PAID_PERIOD_EXPIRED', async () => {
+      vi.setSystemTime(new Date(endMs + 1));
+      await expect(
+        billingService.prepareScheduledCancelToFreeTransition(ministryId)
+      ).rejects.toThrow(
+        expect.objectContaining({
+          statusCode: 400,
+          details: expect.objectContaining({ code: 'PAID_PERIOD_EXPIRED' }),
+        })
+      );
+    });
   });
 });

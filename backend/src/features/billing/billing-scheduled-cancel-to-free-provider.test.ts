@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BillingService } from './billing.service';
 import { BillingReconcilerWorker } from './billing-reconciler.worker';
 import { BillingController } from './billing.controller';
@@ -79,6 +79,8 @@ describe('Phase 3D.2 — Provider Do-Not-Renew & Payment Safety Orchestration (S
   }
 
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-15T12:00:00.000Z'));
     (config as any).billingTimezone = 'America/Sao_Paulo';
 
     activeRecord = createBaseRecord();
@@ -223,6 +225,10 @@ describe('Phase 3D.2 — Provider Do-Not-Renew & Payment Safety Orchestration (S
       mockProvider,
       mockUserRepo
     );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   // ==========================================================================

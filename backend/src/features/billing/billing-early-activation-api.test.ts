@@ -141,6 +141,9 @@ describe('Phase 3C.3 — Tenant-Scoped Early Activation API, Quote Persistence &
   }
 
   beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-15T12:00:00.000Z'));
+
     const { db } = await import('../../lib/firebase');
     firebaseStore = (db as any)._store;
     firebaseStore.clear();
@@ -167,6 +170,7 @@ describe('Phase 3C.3 — Tenant-Scoped Early Activation API, Quote Persistence &
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 

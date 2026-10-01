@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BillingService } from './billing.service';
 import { BillingRepository } from '../../repositories/BillingRepository';
 import { SubscriptionService } from '../subscriptions/subscription.service';
@@ -28,6 +28,8 @@ describe('BillingService & Gateway Automation Tests', () => {
   let mockUserRepo: any;
 
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-15T12:00:00.000Z'));
     (config as any).billingPublicApiUrl = 'https://tunnel.trycloudflare.com';
     const planChangesMap = new Map<string, any>();
     let activeSlotRecord: any = null;
@@ -197,6 +199,10 @@ describe('BillingService & Gateway Automation Tests', () => {
       mockProvider,
       mockUserRepo as any
     );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   // --------------------------------------------------------------------------

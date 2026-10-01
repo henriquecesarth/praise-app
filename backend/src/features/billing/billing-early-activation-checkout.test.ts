@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BillingService } from './billing.service';
 import { AppError } from '../../middleware/error-handler';
 import { BillingEarlyActivationQuote, BillingTransitionV1Record, BillingCheckoutAttempt } from './billing.types';
@@ -95,6 +95,8 @@ describe('Phase 3C.2 — Early Activation Detached Checkout, Attempt Reservation
   };
 
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-15T12:00:00.000Z'));
     planChangesStore.clear();
 
     mockBillingRepo = {
@@ -293,6 +295,10 @@ describe('Phase 3C.2 — Early Activation Detached Checkout, Attempt Reservation
       mockProvider,
       mockUserRepo
     );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe('1. Preconditions & Attempt Reservation Prior to Provider Mutation', () => {
