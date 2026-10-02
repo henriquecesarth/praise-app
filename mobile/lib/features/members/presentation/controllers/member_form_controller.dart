@@ -6,30 +6,38 @@ import 'package:louvaio_mobile/features/members/data/members_repository.dart';
 
 @immutable
 class MemberFormState {
+  final String? ministryId;
   final bool isSubmitting;
   final String? error;
   final bool isSuccess;
   final MinistryMember? savedMember;
+  final bool isInvalidated;
 
   const MemberFormState({
+    this.ministryId,
     this.isSubmitting = false,
     this.error,
     this.isSuccess = false,
     this.savedMember,
+    this.isInvalidated = false,
   });
 
   MemberFormState copyWith({
+    String? ministryId,
     bool? isSubmitting,
     String? error,
     bool clearError = false,
     bool? isSuccess,
     MinistryMember? savedMember,
+    bool? isInvalidated,
   }) {
     return MemberFormState(
+      ministryId: ministryId ?? this.ministryId,
       isSubmitting: isSubmitting ?? this.isSubmitting,
       error: clearError ? null : (error ?? this.error),
       isSuccess: isSuccess ?? this.isSuccess,
       savedMember: savedMember ?? this.savedMember,
+      isInvalidated: isInvalidated ?? this.isInvalidated,
     );
   }
 
@@ -38,17 +46,21 @@ class MemberFormState {
       identical(this, other) ||
       other is MemberFormState &&
           runtimeType == other.runtimeType &&
+          ministryId == other.ministryId &&
           isSubmitting == other.isSubmitting &&
           error == other.error &&
           isSuccess == other.isSuccess &&
-          savedMember == other.savedMember;
+          savedMember == other.savedMember &&
+          isInvalidated == other.isInvalidated;
 
   @override
   int get hashCode =>
+      ministryId.hashCode ^
       isSubmitting.hashCode ^
       error.hashCode ^
       isSuccess.hashCode ^
-      savedMember.hashCode;
+      savedMember.hashCode ^
+      isInvalidated.hashCode;
 }
 
 class MemberFormNotifier extends StateNotifier<MemberFormState> {
@@ -67,6 +79,8 @@ class MemberFormNotifier extends StateNotifier<MemberFormState> {
     String? birthDate,
     List<String> roleIds = const [],
   }) async {
+    if (state.isSubmitting || state.isInvalidated) return null;
+
     final cleanName = name.trim();
     final cleanEmail = email.trim();
 
@@ -80,7 +94,12 @@ class MemberFormNotifier extends StateNotifier<MemberFormState> {
     }
 
     final seq = ++_requestSequence;
-    state = state.copyWith(isSubmitting: true, clearError: true, isSuccess: false);
+    state = state.copyWith(
+      ministryId: ministryId,
+      isSubmitting: true,
+      clearError: true,
+      isSuccess: false,
+    );
 
     try {
       final created = await _repository.addMember(
@@ -92,7 +111,9 @@ class MemberFormNotifier extends StateNotifier<MemberFormState> {
         roleIds: roleIds,
       );
 
-      if (seq != _requestSequence) return null;
+      if (!mounted || seq != _requestSequence || state.isInvalidated || state.ministryId != ministryId) {
+        return null;
+      }
 
       state = state.copyWith(
         isSubmitting: false,
@@ -101,14 +122,18 @@ class MemberFormNotifier extends StateNotifier<MemberFormState> {
       );
       return created;
     } on AppFailure catch (e) {
-      if (seq != _requestSequence) return null;
+      if (!mounted || seq != _requestSequence || state.isInvalidated || state.ministryId != ministryId) {
+        return null;
+      }
       state = state.copyWith(
         isSubmitting: false,
         error: e.message,
       );
       return null;
     } catch (e) {
-      if (seq != _requestSequence) return null;
+      if (!mounted || seq != _requestSequence || state.isInvalidated || state.ministryId != ministryId) {
+        return null;
+      }
       state = state.copyWith(
         isSubmitting: false,
         error: 'Erro ao adicionar integrante.',
@@ -126,6 +151,8 @@ class MemberFormNotifier extends StateNotifier<MemberFormState> {
     required String role,
     List<String>? roleIds,
   }) async {
+    if (state.isSubmitting || state.isInvalidated) return null;
+
     final cleanName = name.trim();
     if (cleanName.isEmpty) {
       state = state.copyWith(error: 'Nome é obrigatório.');
@@ -141,7 +168,12 @@ class MemberFormNotifier extends StateNotifier<MemberFormState> {
     }
 
     final seq = ++_requestSequence;
-    state = state.copyWith(isSubmitting: true, clearError: true, isSuccess: false);
+    state = state.copyWith(
+      ministryId: ministryId,
+      isSubmitting: true,
+      clearError: true,
+      isSuccess: false,
+    );
 
     try {
       final updated = await _repository.updateMember(
@@ -154,7 +186,9 @@ class MemberFormNotifier extends StateNotifier<MemberFormState> {
         roleIds: roleIds,
       );
 
-      if (seq != _requestSequence) return null;
+      if (!mounted || seq != _requestSequence || state.isInvalidated || state.ministryId != ministryId) {
+        return null;
+      }
 
       state = state.copyWith(
         isSubmitting: false,
@@ -163,14 +197,18 @@ class MemberFormNotifier extends StateNotifier<MemberFormState> {
       );
       return updated;
     } on AppFailure catch (e) {
-      if (seq != _requestSequence) return null;
+      if (!mounted || seq != _requestSequence || state.isInvalidated || state.ministryId != ministryId) {
+        return null;
+      }
       state = state.copyWith(
         isSubmitting: false,
         error: e.message,
       );
       return null;
     } catch (e) {
-      if (seq != _requestSequence) return null;
+      if (!mounted || seq != _requestSequence || state.isInvalidated || state.ministryId != ministryId) {
+        return null;
+      }
       state = state.copyWith(
         isSubmitting: false,
         error: 'Erro ao atualizar dados do integrante.',
@@ -181,6 +219,14 @@ class MemberFormNotifier extends StateNotifier<MemberFormState> {
 
   void clearError() {
     state = state.copyWith(clearError: true);
+  }
+
+  void invalidateTenant() {
+    ++_requestSequence;
+    state = const MemberFormState(
+      isInvalidated: true,
+      error: 'Sessão ou ministério alterado. A operação foi cancelada.',
+    );
   }
 
   void reset() {

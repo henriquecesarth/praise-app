@@ -60,8 +60,43 @@
     - Adding member with `roleIds`.
 - [x] **WP6: Final Verification & Manual Checklist**
   - Ran `flutter analyze` (0 issues).
-  - Ran full `flutter test` (410 tests passing).
-  - Ran backend build and tests (tsc code 0, 7 member-management tests passing, 8 IDOR tests passing).
+  - Ran full `flutter test` (414 tests passing).
+  - Ran backend build and tests (tsc code 0, 16 member-management & repository tests passing).
   - Ran web build and full test suite (400 tests passing).
   - Prepared physical-device test plan for Lenovo P11 Plus (unexecuted checklist).
 
+---
+
+## M12A-R2 Remediation (Security, Privacy, Soft-Removal & Tenant Fencing)
+
+- **R2-1 & R2-2 (Strict Allowlist DTOs & Directory Privacy)**:
+  - Eliminated broad object spreading (`{ ...member }`).
+  - Peer view allowlist returns strictly `{ id, name, role, role_ids }`. Contact info (`email`, `phone`, `birth_date`), `user_id`, `is_manual`, `ministry_id`, and timestamps are omitted.
+  - Self view determined strictly through linked authenticated user (`member.user_id && member.user_id === requestingUserId`) without `doc.id` fallback.
+  - Admin view allowlist returns authorized management fields.
+  - Applied viewer-aware DTO shaping to both `getMinistryMemberById` and `getMinistryMembers`.
+- **R2-3 (Canonical roleIds Validation)**:
+  - Added `validateRoleIds(ministryId, roleIds)` in `MinistryRepository`.
+  - Normalizes and deduplicates IDs, queries `ministry_roles`, rejects unknown or cross-ministry role IDs with 400.
+- **R2-4 (RBAC Privilege Escalation Prevention)**:
+  - Prevents ordinary admins from promoting another member to admin (403), demoting an admin (403), or creating a member with admin role (403).
+  - Assignment of `owner` role forbidden (403).
+  - Protecting ministry owner from demotion or removal (400) and protecting last admin (400).
+- **R2-5 (Transactional Soft-Removal & Quota Reversal)**:
+  - `SubscriptionRepository.removeMemberTransactional` performs soft removal: `status: 'removed'`, `removed_at: now`, `updated_at: now` instead of document deletion.
+  - Decrements `members_count` in `ministry_usage`.
+  - Excludes soft-removed members from directory listing, usage calculations, member detail (404), and repeat removals (404).
+  - Preserves Firebase Auth user and cross-ministry memberships intact.
+- **R2-6 & R2-7 (Mobile Tenant Fencing & Mutation Guards)**:
+  - `MemberDetailNotifier` and `MemberFormNotifier` carry tenant scope and token generation sequences.
+  - Discards late Alpha responses on Beta switch (`seq != _requestSequence || state.ministryId != ministryId`).
+  - Validates active tenant immediately before opening edit dialog or confirming removal.
+  - Form dialog validates active tenant in `_submit()` and listens for tenant change to close immediately.
+- **R2-8 (Session Reset)**:
+  - `resetAuthenticatedFeatures` triggers `invalidateTenant()` and `reset()` on both `memberDetailNotifierProvider` and `memberFormNotifierProvider` and invalidates providers.
+- **R2-9 (HTTP Error Classification)**:
+  - Primary classification uses `e.statusCode == 404` for not found / anti-IDOR, and `e.statusCode == 403 || e.statusCode == 401` for restricted/unauthorized.
+- **R2-10 (Automated Coverage & Verification)**:
+  - 15 backend tests in `member-management.test.ts`.
+  - 37 mobile tests in `test/features/members/`.
+  - Full Flutter test suite: 414 tests passing. Full Web test suite: 400 tests passing. All builds clean.

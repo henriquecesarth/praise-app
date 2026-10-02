@@ -18,6 +18,7 @@ class MemberDetailState {
   final bool isSubmitting;
   final String? actionError;
   final bool isDeleted;
+  final bool isInvalidated;
 
   const MemberDetailState({
     this.ministryId,
@@ -31,6 +32,7 @@ class MemberDetailState {
     this.isSubmitting = false,
     this.actionError,
     this.isDeleted = false,
+    this.isInvalidated = false,
   });
 
   Map<String, MinistryRole> get rolesById => {
@@ -60,6 +62,7 @@ class MemberDetailState {
     String? actionError,
     bool clearActionError = false,
     bool? isDeleted,
+    bool? isInvalidated,
   }) {
     return MemberDetailState(
       ministryId: ministryId ?? this.ministryId,
@@ -73,6 +76,7 @@ class MemberDetailState {
       isSubmitting: isSubmitting ?? this.isSubmitting,
       actionError: clearActionError ? null : (actionError ?? this.actionError),
       isDeleted: isDeleted ?? this.isDeleted,
+      isInvalidated: isInvalidated ?? this.isInvalidated,
     );
   }
 
@@ -91,7 +95,8 @@ class MemberDetailState {
           isUnauthorized == other.isUnauthorized &&
           isSubmitting == other.isSubmitting &&
           actionError == other.actionError &&
-          isDeleted == other.isDeleted;
+          isDeleted == other.isDeleted &&
+          isInvalidated == other.isInvalidated;
 
   @override
   int get hashCode =>
@@ -105,7 +110,8 @@ class MemberDetailState {
       isUnauthorized.hashCode ^
       isSubmitting.hashCode ^
       actionError.hashCode ^
-      isDeleted.hashCode;
+      isDeleted.hashCode ^
+      isInvalidated.hashCode;
 }
 
 class MemberDetailNotifier extends StateNotifier<MemberDetailState> {
@@ -140,7 +146,7 @@ class MemberDetailNotifier extends StateNotifier<MemberDetailState> {
         _repository.getRoles(ministryId),
       ]);
 
-      if (seq != _requestSequence) return;
+      if (!mounted || seq != _requestSequence || state.isInvalidated || state.ministryId != ministryId) return;
 
       state = state.copyWith(
         member: results[0] as MinistryMember,
@@ -149,12 +155,17 @@ class MemberDetailNotifier extends StateNotifier<MemberDetailState> {
         clearError: true,
       );
     } on AppFailure catch (e) {
-      if (seq != _requestSequence) return;
+      if (!mounted || seq != _requestSequence || state.isInvalidated || state.ministryId != ministryId) return;
 
-      final isNotFound = e.message.toLowerCase().contains('não encontrado') || e.code == '404';
-      final isUnauthorized = e.message.toLowerCase().contains('restrita') ||
-          e.message.toLowerCase().contains('não autorizado') ||
-          e.code == '403';
+      final isNotFound = e.statusCode == 404 ||
+          e.code == '404' ||
+          e.message.toLowerCase().contains('não encontrado');
+      final isUnauthorized = e.statusCode == 403 ||
+          e.statusCode == 401 ||
+          e.code == '403' ||
+          e.code == '401' ||
+          e.message.toLowerCase().contains('restrita') ||
+          e.message.toLowerCase().contains('não autorizado');
 
       state = state.copyWith(
         isLoading: false,
@@ -163,7 +174,7 @@ class MemberDetailNotifier extends StateNotifier<MemberDetailState> {
         isUnauthorized: isUnauthorized,
       );
     } catch (e) {
-      if (seq != _requestSequence) return;
+      if (!mounted || seq != _requestSequence || state.isInvalidated || state.ministryId != ministryId) return;
       state = state.copyWith(
         isLoading: false,
         error: 'Erro ao carregar dados do integrante.',
@@ -171,10 +182,11 @@ class MemberDetailNotifier extends StateNotifier<MemberDetailState> {
     }
   }
 
-  Future<bool> removeMember() async {
+  Future<bool> removeMember({String? expectedMinistryId}) async {
     final ministryId = state.ministryId;
     final memberId = state.memberId;
-    if (ministryId == null || memberId == null || state.isSubmitting) return false;
+    if (ministryId == null || memberId == null || state.isSubmitting || state.isInvalidated) return false;
+    if (expectedMinistryId != null && expectedMinistryId != ministryId) return false;
 
     final seq = ++_requestSequence;
     state = state.copyWith(isSubmitting: true, clearActionError: true);
@@ -185,7 +197,7 @@ class MemberDetailNotifier extends StateNotifier<MemberDetailState> {
         memberId: memberId,
       );
 
-      if (seq != _requestSequence) return false;
+      if (!mounted || seq != _requestSequence || state.isInvalidated || state.ministryId != ministryId) return false;
 
       state = state.copyWith(
         isSubmitting: false,
@@ -193,14 +205,14 @@ class MemberDetailNotifier extends StateNotifier<MemberDetailState> {
       );
       return true;
     } on AppFailure catch (e) {
-      if (seq != _requestSequence) return false;
+      if (!mounted || seq != _requestSequence || state.isInvalidated || state.ministryId != ministryId) return false;
       state = state.copyWith(
         isSubmitting: false,
         actionError: e.message,
       );
       return false;
     } catch (e) {
-      if (seq != _requestSequence) return false;
+      if (!mounted || seq != _requestSequence || state.isInvalidated || state.ministryId != ministryId) return false;
       state = state.copyWith(
         isSubmitting: false,
         actionError: 'Erro ao remover integrante.',
@@ -213,6 +225,11 @@ class MemberDetailNotifier extends StateNotifier<MemberDetailState> {
     if (state.memberId == updatedMember.id) {
       state = state.copyWith(member: updatedMember);
     }
+  }
+
+  void invalidateTenant() {
+    ++_requestSequence;
+    state = const MemberDetailState(isInvalidated: true);
   }
 
   void reset() {

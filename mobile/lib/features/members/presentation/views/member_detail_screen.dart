@@ -50,6 +50,17 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
   }
 
   Future<void> _openEditDialog(MinistryMember member) async {
+    final activeMinistry = ref.read(ministryContextNotifierProvider).selectedMinistry;
+    if (activeMinistry == null || activeMinistry.id != widget.ministryId) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Operação cancelada: ministério ativo foi alterado.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
     final detailState = ref.read(memberDetailNotifierProvider);
     final directoryState = ref.read(membersDirectoryNotifierProvider);
     final roles = detailState.roles.isNotEmpty
@@ -77,6 +88,17 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
   }
 
   Future<void> _confirmRemove(MinistryMember member) async {
+    final activeMinistry = ref.read(ministryContextNotifierProvider).selectedMinistry;
+    if (activeMinistry == null || activeMinistry.id != widget.ministryId) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Operação cancelada: ministério ativo foi alterado.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
     final messenger = ScaffoldMessenger.of(context);
     final nav = Navigator.of(context);
     final confirmed = await showDialog<bool>(
@@ -108,7 +130,7 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
     if (confirmed == true && mounted) {
       final success = await ref
           .read(memberDetailNotifierProvider.notifier)
-          .removeMember();
+          .removeMember(expectedMinistryId: widget.ministryId);
 
       if (success && mounted) {
         ref.read(membersDirectoryNotifierProvider.notifier).refresh();
@@ -158,7 +180,9 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
         activeMinistry != null && activeMinistry.id == widget.ministryId;
     final isViewerAdmin = isMatchingTenant && activeMinistry.isAdmin;
 
-    final member = state.member;
+    final isMatchingScope =
+        state.ministryId == widget.ministryId && state.memberId == widget.memberId;
+    final member = isMatchingScope ? state.member : widget.initialMember;
 
     return Scaffold(
       appBar: AppBar(
@@ -193,6 +217,40 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
     bool isDark,
   ) {
     final theme = Theme.of(context);
+
+    // Invalidation state (tenant or session switch)
+    if (state.isInvalidated) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.swap_horiz,
+                size: 56,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Sessão ou ministério alterado',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Esta visualização foi cancelada pois o ministério ativo mudou.',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
 
     // 1. Loading state (when no initial member is available)
     if (state.isLoading && state.member == null) {

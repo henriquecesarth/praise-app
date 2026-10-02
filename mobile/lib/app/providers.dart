@@ -43,7 +43,13 @@ void resetAuthenticatedFeatures(dynamic refOrContainer) {
     refOrContainer.read(membersDirectoryNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
+    refOrContainer.read(memberDetailNotifierProvider.notifier).invalidateTenant();
+  } catch (_) {}
+  try {
     refOrContainer.read(memberDetailNotifierProvider.notifier).reset();
+  } catch (_) {}
+  try {
+    refOrContainer.read(memberFormNotifierProvider.notifier).invalidateTenant();
   } catch (_) {}
   try {
     refOrContainer.read(memberFormNotifierProvider.notifier).reset();

@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:louvaio_mobile/app/providers.dart';
+import 'package:louvaio_mobile/features/ministry_context/presentation/controllers/ministry_context_controller.dart';
 import 'package:louvaio_mobile/features/schedules/domain/ministry_member.dart';
 import 'package:louvaio_mobile/features/schedules/domain/ministry_role.dart';
-import 'package:louvaio_mobile/features/members/presentation/controllers/members_providers.dart';
 
 class MemberFormDialog extends ConsumerStatefulWidget {
   final String ministryId;
@@ -102,6 +103,21 @@ class _MemberFormDialogState extends ConsumerState<MemberFormDialog> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
 
+    final activeMinistry = ref.read(ministryContextNotifierProvider).selectedMinistry;
+    if (activeMinistry == null || activeMinistry.id != widget.ministryId) {
+      ref.read(memberFormNotifierProvider.notifier).invalidateTenant();
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Operação cancelada: ministério ativo foi alterado.'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
     final formNotifier = ref.read(memberFormNotifierProvider.notifier);
 
     MinistryMember? result;
@@ -135,6 +151,16 @@ class _MemberFormDialogState extends ConsumerState<MemberFormDialog> {
 
   @override
   Widget build(BuildContext context) {
+    // Tenant switch protection: if active ministry switches away while dialog is open, close dialog immediately
+    ref.listen<MinistryContextState>(ministryContextNotifierProvider, (previous, next) {
+      final newMinistryId = next.selectedMinistry?.id;
+      if (newMinistryId != null && newMinistryId != widget.ministryId) {
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+      }
+    });
+
     final theme = Theme.of(context);
     final formState = ref.watch(memberFormNotifierProvider);
 

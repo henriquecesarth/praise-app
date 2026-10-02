@@ -109,7 +109,9 @@ class FakeMinistryContextNotifier extends StateNotifier<MinistryContextState>
   @override
   Future<void> refresh() async {}
   @override
-  Future<void> selectMinistry(Ministry ministry) async {}
+  Future<void> selectMinistry(Ministry ministry) async {
+    state = state.copyWith(selectedMinistry: ministry);
+  }
   @override
   Future<void> reset() async {}
 }
@@ -459,6 +461,70 @@ void main() {
       expect(detailState.isNotFound, isFalse);
       expect(formState.isSubmitting, isFalse);
       expect(formState.error, isNull);
+    });
+
+    testWidgets('mutation guard: blocks submission and invalidates form if active ministry switches away',
+        (tester) async {
+      final repo = FakeMembersRepo();
+      final contextNotifier = FakeMinistryContextNotifier(
+        const MinistryContextState(
+          status: MinistryBootstrapStatus.ready,
+          selectedMinistry: testMinistry,
+          availableMinistries: [testMinistry],
+        ),
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appEnvironmentProvider.overrideWithValue(
+              const AppEnvironment(
+                env: AppEnv.development,
+                apiBaseUrl: 'http://127.0.0.1:3000/api/v1',
+              ),
+            ),
+            ministryContextNotifierProvider.overrideWith((ref) => contextNotifier),
+            membersRepositoryProvider.overrideWithValue(repo),
+          ],
+          child: MaterialApp(
+            home: Builder(
+              builder: (ctx) => Scaffold(
+                body: ElevatedButton(
+                  onPressed: () {
+                    MemberFormDialog.show(
+                      context: ctx,
+                      ministryId: 'min_test_1',
+                      roles: testRoles,
+                    );
+                  },
+                  child: const Text('Open Dialog'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Open Dialog'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Adicionar Integrante'), findsOneWidget);
+
+      // Now active ministry switches to another ministry
+      const otherMinistry = Ministry(
+        id: 'min_other_999',
+        name: 'Outro Ministério',
+        slug: 'outro-min',
+        role: 'member',
+        ownerUserId: 'user_99',
+      );
+      await contextNotifier.selectMinistry(otherMinistry);
+      await tester.pumpAndSettle();
+
+      // Dialog was closed due to tenant-switch protection
+      expect(find.text('Adicionar Integrante'), findsNothing);
+      expect(repo.addCalls, 0);
     });
   });
 }

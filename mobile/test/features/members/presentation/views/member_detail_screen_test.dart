@@ -447,5 +447,101 @@ void main() {
       expect(find.text('Carlos Oliveira foi removido(a) do ministério.'), findsOneWidget);
       expect(find.text('Previous Screen'), findsOneWidget);
     });
+
+    testWidgets('classifies HTTP 404 AppFailure via statusCode and renders Not Found view',
+        (tester) async {
+      final repo = FakeMembersRepo();
+      repo.memberDetailError = const AppFailure(
+        message: 'Qualquer mensagem de erro',
+        statusCode: 404,
+      );
+
+      await tester.pumpWidget(
+        createWidget(
+          repo: repo,
+          memberId: 'mem_nonexistent',
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Integrante não encontrado'), findsOneWidget);
+      expect(find.byIcon(Icons.person_off_outlined), findsOneWidget);
+    });
+
+    testWidgets('classifies HTTP 403 AppFailure via statusCode and renders Restricted view',
+        (tester) async {
+      final repo = FakeMembersRepo();
+      repo.memberDetailError = const AppFailure(
+        message: 'Qualquer mensagem restrita',
+        statusCode: 403,
+      );
+
+      await tester.pumpWidget(
+        createWidget(
+          repo: repo,
+          memberId: 'mem_forbidden',
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Acesso restrito'), findsOneWidget);
+      expect(find.byIcon(Icons.lock_outline_rounded), findsOneWidget);
+    });
+
+    test('tenant-switch race safety: late Alpha response discarded on Beta switch', () async {
+      final repo = FakeMembersRepo();
+      const alphaMember = MinistryMember(
+        id: 'mem_alpha',
+        name: 'Membro Alpha',
+        role: 'member',
+        roleIds: [],
+      );
+      const betaMember = MinistryMember(
+        id: 'mem_beta',
+        name: 'Membro Beta',
+        role: 'member',
+        roleIds: [],
+      );
+      repo.members = [alphaMember, betaMember];
+
+      final container = ProviderContainer(
+        overrides: [
+          membersRepositoryProvider.overrideWithValue(repo),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(memberDetailNotifierProvider.notifier);
+
+      final alphaCompleter = Completer<MinistryMember>();
+      repo.pendingMemberCompleter = alphaCompleter;
+
+      // Start load for ministry Alpha
+      final futureAlpha = notifier.load(
+        ministryId: 'min_alpha',
+        memberId: 'mem_alpha',
+      );
+
+      expect(container.read(memberDetailNotifierProvider).ministryId, 'min_alpha');
+
+      // Now switch and load for ministry Beta
+      repo.pendingMemberCompleter = null;
+      await notifier.load(
+        ministryId: 'min_beta',
+        memberId: 'mem_beta',
+      );
+
+      expect(container.read(memberDetailNotifierProvider).ministryId, 'min_beta');
+      expect(container.read(memberDetailNotifierProvider).member?.name, 'Membro Beta');
+
+      // Late response from Alpha completes now
+      alphaCompleter.complete(alphaMember);
+      await futureAlpha;
+
+      // State MUST remain Beta, Alpha response discarded
+      final finalState = container.read(memberDetailNotifierProvider);
+      expect(finalState.ministryId, 'min_beta');
+      expect(finalState.member?.name, 'Membro Beta');
+    });
   });
 }
