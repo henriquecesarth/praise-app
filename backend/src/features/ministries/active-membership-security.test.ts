@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { db } from '../../lib/firebase';
 import { MinistryRepository } from '../../repositories/MinistryRepository';
 import { SubscriptionRepository } from '../../repositories/SubscriptionRepository';
@@ -635,17 +635,16 @@ describe('Active Membership Security Hardening (M12A-R4)', { timeout: 30000 }, (
       });
       expect(manual1.is_manual).toBe(true);
 
-      await expect(
-        subRepo.addMemberTransactional({
-          ministryId: minId,
-          name: 'Another Singer',
-          email: 'manual@singer.com',
-          role: 'member',
-        })
-      ).rejects.toMatchObject({
-        statusCode: 409,
-        details: { code: 'DUPLICATE_ACTIVE_MANUAL_MEMBER' },
+      // R6-5: Dois membros manuais distintos podem legitimamente usar o mesmo e-mail
+      const { member: manualDuplicateEmail } = await subRepo.addMemberTransactional({
+        ministryId: minId,
+        name: 'Another Singer',
+        email: 'manual@singer.com',
+        role: 'member',
       });
+      expect(manualDuplicateEmail.id).not.toBe(manual1.id);
+      expect(manualDuplicateEmail.status).toBe('active');
+      expect(manualDuplicateEmail.email).toBe('manual@singer.com');
 
       await ministryRepo.removeMember(minId, manual1.id, ownerId);
 
@@ -656,6 +655,7 @@ describe('Active Membership Security Hardening (M12A-R4)', { timeout: 30000 }, (
         role: 'member',
       });
       expect(manual2.id).not.toBe(manual1.id);
+      expect(manual2.id).not.toBe(manualDuplicateEmail.id);
       expect(manual2.status).toBe('active');
 
       const oldDoc = await db.collection('ministry_members').doc(manual1.id).get();
@@ -703,6 +703,211 @@ describe('Active Membership Security Hardening (M12A-R4)', { timeout: 30000 }, (
 
       usageDoc = await db.collection('ministry_usage').doc(minId).get();
       expect(usageDoc.data()?.members_count).toBe(1);
+    });
+
+    it('linked rejoin preserves still-valid role assignments and drops obsolete role assignments (R6-4)', async () => {
+      const minId = uniqueId('min');
+      const ownerId = uniqueId('usr_owner');
+      const userId = uniqueId('usr_linked_roles');
+      const roleAId = uniqueId('role_a');
+      const roleBId = uniqueId('role_b');
+
+      await db.collection('ministries').doc(minId).set({
+        name: 'Min Roles',
+        owner_user_id: ownerId,
+      });
+      await db.collection('ministry_subscriptions').doc(minId).set({
+        plan_id: 'free',
+        status: 'active',
+      });
+      await db.collection('ministry_usage').doc(minId).set({
+        members_count: 0,
+      });
+
+      // Create Role A and Role B in ministry
+      await db.collection('ministry_roles').doc(roleAId).set({
+        id: roleAId,
+        ministry_id: minId,
+        name: 'Guitarra',
+      });
+      await db.collection('ministry_roles').doc(roleBId).set({
+        id: roleBId,
+        ministry_id: minId,
+        name: 'Bateria',
+      });
+
+      // 1. Linked member added with Role A + Role B
+      const { member: memberInitial } = await subRepo.addMemberTransactional({
+        ministryId: minId,
+        userId,
+        role: 'member',
+        roleIds: [roleAId, roleBId],
+      });
+      expect(memberInitial.role_ids).toEqual(expect.arrayContaining([roleAId, roleBId]));
+
+      // 2. Member removed
+      await ministryRepo.removeMember(minId, memberInitial.id, ownerId);
+
+      // 3. Role B deleted from canonical ministry roles
+      await db.collection('ministry_roles').doc(roleBId).delete();
+
+      // 4. Member rejoins (linked reactivation)
+      const { member: memberRejoined } = await subRepo.addMemberTransactional({
+        ministryId: minId,
+        userId,
+        role: 'member',
+      });
+
+      // 5. Membership active with Role A only; Role B not restored
+      expect(memberRejoined.id).toBe(memberInitial.id);
+      expect(memberRejoined.status).toBe('active');
+      expect(memberRejoined.role_ids).toEqual([roleAId]);
+      expect(memberRejoined.role_ids).not.toContain(roleBId);
+
+      // Verify directly in Firestore document
+      const docFresh = await db.collection('ministry_members').doc(memberInitial.id).get();
+      expect(docFresh.data()?.status).toBe('active');
+      expect(docFresh.data()?.role_ids).toEqual([roleAId]);
+    });
+
+    it('concurrent admin demotions: OCC ensures last active admin cannot be demoted (R6-2)', async () => {
+      const minId = uniqueId('min');
+      const ownerId = uniqueId('usr_owner');
+      const admin1Id = uniqueId('usr_admin1');
+      const admin2Id = uniqueId('usr_admin2');
+
+      await db.collection('ministries').doc(minId).set({
+        name: 'Min OCC Demotion',
+        owner_user_id: ownerId,
+      });
+      await db.collection('ministry_subscriptions').doc(minId).set({
+        plan_id: 'free',
+        status: 'active',
+      });
+      await db.collection('ministry_usage').doc(minId).set({
+        members_count: 2,
+      });
+
+      const { member: m1 } = await subRepo.addMemberTransactional({
+        ministryId: minId,
+        userId: admin1Id,
+        role: 'admin',
+      });
+      const { member: m2 } = await subRepo.addMemberTransactional({
+        ministryId: minId,
+        userId: admin2Id,
+        role: 'admin',
+      });
+
+      // Demote both concurrently
+      const results = await Promise.allSettled([
+        ministryRepo.updateMemberDetails(minId, m1.id, { role: 'member' }, ownerId),
+        ministryRepo.updateMemberDetails(minId, m2.id, { role: 'member' }, ownerId),
+      ]);
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+
+      // Exactly one succeeds; the second must fail with 400 because only 1 active admin remained
+      expect(fulfilled.length).toBe(1);
+      expect(rejected.length).toBe(1);
+      const rejReason = (rejected[0] as PromiseRejectedResult).reason;
+      expect(rejReason?.statusCode).toBe(400);
+      expect(rejReason?.message).toContain('único administrador');
+    });
+
+    it('roleIds update: transactionally validated and rejects cross-ministry or deleted roles (R6-3)', async () => {
+      const minId = uniqueId('min');
+      const otherMinId = uniqueId('min_other');
+      const ownerId = uniqueId('usr_owner');
+      const userId = uniqueId('usr_member');
+      const validRoleId = uniqueId('role_valid');
+      const crossRoleId = uniqueId('role_cross');
+
+      await db.collection('ministries').doc(minId).set({ name: 'Min A', owner_user_id: ownerId });
+      await db.collection('ministries').doc(otherMinId).set({ name: 'Min B', owner_user_id: ownerId });
+      await db.collection('ministry_subscriptions').doc(minId).set({ plan_id: 'free', status: 'active' });
+      await db.collection('ministry_usage').doc(minId).set({ members_count: 1 });
+
+      await db.collection('ministry_roles').doc(validRoleId).set({
+        id: validRoleId,
+        ministry_id: minId,
+        name: 'Vocal',
+      });
+      await db.collection('ministry_roles').doc(crossRoleId).set({
+        id: crossRoleId,
+        ministry_id: otherMinId,
+        name: 'Vocal Outro',
+      });
+
+      const { member } = await subRepo.addMemberTransactional({
+        ministryId: minId,
+        userId,
+        role: 'member',
+      });
+
+      // Update with cross-ministry role fails with 400
+      await expect(
+        ministryRepo.updateMemberDetails(minId, member.id, { roleIds: [crossRoleId] }, ownerId)
+      ).rejects.toMatchObject({
+        statusCode: 400,
+        message: 'Função musical inválida ou não pertencente a este ministério.',
+      });
+
+      // Update with non-existent role fails with 400
+      await expect(
+        ministryRepo.updateMemberDetails(minId, member.id, { roleIds: ['non_existent_role_id'] }, ownerId)
+      ).rejects.toMatchObject({
+        statusCode: 400,
+        message: 'Função musical inválida ou não pertencente a este ministério.',
+      });
+
+      // Update with valid role succeeds
+      const updated = await ministryRepo.updateMemberDetails(minId, member.id, { roleIds: [validRoleId] }, ownerId);
+      expect(updated.role_ids).toEqual([validRoleId]);
+    });
+
+    it('account deletion: findSoleAdminMinistries excludes removed admins and counts active admins correctly (R6-1)', async () => {
+      const { AccountDeletionRepository } = await import('../../repositories/AccountDeletionRepository');
+      const accountDeletionRepo = new AccountDeletionRepository();
+
+      const minId1 = uniqueId('min');
+      const minId2 = uniqueId('min');
+      const userId = uniqueId('usr_del_candidate');
+      const otherAdminId = uniqueId('usr_other_admin');
+
+      await db.collection('ministries').doc(minId1).set({ name: 'Min 1 Sole' });
+      await db.collection('ministries').doc(minId2).set({ name: 'Min 2 Removed' });
+
+      // In Min 1: User is admin, otherAdmin was removed -> user IS sole active admin
+      await subRepo.addMemberTransactional({
+        ministryId: minId1,
+        userId,
+        role: 'admin',
+      });
+      const { member: m1Other } = await subRepo.addMemberTransactional({
+        ministryId: minId1,
+        userId: otherAdminId,
+        role: 'admin',
+      });
+      // Soft-remove other admin
+      await db.collection('ministry_members').doc(m1Other.id).update({ status: 'removed', removed_at: new Date().toISOString() });
+
+      // In Min 2: User was removed as admin -> user is NOT an active admin
+      const { member: m2User } = await subRepo.addMemberTransactional({
+        ministryId: minId2,
+        userId,
+        role: 'admin',
+      });
+      await db.collection('ministry_members').doc(m2User.id).update({ status: 'removed', removed_at: new Date().toISOString() });
+
+      const soleMinistries = await accountDeletionRepo.findSoleAdminMinistries(userId);
+      const soleIds = soleMinistries.map((m) => m.id);
+
+      // Min 1 must be present (user is the sole active admin because other admin is soft-removed)
+      expect(soleIds).toContain(minId1);
+      // Min 2 must NOT be present (user was soft-removed from Min 2, so cannot block account deletion)
+      expect(soleIds).not.toContain(minId2);
     });
   });
 });

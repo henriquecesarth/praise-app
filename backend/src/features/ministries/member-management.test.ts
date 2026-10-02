@@ -44,6 +44,26 @@ describe('Member Management Feature Test Suite (M12A-R2)', () => {
         }))
       );
     }) as any;
+
+    // Default mock for db.runTransaction
+    db.runTransaction = vi.fn().mockImplementation(async (callback: any) => {
+      const mockTransaction = {
+        get: vi.fn().mockImplementation(async (refOrQuery: any) => {
+          if (refOrQuery && typeof refOrQuery.get === 'function') {
+            return await refOrQuery.get();
+          }
+          return { exists: false, data: () => ({}) };
+        }),
+        set: vi.fn(),
+        update: vi.fn().mockImplementation((ref: any, updates: any) => {
+          if (ref && typeof ref.update === 'function') {
+            return ref.update(updates);
+          }
+        }),
+        delete: vi.fn(),
+      };
+      return await callback(mockTransaction);
+    });
   });
 
   afterEach(() => {
@@ -311,6 +331,12 @@ describe('Member Management Feature Test Suite (M12A-R2)', () => {
   describe('3. Canonical roleIds validation', () => {
     beforeEach(() => {
       (repo as any).rolesCol = {
+        doc: vi.fn().mockImplementation((id: string) => ({
+          get: vi.fn().mockResolvedValue({
+            exists: id === 'role-valid-1' || id === 'role-valid-2',
+            data: () => ({ ministry_id: 'min-1' }),
+          }),
+        })),
         where: vi.fn().mockReturnValue({
           get: vi.fn().mockResolvedValue({
             docs: [
