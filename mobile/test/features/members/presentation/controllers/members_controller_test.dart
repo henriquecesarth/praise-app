@@ -24,6 +24,43 @@ class FakeMembersRepository implements MembersRepository {
     if (rolesError != null) throw rolesError!;
     return rolesToReturn;
   }
+
+  @override
+  Future<MinistryMember> getMemberById(String ministryId, String memberId) async {
+    return membersToReturn.firstWhere((m) => m.id == memberId);
+  }
+
+  @override
+  Future<MinistryMember> addMember({
+    required String ministryId,
+    required String name,
+    required String email,
+    String role = 'member',
+    String? birthDate,
+    List<String> roleIds = const [],
+  }) async {
+    final m = MinistryMember(id: 'new_1', name: name, email: email, role: role, birthDate: birthDate, roleIds: roleIds);
+    membersToReturn.add(m);
+    return m;
+  }
+
+  @override
+  Future<MinistryMember> updateMember({
+    required String ministryId,
+    required String memberId,
+    String? name,
+    String? email,
+    String? birthDate,
+    String? role,
+    List<String>? roleIds,
+  }) async {
+    return membersToReturn.firstWhere((m) => m.id == memberId);
+  }
+
+  @override
+  Future<void> removeMember({required String ministryId, required String memberId}) async {
+    membersToReturn.removeWhere((m) => m.id == memberId);
+  }
 }
 
 void main() {

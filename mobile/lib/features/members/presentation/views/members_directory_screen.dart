@@ -6,6 +6,7 @@ import 'package:louvaio_mobile/features/schedules/domain/ministry_member.dart';
 import 'package:louvaio_mobile/features/members/presentation/controllers/members_controller.dart';
 import 'package:louvaio_mobile/features/members/presentation/widgets/member_card.dart';
 import 'package:louvaio_mobile/features/members/presentation/widgets/member_detail_sheet.dart';
+import 'package:louvaio_mobile/features/members/presentation/widgets/member_form_dialog.dart';
 
 /// Screen displaying the ministry member directory with search and role filters.
 ///
@@ -68,6 +69,7 @@ class _MembersDirectoryScreenState
   ) {
     MemberDetailSheet.show(
       context: context,
+      ministryId: widget.ministryId,
       member: member,
       rolesById: state.rolesById,
       isViewerAdmin: isViewerAdmin,
@@ -99,6 +101,30 @@ class _MembersDirectoryScreenState
     final isViewerAdmin = isMatchingTenant && activeMinistry.isAdmin;
 
     return Scaffold(
+      floatingActionButton: isViewerAdmin
+          ? FloatingActionButton.extended(
+              key: const ValueKey('add_member_fab'),
+              onPressed: () async {
+                final messenger = ScaffoldMessenger.of(context);
+                final newMember = await MemberFormDialog.show(
+                  context: context,
+                  ministryId: widget.ministryId,
+                  roles: state.roles,
+                );
+                if (newMember != null && mounted) {
+                  ref.read(membersDirectoryNotifierProvider.notifier).refresh();
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text('${newMember.name} foi adicionado(a) com sucesso!'),
+                      duration: const Duration(seconds: 2),
+                    ),
+                  );
+                }
+              },
+              icon: const Icon(Icons.person_add),
+              label: const Text('Adicionar integrante'),
+            )
+          : null,
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:louvaio_mobile/features/schedules/domain/ministry_member.dart';
 import 'package:louvaio_mobile/features/schedules/domain/ministry_role.dart';
+import 'package:louvaio_mobile/features/members/presentation/views/member_detail_screen.dart';
 
 /// Modal bottom sheet displaying detailed profile of a ministry member.
 ///
@@ -15,12 +16,14 @@ class MemberDetailSheet extends StatelessWidget {
   final MinistryMember member;
   final Map<String, MinistryRole> rolesById;
   final bool isViewerAdmin;
+  final String? ministryId;
 
   const MemberDetailSheet({
     super.key,
     required this.member,
     required this.rolesById,
     this.isViewerAdmin = false,
+    this.ministryId,
   });
 
   static Future<void> show({
@@ -28,6 +31,7 @@ class MemberDetailSheet extends StatelessWidget {
     required MinistryMember member,
     required Map<String, MinistryRole> rolesById,
     bool isViewerAdmin = false,
+    String? ministryId,
   }) {
     return showModalBottomSheet<void>(
       context: context,
@@ -40,6 +44,7 @@ class MemberDetailSheet extends StatelessWidget {
         member: member,
         rolesById: rolesById,
         isViewerAdmin: isViewerAdmin,
+        ministryId: ministryId,
       ),
     );
   }
@@ -254,15 +259,46 @@ class MemberDetailSheet extends StatelessWidget {
                   ),
                 ),
 
-              const SizedBox(height: 24),
+              const SizedBox(height: 20),
 
-              // Close Button
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Fechar'),
-                ),
+              // Action Buttons
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size.fromHeight(44),
+                      ),
+                      child: const Text('Fechar'),
+                    ),
+                  ),
+                  if (isViewerAdmin && ministryId != null) ...[
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton.icon(
+                        key: const ValueKey('open_member_detail_button'),
+                        icon: const Icon(Icons.manage_accounts_outlined, size: 16),
+                        label: const Text('Gerenciar'),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(44),
+                        ),
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => MemberDetailScreen(
+                                ministryId: ministryId!,
+                                memberId: member.id,
+                                initialMember: member,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ],
           ),

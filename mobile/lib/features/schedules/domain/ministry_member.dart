@@ -69,6 +69,32 @@ class MinistryMember {
         if (joinedAt != null) 'joined_at': joinedAt,
       };
 
+    MinistryMember copyWith({
+    String? id,
+    String? userId,
+    String? name,
+    String? email,
+    String? role,
+    List<String>? roleIds,
+    bool? isManual,
+    String? phone,
+    String? birthDate,
+    String? joinedAt,
+  }) {
+    return MinistryMember(
+      id: id ?? this.id,
+      userId: userId ?? this.userId,
+      name: name ?? this.name,
+      email: email ?? this.email,
+      role: role ?? this.role,
+      roleIds: roleIds ?? this.roleIds,
+      isManual: isManual ?? this.isManual,
+      phone: phone ?? this.phone,
+      birthDate: birthDate ?? this.birthDate,
+      joinedAt: joinedAt ?? this.joinedAt,
+    );
+  }
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||

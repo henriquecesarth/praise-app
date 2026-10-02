@@ -42,6 +42,12 @@ void resetAuthenticatedFeatures(dynamic refOrContainer) {
   try {
     refOrContainer.read(membersDirectoryNotifierProvider.notifier).reset();
   } catch (_) {}
+  try {
+    refOrContainer.read(memberDetailNotifierProvider.notifier).reset();
+  } catch (_) {}
+  try {
+    refOrContainer.read(memberFormNotifierProvider.notifier).reset();
+  } catch (_) {}
 
   refOrContainer.invalidate(dashboardNotifierProvider);
   refOrContainer.invalidate(scheduleListNotifierProvider);
@@ -49,6 +55,8 @@ void resetAuthenticatedFeatures(dynamic refOrContainer) {
   refOrContainer.invalidate(scheduleFormNotifierProvider);
   refOrContainer.invalidate(commentsNotifierProvider);
   refOrContainer.invalidate(membersDirectoryNotifierProvider);
+  refOrContainer.invalidate(memberDetailNotifierProvider);
+  refOrContainer.invalidate(memberFormNotifierProvider);
   refOrContainer.invalidate(availabilityListNotifierProvider);
   refOrContainer.invalidate(repertoireListNotifierProvider);
   refOrContainer.invalidate(songDetailNotifierProvider);

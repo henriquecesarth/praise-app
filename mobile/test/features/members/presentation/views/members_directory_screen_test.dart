@@ -28,6 +28,43 @@ class FakeMembersRepo implements MembersRepository {
     if (rolesError != null) throw rolesError!;
     return roles;
   }
+
+  @override
+  Future<MinistryMember> getMemberById(String ministryId, String memberId) async {
+    return members.firstWhere((m) => m.id == memberId);
+  }
+
+  @override
+  Future<MinistryMember> addMember({
+    required String ministryId,
+    required String name,
+    required String email,
+    String role = 'member',
+    String? birthDate,
+    List<String> roleIds = const [],
+  }) async {
+    final m = MinistryMember(id: 'new_${members.length + 1}', name: name, email: email, role: role, birthDate: birthDate, roleIds: roleIds);
+    members.add(m);
+    return m;
+  }
+
+  @override
+  Future<MinistryMember> updateMember({
+    required String ministryId,
+    required String memberId,
+    String? name,
+    String? email,
+    String? birthDate,
+    String? role,
+    List<String>? roleIds,
+  }) async {
+    return members.firstWhere((m) => m.id == memberId);
+  }
+
+  @override
+  Future<void> removeMember({required String ministryId, required String memberId}) async {
+    members.removeWhere((m) => m.id == memberId);
+  }
 }
 
 class FakeMinistryContextNotifier extends StateNotifier<MinistryContextState>

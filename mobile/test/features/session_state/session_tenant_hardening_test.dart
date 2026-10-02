@@ -377,7 +377,7 @@ void main() {
               id: 's_a',
               ministryId: 'min_a',
               title: 'Escala Alfa Exclusiva',
-              date: '2026-10-01',
+              date: '2099-10-01',
               time: '19:00',
             ),
           ];

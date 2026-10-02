@@ -1,0 +1,67 @@
+# ExecPlan: M12A — Mobile Member Management
+
+- **Status**: COMPLETED
+- **Branch**: `feat/mobile-m12` (authoritative baseline `feat/account-deletion-compliance`)
+- **Scope**: Authorized ministry administrators/leaders manage members from Flutter mobile app; ordinary members remain read-only.
+- **Reference**: Prompt M12A, AGENTS.md, MEMORY.md, docs/system-status.md
+
+## Work Packages
+
+- [x] **WP1: Backend Endpoints & Hardening**
+  - Implement `GET /api/v1/ministries/:ministryId/members/:memberId` with `requireMinistryRole('member')`.
+  - Anti-IDOR protection: return 404 fail-closed if member not in `ministryId`.
+  - Privacy policy: if requester is not admin (and not subject), redact sensitive fields (`email`, `birth_date`).
+  - Update `addMemberManuallySchema` in `ministry.types.ts` to support optional `roleIds: z.array(z.string()).optional()`.
+  - Wire `roleIds` into `MinistryRepository.addMemberManually`.
+  - Add backend unit and integration tests covering GET member by ID, anti-IDOR, privacy field redaction, and roleIds on create.
+- [x] **WP2: Mobile Data Layer & Domain Models**
+  - Extend `MembersRepository` / `HttpMembersRepository` with:
+    - `getMemberById(ministryId, memberId)`
+    - `addMember({ ministryId, name, email, role, birthDate, roleIds })`
+    - `updateMember({ ministryId, memberId, name, email, birthDate, role, roleIds })`
+    - `removeMember({ ministryId, memberId })`
+  - Ensure `MinistryMember` domain model has `copyWith` and robust JSON parsing.
+- [x] **WP3: Mobile Feature State & Controllers**
+  - Create `MemberDetailNotifier` / `MemberDetailState` with tenant binding, loading, not-found (404), unauthorized (403), error, and remove actions.
+  - Create `MemberFormNotifier` / `MemberFormState` handling create and edit modes, validation errors, duplicate-submit prevention, and authoritative refresh.
+  - Register providers and ensure `resetAuthenticatedFeatures` clears all member management state.
+- [x] **WP4: Mobile UI & Presentation**
+  - `MemberDetailScreen`:
+    - Responsive layout for phone and tablet.
+    - Statuses: loading, not found (404), unauthorized (403), error with retry, success.
+    - Privacy enforcement: ordinary members see only approved directory info; admins see authorized email, phone, account type.
+    - Musical roles chips.
+    - Admin action buttons: "Editar" and "Remover".
+    - Destructive confirmation dialog before removal.
+    - Tenant-switch listener to pop if active ministry changes.
+  - `MemberFormDialog` (Add & Edit Member):
+    - Clean form with Name, Email, Security Role (Membro/Admin), Birth Date picker, and Musical Roles multi-select.
+    - Form validation, double-submit protection, error feedback.
+  - `MembersDirectoryScreen`:
+    - Add FAB for "Adicionar integrante" visible only to admins (`isViewerAdmin`).
+    - Integrate "Gerenciar" navigation from `MemberDetailSheet` for admin viewers while preserving existing M11 bottom sheet behavior for ordinary members.
+- [x] **WP5: Automated Tests & Validation**
+  - Mobile tests covering:
+    - Member detail loading, 404, 403, and success.
+    - Admin controls visible for admin; absent for ordinary member.
+    - Privacy: no private-field leakage to ordinary member.
+    - Add member success and validation failure.
+    - Edit member success.
+    - Role management and musical roles assignment.
+    - Remove member confirmation and success/failure handling.
+    - Ministry switch race safety (discard stale responses, pop screens).
+    - User switch reset.
+    - Double submission prevention.
+  - Backend tests covering:
+    - GET member by ID happy path.
+    - Anti-IDOR (404 for cross-tenant).
+    - RBAC (non-member 403).
+    - Privacy redaction for ordinary member viewer.
+    - Adding member with `roleIds`.
+- [x] **WP6: Final Verification & Manual Checklist**
+  - Ran `flutter analyze` (0 issues).
+  - Ran full `flutter test` (410 tests passing).
+  - Ran backend build and tests (tsc code 0, 7 member-management tests passing, 8 IDOR tests passing).
+  - Ran web build and full test suite (400 tests passing).
+  - Prepared physical-device test plan for Lenovo P11 Plus (unexecuted checklist).
+
