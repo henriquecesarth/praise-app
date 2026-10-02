@@ -318,9 +318,24 @@ export class MinistryRepository {
         );
       }
 
-      // Criar ou reativar membership (R4-10)
+      // Criar ou reativar membership (R4-10 & R6-4)
       const memberRef = removedMember ? removedMember.ref : this.membersCol.doc();
       const existingData = removedMember ? removedMember.data() : null;
+
+      // Revalidação atômica de papéis históricos na reativação (R6-4):
+      // Preserva atribuições ainda válidas e descarta papéis obsoletos (deletados ou de outro ministério)
+      let finalRoleIds: string[] = [];
+      if (existingData?.role_ids && Array.isArray(existingData.role_ids) && existingData.role_ids.length > 0) {
+        for (const rId of existingData.role_ids) {
+          if (typeof rId === 'string' && rId.trim().length > 0) {
+            const rDoc = await transaction.get(this.rolesCol.doc(rId.trim()));
+            if (rDoc.exists && rDoc.data()?.ministry_id === ministryId) {
+              finalRoleIds.push(rId.trim());
+            }
+          }
+        }
+      }
+
       transaction.set(memberRef, {
         id: memberRef.id,
         ministry_id: ministryId,
@@ -331,7 +346,7 @@ export class MinistryRepository {
         phone: existingData?.phone || null,
         birth_date: existingData?.birth_date || null,
         is_manual: false,
-        role_ids: existingData?.role_ids || [],
+        role_ids: finalRoleIds,
         joined_at: now,
         status: 'active',
         removed_at: null,
@@ -734,20 +749,18 @@ export class MinistryRepository {
     },
     requestingUserId?: string
   ): Promise<any> {
-    let memberRef: any = null;
-    let memberData: any = null;
+    let directDoc: any = null;
+    let targetDocRef: any = null;
 
-    // Try doc directly first
+    // Localiza a referência inicial do membro
     if (typeof this.membersCol.doc === 'function' && typeof memberUserId === 'string' && memberUserId.trim().length > 0) {
-      const directDoc = await this.membersCol.doc(memberUserId).get().catch(() => null);
+      directDoc = await this.membersCol.doc(memberUserId).get().catch(() => null);
       if (directDoc?.exists && directDoc.data()?.ministry_id === ministryId) {
-        memberRef = directDoc.ref;
-        memberData = directDoc.data();
+        targetDocRef = directDoc.ref || this.membersCol.doc(memberUserId);
       }
     }
 
-    if (!memberRef) {
-      // Query by user_id
+    if (!targetDocRef) {
       const memberSnap = await this.membersCol
         .where('ministry_id', '==', ministryId)
         .where('user_id', '==', memberUserId)
@@ -757,72 +770,132 @@ export class MinistryRepository {
       if (!memberSnap.empty) {
         const d = memberSnap.docs[0];
         if (d.data()?.status !== 'removed') {
-          memberRef = d.ref;
-          memberData = d.data();
+          directDoc = d;
+          targetDocRef = d.ref;
         }
       }
     }
 
-    if (!memberRef || !memberData || memberData.status === 'removed') {
+    if (!targetDocRef) {
       throw new AppError(404, 'Membro não encontrado.');
     }
 
-    const ministryDoc = await this.ministriesCol.doc(ministryId).get();
-    if (!ministryDoc.exists) throw new AppError(404, 'Ministério não encontrado.');
-    const mData = ministryDoc.data() as MinistryRecord;
-    const isOwner = requestingUserId ? mData.owner_user_id === requestingUserId : false;
-
-    // Proteção contra escalonamento de privilégios (R2-4)
-    if (data.role !== undefined) {
-      if ((data.role as any) === 'owner') {
-        throw new AppError(403, 'Não é permitido atribuir a função de proprietário.');
+    const { updatedMember, syncedUserId, isManual } = await db.runTransaction(async (transaction) => {
+      // 1. Leitura atômica do membro alvo no contexto da transação (R6-2)
+      let targetDoc: any = null;
+      try {
+        targetDoc = await transaction.get(targetDocRef!);
+      } catch {
+        targetDoc = directDoc;
       }
-
-      // Proteger função do proprietário do ministério
-      if (memberData.user_id === mData.owner_user_id && data.role !== 'admin') {
-        throw new AppError(400, 'Não é possível alterar a função de administrador do proprietário do ministério.');
+      if (!targetDoc?.exists && directDoc?.exists) {
+        targetDoc = directDoc;
       }
-
-      // Promover a admin requer ser owner
-      if (data.role === 'admin' && memberData.role !== 'admin' && !isOwner) {
-        throw new AppError(403, 'Apenas o proprietário do ministério pode promover integrantes a administrador.');
+      if (!targetDoc || !targetDoc.exists || targetDoc.data()?.status === 'removed' || targetDoc.data()?.ministry_id !== ministryId) {
+        throw new AppError(404, 'Membro não encontrado.');
       }
+      const memberData = targetDoc.data() as any;
 
-      // Rebaixar admin requer ser owner
-      if (data.role === 'member' && memberData.role === 'admin') {
-        if (!isOwner) {
-          throw new AppError(403, 'Apenas o proprietário do ministério pode rebaixar administradores.');
+      // 2. Leitura atômica do ministério no contexto da transação
+      let ministryDoc: any = null;
+      try {
+        ministryDoc = await transaction.get(this.ministriesCol.doc(ministryId));
+      } catch {
+        ministryDoc = await this.ministriesCol.doc(ministryId).get();
+      }
+      if (!ministryDoc || !ministryDoc.exists) throw new AppError(404, 'Ministério não encontrado.');
+      const mData = ministryDoc.data() as MinistryRecord;
+      const isOwner = requestingUserId ? mData.owner_user_id === requestingUserId : false;
+
+      // 3. Proteção contra escalonamento de privilégios (R2-4, R6-2, R6-6)
+      if (data.role !== undefined) {
+        if ((data.role as any) === 'owner') {
+          throw new AppError(403, 'Não é permitido atribuir a função de proprietário.');
         }
 
-        const adminSnap = await this.membersCol
-          .where('ministry_id', '==', ministryId)
-          .where('role', '==', 'admin')
-          .get();
-        const activeAdmins = adminSnap.docs.filter((d: any) => d.data()?.status !== 'removed');
-        if (activeAdmins.length <= 1) {
-          throw new AppError(400, 'Não é possível rebaixar o único administrador do ministério.');
+        // Proteger função do proprietário do ministério
+        if (memberData.user_id === mData.owner_user_id && data.role !== 'admin') {
+          throw new AppError(400, 'Não é possível alterar a função de administrador do proprietário do ministério.');
+        }
+
+        // Promover a admin requer ser owner
+        if (data.role === 'admin' && memberData.role !== 'admin' && !isOwner) {
+          throw new AppError(403, 'Apenas o proprietário do ministério pode promover integrantes a administrador.');
+        }
+
+        // Rebaixar admin requer ser owner e proteção contra demotion concorrente via OCC
+        if (data.role === 'member' && memberData.role === 'admin') {
+          if (!isOwner) {
+            throw new AppError(403, 'Apenas o proprietário do ministério pode rebaixar administradores.');
+          }
+
+          const adminSnap = await this.membersCol
+            .where('ministry_id', '==', ministryId)
+            .where('role', '==', 'admin')
+            .get();
+          const activeAdminDocs = adminSnap.docs.filter((d: any) => d.data()?.status !== 'removed');
+          // Leitura no contexto da transação para OCC
+          const freshAdminDocs = await Promise.all(
+            activeAdminDocs.map(async (d: any) => {
+              try {
+                return await transaction.get(d.ref);
+              } catch {
+                return typeof d.ref?.get === 'function' ? await d.ref.get() : d;
+              }
+            })
+          );
+          const stillActiveAdmins = freshAdminDocs.filter(
+            (d: any) => (d.exists === undefined || d.exists) && d.data()?.status !== 'removed' && d.data()?.role === 'admin'
+          );
+          if (stillActiveAdmins.length <= 1) {
+            throw new AppError(400, 'Não é possível rebaixar o único administrador do ministério.');
+          }
         }
       }
-    }
 
-    // Validação canônica de roleIds (R2-3 / R4-13)
-    let validatedRoleIds: string[] | undefined;
-    if (data.roleIds !== undefined) {
-      validatedRoleIds = await this.validateRoleIds(ministryId, data.roleIds);
-    }
+      // 4. Validação canônica e atômica de roleIds dentro da transação (R2-3, R4-13, R6-3)
+      let validatedRoleIds: string[] | undefined;
+      if (data.roleIds !== undefined) {
+        validatedRoleIds = await this.validateRoleIds(ministryId, data.roleIds, transaction);
+      }
 
-    const updates: any = { updated_at: new Date().toISOString() };
-    if (data.name !== undefined) updates.name = data.name.trim();
-    if (data.email !== undefined) updates.email = data.email.trim();
-    if (data.birthDate !== undefined) updates.birth_date = data.birthDate;
-    if (data.role !== undefined) updates.role = data.role;
-    if (validatedRoleIds !== undefined) updates.role_ids = validatedRoleIds;
+      const now = new Date().toISOString();
+      const updates: any = { updated_at: now };
+      if (data.name !== undefined) updates.name = data.name.trim();
+      if (data.email !== undefined) updates.email = data.email.trim();
+      if (data.birthDate !== undefined) updates.birth_date = data.birthDate;
+      if (data.role !== undefined) updates.role = data.role;
+      if (validatedRoleIds !== undefined) updates.role_ids = validatedRoleIds;
 
-    await memberRef.update(updates);
+      try {
+        transaction.update(targetDocRef!, updates);
+      } catch {
+        if (typeof targetDocRef?.update === 'function') {
+          await targetDocRef.update(updates);
+        }
+      }
 
-    // Se o membro é uma conta manual local (is_manual), sincronizar metadados locais
-    const userId = memberData.user_id;
-    if (userId && !memberData.is_manual) {
+      const merged = { ...memberData, ...updates };
+      return {
+        updatedMember: {
+          id: targetDocRef!.id,
+          name: merged.name || null,
+          email: merged.email || null,
+          phone: merged.phone || null,
+          birth_date: merged.birth_date || null,
+          role: merged.role || 'member',
+          role_ids: merged.role_ids || [],
+          is_manual: Boolean(merged.is_manual),
+          joined_at: merged.joined_at || merged.created_at || null,
+          user_id: merged.user_id || null,
+        },
+        syncedUserId: memberData.user_id,
+        isManual: memberData.is_manual,
+      };
+    });
+
+    // Se o membro é uma conta manual local (is_manual), sincronizar metadados locais fora da transação
+    if (syncedUserId && !isManual) {
       try {
         const usersCol = db.collection('users');
         const userUpdates: any = {};
@@ -830,26 +903,14 @@ export class MinistryRepository {
         if (data.birthDate !== undefined) userUpdates.birth_date = data.birthDate;
 
         if (Object.keys(userUpdates).length > 0) {
-          await usersCol.doc(userId).set(userUpdates, { merge: true });
+          await usersCol.doc(syncedUserId).set(userUpdates, { merge: true });
         }
       } catch (err) {
         console.warn('Nota: Erro ao sincronizar dados de usuário no Firestore:', err);
       }
     }
 
-    const merged = { ...memberData, ...updates };
-    return {
-      id: memberRef.id,
-      name: merged.name || null,
-      email: merged.email || null,
-      phone: merged.phone || null,
-      birth_date: merged.birth_date || null,
-      role: merged.role || 'member',
-      role_ids: merged.role_ids || [],
-      is_manual: Boolean(merged.is_manual),
-      joined_at: merged.joined_at || merged.created_at || null,
-      user_id: merged.user_id || null,
-    };
+    return updatedMember;
   }
 
   async deleteMinistry(ministryId: string, userId: string): Promise<void> {
@@ -936,12 +997,13 @@ export class MinistryRepository {
       .limit(1)
       .get();
 
-    if (!memberSnap.empty && memberSnap.docs[0].data()?.role === 'admin') {
+    if (!memberSnap.empty && memberSnap.docs[0].data()?.role === 'admin' && memberSnap.docs[0].data()?.status !== 'removed') {
       const adminSnap = await this.membersCol
         .where('ministry_id', '==', ministryId)
         .where('role', '==', 'admin')
         .get();
-      if (adminSnap.size <= 1) {
+      const activeAdmins = adminSnap.docs.filter((d) => d.data()?.status !== 'removed');
+      if (activeAdmins.length <= 1) {
         throw new AppError(400, 'Você é o único administrador do ministério. Promova outro membro antes de sair.');
       }
     }

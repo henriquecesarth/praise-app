@@ -241,22 +241,6 @@ export class SubscriptionRepository {
         validatedRoleIds = unique;
       }
 
-      // Política R4-9: Membro manual duplicado não pode conflitar com outro ativo
-      if (resolvedIsManual && email) {
-        const cleanEmail = email.trim().toLowerCase();
-        const existingMembersSnap = await this.membersCol
-          .where('ministry_id', '==', ministryId)
-          .get();
-        const activeDuplicate = existingMembersSnap.docs.find(
-          (d) => d.data()?.status !== 'removed' && d.data()?.email?.trim().toLowerCase() === cleanEmail
-        );
-        if (activeDuplicate) {
-          throw new AppError(409, 'Já existe um integrante ativo com este e-mail no ministério.', {
-            code: 'DUPLICATE_ACTIVE_MANUAL_MEMBER',
-          });
-        }
-      }
-
       // Validação de quota
       const plan = getPlanDefinition(subData.plan_id);
       const effectiveMemberQuota = getEffectiveMemberQuota(plan, subData.member_addon_blocks);
@@ -275,6 +259,24 @@ export class SubscriptionRepository {
         );
       }
 
+      // Revalidação atômica de papéis musicais (R4-13 & R6-4):
+      // Para papéis passados explicitamente (roleIds): validação estrita (rejeita se inválido).
+      // Para reativação de membro vinculado com papéis históricos:
+      // "Linked reactivation preserves still-valid role assignments and drops obsolete role assignments."
+      let finalRoleIds: string[] = [];
+      if (roleIds !== undefined && roleIds.length > 0) {
+        finalRoleIds = validatedRoleIds;
+      } else if (existingMemberData?.role_ids && Array.isArray(existingMemberData.role_ids) && existingMemberData.role_ids.length > 0) {
+        for (const rId of existingMemberData.role_ids) {
+          if (typeof rId === 'string' && rId.trim().length > 0) {
+            const rDoc = await transaction.get(this.rolesCol.doc(rId.trim()));
+            if (rDoc.exists && rDoc.data()?.ministry_id === ministryId) {
+              finalRoleIds.push(rId.trim());
+            }
+          }
+        }
+      }
+
       // Criar ou reativar documento do membro
       const memberRef = existingMemberRef || this.membersCol.doc();
       const memberData: any = {
@@ -286,7 +288,7 @@ export class SubscriptionRepository {
         email: email || existingMemberData?.email || null,
         birth_date: birthDate || existingMemberData?.birth_date || null,
         is_manual: resolvedIsManual,
-        role_ids: validatedRoleIds.length > 0 ? validatedRoleIds : (roleIds || existingMemberData?.role_ids || []),
+        role_ids: finalRoleIds,
         joined_at: existingMemberData?.joined_at || now,
         status: 'active',
         removed_at: null,

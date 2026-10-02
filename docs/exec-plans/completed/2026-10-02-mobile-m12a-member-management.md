@@ -116,20 +116,21 @@
   - `ScheduleRepository.updateParticipantConfirmation`: throws 403 when a removed member attempts to accept/decline participation on an active schedule.
 - **R4-7 (Notification Recipient Filtering)**:
   - `NotificationService.resolveParticipantUserIds` and `resolveMinistryMemberUserIds` explicitly ignore records where `status === 'removed'`. Historical notifications remain intact.
-- **R4-8, R4-9 & R4-10 (Join/Leave, Manual Member Re-add & Linked Reactivation Policy)**:
-  - Policy for manual members (R4-9): A removed manual record remains historical. Adding a new manual member creates a new record transactionally. If an active manual member with the same email already exists in the ministry, it rejects with 409 `DUPLICATE_ACTIVE_MANUAL_MEMBER`. No ambiguous fuzzy matching.
-  - Policy for linked users (R4-10): Reactivates the existing membership document transactionally, clears `removed_at`, restores `status: 'active'`, revalidates `role` and `role_ids`, increments usage quota exactly once, and prevents duplicate active documents.
-- **R4-11 & R4-18 (Transactional Last-Active-Admin Invariant with OCC)**:
-  - In `SubscriptionRepository.removeMemberTransactional`, reads the ministry owner and all active admin documents within the Firestore transaction (`transaction.get(d.ref)`), enforcing optimistic concurrency control (OCC).
-  - Two concurrent removal or demotion requests cannot both pass and leave zero admins. Only active (`status !== 'removed'`) admins count.
+- **R4-8, R4-9 & R4-10 (Join/Leave, Manual Member Re-add & Linked Reactivation Policy - Finalized in R6)**:
+  - Policy for manual members (R6-5): Each active manual membership is an independent membership resource identified strictly by its membership document ID. PII (name, email, phone, birth date) is not canonical identity. Two distinct manual memberships may legitimately share an email. A removed manual record remains historical. Adding a manual member always creates a new record transactionally. No ambiguous fuzzy matching, and `DUPLICATE_ACTIVE_MANUAL_MEMBER` is removed.
+  - Policy for linked users (R4-10 & R6-4): `user_id` is their canonical identity. Reactivation transactionally reuses the existing membership document, clears `removed_at`, sets `status: 'active'`, and increments usage quota exactly once.
+  - Linked reactivation role preservation (R6-4): "Linked reactivation preserves still-valid role assignments and drops obsolete role assignments." Historical `role_ids` are revalidated against canonical `ministry_roles` within the transaction; active valid roles are retained, while deleted or cross-ministry roles are dropped without failing the rejoin.
+- **R4-11, R6-1 & R6-2 (Transactional Last-Active-Admin Invariant with OCC & Account Deletion Compliance)**:
+  - In `SubscriptionRepository.removeMemberTransactional` and `MinistryRepository.updateMemberDetails`: atomic OCC locks verify that only active admins (`status !== 'removed'`) count towards the admin threshold. Two concurrent removal or demotion requests cannot both pass and leave zero admins.
+  - Account deletion (`AccountDeletionRepository.findSoleAdminMinistries`): soft-removed former admins are excluded from candidate evaluation and active admin counts, ensuring accounts are not erroneously blocked by historical memberships.
 - **R4-12 (Organization Authority Hardening)**:
   - `OrganizationRepository.isMinistryAdmin` strictly verifies `mData.role === 'admin' && mData.status !== 'removed'`.
-- **R4-13 & R4-19 (Atomic roleIds Validation & Assignment)**:
-  - In `SubscriptionRepository.addMemberTransactional`, `role_ids` are read and validated against `ministry_roles` within the transaction context (`transaction.get`), guaranteeing atomicity and consistency against concurrent role deletions.
+- **R4-13 & R6-3 (Atomic roleIds Validation & Assignment)**:
+  - In `SubscriptionRepository.addMemberTransactional` and `MinistryRepository.updateMemberDetails`, `role_ids` are atomically validated against `ministry_roles` within the Firestore transaction (`transaction.get`), guaranteeing consistency against concurrent role mutations.
 - **R4-14 & R4-15 (Mobile Central Invalidation on Ministry Switch)**:
   - `AppShell` (`mobile/lib/app/shell/app_shell.dart`) centrally triggers `invalidateTenant()` on `memberDetailNotifierProvider`, `memberFormNotifierProvider`, and `scheduleFormNotifierProvider`, followed by `ref.invalidate(...)`, preventing stale data or leaked state across ministry changes.
-- **R4-16 & R4-17 (Verification & Integration Coverage)**:
-  - Dedicated real integration test suite `backend/src/features/ministries/active-membership-security.test.ts` (16 tests against local Firestore emulator):
+- **R4-16, R6-9, R6-10 & R6-11 (Verification & Integration Coverage)**:
+  - Dedicated real integration test suite `backend/src/features/ministries/active-membership-security.test.ts` (20 tests against local Firestore emulator):
     1. Mandatory R4-16 real integration test: active -> soft-removed -> same token -> 403 `MINISTRY_ACCESS_DENIED`.
     2. Read operations 403 after soft removal.
     3. `getUserMinistries` excludes soft-removed ministry.
@@ -139,14 +140,20 @@
     7. Notifications exclude soft-removed member.
     8. Organization admin check excludes soft-removed admin.
     9. Manual member re-add creates separate record transactionally without double active duplicates.
-    10. Duplicate active manual member with same email rejected with 409.
+    10. Multiple active manual members can legitimately share the same email (R6-5).
     11. Linked user re-add reactivates existing document, clears removed_at and increments usage quota once.
     12. Last active admin cannot be removed (400).
     13. Concurrent removal of last active admins safely rejected via OCC lock.
     14. Last active admin cannot be demoted to member.
     15. Atomic validation of roleIds within transaction.
     16. Ministry owner cannot be removed by anyone.
+    17. Linked rejoin preserves still-valid role assignments and drops obsolete role assignments (R6-4).
+    18. RoleIds update TOCTOU rejects invalid role IDs inside transaction (R6-3).
+    19. Concurrent admin demotions safely prevented via OCC lock (R6-2).
+    20. Account deletion findSoleAdminMinistries excludes removed admins and counts active admins correctly (R6-1).
+  - Backend M12A-relevant suites: 256/256 passed across 14 test files.
+  - Backend build: `npm --prefix backend run build` (tsc) passed with exit code 0.
   - Mobile tests: 414/414 passed (`flutter test`).
-  - Web tests: 400/400 passed (`npm --prefix web test`).
   - Mobile analyze: 0 issues (`flutter analyze`).
-
+  - Web tests: 400/400 passed (`npm --prefix web test`).
+  - Web build: `npm --prefix web run build` passed with exit code 0.

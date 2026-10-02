@@ -175,7 +175,11 @@ export class AccountDeletionRepository {
     const results: Array<{ id: string; name: string }> = [];
 
     for (const doc of adminMembersSnap.docs) {
-      const ministryId = doc.data()?.ministry_id;
+      const data = doc.data();
+      // Exclui membros administradores soft-removed do usuário (R6-1)
+      if (data?.status === 'removed') continue;
+
+      const ministryId = data?.ministry_id;
       if (!ministryId) continue;
 
       const allAdminsSnap = await this.membersCol
@@ -183,7 +187,10 @@ export class AccountDeletionRepository {
         .where('role', '==', 'admin')
         .get();
 
-      if (allAdminsSnap.size <= 1) {
+      // Contabiliza estritamente administradores ativos do ministério (R6-1)
+      const activeAdmins = allAdminsSnap.docs.filter((d) => d.data()?.status !== 'removed');
+
+      if (activeAdmins.length <= 1) {
         const mDoc = await this.ministriesCol.doc(ministryId).get();
         const mName = mDoc.exists ? (mDoc.data()?.name as string) : `Ministério ${ministryId}`;
         results.push({ id: ministryId, name: mName });
@@ -214,6 +221,7 @@ export class AccountDeletionRepository {
       if (ministryId) candidateMinistryIds.add(ministryId);
     }
     for (const doc of membershipsSnap.docs) {
+      if (doc.data()?.status === 'removed') continue;
       const ministryId = doc.data()?.ministry_id;
       if (ministryId) {
         candidateMinistryIds.add(ministryId);
