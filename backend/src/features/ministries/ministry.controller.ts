@@ -92,6 +92,18 @@ export class MinistryController extends BaseController {
     }
   };
 
+  getMinistryMemberById = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
+      const memberId = req.params.memberId as string;
+      const requestingUserId = req.user?.id;
+      const member = await this.ministryService.getMinistryMemberById(ministryId, memberId, requestingUserId);
+      this.handleSuccess(res, member);
+    } catch (err) {
+      this.handleError(err, res, next);
+    }
+  };
+
   removeMember = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
       const userId = req.user!.id;
@@ -146,6 +158,7 @@ export const deleteMinistry = instance.deleteMinistry;
 export const createInviteCode = instance.createInviteCode;
 export const joinMinistryByCode = instance.joinMinistryByCode;
 export const getMinistryMembers = instance.getMinistryMembers;
+export const getMinistryMemberById = instance.getMinistryMemberById;
 export const removeMember = instance.removeMember;
 export const updateMemberRole = instance.updateMemberRole;
 export const addMemberManually = instance.addMemberManually;

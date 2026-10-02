@@ -32,4 +32,5 @@ export const addMemberManuallySchema = z.object({
   email: z.string().email('E-mail inválido.'),
   role: z.enum(['admin', 'member']).optional().default('member'),
   birthDate: z.string().optional(), // ISO date string YYYY-MM-DD
+  roleIds: z.array(z.string()).optional(),
 });

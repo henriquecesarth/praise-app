@@ -38,6 +38,7 @@ export class MinistryRepository {
   private readonly ministriesCol = db.collection('ministries');
   private readonly membersCol = db.collection('ministry_members');
   private readonly invitesCol = db.collection('ministry_invites');
+  private readonly usersCol = db.collection('users');
 
   async getUserMinistries(userId: string): Promise<MinistryRecord[]> {
     // 1. Buscar pertencimentos na coleção ministry_members
@@ -405,6 +406,86 @@ export class MinistryRepository {
     return enrichedMembers;
   }
 
+  async getMinistryMemberById(
+    ministryId: string,
+    memberId: string,
+    requestingUserId?: string
+  ): Promise<any> {
+    let memberDoc: any = null;
+    let memberData: any = null;
+
+    // 1. Try direct doc ID first
+    const directDoc = await this.membersCol.doc(memberId).get();
+    if (directDoc.exists && directDoc.data()?.ministry_id === ministryId) {
+      memberDoc = directDoc;
+      memberData = directDoc.data();
+    } else {
+      // 2. Query by user_id
+      const memberSnap = await this.membersCol
+        .where('ministry_id', '==', ministryId)
+        .where('user_id', '==', memberId)
+        .limit(1)
+        .get();
+
+      if (!memberSnap.empty) {
+        memberDoc = memberSnap.docs[0];
+        memberData = memberDoc.data();
+      }
+    }
+
+    if (!memberDoc || !memberData || memberData.ministry_id !== ministryId) {
+      throw new AppError(404, 'Membro não encontrado.');
+    }
+
+    let name = memberData.name || 'Integrante';
+    let email = memberData.email || '';
+    let birthDate = memberData.birth_date || null;
+
+    if (memberData.user_id && !memberData.is_manual) {
+      const uDoc = await this.usersCol.doc(memberData.user_id).get();
+      if (uDoc.exists) {
+        const uData = uDoc.data();
+        name = uData?.name || uData?.displayName || name;
+        email = uData?.email || email;
+        birthDate = uData?.birth_date || birthDate;
+      }
+    }
+
+    // Privacy guard: if requesting user is NOT admin in this ministry AND is not the subject user
+    if (requestingUserId) {
+      let isRequesterAdmin = false;
+      const requesterSnap = await this.membersCol
+        .where('ministry_id', '==', ministryId)
+        .where('user_id', '==', requestingUserId)
+        .limit(1)
+        .get();
+
+      if (!requesterSnap.empty && requesterSnap.docs[0].data()?.role === 'admin') {
+        isRequesterAdmin = true;
+      }
+
+      const isSelf = memberData.user_id === requestingUserId || memberDoc.id === requestingUserId;
+      if (!isRequesterAdmin && !isSelf) {
+        // Redact private fields under conservative data minimization policy
+        email = '';
+        birthDate = null;
+      }
+    }
+
+    return {
+      id: memberDoc.id,
+      ministry_id: memberData.ministry_id,
+      user_id: memberData.user_id || null,
+      role: memberData.role || 'member',
+      joined_at: memberData.joined_at || memberData.created_at || null,
+      is_manual: Boolean(memberData.is_manual),
+      name,
+      email,
+      birth_date: birthDate,
+      role_ids: memberData.role_ids || [],
+    };
+  }
+
   async updateMinistry(ministryId: string, userId: string, data: { name?: string }): Promise<MinistryRecord> {
     const doc = await this.ministriesCol.doc(ministryId).get();
     if (!doc.exists) throw new AppError(404, 'Ministério não encontrado.');
@@ -570,7 +651,7 @@ export class MinistryRepository {
 
   async addMemberManually(
     ministryId: string,
-    memberData: { name: string; email: string; role?: 'admin' | 'member'; birthDate?: string }
+    memberData: { name: string; email: string; role?: 'admin' | 'member'; birthDate?: string; roleIds?: string[] }
   ): Promise<any> {
     const { SubscriptionRepository } = await import('./SubscriptionRepository');
     const subRepo = new SubscriptionRepository();
@@ -581,6 +662,7 @@ export class MinistryRepository {
       role: memberData.role || 'member',
       birthDate: memberData.birthDate || null,
       isManual: true,
+      roleIds: memberData.roleIds || [],
     });
     return member;
   }

@@ -42,6 +42,10 @@ export class MinistryService {
     return this.repo.getMinistryMembers(ministryId);
   }
 
+  async getMinistryMemberById(ministryId: string, memberId: string, requestingUserId?: string): Promise<any> {
+    return this.repo.getMinistryMemberById(ministryId, memberId, requestingUserId);
+  }
+
   async removeMember(ministryId: string, memberUserId: string, requestingUserId: string): Promise<void> {
     return this.repo.removeMember(ministryId, memberUserId, requestingUserId);
   }
@@ -74,7 +78,7 @@ export class MinistryService {
 
   async addMemberManually(
     ministryId: string,
-    memberData: { name: string; email: string; role?: 'admin' | 'member'; birthDate?: string }
+    memberData: { name: string; email: string; role?: 'admin' | 'member'; birthDate?: string; roleIds?: string[] }
   ): Promise<any> {
     return this.repo.addMemberManually(ministryId, memberData);
   }

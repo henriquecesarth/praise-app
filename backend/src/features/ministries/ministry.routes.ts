@@ -50,6 +50,7 @@ router.post(
 
 // Members
 router.get('/:ministryId/members', requireMinistryRole('member'), controller.getMinistryMembers);
+router.get('/:ministryId/members/:memberId', requireMinistryRole('member'), controller.getMinistryMemberById);
 router.post(
   '/:ministryId/members',
   requireMinistryRole('admin'),
