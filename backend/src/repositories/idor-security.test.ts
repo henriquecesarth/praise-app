@@ -161,6 +161,13 @@ describe('Security Hardening: IDOR and Tenant Isolation Repositories', () => {
     const repo = new MinistryRepository();
 
     it('deve impedir rebaixar o único administrador do ministério', async () => {
+      vi.spyOn((repo as any).ministriesCol, 'doc').mockReturnValue({
+        get: vi.fn().mockResolvedValue({
+          exists: true,
+          data: () => ({ id: 'min-1', owner_user_id: 'usr-owner' }),
+        }),
+      });
+
       vi.spyOn((repo as any).membersCol, 'doc').mockReturnValue({
         get: vi.fn().mockResolvedValue({
           exists: true,
@@ -171,12 +178,21 @@ describe('Security Hardening: IDOR and Tenant Isolation Repositories', () => {
 
       vi.spyOn((repo as any).membersCol, 'where').mockReturnValue({
         where: vi.fn().mockReturnValue({
-          get: vi.fn().mockResolvedValue({ size: 1, docs: [{ id: 'admin-doc' }] }),
+          get: vi.fn().mockResolvedValue({
+            size: 1,
+            docs: [
+              {
+                id: 'admin-doc',
+                ref: { get: vi.fn().mockResolvedValue({ exists: true, data: () => ({ role: 'admin', status: 'active' }) }) },
+                data: () => ({ role: 'admin', status: 'active' }),
+              },
+            ],
+          }),
         }),
       } as any);
 
       await expect(
-        repo.updateMemberDetails('min-1', 'usr-admin', { role: 'member' })
+        repo.updateMemberDetails('min-1', 'usr-admin', { role: 'member' }, 'usr-owner')
       ).rejects.toThrow(
         expect.objectContaining({
           statusCode: 400,
