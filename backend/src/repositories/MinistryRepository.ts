@@ -21,6 +21,8 @@ export interface MinistryMemberRecord {
   user_id: string;
   role: 'admin' | 'member';
   joined_at: string;
+  status?: 'active' | 'removed';
+  removed_at?: string | null;
 }
 
 export interface MinistryInviteRecord {
@@ -42,9 +44,11 @@ export class MinistryRepository {
   private readonly rolesCol = db.collection('ministry_roles');
 
   async getUserMinistries(userId: string): Promise<MinistryRecord[]> {
-    // 1. Buscar pertencimentos na coleção ministry_members
+    // 1. Buscar pertencimentos ativos na coleção ministry_members
     const memberSnap = await this.membersCol.where('user_id', '==', userId).get();
-    const memberRows = memberSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as MinistryMemberRecord));
+    const memberRows = memberSnap.docs
+      .map((doc) => ({ id: doc.id, ...doc.data() } as MinistryMemberRecord))
+      .filter((m) => m.status !== 'removed');
 
     // 2. Buscar ministérios onde o usuário é proprietário
     const ownerSnap = await this.ministriesCol.where('owner_user_id', '==', userId).get();
@@ -92,14 +96,16 @@ export class MinistryRepository {
       .limit(1)
       .get();
 
-    if (memberSnap.empty) {
+    const activeMemberDoc = memberSnap?.docs?.find((d: any) => d.data()?.status !== 'removed');
+
+    if (!activeMemberDoc) {
       throw new AppError(403, 'Acesso negado. Você não é integrante deste ministério.', {
         code: 'MINISTRY_ACCESS_DENIED',
         ministryId,
       });
     }
 
-    const role = (memberSnap.docs[0].data().role as 'admin' | 'member') || 'member';
+    const role = (activeMemberDoc.data().role as 'admin' | 'member') || 'member';
 
     return { ...mData, role };
   }
@@ -248,16 +254,20 @@ export class MinistryRepository {
     const now = new Date().toISOString();
 
     await db.runTransaction(async (transaction) => {
-      // 1. Verificar pertencimento prévio para idempotência
+      // 1. Verificar pertencimento prévio para idempotência ou reativação (R4-8, R4-10)
       const existingMembers = await this.membersCol
         .where('ministry_id', '==', ministryId)
         .where('user_id', '==', userId)
         .limit(1)
         .get();
 
-      if (!existingMembers.empty) {
+      const docs = existingMembers?.docs || [];
+      const activeMember = docs.find((d: any) => d.data()?.status !== 'removed');
+      if (activeMember) {
         return;
       }
+
+      const removedMember = docs.find((d: any) => d.data()?.status === 'removed');
 
       const [subDoc, usageDoc, freshInviteDoc] = await Promise.all([
         transaction.get(subRef),
@@ -291,7 +301,7 @@ export class MinistryRepository {
         currentSongsCount = uData?.songs_count || 0;
       } else {
         const snap = await this.membersCol.where('ministry_id', '==', ministryId).get();
-        currentMembersCount = snap.size;
+        currentMembersCount = snap.docs.filter((d) => d.data()?.status !== 'removed').length;
       }
 
       if (effectiveQuota !== 'unlimited' && currentMembersCount + 1 > effectiveQuota) {
@@ -308,14 +318,25 @@ export class MinistryRepository {
         );
       }
 
-      // Criar membership
-      const memberRef = this.membersCol.doc();
+      // Criar ou reativar membership (R4-10)
+      const memberRef = removedMember ? removedMember.ref : this.membersCol.doc();
+      const existingData = removedMember ? removedMember.data() : null;
       transaction.set(memberRef, {
         id: memberRef.id,
         ministry_id: ministryId,
         user_id: userId,
         role: 'member',
+        name: existingData?.name || null,
+        email: existingData?.email || null,
+        phone: existingData?.phone || null,
+        birth_date: existingData?.birth_date || null,
+        is_manual: false,
+        role_ids: existingData?.role_ids || [],
         joined_at: now,
+        status: 'active',
+        removed_at: null,
+        created_at: existingData?.created_at || now,
+        updated_at: now,
       });
 
       // Incrementar uso materializado
@@ -347,7 +368,11 @@ export class MinistryRepository {
     };
   }
 
-  private async validateRoleIds(ministryId: string, roleIds?: string[]): Promise<string[]> {
+  private async validateRoleIds(
+    ministryId: string,
+    roleIds?: string[],
+    transaction?: FirebaseFirestore.Transaction
+  ): Promise<string[]> {
     if (!roleIds || !Array.isArray(roleIds) || roleIds.length === 0) {
       return [];
     }
@@ -357,11 +382,21 @@ export class MinistryRepository {
     if (unique.length === 0) {
       return [];
     }
-    const rolesSnap = await this.rolesCol.where('ministry_id', '==', ministryId).get();
-    const validIds = new Set(rolesSnap.docs.map((d) => d.id));
-    for (const id of unique) {
-      if (!validIds.has(id)) {
-        throw new AppError(400, 'Função musical inválida ou não pertencente a este ministério.');
+
+    if (transaction) {
+      for (const id of unique) {
+        const roleDoc = await transaction.get(this.rolesCol.doc(id));
+        if (!roleDoc.exists || roleDoc.data()?.ministry_id !== ministryId) {
+          throw new AppError(400, 'Função musical inválida ou não pertencente a este ministério.');
+        }
+      }
+    } else {
+      const rolesSnap = await this.rolesCol.where('ministry_id', '==', ministryId).get();
+      const validIds = new Set(rolesSnap.docs.map((d) => d.id));
+      for (const id of unique) {
+        if (!validIds.has(id)) {
+          throw new AppError(400, 'Função musical inválida ou não pertencente a este ministério.');
+        }
       }
     }
     return unique;
@@ -503,8 +538,11 @@ export class MinistryRepository {
         .get();
 
       if (!memberSnap.empty) {
-        memberDoc = memberSnap.docs[0];
-        memberData = memberDoc.data();
+        const d = memberSnap.docs[0];
+        if (d.data()?.status !== 'removed') {
+          memberDoc = d;
+          memberData = d.data();
+        }
       }
     }
 
@@ -621,19 +659,23 @@ export class MinistryRepository {
     const mData = doc.data() as MinistryRecord;
 
     // Verificar membro alvo
-    const memberSnap = await this.membersCol
-      .where('ministry_id', '==', ministryId)
-      .where('user_id', '==', memberUserId)
-      .limit(1)
-      .get();
-
     let targetMemberData: any = null;
-    if (!memberSnap.empty) {
-      targetMemberData = memberSnap.docs[0].data();
-    } else {
-      const dDoc = await this.membersCol.doc(memberUserId).get();
-      if (dDoc.exists && dDoc.data()?.ministry_id === ministryId) {
+    if (typeof this.membersCol.doc === 'function' && typeof memberUserId === 'string' && memberUserId.trim().length > 0) {
+      const dDoc = await this.membersCol.doc(memberUserId).get().catch(() => null);
+      if (dDoc?.exists && dDoc.data()?.ministry_id === ministryId) {
         targetMemberData = dDoc.data();
+      }
+    }
+
+    if (!targetMemberData) {
+      const memberSnap = await this.membersCol
+        .where('ministry_id', '==', ministryId)
+        .where('user_id', '==', memberUserId)
+        .limit(1)
+        .get();
+
+      if (!memberSnap.empty) {
+        targetMemberData = memberSnap.docs[0].data();
       }
     }
 
@@ -647,7 +689,6 @@ export class MinistryRepository {
 
     const isMemberAdmin = targetMemberData.role === 'admin';
     if (isMemberAdmin) {
-      // Regra de autorização: apenas o proprietário pode remover outro administrador
       if (mData.owner_user_id !== requestingUserId && targetMemberData.user_id !== requestingUserId) {
         throw new AppError(403, 'Apenas o proprietário pode remover outro administrador do ministério.');
       }
@@ -656,7 +697,7 @@ export class MinistryRepository {
         .where('ministry_id', '==', ministryId)
         .where('role', '==', 'admin')
         .get();
-      const activeAdmins = adminSnap.docs.filter((d) => d.data()?.status !== 'removed');
+      const activeAdmins = adminSnap.docs.filter((d: any) => d.data()?.status !== 'removed');
       if (activeAdmins.length <= 1) {
         throw new AppError(400, 'Não é possível remover o único administrador do ministério. Promova outro integrante antes.');
       }
@@ -667,6 +708,7 @@ export class MinistryRepository {
     await subRepo.removeMemberTransactional({
       ministryId,
       memberUserIdOrDocId: memberUserId,
+      requestingUserId,
     });
   }
 
@@ -696,11 +738,15 @@ export class MinistryRepository {
     let memberData: any = null;
 
     // Try doc directly first
-    const directDoc = await this.membersCol.doc(memberUserId).get();
-    if (directDoc.exists && directDoc.data()?.ministry_id === ministryId) {
-      memberRef = directDoc.ref;
-      memberData = directDoc.data();
-    } else {
+    if (typeof this.membersCol.doc === 'function' && typeof memberUserId === 'string' && memberUserId.trim().length > 0) {
+      const directDoc = await this.membersCol.doc(memberUserId).get().catch(() => null);
+      if (directDoc?.exists && directDoc.data()?.ministry_id === ministryId) {
+        memberRef = directDoc.ref;
+        memberData = directDoc.data();
+      }
+    }
+
+    if (!memberRef) {
       // Query by user_id
       const memberSnap = await this.membersCol
         .where('ministry_id', '==', ministryId)
@@ -709,8 +755,11 @@ export class MinistryRepository {
         .get();
 
       if (!memberSnap.empty) {
-        memberRef = memberSnap.docs[0].ref;
-        memberData = memberSnap.docs[0].data();
+        const d = memberSnap.docs[0];
+        if (d.data()?.status !== 'removed') {
+          memberRef = d.ref;
+          memberData = d.data();
+        }
       }
     }
 
@@ -749,14 +798,14 @@ export class MinistryRepository {
           .where('ministry_id', '==', ministryId)
           .where('role', '==', 'admin')
           .get();
-        const activeAdmins = adminSnap.docs.filter((d) => d.data()?.status !== 'removed');
+        const activeAdmins = adminSnap.docs.filter((d: any) => d.data()?.status !== 'removed');
         if (activeAdmins.length <= 1) {
           throw new AppError(400, 'Não é possível rebaixar o único administrador do ministério.');
         }
       }
     }
 
-    // Validação canônica de roleIds (R2-3)
+    // Validação canônica de roleIds (R2-3 / R4-13)
     let validatedRoleIds: string[] | undefined;
     if (data.roleIds !== undefined) {
       validatedRoleIds = await this.validateRoleIds(ministryId, data.roleIds);
@@ -772,7 +821,6 @@ export class MinistryRepository {
     await memberRef.update(updates);
 
     // Se o membro é uma conta manual local (is_manual), sincronizar metadados locais
-    // NUNCA permitir que admin de ministério altere senha de contas reais de outros usuários no Firebase Auth
     const userId = memberData.user_id;
     if (userId && !memberData.is_manual) {
       try {
@@ -789,19 +837,18 @@ export class MinistryRepository {
       }
     }
 
-    const updatedDoc = await memberRef.get();
-    const uData = updatedDoc.data();
+    const merged = { ...memberData, ...updates };
     return {
-      id: updatedDoc.id,
-      name: uData.name || null,
-      email: uData.email || null,
-      phone: uData.phone || null,
-      birth_date: uData.birth_date || null,
-      role: uData.role || 'member',
-      role_ids: uData.role_ids || [],
-      is_manual: Boolean(uData.is_manual),
-      joined_at: uData.joined_at || uData.created_at || null,
-      user_id: uData.user_id || null,
+      id: memberRef.id,
+      name: merged.name || null,
+      email: merged.email || null,
+      phone: merged.phone || null,
+      birth_date: merged.birth_date || null,
+      role: merged.role || 'member',
+      role_ids: merged.role_ids || [],
+      is_manual: Boolean(merged.is_manual),
+      joined_at: merged.joined_at || merged.created_at || null,
+      user_id: merged.user_id || null,
     };
   }
 
@@ -904,6 +951,7 @@ export class MinistryRepository {
     await subRepo.removeMemberTransactional({
       ministryId,
       memberUserIdOrDocId: userId,
+      requestingUserId: userId,
     });
   }
 }

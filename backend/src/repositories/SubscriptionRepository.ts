@@ -19,6 +19,7 @@ export class SubscriptionRepository {
   private readonly membersCol = db.collection('ministry_members');
   private readonly songsCol = db.collection('songs');
   private readonly ministriesCol = db.collection('ministries');
+  private readonly rolesCol = db.collection('ministry_roles');
 
   async getSubscription(ministryId: string): Promise<MinistrySubscriptionRecord | null> {
     const doc = await this.subscriptionsCol.doc(ministryId).get();
@@ -144,6 +145,7 @@ export class SubscriptionRepository {
     roleIds?: string[];
   }): Promise<{ member: any; usage: MinistryUsageRecord }> {
     const { ministryId, userId, role, name, email, birthDate, isManual, roleIds } = params;
+    const resolvedIsManual = isManual !== undefined ? Boolean(isManual) : !userId;
 
     return await db.runTransaction(async (transaction) => {
       const subRef = this.subscriptionsCol.doc(ministryId);
@@ -224,6 +226,37 @@ export class SubscriptionRepository {
         }
       }
 
+      // Validação atômica de roleIds dentro da mesma transação (R4-13)
+      let validatedRoleIds: string[] = [];
+      if (roleIds && roleIds.length > 0) {
+        const unique = Array.from(
+          new Set(roleIds.map((r) => (typeof r === 'string' ? r.trim() : '')).filter(Boolean))
+        );
+        for (const rId of unique) {
+          const rDoc = await transaction.get(this.rolesCol.doc(rId));
+          if (!rDoc.exists || rDoc.data()?.ministry_id !== ministryId) {
+            throw new AppError(400, 'Função musical inválida ou não pertencente a este ministério.');
+          }
+        }
+        validatedRoleIds = unique;
+      }
+
+      // Política R4-9: Membro manual duplicado não pode conflitar com outro ativo
+      if (resolvedIsManual && email) {
+        const cleanEmail = email.trim().toLowerCase();
+        const existingMembersSnap = await this.membersCol
+          .where('ministry_id', '==', ministryId)
+          .get();
+        const activeDuplicate = existingMembersSnap.docs.find(
+          (d) => d.data()?.status !== 'removed' && d.data()?.email?.trim().toLowerCase() === cleanEmail
+        );
+        if (activeDuplicate) {
+          throw new AppError(409, 'Já existe um integrante ativo com este e-mail no ministério.', {
+            code: 'DUPLICATE_ACTIVE_MANUAL_MEMBER',
+          });
+        }
+      }
+
       // Validação de quota
       const plan = getPlanDefinition(subData.plan_id);
       const effectiveMemberQuota = getEffectiveMemberQuota(plan, subData.member_addon_blocks);
@@ -252,8 +285,8 @@ export class SubscriptionRepository {
         name: name || existingMemberData?.name || null,
         email: email || existingMemberData?.email || null,
         birth_date: birthDate || existingMemberData?.birth_date || null,
-        is_manual: Boolean(isManual),
-        role_ids: roleIds || existingMemberData?.role_ids || [],
+        is_manual: resolvedIsManual,
+        role_ids: validatedRoleIds.length > 0 ? validatedRoleIds : (roleIds || existingMemberData?.role_ids || []),
         joined_at: existingMemberData?.joined_at || now,
         status: 'active',
         removed_at: null,
@@ -285,12 +318,14 @@ export class SubscriptionRepository {
 
   /**
    * Remove um membro decrementando atomicamente o usage apenas se o membro realmente existir.
+   * Valida autoridade de proprietário e invariant de último administrador na mesma transação.
    */
   async removeMemberTransactional(params: {
     ministryId: string;
     memberUserIdOrDocId: string;
+    requestingUserId?: string;
   }): Promise<{ removed: boolean; usage: MinistryUsageRecord }> {
-    const { ministryId, memberUserIdOrDocId } = params;
+    const { ministryId, memberUserIdOrDocId, requestingUserId } = params;
 
     return await db.runTransaction(async (transaction) => {
       // 1. Localizar o documento do membro
@@ -310,14 +345,57 @@ export class SubscriptionRepository {
           .limit(1)
           .get();
 
-        if (!querySnap.empty) {
-          targetRef = querySnap.docs[0].ref;
-          targetData = querySnap.docs[0].data();
+        const docs = querySnap?.docs || [];
+        const activeDoc = docs.find((d: any) => d.data()?.status !== 'removed');
+        if (activeDoc) {
+          targetRef = activeDoc.ref;
+          targetData = activeDoc.data();
+        } else if (docs.length > 0) {
+          targetRef = docs[0].ref;
+          targetData = docs[0].data();
         }
       }
 
       if (!targetRef || !targetData || targetData.status === 'removed') {
         throw new AppError(404, 'Membro não encontrado neste ministério.');
+      }
+
+      // 2. Validar ministério e regras de proprietário/administrador na mesma transação (R4-11)
+      const ministryDoc = await transaction.get(this.ministriesCol.doc(ministryId));
+      if (ministryDoc.exists) {
+        const mData = ministryDoc.data() as any;
+
+        // Proteger proprietário
+        if (mData?.owner_user_id === memberUserIdOrDocId || targetData.user_id === mData?.owner_user_id) {
+          throw new AppError(400, 'O proprietário do ministério não pode ser removido.');
+        }
+
+        // Proteger administradores
+        if (targetData.role === 'admin') {
+          if (requestingUserId && mData?.owner_user_id !== requestingUserId && targetData.user_id !== requestingUserId) {
+            throw new AppError(403, 'Apenas o proprietário pode remover outro administrador do ministério.');
+          }
+
+          // Bloqueio transacional de concorrência para último administrador ativo
+          const adminSnap = await this.membersCol
+            .where('ministry_id', '==', ministryId)
+            .where('role', '==', 'admin')
+            .get();
+
+          const activeAdminDocs = adminSnap.docs.filter((d) => d.data()?.status !== 'removed');
+          // Leitura no contexto da transação para ativar verificação otimista (OCC)
+          const freshAdminDocs = await Promise.all(
+            activeAdminDocs.map((d) => transaction.get(d.ref))
+          );
+          const stillActiveAdmins = freshAdminDocs.filter((d) => d.exists && d.data()?.status !== 'removed');
+
+          if (stillActiveAdmins.length <= 1) {
+            throw new AppError(
+              400,
+              'Não é possível remover o único administrador do ministério. Promova outro integrante antes.'
+            );
+          }
+        }
       }
 
       const usageRef = this.usageCol.doc(ministryId);

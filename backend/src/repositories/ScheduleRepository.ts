@@ -99,9 +99,34 @@ export class ScheduleRepository {
     return data;
   }
 
+  private async validateParticipantsActive(ministryId: string, participants: Array<{ id: string }>): Promise<void> {
+    const rawIds = participants.map((p) => p.id?.trim()).filter(Boolean);
+    if (rawIds.length === 0) return;
+
+    const snap = await db.collection('ministry_members')
+      .where('ministry_id', '==', ministryId)
+      .get();
+
+    for (const doc of snap.docs) {
+      const d = doc.data();
+      if (d.status === 'removed') {
+        const isMatched = rawIds.includes(doc.id) || (d.user_id && rawIds.includes(d.user_id));
+        if (isMatched) {
+          throw new AppError(400, 'Não é permitido escalar integrantes inativos ou removidos do ministério.', {
+            code: 'REMOVED_MEMBER_ASSIGNMENT_DENIED',
+          });
+        }
+      }
+    }
+  }
+
   async createSchedule(ministryId: string, userId: string, data: Partial<ScheduleRecord>): Promise<ScheduleRecord> {
     const now = new Date().toISOString();
     const ref = this.schedulesCol.doc();
+
+    if (data.participants && data.participants.length > 0) {
+      await this.validateParticipantsActive(ministryId, data.participants);
+    }
 
     const resolvedDuration =
       data.duration_minutes !== undefined
@@ -150,6 +175,12 @@ export class ScheduleRepository {
 
     if (data.participants !== undefined) {
       const existingParticipants = existing.participants || [];
+      const newParticipants = data.participants.filter(
+        (p: any) => !existingParticipants.some((ep: any) => ep.id === p.id)
+      );
+      if (newParticipants.length > 0) {
+        await this.validateParticipantsActive(ministryId, newParticipants);
+      }
       updatePayload.participants = data.participants.map((p: any) => {
         const prev = existingParticipants.find(
           (ep: any) => (ep.id && ep.id === p.id) || (ep.user_id && ep.user_id === p.user_id)
@@ -211,7 +242,7 @@ export class ScheduleRepository {
     let memberId: string | null = null;
     let userRealName: string = userName || '';
 
-    // Consultar pertencimento oficial na coleção ministry_members
+    // Consultar pertencimento oficial na coleção ministry_members (R4-6: membro removido não pode confirmar/recusar)
     const memberSnap = await db.collection('ministry_members')
       .where('ministry_id', '==', ministryId)
       .where('user_id', '==', userId)
@@ -219,6 +250,9 @@ export class ScheduleRepository {
       .get();
 
     if (!memberSnap.empty) {
+      if (memberSnap.docs[0].data()?.status === 'removed') {
+        throw new AppError(403, 'Apenas integrantes ativos do ministério podem confirmar ou recusar presença na escala.');
+      }
       memberId = memberSnap.docs[0].id;
     }
 

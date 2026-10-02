@@ -57,6 +57,13 @@ export class AvailabilityService {
     const doc = snap.docs[0];
     const data = doc.data();
 
+    if (data.status === 'removed') {
+      throw new AppError(403, 'Acesso negado. Você não é integrante deste ministério.', {
+        code: 'MINISTRY_ACCESS_DENIED',
+        ministryId,
+      });
+    }
+
     return {
       memberId: doc.id,
       role: data.role || 'member',
@@ -224,8 +231,8 @@ export class AvailabilityService {
     for (const snap of docSnaps) {
       if (snap.exists) {
         const data = snap.data();
-        if (data && data.ministry_id === ministryId) {
-          // Documento existe E pertence estritamente ao ministério ativo
+        if (data && data.ministry_id === ministryId && data.status !== 'removed') {
+          // Documento existe E pertence estritamente ao ministério ativo e não está removido
           resolutionMap.set(snap.id, snap.id);
           canonicalMemberIds.add(snap.id);
         }
@@ -246,6 +253,7 @@ export class AvailabilityService {
 
         for (const doc of userQuerySnap.docs) {
           const data = doc.data();
+          if (data.status === 'removed') continue;
           const uid = data.user_id;
           if (uid) {
             resolutionMap.set(uid, doc.id);
@@ -393,7 +401,7 @@ export class AvailabilityService {
         });
       }
       const memberData = memberDoc.data();
-      if (!memberData || memberData.ministry_id !== ministryId) {
+      if (!memberData || memberData.ministry_id !== ministryId || memberData.status === 'removed') {
         // Fail-closed anti-IDOR para não divulgar existência em outro ministério
         throw new AppError(404, 'Integrante não encontrado neste ministério.', {
           code: 'MEMBER_NOT_FOUND',
@@ -501,7 +509,7 @@ export class AvailabilityService {
     }
 
     const data = memberDoc.data();
-    if (!data || data.ministry_id !== ministryId) {
+    if (!data || data.ministry_id !== ministryId || data.status === 'removed') {
       // Fail closed para não divulgar existência em outro ministério (anti-IDOR)
       throw new AppError(404, 'Integrante não encontrado neste ministério.', {
         code: 'MEMBER_NOT_FOUND',

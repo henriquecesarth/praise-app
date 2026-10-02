@@ -32,14 +32,27 @@ class _AppShellState extends ConsumerState<AppShell> {
     ref.listen<MinistryContextState>(ministryContextNotifierProvider,
         (previous, next) {
       if (previous?.selectedMinistry?.id != next.selectedMinistry?.id) {
+        try {
+          ref.read(memberDetailNotifierProvider.notifier).invalidateTenant();
+        } catch (_) {}
+        try {
+          ref.read(memberFormNotifierProvider.notifier).invalidateTenant();
+        } catch (_) {}
+        try {
+          ref.read(scheduleFormNotifierProvider.notifier).invalidateTenant();
+        } catch (_) {}
+
         ref.invalidate(dashboardNotifierProvider);
         ref.invalidate(scheduleListNotifierProvider);
         ref.invalidate(scheduleDetailNotifierProvider);
+        ref.invalidate(scheduleFormNotifierProvider);
         ref.invalidate(commentsNotifierProvider);
         ref.invalidate(availabilityListNotifierProvider);
         ref.invalidate(repertoireListNotifierProvider);
         ref.invalidate(songDetailNotifierProvider);
         ref.invalidate(membersDirectoryNotifierProvider);
+        ref.invalidate(memberDetailNotifierProvider);
+        ref.invalidate(memberFormNotifierProvider);
         ref.invalidate(notificationListProvider);
         ref.read(unreadNotificationCountProvider.notifier).refresh();
       }

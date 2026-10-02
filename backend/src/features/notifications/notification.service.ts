@@ -123,6 +123,7 @@ export class NotificationService {
 
       for (const doc of membersSnap.docs) {
         const data = doc.data();
+        if (data.status === 'removed') continue;
         if (data.user_id) {
           memberDocMap.set(doc.id, data.user_id);
           memberUserSet.add(data.user_id);
@@ -161,7 +162,9 @@ export class NotificationService {
       const userIds = new Set<string>();
 
       for (const doc of membersSnap.docs) {
-        const uid = doc.data()?.user_id;
+        const data = doc.data();
+        if (data?.status === 'removed') continue;
+        const uid = data?.user_id;
         if (uid && (!excludeUserId || uid !== excludeUserId)) {
           userIds.add(uid);
         }

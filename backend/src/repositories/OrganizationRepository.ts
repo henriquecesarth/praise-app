@@ -240,8 +240,11 @@ export class OrganizationRepository {
           .where('user_id', '==', actorUserId)
           .limit(1)
           .get();
-        if (!memberSnap.empty && memberSnap.docs[0].data().role === 'admin') {
-          isMinistryAdmin = true;
+        if (!memberSnap.empty) {
+          const mData = memberSnap.docs[0].data();
+          if (mData.role === 'admin' && mData.status !== 'removed') {
+            isMinistryAdmin = true;
+          }
         }
       }
 
