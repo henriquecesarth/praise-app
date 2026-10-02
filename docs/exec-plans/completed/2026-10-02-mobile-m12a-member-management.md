@@ -100,3 +100,53 @@
   - 15 backend tests in `member-management.test.ts`.
   - 37 mobile tests in `test/features/members/`.
   - Full Flutter test suite: 414 tests passing. Full Web test suite: 400 tests passing. All builds clean.
+
+## M12A-R4 Remediation (Active Membership Security Hardening)
+
+- **R4-1 & R4-2 (Authorization Bypass Prevention & Tenant Membership Lookup)**:
+  - `requireMinistryRole` middleware strictly filters out records where `memberData.status === 'removed'`. A removed member presenting an otherwise valid auth token immediately receives HTTP 403 `MINISTRY_ACCESS_DENIED`.
+  - `getUserMinistries` excludes ministries where `membership.status === 'removed'`.
+- **R4-3 & R4-5 (Availability Consumer Hardening)**:
+  - `AvailabilityService.resolveCanonicalMembership`: throws 403 `MINISTRY_ACCESS_DENIED` if `memberData.status === 'removed'`.
+  - `AvailabilityService.resolveMinistryMemberIds`: filters out `status === 'removed'`.
+  - `AvailabilityService.listConsolidatedAvailability` & `resolveEligibleManualMembership`: throws 404 `MEMBER_NOT_FOUND` if target member has `status === 'removed'`.
+- **R4-4 & R4-6 (Schedule Assignment & Participant Confirmation Hardening)**:
+  - `ScheduleRepository.validateParticipantsActive`: throws 400 `REMOVED_MEMBER_ASSIGNMENT_DENIED` on new schedule creation or adding new participants to existing schedules if any participant is soft-removed.
+  - Historical schedules with removed participants remain intact and viewable without breaking.
+  - `ScheduleRepository.updateParticipantConfirmation`: throws 403 when a removed member attempts to accept/decline participation on an active schedule.
+- **R4-7 (Notification Recipient Filtering)**:
+  - `NotificationService.resolveParticipantUserIds` and `resolveMinistryMemberUserIds` explicitly ignore records where `status === 'removed'`. Historical notifications remain intact.
+- **R4-8, R4-9 & R4-10 (Join/Leave, Manual Member Re-add & Linked Reactivation Policy)**:
+  - Policy for manual members (R4-9): A removed manual record remains historical. Adding a new manual member creates a new record transactionally. If an active manual member with the same email already exists in the ministry, it rejects with 409 `DUPLICATE_ACTIVE_MANUAL_MEMBER`. No ambiguous fuzzy matching.
+  - Policy for linked users (R4-10): Reactivates the existing membership document transactionally, clears `removed_at`, restores `status: 'active'`, revalidates `role` and `role_ids`, increments usage quota exactly once, and prevents duplicate active documents.
+- **R4-11 & R4-18 (Transactional Last-Active-Admin Invariant with OCC)**:
+  - In `SubscriptionRepository.removeMemberTransactional`, reads the ministry owner and all active admin documents within the Firestore transaction (`transaction.get(d.ref)`), enforcing optimistic concurrency control (OCC).
+  - Two concurrent removal or demotion requests cannot both pass and leave zero admins. Only active (`status !== 'removed'`) admins count.
+- **R4-12 (Organization Authority Hardening)**:
+  - `OrganizationRepository.isMinistryAdmin` strictly verifies `mData.role === 'admin' && mData.status !== 'removed'`.
+- **R4-13 & R4-19 (Atomic roleIds Validation & Assignment)**:
+  - In `SubscriptionRepository.addMemberTransactional`, `role_ids` are read and validated against `ministry_roles` within the transaction context (`transaction.get`), guaranteeing atomicity and consistency against concurrent role deletions.
+- **R4-14 & R4-15 (Mobile Central Invalidation on Ministry Switch)**:
+  - `AppShell` (`mobile/lib/app/shell/app_shell.dart`) centrally triggers `invalidateTenant()` on `memberDetailNotifierProvider`, `memberFormNotifierProvider`, and `scheduleFormNotifierProvider`, followed by `ref.invalidate(...)`, preventing stale data or leaked state across ministry changes.
+- **R4-16 & R4-17 (Verification & Integration Coverage)**:
+  - Dedicated real integration test suite `backend/src/features/ministries/active-membership-security.test.ts` (16 tests against local Firestore emulator):
+    1. Mandatory R4-16 real integration test: active -> soft-removed -> same token -> 403 `MINISTRY_ACCESS_DENIED`.
+    2. Read operations 403 after soft removal.
+    3. `getUserMinistries` excludes soft-removed ministry.
+    4. Availability endpoint rejects soft-removed member with 403.
+    5. Schedule confirmation rejected with 403 for soft-removed member.
+    6. Scheduling removed member rejected with 400 `REMOVED_MEMBER_ASSIGNMENT_DENIED`.
+    7. Notifications exclude soft-removed member.
+    8. Organization admin check excludes soft-removed admin.
+    9. Manual member re-add creates separate record transactionally without double active duplicates.
+    10. Duplicate active manual member with same email rejected with 409.
+    11. Linked user re-add reactivates existing document, clears removed_at and increments usage quota once.
+    12. Last active admin cannot be removed (400).
+    13. Concurrent removal of last active admins safely rejected via OCC lock.
+    14. Last active admin cannot be demoted to member.
+    15. Atomic validation of roleIds within transaction.
+    16. Ministry owner cannot be removed by anyone.
+  - Mobile tests: 414/414 passed (`flutter test`).
+  - Web tests: 400/400 passed (`npm --prefix web test`).
+  - Mobile analyze: 0 issues (`flutter analyze`).
+
