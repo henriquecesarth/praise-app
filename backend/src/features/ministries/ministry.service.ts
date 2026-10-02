@@ -38,8 +38,8 @@ export class MinistryService {
     return this.repo.joinMinistryByCode(userId, data.code);
   }
 
-  async getMinistryMembers(ministryId: string): Promise<any[]> {
-    return this.repo.getMinistryMembers(ministryId);
+  async getMinistryMembers(ministryId: string, requestingUserId?: string): Promise<any[]> {
+    return this.repo.getMinistryMembers(ministryId, requestingUserId);
   }
 
   async getMinistryMemberById(ministryId: string, memberId: string, requestingUserId?: string): Promise<any> {
@@ -53,12 +53,13 @@ export class MinistryService {
   async updateMemberRole(
     ministryId: string,
     memberUserId: string,
-    data: any
+    data: any,
+    requestingUserId?: string
   ): Promise<any> {
     if (typeof data === 'string') {
-      return this.repo.updateMemberDetails(ministryId, memberUserId, { role: data as any });
+      return this.repo.updateMemberDetails(ministryId, memberUserId, { role: data as any }, requestingUserId);
     }
-    return this.repo.updateMemberDetails(ministryId, memberUserId, data);
+    return this.repo.updateMemberDetails(ministryId, memberUserId, data, requestingUserId);
   }
 
   async updateMemberDetails(
@@ -71,16 +72,18 @@ export class MinistryService {
       role?: 'admin' | 'member';
       roleIds?: string[];
       password?: string;
-    }
+    },
+    requestingUserId?: string
   ): Promise<any> {
-    return this.repo.updateMemberDetails(ministryId, memberUserId, data);
+    return this.repo.updateMemberDetails(ministryId, memberUserId, data, requestingUserId);
   }
 
   async addMemberManually(
     ministryId: string,
-    memberData: { name: string; email: string; role?: 'admin' | 'member'; birthDate?: string; roleIds?: string[] }
+    memberData: { name: string; email: string; role?: 'admin' | 'member'; birthDate?: string; roleIds?: string[] },
+    requestingUserId?: string
   ): Promise<any> {
-    return this.repo.addMemberManually(ministryId, memberData);
+    return this.repo.addMemberManually(ministryId, memberData, requestingUserId);
   }
 
   async leaveMinistry(ministryId: string, userId: string): Promise<void> {

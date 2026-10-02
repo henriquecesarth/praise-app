@@ -35,16 +35,23 @@ describe('MinistryRepository Batch Optimization', () => {
       db.getAll = mockGetAll as any;
 
       try {
-        const enriched = await repo.getMinistryMembers('min-1');
+        // Admin viewer: should receive enriched metadata including email
+        const adminMembers = await repo.getMinistryMembers('min-1', 'u1');
 
-        expect(enriched.length).toBe(3);
-        expect(enriched[0].name).toBe('Henrique César');
-        expect(enriched[0].email).toBe('henrique@example.com');
-        expect(enriched[1].name).toBe('Lívia Santos');
-        expect(enriched[2].name).toBe('Convidado Manual');
+        expect(adminMembers.length).toBe(3);
+        expect(adminMembers[0].name).toBe('Henrique César');
+        expect(adminMembers[0].email).toBe('henrique@example.com');
+        expect(adminMembers[1].name).toBe('Lívia Santos');
+        expect(adminMembers[1].email).toBe('livia@example.com');
+        expect(adminMembers[2].name).toBe('Convidado Manual');
 
         // Confirma que db.getAll() foi chamado em lote uma única vez com 2 referências
         expect(mockGetAll).toHaveBeenCalledTimes(1);
+
+        // Ordinary peer viewer: should NOT receive email for other members
+        const peerMembers = await repo.getMinistryMembers('min-1', 'u-stranger');
+        expect(peerMembers[0].email).toBeUndefined();
+        expect(peerMembers[1].email).toBeUndefined();
       } finally {
         db.getAll = originalGetAll;
       }

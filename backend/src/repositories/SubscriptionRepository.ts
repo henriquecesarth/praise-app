@@ -54,7 +54,7 @@ export class SubscriptionRepository {
       this.songsCol.where('ministry_id', '==', ministryId).get(),
     ]);
     return {
-      realMembersCount: membersSnap.size,
+      realMembersCount: membersSnap.docs.filter((d) => d.data()?.status !== 'removed').length,
       realSongsCount: songsSnap.size,
     };
   }
@@ -187,12 +187,15 @@ export class SubscriptionRepository {
         currentMembersCount = uData.members_count || 0;
         currentSongsCount = uData.songs_count || 0;
       } else {
-        // Se usage ainda não existe, calcula a contagem real
+        // Se usage ainda não existe, calcula a contagem real excluindo membros soft-removed
         const membersSnap = await this.membersCol.where('ministry_id', '==', ministryId).get();
-        currentMembersCount = membersSnap.size;
+        currentMembersCount = membersSnap.docs.filter((d) => d.data()?.status !== 'removed').length;
       }
 
-      // Idempotency: se for usuário autenticado, verificar se já é membro
+      // Idempotency: se for usuário autenticado, verificar se já é membro ativo
+      let existingMemberRef: FirebaseFirestore.DocumentReference | null = null;
+      let existingMemberData: any = null;
+
       if (userId && !isManual) {
         const existingMemberSnap = await this.membersCol
           .where('ministry_id', '==', ministryId)
@@ -202,17 +205,22 @@ export class SubscriptionRepository {
 
         if (!existingMemberSnap.empty) {
           const existing = existingMemberSnap.docs[0];
-          return {
-            member: { id: existing.id, ...existing.data() },
-            usage: {
-              id: ministryId,
-              ministry_id: ministryId,
-              members_count: currentMembersCount,
-              songs_count: currentSongsCount,
-              created_at: now,
-              updated_at: now,
-            },
-          };
+          existingMemberData = existing.data();
+          if (existingMemberData?.status !== 'removed') {
+            return {
+              member: { id: existing.id, ...existingMemberData },
+              usage: {
+                id: ministryId,
+                ministry_id: ministryId,
+                members_count: currentMembersCount,
+                songs_count: currentSongsCount,
+                created_at: now,
+                updated_at: now,
+              },
+            };
+          }
+          // Se existia mas foi soft-removed, reativa o mesmo registro
+          existingMemberRef = existing.ref;
         }
       }
 
@@ -234,19 +242,23 @@ export class SubscriptionRepository {
         );
       }
 
-      // Criar documento do membro
-      const memberRef = this.membersCol.doc();
+      // Criar ou reativar documento do membro
+      const memberRef = existingMemberRef || this.membersCol.doc();
       const memberData: any = {
         id: memberRef.id,
         ministry_id: ministryId,
         user_id: userId || null,
         role: role || 'member',
-        name: name || null,
-        email: email || null,
-        birth_date: birthDate || null,
+        name: name || existingMemberData?.name || null,
+        email: email || existingMemberData?.email || null,
+        birth_date: birthDate || existingMemberData?.birth_date || null,
         is_manual: Boolean(isManual),
-        role_ids: roleIds || [],
-        joined_at: now,
+        role_ids: roleIds || existingMemberData?.role_ids || [],
+        joined_at: existingMemberData?.joined_at || now,
+        status: 'active',
+        removed_at: null,
+        created_at: existingMemberData?.created_at || now,
+        updated_at: now,
       };
 
       transaction.set(memberRef, memberData);
@@ -286,9 +298,11 @@ export class SubscriptionRepository {
       const directDoc = await transaction.get(directRef);
 
       let targetRef: FirebaseFirestore.DocumentReference | null = null;
+      let targetData: any = null;
 
       if (directDoc.exists && directDoc.data()?.ministry_id === ministryId) {
         targetRef = directRef;
+        targetData = directDoc.data();
       } else {
         const querySnap = await this.membersCol
           .where('ministry_id', '==', ministryId)
@@ -298,10 +312,11 @@ export class SubscriptionRepository {
 
         if (!querySnap.empty) {
           targetRef = querySnap.docs[0].ref;
+          targetData = querySnap.docs[0].data();
         }
       }
 
-      if (!targetRef) {
+      if (!targetRef || !targetData || targetData.status === 'removed') {
         throw new AppError(404, 'Membro não encontrado neste ministério.');
       }
 
@@ -318,11 +333,15 @@ export class SubscriptionRepository {
         currentSongsCount = uData.songs_count || 0;
       } else {
         const membersSnap = await this.membersCol.where('ministry_id', '==', ministryId).get();
-        currentMembersCount = membersSnap.size;
+        currentMembersCount = membersSnap.docs.filter((d) => d.data()?.status !== 'removed').length;
       }
 
-      // Deletar membro dentro da transação
-      transaction.delete(targetRef);
+      // Soft removal dentro da transação: marcar como removed e atualizar timestamp
+      transaction.update(targetRef, {
+        status: 'removed',
+        removed_at: now,
+        updated_at: now,
+      });
 
       const newMembersCount = Math.max(0, currentMembersCount - 1);
       const updatedUsage: MinistryUsageRecord = {

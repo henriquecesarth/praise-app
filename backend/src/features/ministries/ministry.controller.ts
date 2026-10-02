@@ -85,7 +85,8 @@ export class MinistryController extends BaseController {
   getMinistryMembers = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
       const ministryId = (req.params.ministryId || req.params.groupId) as string;
-      const members = await this.ministryService.getMinistryMembers(ministryId);
+      const requestingUserId = req.user?.id;
+      const members = await this.ministryService.getMinistryMembers(ministryId, requestingUserId);
       this.handleSuccess(res, members);
     } catch (err) {
       this.handleError(err, res, next);
@@ -120,7 +121,8 @@ export class MinistryController extends BaseController {
     try {
       const ministryId = req.params.ministryId as string;
       const memberId = req.params.memberId as string;
-      const updated = await this.ministryService.updateMemberDetails(ministryId, memberId, req.body);
+      const requestingUserId = req.user?.id;
+      const updated = await this.ministryService.updateMemberDetails(ministryId, memberId, req.body, requestingUserId);
       this.handleSuccess(res, updated);
     } catch (err) {
       this.handleError(err, res, next);
@@ -130,7 +132,8 @@ export class MinistryController extends BaseController {
   addMemberManually = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
       const ministryId = req.params.ministryId as string;
-      const member = await this.ministryService.addMemberManually(ministryId, req.body);
+      const requestingUserId = req.user?.id;
+      const member = await this.ministryService.addMemberManually(ministryId, req.body, requestingUserId);
       this.handleCreated(res, member);
     } catch (err) {
       this.handleError(err, res, next);
