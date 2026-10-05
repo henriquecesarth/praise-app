@@ -13,7 +13,7 @@
 
 LouvAIO Mobile Milestone M12 comprises two core feature packages:
 1. **M12A**: Member Management (Admin member directory, manual member creation, role assignments, profile inspection, authoritative edit, last-admin protection, soft-removal with quota synchronization, and multi-tenant isolation).
-2. **M12B**: Administrative Availability Management & Manual Member Scheduling (Team consolidated availability screen with period presets, strict reason redaction privacy invariant, manual member availability CRUD, and multi-tenant isolation).
+2. **M12B**: Administrative Availability Management & Manual Member Scheduling (Team consolidated availability screen with period presets, strict reason omission privacy invariant, manual member availability CRUD, and multi-tenant isolation).
 
 Physical acceptance testing was executed directly on physical hardware (Lenovo Tab P11 Plus) with a production-aligned local backend attached to Cloud Firestore.
 
@@ -31,16 +31,25 @@ Physical acceptance testing was executed directly on physical hardware (Lenovo T
 ## 2. Architecture & Privacy Invariant Clarification
 
 ### Consolidated Administrative Availability
-- The real availability `reason` is **not** part of `ConsolidatedAvailabilityItem` and is **not** retained by the consolidated mobile state.
-- The mobile consolidated screen (`AdminAvailabilityScreen`) does **not** receive, parse, cache, or display the real reason from the backend.
-- The UI displays generic text:
-  `Motivo confidencial • Privacidade protegida`
-  This text is a **static privacy label only**. It is **NOT** a transformed or anonymized version of the user's actual reason.
-- Authoritative confirmation invariant:
-  `CONSOLIDATED_REASON_VALUE_NEVER_ENTERS_MOBILE_CONSOLIDATED_STATE = CONFIRMED`
+
+The real availability `reason` is not part of `ConsolidatedAvailabilityItem` and is not retained by the consolidated mobile state.
+
+The mobile consolidated screen does not receive, parse, cache, or display the real reason.
+
+If the UI displays generic text such as:
+
+`Motivo confidencial • Privacidade protegida`
+
+that text is a static privacy label only.
+
+It is NOT a transformed/anonymized version of the user's actual reason.
+
+Authoritative confirmation invariant:
+`CONSOLIDATED_REASON_VALUE_NEVER_ENTERS_MOBILE_CONSOLIDATED_STATE = CONFIRMED`
 
 ### Manual-Member Administrative Availability
-- The actual reason remains available only through the separate authorized manual-member management contract (`ManualMemberAvailabilityScreen`), where ministry administrators can inspect and manage operational notes for non-authenticated manual members.
+
+The actual reason remains available only through the separate authorized manual-member management contract.
 
 ---
 
@@ -77,7 +86,7 @@ Physical acceptance testing was executed directly on physical hardware (Lenovo T
 | **CT-B01** | Admin Availability Entry Point | Physical Tablet — **PASS** | "Disponibilidade da Equipe" tile visible in Profile under admin privileges with calendar icon. |
 | **CT-B02** | Ordinary Member Restriction | **NOT_EXECUTED** | Ordinary member account unavailable. Covered in `availability_admin_navigation_test.dart`. |
 | **CT-B03** | Consolidated Availability UI & Presets | Physical Tablet — **PASS** | Screen rendered presets (`7 dias`, `15 dias`, `30 dias`, `Mês atual`, `Personalizado`), member filter, empty state, and refresh action. |
-| **CT-B04** | Privacy Invariant (Reason Redaction) | Physical Tablet — **PASS** | **MANDATORY SECURITY INVARIANT**: Unavailability reason never enters consolidated state (`CONSOLIDATED_REASON_VALUE_NEVER_ENTERS_MOBILE_CONSOLIDATED_STATE`). Static label `"Motivo confidencial • Privacidade protegida"` rendered. |
+| **CT-B04** | Privacy Invariant (Reason Omission) | Physical Tablet — **PASS** | **MANDATORY SECURITY INVARIANT**: The real availability `reason` is not part of `ConsolidatedAvailabilityItem` and is not retained by the consolidated mobile state. The mobile consolidated screen does not receive, parse, cache, or display the real reason (`CONSOLIDATED_REASON_VALUE_NEVER_ENTERS_MOBILE_CONSOLIDATED_STATE`). Static label `"Motivo confidencial • Privacidade protegida"` rendered as a static privacy label only (not a transformed or anonymized reason). |
 | **CT-B05** | Preset Switching | Physical Tablet — **PASS** | Switched between `7 dias`, `15 dias`, `30 dias`; query re-executed seamlessly and dynamically updated results. |
 | **CT-B06** | Custom Date Range Picker | **AUTOMATED_COVERAGE_ONLY** | Covered in `admin_availability_screen_test.dart`. |
 | **CT-B07** | Manual Member Availability Entry Point | Physical Tablet — **PASS** | "Gerenciar manual" shortcut in AppBar and "Gerenciar indisponibilidade" button in member details rendered for manual member `M12 TEST Manual 2`. |
@@ -88,7 +97,7 @@ Physical acceptance testing was executed directly on physical hardware (Lenovo T
 | **CT-B12** | Edit All-Day → Timed Conversion | Physical Tablet — **PASS** | Converted all-day entry to timed entry. Persisted cleanly. |
 | **CT-B13** | Delete Manual Unavailability | Physical Tablet — **PASS** | Deleted unavailability entry; removed synchronously from UI list and Cloud Firestore. |
 | **CT-B14** | Form Validation (Date/Time Bounds) | **AUTOMATED_COVERAGE_ONLY** | Covered in `manual_availability_form_modal_test.dart`. |
-| **CT-B15** | Reason Privacy Contrast | Physical Tablet — **PASS** | Reason is visible to admin in manual member screen, but completely absent from consolidated state, replaced with static privacy label. |
+| **CT-B15** | Reason Privacy Contrast | Physical Tablet — **PASS** | The actual reason remains available only through the separate authorized manual-member management contract (`ManualMemberAvailabilityScreen`). It never enters the consolidated mobile state or `ConsolidatedAvailabilityItem`, where only a static privacy label is rendered. |
 | **CT-B16** | Multi-Tenant Availability Isolation | Physical Tablet — **PASS** | Switched ministry context to `Louvor IBBP`. Verified team availability and member directory were completely isolated; no test records leaked. |
 | **CT-B17** | Concurrent Availability Mutation | **AUTOMATED_COVERAGE_ONLY** | Covered in backend Firestore transaction test suite. |
 | **CT-B18** | Overlapping Period Policy | **AUTOMATED_COVERAGE_ONLY** | Covered in `consolidated_availability_test.dart`. |
