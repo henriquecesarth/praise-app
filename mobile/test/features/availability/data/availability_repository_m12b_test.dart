@@ -286,5 +286,120 @@ void main() {
       );
     });
   });
-}
 
+  group('AvailabilityRepository Malformed Response Handling (R2-5, R2-6)', () {
+    test('malformed consolidated response fails safely with user-safe message and no leak', () async {
+      apiClient.dio.httpClientAdapter = MockAdapter((options) async {
+        // "allDay": "true" instead of boolean -> triggers TypeError during parsing
+        return jsonOk('''
+{
+  "data": [
+    {
+      "id": "cons_malformed",
+      "ministryId": "min_alpha",
+      "memberId": "mem_10",
+      "memberName": "Gabriel",
+      "startDate": "2026-10-10",
+      "endDate": "2026-10-10",
+      "allDay": "true",
+      "startsAt": "2026-10-10T00:00:00",
+      "endsAt": "2026-10-11T00:00:00",
+      "reason": "TopSecretReason"
+    }
+  ]
+}
+''');
+      });
+
+      try {
+        await repository.listConsolidatedAvailability(
+          'min_alpha',
+          from: '2026-10-01',
+          to: '2026-10-31',
+        );
+        fail('Should have thrown AppFailure');
+      } on AppFailure catch (e) {
+        expect(e.message, 'Não foi possível interpretar os dados de disponibilidade recebidos.');
+        expect(e.message.contains('TypeError'), isFalse);
+        expect(e.message.contains('Exception'), isFalse);
+        expect(e.message.contains('TopSecretReason'), isFalse);
+      }
+    });
+
+    test('malformed manual member availability list fails safely', () async {
+      apiClient.dio.httpClientAdapter = MockAdapter((options) async {
+        return jsonOk('''
+{
+  "data": [
+    {
+      "id": "man_malformed",
+      "allDay": "not_a_boolean"
+    }
+  ]
+}
+''');
+      });
+
+      try {
+        await repository.listManualMemberAvailabilities('min_alpha', 'mem_1');
+        fail('Should have thrown AppFailure');
+      } on AppFailure catch (e) {
+        expect(e.message, 'Não foi possível interpretar os dados de disponibilidade recebidos.');
+        expect(e.message.contains('TypeError'), isFalse);
+      }
+    });
+
+    test('malformed create manual member response fails safely', () async {
+      apiClient.dio.httpClientAdapter = MockAdapter((options) async {
+        return jsonCreated('''
+{
+  "id": "created_man",
+  "allDay": "not_bool"
+}
+''');
+      });
+
+      try {
+        await repository.createManualMemberAvailability(
+          'min_alpha',
+          'mem_1',
+          const CreateAvailabilityPayload(
+            startDate: '2026-10-10',
+            endDate: '2026-10-10',
+            allDay: true,
+          ),
+        );
+        fail('Should have thrown AppFailure');
+      } on AppFailure catch (e) {
+        expect(e.message, 'Não foi possível salvar a indisponibilidade.');
+        expect(e.message.contains('TypeError'), isFalse);
+      }
+    });
+
+    test('malformed update manual member response fails safely', () async {
+      apiClient.dio.httpClientAdapter = MockAdapter((options) async {
+        return jsonOk('''
+{
+  "id": "updated_man",
+  "allDay": 12345
+}
+''');
+      });
+
+      try {
+        await repository.updateManualMemberAvailability(
+          'min_alpha',
+          'mem_1',
+          'avail_1',
+          const UpdateAvailabilityPayload(
+            reason: 'Atualizando',
+          ),
+        );
+        fail('Should have thrown AppFailure');
+      } on AppFailure catch (e) {
+        expect(e.message, 'Não foi possível salvar a indisponibilidade.');
+        expect(e.message.contains('TypeError'), isFalse);
+      }
+    });
+  });
+}

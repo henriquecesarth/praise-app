@@ -110,7 +110,10 @@ class HttpAvailabilityRepository implements AvailabilityRepository {
       throw _apiClient.mapDioException(e);
     } catch (e) {
       if (e is AppFailure) rethrow;
-      throw AppFailure(message: 'Erro ao carregar indisponibilidades: $e');
+      throw const AppFailure(
+        message:
+            'Não foi possível interpretar os dados de disponibilidade recebidos.',
+      );
     }
   }
 
@@ -128,8 +131,7 @@ class HttpAvailabilityRepository implements AvailabilityRepository {
       final data = response.data;
       if (data == null) {
         throw const AppFailure(
-          message:
-              'Resposta inesperada do servidor ao criar indisponibilidade.',
+          message: 'Não foi possível salvar a indisponibilidade.',
         );
       }
 
@@ -138,7 +140,9 @@ class HttpAvailabilityRepository implements AvailabilityRepository {
       throw _apiClient.mapDioException(e);
     } catch (e) {
       if (e is AppFailure) rethrow;
-      throw AppFailure(message: 'Erro ao criar indisponibilidade: $e');
+      throw const AppFailure(
+        message: 'Não foi possível salvar a indisponibilidade.',
+      );
     }
   }
 
@@ -157,8 +161,7 @@ class HttpAvailabilityRepository implements AvailabilityRepository {
       final data = response.data;
       if (data == null) {
         throw const AppFailure(
-          message:
-              'Resposta inesperada do servidor ao atualizar indisponibilidade.',
+          message: 'Não foi possível salvar a indisponibilidade.',
         );
       }
 
@@ -167,7 +170,9 @@ class HttpAvailabilityRepository implements AvailabilityRepository {
       throw _apiClient.mapDioException(e);
     } catch (e) {
       if (e is AppFailure) rethrow;
-      throw AppFailure(message: 'Erro ao atualizar indisponibilidade: $e');
+      throw const AppFailure(
+        message: 'Não foi possível salvar a indisponibilidade.',
+      );
     }
   }
 
@@ -181,7 +186,9 @@ class HttpAvailabilityRepository implements AvailabilityRepository {
       throw _apiClient.mapDioException(e);
     } catch (e) {
       if (e is AppFailure) rethrow;
-      throw AppFailure(message: 'Erro ao remover indisponibilidade: $e');
+      throw const AppFailure(
+        message: 'Não foi possível remover a indisponibilidade.',
+      );
     }
   }
 
@@ -222,7 +229,10 @@ class HttpAvailabilityRepository implements AvailabilityRepository {
       throw _apiClient.mapDioException(e);
     } catch (e) {
       if (e is AppFailure) rethrow;
-      throw AppFailure(message: 'Erro ao carregar disponibilidade consolidada: $e');
+      throw const AppFailure(
+        message:
+            'Não foi possível interpretar os dados de disponibilidade recebidos.',
+      );
     }
   }
 
@@ -256,8 +266,9 @@ class HttpAvailabilityRepository implements AvailabilityRepository {
       throw _apiClient.mapDioException(e);
     } catch (e) {
       if (e is AppFailure) rethrow;
-      throw AppFailure(
-        message: 'Erro ao carregar indisponibilidades do integrante: $e',
+      throw const AppFailure(
+        message:
+            'Não foi possível interpretar os dados de disponibilidade recebidos.',
       );
     }
   }
@@ -277,7 +288,7 @@ class HttpAvailabilityRepository implements AvailabilityRepository {
       final data = response.data;
       if (data == null) {
         throw const AppFailure(
-          message: 'Resposta inesperada do servidor ao criar indisponibilidade.',
+          message: 'Não foi possível salvar a indisponibilidade.',
         );
       }
 
@@ -286,7 +297,9 @@ class HttpAvailabilityRepository implements AvailabilityRepository {
       throw _apiClient.mapDioException(e);
     } catch (e) {
       if (e is AppFailure) rethrow;
-      throw AppFailure(message: 'Erro ao criar indisponibilidade manual: $e');
+      throw const AppFailure(
+        message: 'Não foi possível salvar a indisponibilidade.',
+      );
     }
   }
 
@@ -306,7 +319,7 @@ class HttpAvailabilityRepository implements AvailabilityRepository {
       final data = response.data;
       if (data == null) {
         throw const AppFailure(
-          message: 'Resposta inesperada do servidor ao atualizar indisponibilidade.',
+          message: 'Não foi possível salvar a indisponibilidade.',
         );
       }
 
@@ -315,7 +328,9 @@ class HttpAvailabilityRepository implements AvailabilityRepository {
       throw _apiClient.mapDioException(e);
     } catch (e) {
       if (e is AppFailure) rethrow;
-      throw AppFailure(message: 'Erro ao atualizar indisponibilidade manual: $e');
+      throw const AppFailure(
+        message: 'Não foi possível salvar a indisponibilidade.',
+      );
     }
   }
 
@@ -333,7 +348,9 @@ class HttpAvailabilityRepository implements AvailabilityRepository {
       throw _apiClient.mapDioException(e);
     } catch (e) {
       if (e is AppFailure) rethrow;
-      throw AppFailure(message: 'Erro ao remover indisponibilidade manual: $e');
+      throw const AppFailure(
+        message: 'Não foi possível remover a indisponibilidade.',
+      );
     }
   }
 }

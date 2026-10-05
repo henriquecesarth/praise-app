@@ -678,8 +678,7 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
 
           // Admin Action Buttons
           if (isViewerAdmin) ...[
-            if (member.isManual &&
-                (member.userId == null || member.userId!.isEmpty)) ...[
+            if (member.isEligibleManualMember) ...[
               OutlinedButton.icon(
                 key: const ValueKey('manage_availability_button'),
                 onPressed: state.isSubmitting

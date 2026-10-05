@@ -21,6 +21,8 @@ class FakeAvailabilityRepository implements AvailabilityRepository {
 
   Completer<AvailabilityListResponse>? pendingListCompleter;
   Completer<MemberAvailability>? pendingCreateCompleter;
+  Completer<MemberAvailability>? pendingUpdateCompleter;
+  Completer<void>? pendingDeleteCompleter;
 
   @override
   Future<AvailabilityListResponse> listManualMemberAvailabilities(
@@ -94,6 +96,10 @@ class FakeAvailabilityRepository implements AvailabilityRepository {
     lastMemberId = memberId;
     lastUpdatedPayload = payload;
 
+    if (pendingUpdateCompleter != null) {
+      return pendingUpdateCompleter!.future;
+    }
+
     if (shouldThrowMutation) {
       throw mutationFailure ??
           const AppFailure(message: 'Erro ao atualizar indisponibilidade.');
@@ -125,6 +131,10 @@ class FakeAvailabilityRepository implements AvailabilityRepository {
     lastMinistryId = ministryId;
     lastMemberId = memberId;
     lastDeletedId = id;
+
+    if (pendingDeleteCompleter != null) {
+      return pendingDeleteCompleter!.future;
+    }
 
     if (shouldThrowMutation) {
       throw mutationFailure ??
@@ -382,6 +392,157 @@ void main() {
       expect(notifier.state.items.first.id, 'b1');
     });
 
+    test('multi-tenant mutation safety: in-flight create discarded on tenant switch', () async {
+      final completerCreateAlpha = Completer<MemberAvailability>();
+      repository.pendingCreateCompleter = completerCreateAlpha;
+
+      // Start on Alpha
+      repository.listResult = [];
+      await notifier.load(ministryId: 'min_alpha', memberId: 'mem_alpha');
+      expect(notifier.state.ministryId, 'min_alpha');
+
+      const payload = CreateAvailabilityPayload(
+        startDate: '2026-10-10',
+        endDate: '2026-10-10',
+        allDay: true,
+        reason: 'Item Alpha',
+      );
+
+      final futureCreate = notifier.createAvailability(payload: payload);
+      expect(notifier.state.isSubmitting, isTrue);
+
+      // User switches to Beta while mutation is in-flight!
+      repository.pendingListCompleter = null;
+      repository.listResult = [
+        createDummyManualItem(
+          id: 'beta_item',
+          ministryId: 'min_beta',
+          memberId: 'mem_beta',
+          reason: 'Item Beta',
+        ),
+      ];
+      await notifier.load(ministryId: 'min_beta', memberId: 'mem_beta');
+      expect(notifier.state.ministryId, 'min_beta');
+
+      // Now Alpha create completes
+      completerCreateAlpha.complete(createDummyManualItem(
+        id: 'alpha_late',
+        ministryId: 'min_alpha',
+        memberId: 'mem_alpha',
+        reason: 'Item Alpha',
+      ));
+      final success = await futureCreate;
+
+      // Mutation must fail closed / be discarded
+      expect(success, isFalse);
+      expect(notifier.state.ministryId, 'min_beta');
+      expect(notifier.state.items.length, 1);
+      expect(notifier.state.items.first.id, 'beta_item');
+      expect(notifier.state.items.any((i) => i.id == 'alpha_late'), isFalse);
+    });
+
+    test('session safety: in-flight create discarded on session reset (User A -> User B)', () async {
+      final completerCreate = Completer<MemberAvailability>();
+      repository.pendingCreateCompleter = completerCreate;
+
+      repository.listResult = [];
+      await notifier.load(ministryId: 'min_1', memberId: 'mem_1');
+
+      const payload = CreateAvailabilityPayload(
+        startDate: '2026-10-10',
+        endDate: '2026-10-10',
+        allDay: true,
+      );
+
+      final futureCreate = notifier.createAvailability(payload: payload);
+
+      // Session resets (logout / switch user)
+      notifier.reset();
+      expect(notifier.state.ministryId, isNull);
+
+      completerCreate.complete(createDummyManualItem(
+        id: 'late_item',
+        ministryId: 'min_1',
+        memberId: 'mem_1',
+      ));
+      final success = await futureCreate;
+
+      expect(success, isFalse);
+      expect(notifier.state.ministryId, isNull);
+      expect(notifier.state.items.isEmpty, isTrue);
+    });
+
+    test('multi-tenant mutation safety: in-flight update discarded on tenant switch', () async {
+      final completerUpdate = Completer<MemberAvailability>();
+      repository.pendingUpdateCompleter = completerUpdate;
+
+      final initialAlpha = createDummyManualItem(
+        id: 'upd_alpha',
+        ministryId: 'min_alpha',
+        memberId: 'mem_alpha',
+        reason: 'Original',
+      );
+      repository.listResult = [initialAlpha];
+      await notifier.load(ministryId: 'min_alpha', memberId: 'mem_alpha');
+
+      const payload = UpdateAvailabilityPayload(reason: 'Updated');
+      final futureUpdate = notifier.updateAvailability(id: 'upd_alpha', payload: payload);
+
+      // Switch to Beta
+      repository.listResult = [
+        createDummyManualItem(
+          id: 'beta_item',
+          ministryId: 'min_beta',
+          memberId: 'mem_beta',
+        ),
+      ];
+      await notifier.load(ministryId: 'min_beta', memberId: 'mem_beta');
+
+      completerUpdate.complete(createDummyManualItem(
+        id: 'upd_alpha',
+        ministryId: 'min_alpha',
+        memberId: 'mem_alpha',
+        reason: 'Updated',
+      ));
+      final success = await futureUpdate;
+
+      expect(success, isFalse);
+      expect(notifier.state.ministryId, 'min_beta');
+      expect(notifier.state.items.first.id, 'beta_item');
+    });
+
+    test('multi-tenant mutation safety: in-flight delete discarded on tenant switch', () async {
+      final completerDelete = Completer<void>();
+      repository.pendingDeleteCompleter = completerDelete;
+
+      final initialAlpha = createDummyManualItem(
+        id: 'del_alpha',
+        ministryId: 'min_alpha',
+        memberId: 'mem_alpha',
+      );
+      repository.listResult = [initialAlpha];
+      await notifier.load(ministryId: 'min_alpha', memberId: 'mem_alpha');
+
+      final futureDelete = notifier.deleteAvailability(id: 'del_alpha');
+
+      // Switch to Beta
+      repository.listResult = [
+        createDummyManualItem(
+          id: 'beta_item',
+          ministryId: 'min_beta',
+          memberId: 'mem_beta',
+        ),
+      ];
+      await notifier.load(ministryId: 'min_beta', memberId: 'mem_beta');
+
+      completerDelete.complete();
+      final success = await futureDelete;
+
+      expect(success, isFalse);
+      expect(notifier.state.ministryId, 'min_beta');
+      expect(notifier.state.items.first.id, 'beta_item');
+    });
+
     test('reset clears state completely', () async {
       repository.listResult = [
         createDummyManualItem(
@@ -401,4 +562,3 @@ void main() {
     });
   });
 }
-

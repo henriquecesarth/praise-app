@@ -285,12 +285,22 @@ class FakeAvailabilityRepo implements AvailabilityRepository {
     return const AvailabilityListResponse(data: []);
   }
 
+  Future<MemberAvailability> Function(String ministryId, String memberId, CreateAvailabilityPayload payload)?
+      createManualMemberHandler;
+  Future<MemberAvailability> Function(String ministryId, String memberId, String id, UpdateAvailabilityPayload payload)?
+      updateManualMemberHandler;
+  Future<void> Function(String ministryId, String memberId, String id)?
+      deleteManualMemberHandler;
+
   @override
   Future<MemberAvailability> createManualMemberAvailability(
     String ministryId,
     String memberId,
     CreateAvailabilityPayload payload,
   ) async {
+    if (createManualMemberHandler != null) {
+      return createManualMemberHandler!(ministryId, memberId, payload);
+    }
     throw UnimplementedError();
   }
 
@@ -301,6 +311,9 @@ class FakeAvailabilityRepo implements AvailabilityRepository {
     String id,
     UpdateAvailabilityPayload payload,
   ) async {
+    if (updateManualMemberHandler != null) {
+      return updateManualMemberHandler!(ministryId, memberId, id, payload);
+    }
     throw UnimplementedError();
   }
 
@@ -309,7 +322,11 @@ class FakeAvailabilityRepo implements AvailabilityRepository {
     String ministryId,
     String memberId,
     String id,
-  ) async {}
+  ) async {
+    if (deleteManualMemberHandler != null) {
+      return deleteManualMemberHandler!(ministryId, memberId, id);
+    }
+  }
 }
 
 class FakeRepertoireRepo implements RepertoireRepository {
@@ -863,6 +880,52 @@ void main() {
       expect(notifier.state.memberId, 'mem_2');
       expect(notifier.state.items.first.id, 'man_b');
       expect(notifier.state.items.any((a) => a.id == 'man_a'), isFalse);
+    });
+
+    test(
+        'ManualMemberAvailabilityNotifier: in-flight mutation discarded on ministry switch and session reset',
+        () async {
+      final repo = FakeAvailabilityRepo();
+      final completerCreateA = Completer<MemberAvailability>();
+
+      repo.createManualMemberHandler = (mId, memId, payload) {
+        if (mId == 'min_a') return completerCreateA.future;
+        return Future.value(
+          createDummyAvailability(
+            id: 'man_b_created',
+            ministryId: 'min_b',
+          ),
+        );
+      };
+
+      final notifier = ManualMemberAvailabilityNotifier(repository: repo);
+
+      // Start on min_a
+      await notifier.load(ministryId: 'min_a', memberId: 'mem_1');
+
+      const payload = CreateAvailabilityPayload(
+        startDate: '2026-10-15',
+        endDate: '2026-10-15',
+        allDay: true,
+      );
+
+      final futureCreateA = notifier.createAvailability(payload: payload);
+
+      // User switches to min_b while mutation is in-flight
+      await notifier.load(ministryId: 'min_b', memberId: 'mem_2');
+
+      // Now min_a mutation completes late
+      completerCreateA.complete(
+        createDummyAvailability(
+          id: 'man_a_late',
+          ministryId: 'min_a',
+        ),
+      );
+      final success = await futureCreateA;
+
+      expect(success, isFalse);
+      expect(notifier.state.ministryId, 'min_b');
+      expect(notifier.state.items.any((a) => a.id == 'man_a_late'), isFalse);
     });
   });
 

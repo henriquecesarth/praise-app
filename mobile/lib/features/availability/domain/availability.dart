@@ -288,23 +288,23 @@ class AvailabilityValidator {
       return 'A data final é obrigatória (formato: AAAA-MM-DD).';
     }
 
-    if (eDate.compareTo(sDate) < 0) {
-      return 'A data final não pode ser anterior à data inicial.';
-    }
-
-    final startDt = DateTime.tryParse(sDate);
-    final endDt = DateTime.tryParse(eDate);
-    if (startDt == null || endDt == null) {
+    final startCivil = CivilDate.tryParse(sDate);
+    final endCivil = CivilDate.tryParse(eDate);
+    if (startCivil == null || endCivil == null) {
       return 'Data inválida informada.';
     }
 
-    // Maximum span: 90 days
-    final diffDays = endDt.difference(startDt).inDays;
-    if (diffDays > 90) {
-      return 'O período de indisponibilidade não pode exceder 90 dias.';
+    if (endCivil < startCivil) {
+      return 'A data final não pode ser anterior à data inicial.';
     }
 
-    if (!allDay) {
+    if (allDay) {
+      // Maximum span: exactly 90 inclusive civil days (90 accepted, 91 rejected)
+      final inclusiveDays = startCivil.inclusiveDaysTo(endCivil);
+      if (inclusiveDays > 90) {
+        return 'O período de indisponibilidade não pode exceder 90 dias.';
+      }
+    } else {
       final sTime = startTime?.trim() ?? '';
       final eTime = endTime?.trim() ?? '';
 
@@ -315,8 +315,30 @@ class AvailabilityValidator {
         return 'O horário final é obrigatório quando não for dia inteiro.';
       }
 
-      if (sDate == eDate && eTime.compareTo(sTime) <= 0) {
+      final startParts = sTime.split(':');
+      final sHour = int.tryParse(startParts[0]) ?? -1;
+      final sMin = int.tryParse(startParts[1]) ?? -1;
+
+      final endParts = eTime.split(':');
+      final eHour = int.tryParse(endParts[0]) ?? -1;
+      final eMin = int.tryParse(endParts[1]) ?? -1;
+
+      if (sHour < 0 || sHour > 23 || sMin < 0 || sMin > 59 ||
+          eHour < 0 || eHour > 23 || eMin < 0 || eMin > 59) {
+        return 'Horário inválido informado.';
+      }
+
+      final startMinutes = (startCivil.dayOrdinal * 1440) + (sHour * 60) + sMin;
+      final endMinutes = (endCivil.dayOrdinal * 1440) + (eHour * 60) + eMin;
+
+      if (endMinutes <= startMinutes) {
         return 'O horário final deve ser posterior ao horário inicial.';
+      }
+
+      final spanMinutes = endMinutes - startMinutes;
+      const maxSpanMinutes = 90 * 1440; // 90 days continuous
+      if (spanMinutes > maxSpanMinutes) {
+        return 'O período de indisponibilidade não pode exceder 90 dias.';
       }
     }
 

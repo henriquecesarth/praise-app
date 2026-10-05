@@ -235,13 +235,60 @@ void main() {
       expect(err, 'A data final não pode ser anterior à data inicial.');
     });
 
-    test('rejects period exceeding 90 days', () {
-      final err = AvailabilityValidator.validate(
+    test('exact 90-day all-day boundary: accepts 90 days and rejects 91 days', () {
+      // 2026-01-01 to 2026-03-31: exactly 90 inclusive civil days
+      final err90 = AvailabilityValidator.validate(
         startDate: '2026-01-01',
-        endDate: '2026-04-10', // > 90 days
+        endDate: '2026-03-31',
         allDay: true,
       );
-      expect(err, 'O período de indisponibilidade não pode exceder 90 dias.');
+      expect(err90, isNull);
+
+      // 2026-01-01 to 2026-04-01: 91 inclusive civil days
+      final err91 = AvailabilityValidator.validate(
+        startDate: '2026-01-01',
+        endDate: '2026-04-01',
+        allDay: true,
+      );
+      expect(err91, 'O período de indisponibilidade não pode exceder 90 dias.');
+    });
+
+    test('exact 90-day boundary in leap year 2024', () {
+      // 2024 is a leap year (Feb has 29 days). Jan 1 to Mar 30 = 90 days.
+      final errLeap90 = AvailabilityValidator.validate(
+        startDate: '2024-01-01',
+        endDate: '2024-03-30',
+        allDay: true,
+      );
+      expect(errLeap90, isNull);
+
+      // Jan 1 to Mar 31 in leap year = 91 days
+      final errLeap91 = AvailabilityValidator.validate(
+        startDate: '2024-01-01',
+        endDate: '2024-03-31',
+        allDay: true,
+      );
+      expect(errLeap91, 'O período de indisponibilidade não pode exceder 90 dias.');
+    });
+
+    test('rejects timed availability exceeding 90 days', () {
+      final errTimed91 = AvailabilityValidator.validate(
+        startDate: '2026-01-01',
+        endDate: '2026-04-02',
+        allDay: false,
+        startTime: '10:00',
+        endTime: '10:00',
+      );
+      expect(errTimed91, 'O período de indisponibilidade não pode exceder 90 dias.');
+    });
+
+    test('rejects invalid Gregorian dates', () {
+      final errInvalid = AvailabilityValidator.validate(
+        startDate: '2026-02-29', // Not a leap year!
+        endDate: '2026-03-01',
+        allDay: true,
+      );
+      expect(errInvalid, 'Data inválida informada.');
     });
 
     test('rejects timed availability with missing start or end time', () {

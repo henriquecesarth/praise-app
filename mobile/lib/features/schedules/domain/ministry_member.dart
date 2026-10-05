@@ -30,6 +30,11 @@ class MinistryMember {
   bool get isAdmin => role == 'admin';
   String get roleLabel => isAdmin ? 'Administrador' : 'Membro';
 
+  /// Canonical manual-member eligibility for administrative availability management:
+  /// must be manual (`is_manual === true`) and strictly unlinked (`user_id == null`).
+  /// Non-null strings like `""` or whitespace do NOT qualify as null.
+  bool get isEligibleManualMember => isManual && userId == null;
+
   String get initials {
     final parts = name.trim().split(RegExp(r'\s+'));
     if (parts.isEmpty || parts[0].isEmpty) return '?';

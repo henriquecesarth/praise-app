@@ -1,3 +1,5 @@
+export 'civil_date.dart';
+
 /// Pure civil wall-clock date and time formatting utilities.
 ///
 /// Avoids UTC conversions on calendar dates ('YYYY-MM-DD') to ensure

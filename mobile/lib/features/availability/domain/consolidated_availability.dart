@@ -224,59 +224,59 @@ class AvailabilityPlanningPeriod {
   /// Preset: next 7 days (today to today + 6).
   static ({String from, String to}) preset7Days([DateTime? referenceNow]) {
     final now = referenceNow ?? DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final end = today.add(const Duration(days: 6));
-    return (from: formatIsoDate(today), to: formatIsoDate(end));
+    final start = CivilDate(now.year, now.month, now.day);
+    final end = start.addDays(6);
+    return (from: start.toIsoDate(), to: end.toIsoDate());
   }
 
   /// Preset: next 15 days (today to today + 14).
   static ({String from, String to}) preset15Days([DateTime? referenceNow]) {
     final now = referenceNow ?? DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final end = today.add(const Duration(days: 14));
-    return (from: formatIsoDate(today), to: formatIsoDate(end));
+    final start = CivilDate(now.year, now.month, now.day);
+    final end = start.addDays(14);
+    return (from: start.toIsoDate(), to: end.toIsoDate());
   }
 
   /// Preset: next 30 days (today to today + 29).
   static ({String from, String to}) preset30Days([DateTime? referenceNow]) {
     final now = referenceNow ?? DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final end = today.add(const Duration(days: 29));
-    return (from: formatIsoDate(today), to: formatIsoDate(end));
+    final start = CivilDate(now.year, now.month, now.day);
+    final end = start.addDays(29);
+    return (from: start.toIsoDate(), to: end.toIsoDate());
   }
 
   /// Preset: this month (first day to last day of current month).
   static ({String from, String to}) presetThisMonth([DateTime? referenceNow]) {
     final now = referenceNow ?? DateTime.now();
-    final firstDay = DateTime(now.year, now.month, 1);
-    final nextMonthFirst = DateTime(now.year, now.month + 1, 1);
-    final lastDay = nextMonthFirst.subtract(const Duration(days: 1));
-    return (from: formatIsoDate(firstDay), to: formatIsoDate(lastDay));
+    final start = CivilDate(now.year, now.month, 1);
+    final daysInMonth = CivilDate.daysInMonth(now.year, now.month);
+    final end = CivilDate(now.year, now.month, daysInMonth);
+    return (from: start.toIsoDate(), to: end.toIsoDate());
   }
 
   /// Calculates inclusive days between two civil dates.
   /// Returns negative value if to < from.
   static int calculateInclusiveDays(String from, String to) {
-    final dtFrom = parseIsoDate(from);
-    final dtTo = parseIsoDate(to);
-    if (dtFrom == null || dtTo == null) return -1;
-    if (dtTo.isBefore(dtFrom)) return -1;
-    return dtTo.difference(dtFrom).inDays + 1;
+    final cFrom = CivilDate.tryParse(from);
+    final cTo = CivilDate.tryParse(to);
+    if (cFrom == null || cTo == null) return -1;
+    if (cTo < cFrom) return -1;
+    return cFrom.inclusiveDaysTo(cTo);
   }
 
   /// Validates planning date range. Returns null if valid, or an error message in PT-BR.
   static String? validateRange(String from, String to) {
-    final dtFrom = parseIsoDate(from);
-    final dtTo = parseIsoDate(to);
+    final cFrom = CivilDate.tryParse(from);
+    final cTo = CivilDate.tryParse(to);
 
-    if (dtFrom == null) {
+    if (cFrom == null) {
       return 'A data inicial é obrigatória (formato: AAAA-MM-DD).';
     }
-    if (dtTo == null) {
+    if (cTo == null) {
       return 'A data final é obrigatória (formato: AAAA-MM-DD).';
     }
 
-    if (dtTo.isBefore(dtFrom)) {
+    if (cTo < cFrom) {
       return 'A data final não pode ser anterior à data inicial.';
     }
 
@@ -293,12 +293,9 @@ class AvailabilityPlanningPeriod {
 ///
 /// Invariant:
 /// - `is_manual === true`
-/// - `user_id == null || user_id == ''`
+/// - `user_id == null` (strictly absent/null; empty string or whitespace does not qualify)
 /// - Active (not removed).
 class ManualMemberEligibility {
-  static bool isEligible(MinistryMember member) {
-    final isManual = member.isManual;
-    final hasNoUserId = member.userId == null || member.userId!.trim().isEmpty;
-    return isManual && hasNoUserId;
-  }
+  static bool isEligible(MinistryMember member) =>
+      member.isEligibleManualMember;
 }

@@ -184,12 +184,26 @@ void main() {
       expect(AvailabilityPlanningPeriod.calculateInclusiveDays(pMonth.from, pMonth.to), 31);
     });
 
-    test('validateRange rejects invalid ranges and allows up to 90 days', () {
+    test('validateRange enforces exact 90-day civil boundary', () {
       expect(AvailabilityPlanningPeriod.validateRange('2026-10-01', '2026-10-01'), isNull);
-      expect(AvailabilityPlanningPeriod.validateRange('2026-10-01', '2026-12-29'), isNull);
 
-      final over90 = AvailabilityPlanningPeriod.validateRange('2026-10-01', '2027-01-15');
+      // Exactly 90 inclusive days in 2026 (non-leap)
+      expect(AvailabilityPlanningPeriod.validateRange('2026-01-01', '2026-03-31'), isNull);
+      expect(AvailabilityPlanningPeriod.calculateInclusiveDays('2026-01-01', '2026-03-31'), 90);
+
+      // 91 inclusive days in 2026 -> rejected
+      final over90 = AvailabilityPlanningPeriod.validateRange('2026-01-01', '2026-04-01');
       expect(over90, contains('90 dias civis'));
+      expect(AvailabilityPlanningPeriod.calculateInclusiveDays('2026-01-01', '2026-04-01'), 91);
+
+      // Exactly 90 inclusive days in 2024 (leap year)
+      expect(AvailabilityPlanningPeriod.validateRange('2024-01-01', '2024-03-30'), isNull);
+      expect(AvailabilityPlanningPeriod.calculateInclusiveDays('2024-01-01', '2024-03-30'), 90);
+
+      // 91 inclusive days in 2024 (leap year) -> rejected
+      final over90Leap = AvailabilityPlanningPeriod.validateRange('2024-01-01', '2024-03-31');
+      expect(over90Leap, contains('90 dias civis'));
+      expect(AvailabilityPlanningPeriod.calculateInclusiveDays('2024-01-01', '2024-03-31'), 91);
 
       final inverted = AvailabilityPlanningPeriod.validateRange('2026-10-15', '2026-10-10');
       expect(inverted, contains('não pode ser anterior'));
@@ -199,8 +213,9 @@ void main() {
     });
   });
 
-  group('ManualMemberEligibility Invariants', () {
-    test('only manual members without linked user_id are eligible', () {
+  group('ManualMemberEligibility Invariants (R2-1)', () {
+    test('strictly requires isManual == true && userId == null', () {
+      // 1. userId == null -> eligible when manual
       const eligibleManualMember = MinistryMember(
         id: 'mem_1',
         name: 'Membro Manual 1',
@@ -208,38 +223,47 @@ void main() {
         userId: null,
       );
       expect(ManualMemberEligibility.isEligible(eligibleManualMember), isTrue);
+      expect(eligibleManualMember.isEligibleManualMember, isTrue);
 
-      const eligibleEmptyUserId = MinistryMember(
+      // 2. userId == "" -> NOT eligible
+      const emptyStringUserId = MinistryMember(
         id: 'mem_2',
-        name: 'Membro Manual 2',
+        name: 'Membro com String Vazia',
+        isManual: true,
+        userId: '',
+      );
+      expect(ManualMemberEligibility.isEligible(emptyStringUserId), isFalse);
+      expect(emptyStringUserId.isEligibleManualMember, isFalse);
+
+      // 3. userId == "   " (whitespace) -> NOT eligible
+      const whitespaceUserId = MinistryMember(
+        id: 'mem_3',
+        name: 'Membro com Espaços',
         isManual: true,
         userId: '   ',
       );
-      expect(ManualMemberEligibility.isEligible(eligibleEmptyUserId), isTrue);
+      expect(ManualMemberEligibility.isEligible(whitespaceUserId), isFalse);
+      expect(whitespaceUserId.isEligibleManualMember, isFalse);
 
+      // 4. linked non-empty userId -> NOT eligible
       const linkedMember = MinistryMember(
-        id: 'mem_3',
+        id: 'mem_4',
         name: 'Membro Vinculado',
-        isManual: false,
+        isManual: true,
         userId: 'usr_xyz',
       );
       expect(ManualMemberEligibility.isEligible(linkedMember), isFalse);
+      expect(linkedMember.isEligibleManualMember, isFalse);
 
+      // 5. isManual == false -> NOT eligible
       const unlinkedNonManualMember = MinistryMember(
-        id: 'mem_4',
+        id: 'mem_5',
         name: 'Membro Não Manual Sem User',
         isManual: false,
         userId: null,
       );
       expect(ManualMemberEligibility.isEligible(unlinkedNonManualMember), isFalse);
-
-      const manualWithUserIdAnomaly = MinistryMember(
-        id: 'mem_5',
-        name: 'Membro Manual mas com User ID',
-        isManual: true,
-        userId: 'usr_real',
-      );
-      expect(ManualMemberEligibility.isEligible(manualWithUserIdAnomaly), isFalse);
+      expect(unlinkedNonManualMember.isEligibleManualMember, isFalse);
     });
   });
 }
