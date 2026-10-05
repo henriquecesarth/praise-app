@@ -21,6 +21,7 @@ import '../features/members/presentation/controllers/members_providers.dart';
 import '../features/notifications/presentation/controllers/notification_providers.dart';
 export '../features/schedules/presentation/controllers/schedule_providers.dart';
 export '../features/repertoire/presentation/controllers/repertoire_providers.dart';
+export '../features/availability/presentation/controllers/availability_providers.dart';
 export '../features/push_notifications/presentation/controllers/push_notification_providers.dart';
 export '../features/members/presentation/controllers/members_providers.dart';
 
@@ -54,6 +55,12 @@ void resetAuthenticatedFeatures(dynamic refOrContainer) {
   try {
     refOrContainer.read(memberFormNotifierProvider.notifier).reset();
   } catch (_) {}
+  try {
+    refOrContainer.read(adminAvailabilityNotifierProvider.notifier).reset();
+  } catch (_) {}
+  try {
+    refOrContainer.read(manualMemberAvailabilityNotifierProvider.notifier).reset();
+  } catch (_) {}
 
   refOrContainer.invalidate(dashboardNotifierProvider);
   refOrContainer.invalidate(scheduleListNotifierProvider);
@@ -64,6 +71,8 @@ void resetAuthenticatedFeatures(dynamic refOrContainer) {
   refOrContainer.invalidate(memberDetailNotifierProvider);
   refOrContainer.invalidate(memberFormNotifierProvider);
   refOrContainer.invalidate(availabilityListNotifierProvider);
+  refOrContainer.invalidate(adminAvailabilityNotifierProvider);
+  refOrContainer.invalidate(manualMemberAvailabilityNotifierProvider);
   refOrContainer.invalidate(repertoireListNotifierProvider);
   refOrContainer.invalidate(songDetailNotifierProvider);
 

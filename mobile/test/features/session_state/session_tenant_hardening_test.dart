@@ -16,13 +16,15 @@ import 'package:louvaio_mobile/features/auth/domain/auth_user.dart';
 import 'package:louvaio_mobile/features/auth/presentation/controllers/auth_controller.dart';
 import 'package:louvaio_mobile/features/availability/data/availability_repository.dart';
 import 'package:louvaio_mobile/features/availability/domain/availability.dart';
+import 'package:louvaio_mobile/features/availability/presentation/controllers/admin_availability_controller.dart';
 import 'package:louvaio_mobile/features/availability/presentation/controllers/availability_list_controller.dart';
-import 'package:louvaio_mobile/features/availability/presentation/controllers/availability_providers.dart';
+import 'package:louvaio_mobile/features/availability/presentation/controllers/manual_member_availability_controller.dart';
 import 'package:louvaio_mobile/features/dashboard/data/dashboard_repository.dart';
 import 'package:louvaio_mobile/features/dashboard/domain/announcement.dart';
 import 'package:louvaio_mobile/features/dashboard/domain/dashboard_schedule_summary.dart';
 import 'package:louvaio_mobile/features/dashboard/presentation/controllers/dashboard_controller.dart';
 import 'package:louvaio_mobile/features/dashboard/presentation/dashboard_view.dart';
+import 'package:louvaio_mobile/features/members/data/members_repository.dart';
 import 'package:louvaio_mobile/features/ministry_context/data/ministry_repository.dart';
 import 'package:louvaio_mobile/features/ministry_context/domain/ministry.dart';
 import 'package:louvaio_mobile/features/repertoire/data/repertoire_repository.dart';
@@ -190,8 +192,48 @@ class FakeScheduleRepo implements ScheduleRepository {
   Future<List<MinistryRole>> getMinistryRoles(String ministryId) async => [];
 }
 
+class FakeMembersRepo implements MembersRepository {
+  @override
+  Future<List<MinistryMember>> getMembers(String ministryId) async => [];
+
+  @override
+  Future<List<MinistryRole>> getRoles(String ministryId) async => [];
+
+  @override
+  Future<MinistryMember> getMemberById(String ministryId, String memberId) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<MinistryMember> addMember({
+    required String ministryId,
+    required String name,
+    required String email,
+    String role = 'member',
+    String? birthDate,
+    List<String> roleIds = const [],
+  }) async => throw UnimplementedError();
+
+  @override
+  Future<MinistryMember> updateMember({
+    required String ministryId,
+    required String memberId,
+    String? name,
+    String? email,
+    String? birthDate,
+    String? role,
+    List<String>? roleIds,
+  }) async => throw UnimplementedError();
+
+  @override
+  Future<void> removeMember({required String ministryId, required String memberId}) async {}
+}
+
 class FakeAvailabilityRepo implements AvailabilityRepository {
   Future<AvailabilityListResponse> Function(String ministryId)? listHandler;
+  Future<ConsolidatedAvailabilityResponse> Function(String ministryId, {required String from, required String to})?
+      listConsolidatedHandler;
+  Future<AvailabilityListResponse> Function(String ministryId, String memberId)?
+      listManualMemberHandler;
 
   @override
   Future<AvailabilityListResponse> listMyAvailabilities(String ministryId,
@@ -214,6 +256,60 @@ class FakeAvailabilityRepo implements AvailabilityRepository {
 
   @override
   Future<void> deleteMyAvailability(String ministryId, String id) async {}
+
+  @override
+  Future<ConsolidatedAvailabilityResponse> listConsolidatedAvailability(
+    String ministryId, {
+    required String from,
+    required String to,
+    String? memberId,
+    int limit = 50,
+    String? cursor,
+  }) async {
+    if (listConsolidatedHandler != null) {
+      return listConsolidatedHandler!(ministryId, from: from, to: to);
+    }
+    return const ConsolidatedAvailabilityResponse(data: []);
+  }
+
+  @override
+  Future<AvailabilityListResponse> listManualMemberAvailabilities(
+    String ministryId,
+    String memberId, {
+    int limit = 50,
+    String? cursor,
+  }) async {
+    if (listManualMemberHandler != null) {
+      return listManualMemberHandler!(ministryId, memberId);
+    }
+    return const AvailabilityListResponse(data: []);
+  }
+
+  @override
+  Future<MemberAvailability> createManualMemberAvailability(
+    String ministryId,
+    String memberId,
+    CreateAvailabilityPayload payload,
+  ) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<MemberAvailability> updateManualMemberAvailability(
+    String ministryId,
+    String memberId,
+    String id,
+    UpdateAvailabilityPayload payload,
+  ) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> deleteManualMemberAvailability(
+    String ministryId,
+    String memberId,
+    String id,
+  ) async {}
 }
 
 class FakeRepertoireRepo implements RepertoireRepository {
@@ -466,7 +562,7 @@ void main() {
           id: 's_b',
           ministryId: 'min_b',
           title: 'Escala Beta Exclusiva',
-          date: '2026-10-02',
+          date: '2099-10-02',
           time: '20:00',
         ),
       ]);
@@ -655,6 +751,119 @@ void main() {
       expect(notifier.state.items.first.id, 'av_b');
       expect(notifier.state.items.any((a) => a.id == 'av_a'), isFalse);
     });
+
+    test(
+        'AdminAvailabilityNotifier: in-flight request discarded on ministry switch',
+        () async {
+      final repo = FakeAvailabilityRepo();
+      final completerA = Completer<ConsolidatedAvailabilityResponse>();
+
+      repo.listConsolidatedHandler = (mId, {required from, required to}) {
+        if (mId == 'min_a') return completerA.future;
+        return Future.value(
+          const ConsolidatedAvailabilityResponse(
+            data: [
+              ConsolidatedAvailabilityItem(
+                id: 'item_b',
+                ministryId: 'min_b',
+                memberId: 'mem_b',
+                memberName: 'Member B',
+                startDate: '2026-10-10',
+                endDate: '2026-10-10',
+                allDay: true,
+                startsAt: '2026-10-10T00:00:00',
+                endsAt: '2026-10-11T00:00:00',
+              ),
+            ],
+          ),
+        );
+      };
+
+      final notifier = AdminAvailabilityNotifier(
+        repository: repo,
+        membersRepository: FakeMembersRepo(),
+      );
+
+      final futureA = notifier.loadForMinistry('min_a');
+      await notifier.loadForMinistry('min_b');
+
+      expect(notifier.state.ministryId, 'min_b');
+      expect(notifier.state.items.first.id, 'item_b');
+
+      completerA.complete(
+        const ConsolidatedAvailabilityResponse(
+          data: [
+            ConsolidatedAvailabilityItem(
+              id: 'item_a',
+              ministryId: 'min_a',
+              memberId: 'mem_a',
+              memberName: 'Member A',
+              startDate: '2026-10-05',
+              endDate: '2026-10-05',
+              allDay: true,
+              startsAt: '2026-10-05T00:00:00',
+              endsAt: '2026-10-06T00:00:00',
+            ),
+          ],
+        ),
+      );
+      await futureA;
+
+      expect(notifier.state.ministryId, 'min_b');
+      expect(notifier.state.items.first.id, 'item_b');
+      expect(notifier.state.items.any((a) => a.id == 'item_a'), isFalse);
+    });
+
+    test(
+        'ManualMemberAvailabilityNotifier: in-flight request discarded on ministry switch',
+        () async {
+      final repo = FakeAvailabilityRepo();
+      final completerA = Completer<AvailabilityListResponse>();
+
+      repo.listManualMemberHandler = (mId, memId) {
+        if (mId == 'min_a') return completerA.future;
+        return Future.value(
+          AvailabilityListResponse(
+            data: [
+              createDummyAvailability(
+                id: 'man_b',
+                ministryId: 'min_b',
+                startDate: '2026-10-12',
+                endDate: '2026-10-12',
+              ),
+            ],
+          ),
+        );
+      };
+
+      final notifier = ManualMemberAvailabilityNotifier(repository: repo);
+
+      final futureA = notifier.load(ministryId: 'min_a', memberId: 'mem_1');
+      await notifier.load(ministryId: 'min_b', memberId: 'mem_2');
+
+      expect(notifier.state.ministryId, 'min_b');
+      expect(notifier.state.memberId, 'mem_2');
+      expect(notifier.state.items.first.id, 'man_b');
+
+      completerA.complete(
+        AvailabilityListResponse(
+          data: [
+            createDummyAvailability(
+              id: 'man_a',
+              ministryId: 'min_a',
+              startDate: '2026-10-08',
+              endDate: '2026-10-08',
+            ),
+          ],
+        ),
+      );
+      await futureA;
+
+      expect(notifier.state.ministryId, 'min_b');
+      expect(notifier.state.memberId, 'mem_2');
+      expect(notifier.state.items.first.id, 'man_b');
+      expect(notifier.state.items.any((a) => a.id == 'man_a'), isFalse);
+    });
   });
 
   group('M7 Regression D & E: Logout & User-Change Isolation', () {
@@ -720,6 +929,36 @@ void main() {
         ],
       );
 
+      container.read(adminAvailabilityNotifierProvider.notifier).state =
+          const AdminAvailabilityState(
+        ministryId: 'min_a',
+        items: [
+          ConsolidatedAvailabilityItem(
+            id: 'item_1',
+            ministryId: 'min_a',
+            memberId: 'mem_1',
+            memberName: 'Member 1',
+            startDate: '2026-10-01',
+            endDate: '2026-10-01',
+            allDay: true,
+            startsAt: '2026-10-01T00:00:00',
+            endsAt: '2026-10-02T00:00:00',
+          ),
+        ],
+      );
+
+      container.read(manualMemberAvailabilityNotifierProvider.notifier).state =
+          ManualMemberAvailabilityState(
+        ministryId: 'min_a',
+        memberId: 'mem_1',
+        items: [
+          createDummyAvailability(
+            id: 'man_1',
+            ministryId: 'min_a',
+          ),
+        ],
+      );
+
       container.read(repertoireListNotifierProvider.notifier).state =
           const RepertoireListState(
         ministryId: 'min_a',
@@ -764,6 +1003,10 @@ void main() {
           container.read(scheduleListNotifierProvider).schedules, isNotEmpty);
       expect(
           container.read(availabilityListNotifierProvider).items, isNotEmpty);
+      expect(
+          container.read(adminAvailabilityNotifierProvider).items, isNotEmpty);
+      expect(
+          container.read(manualMemberAvailabilityNotifierProvider).items, isNotEmpty);
       expect(container.read(repertoireListNotifierProvider).songs, isNotEmpty);
       expect(container.read(unreadNotificationCountProvider), 4);
       expect(container.read(notificationListProvider).items, isNotEmpty);
@@ -782,6 +1025,14 @@ void main() {
       expect(
           container.read(availabilityListNotifierProvider).ministryId, isNull);
       expect(container.read(availabilityListNotifierProvider).items, isEmpty);
+      expect(
+          container.read(adminAvailabilityNotifierProvider).ministryId, isNull);
+      expect(container.read(adminAvailabilityNotifierProvider).items, isEmpty);
+      expect(
+          container.read(manualMemberAvailabilityNotifierProvider).ministryId, isNull);
+      expect(
+          container.read(manualMemberAvailabilityNotifierProvider).memberId, isNull);
+      expect(container.read(manualMemberAvailabilityNotifierProvider).items, isEmpty);
       expect(container.read(repertoireListNotifierProvider).ministryId, isNull);
       expect(container.read(repertoireListNotifierProvider).songs, isEmpty);
       expect(container.read(unreadNotificationCountProvider), 0);

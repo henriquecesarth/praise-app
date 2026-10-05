@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/providers.dart';
 import '../../../../core/errors/app_failure.dart';
 import '../../domain/availability.dart';
-import '../controllers/availability_providers.dart';
 import '../widgets/availability_card.dart';
 import '../widgets/availability_form_modal.dart';
 

@@ -436,6 +436,12 @@ void main() {
       expect(find.text('Membro LouvAIO'), findsOneWidget);
       expect(find.text('membro@louvaio.com'), findsOneWidget);
       expect(find.text('Contexto do Ministério'), findsOneWidget);
+
+      await tester.scrollUntilVisible(
+        find.text('Sair da Conta'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
       expect(find.text('Sair da Conta'), findsOneWidget);
 
       // O. Production UI must NOT expose technical UID

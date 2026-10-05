@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../features/availability/presentation/controllers/availability_providers.dart';
 import '../../features/availability/presentation/views/my_availability_screen.dart';
+import '../../features/availability/presentation/views/admin_availability_screen.dart';
 import '../../features/dashboard/presentation/dashboard_view.dart';
 import '../../features/ministry_context/domain/ministry.dart';
 import '../../features/ministry_context/presentation/controllers/ministry_context_controller.dart';
@@ -41,6 +41,12 @@ class _AppShellState extends ConsumerState<AppShell> {
         try {
           ref.read(scheduleFormNotifierProvider.notifier).invalidateTenant();
         } catch (_) {}
+        try {
+          ref.read(adminAvailabilityNotifierProvider.notifier).invalidateTenant();
+        } catch (_) {}
+        try {
+          ref.read(manualMemberAvailabilityNotifierProvider.notifier).invalidateTenant();
+        } catch (_) {}
 
         ref.invalidate(dashboardNotifierProvider);
         ref.invalidate(scheduleListNotifierProvider);
@@ -48,6 +54,8 @@ class _AppShellState extends ConsumerState<AppShell> {
         ref.invalidate(scheduleFormNotifierProvider);
         ref.invalidate(commentsNotifierProvider);
         ref.invalidate(availabilityListNotifierProvider);
+        ref.invalidate(adminAvailabilityNotifierProvider);
+        ref.invalidate(manualMemberAvailabilityNotifierProvider);
         ref.invalidate(repertoireListNotifierProvider);
         ref.invalidate(songDetailNotifierProvider);
         ref.invalidate(membersDirectoryNotifierProvider);
@@ -491,6 +499,31 @@ class _ProfileView extends ConsumerWidget {
               },
             ),
             const Divider(),
+            if (selectedMinistry!.isAdmin) ...[
+              ListTile(
+                key: const ValueKey('admin_availability_tile'),
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  Icons.event_available_outlined,
+                  color: theme.colorScheme.secondary,
+                ),
+                title: const Text('Disponibilidade da Equipe'),
+                subtitle: const Text(
+                    'Consolidado de indisponibilidades dos integrantes'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => AdminAvailabilityScreen(
+                        ministryId: selectedMinistry!.id,
+                        ministryName: selectedMinistry!.name,
+                      ),
+                    ),
+                  );
+                },
+              ),
+              const Divider(),
+            ],
           ],
           ListTile(
             contentPadding: EdgeInsets.zero,

@@ -7,7 +7,6 @@ import 'package:louvaio_mobile/core/errors/app_failure.dart';
 import 'package:louvaio_mobile/core/storage/preferences_storage.dart';
 import 'package:louvaio_mobile/features/availability/data/availability_repository.dart';
 import 'package:louvaio_mobile/features/availability/domain/availability.dart';
-import 'package:louvaio_mobile/features/availability/presentation/controllers/availability_providers.dart';
 import 'package:louvaio_mobile/features/availability/presentation/widgets/availability_form_modal.dart';
 
 class FakeModalAvailabilityRepository implements AvailabilityRepository {
@@ -84,6 +83,56 @@ class FakeModalAvailabilityRepository implements AvailabilityRepository {
 
   @override
   Future<void> deleteMyAvailability(String ministryId, String id) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<ConsolidatedAvailabilityResponse> listConsolidatedAvailability(
+    String ministryId, {
+    required String from,
+    required String to,
+    String? memberId,
+    int limit = 50,
+    String? cursor,
+  }) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<AvailabilityListResponse> listManualMemberAvailabilities(
+    String ministryId,
+    String memberId, {
+    int limit = 50,
+    String? cursor,
+  }) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<MemberAvailability> createManualMemberAvailability(
+    String ministryId,
+    String memberId,
+    CreateAvailabilityPayload payload,
+  ) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<MemberAvailability> updateManualMemberAvailability(
+    String ministryId,
+    String memberId,
+    String id,
+    UpdateAvailabilityPayload payload,
+  ) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> deleteManualMemberAvailability(
+    String ministryId,
+    String memberId,
+    String id,
+  ) async {
     throw UnimplementedError();
   }
 }

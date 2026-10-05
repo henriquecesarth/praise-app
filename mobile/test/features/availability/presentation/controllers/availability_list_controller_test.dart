@@ -54,6 +54,56 @@ class FakeAvailabilityRepository implements AvailabilityRepository {
   Future<void> deleteMyAvailability(String ministryId, String id) async {
     throw UnimplementedError();
   }
+
+  @override
+  Future<ConsolidatedAvailabilityResponse> listConsolidatedAvailability(
+    String ministryId, {
+    required String from,
+    required String to,
+    String? memberId,
+    int limit = 50,
+    String? cursor,
+  }) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<AvailabilityListResponse> listManualMemberAvailabilities(
+    String ministryId,
+    String memberId, {
+    int limit = 50,
+    String? cursor,
+  }) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<MemberAvailability> createManualMemberAvailability(
+    String ministryId,
+    String memberId,
+    CreateAvailabilityPayload payload,
+  ) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<MemberAvailability> updateManualMemberAvailability(
+    String ministryId,
+    String memberId,
+    String id,
+    UpdateAvailabilityPayload payload,
+  ) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> deleteManualMemberAvailability(
+    String ministryId,
+    String memberId,
+    String id,
+  ) async {
+    throw UnimplementedError();
+  }
 }
 
 MemberAvailability createDummyAvailability({

@@ -6,6 +6,7 @@ import 'package:louvaio_mobile/features/ministry_context/presentation/controller
 import 'package:louvaio_mobile/features/schedules/domain/ministry_member.dart';
 import 'package:louvaio_mobile/features/members/presentation/controllers/member_detail_controller.dart';
 import 'package:louvaio_mobile/features/members/presentation/widgets/member_form_dialog.dart';
+import 'package:louvaio_mobile/features/availability/presentation/views/manual_member_availability_screen.dart';
 
 /// Full screen view for inspecting and managing a ministry member.
 ///
@@ -677,6 +678,30 @@ class _MemberDetailScreenState extends ConsumerState<MemberDetailScreen> {
 
           // Admin Action Buttons
           if (isViewerAdmin) ...[
+            if (member.isManual &&
+                (member.userId == null || member.userId!.isEmpty)) ...[
+              OutlinedButton.icon(
+                key: const ValueKey('manage_availability_button'),
+                onPressed: state.isSubmitting
+                    ? null
+                    : () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => ManualMemberAvailabilityScreen(
+                              ministryId: widget.ministryId,
+                              member: member,
+                            ),
+                          ),
+                        );
+                      },
+                icon: const Icon(Icons.event_busy_outlined, size: 18),
+                label: const Text('Gerenciar indisponibilidade'),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
             FilledButton.icon(
               key: const ValueKey('manage_edit_button'),
               onPressed:
