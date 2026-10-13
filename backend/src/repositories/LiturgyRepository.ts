@@ -6,6 +6,29 @@ export class LiturgyRepository {
   private readonly itemsCol = db.collection('liturgy_items');
   private readonly songsCol = db.collection('songs');
 
+  private async validateSongReferences(groupId: string, items?: any[]): Promise<void> {
+    if (!items || !Array.isArray(items)) return;
+    const songIds = Array.from(
+      new Set(
+        items
+          .map((item) => (item.song_id || item.songId ? String(item.song_id || item.songId).trim() : null))
+          .filter(Boolean) as string[]
+      )
+    );
+
+    for (const songId of songIds) {
+      const songDoc = await this.songsCol.doc(songId).get();
+      if (!songDoc.exists) {
+        throw new AppError(404, `Música referenciada '${songId}' não encontrada.`);
+      }
+      const songData = songDoc.data();
+      const songMinistryId = songData?.ministry_id || songData?.group_id;
+      if (songMinistryId !== groupId) {
+        throw new AppError(400, 'Uma ou mais músicas selecionadas não pertencem a este ministério.');
+      }
+    }
+  }
+
   async getLiturgiesByGroup(groupId: string) {
     const snap = await this.liturgiesCol.where('group_id', '==', groupId).get();
     const liturgies = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as any));
@@ -17,7 +40,7 @@ export class LiturgyRepository {
       for (const item of items) {
         if (item.song_id) {
           const songDoc = await this.songsCol.doc(item.song_id).get();
-          if (songDoc.exists) {
+          if (songDoc.exists && (songDoc.data()?.ministry_id === groupId || songDoc.data()?.group_id === groupId)) {
             item.song = { id: songDoc.id, ...songDoc.data() };
           }
         }
@@ -36,7 +59,8 @@ export class LiturgyRepository {
       throw new AppError(404, 'Liturgia não encontrada.');
     }
     const liturgy = { id: doc.id, ...doc.data() } as any;
-    if (liturgy.group_id !== groupId) {
+    const liturgyMinistryId = liturgy.ministry_id || liturgy.group_id;
+    if (liturgyMinistryId !== groupId) {
       throw new AppError(404, 'Liturgia não encontrada.');
     }
 
@@ -46,7 +70,7 @@ export class LiturgyRepository {
     for (const item of items) {
       if (item.song_id) {
         const songDoc = await this.songsCol.doc(item.song_id).get();
-        if (songDoc.exists && songDoc.data()?.ministry_id === groupId) {
+        if (songDoc.exists && (songDoc.data()?.ministry_id === groupId || songDoc.data()?.group_id === groupId)) {
           item.song = { id: songDoc.id, ...songDoc.data() };
         }
       }
@@ -57,24 +81,28 @@ export class LiturgyRepository {
     return liturgy;
   }
 
-  async createLiturgy(groupId: string, userId: string, data: { title: string; date: string; description?: string; items?: any[] }) {
+  async createLiturgy(groupId: string, userId: string, data: { title: string; date: string; description?: string | null; items?: any[] }) {
+    await this.validateSongReferences(groupId, data.items);
+
     const now = new Date().toISOString();
     const ref = this.liturgiesCol.doc();
+    const batch = db.batch();
 
     const liturgy = {
       id: ref.id,
       group_id: groupId,
-      title: data.title,
+      ministry_id: groupId,
+      title: data.title.trim(),
       date: data.date,
-      description: data.description || null,
+      description: data.description ? data.description.trim() : null,
       created_by: userId,
       created_at: now,
       updated_at: now,
     };
 
-    await ref.set(liturgy);
+    batch.set(ref, liturgy);
 
-    const createdItems = [];
+    const createdItems: any[] = [];
     if (data.items && Array.isArray(data.items)) {
       for (let i = 0; i < data.items.length; i++) {
         const itemInput = data.items[i];
@@ -84,15 +112,17 @@ export class LiturgyRepository {
           liturgy_id: ref.id,
           song_id: itemInput.song_id || itemInput.songId || null,
           type: itemInput.type || 'song',
-          title: itemInput.title,
-          notes: itemInput.notes || null,
-          position: i,
+          title: itemInput.title.trim(),
+          notes: itemInput.notes ? itemInput.notes.trim() : null,
+          position: typeof itemInput.position === 'number' ? itemInput.position : i,
           created_at: now,
         };
-        await itemRef.set(itemData);
+        batch.set(itemRef, itemData);
         createdItems.push(itemData);
       }
     }
+
+    await batch.commit();
 
     return { ...liturgy, liturgy_items: createdItems };
   }
@@ -102,23 +132,25 @@ export class LiturgyRepository {
     groupId: string,
     data: { title?: string; date?: string; description?: string | null; items?: any[] }
   ) {
-    const existing = await this.getLiturgyById(liturgyId, groupId);
+    await this.getLiturgyById(liturgyId, groupId);
+    await this.validateSongReferences(groupId, data.items);
+
     const now = new Date().toISOString();
+    const batch = db.batch();
 
     const updatePayload: any = { updated_at: now };
-    if (data.title !== undefined) updatePayload.title = data.title;
+    if (data.title !== undefined) updatePayload.title = data.title.trim();
     if (data.date !== undefined) updatePayload.date = data.date;
-    if (data.description !== undefined) updatePayload.description = data.description;
+    if (data.description !== undefined) updatePayload.description = data.description ? data.description.trim() : null;
 
-    await this.liturgiesCol.doc(liturgyId).update(updatePayload);
+    batch.update(this.liturgiesCol.doc(liturgyId), updatePayload);
 
     if (data.items !== undefined && Array.isArray(data.items)) {
-      // Remover itens anteriores
       const oldItemsSnap = await this.itemsCol.where('liturgy_id', '==', liturgyId).get();
-      const deletes = oldItemsSnap.docs.map((d) => d.ref.delete());
-      await Promise.all(deletes);
+      for (const d of oldItemsSnap.docs) {
+        batch.delete(d.ref);
+      }
 
-      // Inserir novos itens
       for (let i = 0; i < data.items.length; i++) {
         const itemInput = data.items[i];
         const itemRef = this.itemsCol.doc();
@@ -127,14 +159,16 @@ export class LiturgyRepository {
           liturgy_id: liturgyId,
           song_id: itemInput.song_id || itemInput.songId || null,
           type: itemInput.type || 'song',
-          title: itemInput.title,
-          notes: itemInput.notes || null,
-          position: i,
+          title: itemInput.title.trim(),
+          notes: itemInput.notes ? itemInput.notes.trim() : null,
+          position: typeof itemInput.position === 'number' ? itemInput.position : i,
           created_at: now,
         };
-        await itemRef.set(itemData);
+        batch.set(itemRef, itemData);
       }
     }
+
+    await batch.commit();
 
     return this.getLiturgyById(liturgyId, groupId);
   }
@@ -143,10 +177,13 @@ export class LiturgyRepository {
     await this.getLiturgyById(liturgyId, groupId);
 
     const itemsSnap = await this.itemsCol.where('liturgy_id', '==', liturgyId).get();
-    const deletes = itemsSnap.docs.map((d) => d.ref.delete());
-    await Promise.all(deletes);
+    const batch = db.batch();
 
-    await this.liturgiesCol.doc(liturgyId).delete();
+    for (const d of itemsSnap.docs) {
+      batch.delete(d.ref);
+    }
+    batch.delete(this.liturgiesCol.doc(liturgyId));
+
+    await batch.commit();
   }
 }
-
