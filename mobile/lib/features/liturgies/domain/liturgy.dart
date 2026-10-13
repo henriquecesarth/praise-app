@@ -101,10 +101,11 @@ class LiturgyItem {
   }
 
   Map<String, dynamic> toJson() {
+    final isSong = type == LiturgyItemType.song;
     return {
       'id': id,
       'liturgy_id': liturgyId,
-      'song_id': songId,
+      'song_id': isSong ? songId : null,
       'type': type.value,
       'title': title,
       'notes': notes,

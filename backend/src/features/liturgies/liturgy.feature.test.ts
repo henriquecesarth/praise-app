@@ -47,6 +47,32 @@ describe('Liturgy Feature & Security Test Suite (M13)', () => {
       expect(parsed2.success).toBe(true);
     });
 
+    it('rejects path-like, slash-containing, or whitespace-only song IDs (R2-9)', () => {
+      expect(liturgyItemSchema.safeParse({ title: 'Song', songId: 'foo/bar' }).success).toBe(false);
+      expect(liturgyItemSchema.safeParse({ title: 'Song', song_id: '/foo' }).success).toBe(false);
+      expect(liturgyItemSchema.safeParse({ title: 'Song', songId: 'foo/' }).success).toBe(false);
+      expect(liturgyItemSchema.safeParse({ title: 'Song', songId: '   ' }).success).toBe(false);
+      expect(liturgyItemSchema.safeParse({ title: 'Song', songId: 'a'.repeat(101) }).success).toBe(false);
+      // Valid alphanumeric and dash/underscore accepted
+      expect(liturgyItemSchema.safeParse({ title: 'Song', songId: 'song-abc_123' }).success).toBe(true);
+    });
+
+    it('accepts valid civil dates and leap day dates (R2-11)', () => {
+      expect(createLiturgySchema.safeParse({ title: 'Culto', date: '2026-10-13' }).success).toBe(true);
+      expect(createLiturgySchema.safeParse({ title: 'Culto', date: '2024-02-29' }).success).toBe(true); // 2024 is leap year
+      expect(createLiturgySchema.safeParse({ title: 'Culto', date: '2026-10-05T19:00:00.000Z' }).success).toBe(true);
+    });
+
+    it('rejects impossible dates, invalid leap day, and malformed strings (R2-11)', () => {
+      expect(createLiturgySchema.safeParse({ title: 'Culto', date: '2026-02-29' }).success).toBe(false); // 2026 is not leap year
+      expect(createLiturgySchema.safeParse({ title: 'Culto', date: '2026-02-31' }).success).toBe(false);
+      expect(createLiturgySchema.safeParse({ title: 'Culto', date: '2026-13-01' }).success).toBe(false);
+      expect(createLiturgySchema.safeParse({ title: 'Culto', date: '2026-00-10' }).success).toBe(false);
+      expect(createLiturgySchema.safeParse({ title: 'Culto', date: 'abcdefghij' }).success).toBe(false);
+      expect(createLiturgySchema.safeParse({ title: 'Culto', date: '2026-10-13junk' }).success).toBe(false);
+      expect(createLiturgySchema.safeParse({ title: 'Culto', date: '2026-99-99' }).success).toBe(false);
+    });
+
     it('rejects liturgy with empty title or invalid bounds', () => {
       const invalid = {
         title: ' ',
@@ -160,6 +186,60 @@ describe('Liturgy Feature & Security Test Suite (M13)', () => {
       // Item 2 song is NOT enriched because ministry_id is min-beta
       expect(items[1].song).toBeUndefined();
     });
+
+    it('excludes song enrichment if song has contradictory tenant fields (ministry_id=Beta, group_id=Alpha) (R2-5)', async () => {
+      const mockLiturgiesDocs = [
+        {
+          id: 'lit-1',
+          data: () => ({ id: 'lit-1', group_id: 'min-alpha', ministry_id: 'min-alpha', title: 'Culto', date: '2026-10-13' }),
+        },
+      ];
+      const mockItemsDocs = [
+        {
+          id: 'item-1',
+          data: () => ({ id: 'item-1', liturgy_id: 'lit-1', song_id: 'song-contradictory', type: 'song', title: 'Contraditória' }),
+        },
+      ];
+      (repo as any).liturgiesCol = {
+        where: vi.fn().mockReturnValue({
+          get: vi.fn().mockResolvedValue({ docs: mockLiturgiesDocs }),
+        }),
+      };
+      (repo as any).itemsCol = {
+        where: vi.fn().mockReturnValue({
+          get: vi.fn().mockResolvedValue({ docs: mockItemsDocs }),
+        }),
+      };
+      (repo as any).songsCol = {
+        doc: () => ({
+          get: vi.fn().mockResolvedValue({
+            exists: true,
+            id: 'song-contradictory',
+            data: () => ({ id: 'song-contradictory', ministry_id: 'min-beta', group_id: 'min-alpha', title: 'Contraditória' }),
+          }),
+        }),
+      };
+
+      const list = await repo.getLiturgiesByGroup('min-alpha');
+      expect(list[0].liturgy_items[0].song).toBeUndefined();
+    });
+
+    it('excludes liturgy from list if liturgy has contradictory tenant fields (ministry_id=Beta, group_id=Alpha) (R2-7)', async () => {
+      const mockLiturgiesDocs = [
+        {
+          id: 'lit-contradictory',
+          data: () => ({ id: 'lit-contradictory', group_id: 'min-alpha', ministry_id: 'min-beta', title: 'Culto Contraditório' }),
+        },
+      ];
+      (repo as any).liturgiesCol = {
+        where: vi.fn().mockReturnValue({
+          get: vi.fn().mockResolvedValue({ docs: mockLiturgiesDocs }),
+        }),
+      };
+
+      const list = await repo.getLiturgiesByGroup('min-alpha');
+      expect(list).toHaveLength(0);
+    });
   });
 
   describe('3. Anti-IDOR & Fail-Closed Tenant Security', () => {
@@ -188,6 +268,22 @@ describe('Liturgy Feature & Security Test Suite (M13)', () => {
 
       // Request from min-alpha must fail with 404 (anti-IDOR)
       await expect(repo.getLiturgyById('lit-beta', 'min-alpha')).rejects.toThrow(
+        new AppError(404, 'Liturgia não encontrada.')
+      );
+    });
+
+    it('throws 404 fail-closed when liturgy has contradictory tenant fields (ministry_id=Beta, group_id=Alpha) (R2-7)', async () => {
+      (repo as any).liturgiesCol = {
+        doc: () => ({
+          get: vi.fn().mockResolvedValue({
+            exists: true,
+            id: 'lit-contradictory',
+            data: () => ({ id: 'lit-contradictory', group_id: 'min-alpha', ministry_id: 'min-beta' }),
+          }),
+        }),
+      };
+
+      await expect(repo.getLiturgyById('lit-contradictory', 'min-alpha')).rejects.toThrow(
         new AppError(404, 'Liturgia não encontrada.')
       );
     });
@@ -268,6 +364,50 @@ describe('Liturgy Feature & Security Test Suite (M13)', () => {
       expect(result.id).toBe('lit-alpha');
       expect(result.liturgy_items[0].song).toBeUndefined();
     });
+
+    it('detail (getLiturgyById) does not enrich song with contradictory tenant fields (R2-5)', async () => {
+      (repo as any).liturgiesCol = {
+        doc: () => ({
+          get: vi.fn().mockResolvedValue({
+            exists: true,
+            id: 'lit-alpha',
+            data: () => ({ id: 'lit-alpha', group_id: 'min-alpha', ministry_id: 'min-alpha', title: 'Culto Alpha' }),
+          }),
+        }),
+      };
+
+      (repo as any).itemsCol = {
+        where: vi.fn().mockReturnValue({
+          get: vi.fn().mockResolvedValue({
+            docs: [
+              {
+                id: 'item-1',
+                data: () => ({
+                  id: 'item-1',
+                  liturgy_id: 'lit-alpha',
+                  song_id: 'song-contra',
+                  type: 'song',
+                  title: 'Música Contraditória',
+                }),
+              },
+            ],
+          }),
+        }),
+      };
+
+      (repo as any).songsCol = {
+        doc: () => ({
+          get: vi.fn().mockResolvedValue({
+            exists: true,
+            id: 'song-contra',
+            data: () => ({ id: 'song-contra', ministry_id: 'min-beta', group_id: 'min-alpha', title: 'Música Beta' }),
+          }),
+        }),
+      };
+
+      const result = await repo.getLiturgyById('lit-alpha', 'min-alpha');
+      expect(result.liturgy_items[0].song).toBeUndefined();
+    });
   });
 
   describe('4. Cross-Tenant Song Reference Validation', () => {
@@ -334,6 +474,26 @@ describe('Liturgy Feature & Security Test Suite (M13)', () => {
       await expect(
         repo.updateLiturgy('lit-1', 'min-alpha', {
           items: [{ title: 'Música', songId: 'song-other' }],
+        })
+      ).rejects.toThrow(new AppError(400, 'Uma ou mais músicas selecionadas não pertencem a este ministério.'));
+    });
+
+    it('rejects liturgy creation if referenced song has contradictory tenant fields (R2-8)', async () => {
+      (repo as any).songsCol = {
+        doc: (id: string) => ({
+          get: vi.fn().mockResolvedValue({
+            exists: true,
+            id,
+            data: () => ({ id, ministry_id: 'min-beta', group_id: 'min-alpha', title: 'Song' }),
+          }),
+        }),
+      };
+
+      await expect(
+        repo.createLiturgy('min-alpha', 'user-1', {
+          title: 'Culto',
+          date: '2026-10-13',
+          items: [{ title: 'Música', songId: 'song-contradictory' }],
         })
       ).rejects.toThrow(new AppError(400, 'Uma ou mais músicas selecionadas não pertencem a este ministério.'));
     });
@@ -569,5 +729,44 @@ describe('Liturgy Feature & Security Test Suite (M13)', () => {
       expect(writeErr.details.code).toBe('MINISTRY_ACCESS_DENIED');
     });
   });
-});
 
+  describe('7. Non-Song Item Normalization (R2-15)', () => {
+    it('normalizes song_id to null when item type is reading, prayer, or custom', async () => {
+      const mockBatch = {
+        set: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn(),
+        commit: vi.fn().mockResolvedValue(undefined),
+      };
+      vi.spyOn(db, 'batch').mockReturnValue(mockBatch as any);
+
+      (repo as any).liturgiesCol = {
+        doc: () => ({ id: 'mock-lit-id' }),
+      };
+      (repo as any).itemsCol = {
+        doc: () => ({ id: 'mock-item-id' }),
+      };
+
+      const result = await repo.createLiturgy('min-alpha', 'usr-1', {
+        title: 'Culto Misto',
+        date: '2026-10-13',
+        items: [
+          { title: 'Oração', type: 'prayer', songId: 'some-song-id', position: 0 },
+          { title: 'Leitura Bíblica', type: 'reading', song_id: 'some-other-id', position: 1 },
+        ],
+      });
+
+      expect(result.liturgy_items[0].song_id).toBeNull();
+      expect(result.liturgy_items[1].song_id).toBeNull();
+      // Ensure mockBatch.set recorded song_id as null
+      expect(mockBatch.set).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ type: 'prayer', song_id: null })
+      );
+      expect(mockBatch.set).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ type: 'reading', song_id: null })
+      );
+    });
+  });
+});

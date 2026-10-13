@@ -1,4 +1,5 @@
-﻿import 'package:flutter_test/flutter_test.dart';
+import 'dart:async';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/core/errors/app_failure.dart';
 import 'package:louvaio_mobile/features/liturgies/data/liturgy_repository.dart';
 import 'package:louvaio_mobile/features/liturgies/domain/liturgy.dart';
@@ -10,6 +11,9 @@ class FakeLiturgyRepository implements LiturgyRepository {
   List<Liturgy> liturgiesToReturn = [];
   Liturgy? detailToReturn;
   Exception? errorToThrow;
+  Completer<void>? createCompleter;
+  Completer<void>? updateCompleter;
+  Completer<void>? deleteCompleter;
   int listCallCount = 0;
   int detailCallCount = 0;
   int createCallCount = 0;
@@ -45,6 +49,7 @@ class FakeLiturgyRepository implements LiturgyRepository {
     List<Map<String, dynamic>>? items,
   }) async {
     createCallCount++;
+    if (createCompleter != null) await createCompleter!.future;
     if (errorToThrow != null) throw errorToThrow!;
     return Liturgy(
       id: 'created-1',
@@ -65,6 +70,7 @@ class FakeLiturgyRepository implements LiturgyRepository {
     List<Map<String, dynamic>>? items,
   }) async {
     updateCallCount++;
+    if (updateCompleter != null) await updateCompleter!.future;
     if (errorToThrow != null) throw errorToThrow!;
     return Liturgy(
       id: liturgyId,
@@ -77,6 +83,7 @@ class FakeLiturgyRepository implements LiturgyRepository {
   @override
   Future<bool> deleteLiturgy(String ministryId, String liturgyId) async {
     deleteCallCount++;
+    if (deleteCompleter != null) await deleteCompleter!.future;
     if (errorToThrow != null) throw errorToThrow!;
     return true;
   }
@@ -203,6 +210,96 @@ void main() {
       final ok = await notifier.deleteLiturgy('min-1', 'lit-1');
       expect(ok, isTrue);
       expect(fakeRepo.deleteCallCount, equals(1));
+    });
+
+    test('stale createLiturgy is discarded when tenant changes', () async {
+      fakeRepo.createCompleter = Completer<void>();
+      final notifier = LiturgyFormNotifier(repository: fakeRepo);
+
+      final future = notifier.createLiturgy('min-1', title: 'Culto Stale', date: '2026-10-15');
+      expect(notifier.state.isSubmitting, isTrue);
+
+      // Invalidate tenant while request is in-flight
+      notifier.invalidateTenant();
+
+      // Complete async repository call
+      fakeRepo.createCompleter!.complete();
+      final result = await future;
+
+      expect(result, isNull, reason: 'Stale mutation result must be discarded');
+      expect(notifier.state.isSuccess, isFalse);
+      expect(notifier.state.isSubmitting, isFalse);
+    });
+
+    test('stale createLiturgy error is discarded when tenant changes', () async {
+      fakeRepo.createCompleter = Completer<void>();
+      fakeRepo.errorToThrow = const AppFailure(message: 'Erro servidor');
+      final notifier = LiturgyFormNotifier(repository: fakeRepo);
+
+      final future = notifier.createLiturgy('min-1', title: 'Culto Stale Error', date: '2026-10-15');
+      expect(notifier.state.isSubmitting, isTrue);
+
+      notifier.invalidateTenant();
+
+      fakeRepo.createCompleter!.complete();
+      final result = await future;
+
+      expect(result, isNull);
+      expect(notifier.state.errorMessage, isNull, reason: 'Stale error must be discarded');
+      expect(notifier.state.isSubmitting, isFalse);
+    });
+
+    test('stale updateLiturgy is discarded when tenant changes', () async {
+      fakeRepo.updateCompleter = Completer<void>();
+      final notifier = LiturgyFormNotifier(repository: fakeRepo);
+
+      final future = notifier.updateLiturgy('min-1', 'lit-1', title: 'Culto Update Stale');
+      expect(notifier.state.isSubmitting, isTrue);
+
+      notifier.invalidateTenant();
+
+      fakeRepo.updateCompleter!.complete();
+      final result = await future;
+
+      expect(result, isNull, reason: 'Stale update result must be discarded');
+      expect(notifier.state.isSuccess, isFalse);
+      expect(notifier.state.isSubmitting, isFalse);
+    });
+
+    test('stale deleteLiturgy is discarded when tenant changes', () async {
+      fakeRepo.deleteCompleter = Completer<void>();
+      final notifier = LiturgyFormNotifier(repository: fakeRepo);
+
+      final future = notifier.deleteLiturgy('min-1', 'lit-1');
+      expect(notifier.state.isSubmitting, isTrue);
+
+      notifier.invalidateTenant();
+
+      fakeRepo.deleteCompleter!.complete();
+      final ok = await future;
+
+      expect(ok, isFalse, reason: 'Stale delete result must return false');
+      expect(notifier.state.isSuccess, isFalse);
+      expect(notifier.state.isSubmitting, isFalse);
+    });
+
+    test('session reset clears state and discards in-flight mutation', () async {
+      fakeRepo.createCompleter = Completer<void>();
+      final notifier = LiturgyFormNotifier(repository: fakeRepo);
+
+      final future = notifier.createLiturgy('min-1', title: 'Culto User Reset', date: '2026-10-15');
+      expect(notifier.state.isSubmitting, isTrue);
+
+      // User logout or context reset
+      notifier.reset();
+      expect(notifier.state.isSubmitting, isFalse);
+
+      fakeRepo.createCompleter!.complete();
+      final result = await future;
+
+      expect(result, isNull);
+      expect(notifier.state.isSuccess, isFalse);
+      expect(notifier.state.isSubmitting, isFalse);
     });
   });
 }

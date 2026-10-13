@@ -32,10 +32,14 @@ class LiturgyFormState {
 
 class LiturgyFormNotifier extends StateNotifier<LiturgyFormState> {
   final LiturgyRepository _repository;
+  int _currentGeneration = 0;
+  String? _boundMinistryId;
 
   LiturgyFormNotifier({required LiturgyRepository repository})
       : _repository = repository,
         super(const LiturgyFormState());
+
+  int get currentGeneration => _currentGeneration;
 
   Future<Liturgy?> createLiturgy(
     String ministryId, {
@@ -45,6 +49,8 @@ class LiturgyFormNotifier extends StateNotifier<LiturgyFormState> {
     List<Map<String, dynamic>>? items,
   }) async {
     if (state.isSubmitting) return null; // Double-submit guard
+    final requestGeneration = _currentGeneration;
+    _boundMinistryId = ministryId;
     state = state.copyWith(isSubmitting: true, clearError: true, isSuccess: false);
 
     try {
@@ -55,9 +61,15 @@ class LiturgyFormNotifier extends StateNotifier<LiturgyFormState> {
         description: description,
         items: items,
       );
+      if (requestGeneration != _currentGeneration || _boundMinistryId != ministryId) {
+        return null; // Stale mutation discarded
+      }
       state = state.copyWith(isSubmitting: false, isSuccess: true);
       return created;
     } catch (e) {
+      if (requestGeneration != _currentGeneration || _boundMinistryId != ministryId) {
+        return null; // Stale mutation discarded
+      }
       state = state.copyWith(
         isSubmitting: false,
         errorMessage: e is AppFailure ? e.message : e.toString(),
@@ -75,6 +87,8 @@ class LiturgyFormNotifier extends StateNotifier<LiturgyFormState> {
     List<Map<String, dynamic>>? items,
   }) async {
     if (state.isSubmitting) return null; // Double-submit guard
+    final requestGeneration = _currentGeneration;
+    _boundMinistryId = ministryId;
     state = state.copyWith(isSubmitting: true, clearError: true, isSuccess: false);
 
     try {
@@ -86,9 +100,15 @@ class LiturgyFormNotifier extends StateNotifier<LiturgyFormState> {
         description: description,
         items: items,
       );
+      if (requestGeneration != _currentGeneration || _boundMinistryId != ministryId) {
+        return null; // Stale mutation discarded
+      }
       state = state.copyWith(isSubmitting: false, isSuccess: true);
       return updated;
     } catch (e) {
+      if (requestGeneration != _currentGeneration || _boundMinistryId != ministryId) {
+        return null; // Stale mutation discarded
+      }
       state = state.copyWith(
         isSubmitting: false,
         errorMessage: e is AppFailure ? e.message : e.toString(),
@@ -99,13 +119,21 @@ class LiturgyFormNotifier extends StateNotifier<LiturgyFormState> {
 
   Future<bool> deleteLiturgy(String ministryId, String liturgyId) async {
     if (state.isSubmitting) return false; // Double-submit guard
+    final requestGeneration = _currentGeneration;
+    _boundMinistryId = ministryId;
     state = state.copyWith(isSubmitting: true, clearError: true, isSuccess: false);
 
     try {
       await _repository.deleteLiturgy(ministryId, liturgyId);
+      if (requestGeneration != _currentGeneration || _boundMinistryId != ministryId) {
+        return false; // Stale mutation discarded
+      }
       state = state.copyWith(isSubmitting: false, isSuccess: true);
       return true;
     } catch (e) {
+      if (requestGeneration != _currentGeneration || _boundMinistryId != ministryId) {
+        return false; // Stale mutation discarded
+      }
       state = state.copyWith(
         isSubmitting: false,
         errorMessage: e is AppFailure ? e.message : e.toString(),
@@ -115,10 +143,14 @@ class LiturgyFormNotifier extends StateNotifier<LiturgyFormState> {
   }
 
   void invalidateTenant() {
+    _currentGeneration++;
+    _boundMinistryId = null;
     state = const LiturgyFormState();
   }
 
   void reset() {
+    _currentGeneration++;
+    _boundMinistryId = null;
     state = const LiturgyFormState();
   }
 }

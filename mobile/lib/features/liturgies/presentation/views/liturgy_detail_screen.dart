@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/providers.dart';
+import '../../../ministry_context/presentation/controllers/ministry_context_controller.dart';
 import '../../../repertoire/presentation/views/song_detail_view.dart';
 import '../../domain/liturgy.dart';
 import '../widgets/liturgy_item_tile.dart';
@@ -76,7 +77,15 @@ class _LiturgyDetailScreenState extends ConsumerState<LiturgyDetailScreen> {
           .read(liturgyFormNotifierProvider.notifier)
           .deleteLiturgy(widget.ministryId, widget.liturgyId);
 
-      if (success) {
+      if (!mounted) return;
+      final currentActiveId =
+          ref.read(ministryContextNotifierProvider).selectedMinistry?.id;
+      if (currentActiveId != widget.ministryId) {
+        // Stale tenant switch occurred during deletion - discard UI feedback
+        return;
+      }
+
+      if (success && mounted) {
         messenger.showSnackBar(
           const SnackBar(
             content: Text('Liturgia excluída com sucesso.'),
@@ -84,7 +93,7 @@ class _LiturgyDetailScreenState extends ConsumerState<LiturgyDetailScreen> {
           ),
         );
         navigator.pop(true);
-      } else {
+      } else if (mounted) {
         final error = ref.read(liturgyFormNotifierProvider).errorMessage ??
             'Não foi possível excluir a liturgia.';
         messenger.showSnackBar(
@@ -99,6 +108,12 @@ class _LiturgyDetailScreenState extends ConsumerState<LiturgyDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<MinistryContextState>(ministryContextNotifierProvider, (_, next) {
+      if (next.selectedMinistry?.id != widget.ministryId && mounted) {
+        Navigator.of(context).pop();
+      }
+    });
+
     final theme = Theme.of(context);
     final detailState = ref.watch(liturgyDetailNotifierProvider);
     final ministryState = ref.watch(ministryContextNotifierProvider);

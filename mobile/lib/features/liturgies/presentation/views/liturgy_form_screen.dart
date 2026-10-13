@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../app/providers.dart';
+import '../../../ministry_context/presentation/controllers/ministry_context_controller.dart';
 import '../../../repertoire/domain/song_summary.dart';
-import '../../../repertoire/presentation/controllers/repertoire_providers.dart';
-import '../controllers/liturgy_providers.dart';
 import '../../domain/liturgy.dart';
 
 /// Screen for creating and editing a Liturgy and its itinerary items.
@@ -115,6 +115,9 @@ class _LiturgyFormScreenState extends ConsumerState<LiturgyFormScreen> {
 
   void _reorderItem(int oldIndex, int newIndex) {
     setState(() {
+      if (newIndex > oldIndex) {
+        newIndex -= 1;
+      }
       final item = _items.removeAt(oldIndex);
       _items.insert(newIndex, item);
       for (var i = 0; i < _items.length; i++) {
@@ -157,6 +160,14 @@ class _LiturgyFormScreenState extends ConsumerState<LiturgyFormScreen> {
       success = created != null;
     }
 
+    if (!mounted) return;
+    final currentActiveId =
+        ref.read(ministryContextNotifierProvider).selectedMinistry?.id;
+    if (currentActiveId != widget.ministryId) {
+      // Tenant switch happened during mutation - discard stale UI feedback & navigation
+      return;
+    }
+
     if (success && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -183,6 +194,12 @@ class _LiturgyFormScreenState extends ConsumerState<LiturgyFormScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<MinistryContextState>(ministryContextNotifierProvider, (_, next) {
+      if (next.selectedMinistry?.id != widget.ministryId && mounted) {
+        Navigator.of(context).pop(false);
+      }
+    });
+
     final theme = Theme.of(context);
     final formState = ref.watch(liturgyFormNotifierProvider);
     final isSubmitting = formState.isSubmitting;
@@ -572,6 +589,12 @@ class _AddItemSheetState extends ConsumerState<_AddItemSheet> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<MinistryContextState>(ministryContextNotifierProvider, (_, next) {
+      if (next.selectedMinistry?.id != widget.ministryId && mounted) {
+        Navigator.of(context).pop();
+      }
+    });
+
     final theme = Theme.of(context);
 
     return Padding(
@@ -631,6 +654,9 @@ class _AddItemSheetState extends ConsumerState<_AddItemSheet> {
               onSelectionChanged: (set) {
                 setState(() {
                   _selectedType = set.first;
+                  if (_selectedType != LiturgyItemType.song) {
+                    _selectedSong = null;
+                  }
                 });
               },
             ),
@@ -736,12 +762,22 @@ class _SongPickerModalState extends ConsumerState<_SongPickerModal> {
           .read(repertoireRepositoryProvider)
           .listSongs(widget.ministryId, search: query, limit: 50);
       if (!mounted) return;
+      final currentActiveId =
+          ref.read(ministryContextNotifierProvider).selectedMinistry?.id;
+      if (currentActiveId != widget.ministryId) {
+        return;
+      }
       setState(() {
         _songs = result.songs;
         _isLoading = false;
       });
     } catch (e) {
       if (!mounted) return;
+      final currentActiveId =
+          ref.read(ministryContextNotifierProvider).selectedMinistry?.id;
+      if (currentActiveId != widget.ministryId) {
+        return;
+      }
       setState(() {
         _error = 'Não foi possível carregar as músicas.';
         _isLoading = false;
@@ -751,6 +787,12 @@ class _SongPickerModalState extends ConsumerState<_SongPickerModal> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<MinistryContextState>(ministryContextNotifierProvider, (_, next) {
+      if (next.selectedMinistry?.id != widget.ministryId && mounted) {
+        Navigator.of(context).pop();
+      }
+    });
+
     final theme = Theme.of(context);
 
     return Padding(

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,6 +15,7 @@ class FakeDetailRepo implements LiturgyRepository {
   Liturgy? liturgyToReturn;
   Exception? error;
   int deleteCallCount = 0;
+  Completer<void>? deleteCompleter;
 
   @override
   Future<List<Liturgy>> listLiturgies(String ministryId) async => [];
@@ -37,6 +39,7 @@ class FakeDetailRepo implements LiturgyRepository {
   @override
   Future<bool> deleteLiturgy(String ministryId, String liturgyId) async {
     deleteCallCount++;
+    if (deleteCompleter != null) await deleteCompleter!.future;
     return true;
   }
 }
@@ -49,6 +52,10 @@ class FakeMinistryContextNotifier extends StateNotifier<MinistryContextState>
           selectedMinistry: initialMinistry,
           availableMinistries: [initialMinistry],
         ));
+
+  void changeMinistry(Ministry ministry) {
+    state = state.copyWith(selectedMinistry: ministry);
+  }
 
   @override
   Future<void> bootstrap() async {}
@@ -193,6 +200,84 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(repo.deleteCallCount, equals(1));
+    });
+
+    testWidgets('auto-dismisses detail screen when active ministry changes', (tester) async {
+      final repo = FakeDetailRepo()..liturgyToReturn = sampleLiturgy;
+      final contextNotifier = FakeMinistryContextNotifier(adminMinistry);
+
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          appEnvironmentProvider.overrideWithValue(
+            const AppEnvironment(
+              env: AppEnv.development,
+              apiBaseUrl: 'http://localhost:3000/api/v1',
+            ),
+          ),
+          liturgyRepositoryProvider.overrideWithValue(repo),
+          ministryContextNotifierProvider.overrideWith((ref) => contextNotifier),
+        ],
+        child: const MaterialApp(
+          home: LiturgyDetailScreen(
+            ministryId: 'min-1',
+            liturgyId: 'lit-1',
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(LiturgyDetailScreen), findsOneWidget);
+
+      // Change ministry to Beta
+      contextNotifier.changeMinistry(
+        const Ministry(id: 'min-2', name: 'Beta', role: 'admin'),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(LiturgyDetailScreen), findsNothing);
+    });
+
+    testWidgets('discards delete UI feedback if active ministry changes during delete', (tester) async {
+      final repo = FakeDetailRepo()..liturgyToReturn = sampleLiturgy;
+      repo.deleteCompleter = Completer<void>();
+      final contextNotifier = FakeMinistryContextNotifier(adminMinistry);
+
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          appEnvironmentProvider.overrideWithValue(
+            const AppEnvironment(
+              env: AppEnv.development,
+              apiBaseUrl: 'http://localhost:3000/api/v1',
+            ),
+          ),
+          liturgyRepositoryProvider.overrideWithValue(repo),
+          ministryContextNotifierProvider.overrideWith((ref) => contextNotifier),
+        ],
+        child: const MaterialApp(
+          home: LiturgyDetailScreen(
+            ministryId: 'min-1',
+            liturgyId: 'lit-1',
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('delete_liturgy_button')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Excluir'));
+      await tester.pump(); // In flight delete
+
+      // Switch ministry while delete is in flight
+      contextNotifier.changeMinistry(
+        const Ministry(id: 'min-2', name: 'Beta', role: 'admin'),
+      );
+      await tester.pumpAndSettle();
+
+      repo.deleteCompleter!.complete();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Liturgia excluída com sucesso.'), findsNothing);
     });
   });
 }

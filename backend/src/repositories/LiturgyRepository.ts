@@ -6,11 +6,36 @@ export class LiturgyRepository {
   private readonly itemsCol = db.collection('liturgy_items');
   private readonly songsCol = db.collection('songs');
 
+  private isOwnedByTenant(data: any, expectedTenant: string): boolean {
+    if (!data || typeof data !== 'object') return false;
+    const ministryId = data.ministry_id;
+    const groupId = data.group_id;
+
+    // Se ambos existem e discordam: CONTRADICTORY_TENANT_FIELDS -> fail closed
+    if (ministryId && groupId && ministryId !== groupId) {
+      return false;
+    }
+
+    // Caso A: ministry_id existe (autoritativo)
+    if (ministryId) {
+      return ministryId === expectedTenant;
+    }
+
+    // Caso B: legacy group_id existe
+    if (groupId) {
+      return groupId === expectedTenant;
+    }
+
+    // Caso C: nenhum existe
+    return false;
+  }
+
   private async validateSongReferences(groupId: string, items?: any[]): Promise<void> {
     if (!items || !Array.isArray(items)) return;
     const songIds = Array.from(
       new Set(
         items
+          .filter((item) => !item.type || item.type === 'song')
           .map((item) => (item.song_id || item.songId ? String(item.song_id || item.songId).trim() : null))
           .filter(Boolean) as string[]
       )
@@ -22,8 +47,7 @@ export class LiturgyRepository {
         throw new AppError(404, `Música referenciada '${songId}' não encontrada.`);
       }
       const songData = songDoc.data();
-      const songMinistryId = songData?.ministry_id || songData?.group_id;
-      if (songMinistryId !== groupId) {
+      if (!this.isOwnedByTenant(songData, groupId)) {
         throw new AppError(400, 'Uma ou mais músicas selecionadas não pertencem a este ministério.');
       }
     }
@@ -31,16 +55,17 @@ export class LiturgyRepository {
 
   async getLiturgiesByGroup(groupId: string) {
     const snap = await this.liturgiesCol.where('group_id', '==', groupId).get();
-    const liturgies = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as any));
+    const rawLiturgies = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as any));
+    const liturgies = rawLiturgies.filter((l) => this.isOwnedByTenant(l, groupId));
 
     for (const liturgy of liturgies) {
       const itemsSnap = await this.itemsCol.where('liturgy_id', '==', liturgy.id).get();
       const items = itemsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
 
       for (const item of items) {
-        if (item.song_id) {
+        if (item.type === 'song' && item.song_id) {
           const songDoc = await this.songsCol.doc(item.song_id).get();
-          if (songDoc.exists && (songDoc.data()?.ministry_id === groupId || songDoc.data()?.group_id === groupId)) {
+          if (songDoc.exists && this.isOwnedByTenant(songDoc.data(), groupId)) {
             item.song = { id: songDoc.id, ...songDoc.data() };
           }
         }
@@ -59,8 +84,7 @@ export class LiturgyRepository {
       throw new AppError(404, 'Liturgia não encontrada.');
     }
     const liturgy = { id: doc.id, ...doc.data() } as any;
-    const liturgyMinistryId = liturgy.ministry_id || liturgy.group_id;
-    if (liturgyMinistryId !== groupId) {
+    if (!this.isOwnedByTenant(liturgy, groupId)) {
       throw new AppError(404, 'Liturgia não encontrada.');
     }
 
@@ -68,9 +92,9 @@ export class LiturgyRepository {
     const items = itemsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
 
     for (const item of items) {
-      if (item.song_id) {
+      if (item.type === 'song' && item.song_id) {
         const songDoc = await this.songsCol.doc(item.song_id).get();
-        if (songDoc.exists && (songDoc.data()?.ministry_id === groupId || songDoc.data()?.group_id === groupId)) {
+        if (songDoc.exists && this.isOwnedByTenant(songDoc.data(), groupId)) {
           item.song = { id: songDoc.id, ...songDoc.data() };
         }
       }
@@ -107,11 +131,15 @@ export class LiturgyRepository {
       for (let i = 0; i < data.items.length; i++) {
         const itemInput = data.items[i];
         const itemRef = this.itemsCol.doc();
+        const itemType = itemInput.type || 'song';
+        const isSong = itemType === 'song';
+        const songId = isSong ? (itemInput.song_id || itemInput.songId || null) : null;
+
         const itemData = {
           id: itemRef.id,
           liturgy_id: ref.id,
-          song_id: itemInput.song_id || itemInput.songId || null,
-          type: itemInput.type || 'song',
+          song_id: songId,
+          type: itemType,
           title: itemInput.title.trim(),
           notes: itemInput.notes ? itemInput.notes.trim() : null,
           position: typeof itemInput.position === 'number' ? itemInput.position : i,
@@ -154,11 +182,15 @@ export class LiturgyRepository {
       for (let i = 0; i < data.items.length; i++) {
         const itemInput = data.items[i];
         const itemRef = this.itemsCol.doc();
+        const itemType = itemInput.type || 'song';
+        const isSong = itemType === 'song';
+        const songId = isSong ? (itemInput.song_id || itemInput.songId || null) : null;
+
         const itemData = {
           id: itemRef.id,
           liturgy_id: liturgyId,
-          song_id: itemInput.song_id || itemInput.songId || null,
-          type: itemInput.type || 'song',
+          song_id: songId,
+          type: itemType,
           title: itemInput.title.trim(),
           notes: itemInput.notes ? itemInput.notes.trim() : null,
           position: typeof itemInput.position === 'number' ? itemInput.position : i,
