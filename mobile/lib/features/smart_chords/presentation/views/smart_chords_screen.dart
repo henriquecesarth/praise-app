@@ -1,4 +1,5 @@
-﻿import 'package:flutter/material.dart';
+import 'dart:async';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../domain/smart_chord.dart';
 import '../controllers/smart_chord_providers.dart';
@@ -15,6 +16,7 @@ class SmartChordsScreen extends ConsumerStatefulWidget {
 
 class _SmartChordsScreenState extends ConsumerState<SmartChordsScreen> {
   final _searchController = TextEditingController();
+  Timer? _debounceTimer;
 
   @override
   void initState() {
@@ -26,12 +28,28 @@ class _SmartChordsScreenState extends ConsumerState<SmartChordsScreen> {
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _searchController.dispose();
     super.dispose();
   }
 
   void _onSearchChanged(String query) {
-    ref.read(smartChordListNotifierProvider.notifier).setSearch(query);
+    _debounceTimer?.cancel();
+    if (query.isEmpty) {
+      ref.read(smartChordListNotifierProvider.notifier).setSearch('');
+      return;
+    }
+    _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        ref.read(smartChordListNotifierProvider.notifier).setSearch(query);
+      }
+    });
+  }
+
+  void _clearSearch() {
+    _debounceTimer?.cancel();
+    _searchController.clear();
+    ref.read(smartChordListNotifierProvider.notifier).setSearch('');
   }
 
   @override
@@ -81,10 +99,7 @@ class _SmartChordsScreenState extends ConsumerState<SmartChordsScreen> {
                 suffixIcon: _searchController.text.isNotEmpty
                     ? IconButton(
                         icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          _searchController.clear();
-                          _onSearchChanged('');
-                        },
+                        onPressed: _clearSearch,
                       )
                     : null,
                 filled: true,

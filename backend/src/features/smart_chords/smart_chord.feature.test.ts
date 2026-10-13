@@ -5,6 +5,11 @@ import { RepertoireRepository } from '../../repositories/RepertoireRepository';
 import { SmartChordService } from './smart_chord.service';
 import { SmartChordController } from './smart_chord.controller';
 import smartChordRouter from './smart_chord.routes';
+import {
+  singleDocumentIdSchema,
+  createSmartChordSchema,
+  updateSmartChordSchema,
+} from './smart_chord.types';
 import { AppError } from '../../middleware/error-handler';
 
 describe('Smart Chords Feature Test Suite', () => {
@@ -584,6 +589,140 @@ describe('Smart Chords Feature Test Suite', () => {
       expect(passedUpdate.user_id).toBeUndefined();
       expect(passedUpdate.created_at).toBeUndefined();
       expect(passedUpdate.injected_field).toBeUndefined();
+    });
+  });
+
+  describe('13. song_id and artist_id Hardened Validation (R2-12, R2-13, R2-14)', () => {
+    it('aceita formatos válidos de song_id e artist_id reais', () => {
+      const validCases = ['song-123', 'artist_456', '2WkRj6YqLq4r49', 'A-B_c1', 'a'.repeat(100)];
+      for (const id of validCases) {
+        expect(() => singleDocumentIdSchema.parse(id)).not.toThrow();
+        expect(() =>
+          createSmartChordSchema.parse({
+            title: 'Título Válido',
+            original_key: 'G',
+            content: '[G]Cifra',
+            song_id: id,
+            artist_id: id,
+          })
+        ).not.toThrow();
+      }
+    });
+
+    it('rejeita song_id ou artist_id contendo caminhos path-like (foo/bar, /foo, foo/, a\\b)', () => {
+      const invalidPathCases = ['foo/bar', '/foo', 'foo/', 'a\\b', 'folder/doc', 'a/b/c'];
+      for (const id of invalidPathCases) {
+        expect(() => singleDocumentIdSchema.parse(id)).toThrow();
+        expect(() =>
+          createSmartChordSchema.parse({
+            title: 'Título',
+            original_key: 'G',
+            content: '[G]',
+            song_id: id,
+          })
+        ).toThrow();
+        expect(() =>
+          createSmartChordSchema.parse({
+            title: 'Título',
+            original_key: 'G',
+            content: '[G]',
+            artist_id: id,
+          })
+        ).toThrow();
+        expect(() => updateSmartChordSchema.parse({ song_id: id })).toThrow();
+        expect(() => updateSmartChordSchema.parse({ artist_id: id })).toThrow();
+      }
+    });
+
+    it('rejeita IDs compostos apenas de espaços em branco (whitespace-only)', () => {
+      const whitespaceCases = [' ', '   ', '\t', '\t   '];
+      for (const id of whitespaceCases) {
+        expect(() => singleDocumentIdSchema.parse(id)).toThrow();
+        expect(() =>
+          createSmartChordSchema.parse({
+            title: 'Título',
+            original_key: 'G',
+            content: '[G]',
+            song_id: id,
+          })
+        ).toThrow();
+      }
+    });
+
+    it('rejeita IDs com caracteres de controle ou nova linha', () => {
+      const controlCases = ['song\nid', 'song\rid', 'song\x00id', 'song\bid'];
+      for (const id of controlCases) {
+        expect(() => singleDocumentIdSchema.parse(id)).toThrow();
+        expect(() =>
+          createSmartChordSchema.parse({
+            title: 'Título',
+            original_key: 'G',
+            content: '[G]',
+            song_id: id,
+          })
+        ).toThrow();
+      }
+    });
+
+    it('rejeita IDs que excedem o tamanho máximo de 100 caracteres', () => {
+      const tooLongId = 'a'.repeat(101);
+      expect(() => singleDocumentIdSchema.parse(tooLongId)).toThrow();
+      expect(() =>
+        createSmartChordSchema.parse({
+          title: 'Título',
+          original_key: 'G',
+          content: '[G]',
+          song_id: tooLongId,
+        })
+      ).toThrow();
+    });
+
+    it('garante que acesso ao repositório não é atingido quando controller valida payload com IDs inválidos', async () => {
+      const createSpy = vi.spyOn(smartChordRepo, 'createSmartChord');
+      const req = {
+        user: { id: 'user-a' },
+        body: {
+          title: 'Cifra Inválida',
+          original_key: 'C',
+          content: '[C]',
+          song_id: 'foo/bar',
+        },
+      } as any;
+      const res = {
+        status: vi.fn().mockReturnThis(),
+        json: vi.fn().mockReturnThis(),
+      } as any;
+      const next = vi.fn();
+
+      await controller.createSmartChord(req, res, next);
+
+      expect(createSpy).not.toHaveBeenCalled();
+      expect(next).toHaveBeenCalledTimes(1);
+      const passedError = next.mock.calls[0][0];
+      expect(passedError).toBeInstanceOf(AppError);
+      expect(passedError.statusCode).toBe(400);
+      expect(passedError.message).toBe('Dados inválidos.');
+    });
+
+    it('valida parâmetros de rota :id e :songId rejeitando paths malformados com 400 sem atingir o repositório', async () => {
+      const getByIdSpy = vi.spyOn(smartChordRepo, 'getSmartChordById');
+      const getBySongSpy = vi.spyOn(smartChordRepo, 'getSmartChordsBySongId');
+      const deleteSpy = vi.spyOn(smartChordRepo, 'deleteSmartChord');
+
+      const next1 = vi.fn();
+      await controller.getSmartChord({ user: { id: 'user-a' }, params: { id: 'malformed/id' } } as any, {} as any, next1);
+      expect(getByIdSpy).not.toHaveBeenCalled();
+      expect(next1).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+
+      const next2 = vi.fn();
+      await controller.getSmartChordsBySong({ user: { id: 'user-a' }, params: { songId: 'malformed/song' } } as any, {} as any, next2);
+      expect(getBySongSpy).not.toHaveBeenCalled();
+      expect(next2).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+
+      const next3 = vi.fn();
+      await controller.deleteSmartChord({ user: { id: 'user-a' }, params: { id: 'bad\nid' } } as any, {} as any, next3);
+      expect(deleteSpy).not.toHaveBeenCalled();
+      expect(next3).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
     });
   });
 });

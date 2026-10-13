@@ -1,17 +1,21 @@
 import { z } from 'zod';
 
+export const singleDocumentIdSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{1,100}$/, 'ID deve conter apenas caracteres alfanuméricos, hífen ou sublinhado (máx 100 caracteres).');
+
 export const createSmartChordSchema = z.object({
   title: z.string().trim().min(1, 'Título é obrigatório.').max(255),
-  artist_id: z.string().nullable().optional(),
-  song_id: z.string().nullable().optional(),
+  artist_id: singleDocumentIdSchema.nullable().optional(),
+  song_id: singleDocumentIdSchema.nullable().optional(),
   original_key: z.string().trim().min(1, 'Tom original é obrigatório.').max(10),
   content: z.string().min(1, 'O conteúdo da cifra é obrigatório.'),
 });
 
 export const updateSmartChordSchema = z.object({
   title: z.string().trim().min(1, 'Título não pode ser vazio.').max(255).optional(),
-  artist_id: z.string().nullable().optional(),
-  song_id: z.string().nullable().optional(),
+  artist_id: singleDocumentIdSchema.nullable().optional(),
+  song_id: singleDocumentIdSchema.nullable().optional(),
   original_key: z.string().trim().min(1, 'Tom original não pode ser vazio.').max(10).optional(),
   content: z.string().min(1, 'Conteúdo não pode ser vazio.').optional(),
 });

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../app/providers.dart';
+import '../../../auth/presentation/controllers/auth_controller.dart';
 import '../../domain/smart_chord.dart';
 import '../../domain/smart_chord_parser.dart';
-import '../controllers/smart_chord_providers.dart';
+import '../controllers/smart_chord_form_controller.dart';
 import 'smart_chord_form_screen.dart';
 
 class SmartChordReaderScreen extends ConsumerStatefulWidget {
@@ -21,13 +23,32 @@ class SmartChordReaderScreen extends ConsumerStatefulWidget {
 
 class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen> {
   double _fontSize = 15.0;
+  String? _boundUserId;
+  bool _isDismissed = false;
 
   @override
   void initState() {
     super.initState();
+    final user = ref.read(authNotifierProvider).user;
+    _boundUserId = user?.id;
+
+    if (_boundUserId == null || _boundUserId!.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _dismissScreen();
+      });
+    }
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(smartChordDetailNotifierProvider.notifier).load(widget.chordId);
     });
+  }
+
+  void _dismissScreen() {
+    if (_isDismissed) return;
+    _isDismissed = true;
+    if (mounted) {
+      Navigator.of(context).pop();
+    }
   }
 
   void _increaseFontSize() {
@@ -68,36 +89,59 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
       },
     );
 
-    if (confirmed != true || !mounted) return;
+    if (confirmed != true || !mounted || _isDismissed) return;
 
-    final success = await ref
+    final mutationResult = await ref
         .read(smartChordFormNotifierProvider.notifier)
-        .deleteSmartChord(chord.id);
+        .deleteSmartChord(chord.id, userId: _boundUserId);
 
-    if (!mounted) return;
+    if (!mounted || _isDismissed) return;
 
-    if (success) {
-      ref.read(smartChordListNotifierProvider.notifier).removeChord(chord.id);
-      if (chord.songId != null) {
-        ref.read(songSmartChordsNotifierProvider.notifier).removeChord(chord.id);
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cifra excluída com sucesso.')),
-      );
-      Navigator.of(context).pop(true);
-    } else {
-      final formState = ref.read(smartChordFormNotifierProvider);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(formState.errorMessage ?? 'Erro ao excluir cifra.'),
-          backgroundColor: Theme.of(context).colorScheme.error,
-        ),
-      );
+    final currentUserId = ref.read(authNotifierProvider).user?.id;
+    if (currentUserId == null || currentUserId != _boundUserId) {
+      _dismissScreen();
+      return;
+    }
+
+    switch (mutationResult.outcome) {
+      case MutationOutcome.success:
+        ref.read(smartChordListNotifierProvider.notifier).removeChord(chord.id);
+        if (chord.songId != null) {
+          ref.read(songSmartChordsNotifierProvider.notifier).removeChord(chord.id);
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Cifra excluída com sucesso.')),
+        );
+        Navigator.of(context).pop(true);
+        break;
+
+      case MutationOutcome.failure:
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(mutationResult.errorMessage ?? 'Erro ao excluir cifra.'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+        break;
+
+      case MutationOutcome.discarded:
+        // Discarded stale delete: do NOTHING. No snackbars, no pop, no evict.
+        break;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    // Session switch protection: if active user changes away or logs out, close immediately
+    ref.listen<AuthState>(authNotifierProvider, (previous, next) {
+      final currentUid = next.user?.id;
+      final isUnauthenticated = !next.isAuthenticated || currentUid == null || currentUid.isEmpty;
+      final userChanged = _boundUserId != null && currentUid != _boundUserId;
+      if (isUnauthenticated || userChanged) {
+        _dismissScreen();
+      }
+    });
+
     final theme = Theme.of(context);
     final detailState = ref.watch(smartChordDetailNotifierProvider);
     final chord = detailState.chord ?? widget.initialChord;

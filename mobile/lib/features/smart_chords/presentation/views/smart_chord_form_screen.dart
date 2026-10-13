@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../app/providers.dart';
+import '../../../auth/presentation/controllers/auth_controller.dart';
+import '../../../ministry_context/presentation/controllers/ministry_context_controller.dart';
 import '../../domain/smart_chord.dart';
 import '../../domain/smart_chord_parser.dart';
-import '../controllers/smart_chord_providers.dart';
+import '../controllers/smart_chord_form_controller.dart';
 
 class SmartChordFormScreen extends ConsumerStatefulWidget {
   final SmartChord? initialChord;
@@ -36,10 +39,23 @@ class _SmartChordFormScreenState extends ConsumerState<SmartChordFormScreen> {
   String? _artistId;
   String? _artistName;
   bool _showPreview = false;
+  String? _boundUserId;
+  String? _boundMinistryId;
+  bool _isDismissedOrInvalidated = false;
 
   @override
   void initState() {
     super.initState();
+    final authUser = ref.read(authNotifierProvider).user;
+    _boundUserId = authUser?.id;
+    _boundMinistryId = ref.read(ministryContextNotifierProvider).selectedMinistry?.id;
+
+    if (_boundUserId == null || _boundUserId!.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _dismissScreen();
+      });
+    }
+
     final chord = widget.initialChord;
     _titleController = TextEditingController(
       text: chord?.title ?? widget.prefillSongTitle ?? '',
@@ -58,8 +74,27 @@ class _SmartChordFormScreenState extends ConsumerState<SmartChordFormScreen> {
     _artistName = chord?.artistName ?? widget.prefillArtistName;
   }
 
+  void _dismissScreen() {
+    if (_isDismissedOrInvalidated) return;
+    _isDismissedOrInvalidated = true;
+    _clearDraftControllers();
+    if (mounted) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  void _clearDraftControllers() {
+    _titleController.clear();
+    _contentController.clear();
+    _songId = null;
+    _songTitle = null;
+    _artistId = null;
+    _artistName = null;
+  }
+
   @override
   void dispose() {
+    _clearDraftControllers();
     _titleController.dispose();
     _contentController.dispose();
     super.dispose();
@@ -86,6 +121,7 @@ class _SmartChordFormScreenState extends ConsumerState<SmartChordFormScreen> {
   }
 
   Future<void> _submit() async {
+    if (_isDismissedOrInvalidated) return;
     if (!_formKey.currentState!.validate()) return;
 
     final isEditing = widget.initialChord != null;
@@ -105,39 +141,92 @@ class _SmartChordFormScreenState extends ConsumerState<SmartChordFormScreen> {
       updatedAt: widget.initialChord?.updatedAt ?? '',
     );
 
-    SmartChord? result;
-    if (isEditing) {
-      result = await formNotifier.updateSmartChord(widget.initialChord!.id, chordData);
-    } else {
-      result = await formNotifier.createSmartChord(chordData);
+    final mutationResult = isEditing
+        ? await formNotifier.updateSmartChord(
+            widget.initialChord!.id,
+            chordData,
+            userId: _boundUserId,
+          )
+        : await formNotifier.createSmartChord(
+            chordData,
+            userId: _boundUserId,
+          );
+
+    if (!mounted || _isDismissedOrInvalidated) return;
+
+    final currentUserId = ref.read(authNotifierProvider).user?.id;
+    if (currentUserId == null || currentUserId != _boundUserId) {
+      _dismissScreen();
+      return;
     }
 
-    if (result != null && mounted) {
-      ref.read(smartChordListNotifierProvider.notifier).upsertChord(result);
-      if (result.songId != null) {
-        ref.read(songSmartChordsNotifierProvider.notifier).upsertChord(result);
+    final hasMinistryLink = (chordData.songId != null && chordData.songId!.isNotEmpty) ||
+        (chordData.artistId != null && chordData.artistId!.isNotEmpty);
+    if (hasMinistryLink && _boundMinistryId != null) {
+      final currentMinistryId = ref.read(ministryContextNotifierProvider).selectedMinistry?.id;
+      if (currentMinistryId != _boundMinistryId) {
+        _dismissScreen();
+        return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            isEditing ? 'Cifra atualizada com sucesso.' : 'Cifra cadastrada com sucesso.',
+    }
+
+    switch (mutationResult.outcome) {
+      case MutationOutcome.success:
+        final result = mutationResult.data;
+        if (result != null) {
+          ref.read(smartChordListNotifierProvider.notifier).upsertChord(result);
+          if (result.songId != null) {
+            ref.read(songSmartChordsNotifierProvider.notifier).upsertChord(result);
+          }
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              isEditing ? 'Cifra atualizada com sucesso.' : 'Cifra cadastrada com sucesso.',
+            ),
           ),
-        ),
-      );
-      Navigator.of(context).pop(result);
-    } else if (mounted) {
-      final formState = ref.read(smartChordFormNotifierProvider);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(formState.errorMessage ?? 'Erro ao salvar cifra.'),
-          backgroundColor: Theme.of(context).colorScheme.error,
-        ),
-      );
+        );
+        Navigator.of(context).pop(result);
+        break;
+
+      case MutationOutcome.failure:
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(mutationResult.errorMessage ?? 'Erro ao salvar cifra.'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+        break;
+
+      case MutationOutcome.discarded:
+        // Stale mutation discarded: show NOTHING, navigate NOTHING, refresh NOTHING.
+        break;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    // Session switch protection: if active user changes away or logs out, close immediately
+    ref.listen<AuthState>(authNotifierProvider, (previous, next) {
+      final currentUid = next.user?.id;
+      final isUnauthenticated = !next.isAuthenticated || currentUid == null || currentUid.isEmpty;
+      final userChanged = _boundUserId != null && currentUid != _boundUserId;
+      if (isUnauthenticated || userChanged) {
+        _dismissScreen();
+      }
+    });
+
+    // Tenant switch protection: if ministry-linked and active ministry changes, close immediately
+    ref.listen<MinistryContextState>(ministryContextNotifierProvider, (previous, next) {
+      final currentMinistryId = next.selectedMinistry?.id;
+      final ministryChanged = _boundMinistryId != null && currentMinistryId != _boundMinistryId;
+      final hasMinistryLink = (_songId != null && _songId!.isNotEmpty) ||
+          (_artistId != null && _artistId!.isNotEmpty);
+
+      if (ministryChanged && hasMinistryLink) {
+        _dismissScreen();
+      }
+    });
     final theme = Theme.of(context);
     final formState = ref.watch(smartChordFormNotifierProvider);
     final isSubmitting = formState.isSubmitting;

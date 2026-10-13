@@ -1,10 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
+import { ZodError } from 'zod';
 import { BaseController } from '../../controllers/BaseController';
 import * as smartChordService from './smart_chord.service';
 import {
   createSmartChordSchema,
   updateSmartChordSchema,
   smartChordsQuerySchema,
+  singleDocumentIdSchema,
 } from './smart_chord.types';
 
 import { AppError } from '../../middleware/error-handler';
@@ -19,6 +21,20 @@ function getUserId(req: Request): string {
 
 
 export class SmartChordController extends BaseController {
+  protected override handleError(error: unknown, res: Response, next: NextFunction): void {
+    if (error instanceof ZodError) {
+      return next(
+        new AppError(400, 'Dados inválidos.', {
+          errors: error.issues.map((e) => ({
+            field: e.path.join('.'),
+            message: e.message,
+          })),
+        })
+      );
+    }
+    super.handleError(error, res, next);
+  }
+
   listSmartChords = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const userId = getUserId(req);
@@ -38,7 +54,7 @@ export class SmartChordController extends BaseController {
   getSmartChord = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const userId = getUserId(req);
-      const id = req.params.id as string;
+      const id = singleDocumentIdSchema.parse(req.params.id);
 
       const result = await smartChordService.getSmartChordById(id, userId);
       this.handleSuccess(res, result);
@@ -50,7 +66,7 @@ export class SmartChordController extends BaseController {
   getSmartChordsBySong = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const userId = getUserId(req);
-      const songId = req.params.songId as string;
+      const songId = singleDocumentIdSchema.parse(req.params.songId);
 
       const result = await smartChordService.getSmartChordsBySong(songId, userId);
       this.handleSuccess(res, { data: result });
@@ -74,7 +90,7 @@ export class SmartChordController extends BaseController {
   updateSmartChord = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const userId = getUserId(req);
-      const id = req.params.id as string;
+      const id = singleDocumentIdSchema.parse(req.params.id);
       const body = updateSmartChordSchema.parse(req.body);
 
       const result = await smartChordService.updateSmartChord(id, userId, body);
@@ -87,7 +103,7 @@ export class SmartChordController extends BaseController {
   deleteSmartChord = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const userId = getUserId(req);
-      const id = req.params.id as string;
+      const id = singleDocumentIdSchema.parse(req.params.id);
 
       await smartChordService.deleteSmartChord(id, userId);
       this.handleNoContent(res);

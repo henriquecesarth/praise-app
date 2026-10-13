@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/core/errors/app_failure.dart';
 import 'package:louvaio_mobile/features/smart_chords/data/smart_chord_repository.dart';
@@ -285,10 +285,11 @@ void main() {
         updatedAt: '',
       );
 
-      final created = await notifier.createSmartChord(chord);
+      final result = await notifier.createSmartChord(chord);
 
-      expect(created, isNotNull);
-      expect(created!.id, 'sc-created');
+      expect(result.isSuccess, isTrue);
+      expect(result.data, isNotNull);
+      expect(result.data!.id, 'sc-created');
       expect(notifier.state.isSuccess, isTrue);
       expect(repository.createCallCount, 1);
     });
@@ -310,12 +311,13 @@ void main() {
       expect(notifier.state.isSubmitting, isTrue);
 
       final secondCall = await notifier.createSmartChord(chord);
-      expect(secondCall, isNull); // Second call rejected immediately
+      expect(secondCall.isDiscarded, isTrue); // Second call discarded immediately
       expect(repository.createCallCount, 1);
 
       repository.createCompleter!.complete();
       final result1 = await firstCall;
-      expect(result1, isNotNull);
+      expect(result1.isSuccess, isTrue);
+      expect(result1.data, isNotNull);
     });
 
     test('updateSmartChord calls repository', () async {
@@ -332,16 +334,17 @@ void main() {
 
       final updated = await notifier.updateSmartChord('sc-1', chord);
 
-      expect(updated, isNotNull);
-      expect(updated!.id, 'sc-1');
+      expect(updated.isSuccess, isTrue);
+      expect(updated.data, isNotNull);
+      expect(updated.data!.id, 'sc-1');
       expect(repository.updateCallCount, 1);
     });
 
-    test('deleteSmartChord calls repository and returns true', () async {
+    test('deleteSmartChord calls repository and returns success', () async {
       final notifier = SmartChordFormNotifier(repository: repository);
-      final success = await notifier.deleteSmartChord('sc-1');
+      final result = await notifier.deleteSmartChord('sc-1');
 
-      expect(success, isTrue);
+      expect(result.isSuccess, isTrue);
       expect(repository.deleteCallCount, 1);
     });
 
@@ -359,9 +362,173 @@ void main() {
         updatedAt: '',
       ));
 
-      expect(result, isNull);
+      expect(result.isFailure, isTrue);
+      expect(result.outcome, MutationOutcome.failure);
+      expect(result.errorMessage, 'Erro ao salvar cifra.');
       expect(notifier.state.errorMessage, 'Erro ao salvar cifra.');
       expect(notifier.state.isSubmitting, isFalse);
+    });
+
+    // R2-9: Session reset tests with pending Completers
+    test('create success: in-flight request resolves after reset -> outcome is discarded, no state leak', () async {
+      repository.createCompleter = Completer<void>();
+      final notifier = SmartChordFormNotifier(
+        repository: repository,
+        boundUserId: 'user-a',
+      );
+      const chord = SmartChord(
+        id: '',
+        userId: 'user-a',
+        title: 'Minha Cifra Secreta',
+        originalKey: 'D',
+        content: '[D]Letra Secreta',
+        createdAt: '',
+        updatedAt: '',
+      );
+
+      final pendingCreate = notifier.createSmartChord(chord, userId: 'user-a');
+      expect(notifier.state.isSubmitting, isTrue);
+
+      // Session reset / logout occurs while request is in flight: User B logs in
+      notifier.reset(newUserId: 'user-b');
+      expect(notifier.state.isSubmitting, isFalse);
+      expect(notifier.state.isSuccess, isFalse);
+
+      // User A request finally arrives
+      repository.createCompleter!.complete();
+      final outcome = await pendingCreate;
+
+      expect(outcome.isDiscarded, isTrue);
+      expect(outcome.outcome, MutationOutcome.discarded);
+      expect(outcome.data, isNull);
+      expect(notifier.state.isSuccess, isFalse);
+      expect(notifier.state.errorMessage, isNull);
+    });
+
+    test('create error: in-flight request fails after reset -> outcome is discarded, no User-B error leak', () async {
+      repository.createCompleter = Completer<void>();
+      final notifier = SmartChordFormNotifier(
+        repository: repository,
+        boundUserId: 'user-a',
+      );
+      const chord = SmartChord(
+        id: '',
+        userId: 'user-a',
+        title: 'Cifra Com Falha',
+        originalKey: 'E',
+        content: '[E]Letra',
+        createdAt: '',
+        updatedAt: '',
+      );
+
+      final pendingCreate = notifier.createSmartChord(chord, userId: 'user-a');
+
+      // Logout / reset occurs
+      notifier.reset(newUserId: 'user-b');
+
+      // Request fails on backend
+      repository.errorToThrow = const AppFailure(message: 'Erro no backend User A', statusCode: 500);
+      repository.createCompleter!.complete();
+      final outcome = await pendingCreate;
+
+      expect(outcome.isDiscarded, isTrue);
+      expect(outcome.outcome, MutationOutcome.discarded);
+      expect(notifier.state.errorMessage, isNull);
+      expect(notifier.state.isSubmitting, isFalse);
+    });
+
+    test('update success: in-flight request resolves after reset -> outcome is discarded', () async {
+      repository.updateCompleter = Completer<void>();
+      final notifier = SmartChordFormNotifier(
+        repository: repository,
+        boundUserId: 'user-a',
+      );
+      const chord = SmartChord(
+        id: 'sc-1',
+        userId: 'user-a',
+        title: 'Cifra Atualizada',
+        originalKey: 'F',
+        content: '[F]Letra',
+        createdAt: '',
+        updatedAt: '',
+      );
+
+      final pendingUpdate = notifier.updateSmartChord('sc-1', chord, userId: 'user-a');
+      notifier.reset(newUserId: 'user-b');
+
+      repository.updateCompleter!.complete();
+      final outcome = await pendingUpdate;
+
+      expect(outcome.isDiscarded, isTrue);
+      expect(outcome.outcome, MutationOutcome.discarded);
+      expect(notifier.state.isSuccess, isFalse);
+      expect(notifier.state.errorMessage, isNull);
+    });
+
+    test('update error: in-flight request fails after reset -> outcome is discarded', () async {
+      repository.updateCompleter = Completer<void>();
+      final notifier = SmartChordFormNotifier(
+        repository: repository,
+        boundUserId: 'user-a',
+      );
+      const chord = SmartChord(
+        id: 'sc-1',
+        userId: 'user-a',
+        title: 'Cifra Atualizada',
+        originalKey: 'F',
+        content: '[F]Letra',
+        createdAt: '',
+        updatedAt: '',
+      );
+
+      final pendingUpdate = notifier.updateSmartChord('sc-1', chord, userId: 'user-a');
+      notifier.reset(newUserId: 'user-b');
+
+      repository.errorToThrow = const AppFailure(message: 'Erro de rede', statusCode: 500);
+      repository.updateCompleter!.complete();
+      final outcome = await pendingUpdate;
+
+      expect(outcome.isDiscarded, isTrue);
+      expect(outcome.outcome, MutationOutcome.discarded);
+      expect(notifier.state.errorMessage, isNull);
+    });
+
+    test('delete success: in-flight request resolves after reset -> outcome is discarded', () async {
+      repository.deleteCompleter = Completer<void>();
+      final notifier = SmartChordFormNotifier(
+        repository: repository,
+        boundUserId: 'user-a',
+      );
+
+      final pendingDelete = notifier.deleteSmartChord('sc-1', userId: 'user-a');
+      notifier.reset(newUserId: 'user-b');
+
+      repository.deleteCompleter!.complete();
+      final outcome = await pendingDelete;
+
+      expect(outcome.isDiscarded, isTrue);
+      expect(outcome.outcome, MutationOutcome.discarded);
+      expect(notifier.state.isSuccess, isFalse);
+      expect(notifier.state.errorMessage, isNull);
+    });
+
+    test('delete error: in-flight request fails after reset -> outcome is discarded', () async {
+      repository.deleteCompleter = Completer<void>();
+      final notifier = SmartChordFormNotifier(
+        repository: repository,
+        boundUserId: 'user-a',
+      );
+
+      final pendingDelete = notifier.deleteSmartChord('sc-1', userId: 'user-a');
+      notifier.reset(newUserId: 'user-b');
+
+      repository.errorToThrow = const AppFailure(message: 'Falha ao deletar', statusCode: 500);
+      repository.deleteCompleter!.complete();
+      final outcome = await pendingDelete;
+
+      expect(outcome.isDiscarded, isTrue);
+      expect(outcome.outcome, MutationOutcome.discarded);
+      expect(notifier.state.errorMessage, isNull);
     });
   });
 }

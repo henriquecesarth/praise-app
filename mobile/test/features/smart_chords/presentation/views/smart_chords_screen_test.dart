@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/core/errors/app_failure.dart';
@@ -131,5 +131,98 @@ void main() {
 
     expect(find.text('Oceanos'), findsOneWidget);
     expect(find.text('Lugar Secreto'), findsNothing);
+  });
+
+  testWidgets('R2-15 & R2-16: debounces rapid typing by 300ms and issues single server search', (tester) async {
+    repo.chords = [
+      const SmartChord(
+        id: 'c-1',
+        userId: 'u-1',
+        title: 'Oceanos',
+        originalKey: 'D',
+        content: '[D]Tua graça',
+        createdAt: '',
+        updatedAt: '',
+      ),
+      const SmartChord(
+        id: 'c-2',
+        userId: 'u-1',
+        title: 'Lugar Secreto',
+        originalKey: 'Em',
+        content: '[Em]Tu és tudo',
+        createdAt: '',
+        updatedAt: '',
+      ),
+    ];
+
+    await tester.pumpWidget(createWidget());
+    await tester.pumpAndSettle();
+
+    expect(repo.getChordsCallCount, 1);
+
+    // Rapid keystrokes: 'O', 'Oc', 'Oce' within 100ms intervals
+    await tester.enterText(find.byKey(const ValueKey('smart_chords_search_field')), 'O');
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(repo.getChordsCallCount, 1);
+
+    await tester.enterText(find.byKey(const ValueKey('smart_chords_search_field')), 'Oc');
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(repo.getChordsCallCount, 1);
+
+    await tester.enterText(find.byKey(const ValueKey('smart_chords_search_field')), 'Oce');
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(repo.getChordsCallCount, 1);
+
+    // Wait until 300ms debounce fires
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pumpAndSettle();
+
+    expect(repo.getChordsCallCount, 2);
+    expect(find.text('Oceanos'), findsOneWidget);
+    expect(find.text('Lugar Secreto'), findsNothing);
+  });
+
+  testWidgets('R2-15: clear search cancels pending timer and resets search immediately', (tester) async {
+    repo.chords = [
+      const SmartChord(
+        id: 'c-1',
+        userId: 'u-1',
+        title: 'Oceanos',
+        originalKey: 'D',
+        content: '[D]Tua graça',
+        createdAt: '',
+        updatedAt: '',
+      ),
+      const SmartChord(
+        id: 'c-2',
+        userId: 'u-1',
+        title: 'Lugar Secreto',
+        originalKey: 'Em',
+        content: '[Em]Tu és tudo',
+        createdAt: '',
+        updatedAt: '',
+      ),
+    ];
+
+    await tester.pumpWidget(createWidget());
+    await tester.pumpAndSettle();
+
+    expect(repo.getChordsCallCount, 1);
+
+    // Filter with completed search
+    await tester.enterText(find.byKey(const ValueKey('smart_chords_search_field')), 'Oce');
+    await tester.pumpAndSettle();
+    expect(repo.getChordsCallCount, 2);
+    expect(find.text('Oceanos'), findsOneWidget);
+    expect(find.text('Lugar Secreto'), findsNothing);
+
+    // Tap clear button in text field
+    await tester.tap(find.byIcon(Icons.clear));
+    await tester.pumpAndSettle();
+
+    // Call count incremented immediately without 300ms delay and all items restored
+    expect(repo.getChordsCallCount, 3);
+    expect(find.text('Oceanos'), findsOneWidget);
+    expect(find.text('Lugar Secreto'), findsOneWidget);
   });
 }
