@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../../app/providers.dart';
 import '../../../ministry_context/presentation/controllers/ministry_context_controller.dart';
+import '../../../smart_chords/presentation/views/smart_chord_reader_screen.dart';
+import '../../../smart_chords/presentation/views/smart_chord_form_screen.dart';
 import '../../domain/song_detail.dart';
 
 /// Native member-facing detail view for a song.
@@ -31,6 +33,9 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
       ref
           .read(songDetailNotifierProvider.notifier)
           .load(widget.ministryId, widget.songId);
+      ref
+          .read(songSmartChordsNotifierProvider.notifier)
+          .load(widget.songId);
     });
   }
 
@@ -150,7 +155,7 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
   }
 }
 
-class _SongDetailContent extends StatelessWidget {
+class _SongDetailContent extends ConsumerWidget {
   final SongDetail song;
   final ValueChanged<String> onOpenLink;
 
@@ -160,7 +165,7 @@ class _SongDetailContent extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final classification = song.classification;
     final classColor =
@@ -334,6 +339,163 @@ class _SongDetailContent extends StatelessWidget {
             ),
             const SizedBox(height: 24),
           ],
+
+          // Smart Chords Section
+          Builder(
+            builder: (context) {
+              final smartChordsState = ref.watch(songSmartChordsNotifierProvider);
+              final chords = smartChordsState.items;
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.queue_music_outlined,
+                        size: 20,
+                        color: theme.colorScheme.primary,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Cifras Inteligentes',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        tooltip: 'Nova Cifra para esta música',
+                        icon: const Icon(Icons.add_circle_outline, size: 20),
+                        onPressed: () async {
+                          final created = await Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => SmartChordFormScreen(
+                                prefillSongId: song.id,
+                                prefillSongTitle: song.title,
+                                prefillArtistName: song.artistName,
+                                prefillKey: song.originalKey,
+                              ),
+                            ),
+                          );
+                          if (created != null && context.mounted) {
+                            ref
+                                .read(songSmartChordsNotifierProvider.notifier)
+                                .load(song.id, force: true);
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  if (smartChordsState.isLoading && chords.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8.0),
+                      child: Center(
+                        child: SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                    )
+                  else if (chords.isNotEmpty)
+                    Card(
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(
+                          color: theme.dividerColor.withValues(alpha: 0.2),
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          for (int i = 0; i < chords.length; i++) ...[
+                            if (i > 0) const Divider(height: 1),
+                            ListTile(
+                              leading: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.primaryContainer
+                                      .withValues(alpha: 0.5),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  chords[i].originalKey,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: theme.colorScheme.primary,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                              title: Text(chords[i].title),
+                              subtitle: const Text(
+                                'Toque para abrir no leitor com transposição',
+                              ),
+                              trailing:
+                                  const Icon(Icons.chevron_right, size: 20),
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => SmartChordReaderScreen(
+                                      chordId: chords[i].id,
+                                      initialChord: chords[i],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ],
+                      ),
+                    )
+                  else
+                    Card(
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(
+                          color: theme.dividerColor.withValues(alpha: 0.2),
+                        ),
+                      ),
+                      child: ListTile(
+                        leading: Icon(
+                          Icons.add_circle_outline,
+                          color: theme.colorScheme.primary,
+                        ),
+                        title: const Text('Cadastrar cifra inteligente'),
+                        subtitle: const Text(
+                          'Crie uma cifra com transposição dinâmica para esta música',
+                        ),
+                        trailing: const Icon(Icons.chevron_right, size: 20),
+                        onTap: () async {
+                          final created = await Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => SmartChordFormScreen(
+                                prefillSongId: song.id,
+                                prefillSongTitle: song.title,
+                                prefillArtistName: song.artistName,
+                                prefillKey: song.originalKey,
+                              ),
+                            ),
+                          );
+                          if (created != null && context.mounted) {
+                            ref
+                                .read(songSmartChordsNotifierProvider.notifier)
+                                .load(song.id, force: true);
+                          }
+                        },
+                      ),
+                    ),
+                  const SizedBox(height: 24),
+                ],
+              );
+            },
+          ),
 
           // Notes Section
           if (song.hasNotes) ...[

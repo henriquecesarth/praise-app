@@ -187,6 +187,12 @@ void main() {
       await tester.tap(find.text('Perfil'));
       await tester.pumpAndSettle();
 
+      await tester.scrollUntilVisible(
+        find.text('Excluir minha conta'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+
       expect(find.text('Excluir minha conta'), findsOneWidget);
       expect(
         find.text('Gerenciar encerramento permanente da conta no portal LouvAIO'),
@@ -201,6 +207,12 @@ void main() {
       // Navigate to Perfil tab
       await tester.tap(find.text('Perfil'));
       await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.text('Excluir minha conta'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
 
       // Tap Excluir minha conta tile
       await tester.tap(find.text('Excluir minha conta'));
@@ -229,6 +241,12 @@ void main() {
       // Navigate to Perfil tab
       await tester.tap(find.text('Perfil'));
       await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.text('Excluir minha conta'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
 
       await tester.tap(find.text('Excluir minha conta'));
       await tester.pumpAndSettle();

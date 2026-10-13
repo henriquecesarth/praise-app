@@ -11,6 +11,7 @@ import '../../features/schedules/presentation/views/schedules_view.dart';
 import '../../features/notifications/presentation/controllers/notification_providers.dart';
 import '../../features/notifications/presentation/views/notification_center_screen.dart';
 import '../../features/liturgies/presentation/views/liturgies_screen.dart';
+import '../../features/smart_chords/presentation/views/smart_chords_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../providers.dart';
 
@@ -549,6 +550,26 @@ class _ProfileView extends ConsumerWidget {
                       ministryId: selectedMinistry!.id,
                       ministryName: selectedMinistry!.name,
                     ),
+                  ),
+                );
+              },
+            ),
+            const Divider(),
+            ListTile(
+              key: const ValueKey('profile_smart_chords_tile'),
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                Icons.queue_music_outlined,
+                color: theme.colorScheme.primary,
+              ),
+              title: const Text('Cifras Inteligentes'),
+              subtitle: const Text(
+                  'Biblioteca pessoal, transposição e visualização'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const SmartChordsScreen(),
                   ),
                 );
               },
