@@ -10,6 +10,7 @@ import '../../features/repertoire/presentation/views/repertoire_view.dart';
 import '../../features/schedules/presentation/views/schedules_view.dart';
 import '../../features/notifications/presentation/controllers/notification_providers.dart';
 import '../../features/notifications/presentation/views/notification_center_screen.dart';
+import '../../features/liturgies/presentation/views/liturgies_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../providers.dart';
 
@@ -47,6 +48,9 @@ class _AppShellState extends ConsumerState<AppShell> {
         try {
           ref.read(manualMemberAvailabilityNotifierProvider.notifier).invalidateTenant();
         } catch (_) {}
+        try {
+          ref.read(liturgyFormNotifierProvider.notifier).invalidateTenant();
+        } catch (_) {}
 
         ref.invalidate(dashboardNotifierProvider);
         ref.invalidate(scheduleListNotifierProvider);
@@ -61,6 +65,9 @@ class _AppShellState extends ConsumerState<AppShell> {
         ref.invalidate(membersDirectoryNotifierProvider);
         ref.invalidate(memberDetailNotifierProvider);
         ref.invalidate(memberFormNotifierProvider);
+        ref.invalidate(liturgyListNotifierProvider);
+        ref.invalidate(liturgyDetailNotifierProvider);
+        ref.invalidate(liturgyFormNotifierProvider);
         ref.invalidate(notificationListProvider);
         ref.read(unreadNotificationCountProvider.notifier).refresh();
       }
@@ -353,7 +360,7 @@ class _ProfileView extends ConsumerWidget {
 
     return SafeArea(
       child: ListView(
-        padding: const EdgeInsets.all(20.0),
+        padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
         children: [
           // User Card
           Card(
@@ -365,7 +372,7 @@ class _ProfileView extends ConsumerWidget {
               ),
             ),
             child: Padding(
-              padding: const EdgeInsets.all(20.0),
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
               child: Row(
                 children: [
                   CircleAvatar(
@@ -408,7 +415,7 @@ class _ProfileView extends ConsumerWidget {
               ),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
 
           // Ministry Context Card
           if (selectedMinistry != null)
@@ -421,7 +428,7 @@ class _ProfileView extends ConsumerWidget {
                 ),
               ),
               child: Padding(
-                padding: const EdgeInsets.all(20.0),
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -524,6 +531,29 @@ class _ProfileView extends ConsumerWidget {
               ),
               const Divider(),
             ],
+            ListTile(
+              key: const ValueKey('profile_liturgies_tile'),
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                Icons.menu_book_outlined,
+                color: theme.colorScheme.primary,
+              ),
+              title: const Text('Liturgias & Roteiros'),
+              subtitle: const Text(
+                  'Ordem de culto, momentos, leituras e repertório'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => LiturgiesScreen(
+                      ministryId: selectedMinistry!.id,
+                      ministryName: selectedMinistry!.name,
+                    ),
+                  ),
+                );
+              },
+            ),
+            const Divider(),
           ],
           ListTile(
             contentPadding: EdgeInsets.zero,

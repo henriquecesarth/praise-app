@@ -19,11 +19,13 @@ import '../features/availability/presentation/controllers/availability_providers
 import '../features/push_notifications/presentation/controllers/push_notification_providers.dart';
 import '../features/members/presentation/controllers/members_providers.dart';
 import '../features/notifications/presentation/controllers/notification_providers.dart';
+import '../features/liturgies/presentation/controllers/liturgy_providers.dart';
 export '../features/schedules/presentation/controllers/schedule_providers.dart';
 export '../features/repertoire/presentation/controllers/repertoire_providers.dart';
 export '../features/availability/presentation/controllers/availability_providers.dart';
 export '../features/push_notifications/presentation/controllers/push_notification_providers.dart';
 export '../features/members/presentation/controllers/members_providers.dart';
+export '../features/liturgies/presentation/controllers/liturgy_providers.dart';
 
 /// Clears all authenticated feature caches from memory upon logout or user change.
 /// Accepts either [Ref] or [ProviderContainer].
@@ -61,6 +63,21 @@ void resetAuthenticatedFeatures(dynamic refOrContainer) {
   try {
     refOrContainer.read(manualMemberAvailabilityNotifierProvider.notifier).reset();
   } catch (_) {}
+  try {
+    refOrContainer.read(liturgyListNotifierProvider.notifier).reset();
+  } catch (_) {}
+  try {
+    refOrContainer.read(liturgyDetailNotifierProvider.notifier).invalidateTenant();
+  } catch (_) {}
+  try {
+    refOrContainer.read(liturgyDetailNotifierProvider.notifier).reset();
+  } catch (_) {}
+  try {
+    refOrContainer.read(liturgyFormNotifierProvider.notifier).invalidateTenant();
+  } catch (_) {}
+  try {
+    refOrContainer.read(liturgyFormNotifierProvider.notifier).reset();
+  } catch (_) {}
 
   refOrContainer.invalidate(dashboardNotifierProvider);
   refOrContainer.invalidate(scheduleListNotifierProvider);
@@ -75,6 +92,9 @@ void resetAuthenticatedFeatures(dynamic refOrContainer) {
   refOrContainer.invalidate(manualMemberAvailabilityNotifierProvider);
   refOrContainer.invalidate(repertoireListNotifierProvider);
   refOrContainer.invalidate(songDetailNotifierProvider);
+  refOrContainer.invalidate(liturgyListNotifierProvider);
+  refOrContainer.invalidate(liturgyDetailNotifierProvider);
+  refOrContainer.invalidate(liturgyFormNotifierProvider);
 
   refOrContainer.invalidate(unreadNotificationCountProvider);
   refOrContainer.invalidate(notificationListProvider);
