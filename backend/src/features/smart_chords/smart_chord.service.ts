@@ -20,6 +20,9 @@ export class SmartChordService {
   ) {}
 
   private async validateSongAndArtistAccess(userId: string, songId?: string | null, artistId?: string | null): Promise<void> {
+    let songMinistryId: string | null = null;
+    let songArtistId: string | null = null;
+
     if (songId) {
       const song = await this.repertoireRepository.findSongById(songId);
       if (!song) {
@@ -27,6 +30,10 @@ export class SmartChordService {
       }
       if (song.ministry_id) {
         await this.ministryRepository.getMinistryById(song.ministry_id, userId);
+        songMinistryId = song.ministry_id;
+      }
+      if (song.artist_id) {
+        songArtistId = song.artist_id;
       }
     }
 
@@ -37,6 +44,12 @@ export class SmartChordService {
       }
       if (artist.ministry_id) {
         await this.ministryRepository.getMinistryById(artist.ministry_id, userId);
+        if (songMinistryId && artist.ministry_id !== songMinistryId) {
+          throw new AppError(400, 'A música e o artista vinculados devem pertencer ao mesmo ministério.');
+        }
+      }
+      if (songArtistId && artistId !== songArtistId) {
+        throw new AppError(400, 'O artista vinculado diverge do artista da música selecionada.');
       }
     }
   }
@@ -49,14 +62,16 @@ export class SmartChordService {
       limit?: number;
     }
   ): Promise<PaginatedResponse<SmartChord>> {
-    const page = filters.page || 1;
-    const limit = filters.limit || 50;
+    const page = Math.max(1, filters.page || 1);
+    const limit = Math.min(Math.max(1, filters.limit || 50), 100);
 
     const list = await this.smartChordRepository.getSmartChords(userId, filters.search);
     const total = list.length;
+    const startIndex = (page - 1) * limit;
+    const pagedList = list.slice(startIndex, startIndex + limit);
 
     return {
-      data: list as SmartChord[],
+      data: pagedList as SmartChord[],
       total,
       page,
       limit,
@@ -80,7 +95,10 @@ export class SmartChordService {
 
   async updateSmartChord(id: string, userId: string, data: Partial<SmartChord>): Promise<SmartChord> {
     if (data.song_id !== undefined || data.artist_id !== undefined) {
-      await this.validateSongAndArtistAccess(userId, data.song_id, data.artist_id);
+      const existing = await this.smartChordRepository.getSmartChordById(id, userId);
+      const effectiveSongId = data.song_id !== undefined ? data.song_id : existing.song_id;
+      const effectiveArtistId = data.artist_id !== undefined ? data.artist_id : existing.artist_id;
+      await this.validateSongAndArtistAccess(userId, effectiveSongId, effectiveArtistId);
     }
     return this.smartChordRepository.updateSmartChord(id, userId, data) as unknown as SmartChord;
   }

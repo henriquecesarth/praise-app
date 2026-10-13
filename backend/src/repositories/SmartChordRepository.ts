@@ -78,15 +78,17 @@ export class SmartChordRepository {
 
     const ref = this.smartChordsCol.doc(id);
     const now = new Date().toISOString();
-    const updateData = { ...data, updated_at: now };
-    // Impedir alteração arbitrária de id ou user_id via mass assignment
-    delete updateData.id;
-    delete updateData.user_id;
+    const updateData: Record<string, any> = { updated_at: now };
+    if (data.title !== undefined) updateData.title = data.title;
+    if (data.original_key !== undefined) updateData.original_key = data.original_key;
+    if (data.content !== undefined) updateData.content = data.content;
+    if (data.artist_id !== undefined) updateData.artist_id = data.artist_id || null;
+    if (data.song_id !== undefined) updateData.song_id = data.song_id || null;
 
     await ref.update(updateData);
 
     const updatedDoc = await ref.get();
-    return { id: updatedDoc.id, ...updatedDoc.data() };
+    return this.toDomain(updatedDoc.id, updatedDoc.data() || {});
   }
 
   async deleteSmartChord(id: string, userId: string) {

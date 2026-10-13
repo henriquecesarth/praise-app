@@ -283,6 +283,14 @@ describe('Smart Chords Feature Test Suite', () => {
     });
 
     it('valida acesso à música na atualização (updateSmartChord)', async () => {
+      vi.spyOn(smartChordRepo, 'getSmartChordById').mockResolvedValue({
+        id: 'chord-1',
+        user_id: 'user-a',
+        song_id: null,
+        artist_id: null,
+        title: 'Cifra',
+      } as any);
+
       vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue({
         id: 'song-alien',
         ministry_id: 'min-alien',
@@ -386,6 +394,196 @@ describe('Smart Chords Feature Test Suite', () => {
       expect(mockNext).toHaveBeenCalledWith(
         expect.objectContaining({ statusCode: 401, message: 'Usuário não autenticado.' })
       );
+    });
+  });
+
+  describe('10. Pagination and Query Bounds', () => {
+    it('fatía a lista retornada em data de acordo com page e limit', async () => {
+      const mockChords = Array.from({ length: 25 }, (_, i) => ({
+        id: `sc-${i + 1}`,
+        user_id: 'user-a',
+        title: `Cifra ${i + 1}`,
+        original_key: 'C',
+        content: '[C]Letra',
+      }));
+
+      vi.spyOn(smartChordRepo, 'getSmartChords').mockResolvedValue(mockChords as any);
+
+      // Page 1, limit 10
+      const page1 = await service.getSmartChords('user-a', { page: 1, limit: 10 });
+      expect(page1.total).toBe(25);
+      expect(page1.page).toBe(1);
+      expect(page1.limit).toBe(10);
+      expect(page1.totalPages).toBe(3);
+      expect(page1.data).toHaveLength(10);
+      expect(page1.data[0].id).toBe('sc-1');
+      expect(page1.data[9].id).toBe('sc-10');
+
+      // Page 2, limit 10
+      const page2 = await service.getSmartChords('user-a', { page: 2, limit: 10 });
+      expect(page2.data).toHaveLength(10);
+      expect(page2.data[0].id).toBe('sc-11');
+      expect(page2.data[9].id).toBe('sc-20');
+
+      // Page 3, limit 10 (última página com 5 itens)
+      const page3 = await service.getSmartChords('user-a', { page: 3, limit: 10 });
+      expect(page3.data).toHaveLength(5);
+      expect(page3.data[0].id).toBe('sc-21');
+      expect(page3.data[4].id).toBe('sc-25');
+
+      // Page 4 (além do total)
+      const page4 = await service.getSmartChords('user-a', { page: 4, limit: 10 });
+      expect(page4.data).toHaveLength(0);
+    });
+
+    it('grampeia o limite máximo em 100 e página mínima em 1', async () => {
+      const mockChords = [
+        { id: 'sc-1', user_id: 'user-a', title: 'Cifra 1', original_key: 'C', content: '[C]' }
+      ];
+      vi.spyOn(smartChordRepo, 'getSmartChords').mockResolvedValue(mockChords as any);
+
+      const res = await service.getSmartChords('user-a', { page: 0, limit: 500 });
+      expect(res.page).toBe(1);
+      expect(res.limit).toBe(100);
+    });
+  });
+
+  describe('11. Song and Artist Cross-Ministry Consistency', () => {
+    it('rejeita criação quando música pertence ao Ministério Alpha e artista ao Ministério Beta', async () => {
+      vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue({
+        id: 'song-alpha',
+        ministry_id: 'min-alpha',
+        title: 'Música Alpha',
+      } as any);
+
+      vi.spyOn(repertoireRepo, 'findArtistById').mockResolvedValue({
+        id: 'artist-beta',
+        ministry_id: 'min-beta',
+        name: 'Artista Beta',
+      } as any);
+
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({
+        id: 'min-alpha',
+        name: 'Alpha',
+      } as any);
+
+      await expect(
+        service.createSmartChord('user-a', {
+          title: 'Cifra Mista',
+          original_key: 'C',
+          content: '[C]',
+          song_id: 'song-alpha',
+          artist_id: 'artist-beta',
+        })
+      ).rejects.toThrow(
+        expect.objectContaining({
+          statusCode: 400,
+          message: 'A música e o artista vinculados devem pertencer ao mesmo ministério.',
+        })
+      );
+    });
+
+    it('rejeita criação quando artista diverge do artista já associado à música', async () => {
+      vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue({
+        id: 'song-1',
+        ministry_id: 'min-alpha',
+        artist_id: 'artist-original',
+        title: 'Música com Artista Original',
+      } as any);
+
+      vi.spyOn(repertoireRepo, 'findArtistById').mockResolvedValue({
+        id: 'artist-divergente',
+        ministry_id: 'min-alpha',
+        name: 'Outro Artista',
+      } as any);
+
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({
+        id: 'min-alpha',
+        name: 'Alpha',
+      } as any);
+
+      await expect(
+        service.createSmartChord('user-a', {
+          title: 'Cifra Contraditória',
+          original_key: 'C',
+          content: '[C]',
+          song_id: 'song-1',
+          artist_id: 'artist-divergente',
+        })
+      ).rejects.toThrow(
+        expect.objectContaining({
+          statusCode: 400,
+          message: 'O artista vinculado diverge do artista da música selecionada.',
+        })
+      );
+    });
+
+    it('valida consistência na atualização combinando novos campos com os existentes no documento', async () => {
+      vi.spyOn(smartChordRepo, 'getSmartChordById').mockResolvedValue({
+        id: 'chord-1',
+        user_id: 'user-a',
+        song_id: 'song-alpha',
+        artist_id: 'artist-alpha',
+        title: 'Cifra Existente',
+      } as any);
+
+      vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue({
+        id: 'song-alpha',
+        ministry_id: 'min-alpha',
+        title: 'Música Alpha',
+      } as any);
+
+      vi.spyOn(repertoireRepo, 'findArtistById').mockResolvedValue({
+        id: 'artist-beta',
+        ministry_id: 'min-beta',
+        name: 'Artista Beta',
+      } as any);
+
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({
+        id: 'min-alpha',
+        name: 'Alpha',
+      } as any);
+
+      // Usuário altera apenas artist_id para um de outro ministério
+      await expect(
+        service.updateSmartChord('chord-1', 'user-a', { artist_id: 'artist-beta' })
+      ).rejects.toThrow(
+        expect.objectContaining({
+          statusCode: 400,
+          message: 'A música e o artista vinculados devem pertencer ao mesmo ministério.',
+        })
+      );
+    });
+  });
+
+  describe('12. DTO Allowlist and Mass Assignment Protection', () => {
+    it('ignora campos não-permitidos como id, user_id, created_at ou campos arbitrários no update', async () => {
+      const updateDocMock = vi.fn();
+      vi.spyOn((smartChordRepo as any).smartChordsCol, 'doc').mockReturnValue({
+        get: vi.fn().mockResolvedValue({
+          exists: true,
+          id: 'chord-123',
+          data: () => ({ user_id: 'user-a', title: 'Antigo', content: '[C]' }),
+        }),
+        update: updateDocMock,
+      });
+
+      await smartChordRepo.updateSmartChord('chord-123', 'user-a', {
+        title: 'Novo Título',
+        id: 'hacked-id',
+        user_id: 'hacked-user',
+        created_at: '2020-01-01T00:00:00.000Z',
+        injected_field: 'malicious',
+      });
+
+      expect(updateDocMock).toHaveBeenCalledTimes(1);
+      const passedUpdate = updateDocMock.mock.calls[0][0];
+      expect(passedUpdate.title).toBe('Novo Título');
+      expect(passedUpdate.updated_at).toBeDefined();
+      expect(passedUpdate.id).toBeUndefined();
+      expect(passedUpdate.user_id).toBeUndefined();
+      expect(passedUpdate.created_at).toBeUndefined();
+      expect(passedUpdate.injected_field).toBeUndefined();
     });
   });
 });

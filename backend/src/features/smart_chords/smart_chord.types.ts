@@ -1,19 +1,25 @@
 import { z } from 'zod';
 
 export const createSmartChordSchema = z.object({
-  title: z.string().min(1, 'Título é obrigatório.').max(255),
+  title: z.string().trim().min(1, 'Título é obrigatório.').max(255),
   artist_id: z.string().nullable().optional(),
   song_id: z.string().nullable().optional(),
-  original_key: z.string().min(1, 'Tom original é obrigatório.').max(10),
+  original_key: z.string().trim().min(1, 'Tom original é obrigatório.').max(10),
   content: z.string().min(1, 'O conteúdo da cifra é obrigatório.'),
 });
 
-export const updateSmartChordSchema = createSmartChordSchema.partial();
+export const updateSmartChordSchema = z.object({
+  title: z.string().trim().min(1, 'Título não pode ser vazio.').max(255).optional(),
+  artist_id: z.string().nullable().optional(),
+  song_id: z.string().nullable().optional(),
+  original_key: z.string().trim().min(1, 'Tom original não pode ser vazio.').max(10).optional(),
+  content: z.string().min(1, 'Conteúdo não pode ser vazio.').optional(),
+});
 
 export const smartChordsQuerySchema = z.object({
-  search: z.string().optional(),
-  page: z.string().regex(/^\d+$/).optional().default('1'),
-  limit: z.string().regex(/^\d+$/).optional().default('50'),
+  search: z.string().max(100).optional(),
+  page: z.string().regex(/^[1-9]\d*$/, 'Página deve ser maior que zero.').optional().default('1'),
+  limit: z.string().regex(/^[1-9]\d*$/, 'Limite deve ser maior que zero.').optional().default('50'),
 });
 
 export interface SmartChord {
