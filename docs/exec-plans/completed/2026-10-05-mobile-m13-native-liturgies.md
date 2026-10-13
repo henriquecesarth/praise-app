@@ -1,5 +1,4 @@
-const fs = require('fs');
-const content = `#ExecPlan: M13 — Native Liturgies
+# ExecPlan: M13 — Native Liturgies
 
 - **Status**: COMPLETED & CLOSED
 - **Branch**: `feat/mobile-m13` (Base SHA: `03a0c10a30b42c672b1aa258c7344eeb9c0a6b7d`)
@@ -90,13 +89,13 @@ While web has a liturgy view (`LiturgiesView.tsx`), the native Flutter mobile cl
 
 - [x] **WP6: Automated Verification Gates**
   - Backend focused tests: 51/51 PASS.
-  - Backend build: PASS (`'npm --prefix backend run build`).
+  - Backend build: PASS (`npm --prefix backend run build`).
   - Backend full suite: `BACKEND_FULL_SUITE_NOT_COMPLETED — FIRESTORE_EMULATOR_DEPENDENCY` (pre-existing emulator dependency in Zernio suites unrelated to M13).
   - Mobile M13 focused Flutter tests: 39/39 PASS.
   - Mobile full Flutter tests: 522/522 PASS.
-  - Flutter analyze: PASS (0 issues found).
+  - Flutter analyze: PASS / No issues found.
   - Web unit tests: 400/400 PASS.
-  - Web build: PASS (`'npm --prefix web run build`).
+  - Web build: PASS (`npm --prefix web run build`).
   - Git diff clean.
 
 ---
@@ -143,14 +142,14 @@ While web has a liturgy view (`LiturgiesView.tsx`), the native Flutter mobile cl
 - `CT-M13-17` (Isolamento Cross-Tenant): `PASS_PHYSICAL`
 - `CT-M13-18..21` (Tenant Auto-Dismissal): `AUTOMATED_ONLY`
 - `CT-M13-22` (In-flight Mutation Race Fencing): `AUTOMATED_COVERAGE_ONLY — MANUAL RACE NOT REPRODUCIBLE`
-- `CT-M13-23` (User A -> User B Session Reset): `NOT_EXECUTED — SAFE SECOND ACCOUNT UNAvAILABLE` (coberto por testes de provider)
+- `CT-M13-23` (User A -> User B Session Reset): `NOT_EXECUTED — SAFE SECOND ACCOUNT UNAVAILABLE` (coberto por testes de provider)
 - `CT-M13-24` (Removed-Member Access): `NOT_EXECUTED — SAFE TEST USER UNAVAILABLE` (coberto por testes backend de active membership)
 - `CT-M13-25` (Cross-Tenant Song Observation): `PASS_PHYSICAL` (observação no picker de músicas restrita ao ministério ativo); ataques com campos corrompidos cobertos por `AUTOMATED_SECURITY_COVERAGE`.
 - `CT-M13-26` (Seleção de Data Nativa): `PASS_PHYSICAL`
 - `CT-M13-27` (Persistência da Data): `PASS_PHYSICAL`
 - `CT-M13-28` (Tablet Orientation Landscape / Portrait): `PASS_PHYSICAL`
 - `CT-M13-29` (Touch Target Accessibility): `PASS_PHYSICAL`
-- `CT-M13-30` (Long Content UXLi: `PASS_PHYSICAL`
+- `CT-M13-30` (Long Content UX): `PASS_PHYSICAL`
 - `CT-M13-31` (Back Navigation Stack): `PASS_PHYSICAL`
 
 ---
@@ -159,19 +158,18 @@ While web has a liturgy view (`LiturgiesView.tsx`), the native Flutter mobile cl
 
 1. **Tenant Ownership**:
    - `ministry_id` é autoritativo quando presente.
-   - O legado `group_id` é aceito apenas quando `ministry_id`  estiver ausente.
+   - O legado `group_id` é aceito apenas quando `ministry_id` estiver ausente.
    - Caso ambos existam e divirjam, a resolução de acesso e referência falha fechada.
 2. **Anti-IDOR**:
    - Leituras, edições e exclusões cross-tenant falham fechadas com HTTP 404.
 3. **Song Reference Tenant Isolation**:
-   - Referências de `songId` pertencentes a outros ministérios sÃo estritamente rejeitadas no backend.
+   - Referências de `songId` pertencentes a outros ministérios são estritamente rejeitadas no backend (`songDoc.data()?.ministry_id === groupId`).
    - Identificadores contraditórios não enriquecem dados de músicas de outro ministério.
 4. **Active Membership**:
-   - Integrantes removidos (`status: 'removed'`) não conseguem acessar liturgias por sess�Y\�]][�X�Y\�[�Y�\�
-�RS�T��W�P��T���S�QQ
-K��K�
-����Pʊ���HY[X��Έ��Y[�HZ]\�K��HYZ[��ܚXp�����Yp�����H^�\���˂�H�X��[�0�HH��۝Z\�H]]ܚ]]]�HH]]ܚ^�p����˂���
-��]�ZX�YYH�[��X�[ۘ[
-����HܚXp�����]X[^�p�����H^�\����][^�[H�]�ܚ]\���\�\�ܙH\�H�\�[�\�[�YܚYYH]0�ZX�H[��H��X�p��[�H]\��XHH������]\�][��\����XY�˂�ˈ
-���Yܘ\�H�[Yp����ʊ���H�ۙ�Y�X�Z]H\[�\��ܛX]��[���X��HQH��[Y[���\�\�ܙK�Z�Z][���\�X�\�\�H�\��H�H�]�\��[��H]X�\��][Y[�H���ܛX]�ܙY�ܚX[��VVVKSSKQ��H�ۋ\�ۙ�][\��\HOH	��ۙ��O��ۙ��YH�[���˝ܚ]Q�[T�[��	�����^X�\[�����\]Y̌��LLLK[[ؚ[K[LL�[�]]�K[]\��Y\˛Y	��۝[�
-N�
+   - Integrantes removidos (`status: 'removed'`) não conseguem acessar liturgias por verificação de `requireActiveMinistryMembership`.
+5. **Write Consistency & Atomicity**:
+   - Batch writes no Firestore em criação, atualização e exclusão prevenindo registros órfãos ou dados parcialmente escritos.
+6. **Mutation Generation Fencing**:
+   - Fencing de concorrência com descarte de mutações obsoletas pós-await se a geração do tenant for alterada durante chamada HTTP.
+7. **Safe Auto-Dismissal**:
+   - Auto-dismissal seguro de telas e sheets ao detectar troca de ministério via `ref.listen`.
