@@ -324,16 +324,18 @@ export class RepertoireRepository {
 
     if (data.artist_id) {
       const artDoc = await this.artistsCol.doc(data.artist_id).get();
-      if (artDoc.exists && artDoc.data()?.ministry_id === ministryId) {
-        artistObj = { id: artDoc.id, ...artDoc.data() };
+      if (!artDoc.exists || artDoc.data()?.ministry_id !== ministryId) {
+        throw new AppError(404, 'Artista não encontrado.');
       }
+      artistObj = { id: artDoc.id, ...artDoc.data() };
     }
 
     if (data.classification_id) {
       const classDoc = await this.classificationsCol.doc(data.classification_id).get();
-      if (classDoc.exists && classDoc.data()?.ministry_id === ministryId) {
-        classificationObj = { id: classDoc.id, ...classDoc.data() };
+      if (!classDoc.exists || classDoc.data()?.ministry_id !== ministryId) {
+        throw new AppError(404, 'Classificação não encontrada.');
       }
+      classificationObj = { id: classDoc.id, ...classDoc.data() };
     }
 
     const { SubscriptionRepository } = await import('./SubscriptionRepository');
@@ -377,22 +379,26 @@ export class RepertoireRepository {
     if (data.artist_id !== undefined) {
       if (data.artist_id) {
         const artDoc = await this.artistsCol.doc(data.artist_id).get();
-        updateData.artist = artDoc.exists && artDoc.data()?.ministry_id === ministryId
-          ? { id: artDoc.id, ...artDoc.data() }
-          : null;
+        if (!artDoc.exists || artDoc.data()?.ministry_id !== ministryId) {
+          throw new AppError(404, 'Artista não encontrado.');
+        }
+        updateData.artist = { id: artDoc.id, ...artDoc.data() };
       } else {
         updateData.artist = null;
+        updateData.artist_id = null;
       }
     }
 
     if (data.classification_id !== undefined) {
       if (data.classification_id) {
         const classDoc = await this.classificationsCol.doc(data.classification_id).get();
-        updateData.classification = classDoc.exists && classDoc.data()?.ministry_id === ministryId
-          ? { id: classDoc.id, ...classDoc.data() }
-          : null;
+        if (!classDoc.exists || classDoc.data()?.ministry_id !== ministryId) {
+          throw new AppError(404, 'Classificação não encontrada.');
+        }
+        updateData.classification = { id: classDoc.id, ...classDoc.data() };
       } else {
         updateData.classification = null;
+        updateData.classification_id = null;
       }
     }
 

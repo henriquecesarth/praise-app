@@ -250,4 +250,98 @@ describe('RepertoireRepository Hardened Cursor Pagination & Performance', () => 
       }
     });
   });
+
+  describe('Multi-Tenant Anti-IDOR: Foreign Artist & Classification Relations', () => {
+    it('createSong deve REJEITAR artist_id pertencente a outro ministério com 404', async () => {
+      (repo as any).artistsCol = {
+        doc: vi.fn().mockReturnValue({
+          get: vi.fn().mockResolvedValue({
+            exists: true,
+            data: () => ({ ministry_id: 'min-beta', name: 'Foreign Artist' }),
+          }),
+        }),
+      };
+
+      await expect(
+        repo.createSong('min-alpha', 'user-1', {
+          title: 'Nova Música',
+          artist_id: 'artist-from-beta',
+        })
+      ).rejects.toThrow(AppError);
+    });
+
+    it('createSong deve REJEITAR classification_id pertencente a outro ministério com 404', async () => {
+      (repo as any).classificationsCol = {
+        doc: vi.fn().mockReturnValue({
+          get: vi.fn().mockResolvedValue({
+            exists: true,
+            data: () => ({ ministry_id: 'min-beta', name: 'Foreign Tag' }),
+          }),
+        }),
+      };
+
+      await expect(
+        repo.createSong('min-alpha', 'user-1', {
+          title: 'Nova Música',
+          classification_id: 'tag-from-beta',
+        })
+      ).rejects.toThrow(AppError);
+    });
+
+    it('updateSong deve REJEITAR artist_id pertencente a outro ministério com 404', async () => {
+      (repo as any).songsCol = {
+        doc: vi.fn().mockReturnValue({
+          get: vi.fn().mockResolvedValue({
+            exists: true,
+            id: 'song-1',
+            data: () => ({ ministry_id: 'min-alpha', title: 'Minha Música' }),
+          }),
+          update: vi.fn(),
+        }),
+      };
+
+      (repo as any).artistsCol = {
+        doc: vi.fn().mockReturnValue({
+          get: vi.fn().mockResolvedValue({
+            exists: true,
+            data: () => ({ ministry_id: 'min-beta', name: 'Foreign Artist' }),
+          }),
+        }),
+      };
+
+      await expect(
+        repo.updateSong('song-1', 'min-alpha', {
+          artist_id: 'artist-from-beta',
+        })
+      ).rejects.toThrow(AppError);
+    });
+
+    it('updateSong deve REJEITAR classification_id pertencente a outro ministério com 404', async () => {
+      (repo as any).songsCol = {
+        doc: vi.fn().mockReturnValue({
+          get: vi.fn().mockResolvedValue({
+            exists: true,
+            id: 'song-1',
+            data: () => ({ ministry_id: 'min-alpha', title: 'Minha Música' }),
+          }),
+          update: vi.fn(),
+        }),
+      };
+
+      (repo as any).classificationsCol = {
+        doc: vi.fn().mockReturnValue({
+          get: vi.fn().mockResolvedValue({
+            exists: true,
+            data: () => ({ ministry_id: 'min-beta', name: 'Foreign Tag' }),
+          }),
+        }),
+      };
+
+      await expect(
+        repo.updateSong('song-1', 'min-alpha', {
+          classification_id: 'tag-from-beta',
+        })
+      ).rejects.toThrow(AppError);
+    });
+  });
 });
