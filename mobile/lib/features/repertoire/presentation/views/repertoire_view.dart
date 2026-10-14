@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../app/providers.dart';
+import '../../domain/song_detail.dart';
 import '../controllers/repertoire_list_controller.dart';
-import '../controllers/repertoire_providers.dart';
 import '../widgets/song_card.dart';
 import 'song_detail_view.dart';
+import 'song_form_screen.dart';
 
-/// Member-facing repertoire browsing screen.
-/// Replaces the M6 placeholder. Read-only — no song creation or editing actions.
+/// Repertoire browsing screen with administrative creation for managers.
 class RepertoireView extends ConsumerStatefulWidget {
   final String? ministryId;
 
@@ -65,11 +66,28 @@ class _RepertoireViewState extends ConsumerState<RepertoireView> {
     super.dispose();
   }
 
+  Future<void> _openCreateSong(BuildContext context) async {
+    final ministryId = widget.ministryId;
+    if (ministryId == null) return;
+
+    final created = await Navigator.of(context).push<SongDetail>(
+      MaterialPageRoute(
+        builder: (_) => SongFormScreen(ministryId: ministryId),
+      ),
+    );
+
+    if (created != null && mounted) {
+      ref.read(repertoireListNotifierProvider.notifier).refresh();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(repertoireListNotifierProvider);
     final isWide = MediaQuery.sizeOf(context).width >= 600;
     final isMatchingMinistry = state.ministryId == widget.ministryId;
+    final ministryState = ref.watch(ministryContextNotifierProvider);
+    final isAdmin = ministryState.selectedMinistry?.isAdmin ?? false;
 
     if (widget.ministryId == null) {
       return const _CenteredInfo(
@@ -78,7 +96,8 @@ class _RepertoireViewState extends ConsumerState<RepertoireView> {
       );
     }
 
-    return SafeArea(
+    return Scaffold(
+      body: SafeArea(
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 800),
@@ -196,6 +215,15 @@ class _RepertoireViewState extends ConsumerState<RepertoireView> {
           ),
         ),
       ),
+    ),
+    floatingActionButton: isAdmin && widget.ministryId != null
+          ? FloatingActionButton.extended(
+              key: const ValueKey('repertoire_add_song_fab'),
+              onPressed: () => _openCreateSong(context),
+              icon: const Icon(Icons.add),
+              label: const Text('Nova música'),
+            )
+          : null,
     );
   }
 }

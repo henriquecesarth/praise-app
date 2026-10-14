@@ -8,7 +8,9 @@ class SongDetail {
   final String id;
   final String ministryId;
   final String title;
+  final String? artistId;
   final String? artistName;
+  final String? classificationId;
   final SongClassificationRef? classification;
   final String? originalKey;
   final int? bpm;
@@ -27,7 +29,9 @@ class SongDetail {
     required this.id,
     required this.ministryId,
     required this.title,
+    this.artistId,
     this.artistName,
+    this.classificationId,
     this.classification,
     this.originalKey,
     this.bpm,
@@ -46,22 +50,28 @@ class SongDetail {
   factory SongDetail.fromJson(Map<String, dynamic> json) {
     // Artist handling: object { id, name } or string or null
     String? resolvedArtist;
+    String? resolvedArtistId = json['artist_id']?.toString();
     final rawArtist = json['artist'];
     if (rawArtist is Map) {
       resolvedArtist = rawArtist['name']?.toString();
+      resolvedArtistId ??= rawArtist['id']?.toString();
     } else if (rawArtist is String && rawArtist.isNotEmpty) {
       resolvedArtist = rawArtist;
     }
+    resolvedArtist ??= json['artist_name']?.toString();
 
     // Classification handling: object { id, name, color } or null
+    String? resolvedClassificationId = json['classification_id']?.toString();
     SongClassificationRef? resolvedClassification;
     final rawClass = json['classification'];
     if (rawClass is Map<String, dynamic>) {
       resolvedClassification = SongClassificationRef.fromJson(rawClass);
+      resolvedClassificationId ??= resolvedClassification.id;
     } else if (rawClass is Map) {
       resolvedClassification = SongClassificationRef.fromJson(
         Map<String, dynamic>.from(rawClass),
       );
+      resolvedClassificationId ??= resolvedClassification.id;
     }
 
     final youtubeUrl = json['youtube_url']?.toString();
@@ -83,7 +93,9 @@ class SongDetail {
       id: json['id']?.toString() ?? '',
       ministryId: json['ministry_id']?.toString() ?? '',
       title: json['title']?.toString() ?? '',
+      artistId: resolvedArtistId,
       artistName: resolvedArtist,
+      classificationId: resolvedClassificationId,
       classification: resolvedClassification,
       originalKey: json['original_key']?.toString(),
       bpm: json['bpm'] != null ? (json['bpm'] as num).toInt() : null,

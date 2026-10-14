@@ -92,6 +92,9 @@ void resetAuthenticatedFeatures(dynamic refOrContainer) {
   try {
     refOrContainer.read(smartChordFormNotifierProvider.notifier).reset();
   } catch (_) {}
+  try {
+    refOrContainer.read(songFormNotifierProvider.notifier).reset();
+  } catch (_) {}
 
   refOrContainer.invalidate(dashboardNotifierProvider);
   refOrContainer.invalidate(scheduleListNotifierProvider);
@@ -106,6 +109,7 @@ void resetAuthenticatedFeatures(dynamic refOrContainer) {
   refOrContainer.invalidate(manualMemberAvailabilityNotifierProvider);
   refOrContainer.invalidate(repertoireListNotifierProvider);
   refOrContainer.invalidate(songDetailNotifierProvider);
+  refOrContainer.invalidate(songFormNotifierProvider);
   refOrContainer.invalidate(liturgyListNotifierProvider);
   refOrContainer.invalidate(liturgyDetailNotifierProvider);
   refOrContainer.invalidate(liturgyFormNotifierProvider);

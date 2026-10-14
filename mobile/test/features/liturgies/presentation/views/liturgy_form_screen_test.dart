@@ -12,7 +12,9 @@ import 'package:louvaio_mobile/features/ministry_context/presentation/controller
 import 'package:louvaio_mobile/features/repertoire/data/repertoire_repository.dart';
 import 'package:louvaio_mobile/features/repertoire/domain/paginated_songs.dart';
 import 'package:louvaio_mobile/features/repertoire/domain/song_summary.dart';
+import 'package:louvaio_mobile/features/repertoire/domain/artist.dart';
 import 'package:louvaio_mobile/features/repertoire/domain/song_detail.dart';
+import 'package:louvaio_mobile/features/repertoire/domain/song_form_data.dart';
 import 'package:louvaio_mobile/features/repertoire/domain/classification.dart';
 
 class FakeFormLiturgyRepo implements LiturgyRepository {
@@ -131,6 +133,24 @@ class FakeRepertoireRepo implements RepertoireRepository {
   @override
   Future<List<Classification>> listClassifications(String ministryId) async =>
       [];
+
+  @override
+  Future<SongDetail> createSong(String ministryId, SongFormData data) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<SongDetail> updateSong(String ministryId, String songId, SongFormData data) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> deleteSong(String ministryId, String songId) async {}
+
+  @override
+  Future<List<Artist>> listArtists(String ministryId, {String? search}) async => [];
+
+  @override
+  Future<Artist> createArtist(String ministryId, String name) async =>
+      Artist(id: 'mock-artist', ministryId: ministryId, name: name);
 }
 
 void main() {

@@ -6,6 +6,7 @@ import '../../../ministry_context/presentation/controllers/ministry_context_cont
 import '../../../smart_chords/presentation/views/smart_chord_reader_screen.dart';
 import '../../../smart_chords/presentation/views/smart_chord_form_screen.dart';
 import '../../domain/song_detail.dart';
+import 'song_form_screen.dart';
 
 /// Native member-facing detail view for a song.
 /// Read-only — displays real backend details, links, and readable lyrics.
@@ -69,6 +70,78 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
     }
   }
 
+  Future<void> _openEdit(BuildContext context, SongDetail song) async {
+    final updated = await Navigator.of(context).push<SongDetail>(
+      MaterialPageRoute(
+        builder: (_) => SongFormScreen(
+          ministryId: widget.ministryId,
+          initialSong: song,
+        ),
+      ),
+    );
+
+    if (updated != null && mounted) {
+      ref
+          .read(songDetailNotifierProvider.notifier)
+          .load(widget.ministryId, widget.songId);
+      ref.read(repertoireListNotifierProvider.notifier).refresh();
+    }
+  }
+
+  Future<void> _confirmDelete(BuildContext context, SongDetail song) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    final errorColor = Theme.of(context).colorScheme.error;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Excluir música'),
+        content: Text(
+          'Deseja realmente excluir "${song.title}" do repertório deste ministério? Esta ação não pode ser desfeita.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const ValueKey('confirm_delete_song_button'),
+            style: FilledButton.styleFrom(
+              backgroundColor: errorColor,
+              foregroundColor: Theme.of(dialogCtx).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      final formNotifier = ref.read(songFormNotifierProvider.notifier);
+      final result = await formNotifier.deleteSong(song.id, ministryId: widget.ministryId);
+
+      if (!mounted) return;
+      if (result.isSuccess) {
+        ref.read(repertoireListNotifierProvider.notifier).refresh();
+        navigator.pop();
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('Música excluída com sucesso!'),
+          ),
+        );
+      } else if (result.isFailure) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(result.errorMessage ?? 'Erro ao excluir música.'),
+            backgroundColor: errorColor,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     // Ministry isolation: pop immediately if the active ministry changes
@@ -83,6 +156,8 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
 
     final detailState = ref.watch(songDetailNotifierProvider);
     final theme = Theme.of(context);
+    final ministryState = ref.watch(ministryContextNotifierProvider);
+    final isAdmin = ministryState.selectedMinistry?.isAdmin ?? false;
     final isMatchingContext = detailState.ministryId == widget.ministryId &&
         detailState.songId == widget.songId;
 
@@ -142,6 +217,22 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
           detailState.song?.title ?? widget.initialTitle ?? 'Música',
           overflow: TextOverflow.ellipsis,
         ),
+        actions: [
+          if (isAdmin && detailState.song != null) ...[
+            IconButton(
+              key: const ValueKey('edit_song_button'),
+              tooltip: 'Editar música',
+              icon: const Icon(Icons.edit_outlined),
+              onPressed: () => _openEdit(context, detailState.song!),
+            ),
+            IconButton(
+              key: const ValueKey('delete_song_button'),
+              tooltip: 'Excluir música',
+              icon: Icon(Icons.delete_outline, color: theme.colorScheme.error),
+              onPressed: () => _confirmDelete(context, detailState.song!),
+            ),
+          ],
+        ],
       ),
       body: SafeArea(
         child: Center(
