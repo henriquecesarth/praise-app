@@ -1,6 +1,6 @@
 # ExecPlan: M14 — Native Smart Chords
 
-- **Status**: ACTIVE / IN PROGRESS
+- **Status**: CLOSED (Review: PASS, Physical Acceptance: PASS, Final Status: M14_PHYSICAL_ACCEPTANCE_PASS)
 - **Branch**: `feat/mobile-m14` (Base SHA: `3ea53a822e3fe8da522f189f7cee74cb12451b8c`)
 - **Scope**: Native mobile Smart Chords experience (M14A library & viewer + M14B chord parsing, rendering & transposition + M14C create/edit/delete CRUD), backend security & consistency hardening, repertoire integration, tablet & phone UX.
 - **Reference**: AGENTS.md, MEMORY.md, docs/system-status.md, docs/mobile/architecture.md, web/src/utils/smart_chord.ts
@@ -144,3 +144,93 @@ Furthermore, the backend audit identifies areas for hardening:
 - Flutter analyze: `flutter analyze` (0 issues found, clean).
 - Flutter focused tests: `flutter test test/features/smart_chords/` (74/74 PASS).
 - Flutter full test suite: `flutter test` (596/596 PASS).
+
+---
+
+## 6. Physical Device Acceptance (Lenovo Tab P11 Plus / TB-J616F)
+
+- **Date**: 2026-10-14
+- **Device**: Lenovo Tab P11 Plus / TB-J616F (Android 12, API 31, Serial `HND29KG9`)
+- **App Build**: Debug APK with `--dart-define=APP_ENV=development --dart-define=API_BASE_URL=http://127.0.0.1:3000/api/v1`
+- **Backend**: Local Express backend (`status = ok` on `http://127.0.0.1:3000/api/health`), port forwarding via `adb reverse tcp:3000 tcp:3000`
+- **Authenticated User**: `XnpmlGGY6PZCRT90U0hYlLrEwjf2` (`teix.code@gmail.com` / Henrique Teixeira)
+- **Ministry Contexts**: `LouvAIO Sandbox Test` (ID `5kL2qssw4PCi2irzC25X`, empty repertoire) & `Louvor IBBP` (repertoire with songs)
+
+### Execution Matrix
+
+| Mandatory Check | Result | Evidence |
+|---|---|---|
+| `CREATE_PERSONAL_SMART_CHORD` | `PASS_PHYSICAL` | Created "M14 TEST Amazing Grace", Key C, persisted and listed in personal library |
+| `READER_ALIGNMENT` | `PASS_PHYSICAL` | Monospace chord row aligned over lyrics, brackets stripped, blank lines preserved |
+| `TRANSPOSE_PLUS` | `PASS_PHYSICAL` | C -> C# (+1) transposed all chords and key indicator with `(+1)` badge |
+| `TRANSPOSE_MINUS` | `PASS_PHYSICAL` | C -> B (-1) wraparound correctly calculated and rendered |
+| `TRANSPOSE_RESET` | `PASS_PHYSICAL` | `Original` button restores C and hides reset action (`TRANSPOSE_IS_EPHEMERAL = PASS`) |
+| `TRANSPOSE_NOT_PERSISTED` | `PASS_PHYSICAL` | Closing reader and inspecting stored chord verified persisted key (C) and raw text unchanged |
+| `EDIT` | `PASS_PHYSICAL` | Title edited to "M14 TEST Amazing Grace Editada", key to D, content updated and persisted |
+| `DELETE` | `PASS_PHYSICAL` | Destructive dialog with cancel and confirm, deleted chord removed immediately from library |
+| `SEARCH` | `PASS_PHYSICAL` | 300ms debounced server-side search filtered by title, clear button reset library immediately |
+| `SONG_DETAIL_INTEGRATION` | `PASS_PHYSICAL` | "Cifras Inteligentes" section on SongDetail renders linked chords and add button |
+| `MULTIPLE_CHORDS_PER_SONG` | `PASS_PHYSICAL` | 2 chords linked to "Ao Teu rosto vir" rendered independently (`MODEL_N` verified) |
+| `LINKED_RELATION_SAFETY` | `PASS_PHYSICAL` / `AUTOMATED_ONLY` | Repertoire chords isolated between Louvor IBBP and Sandbox Test (`PASS_PHYSICAL`); concurrent switch during pushed route handled by route modal barrier (`AUTOMATED_ONLY`) |
+| `USER_SESSION_PRIVACY` | `AUTOMATED_ONLY` | Logout not reachable from pushed route modal shell; covered by 74/74 automated widget tests |
+| `LONG_CONTENT` | `PASS_PHYSICAL` | 4-verse Portuguese chord sheet scrolled smoothly with pinned reader controls |
+| `PORTRAIT` | `PASS_PHYSICAL` | 1200x1976 layout verified: readable margins, action buttons right-aligned, no RenderFlex overflow |
+| `LANDSCAPE` | `PASS_PHYSICAL` | 2000x1176 tablet layout verified: navigation rail, 2-column/centered form, responsive toolbar |
+| `KEYBOARD_UX` | `PASS_PHYSICAL` | Title and multiline editor focusable, scrollable with keyboard, save button pinned and reachable |
+
+### Test Data Cleanup
+- All temporary `M14 TEST ...` Smart Chords deleted via canonical API (`total = 0`). No real user records modified or deleted.
+
+---
+
+## 7. Milestone Closure & Durable Architecture Summary
+
+- **M14 Lifecycle**: CLOSED
+- **Final Code Status**: CODE_READY_FOR_PRODUCTION
+- **Independent Final Review**: PASS
+- **Physical Acceptance**: M14_PHYSICAL_ACCEPTANCE_PASS
+- **Overall**: M14_PHYSICAL_ACCEPTANCE_PASS
+
+### Architecture & Security Invariants
+1. **Ownership**:
+   - Smart Chords are personal resources owned globally by authenticated `user_id`.
+   - Cross-user GET, UPDATE, and DELETE fail closed (HTTP 404).
+   - Personal Smart Chord ownership does NOT become ministry ownership.
+2. **Ministry Relationships**:
+   - Optional reference to `song_id` and `artist_id` from repertoire (ministry-scoped).
+   - Backend validates active membership, song/artist existence within active ministry, and mutual consistency.
+   - Removing user membership preserves user's personal chord, blocks new unauthorized linkage, and does not leak foreign repertoire metadata.
+3. **Session Privacy & Fencing**:
+   - Pushed form and reader screens observe `AuthState` changes; on user change or logout, routes immediately dismiss and controllers clear draft data.
+   - Typed mutation outcomes: `SUCCESS`, `FAILURE`, `DISCARDED`.
+   - Stale mutations invalidated by session generation produce `DISCARDED` (no SnackBar, no navigation pop, no state eviction).
+4. **Tenant-Linked Editor Rule**:
+   - Forms linked to active ministry songs/artists auto-dismiss on active ministry switch.
+   - Unlinked personal drafts and reader routes remain open and global across ministry switches.
+5. **Canonical API Contract**:
+   - Routes:
+     - `GET    /api/v1/smart-chords`
+     - `GET    /api/v1/smart-chords/song/:songId` (retains strict route precedence over `/:id`)
+     - `GET    /api/v1/smart-chords/:id`
+     - `POST   /api/v1/smart-chords`
+     - `PUT    /api/v1/smart-chords/:id`
+     - `DELETE /api/v1/smart-chords/:id`
+6. **Bounded Document ID Validation**:
+   - Single-document regex `/^[A-Za-z0-9_-]{1,100}$/` enforced on route IDs, `/song/:songId`, `song_id`, and `artist_id`.
+   - Malformed IDs fail as HTTP 400 (`AppError('Dados inválidos.')`).
+7. **Search Contract**:
+   - `SEARCH_FIELDS = title only`. Backend-filtered, operates on full collection before slicing, 300ms client debounce.
+8. **Deferred Tech Debt**:
+   - `SMART_CHORD_FIRESTORE_CURSOR_PAGINATION = DEFERRED_TECH_DEBT`
+   - `SMART_CHORD_AUTO_CREATE_SONG = DEFERRED`
+
+### Verification Baseline
+- **Backend Smart Chords**: 31/31 PASS
+- **Backend Build**: PASS
+- **Backend Full Suite**: BACKEND_FULL_SUITE_NOT_COMPLETED — FIRESTORE_EMULATOR_DEPENDENCY
+- **Flutter Smart Chords**: 74/74 PASS
+- **Flutter Full Suite**: 596/596 PASS
+- **Flutter Analyze**: PASS (clean, 0 issues)
+- **Web Tests**: 400/400 PASS
+- **Web Build**: PASS
+- **Physical Acceptance**: 24 physical passes on Lenovo Tab P11 Plus (Android 12 / API 31 / TB-J616F / ADB `HND29KG9`), 5 automated-only cases, 1 safe second account not executed. All temporary test records cleaned up (`total = 0`).
