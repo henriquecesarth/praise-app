@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/providers.dart';
+import '../../../auth/presentation/controllers/auth_controller.dart';
 import '../../../ministry_context/presentation/controllers/ministry_context_controller.dart';
 import '../../domain/artist.dart';
 import '../../domain/song_detail.dart';
@@ -42,7 +43,9 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
   String? _selectedKey;
   String? _selectedArtistId;
   String? _selectedClassificationId;
+  String? _boundUserId;
   bool _isSaved = false;
+  bool _isForcedDismiss = false;
 
   static const List<String> _musicalKeys = [
     'C', 'C#', 'Db', 'D', 'D#', 'Eb', 'E', 'F',
@@ -79,14 +82,40 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
     _chordSheetUrlController.addListener(_onFieldChanged);
     _notesController.addListener(_onFieldChanged);
 
+    final currentUserId = ref.read(authNotifierProvider).user?.id ?? '';
+    _boundUserId = currentUserId.isNotEmpty ? currentUserId : null;
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final currentUserId = ref.read(authNotifierProvider).user?.id ?? '';
       ref.read(songFormNotifierProvider.notifier).init(
             ministryId: widget.ministryId,
             boundUserId: currentUserId,
             initialSong: widget.initialSong,
           );
     });
+  }
+
+  void _forceDismiss() {
+    if (_isForcedDismiss) return;
+    _isForcedDismiss = true;
+    ref.read(songFormNotifierProvider.notifier).invalidateTenant();
+    _clearDraftControllers();
+    if (mounted && Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  void _clearDraftControllers() {
+    _titleController.clear();
+    _bpmController.clear();
+    _durationController.clear();
+    _lyricsController.clear();
+    _youtubeUrlController.clear();
+    _audioUrlController.clear();
+    _chordSheetUrlController.clear();
+    _notesController.clear();
+    _selectedKey = null;
+    _selectedArtistId = null;
+    _selectedClassificationId = null;
   }
 
   void _onFieldChanged() {
@@ -210,7 +239,7 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
         ? await notifier.updateSong(widget.initialSong!.id, formData)
         : await notifier.createSong(formData);
 
-    if (!mounted) return;
+    if (!mounted || _isForcedDismiss) return;
     if (result.isDiscarded) return;
 
     if (result.isSuccess && result.data != null) {
@@ -243,6 +272,7 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
   Future<void> _openArtistPicker(List<Artist> artists) async {
     final searchController = TextEditingController();
     final messenger = ScaffoldMessenger.of(context);
+    final errorColor = Theme.of(context).colorScheme.error;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -360,6 +390,16 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
                                       ),
                                     ),
                                   );
+                                } else if (res.isFailure) {
+                                  messenger.showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        res.errorMessage ??
+                                            'Erro ao criar artista.',
+                                      ),
+                                      backgroundColor: errorColor,
+                                    ),
+                                  );
                                 }
                               }
                             },
@@ -435,14 +475,25 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Multi-tenant protection: auto-pop if active ministry switches away
+    // Multi-tenant protection: auto-pop immediately if active ministry switches away
     ref.listen<MinistryContextState>(ministryContextNotifierProvider,
         (previous, next) {
       final newMinistryId = next.selectedMinistry?.id;
-      if (newMinistryId != null && newMinistryId != widget.ministryId) {
-        if (mounted) {
-          Navigator.of(context).maybePop();
-        }
+      if (newMinistryId != null &&
+          newMinistryId.isNotEmpty &&
+          newMinistryId != widget.ministryId) {
+        _forceDismiss();
+      }
+    });
+
+    // Session switch protection: if active user changes away or logs out, close immediately
+    ref.listen<AuthState>(authNotifierProvider, (previous, next) {
+      final currentUid = next.user?.id;
+      final isUnauthenticated =
+          !next.isAuthenticated || currentUid == null || currentUid.isEmpty;
+      final userChanged = _boundUserId != null && currentUid != _boundUserId;
+      if ((_boundUserId != null && isUnauthenticated) || userChanged) {
+        _forceDismiss();
       }
     });
 
@@ -464,9 +515,15 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
     }
 
     return PopScope(
-      canPop: _isSaved || !_isDirty || formState.isSubmitting,
+      canPop: _isForcedDismiss || _isSaved || !_isDirty || formState.isSubmitting,
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
+        if (_isForcedDismiss) {
+          if (Navigator.of(context).canPop()) {
+            Navigator.of(context).pop();
+          }
+          return;
+        }
         final shouldLeave = await _showDiscardDialog(context);
         if (shouldLeave && context.mounted) {
           Navigator.of(context).pop();

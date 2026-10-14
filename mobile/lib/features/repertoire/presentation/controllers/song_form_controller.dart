@@ -294,15 +294,26 @@ class SongFormNotifier extends StateNotifier<SongFormState> {
     }
   }
 
-  Future<MutationResult<void>> deleteSong(String songId, {String? ministryId}) async {
+  Future<MutationResult<void>> deleteSong(
+    String songId, {
+    String? ministryId,
+    String? boundUserId,
+  }) async {
     if (state.isSubmitting) return const MutationResult.discarded();
     final requestGeneration = _currentGeneration;
     final targetMinistryId = ministryId ?? _boundMinistryId;
-    final expectedUserId = _boundUserId;
+    final expectedUserId = boundUserId ?? _boundUserId;
 
     if (targetMinistryId == null || targetMinistryId.isEmpty) {
       return const MutationResult.failure('Ministério não informado.');
     }
+
+    if (expectedUserId == null || expectedUserId.isEmpty) {
+      return const MutationResult.failure('Usuário não autenticado.');
+    }
+
+    _boundMinistryId = targetMinistryId;
+    _boundUserId = expectedUserId;
 
     state = state.copyWith(
       isSubmitting: true,
@@ -314,7 +325,9 @@ class SongFormNotifier extends StateNotifier<SongFormState> {
       await _repository.deleteSong(targetMinistryId, songId);
 
       if (requestGeneration != _currentGeneration ||
-          targetMinistryId != (ministryId ?? _boundMinistryId) ||
+          _boundMinistryId == null ||
+          _boundUserId == null ||
+          targetMinistryId != _boundMinistryId ||
           expectedUserId != _boundUserId) {
         return const MutationResult.discarded();
       }
@@ -328,7 +341,9 @@ class SongFormNotifier extends StateNotifier<SongFormState> {
       return const MutationResult.success();
     } catch (e) {
       if (requestGeneration != _currentGeneration ||
-          targetMinistryId != (ministryId ?? _boundMinistryId) ||
+          _boundMinistryId == null ||
+          _boundUserId == null ||
+          targetMinistryId != _boundMinistryId ||
           expectedUserId != _boundUserId) {
         return const MutationResult.discarded();
       }

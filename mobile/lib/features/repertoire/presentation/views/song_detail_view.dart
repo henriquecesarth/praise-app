@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../../app/providers.dart';
+import '../../../auth/presentation/controllers/auth_controller.dart';
 import '../../../ministry_context/presentation/controllers/ministry_context_controller.dart';
 import '../../../smart_chords/presentation/views/smart_chord_reader_screen.dart';
 import '../../../smart_chords/presentation/views/smart_chord_form_screen.dart';
@@ -27,9 +28,15 @@ class SongDetailView extends ConsumerStatefulWidget {
 }
 
 class _SongDetailViewState extends ConsumerState<SongDetailView> {
+  String? _boundUserId;
+  bool _isDismissed = false;
+
   @override
   void initState() {
     super.initState();
+    final user = ref.read(authNotifierProvider).user;
+    _boundUserId = user?.id;
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref
           .read(songDetailNotifierProvider.notifier)
@@ -38,6 +45,15 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
           .read(songSmartChordsNotifierProvider.notifier)
           .load(widget.songId);
     });
+  }
+
+  void _dismissScreen() {
+    if (_isDismissed) return;
+    _isDismissed = true;
+    ref.read(songFormNotifierProvider.notifier).invalidateTenant();
+    if (mounted && Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
   }
 
   Future<void> _safeLaunchUrl(String urlString) async {
@@ -120,12 +136,22 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
 
     if (confirmed == true && mounted) {
       final formNotifier = ref.read(songFormNotifierProvider.notifier);
-      final result = await formNotifier.deleteSong(song.id, ministryId: widget.ministryId);
+      final currentUserId =
+          ref.read(authNotifierProvider).user?.id ?? _boundUserId;
+      final result = await formNotifier.deleteSong(
+        song.id,
+        ministryId: widget.ministryId,
+        boundUserId: currentUserId,
+      );
 
-      if (!mounted) return;
+      if (!mounted || _isDismissed) return;
+      if (result.isDiscarded) return;
+
       if (result.isSuccess) {
         ref.read(repertoireListNotifierProvider.notifier).refresh();
-        navigator.pop();
+        if (navigator.canPop()) {
+          navigator.pop();
+        }
         messenger.showSnackBar(
           const SnackBar(
             content: Text('Música excluída com sucesso!'),
@@ -148,9 +174,18 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
     ref.listen<MinistryContextState>(ministryContextNotifierProvider,
         (previous, next) {
       if (previous?.selectedMinistry?.id != next.selectedMinistry?.id) {
-        if (mounted && Navigator.of(context).canPop()) {
-          Navigator.of(context).pop();
-        }
+        _dismissScreen();
+      }
+    });
+
+    // Session switch protection: if active user changes away or logs out, close immediately
+    ref.listen<AuthState>(authNotifierProvider, (previous, next) {
+      final currentUid = next.user?.id;
+      final isUnauthenticated =
+          !next.isAuthenticated || currentUid == null || currentUid.isEmpty;
+      final userChanged = _boundUserId != null && currentUid != _boundUserId;
+      if ((_boundUserId != null && isUnauthenticated) || userChanged) {
+        _dismissScreen();
       }
     });
 

@@ -1,6 +1,6 @@
 # ExecPlan: M15 — Native Repertoire Administration
 
-- **Status**: ACTIVE / IMPLEMENTATION
+- **Status**: ACTIVE / REMEDIATION (M15-R2 Complete, Ready for Final Review)
 - **Branch**: `feat/mobile-m15` (Base SHA: `58c4240e5f0b249cbe3268d4f0e209a7019857a1`)
 - **Scope**: Native mobile Repertoire Administration (Song authoring: create, edit, delete; Artist selection and quick-create; Classification selection; Repertoire FAB & SongDetail admin controls; multi-tenant and session fencing; quota & restricted state handling; tablet and phone UX).
 - **Reference**: AGENTS.md, MEMORY.md, docs/system-status.md, docs/mobile/architecture.md, backend/src/features/repertoire/, web/src/components/CreateSongModal.tsx
@@ -57,25 +57,50 @@ Furthermore:
 - [x] Phase 4: SongFormScreen UI (phone & tablet responsive, key chips, artist picker/creator, lyrics)
 - [x] Phase 5: RepertoireView FAB & SongDetailView admin actions (Edit/Delete)
 - [x] Phase 6: Unit, widget, and regression test suites (Flutter & Backend)
-- [ ] Phase 7: Independent review & Lenovo Tab P11 Plus physical acceptance preparation
+- [x] Phase 7: Independent review M15-R1 (Verdict: REMEDIATION_REQUIRED)
+- [x] Phase 8: M15-R2 Remediation (F-01, F-02, F-03 & test gaps resolved)
+- [ ] Phase 9: Final independent review & physical acceptance on Lenovo Tab P11 Plus
 
 ---
 
-## 4. Verification Evidence & Test Summary
+## 4. M15-R1 Review Findings & M15-R2 Remediation
+
+### Findings Resolved
+- **F-01 (HIGH) — Dirty PopScope blocking forced tenant dismissal**:
+  - *Problem*: In `SongFormScreen`, `ministryContextNotifierProvider` change invoked `Navigator.of(context).maybePop()`. When form was dirty (`canPop: false`), the discard dialog blocked forced dismissal, allowing foreign tenant forms to remain open.
+  - *Fix*: Added `_isForcedDismiss` flag and `_forceDismiss()`. On tenant switch, `_forceDismiss()` sets `_isForcedDismiss = true`, clears and disposes all draft controllers, resets dirty state, and immediately calls `Navigator.of(context).pop()`. `PopScope` explicitly allows immediate pop when `_isForcedDismiss` is true without showing discard dialog.
+- **F-02 (HIGH) — SongFormScreen lacked auth/session dismissal**:
+  - *Problem*: `SongFormScreen` only listened to ministry changes. On user logout or user account switch, dirty draft inputs remained mounted in memory and displayed on screen.
+  - *Fix*: Bound `_boundUserId` in `initState` from `authNotifierProvider`. Added `authNotifierProvider` listener in `build()` that triggers `_forceDismiss()` if user logs out or user ID changes. Clears all draft state immediately.
+- **F-03 (HIGH) — SongDetail delete path completed across sessions**:
+  - *Problem*: `deleteSong` in `SongFormNotifier` had no session fencing (`_boundUserId == null`). An in-flight delete could execute across user logout and show snackbars/navigate back on a different user's session.
+  - *Fix*: Added `String? boundUserId` to `deleteSong()`, enforced non-null/non-empty check, bound `_boundUserId`, and verified session generation after the delete repository call. Discarded result (`MutationResult.discarded()`) suppresses UI pops, snackbars, and refreshes in `SongDetailView`.
+
+### Test Gaps Closed
+- `TEST_GAP-01`: Widget test asserting dirty form auto-dismisses immediately on tenant change without discard dialog.
+- `TEST_GAP-02`: Widget tests asserting draft is wiped and form auto-dismisses on logout, and on user switch (User A -> User B).
+- `TEST_GAP-03`: Widget test asserting in-flight delete is discarded on logout without snackbar or navigation crash.
+- `TEST_GAP-04`: Widget test asserting quick-create artist failure preserves song draft.
+- Controller tests: `deleteSong` fails if `boundUserId` is missing/empty, and discards if tenant/session changes during in-flight deletion.
+
+---
+
+## 5. Verification Evidence & Test Summary
 
 - **Static Analysis**: `flutter analyze` runs completely clean with 0 issues (`No issues found!`).
-- **Mobile Repertoire Suite**: 70/70 tests passing (`flutter test test/features/repertoire/`).
+- **Mobile Repertoire Suite**: 77/77 tests passing (`flutter test test/features/repertoire/`).
   - `artist_test.dart`: 4/4 passing
   - `song_form_data_test.dart`: 6/6 passing
   - `repertoire_domain_test.dart`: 8/8 passing
   - `repertoire_repository_admin_test.dart`: 7/7 passing
   - `repertoire_controllers_test.dart`: 13/13 passing
-  - `song_form_controller_test.dart`: 7/7 passing
-  - `repertoire_admin_actions_test.dart`: 5/5 passing
+  - `song_form_controller_test.dart`: 9/9 passing (+2 remediation tests)
+  - `repertoire_admin_actions_test.dart`: 6/6 passing (+1 remediation test)
   - `repertoire_view_test.dart`: 10/10 passing
   - `song_detail_view_test.dart`: 5/5 passing
-  - `song_form_screen_test.dart`: 5/5 passing
-- **Full Mobile Suite**: 627/627 tests passing across the entire mobile application (`flutter test`).
+  - `song_form_screen_test.dart`: 9/9 passing (+4 remediation tests)
+- **Mobile Smart Chords Suite**: 74/74 passing (`flutter test test/features/smart_chords/`).
+- **Full Mobile Suite**: 634/634 tests passing across the entire mobile application (`flutter test`).
 - **Backend Build & Verification**:
   - `npm --prefix backend run build`: 0 errors (clean `tsc` output)
   - `src/repositories/RepertoireRepository.test.ts`: 12/12 passing

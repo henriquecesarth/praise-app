@@ -1,9 +1,14 @@
+import 'dart:async';
+import 'package:firebase_auth/firebase_auth.dart' hide AuthProvider;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/app/environment/app_environment.dart';
 import 'package:louvaio_mobile/app/providers.dart';
 import 'package:louvaio_mobile/core/storage/preferences_storage.dart';
+import 'package:louvaio_mobile/features/auth/data/auth_repository.dart';
+import 'package:louvaio_mobile/features/auth/domain/auth_user.dart';
+import 'package:louvaio_mobile/features/auth/presentation/controllers/auth_controller.dart';
 import 'package:louvaio_mobile/features/ministry_context/data/ministry_repository.dart';
 import 'package:louvaio_mobile/features/ministry_context/domain/ministry.dart';
 import 'package:louvaio_mobile/features/ministry_context/presentation/controllers/ministry_context_controller.dart';
@@ -18,6 +23,52 @@ import 'package:louvaio_mobile/features/repertoire/presentation/controllers/repe
 import 'package:louvaio_mobile/features/repertoire/presentation/controllers/song_detail_controller.dart';
 import 'package:louvaio_mobile/features/repertoire/presentation/views/repertoire_view.dart';
 import 'package:louvaio_mobile/features/repertoire/presentation/views/song_detail_view.dart';
+
+class _FakeAuthRepo implements AuthRepository {
+  @override
+  Stream<User?> authStateChanges() => const Stream.empty();
+  @override
+  User? get currentFirebaseUser => null;
+  @override
+  Future<String?> getIdToken({bool forceRefresh = false}) async => null;
+  @override
+  Future<UserCredential> signInWithEmailAndPassword(
+          {required String email, required String password}) =>
+      throw UnimplementedError();
+  @override
+  Future<AuthUser> signUp(
+          {required String name,
+          required String email,
+          required String password}) =>
+      throw UnimplementedError();
+  @override
+  Future<AuthUser> getMe() => throw UnimplementedError();
+  @override
+  Future<void> signOut() async {}
+}
+
+class FakeAuthNotifier extends AuthNotifier {
+  FakeAuthNotifier([
+    AuthState initialState = const AuthState.authenticated(
+      AuthUser(id: 'admin_user', email: 'admin@test.com', name: 'Admin'),
+    ),
+  ]) : super(_FakeAuthRepo()) {
+    state = initialState;
+  }
+
+  void setUser(AuthUser? user) {
+    if (user != null) {
+      state = AuthState.authenticated(user);
+    } else {
+      state = const AuthState.unauthenticated();
+    }
+  }
+
+  @override
+  Future<void> logout() async {
+    state = const AuthState.unauthenticated();
+  }
+}
 
 class _FakePreferencesStorage implements PreferencesStorage {
   @override
@@ -57,6 +108,7 @@ class FakeRepertoireRepo implements RepertoireRepository {
   List<SongSummary> songs = [];
   SongDetail? detail;
   String? deletedSongId;
+  Completer<void>? deleteCompleter;
 
   @override
   Future<PaginatedSongs> listSongs(String ministryId,
@@ -90,6 +142,9 @@ class FakeRepertoireRepo implements RepertoireRepository {
 
   @override
   Future<void> deleteSong(String ministryId, String songId) async {
+    if (deleteCompleter != null) {
+      await deleteCompleter!.future;
+    }
     deletedSongId = songId;
   }
 
@@ -103,9 +158,11 @@ class FakeRepertoireRepo implements RepertoireRepository {
 
 void main() {
   late FakeRepertoireRepo fakeRepo;
+  late FakeAuthNotifier authNotifier;
 
   setUp(() {
     fakeRepo = FakeRepertoireRepo();
+    authNotifier = FakeAuthNotifier();
   });
 
   Widget buildRepertoireView({required String role}) {
@@ -117,6 +174,7 @@ void main() {
         preferencesStorageProvider.overrideWithValue(_FakePreferencesStorage()),
         ministryRepositoryProvider.overrideWithValue(_FakeMinistryRepo()),
         ministryContextNotifierProvider.overrideWith((ref) => FakeMinistryContextNotifier(role: role)),
+        authNotifierProvider.overrideWith((ref) => authNotifier),
         repertoireRepositoryProvider.overrideWithValue(fakeRepo),
         repertoireListNotifierProvider.overrideWith((ref) => RepertoireListNotifier(repository: fakeRepo)),
       ],
@@ -142,6 +200,7 @@ void main() {
         preferencesStorageProvider.overrideWithValue(_FakePreferencesStorage()),
         ministryRepositoryProvider.overrideWithValue(_FakeMinistryRepo()),
         ministryContextNotifierProvider.overrideWith((ref) => FakeMinistryContextNotifier(role: role)),
+        authNotifierProvider.overrideWith((ref) => authNotifier),
         repertoireRepositoryProvider.overrideWithValue(fakeRepo),
         songDetailNotifierProvider.overrideWith((ref) => SongDetailNotifier(repository: fakeRepo)),
         songFormNotifierProvider.overrideWith((ref) => SongFormNotifier(repository: fakeRepo)),
@@ -204,6 +263,69 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(fakeRepo.deletedSongId, equals('song_123'));
+    });
+
+    testWidgets('TEST_GAP-03: in-flight delete discarded on logout without snackbar or navigation crash', (tester) async {
+      fakeRepo.deleteCompleter = Completer<void>();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appEnvironmentProvider.overrideWithValue(
+              const AppEnvironment(env: AppEnv.development, apiBaseUrl: 'http://localhost:3000/api/v1'),
+            ),
+            preferencesStorageProvider.overrideWithValue(_FakePreferencesStorage()),
+            ministryRepositoryProvider.overrideWithValue(_FakeMinistryRepo()),
+            ministryContextNotifierProvider.overrideWith((ref) => FakeMinistryContextNotifier(role: 'admin')),
+            authNotifierProvider.overrideWith((ref) => authNotifier),
+            repertoireRepositoryProvider.overrideWithValue(fakeRepo),
+            songDetailNotifierProvider.overrideWith((ref) => SongDetailNotifier(repository: fakeRepo)),
+            songFormNotifierProvider.overrideWith((ref) => SongFormNotifier(repository: fakeRepo)),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: Builder(
+                builder: (ctx) => ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(ctx).push(
+                      MaterialPageRoute(
+                        builder: (_) => const SongDetailView(
+                          ministryId: 'min_1',
+                          songId: 'song_123',
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('Open Detail'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Open Detail'));
+      await tester.pumpAndSettle();
+
+      // Tap delete and confirm
+      await tester.tap(find.byKey(const ValueKey('delete_song_button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('confirm_delete_song_button')));
+      await tester.pump();
+
+      // Logout occurs while delete is in-flight
+      authNotifier.logout();
+      await tester.pumpAndSettle();
+
+      // Complete the in-flight delete
+      fakeRepo.deleteCompleter!.complete();
+      await tester.pumpAndSettle();
+
+      // Detail route is popped, no success snackbar shown, no crash
+      expect(find.text('Música excluída com sucesso!'), findsNothing);
+      expect(find.byType(SnackBar), findsNothing);
+      expect(find.text('Open Detail'), findsOneWidget);
     });
   });
 }

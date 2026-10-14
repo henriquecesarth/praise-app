@@ -172,5 +172,31 @@ void main() {
       expect(result.isDiscarded, isTrue);
       expect(result.isSuccess, isFalse);
     });
+
+    test('deleteSong fails if boundUserId is missing and not initialized', () async {
+      final result = await notifier.deleteSong('s-1', ministryId: testMinistryId);
+      expect(result.isFailure, isTrue);
+      expect(result.errorMessage, equals('Usuário não autenticado.'));
+    });
+
+    test('deleteSong discards if tenant or session changes during in-flight deletion', () async {
+      final completer = Completer<void>();
+      when(() => repository.deleteSong(testMinistryId, 's-to-delete'))
+          .thenAnswer((_) => completer.future);
+
+      final futureResult = notifier.deleteSong(
+        's-to-delete',
+        ministryId: testMinistryId,
+        boundUserId: testUserId,
+      );
+
+      notifier.invalidateTenant();
+
+      completer.complete();
+
+      final result = await futureResult;
+      expect(result.isDiscarded, isTrue);
+      expect(result.isSuccess, isFalse);
+    });
   });
 }

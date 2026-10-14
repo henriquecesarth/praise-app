@@ -1,9 +1,14 @@
+import 'package:firebase_auth/firebase_auth.dart' hide AuthProvider;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/app/environment/app_environment.dart';
 import 'package:louvaio_mobile/app/providers.dart';
+import 'package:louvaio_mobile/core/errors/app_failure.dart';
 import 'package:louvaio_mobile/core/storage/preferences_storage.dart';
+import 'package:louvaio_mobile/features/auth/data/auth_repository.dart';
+import 'package:louvaio_mobile/features/auth/domain/auth_user.dart';
+import 'package:louvaio_mobile/features/auth/presentation/controllers/auth_controller.dart';
 import 'package:louvaio_mobile/features/ministry_context/data/ministry_repository.dart';
 import 'package:louvaio_mobile/features/ministry_context/domain/ministry.dart';
 import 'package:louvaio_mobile/features/ministry_context/presentation/controllers/ministry_context_controller.dart';
@@ -14,6 +19,52 @@ import 'package:louvaio_mobile/features/repertoire/domain/paginated_songs.dart';
 import 'package:louvaio_mobile/features/repertoire/domain/song_detail.dart';
 import 'package:louvaio_mobile/features/repertoire/domain/song_form_data.dart';
 import 'package:louvaio_mobile/features/repertoire/presentation/views/song_form_screen.dart';
+
+class _FakeAuthRepo implements AuthRepository {
+  @override
+  Stream<User?> authStateChanges() => const Stream.empty();
+  @override
+  User? get currentFirebaseUser => null;
+  @override
+  Future<String?> getIdToken({bool forceRefresh = false}) async => null;
+  @override
+  Future<UserCredential> signInWithEmailAndPassword(
+          {required String email, required String password}) =>
+      throw UnimplementedError();
+  @override
+  Future<AuthUser> signUp(
+          {required String name,
+          required String email,
+          required String password}) =>
+      throw UnimplementedError();
+  @override
+  Future<AuthUser> getMe() => throw UnimplementedError();
+  @override
+  Future<void> signOut() async {}
+}
+
+class FakeAuthNotifier extends AuthNotifier {
+  FakeAuthNotifier([
+    AuthState initialState = const AuthState.authenticated(
+      AuthUser(id: 'admin_user', email: 'admin@test.com', name: 'Admin'),
+    ),
+  ]) : super(_FakeAuthRepo()) {
+    state = initialState;
+  }
+
+  void setUser(AuthUser? user) {
+    if (user != null) {
+      state = AuthState.authenticated(user);
+    } else {
+      state = const AuthState.unauthenticated();
+    }
+  }
+
+  @override
+  Future<void> logout() async {
+    state = const AuthState.unauthenticated();
+  }
+}
 
 class _FakePreferencesStorage implements PreferencesStorage {
   @override
@@ -59,6 +110,7 @@ class FakeRepertoireRepo implements RepertoireRepository {
   ];
   SongFormData? lastCreatedData;
   SongFormData? lastUpdatedData;
+  AppFailure? artistErrorToThrow;
 
   @override
   Future<PaginatedSongs> listSongs(String ministryId,
@@ -79,6 +131,7 @@ class FakeRepertoireRepo implements RepertoireRepository {
 
   @override
   Future<Artist> createArtist(String ministryId, String name) async {
+    if (artistErrorToThrow != null) throw artistErrorToThrow!;
     final newArtist = Artist(id: 'art-new', ministryId: ministryId, name: name);
     artists.add(newArtist);
     return newArtist;
@@ -102,9 +155,13 @@ class FakeRepertoireRepo implements RepertoireRepository {
 
 void main() {
   late FakeRepertoireRepo fakeRepo;
+  late FakeAuthNotifier authNotifier;
+  late FakeMinistryContextNotifier ministryNotifier;
 
   setUp(() {
     fakeRepo = FakeRepertoireRepo();
+    authNotifier = FakeAuthNotifier();
+    ministryNotifier = FakeMinistryContextNotifier(role: 'admin');
   });
 
   Widget buildSubject({SongDetail? initialSong}) {
@@ -115,7 +172,8 @@ void main() {
         ),
         preferencesStorageProvider.overrideWithValue(_FakePreferencesStorage()),
         ministryRepositoryProvider.overrideWithValue(_FakeMinistryRepo()),
-        ministryContextNotifierProvider.overrideWith((ref) => FakeMinistryContextNotifier(role: 'admin')),
+        ministryContextNotifierProvider.overrideWith((ref) => ministryNotifier),
+        authNotifierProvider.overrideWith((ref) => authNotifier),
         repertoireRepositoryProvider.overrideWithValue(fakeRepo),
         songFormNotifierProvider.overrideWith((ref) => SongFormNotifier(repository: fakeRepo)),
       ],
@@ -123,6 +181,41 @@ void main() {
         home: SongFormScreen(
           ministryId: 'min_1',
           initialSong: initialSong,
+        ),
+      ),
+    );
+  }
+
+  Widget buildPushableSubject({SongDetail? initialSong, String ministryId = 'min_1'}) {
+    return ProviderScope(
+      overrides: [
+        appEnvironmentProvider.overrideWithValue(
+          const AppEnvironment(env: AppEnv.development, apiBaseUrl: 'http://localhost:3000/api/v1'),
+        ),
+        preferencesStorageProvider.overrideWithValue(_FakePreferencesStorage()),
+        ministryRepositoryProvider.overrideWithValue(_FakeMinistryRepo()),
+        ministryContextNotifierProvider.overrideWith((ref) => ministryNotifier),
+        authNotifierProvider.overrideWith((ref) => authNotifier),
+        repertoireRepositoryProvider.overrideWithValue(fakeRepo),
+        songFormNotifierProvider.overrideWith((ref) => SongFormNotifier(repository: fakeRepo)),
+      ],
+      child: MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => ElevatedButton(
+              onPressed: () {
+                Navigator.of(ctx).push(
+                  MaterialPageRoute(
+                    builder: (_) => SongFormScreen(
+                      ministryId: ministryId,
+                      initialSong: initialSong,
+                    ),
+                  ),
+                );
+              },
+              child: const Text('Open Song Form'),
+            ),
+          ),
         ),
       ),
     );
@@ -207,6 +300,132 @@ void main() {
       expect(find.text('Musica Existente'), findsOneWidget);
       expect(find.text('110'), findsOneWidget);
       expect(find.text('04:00'), findsOneWidget);
+    });
+
+    testWidgets('TEST_GAP-01: dirty form auto-dismisses immediately on tenant change without discard dialog', (tester) async {
+      await tester.pumpWidget(buildPushableSubject());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Open Song Form'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('song_form_save_button')), findsOneWidget);
+
+      // Make dirty by typing draft
+      await tester.enterText(find.byKey(const ValueKey('song_title_input')), 'Rascunho Alpha');
+      await tester.enterText(find.byKey(const ValueKey('song_lyrics_input')), 'Letra confidencial Alpha');
+      await tester.pumpAndSettle();
+
+      // Switch active ministry to Beta
+      ministryNotifier.state = const MinistryContextState(
+        status: MinistryBootstrapStatus.ready,
+        selectedMinistry: Ministry(id: 'min_beta', name: 'Beta', role: 'admin'),
+        availableMinistries: [
+          Ministry(id: 'min_1', name: 'Alpha', role: 'admin'),
+          Ministry(id: 'min_beta', name: 'Beta', role: 'admin'),
+        ],
+      );
+      await tester.pumpAndSettle();
+
+      // Form route is popped immediately, no discard dialog shown, draft destroyed
+      expect(find.byKey(const ValueKey('song_form_save_button')), findsNothing);
+      expect(find.text('Descartar alterações?'), findsNothing);
+      expect(find.text('Rascunho Alpha'), findsNothing);
+      expect(find.text('Open Song Form'), findsOneWidget);
+    });
+
+    testWidgets('TEST_GAP-02: draft is destroyed and form auto-dismisses on logout', (tester) async {
+      await tester.pumpWidget(buildPushableSubject());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Open Song Form'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('song_form_save_button')), findsOneWidget);
+
+      // Enter private draft
+      await tester.enterText(find.byKey(const ValueKey('song_title_input')), 'Privado User A');
+      await tester.enterText(find.byKey(const ValueKey('song_lyrics_input')), 'Letra ultra confidencial');
+      await tester.pumpAndSettle();
+
+      // Logout occurs
+      authNotifier.logout();
+      await tester.pumpAndSettle();
+
+      // Form route closed, draft text destroyed
+      expect(find.byKey(const ValueKey('song_form_save_button')), findsNothing);
+      expect(find.text('Privado User A'), findsNothing);
+      expect(find.text('Letra ultra confidencial'), findsNothing);
+      expect(find.text('Open Song Form'), findsOneWidget);
+    });
+
+    testWidgets('TEST_GAP-02: draft is destroyed and form auto-dismisses on user change (User A -> User B)', (tester) async {
+      await tester.pumpWidget(buildPushableSubject());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Open Song Form'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('song_form_save_button')), findsOneWidget);
+
+      // Enter private draft
+      await tester.enterText(find.byKey(const ValueKey('song_title_input')), 'User A Secret Song');
+      await tester.pumpAndSettle();
+
+      // Active user changes to User B
+      authNotifier.setUser(const AuthUser(id: 'user_b', email: 'user.b@test.com', name: 'User B'));
+      await tester.pumpAndSettle();
+
+      // Form route closed, draft destroyed
+      expect(find.byKey(const ValueKey('song_form_save_button')), findsNothing);
+      expect(find.text('User A Secret Song'), findsNothing);
+      expect(find.text('Open Song Form'), findsOneWidget);
+    });
+
+    testWidgets('TEST_GAP-04: quick-create artist failure preserves song draft', (tester) async {
+      fakeRepo.artistErrorToThrow = const AppFailure(
+        message: 'Nome de artista já cadastrado.',
+        statusCode: 400,
+      );
+
+      await tester.pumpWidget(buildSubject());
+      await tester.pumpAndSettle();
+
+      // Fill in draft data
+      await tester.enterText(find.byKey(const ValueKey('song_title_input')), 'Grande é o Senhor');
+      await tester.enterText(find.byKey(const ValueKey('song_bpm_input')), '128');
+      await tester.ensureVisible(find.byKey(const ValueKey('key_chip_G')));
+      await tester.tap(find.byKey(const ValueKey('key_chip_G')));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.byKey(const ValueKey('song_lyrics_input')));
+      await tester.enterText(find.byKey(const ValueKey('song_lyrics_input')), 'Aleluia ao Deus Vivo');
+      await tester.pumpAndSettle();
+
+      // Open artist picker
+      await tester.ensureVisible(find.byKey(const ValueKey('artist_picker_tile')));
+      await tester.tap(find.byKey(const ValueKey('artist_picker_tile')));
+      await tester.pumpAndSettle();
+
+      // Tap "Novo" in sheet
+      await tester.tap(find.widgetWithText(FilledButton, 'Novo'));
+      await tester.pumpAndSettle();
+
+      // Enter duplicate artist name in dialog
+      await tester.enterText(find.byType(TextField).last, 'Morada');
+      await tester.pumpAndSettle();
+
+      // Tap "Criar"
+      await tester.tap(find.widgetWithText(FilledButton, 'Criar'));
+      await tester.pumpAndSettle();
+
+      // Error snackbar is shown
+      expect(find.text('Nome de artista já cadastrado.'), findsOneWidget);
+
+      // Verify draft inputs are PRESERVED
+      expect(find.text('Grande é o Senhor'), findsOneWidget);
+      expect(find.text('128'), findsOneWidget);
+      expect(find.text('Aleluia ao Deus Vivo'), findsOneWidget);
     });
   });
 }
