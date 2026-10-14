@@ -1,7 +1,13 @@
-# ExecPlan: M15 â€” Native Repertoire Administration
+# ExecPlan: M15 — Native Repertoire Administration
 
-- **Status**: M15_PHYSICAL_ACCEPTANCE_PARTIAL (Final Review PASS, Physical Acceptance PARTIAL pending focused physical retest of UI_LIST_REFRESH_STATE_CONVERGENCE)
-- **Branch**: `feat/mobile-m15` (Base SHA: `58c4240e5f0b249cbe3268d4f0e209a7019857a1`, Remediation SHA: `dcc530ecf2009788ab0272c82f4d83bbf9f65ad9`)
+- **Lifecycle**: CLOSED
+- **Final Decision**:
+  - `M15_REVIEW = PASS`
+  - `M15_PHYSICAL_ACCEPTANCE = PASS`
+  - `M15_FOCUSED_PHYSICAL_RETEST = PASS`
+  - `M15_OVERALL = M15_PHYSICAL_ACCEPTANCE_PASS`
+  - `M15_LIFECYCLE = CLOSED`
+- **Branch**: `feat/mobile-m15` (Base SHA: `58c4240e5f0b249cbe3268d4f0e209a7019857a1`, Product HEAD SHA: `1b46ada648d1f1b21035a7d28a87bfbb9dd5ce21`)
 - **Scope**: Native mobile Repertoire Administration (Song authoring: create, edit, delete; Artist selection and quick-create; Classification selection; Repertoire FAB & SongDetail admin controls; multi-tenant and session fencing; quota & restricted state handling; tablet and phone UX).
 - **Reference**: AGENTS.md, MEMORY.md, docs/system-status.md, docs/mobile/architecture.md, backend/src/features/repertoire/, web/src/components/CreateSongModal.tsx
 
@@ -18,7 +24,7 @@ Furthermore:
 
 ---
 
-## 2. Architectural Decisions & Product Boundaries
+## 2. Architectural Decisions, Invariants & Product Boundaries
 
 1. **Included in M15**:
    - Create song (title, artist, classification, musical key, BPM, duration, lyrics, YouTube URL, Audio URL, Chord Sheet URL, external links).
@@ -27,7 +33,7 @@ Furthermore:
    - Existing artist picker with search/selection.
    - Quick-create new artist inline within song form (independent mutation semantics).
    - Existing classification selector (chips/picker).
-   - Repertoire FAB (`Nova mÃºsica`) visible strictly to ministry admins.
+   - Repertoire FAB (`Nova música`) visible strictly to ministry admins.
    - SongDetail administrative actions (Editar, Excluir) visible strictly to ministry admins.
    - Quota enforcement handling (HTTP 403 / PLAN_SONG_QUOTA_REACHED / SUBSCRIPTION_RESTRICTED).
    - Unsaved changes guard (PopScope / discard dialog).
@@ -41,10 +47,42 @@ Furthermore:
    - Audio/MP3, PDF, or image file uploads to Cloud Storage (URLs only).
    - Folders / Pastas management (secondary web organization feature; deferred).
    - Schedule conflict detection (Candidate for M16).
-3. **Delete Reference Semantics**:
+3. **Backend Security Hardening**:
+   - `SONG_WRITE_RBAC = PASS`
+   - `SONG_TENANT_IDOR = PASS`
+   - `FOREIGN_ARTIST_REFERENCE = PASS`
+   - `FOREIGN_CLASSIFICATION_REFERENCE = PASS`
+   - `ACTIVE_MEMBERSHIP = PASS`
+   - `VALIDATION_ORACLE = PASS`
+   - Foreign repertoire relationships are validated against active ministry. Create/update must fail closed (HTTP 404) if `artist_id` or `classification_id` belongs to another ministry. Target song ownership is validated before relation probing during update.
+4. **Quota Semantics**:
+   - `SONG_QUOTA_ENFORCEMENT = CREATE_ONLY`
+   - Plan song quota count is enforced on create; POST/PUT remain subject to operational access restrictions; DELETE is allowed as remediation according to current backend policy. Update does not consume additional quota.
+5. **Delete Reference Semantics**:
+   - `SONG_DELETE_CASCADE = NONE`
+   - `DELETE → SMART_CHORD_SEMANTICS = PRESERVED`
+   - `DELETE → LITURGY_SEMANTICS = PRESERVED`
+   - `DELETE → SCHEDULE_SEMANTICS = PRESERVED`
    - Deleting a song is transactional on the song document and decrements `usage.songs_count`.
    - Personal Smart Chords retain their user ownership and `song_id` reference without destructive cascade; SongDetail and Reader fail gracefully if song is unlinked or deleted.
    - Historical liturgies and schedules preserve copied/snapshotted metadata.
+6. **Session & Tenant Fencing**:
+   - `TENANT_FORCED_DISMISS_BYPASSES_DIRTY_GUARD = PASS`
+   - `FORM_SESSION_PRIVACY = PASS`
+   - The song form binds to original authenticated user and original active ministry. On `Alpha → Beta` or `User A → logout/User B`, the form invalidates, wipes private draft state, bypasses ordinary dirty-form confirmation, and dismisses immediately.
+7. **Mutation Fencing**:
+   - `CREATE_POST_AWAIT_FENCING = PASS`
+   - `UPDATE_POST_AWAIT_FENCING = PASS`
+   - `DELETE_POST_AWAIT_FENCING = PASS`
+   - `QUICK_ARTIST_POST_AWAIT_FENCING = PASS`
+   - Create, update, delete, and quick artist creation use post-await fencing. Stale completion after tenant/session invalidation yields `DISCARDED` and produces no snackbar, route pop, wrong-tenant refresh, or cache mutation.
+8. **State Convergence Invariants (M15-R4)**:
+   - `CREATE_RETURN_LIST_CONVERGENCE = PASS`
+   - `EDIT_RETURN_LIST_CONVERGENCE = PASS`
+   - `DELETE_LIST_EVICTION = PASS`
+   - `LIST_REFRESH_TENANT_FENCING = PASS`
+   - `REPEATED_CREATE_CONVERGENCE = PASS`
+   - `UI_LIST_REFRESH_STATE_CONVERGENCE = FIXED_PHYSICAL`
 
 ---
 
@@ -111,7 +149,7 @@ Furthermore:
 
 ---
 
-## 5. Architectural Answers for M15 Review
+## 6. Architectural Answers for M15 Review
 
 1. **Scope Classification**:
    - `RECOMMENDED_M15 = Native Repertoire Administration`
@@ -123,11 +161,15 @@ Furthermore:
    - Smart Chords remain personal resources owned by `user_id`.
    - `SMART_CHORD_AUTO_CREATE_SONG` remains deferred, but M15 provides the required native repertoire songs to link.
 4. **Deferred Modules**:
+   - `SMART_CHORD_FIRESTORE_CURSOR_PAGINATION = DEFERRED_TECH_DEBT`
+   - `SMART_CHORD_AUTO_CREATE_SONG = STILL_DEFERRED`
+   - `FULL_ARTIST_CRUD_MOBILE = DEFERRED`
+   - `CLASSIFICATION_CRUD_MOBILE = DEFERRED`
    - Audio file uploads, folders CRUD, and full artist/classification administration are intentionally deferred.
 
 ---
 
-## 6. Physical Device Acceptance Matrix (Lenovo Tab P11 Plus / Android 12)
+## 7. Physical Device Acceptance Matrix (Lenovo Tab P11 Plus / Android 12)
 
 - **Device**: Lenovo Tab P11 Plus (TB-J616F / Android 12 / API 31 / ADB: `HND29KG9`)
 - **APK Target**: Debug build (`APP_ENV=development`, `API_BASE_URL=http://127.0.0.1:3000/api/v1` via ADB reverse `tcp:3000 tcp:3000`)
@@ -137,28 +179,28 @@ Furthermore:
 ### Test Cases Summary
 | Test ID | Case Description | Result | Evidence / Notes |
 |---|---|---|---|
-| **CT-M15-01** | Admin FAB visibility | `PASS_PHYSICAL` | `Nova mÃºsica` FAB visible at `[1750,1068][1976,1152]` in tablet layout. |
+| **CT-M15-01** | Admin FAB visibility | `PASS_PHYSICAL` | `Nova música` FAB visible at `[1750,1068][1976,1152]` in tablet layout. |
 | **CT-M15-02** | Ordinary member visibility | `NOT_EXECUTED` | Safe member-only account unavailable; automated RBAC suites (20/20) remain authoritative. |
 | **CT-M15-03** | Open create form | `PASS_PHYSICAL` | Form opened with title, artist picker, 17 musical keys + "Sem tom", BPM, duration, classifications, lyrics, and external URLs. |
-| **CT-M15-04** | Required title validation | `PASS_PHYSICAL` | Tapping `Salvar` with empty title displayed `"O tÃ­tulo Ã© obrigatÃ³rio"`, 0 crashes. |
-| **CT-M15-05** | Create song happy path | `PASS_PHYSICAL` | Created `M15 TEST Quao Grande Es Tu` (Key G, 72 BPM, 04:30, AdoraÃ§Ã£o, lyrics); persisted in Firestore. |
-| **CT-M15-06** | SongDetail authoritative data | `PASS_PHYSICAL` | Opened created song; Title, Artist, Key G, 72 BPM, 04:30, AdoraÃ§Ã£o, and lyrics match authoritative saved values. |
+| **CT-M15-04** | Required title validation | `PASS_PHYSICAL` | Tapping `Salvar` with empty title displayed `"O título é obrigatório"`, 0 crashes. |
+| **CT-M15-05** | Create song happy path | `PASS_PHYSICAL` | Created `M15 TEST Quao Grande Es Tu` (Key G, 72 BPM, 04:30, Adoração, lyrics); persisted in Firestore. |
+| **CT-M15-06** | SongDetail authoritative data | `PASS_PHYSICAL` | Opened created song; Title, Artist, Key G, 72 BPM, 04:30, Adoração, and lyrics match authoritative saved values. |
 | **CT-M15-07** | Existing artist selection | `PASS_PHYSICAL` | Opened artist picker, existing artists displayed, selection persisted upon save. |
 | **CT-M15-08** | Quick-create artist | `PASS_PHYSICAL` | Opened artist picker -> tapped `Novo` -> created `M15 TEST Cantor` -> dialog closed and new artist automatically selected in form. |
 | **CT-M15-09** | Artist failure preserves draft | `AUTOMATED_ONLY` | Backend allows duplicate artist names; automated widget test `TEST_GAP-04` proved draft preservation upon `AppFailure`. |
-| **CT-M15-10** | Classification selection | `PASS_PHYSICAL` | `AdoraÃ§Ã£o` FilterChip selected and persisted in Firestore and UI. |
+| **CT-M15-10** | Classification selection | `PASS_PHYSICAL` | `Adoração` FilterChip selected and persisted in Firestore and UI. |
 | **CT-M15-11** | Edit metadata | `PASS_PHYSICAL` | Opened test song -> tapped Editar -> updated title to `M15 TEST Quao Grande Es Tu Editada`, BPM to `75`, duration to `04:30`; saved cleanly. |
 | **CT-M15-12** | Edit musical key | `PASS_PHYSICAL` | Changed key from G to A in form; saved and verified `Tom: A` in SongDetail. |
 | **CT-M15-13** | Edit classification removal | `PASS_PHYSICAL` | Selected `Nenhuma`; saved and verified classification chip removed from SongDetail. |
 | **CT-M15-14** | Reopen authoritative edit form | `PASS_PHYSICAL` | Reopening form pre-populated all authoritative server values accurately. |
 | **CT-M15-15** | Valid external URL | `PASS_PHYSICAL` | Entered `https://youtube.com/watch?v=dQw4w9WgXcQ`; displayed clickable video link tile in SongDetail; tapping opened launcher without crash. |
-| **CT-M15-16** | Invalid external URL | `PASS_PHYSICAL` | Entered `javascript:alert(1)`; tapping Salvar displayed validation error: `"Informe uma URL vÃ¡lida iniciando com http:// ou https://"`. |
-| **CT-M15-17** | Unsaved changes guard | `PASS_PHYSICAL` | Dirty form -> Back -> dialog `"Descartar alteraÃ§Ãµes?"` displayed. "Continuar editando" kept draft. "Descartar" popped route cleanly. |
+| **CT-M15-16** | Invalid external URL | `PASS_PHYSICAL` | Entered `javascript:alert(1)`; tapping Salvar displayed validation error: `"Informe uma URL válida iniciando com http:// ou https://"`. |
+| **CT-M15-17** | Unsaved changes guard | `PASS_PHYSICAL` | Dirty form -> Back -> dialog `"Descartar alterações?"` displayed. "Continuar editando" kept draft. "Descartar" popped route cleanly. |
 | **CT-M15-18** | Clean form back | `PASS_PHYSICAL` | Clean form with no modifications -> Back -> popped cleanly without discard dialog. |
 | **CT-M15-19** | Successful save pop | `PASS_PHYSICAL` | `PopScope` allowed immediate pop on save without displaying discard confirmation dialog. |
-| **CT-M15-20** | Delete cancel confirmation | `PASS_PHYSICAL` | Tapped Excluir mÃºsica -> tapped Cancelar in confirmation dialog -> dialog dismissed and SongDetail remained mounted. |
-| **CT-M15-21** | Delete confirm happy path | `PASS_PHYSICAL` | Tapped Excluir mÃºsica -> confirmed Excluir -> song deleted, SongDetail popped immediately. |
-| **CT-M15-22** | Delete evicted from repertoire & search | `PASS_PHYSICAL` | Repertoire list showed empty state; typing search query returned `"Nenhuma mÃºsica encontrada"`. |
+| **CT-M15-20** | Delete cancel confirmation | `PASS_PHYSICAL` | Tapped Excluir música -> tapped Cancelar in confirmation dialog -> dialog dismissed and SongDetail remained mounted. |
+| **CT-M15-21** | Delete confirm happy path | `PASS_PHYSICAL` | Tapped Excluir música -> confirmed Excluir -> song deleted, SongDetail popped immediately. |
+| **CT-M15-22** | Delete evicted from repertoire & search | `PASS_PHYSICAL` | Repertoire list showed empty state; typing search query returned `"Nenhuma música encontrada"`. |
 | **CT-M15-23** | Delete personal Smart Chord preservation | `PASS_PHYSICAL` | Created `M15 TEST Chord Song` with personal Smart Chord, deleted repertoire song, opened `Cifras Inteligentes` from Profile, Smart Chord was preserved and opened in reader without crashing. |
 | **CT-M15-24** | Delete schedule snapshot preservation | `AUTOMATED_ONLY` | Automated backend integration suite proves historical schedule items retain copied metadata when repertoire song is deleted. |
 | **CT-M15-25** | Delete liturgy snapshot preservation | `AUTOMATED_ONLY` | Automated backend integration suite proves liturgy items retain snapshotted metadata when repertoire song is deleted. |
@@ -169,7 +211,7 @@ Furthermore:
 | **CT-M15-30** | In-flight mutation discarded on session loss | `AUTOMATED_ONLY` | Automated controller tests and `TEST_GAP-03` prove discarded outcome without stale snackbars. |
 | **CT-M15-31** | Direct user switch A -> B | `NOT_EXECUTED` | Safe second user credentials unavailable; automated widget test `TEST_GAP-02` proves immediate unmount and draft wipe on user change. |
 | **CT-M15-32** | Song quota reached | `AUTOMATED_ONLY` | Sandbox ministry on Essential plan; automated backend quota integration tests and mobile repository tests prove `PLAN_SONG_QUOTA_REACHED` handling. |
-| **CT-M15-33** | Open Smart Chord creation pre-linked | `PASS_PHYSICAL` | Tapped `Cadastrar cifra inteligente` -> `Nova Cifra` opened with pre-filled title, original tone D, and `Vinculada ao repertÃ³rio: M15`. |
+| **CT-M15-33** | Open Smart Chord creation pre-linked | `PASS_PHYSICAL` | Tapped `Cadastrar cifra inteligente` -> `Nova Cifra` opened with pre-filled title, original tone D, and `Vinculada ao repertório: M15`. |
 | **CT-M15-34** | Repertoire edit does not mutate Smart Chord | `PASS_PHYSICAL` | Edited song key from D to E in repertoire -> Smart Chord retained original tone D and chords intact. |
 | **CT-M15-35** | Portrait rotation layout | `PASS_PHYSICAL` | Rotated to rotation 0 -> layout adapted cleanly with NavigationBar, FAB, search bar, and empty state centered. |
 | **CT-M15-36** | Landscape rotation layout | `PASS_PHYSICAL` | Rotated back to rotation 1 -> NavigationRail, app bar, search bar, chips, and FAB restored cleanly. |
@@ -179,15 +221,16 @@ Furthermore:
 | **CT-M15-40** | Liturgies integration smoke | `PASS_PHYSICAL` | Liturgias & Roteiros opened and rendered without errors. |
 | **CT-M15-41** | Smart Chords regression smoke | `PASS_PHYSICAL` | Cifras Inteligentes library, reader, font adjustment, and transposition functional. |
 
-### Documented Finding
-- **UI List Refresh Convergence Defect**:
-  - *Reproduction*: Opening `SongFormScreen` from `RepertoireView` (create or edit) -> save successfully (`_submit()`) -> form calls `ref.invalidate(repertoireListNotifierProvider)` and pops back -> `_openCreateSong` invokes `repertoireListNotifierProvider.notifier.refresh()` -> `repertoireListNotifierProvider` was reset to initial state where `state.ministryId == null`, aborting `refresh()` silently -> `RepertoireView.build` shows `CircularProgressIndicator` until re-mounted.
-  - *Classification*: `UI / STATE CONVERGENCE` (Non-blocking for physical test completion; switching tabs or re-mounting immediately resolves and displays the created/updated song).
-  - *Status Revision*: Lifecycle revised from `PASS` to `M15_PHYSICAL_ACCEPTANCE_PARTIAL` pending focused physical retest of state convergence.
+### Documented Finding & Lifecycle Chronology
+1. **Initial Physical Acceptance**: 41 cases executed on Lenovo Tab P11 Plus (28 PASS_PHYSICAL, 10 AUTOMATED_ONLY, 3 NOT_EXECUTED).
+2. **Product Defect Discovered**: `UI_LIST_REFRESH_STATE_CONVERGENCE` — `SongFormScreen._submit()` invalidated `repertoireListNotifierProvider`, resetting `state.ministryId` to null and causing returning `refresh()` to abort silently, stranding `RepertoireView` on permanent `CircularProgressIndicator` until out-of-band remount.
+3. **Status Revision**: Physical lifecycle revised to `M15_PHYSICAL_ACCEPTANCE_PARTIAL` pending remediation and focused retest.
+4. **M15-R4 Remediation**: Removed destructive provider invalidation; upgraded `RepertoireListNotifier.refresh({String? ministryId})` to accept explicit ministry binding with multi-tenant/session fencing; automated regression tests passing.
+5. **Focused Physical Retest**: Executed 7-case focused retest on Lenovo Tab P11 Plus; 7/7 PASS_PHYSICAL; final status `M15_PHYSICAL_ACCEPTANCE_PASS`.
 
 ---
 
-## 7. M15-R4 State Convergence Remediation & Verification
+## 8. M15-R4 State Convergence Remediation & Verification
 
 ### Defect Analysis & Root Cause
 1. **Destructive Invalidation**: `SongFormScreen._submit()` called `ref.invalidate(repertoireListNotifierProvider)` upon successful mutation. In Riverpod, invalidating a `StateNotifierProvider` disposes and recreates it in its initial constructor state (`const RepertoireListState()` where `state.ministryId == null`).
@@ -209,15 +252,46 @@ Furthermore:
 4. **Session Reset Isolation**:
    - If user logs out or session resets during an in-flight refresh, `notifier.reset()` increments request sequence and wipes state, discarding the pending response.
 
-### Automated Evidence
-- **Repertoire Test Suite**: 84/84 passing (`flutter test test/features/repertoire/`).
+### Automated Evidence Baseline
+- **Flutter Repertoire Suite**: 84/84 passing (`flutter test test/features/repertoire/`).
   - `CREATE_RETURN_LIST_CONVERGENCE = PASS`
   - `EDIT_RETURN_LIST_CONVERGENCE = PASS`
   - `DELETE_LIST_EVICTION = PASS`
   - `LIST_REFRESH_TENANT_FENCING = PASS`
   - `session reset discards in-flight refresh response = PASS`
-- **Smart Chords Suite**: 74/74 passing (`flutter test test/features/smart_chords/`).
-- **Full Mobile Suite**: 641/641 passing (`flutter test`).
-- **Static Analysis**: `flutter analyze` runs completely clean with 0 issues.
-- **Milestone Lifecycle State**: `CODE_READY_FOR_FOCUSED_PHYSICAL_RETEST` (treated as `M15_PHYSICAL_ACCEPTANCE_PARTIAL` until physical retest on device).
+- **Flutter Smart Chords Suite**: 74/74 passing (`flutter test test/features/smart_chords/`).
+- **Flutter Full Mobile Suite**: 641/641 passing across entire mobile application (`flutter test`).
+- **Flutter Static Analysis**: `flutter analyze` runs completely clean with 0 issues (`No issues found!`).
+- **Backend Repertoire Suite**: 12/12 passing (`npm --prefix backend test src/repositories/RepertoireRepository.test.ts`).
+- **Backend Anti-IDOR Suite**: 8/8 passing (`npm --prefix backend test src/repositories/idor-security.test.ts`).
+- **Backend Focused Total**: 20/20 passing.
+- **Backend Build**: PASS (`npm --prefix backend run build` clean output).
+- **Web Test Suite**: 400/400 passing across 24 test files (`npm --prefix web test`).
+- **Web Build**: PASS (`npm --prefix web run build` clean output).
 
+---
+
+## 9. Focused Physical Retest Matrix (Lenovo Tab P11 Plus / Android 12)
+
+- **Execution Date**: 2026-10-14
+- **Device**: Lenovo Tab P11 Plus (TB-J616F / Android 12 / API 31 / ADB: `HND29KG9`)
+- **APK Target**: Debug build (`APP_ENV=development`, `API_BASE_URL=http://127.0.0.1:3000/api/v1` via ADB reverse `tcp:3000 tcp:3000`)
+- **Target HEAD SHA**: `1b46ada648d1f1b21035a7d28a87bfbb9dd5ce21`
+- **Backend API**: Local Express server running (`http://127.0.0.1:3000/api/health` -> `status: ok`)
+- **Active User**: `Henrique Teixeira` (ADMINISTRADOR in `LouvAIO Sandbox Test` and `Louvor IBBP`)
+
+### Retest Cases & Observations
+| Test ID | Case Description | Invariant / Requirement | Result | Physical Evidence / Verification |
+|---|---|---|---|---|
+| **RETEST-M15-01** | Create → immediate list convergence | `CREATE_RETURN_LIST_CONVERGENCE = PASS` | `PASS_PHYSICAL` | Created `M15 RETEST Create` (Key G, 72 BPM, 04:30, lyrics). Form popped immediately; no indefinite spinner; `RepertoireView` automatically refreshed without remounting; single row appeared; zero duplicate rows. |
+| **RETEST-M15-02** | Edit → immediate authoritative convergence | `EDIT_RETURN_LIST_CONVERGENCE = PASS` | `PASS_PHYSICAL` | Opened `M15 RETEST Create`, edited Title to `M15 RETEST Editada` and BPM to `75`. Saved; `SongDetailView` updated immediately with new metadata; Back to `RepertoireView` showed `M15 RETEST Editada` (75 BPM); zero stale rows; zero duplicate rows; no spinner deadlock. |
+| **RETEST-M15-03** | Delete → immediate list eviction | `DELETE_LIST_EVICTION = PASS` | `PASS_PHYSICAL` | Opened `M15 RETEST Editada`, tapped delete, confirmed native dialog. `SongDetailView` closed immediately; `RepertoireView` remained mounted and interactive; song evicted from list; empty state displayed; no indefinite spinner. |
+| **RETEST-M15-04** | Search after delete | Deleted record does not appear; empty search state | `PASS_PHYSICAL` | In `RepertoireView`, typed `M15 RETEST Editada` into search field. Result: `Nenhuma música encontrada`; zero cached/resurrected items; no spinner deadlock. |
+| **RETEST-M15-05** | Filter/list state smoke | Category chips responsive; no tenant/state mismatch | `PASS_PHYSICAL` | Tapped `Limpar busca e filtros`, then switched between `Adoração` and `Todos` classification chips. List remained responsive; zero loading deadlocks. |
+| **RETEST-M15-06** | Second create cycle | `REPEATED_CREATE_CONVERGENCE = PASS` | `PASS_PHYSICAL` | Created `M15 RETEST Second Cycle` (Key G, 80 BPM). Save returned immediately to working `RepertoireView` without remount; song appeared; no spinner deadlock; then cleanly deleted to purge test data. |
+| **RETEST-M15-07** | Quick tenant smoke | Mutual tenant isolation & no cross-tenant leakage | `PASS_PHYSICAL` | Switched from `LouvAIO Sandbox Test` to `Louvor IBBP`. `Louvor IBBP` loaded its 4 repertoire songs cleanly. Switched back to `LouvAIO Sandbox Test`; loaded clean empty repertoire state. Zero leakage; zero deadlocks. |
+
+### Retest Verdict & Lifecycle Finalization
+- **UI List Refresh Convergence Defect**: RESOLVED & PHYSICALLY VALIDATED.
+- **Focused Physical Retest**: `PASS_PHYSICAL` (7/7 cases passing).
+- **Milestone Acceptance Status**: `M15_FOCUSED_PHYSICAL_RETEST_PASS` / `M15_PHYSICAL_ACCEPTANCE_PASS`.
