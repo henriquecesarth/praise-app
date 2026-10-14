@@ -358,17 +358,35 @@ class RepertoireListNotifier extends StateNotifier<RepertoireListState> {
   }
 
   /// Pull-to-refresh without wiping current list before new data arrives.
-  Future<void> refresh() async {
-    final ministryId = state.ministryId;
-    if (ministryId == null || state.isRefreshing) return;
+  /// If [ministryId] is provided, it binds or confirms the target ministry,
+  /// preventing dropped refreshes if the state was previously uninitialized or invalidated.
+  Future<void> refresh({String? ministryId}) async {
+    final targetMinistryId = ministryId ?? state.ministryId;
+    if (targetMinistryId == null || state.isRefreshing) return;
+
+    // Strict tenant boundary: if state is already bound to another tenant,
+    // do not allow an alien ministry refresh to overwrite it.
+    if (state.ministryId != null &&
+        ministryId != null &&
+        state.ministryId != ministryId) {
+      return;
+    }
+
+    if (state.ministryId == null) {
+      state = state.copyWith(ministryId: targetMinistryId);
+    }
 
     state = state.copyWith(isRefreshing: true);
     _requestSequence++;
     final currentSeq = _requestSequence;
 
+    if (state.availableClassifications.isEmpty) {
+      _loadClassifications(targetMinistryId);
+    }
+
     try {
       final response = await _repository.listSongs(
-        ministryId,
+        targetMinistryId,
         search: state.searchQuery.trim().isNotEmpty
             ? state.searchQuery.trim()
             : null,
@@ -376,11 +394,12 @@ class RepertoireListNotifier extends StateNotifier<RepertoireListState> {
         page: 1,
       );
 
-      if (_requestSequence != currentSeq || state.ministryId != ministryId) {
+      if (_requestSequence != currentSeq || state.ministryId != targetMinistryId) {
         return;
       }
 
       state = state.copyWith(
+        ministryId: targetMinistryId,
         songs: response.songs,
         total: response.total,
         nextCursor: response.nextCursor,
@@ -390,7 +409,7 @@ class RepertoireListNotifier extends StateNotifier<RepertoireListState> {
         clearError: true,
       );
     } on AppFailure catch (e) {
-      if (_requestSequence != currentSeq || state.ministryId != ministryId) {
+      if (_requestSequence != currentSeq || state.ministryId != targetMinistryId) {
         return;
       }
       state = state.copyWith(
@@ -398,7 +417,7 @@ class RepertoireListNotifier extends StateNotifier<RepertoireListState> {
         error: e.message,
       );
     } catch (_) {
-      if (_requestSequence != currentSeq || state.ministryId != ministryId) {
+      if (_requestSequence != currentSeq || state.ministryId != targetMinistryId) {
         return;
       }
       state = state.copyWith(

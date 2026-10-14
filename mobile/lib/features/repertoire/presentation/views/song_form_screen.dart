@@ -244,8 +244,6 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
 
     if (result.isSuccess && result.data != null) {
       _isSaved = true;
-      ref.invalidate(repertoireListNotifierProvider);
-      ref.invalidate(songDetailNotifierProvider);
 
       Navigator.of(context).pop(result.data);
 

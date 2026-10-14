@@ -100,7 +100,9 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
       ref
           .read(songDetailNotifierProvider.notifier)
           .load(widget.ministryId, widget.songId);
-      ref.read(repertoireListNotifierProvider.notifier).refresh();
+      ref
+          .read(repertoireListNotifierProvider.notifier)
+          .refresh(ministryId: widget.ministryId);
     }
   }
 
@@ -148,7 +150,9 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
       if (result.isDiscarded) return;
 
       if (result.isSuccess) {
-        ref.read(repertoireListNotifierProvider.notifier).refresh();
+        ref
+            .read(repertoireListNotifierProvider.notifier)
+            .refresh(ministryId: widget.ministryId);
         if (navigator.canPop()) {
           navigator.pop();
         }

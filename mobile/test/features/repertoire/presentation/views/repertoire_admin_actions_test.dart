@@ -23,6 +23,7 @@ import 'package:louvaio_mobile/features/repertoire/presentation/controllers/repe
 import 'package:louvaio_mobile/features/repertoire/presentation/controllers/song_detail_controller.dart';
 import 'package:louvaio_mobile/features/repertoire/presentation/views/repertoire_view.dart';
 import 'package:louvaio_mobile/features/repertoire/presentation/views/song_detail_view.dart';
+import 'package:louvaio_mobile/features/repertoire/presentation/widgets/song_card.dart';
 
 class _FakeAuthRepo implements AuthRepository {
   @override
@@ -113,7 +114,13 @@ class FakeRepertoireRepo implements RepertoireRepository {
   @override
   Future<PaginatedSongs> listSongs(String ministryId,
       {String? search, String? classificationId, String? cursor, int? page, int? limit}) async {
-    return PaginatedSongs(songs: songs, total: songs.length);
+    var filtered = songs;
+    if (search != null && search.trim().isNotEmpty) {
+      filtered = songs
+          .where((s) => s.title.toLowerCase().contains(search.trim().toLowerCase()))
+          .toList();
+    }
+    return PaginatedSongs(songs: filtered, total: filtered.length);
   }
 
   @override
@@ -132,12 +139,35 @@ class FakeRepertoireRepo implements RepertoireRepository {
 
   @override
   Future<SongDetail> createSong(String ministryId, SongFormData data) async {
-    return SongDetail(id: 'new-id', ministryId: ministryId, title: data.title);
+    final detail = SongDetail(id: 'new-id', ministryId: ministryId, title: data.title);
+    songs = [
+      ...songs,
+      SongSummary(
+        id: 'new-id',
+        ministryId: ministryId,
+        title: data.title,
+        originalKey: data.originalKey,
+      ),
+    ];
+    return detail;
   }
 
   @override
   Future<SongDetail> updateSong(String ministryId, String songId, SongFormData data) async {
-    return SongDetail(id: songId, ministryId: ministryId, title: data.title);
+    final updated = SongDetail(id: songId, ministryId: ministryId, title: data.title);
+    songs = songs.map((s) {
+      if (s.id == songId) {
+        return SongSummary(
+          id: songId,
+          ministryId: ministryId,
+          title: data.title,
+          originalKey: data.originalKey ?? s.originalKey,
+        );
+      }
+      return s;
+    }).toList();
+    detail = updated;
+    return updated;
   }
 
   @override
@@ -146,6 +176,7 @@ class FakeRepertoireRepo implements RepertoireRepository {
       await deleteCompleter!.future;
     }
     deletedSongId = songId;
+    songs.removeWhere((s) => s.id == songId);
   }
 
   @override
@@ -228,6 +259,174 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('repertoire_add_song_fab')), findsNothing);
+    });
+
+    testWidgets('CREATE_RETURN_LIST_CONVERGENCE: create song returns to RepertoireView and displays created song without getting stuck on loading spinner', (tester) async {
+      await tester.pumpWidget(buildRepertoireView(role: 'admin'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.text('Repertório Vazio'), findsOneWidget);
+
+      // Open create form via FAB
+      await tester.tap(find.byKey(const ValueKey('repertoire_add_song_fab')));
+      await tester.pumpAndSettle();
+
+      // Enter title
+      await tester.enterText(find.byKey(const ValueKey('song_title_input')), 'Música Nova Criada');
+      await tester.pumpAndSettle();
+
+      // Tap Salvar
+      await tester.tap(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.pumpAndSettle();
+
+      // Form is dismissed, return to RepertoireView
+      expect(find.byKey(const ValueKey('song_form_save_button')), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.text('Música Nova Criada'), findsOneWidget);
+    });
+
+    testWidgets('EDIT_RETURN_LIST_CONVERGENCE: edit song returns to SongDetail and RepertoireView with updated title and no permanent spinner', (tester) async {
+      fakeRepo.songs = [
+        const SongSummary(
+          id: 'song_123',
+          ministryId: 'min_1',
+          title: 'Vitorioso Es',
+          artistName: 'Gabriel Guedes',
+        ),
+      ];
+      fakeRepo.detail = const SongDetail(
+        id: 'song_123',
+        ministryId: 'min_1',
+        title: 'Vitorioso Es',
+        artistName: 'Gabriel Guedes',
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appEnvironmentProvider.overrideWithValue(
+              const AppEnvironment(env: AppEnv.development, apiBaseUrl: 'http://localhost:3000/api/v1'),
+            ),
+            preferencesStorageProvider.overrideWithValue(_FakePreferencesStorage()),
+            ministryRepositoryProvider.overrideWithValue(_FakeMinistryRepo()),
+            ministryContextNotifierProvider.overrideWith((ref) => FakeMinistryContextNotifier(role: 'admin')),
+            authNotifierProvider.overrideWith((ref) => authNotifier),
+            repertoireRepositoryProvider.overrideWithValue(fakeRepo),
+            repertoireListNotifierProvider.overrideWith((ref) => RepertoireListNotifier(repository: fakeRepo)),
+            songDetailNotifierProvider.overrideWith((ref) => SongDetailNotifier(repository: fakeRepo)),
+            songFormNotifierProvider.overrideWith((ref) => SongFormNotifier(repository: fakeRepo)),
+          ],
+          child: const MaterialApp(
+            home: RepertoireView(ministryId: 'min_1'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Vitorioso Es'), findsOneWidget);
+
+      // Open detail
+      await tester.tap(find.text('Vitorioso Es'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SongDetailView), findsOneWidget);
+      expect(find.byKey(const ValueKey('edit_song_button')), findsOneWidget);
+
+      // Open edit form
+      await tester.tap(find.byKey(const ValueKey('edit_song_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('song_form_save_button')), findsOneWidget);
+
+      // Enter updated title
+      await tester.enterText(find.byKey(const ValueKey('song_title_input')), 'Vitorioso Es Editada');
+      await tester.pumpAndSettle();
+
+      // Tap Salvar
+      await tester.tap(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.pumpAndSettle();
+
+      // Form popped, back in detail view with updated title
+      expect(find.byKey(const ValueKey('song_form_save_button')), findsNothing);
+      expect(find.text('Vitorioso Es Editada'), findsWidgets);
+
+      // Pop detail view back to RepertoireView
+      final backButton = find.byType(BackButton);
+      expect(backButton, findsOneWidget);
+      await tester.tap(backButton);
+      await tester.pumpAndSettle();
+
+      // RepertoireView has updated song and no stuck spinner
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.text('Vitorioso Es Editada'), findsOneWidget);
+    });
+
+    testWidgets('DELETE_LIST_EVICTION: delete song closes detail, refreshes list, evicts from search, and does not get stuck loading', (tester) async {
+      fakeRepo.songs = [
+        const SongSummary(
+          id: 'song_to_delete',
+          ministryId: 'min_1',
+          title: 'Musica Para Excluir',
+        ),
+      ];
+      fakeRepo.detail = const SongDetail(
+        id: 'song_to_delete',
+        ministryId: 'min_1',
+        title: 'Musica Para Excluir',
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appEnvironmentProvider.overrideWithValue(
+              const AppEnvironment(env: AppEnv.development, apiBaseUrl: 'http://localhost:3000/api/v1'),
+            ),
+            preferencesStorageProvider.overrideWithValue(_FakePreferencesStorage()),
+            ministryRepositoryProvider.overrideWithValue(_FakeMinistryRepo()),
+            ministryContextNotifierProvider.overrideWith((ref) => FakeMinistryContextNotifier(role: 'admin')),
+            authNotifierProvider.overrideWith((ref) => authNotifier),
+            repertoireRepositoryProvider.overrideWithValue(fakeRepo),
+            repertoireListNotifierProvider.overrideWith((ref) => RepertoireListNotifier(repository: fakeRepo)),
+            songDetailNotifierProvider.overrideWith((ref) => SongDetailNotifier(repository: fakeRepo)),
+            songFormNotifierProvider.overrideWith((ref) => SongFormNotifier(repository: fakeRepo)),
+          ],
+          child: const MaterialApp(
+            home: RepertoireView(ministryId: 'min_1'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Musica Para Excluir'), findsOneWidget);
+
+      // Open detail
+      await tester.tap(find.text('Musica Para Excluir'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SongDetailView), findsOneWidget);
+
+      // Tap delete button
+      await tester.tap(find.byKey(const ValueKey('delete_song_button')));
+      await tester.pumpAndSettle();
+
+      // Confirm delete in dialog
+      await tester.tap(find.byKey(const ValueKey('confirm_delete_song_button')));
+      await tester.pumpAndSettle();
+
+      // Detail popped, returned to RepertoireView
+      expect(find.byType(SongDetailView), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.text('Musica Para Excluir'), findsNothing);
+      expect(find.text('Repertório Vazio'), findsOneWidget);
+
+      // Searching for deleted song also returns empty
+      await tester.enterText(find.byType(TextField), 'Musica Para Excluir');
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Nenhuma música encontrada'), findsOneWidget);
+      expect(find.byType(SongCard), findsNothing);
     });
 
     testWidgets('SongDetailView renders Edit and Delete action icons for admin', (tester) async {

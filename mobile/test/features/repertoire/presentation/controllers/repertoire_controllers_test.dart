@@ -218,6 +218,98 @@ void main() {
       expect(notifier.state.isRefreshing, isFalse);
       expect(notifier.state.songs.length, equals(2));
     });
+
+    test('refresh binds ministry and loads data if state was uninitialized or invalidated', () async {
+      final notifier = RepertoireListNotifier(repository: mockRepo);
+      expect(notifier.state.ministryId, isNull);
+
+      when(() => mockRepo.listClassifications('min-1'))
+          .thenAnswer((_) async => []);
+      when(() => mockRepo.listSongs('min-1', page: 1)).thenAnswer(
+        (_) async => PaginatedSongs(songs: [makeSong('s1', 'Restored Song')], total: 1),
+      );
+
+      await notifier.refresh(ministryId: 'min-1');
+
+      expect(notifier.state.ministryId, equals('min-1'));
+      expect(notifier.state.songs.length, equals(1));
+      expect(notifier.state.songs.first.title, equals('Restored Song'));
+      expect(notifier.state.isRefreshing, isFalse);
+    });
+
+    test('LIST_REFRESH_TENANT_FENCING: in-flight refresh discarded if tenant switches mid-request', () async {
+      final notifier = RepertoireListNotifier(repository: mockRepo);
+
+      when(() => mockRepo.listClassifications(any()))
+          .thenAnswer((_) async => []);
+
+      when(() => mockRepo.listSongs('Alpha', page: 1)).thenAnswer((_) async {
+        // Tenant switches to Beta while Alpha refresh is in-flight
+        await notifier.loadForMinistry('Beta');
+        return PaginatedSongs(
+          songs: [makeSong('s-alpha', 'Alpha Song')],
+          total: 1,
+        );
+      });
+
+      when(() => mockRepo.listSongs('Beta', page: 1)).thenAnswer((_) async {
+        return PaginatedSongs(
+          songs: [makeSong('s-beta', 'Beta Song')],
+          total: 1,
+        );
+      });
+
+      await notifier.loadForMinistry('Alpha');
+      await notifier.refresh(ministryId: 'Alpha');
+
+      // Alpha data must be discarded; Beta must be active
+      expect(notifier.state.ministryId, equals('Beta'));
+      expect(notifier.state.songs.length, equals(1));
+      expect(notifier.state.songs.first.title, equals('Beta Song'));
+    });
+
+    test('LIST_REFRESH_TENANT_FENCING: alien ministry refresh rejected when state already bound to another tenant', () async {
+      final notifier = RepertoireListNotifier(repository: mockRepo);
+
+      when(() => mockRepo.listClassifications(any()))
+          .thenAnswer((_) async => []);
+      when(() => mockRepo.listSongs('Beta', page: 1)).thenAnswer(
+        (_) async => PaginatedSongs(songs: [makeSong('s-beta', 'Beta Song')], total: 1),
+      );
+
+      await notifier.loadForMinistry('Beta');
+      expect(notifier.state.ministryId, equals('Beta'));
+
+      // Alien refresh for Alpha attempted
+      await notifier.refresh(ministryId: 'Alpha');
+
+      // State is still Beta, zero Alpha corruption
+      expect(notifier.state.ministryId, equals('Beta'));
+      expect(notifier.state.songs.first.title, equals('Beta Song'));
+      verifyNever(() => mockRepo.listSongs('Alpha', page: any(named: 'page')));
+    });
+
+    test('session reset discards in-flight refresh response', () async {
+      final notifier = RepertoireListNotifier(repository: mockRepo);
+
+      when(() => mockRepo.listClassifications(any()))
+          .thenAnswer((_) async => []);
+
+      when(() => mockRepo.listSongs('Alpha', page: 1)).thenAnswer((_) async {
+        // Session resets (logout) while refresh is in-flight
+        notifier.reset();
+        return PaginatedSongs(
+          songs: [makeSong('s-alpha', 'Alpha Song')],
+          total: 1,
+        );
+      });
+
+      await notifier.loadForMinistry('Alpha');
+      await notifier.refresh(ministryId: 'Alpha');
+
+      expect(notifier.state.ministryId, isNull);
+      expect(notifier.state.songs, isEmpty);
+    });
   });
 
   group('SongDetailNotifier', () {

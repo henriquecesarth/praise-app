@@ -77,7 +77,9 @@ class _RepertoireViewState extends ConsumerState<RepertoireView> {
     );
 
     if (created != null && mounted) {
-      ref.read(repertoireListNotifierProvider.notifier).refresh();
+      await ref
+          .read(repertoireListNotifierProvider.notifier)
+          .refresh(ministryId: ministryId);
     }
   }
 
