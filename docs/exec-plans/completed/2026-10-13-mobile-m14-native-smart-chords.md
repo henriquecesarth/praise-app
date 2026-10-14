@@ -233,4 +233,4 @@ Furthermore, the backend audit identifies areas for hardening:
 - **Flutter Analyze**: PASS (clean, 0 issues)
 - **Web Tests**: 400/400 PASS
 - **Web Build**: PASS
-- **Physical Acceptance**: 24 physical passes on Lenovo Tab P11 Plus (Android 12 / API 31 / TB-J616F / ADB `HND29KG9`), 5 automated-only cases, 1 safe second account not executed. All temporary test records cleaned up (`total = 0`).
+- **Physical Acceptance**: 28 physical passes on Lenovo Tab P11 Plus (Android 12 / API 31 / TB-J616F / ADB `HND29KG9`), 5 automated-only cases, 1 safe second account not executed (34 total CT-M14 cases). All temporary test records cleaned up (`total = 0`).
