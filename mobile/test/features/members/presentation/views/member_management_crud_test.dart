@@ -102,6 +102,9 @@ class FakeMembersRepo implements MembersRepository {
 
 class FakeMinistryContextNotifier extends StateNotifier<MinistryContextState>
     implements MinistryContextNotifier {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+
   FakeMinistryContextNotifier(super.initialState);
 
   @override

@@ -47,6 +47,9 @@ class FakeDashboardRepository implements DashboardRepository {
 }
 
 class FakeMinistryRepository implements MinistryRepository {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+
   List<Ministry> ministries;
   FakeMinistryRepository({this.ministries = const []});
 

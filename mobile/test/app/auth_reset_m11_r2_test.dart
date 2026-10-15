@@ -11,6 +11,8 @@ import 'package:louvaio_mobile/features/schedules/domain/schedule.dart';
 
 class StubMinistryRepo implements MinistryRepository {
   @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+  @override
   Future<List<Ministry>> getMyMinistries() async => [];
 }
 

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app/providers.dart';
+import 'widgets/create_ministry_sheet.dart';
+import 'widgets/join_ministry_sheet.dart';
 
 /// Screen displayed when an authenticated user has zero ministry memberships.
 class MinistryEmptyScreen extends ConsumerWidget {
@@ -60,7 +62,7 @@ class MinistryEmptyScreen extends ConsumerWidget {
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    'Sua conta foi autenticada, mas ainda não está associada a nenhum ministério de louvor. Solicite um convite ao líder ou administrador da sua igreja para começar.',
+                    'Sua conta foi autenticada, mas ainda não está associada a nenhum ministério de louvor. Crie o seu ministério como líder ou digite um código de convite para ingressar na equipe.',
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
                       height: 1.5,
@@ -68,10 +70,38 @@ class MinistryEmptyScreen extends ConsumerWidget {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 32),
+
+                  // Action 1: Create Ministry
                   SizedBox(
                     width: double.infinity,
                     height: 48,
                     child: FilledButton.icon(
+                      key: const ValueKey('empty_screen_create_ministry_button'),
+                      onPressed: () => CreateMinistrySheet.show(context),
+                      icon: const Icon(Icons.add_business_outlined),
+                      label: const Text('Criar ministério'),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Action 2: Join Ministry by code
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: FilledButton.tonalIcon(
+                      key: const ValueKey('empty_screen_join_ministry_button'),
+                      onPressed: () => JoinMinistrySheet.show(context),
+                      icon: const Icon(Icons.key_rounded),
+                      label: const Text('Entrar com código de convite'),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Auxiliary Action 1: Refresh
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: OutlinedButton.icon(
                       onPressed: isLoading
                           ? null
                           : () async {
@@ -82,11 +112,10 @@ class MinistryEmptyScreen extends ConsumerWidget {
                             },
                       icon: isLoading
                           ? const SizedBox(
-                              width: 20,
-                              height: 20,
+                              width: 18,
+                              height: 18,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: Colors.white,
                               ),
                             )
                           : const Icon(Icons.refresh),
@@ -95,17 +124,15 @@ class MinistryEmptyScreen extends ConsumerWidget {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: OutlinedButton.icon(
-                      onPressed: () async {
-                        await ref.read(authNotifierProvider.notifier).logout();
-                      },
-                      icon: const Icon(Icons.logout),
-                      label: const Text('Sair da Conta'),
-                    ),
+                  const SizedBox(height: 8),
+
+                  // Auxiliary Action 2: Logout
+                  TextButton.icon(
+                    onPressed: () async {
+                      await ref.read(authNotifierProvider.notifier).logout();
+                    },
+                    icon: const Icon(Icons.logout, size: 18),
+                    label: const Text('Sair da Conta'),
                   ),
                 ],
               ),

@@ -117,6 +117,9 @@ class FakeScreenAvailabilityRepository implements AvailabilityRepository {
 }
 
 class FakeMinistryRepository implements MinistryRepository {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+
   List<Ministry> ministries = [];
   @override
   Future<List<Ministry>> getMyMinistries() async => ministries;

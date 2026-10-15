@@ -21,6 +21,9 @@ import '../features/members/presentation/controllers/members_providers.dart';
 import '../features/notifications/presentation/controllers/notification_providers.dart';
 import '../features/liturgies/presentation/controllers/liturgy_providers.dart';
 import '../features/smart_chords/presentation/controllers/smart_chord_providers.dart';
+import '../features/ministry_context/presentation/controllers/create_ministry_controller.dart';
+import '../features/ministry_context/presentation/controllers/join_ministry_controller.dart';
+import '../features/members/presentation/controllers/invite_code_controller.dart';
 export '../features/schedules/presentation/controllers/schedule_providers.dart';
 export '../features/repertoire/presentation/controllers/repertoire_providers.dart';
 export '../features/availability/presentation/controllers/availability_providers.dart';
@@ -28,10 +31,22 @@ export '../features/push_notifications/presentation/controllers/push_notificatio
 export '../features/members/presentation/controllers/members_providers.dart';
 export '../features/liturgies/presentation/controllers/liturgy_providers.dart';
 export '../features/smart_chords/presentation/controllers/smart_chord_providers.dart';
+export '../features/ministry_context/presentation/controllers/create_ministry_controller.dart';
+export '../features/ministry_context/presentation/controllers/join_ministry_controller.dart';
+export '../features/members/presentation/controllers/invite_code_controller.dart';
 
 /// Clears all authenticated feature caches from memory upon logout or user change.
 /// Accepts either [Ref] or [ProviderContainer].
 void resetAuthenticatedFeatures(dynamic refOrContainer) {
+  try {
+    refOrContainer.read(createMinistryNotifierProvider.notifier).reset();
+  } catch (_) {}
+  try {
+    refOrContainer.read(joinMinistryNotifierProvider.notifier).reset();
+  } catch (_) {}
+  try {
+    refOrContainer.read(inviteCodeNotifierProvider.notifier).reset();
+  } catch (_) {}
   try {
     refOrContainer.read(ministryContextNotifierProvider.notifier).reset();
   } catch (_) {}
@@ -281,6 +296,40 @@ final ministryContextNotifierProvider =
   return MinistryContextNotifier(
     repository: ref.watch(ministryRepositoryProvider),
     preferencesStorage: ref.watch(preferencesStorageProvider),
+  );
+});
+
+/// Provider for the create ministry state notifier.
+final createMinistryNotifierProvider =
+    StateNotifierProvider<CreateMinistryNotifier, CreateMinistryState>((ref) {
+  final auth = ref.watch(authNotifierProvider);
+  return CreateMinistryNotifier(
+    repository: ref.watch(ministryRepositoryProvider),
+    contextNotifier: ref.watch(ministryContextNotifierProvider.notifier),
+    boundUserId: auth.user?.id,
+  );
+});
+
+/// Provider for the join ministry state notifier.
+final joinMinistryNotifierProvider =
+    StateNotifierProvider<JoinMinistryNotifier, JoinMinistryState>((ref) {
+  final auth = ref.watch(authNotifierProvider);
+  return JoinMinistryNotifier(
+    repository: ref.watch(ministryRepositoryProvider),
+    contextNotifier: ref.watch(ministryContextNotifierProvider.notifier),
+    boundUserId: auth.user?.id,
+  );
+});
+
+/// Provider for the invite code state notifier.
+final inviteCodeNotifierProvider =
+    StateNotifierProvider<InviteCodeNotifier, InviteCodeState>((ref) {
+  final auth = ref.watch(authNotifierProvider);
+  final ministry = ref.watch(ministryContextNotifierProvider);
+  return InviteCodeNotifier(
+    repository: ref.watch(ministryRepositoryProvider),
+    boundMinistryId: ministry.selectedMinistry?.id,
+    boundUserId: auth.user?.id,
   );
 });
 

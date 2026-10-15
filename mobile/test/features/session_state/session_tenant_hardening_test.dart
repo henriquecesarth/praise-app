@@ -386,6 +386,9 @@ class FakeRepertoireRepo implements RepertoireRepository {
 }
 
 class FakeMinistryRepo implements MinistryRepository {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+
   List<Ministry> ministries;
   FakeMinistryRepo({this.ministries = const []});
 

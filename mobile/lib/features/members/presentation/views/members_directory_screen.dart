@@ -7,6 +7,7 @@ import 'package:louvaio_mobile/features/members/presentation/controllers/members
 import 'package:louvaio_mobile/features/members/presentation/widgets/member_card.dart';
 import 'package:louvaio_mobile/features/members/presentation/widgets/member_detail_sheet.dart';
 import 'package:louvaio_mobile/features/members/presentation/widgets/member_form_dialog.dart';
+import 'package:louvaio_mobile/features/members/presentation/widgets/invite_code_sheet.dart';
 
 /// Screen displaying the ministry member directory with search and role filters.
 ///
@@ -143,6 +144,19 @@ class _MembersDirectoryScreenState
           ],
         ),
         actions: [
+          if (isViewerAdmin)
+            IconButton(
+              key: const ValueKey('invite_member_button'),
+              tooltip: 'Convidar integrante',
+              icon: const Icon(Icons.person_add_alt_1_outlined),
+              onPressed: () {
+                InviteCodeSheet.show(
+                  context: context,
+                  ministryId: widget.ministryId,
+                  ministryName: widget.ministryName ?? activeMinistry.name,
+                );
+              },
+            ),
           if (isMatchingMinistry && state.members.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(right: 16.0),
@@ -384,6 +398,21 @@ class _MembersDirectoryScreenState
                   color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
                 ),
               ),
+              if (isViewerAdmin) ...[
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  key: const ValueKey('empty_invite_member_button'),
+                  onPressed: () {
+                    InviteCodeSheet.show(
+                      context: context,
+                      ministryId: widget.ministryId,
+                      ministryName: widget.ministryName ?? 'Ministério',
+                    );
+                  },
+                  icon: const Icon(Icons.person_add_alt_1_outlined),
+                  label: const Text('Convidar integrante'),
+                ),
+              ],
             ],
           ),
         ),

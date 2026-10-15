@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/providers.dart';
+import 'create_ministry_sheet.dart';
+import 'join_ministry_sheet.dart';
 
 /// Modal bottom sheet allowing users to switch between their available ministries.
 class MinistrySwitcherSheet extends ConsumerWidget {
@@ -166,6 +168,56 @@ class MinistrySwitcherSheet extends ConsumerWidget {
                   );
                 },
               ),
+            ),
+            const Divider(height: 1),
+            // Existing-user onboarding entry points
+            ListTile(
+              key: const ValueKey('switcher_create_ministry_tile'),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 20.0,
+                vertical: 2.0,
+              ),
+              leading: CircleAvatar(
+                radius: 20,
+                backgroundColor: theme.colorScheme.primaryContainer,
+                child: Icon(
+                  Icons.add_business_outlined,
+                  size: 20,
+                  color: theme.colorScheme.onPrimaryContainer,
+                ),
+              ),
+              title: const Text(
+                'Criar novo ministério',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              onTap: () {
+                Navigator.of(context).pop();
+                CreateMinistrySheet.show(context);
+              },
+            ),
+            ListTile(
+              key: const ValueKey('switcher_join_ministry_tile'),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 20.0,
+                vertical: 2.0,
+              ),
+              leading: CircleAvatar(
+                radius: 20,
+                backgroundColor: theme.colorScheme.secondaryContainer,
+                child: Icon(
+                  Icons.key_rounded,
+                  size: 20,
+                  color: theme.colorScheme.onSecondaryContainer,
+                ),
+              ),
+              title: const Text(
+                'Entrar com código',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              onTap: () {
+                Navigator.of(context).pop();
+                JoinMinistrySheet.show(context);
+              },
             ),
           ],
         ),

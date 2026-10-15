@@ -81,6 +81,7 @@ class MinistryContextState {
 class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
   final MinistryRepository _repository;
   final PreferencesStorage _preferencesStorage;
+  int _contextGeneration = 0;
 
   MinistryContextNotifier({
     required MinistryRepository repository,
@@ -99,6 +100,7 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
   ///    - If found: select it, transition to [MinistryBootstrapStatus.ready].
   ///    - If not found or stale: discard preference, transition to [MinistryBootstrapStatus.needsSelection].
   Future<void> bootstrap() async {
+    final requestGen = ++_contextGeneration;
     state = state.copyWith(
       status: MinistryBootstrapStatus.loading,
       clearFailure: true,
@@ -106,13 +108,16 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
 
     try {
       final ministries = await _repository.getMyMinistries();
+      if (requestGen != _contextGeneration) return;
       _resolveMinistries(ministries);
     } on AppFailure catch (e) {
+      if (requestGen != _contextGeneration) return;
       state = state.copyWith(
         status: MinistryBootstrapStatus.error,
         failure: e,
       );
     } catch (e) {
+      if (requestGen != _contextGeneration) return;
       state = state.copyWith(
         status: MinistryBootstrapStatus.error,
         failure: AppFailure(
@@ -125,13 +130,16 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
 
   /// Refreshes memberships from backend, validating existing context selection.
   Future<void> refresh() async {
+    final requestGen = ++_contextGeneration;
     final currentSelectedId = state.selectedMinistry?.id;
 
     try {
       final ministries = await _repository.getMyMinistries();
+      if (requestGen != _contextGeneration) return;
 
       if (ministries.isEmpty) {
         await _preferencesStorage.setSelectedMinistryId(null);
+        if (requestGen != _contextGeneration) return;
         state = const MinistryContextState(
           status: MinistryBootstrapStatus.empty,
           availableMinistries: [],
@@ -154,6 +162,7 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
       if (stillSelected != null) {
         // Retain selection with updated data
         await _preferencesStorage.setSelectedMinistryId(stillSelected.id);
+        if (requestGen != _contextGeneration) return;
         state = MinistryContextState(
           status: MinistryBootstrapStatus.ready,
           availableMinistries: ministries,
@@ -162,14 +171,17 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
       } else {
         // Selection was removed or invalid; re-resolve
         await _preferencesStorage.setSelectedMinistryId(null);
+        if (requestGen != _contextGeneration) return;
         _resolveMinistries(ministries);
       }
     } on AppFailure catch (e) {
+      if (requestGen != _contextGeneration) return;
       state = state.copyWith(
         status: MinistryBootstrapStatus.error,
         failure: e,
       );
     } catch (e) {
+      if (requestGen != _contextGeneration) return;
       state = state.copyWith(
         status: MinistryBootstrapStatus.error,
         failure: AppFailure(
@@ -177,6 +189,80 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
           details: {'raw': e.toString()},
         ),
       );
+    }
+  }
+
+  /// Authoritatively refreshes memberships and selects the specified [targetMinistryId].
+  ///
+  /// Fenced against stale responses if reset() is invoked or if session context changes.
+  /// Throws typed [AppFailure] if the target ministry is not found in the fresh list.
+  Future<Ministry> refreshAndSelect(
+    String targetMinistryId, {
+    String? expectedUserId,
+  }) async {
+    final requestGen = ++_contextGeneration;
+
+    try {
+      final ministries = await _repository.getMyMinistries();
+
+      // Generation fencing: verify context generation has not been reset
+      if (requestGen != _contextGeneration) {
+        throw const AppFailure(
+          message: 'Operação cancelada: contexto de sessão foi alterado.',
+          code: 'SESSION_CHANGED',
+        );
+      }
+
+      Ministry? matched;
+      for (final m in ministries) {
+        if (m.id == targetMinistryId) {
+          matched = m;
+          break;
+        }
+      }
+
+      if (matched == null) {
+        // Fail-safe: do not silently select another ministry or leave stale state
+        throw const AppFailure(
+          message:
+              'O ministério alvo não foi encontrado na lista de ministérios.',
+          statusCode: 404,
+          code: 'TARGET_MINISTRY_MISSING',
+        );
+      }
+
+      await _preferencesStorage.setSelectedMinistryId(matched.id);
+
+      // Re-verify fencing after preferences await
+      if (requestGen != _contextGeneration) {
+        throw const AppFailure(
+          message: 'Operação cancelada: contexto de sessão foi alterado.',
+          code: 'SESSION_CHANGED',
+        );
+      }
+
+      state = MinistryContextState(
+        status: MinistryBootstrapStatus.ready,
+        availableMinistries: ministries,
+        selectedMinistry: matched,
+        failure: null,
+      );
+
+      return matched;
+    } catch (e) {
+      // Only record failure in state if generation still matches
+      if (requestGen == _contextGeneration) {
+        final failure = e is AppFailure
+            ? e
+            : AppFailure(
+                message: 'Falha ao atualizar o contexto do ministério.',
+                details: {'raw': e.toString()},
+              );
+        state = state.copyWith(
+          failure: failure,
+        );
+      }
+      rethrow;
     }
   }
 
@@ -200,6 +286,7 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
 
   /// Resets state and clears stored preference (called on logout or user switch).
   Future<void> reset() async {
+    _contextGeneration++;
     await _preferencesStorage.setSelectedMinistryId(null);
     if (!mounted) return;
     state = const MinistryContextState.initial();

@@ -45,6 +45,9 @@ class FakeLiturgyRepo implements LiturgyRepository {
 
 class FakeMinistryContextNotifier extends StateNotifier<MinistryContextState>
     implements MinistryContextNotifier {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+
   FakeMinistryContextNotifier(Ministry initialMinistry)
       : super(MinistryContextState(
           status: MinistryBootstrapStatus.ready,

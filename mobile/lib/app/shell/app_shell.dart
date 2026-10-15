@@ -52,6 +52,9 @@ class _AppShellState extends ConsumerState<AppShell> {
         try {
           ref.read(liturgyFormNotifierProvider.notifier).invalidateTenant();
         } catch (_) {}
+        try {
+          ref.read(inviteCodeNotifierProvider.notifier).reset();
+        } catch (_) {}
 
         ref.invalidate(dashboardNotifierProvider);
         ref.invalidate(scheduleListNotifierProvider);
@@ -69,6 +72,7 @@ class _AppShellState extends ConsumerState<AppShell> {
         ref.invalidate(liturgyListNotifierProvider);
         ref.invalidate(liturgyDetailNotifierProvider);
         ref.invalidate(liturgyFormNotifierProvider);
+        ref.invalidate(inviteCodeNotifierProvider);
         ref.invalidate(notificationListProvider);
         ref.read(unreadNotificationCountProvider.notifier).refresh();
       }

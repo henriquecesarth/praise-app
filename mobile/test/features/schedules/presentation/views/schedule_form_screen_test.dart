@@ -78,6 +78,9 @@ class _FakeRepertoireRepo implements RepertoireRepository {
 
 class _FakeMinistryRepo implements MinistryRepository {
   @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+
+  @override
   Future<List<Ministry>> getMyMinistries() async => [];
 }
 
