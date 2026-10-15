@@ -73,6 +73,15 @@ abstract class AvailabilityRepository {
     String memberId,
     String id,
   );
+
+  /// Checks availability conflicts for a schedule time window against candidate member unavailabilities.
+  ///
+  /// Calls `POST /api/v1/ministries/:ministryId/availability/check-conflicts`.
+  /// Admin-only. Does NOT block schedule authoring.
+  Future<ScheduleConflictCheckResponse> checkScheduleConflicts(
+    String ministryId,
+    CheckScheduleConflictsPayload payload,
+  );
 }
 
 class HttpAvailabilityRepository implements AvailabilityRepository {
@@ -350,6 +359,40 @@ class HttpAvailabilityRepository implements AvailabilityRepository {
       if (e is AppFailure) rethrow;
       throw const AppFailure(
         message: 'Não foi possível remover a indisponibilidade.',
+      );
+    }
+  }
+
+  @override
+  Future<ScheduleConflictCheckResponse> checkScheduleConflicts(
+    String ministryId,
+    CheckScheduleConflictsPayload payload,
+  ) async {
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '/ministries/$ministryId/availability/check-conflicts',
+        data: payload.toJson(),
+      );
+      var data = response.data;
+      if (data == null) {
+        throw const AppFailure(
+          message:
+              'Resposta vazia do servidor ao verificar conflitos de disponibilidade.',
+          statusCode: 500,
+        );
+      }
+      if (data.containsKey('data') && data['data'] is Map<String, dynamic>) {
+        data = data['data'] as Map<String, dynamic>;
+      }
+      return ScheduleConflictCheckResponse.fromJson(data);
+    } on DioException catch (e) {
+      throw _apiClient.mapDioException(e);
+    } catch (e) {
+      if (e is AppFailure) rethrow;
+      throw AppFailure(
+        message:
+            'Não foi possível verificar a disponibilidade dos integrantes.',
+        details: {'raw': e.toString()},
       );
     }
   }

@@ -104,6 +104,11 @@ class FakeAvailabilityRepository implements AvailabilityRepository {
   ) async {
     throw UnimplementedError();
   }
+
+  @override
+  Future<ScheduleConflictCheckResponse> checkScheduleConflicts(
+          String ministryId, CheckScheduleConflictsPayload payload) =>
+      throw UnimplementedError();
 }
 
 MemberAvailability createDummyAvailability({

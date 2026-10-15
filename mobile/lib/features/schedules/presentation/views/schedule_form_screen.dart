@@ -913,11 +913,51 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen> {
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text(
-                                  'Integrantes (${formState.participants.length})',
-                                  style: theme.textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                  ),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      'Integrantes (${formState.participants.length})',
+                                      style:
+                                          theme.textTheme.titleMedium?.copyWith(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    if (formState.selectedConflictsCount > 0) ...[
+                                      const SizedBox(width: 8),
+                                      Container(
+                                        key: const ValueKey('tab_conflict_badge'),
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 8, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.amber.shade100,
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                          border: Border.all(
+                                              color: Colors.amber.shade800),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(
+                                              Icons.warning_amber_rounded,
+                                              size: 14,
+                                              color: Colors.amber.shade900,
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              '${formState.selectedConflictsCount}',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.amber.shade900,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ],
                                 ),
                                 FilledButton.tonalIcon(
                                   key: const ValueKey('add_participant_button'),
@@ -931,6 +971,130 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen> {
                                 ),
                               ],
                             ),
+                            if (formState.isCheckingConflicts)
+                              Padding(
+                                key: const ValueKey(
+                                    'schedule_conflict_loading_indicator'),
+                                padding:
+                                    const EdgeInsets.only(top: 8.0, bottom: 4.0),
+                                child: Row(
+                                  children: [
+                                    const SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'Verificando disponibilidade...',
+                                      style: theme.textTheme.bodySmall?.copyWith(
+                                        color: theme.colorScheme.onSurface
+                                            .withValues(alpha: 0.6),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            if (formState.conflictError != null &&
+                                !formState.isCheckingConflicts)
+                              Container(
+                                key: const ValueKey(
+                                    'schedule_conflict_error_banner'),
+                                margin:
+                                    const EdgeInsets.only(top: 8.0, bottom: 8.0),
+                                padding: const EdgeInsets.all(10.0),
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.errorContainer
+                                      .withValues(alpha: 0.5),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                      color: theme.colorScheme.error
+                                          .withValues(alpha: 0.3)),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.sync_problem,
+                                        size: 18,
+                                        color: theme.colorScheme.error),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        formState.conflictError!,
+                                        style:
+                                            theme.textTheme.bodySmall?.copyWith(
+                                          color: theme
+                                              .colorScheme.onErrorContainer,
+                                        ),
+                                      ),
+                                    ),
+                                    TextButton(
+                                      key: const ValueKey(
+                                          'retry_conflict_check_button'),
+                                      onPressed: () =>
+                                          notifier.retryConflictCheck(),
+                                      style: TextButton.styleFrom(
+                                        visualDensity: VisualDensity.compact,
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 8),
+                                      ),
+                                      child: const Text('Tentar novamente'),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            if (formState.selectedConflictsCount > 0 &&
+                                !formState.isCheckingConflicts)
+                              Container(
+                                key: const ValueKey(
+                                    'schedule_conflict_warning_banner'),
+                                margin:
+                                    const EdgeInsets.only(top: 8.0, bottom: 8.0),
+                                padding: const EdgeInsets.all(12.0),
+                                decoration: BoxDecoration(
+                                  color: Colors.amber.shade50,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border:
+                                      Border.all(color: Colors.amber.shade400),
+                                ),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Icon(Icons.warning_amber_rounded,
+                                        size: 20,
+                                        color: Colors.amber.shade900),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            formState.selectedConflictsCount ==
+                                                    1
+                                                ? '1 integrante escalado está indisponível neste horário.'
+                                                : '${formState.selectedConflictsCount} integrantes escalados estão indisponíveis neste horário.',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 13,
+                                              color: Colors.amber.shade900,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            'Aviso informativo: você ainda pode salvar a escala normalmente.',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.amber.shade900
+                                                  .withValues(alpha: 0.8),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             const SizedBox(height: 12),
                             if (formState.participants.isEmpty)
                               Padding(
@@ -976,6 +1140,8 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen> {
                                     const Divider(height: 1),
                                 itemBuilder: (ctx, index) {
                                   final p = formState.participants[index];
+                                  final hasConflict =
+                                      formState.hasConflict(p.id, p.userId);
                                   return ListTile(
                                     contentPadding: EdgeInsets.zero,
                                     leading: CircleAvatar(
@@ -990,7 +1156,48 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen> {
                                       style: const TextStyle(
                                           fontWeight: FontWeight.w600),
                                     ),
-                                    subtitle: Text(p.role),
+                                    subtitle: Wrap(
+                                      crossAxisAlignment:
+                                          WrapCrossAlignment.center,
+                                      spacing: 6,
+                                      children: [
+                                        Text(p.role),
+                                        if (hasConflict)
+                                          Container(
+                                            key: ValueKey(
+                                                'participant_conflict_badge_${p.id}'),
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 6, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color: Colors.amber.shade100,
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                              border: Border.all(
+                                                  color: Colors.amber.shade700),
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(
+                                                  Icons.warning_amber_rounded,
+                                                  size: 12,
+                                                  color: Colors.amber.shade900,
+                                                ),
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  'Indisponível',
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.w600,
+                                                    color:
+                                                        Colors.amber.shade900,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                      ],
+                                    ),
                                     trailing: Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
@@ -1798,6 +2005,8 @@ class _MemberPickerSheetState extends ConsumerState<_MemberPickerSheet> {
                   final member = filtered[index];
                   final isAlreadySelected =
                       formState.isMemberSelected(member.id, member.userId);
+                  final hasConflict =
+                      formState.hasConflict(member.id, member.userId);
 
                   return ListTile(
                     enabled: !isAlreadySelected,
@@ -1819,7 +2028,45 @@ class _MemberPickerSheetState extends ConsumerState<_MemberPickerSheet> {
                             label: Text('Já escalado'),
                             visualDensity: VisualDensity.compact,
                           )
-                        : const Icon(Icons.chevron_right),
+                        : Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (hasConflict)
+                                Container(
+                                  key: ValueKey(
+                                      'member_picker_conflict_badge_${member.id}'),
+                                  margin: const EdgeInsets.only(right: 6),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.amber.shade100,
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(
+                                        color: Colors.amber.shade700),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.warning_amber_rounded,
+                                        size: 12,
+                                        color: Colors.amber.shade900,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        'Indisponível',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.amber.shade900,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              const Icon(Icons.chevron_right),
+                            ],
+                          ),
                     onTap: isAlreadySelected
                         ? null
                         : () => _chooseRoleAndAdd(

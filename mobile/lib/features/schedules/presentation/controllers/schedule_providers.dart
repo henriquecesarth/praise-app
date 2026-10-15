@@ -45,5 +45,6 @@ final scheduleFormNotifierProvider = StateNotifierProvider.autoDispose<
     ScheduleFormNotifier, ScheduleFormState>((ref) {
   return ScheduleFormNotifier(
     repository: ref.watch(scheduleRepositoryProvider),
+    availabilityRepository: ref.watch(availabilityRepositoryProvider),
   );
 });

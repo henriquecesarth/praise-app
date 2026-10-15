@@ -97,6 +97,11 @@ class FakeAvailabilityRepository implements AvailabilityRepository {
   Future<void> deleteManualMemberAvailability(
           String ministryId, String memberId, String id) =>
       throw UnimplementedError();
+
+  @override
+  Future<ScheduleConflictCheckResponse> checkScheduleConflicts(
+          String ministryId, CheckScheduleConflictsPayload payload) =>
+      throw UnimplementedError();
 }
 
 class FakeMembersRepository implements MembersRepository {

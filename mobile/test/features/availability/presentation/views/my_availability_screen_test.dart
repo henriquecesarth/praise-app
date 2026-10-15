@@ -109,6 +109,11 @@ class FakeScreenAvailabilityRepository implements AvailabilityRepository {
   ) async {
     throw UnimplementedError();
   }
+
+  @override
+  Future<ScheduleConflictCheckResponse> checkScheduleConflicts(
+          String ministryId, CheckScheduleConflictsPayload payload) =>
+      throw UnimplementedError();
 }
 
 class FakeMinistryRepository implements MinistryRepository {

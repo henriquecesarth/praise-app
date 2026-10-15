@@ -84,6 +84,11 @@ class FakeScreenAvailabilityRepo implements AvailabilityRepository {
   Future<void> deleteManualMemberAvailability(
           String ministryId, String memberId, String id) =>
       throw UnimplementedError();
+
+  @override
+  Future<ScheduleConflictCheckResponse> checkScheduleConflicts(
+          String ministryId, CheckScheduleConflictsPayload payload) =>
+      throw UnimplementedError();
 }
 
 class FakeMembersRepo implements MembersRepository {
@@ -261,11 +266,11 @@ void main() {
           ministryId: 'min_1',
           memberId: 'm1',
           memberName: 'Baterista João',
-          startDate: '2026-10-15',
-          endDate: '2026-10-15',
+          startDate: '2026-10-25',
+          endDate: '2026-10-25',
           allDay: true,
-          startsAt: '2026-10-15T00:00:00',
-          endsAt: '2026-10-16T00:00:00',
+          startsAt: '2026-10-25T00:00:00',
+          endsAt: '2026-10-26T00:00:00',
         ),
       ];
 
@@ -276,7 +281,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Baterista João'), findsOneWidget);
-      expect(find.text('15/10/2026 • Dia inteiro'), findsOneWidget);
+      expect(find.text('25/10/2026 • Dia inteiro'), findsOneWidget);
       expect(find.text('Agendado'), findsOneWidget);
 
       // Verify privacy preservation: no reason text in widget tree

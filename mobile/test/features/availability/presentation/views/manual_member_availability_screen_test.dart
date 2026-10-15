@@ -86,6 +86,11 @@ class FakeScreenAvailabilityRepo implements AvailabilityRepository {
           int limit = 50,
           String? cursor}) =>
       throw UnimplementedError();
+
+  @override
+  Future<ScheduleConflictCheckResponse> checkScheduleConflicts(
+          String ministryId, CheckScheduleConflictsPayload payload) =>
+      throw UnimplementedError();
 }
 
 class FakeMinistryRepo implements MinistryRepository {

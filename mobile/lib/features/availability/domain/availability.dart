@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../../../../core/utils/date_utils.dart';
 export 'consolidated_availability.dart';
+export 'schedule_conflict.dart';
 
 /// Pure civil wall-clock model representing a member unavailability period.
 ///

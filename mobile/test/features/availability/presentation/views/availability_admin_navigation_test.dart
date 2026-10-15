@@ -225,6 +225,11 @@ class FakeAvailabilityRepo implements AvailabilityRepository {
 
   @override
   Future<void> deleteManualMemberAvailability(String ministryId, String memberId, String availabilityId) async {}
+
+  @override
+  Future<ScheduleConflictCheckResponse> checkScheduleConflicts(
+          String ministryId, CheckScheduleConflictsPayload payload) =>
+      throw UnimplementedError();
 }
 
 void main() {

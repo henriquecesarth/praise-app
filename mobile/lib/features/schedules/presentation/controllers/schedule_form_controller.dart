@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/errors/app_failure.dart';
+import '../../../availability/data/availability_repository.dart';
+import '../../../availability/domain/schedule_conflict.dart';
 import '../../data/schedule_repository.dart';
 import '../../domain/ministry_member.dart';
 import '../../domain/ministry_role.dart';
@@ -100,6 +103,9 @@ class ScheduleFormState {
   final ScheduleFormSnapshot? initialSnapshot;
   final String? error;
   final bool submitSuccess;
+  final Map<String, ParticipantConflictResult> availabilityConflictByMemberId;
+  final bool isCheckingConflicts;
+  final String? conflictError;
 
   const ScheduleFormState({
     this.scheduleId,
@@ -125,6 +131,9 @@ class ScheduleFormState {
     this.initialSnapshot,
     this.error,
     this.submitSuccess = false,
+    this.availabilityConflictByMemberId = const {},
+    this.isCheckingConflicts = false,
+    this.conflictError,
   });
 
   bool get isEditing => scheduleId != null;
@@ -172,6 +181,52 @@ class ScheduleFormState {
     return songs.any((s) => s.id == songId);
   }
 
+  /// Number of currently selected participants that have an availability conflict.
+  int get selectedConflictsCount {
+    if (availabilityConflictByMemberId.isEmpty || participants.isEmpty) return 0;
+    int count = 0;
+    for (final p in participants) {
+      if (hasConflict(p.id, p.userId)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /// List of participants who currently have an availability conflict.
+  List<ScheduleParticipant> get conflictingParticipants {
+    if (availabilityConflictByMemberId.isEmpty || participants.isEmpty) {
+      return const [];
+    }
+    return participants.where((p) => hasConflict(p.id, p.userId)).toList();
+  }
+
+  /// Checks whether the given memberId or userId has an availability conflict.
+  bool hasConflict(String memberId, [String? userId]) {
+    final byMember = availabilityConflictByMemberId[memberId];
+    if (byMember != null && byMember.hasConflict) return true;
+    if (userId != null && userId.isNotEmpty) {
+      final byUser = availabilityConflictByMemberId[userId];
+      if (byUser != null && byUser.hasConflict) return true;
+    }
+    return false;
+  }
+
+  /// Retrieves the conflict result for a member or user id.
+  ParticipantConflictResult? getConflictResult(
+    String memberId, [
+    String? userId,
+  ]) {
+    final byMember = availabilityConflictByMemberId[memberId];
+    if (byMember != null && byMember.hasConflict) return byMember;
+    if (userId != null && userId.isNotEmpty) {
+      final byUser = availabilityConflictByMemberId[userId];
+      if (byUser != null && byUser.hasConflict) return byUser;
+    }
+    return byMember ??
+        (userId != null ? availabilityConflictByMemberId[userId] : null);
+  }
+
   ScheduleFormState copyWith({
     String? scheduleId,
     String? ministryId,
@@ -199,6 +254,11 @@ class ScheduleFormState {
     String? error,
     bool clearError = false,
     bool? submitSuccess,
+    Map<String, ParticipantConflictResult>? availabilityConflictByMemberId,
+    bool clearAvailabilityConflicts = false,
+    bool? isCheckingConflicts,
+    String? conflictError,
+    bool clearConflictError = false,
   }) {
     return ScheduleFormState(
       scheduleId: scheduleId ?? this.scheduleId,
@@ -225,16 +285,29 @@ class ScheduleFormState {
       initialSnapshot: initialSnapshot ?? this.initialSnapshot,
       error: clearError ? null : (error ?? this.error),
       submitSuccess: submitSuccess ?? this.submitSuccess,
+      availabilityConflictByMemberId: clearAvailabilityConflicts
+          ? const {}
+          : (availabilityConflictByMemberId ??
+              this.availabilityConflictByMemberId),
+      isCheckingConflicts: isCheckingConflicts ?? this.isCheckingConflicts,
+      conflictError:
+          clearConflictError ? null : (conflictError ?? this.conflictError),
     );
   }
 }
 
 class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
   final ScheduleRepository _repository;
+  final AvailabilityRepository? _availabilityRepository;
   int _requestSequence = 0;
+  int _conflictSequence = 0;
+  Timer? _conflictDebounceTimer;
 
-  ScheduleFormNotifier({required ScheduleRepository repository})
-      : _repository = repository,
+  ScheduleFormNotifier({
+    required ScheduleRepository repository,
+    AvailabilityRepository? availabilityRepository,
+  })  : _repository = repository,
+        _availabilityRepository = availabilityRepository,
         super(const ScheduleFormState());
 
   /// Initializes the form for creation or editing.
@@ -244,6 +317,8 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
     ScheduleDetail? initialSchedule,
   }) {
     final generation = ++_requestSequence;
+    _conflictDebounceTimer?.cancel();
+    _conflictSequence++;
     final now = DateTime.now();
     final todayCivil =
         '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
@@ -285,6 +360,10 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
         isLoadingMembers: true,
         initialSnapshot: snapshot,
       );
+
+      if (initialSchedule.participants.isNotEmpty) {
+        _scheduleConflictCheck(debounce: false);
+      }
     } else {
       snapshot = ScheduleFormSnapshot(
         title: 'Culto',
@@ -327,9 +406,13 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
 
   /// Invalidates the form permanently when a tenant mismatch or session logout occurs.
   void invalidateTenant() {
+    _conflictDebounceTimer?.cancel();
+    _conflictSequence++;
     _requestSequence++;
     state = state.copyWith(
       isInvalidated: true,
+      isCheckingConflicts: false,
+      clearAvailabilityConflicts: true,
       error: 'Sessão ou ministério alterado. A edição foi cancelada.',
     );
   }
@@ -350,6 +433,7 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
         availableRoles: results[1] as List<MinistryRole>,
         isLoadingMembers: false,
       );
+      _scheduleConflictCheck(debounce: false);
     } catch (e) {
       if (!mounted || generation != _requestSequence || state.isInvalidated) {
         return;
@@ -367,19 +451,39 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
 
   void setDate(String value) {
     if (state.date == value) return;
-    state = state.copyWith(date: value, isDirty: true, clearError: true);
+    state = state.copyWith(
+      date: value,
+      isDirty: true,
+      clearError: true,
+      clearAvailabilityConflicts: true,
+      clearConflictError: true,
+    );
+    _scheduleConflictCheck(debounce: true);
   }
 
   void setTime(String value) {
     if (state.time == value) return;
-    state = state.copyWith(time: value, isDirty: true, clearError: true);
+    state = state.copyWith(
+      time: value,
+      isDirty: true,
+      clearError: true,
+      clearAvailabilityConflicts: true,
+      clearConflictError: true,
+    );
+    _scheduleConflictCheck(debounce: true);
   }
 
   void setDurationMinutes(int value) {
     final clamped = value.clamp(15, 1440);
     if (state.durationMinutes == clamped) return;
     state = state.copyWith(
-        durationMinutes: clamped, isDirty: true, clearError: true);
+      durationMinutes: clamped,
+      isDirty: true,
+      clearError: true,
+      clearAvailabilityConflicts: true,
+      clearConflictError: true,
+    );
+    _scheduleConflictCheck(debounce: true);
   }
 
   void setNotes(String value) {
@@ -424,6 +528,11 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
       isDirty: true,
       clearError: true,
     );
+
+    if (!state.availabilityConflictByMemberId.containsKey(member.id)) {
+      _scheduleConflictCheck(debounce: false);
+    }
+
     return true;
   }
 
@@ -723,5 +832,133 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
       );
       return null;
     }
+  }
+
+  // ─── Availability Conflict Evaluation ──────────────────────────────────
+
+  /// Triggers a manual retry of conflict evaluation.
+  void retryConflictCheck() {
+    _scheduleConflictCheck(debounce: false);
+  }
+
+  void _scheduleConflictCheck({bool debounce = true}) {
+    _conflictDebounceTimer?.cancel();
+    _conflictSequence++;
+    if (_availabilityRepository == null || state.isInvalidated) return;
+
+    if (debounce) {
+      _conflictDebounceTimer = Timer(const Duration(milliseconds: 300), () {
+        _executeConflictCheck();
+      });
+    } else {
+      _executeConflictCheck();
+    }
+  }
+
+  Future<void> _executeConflictCheck() async {
+    if (_availabilityRepository == null || state.isInvalidated) return;
+    if (state.ministryId.isEmpty) return;
+
+    final dateRegex = RegExp(r'^\d{4}-\d{2}-\d{2}$');
+    final timeRegex = RegExp(r'^([01]\d|2[0-3]):[0-5]\d$');
+    if (!dateRegex.hasMatch(state.date) || !timeRegex.hasMatch(state.time)) {
+      return;
+    }
+
+    final candidateIds = <String>{};
+    for (final m in state.availableMembers) {
+      if (m.id.trim().isNotEmpty) {
+        candidateIds.add(m.id.trim());
+      }
+    }
+    for (final p in state.participants) {
+      if (p.id.trim().isNotEmpty) {
+        candidateIds.add(p.id.trim());
+      }
+    }
+
+    if (candidateIds.isEmpty) {
+      state = state.copyWith(
+        availabilityConflictByMemberId: const {},
+        isCheckingConflicts: false,
+        clearConflictError: true,
+      );
+      return;
+    }
+
+    final generation = ++_conflictSequence;
+    final ministryId = state.ministryId;
+    final date = state.date;
+    final time = state.time;
+    final duration = state.durationMinutes.clamp(15, 1440);
+
+    state = state.copyWith(
+      isCheckingConflicts: true,
+      clearConflictError: true,
+    );
+
+    try {
+      final allCandidateList = candidateIds.toList();
+      const chunkSize = 50;
+      final chunks = <List<String>>[];
+      for (var i = 0; i < allCandidateList.length; i += chunkSize) {
+        chunks.add(allCandidateList.sublist(
+          i,
+          i + chunkSize > allCandidateList.length
+              ? allCandidateList.length
+              : i + chunkSize,
+        ));
+      }
+
+      final responses = await Future.wait(
+        chunks.map((chunk) => _availabilityRepository.checkScheduleConflicts(
+              ministryId,
+              CheckScheduleConflictsPayload(
+                date: date,
+                time: time,
+                durationMinutes: duration,
+                participantIds: chunk,
+              ),
+            )),
+      );
+
+      if (!mounted || generation != _conflictSequence || state.isInvalidated) {
+        return;
+      }
+      if (state.ministryId != ministryId) return;
+
+      final mergedMap = <String, ParticipantConflictResult>{};
+      for (final resp in responses) {
+        for (final conflict in resp.conflicts) {
+          mergedMap[conflict.participantId] = conflict;
+          if (conflict.memberId != null && conflict.memberId!.isNotEmpty) {
+            mergedMap[conflict.memberId!] = conflict;
+          }
+        }
+      }
+
+      state = state.copyWith(
+        availabilityConflictByMemberId: mergedMap,
+        isCheckingConflicts: false,
+        clearConflictError: true,
+      );
+    } catch (e) {
+      if (!mounted || generation != _conflictSequence || state.isInvalidated) {
+        return;
+      }
+      if (state.ministryId != ministryId) return;
+
+      state = state.copyWith(
+        isCheckingConflicts: false,
+        conflictError:
+            'Não foi possível verificar a disponibilidade dos integrantes.',
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _conflictDebounceTimer?.cancel();
+    super.dispose();
   }
 }

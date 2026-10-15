@@ -329,6 +329,11 @@ class FakeAvailabilityRepo implements AvailabilityRepository {
       return deleteManualMemberHandler!(ministryId, memberId, id);
     }
   }
+
+  @override
+  Future<ScheduleConflictCheckResponse> checkScheduleConflicts(
+          String ministryId, CheckScheduleConflictsPayload payload) =>
+      throw UnimplementedError();
 }
 
 class FakeRepertoireRepo implements RepertoireRepository {
