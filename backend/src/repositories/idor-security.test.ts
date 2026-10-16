@@ -4,6 +4,7 @@ import { RepertoireRepository } from './RepertoireRepository';
 import { ScheduleRepository } from './ScheduleRepository';
 import { LiturgyRepository } from './LiturgyRepository';
 import { MinistryRepository } from './MinistryRepository';
+import { TeamRepository } from './TeamRepository';
 import { AppError } from '../middleware/error-handler';
 import { db } from '../lib/firebase';
 
@@ -198,6 +199,54 @@ describe('Security Hardening: IDOR and Tenant Isolation Repositories', () => {
           statusCode: 400,
           message: expect.stringMatching(/Não é possível rebaixar o único administrador/i),
         })
+      );
+    });
+  });
+
+  describe('TeamRepository (Tenant isolation & non-enumerating IDOR guard)', () => {
+    const repo = new TeamRepository();
+
+    it('deve retornar 404 indistinguível ao tentar acessar equipe de outro ministério (fechando o oráculo de existência)', async () => {
+      vi.spyOn((repo as any).teamsCol, 'doc').mockReturnValue({
+        get: vi.fn().mockResolvedValue({
+          exists: true,
+          id: 'team-victim',
+          data: () => ({ ministry_id: 'min-victim', name: 'Equipe Secreta' }),
+        }),
+      });
+
+      await expect(repo.getTeamById('team-victim', 'min-attacker')).rejects.toThrow(
+        expect.objectContaining({ statusCode: 404, message: 'Equipe não encontrada.' })
+      );
+    });
+
+    it('deve retornar 404 indistinguível ao tentar atualizar equipe de outro ministério', async () => {
+      vi.spyOn((repo as any).teamsCol, 'doc').mockReturnValue({
+        get: vi.fn().mockResolvedValue({
+          exists: true,
+          id: 'team-victim',
+          data: () => ({ ministry_id: 'min-victim', name: 'Equipe Secreta' }),
+        }),
+        update: vi.fn(),
+      });
+
+      await expect(repo.updateTeam('team-victim', 'min-attacker', { name: 'Hacked' })).rejects.toThrow(
+        expect.objectContaining({ statusCode: 404, message: 'Equipe não encontrada.' })
+      );
+    });
+
+    it('deve retornar 404 indistinguível ao tentar deletar equipe de outro ministério', async () => {
+      vi.spyOn((repo as any).teamsCol, 'doc').mockReturnValue({
+        get: vi.fn().mockResolvedValue({
+          exists: true,
+          id: 'team-victim',
+          data: () => ({ ministry_id: 'min-victim', name: 'Equipe Secreta' }),
+        }),
+        delete: vi.fn(),
+      });
+
+      await expect(repo.deleteTeam('team-victim', 'min-attacker')).rejects.toThrow(
+        expect.objectContaining({ statusCode: 404, message: 'Equipe não encontrada.' })
       );
     });
   });

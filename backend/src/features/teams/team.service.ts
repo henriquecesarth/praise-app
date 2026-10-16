@@ -14,7 +14,7 @@ export class TeamService {
   async createTeam(
     ministryId: string,
     createdBy: string,
-    data: { name: string; description?: string; memberIds?: string[] }
+    data: { name: string; description?: string | null; memberIds?: string[] }
   ): Promise<TeamRecord> {
     return this.repo.createTeam(ministryId, createdBy, data);
   }
