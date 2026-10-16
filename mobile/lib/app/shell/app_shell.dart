@@ -12,6 +12,7 @@ import '../../features/notifications/presentation/controllers/notification_provi
 import '../../features/notifications/presentation/views/notification_center_screen.dart';
 import '../../features/liturgies/presentation/views/liturgies_screen.dart';
 import '../../features/smart_chords/presentation/views/smart_chords_screen.dart';
+import '../../features/teams/presentation/views/teams_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../providers.dart';
 
@@ -55,6 +56,15 @@ class _AppShellState extends ConsumerState<AppShell> {
         try {
           ref.read(inviteCodeNotifierProvider.notifier).reset();
         } catch (_) {}
+        try {
+          ref.read(teamFormNotifierProvider.notifier).invalidateTenant();
+        } catch (_) {}
+        try {
+          ref.read(teamFormNotifierProvider.notifier).reset();
+        } catch (_) {}
+        try {
+          ref.read(teamsListNotifierProvider.notifier).reset();
+        } catch (_) {}
 
         ref.invalidate(dashboardNotifierProvider);
         ref.invalidate(scheduleListNotifierProvider);
@@ -72,6 +82,8 @@ class _AppShellState extends ConsumerState<AppShell> {
         ref.invalidate(liturgyListNotifierProvider);
         ref.invalidate(liturgyDetailNotifierProvider);
         ref.invalidate(liturgyFormNotifierProvider);
+        ref.invalidate(teamsListNotifierProvider);
+        ref.invalidate(teamFormNotifierProvider);
         ref.invalidate(inviteCodeNotifierProvider);
         ref.invalidate(notificationListProvider);
         ref.read(unreadNotificationCountProvider.notifier).refresh();
@@ -527,6 +539,29 @@ class _ProfileView extends ConsumerWidget {
                   Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => AdminAvailabilityScreen(
+                        ministryId: selectedMinistry!.id,
+                        ministryName: selectedMinistry!.name,
+                      ),
+                    ),
+                  );
+                },
+              ),
+              const Divider(),
+              ListTile(
+                key: const ValueKey('profile_teams_tile'),
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  Icons.groups_outlined,
+                  color: theme.colorScheme.secondary,
+                ),
+                title: const Text('Equipes'),
+                subtitle: const Text(
+                    'Grupos de integrantes para organização e escalas'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => TeamsScreen(
                         ministryId: selectedMinistry!.id,
                         ministryName: selectedMinistry!.name,
                       ),

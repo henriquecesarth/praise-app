@@ -24,6 +24,7 @@ import '../features/smart_chords/presentation/controllers/smart_chord_providers.
 import '../features/ministry_context/presentation/controllers/create_ministry_controller.dart';
 import '../features/ministry_context/presentation/controllers/join_ministry_controller.dart';
 import '../features/members/presentation/controllers/invite_code_controller.dart';
+import '../features/teams/presentation/controllers/teams_providers.dart';
 export '../features/schedules/presentation/controllers/schedule_providers.dart';
 export '../features/repertoire/presentation/controllers/repertoire_providers.dart';
 export '../features/availability/presentation/controllers/availability_providers.dart';
@@ -34,10 +35,20 @@ export '../features/smart_chords/presentation/controllers/smart_chord_providers.
 export '../features/ministry_context/presentation/controllers/create_ministry_controller.dart';
 export '../features/ministry_context/presentation/controllers/join_ministry_controller.dart';
 export '../features/members/presentation/controllers/invite_code_controller.dart';
+export '../features/teams/presentation/controllers/teams_providers.dart';
 
 /// Clears all authenticated feature caches from memory upon logout or user change.
 /// Accepts either [Ref] or [ProviderContainer].
 void resetAuthenticatedFeatures(dynamic refOrContainer) {
+  try {
+    refOrContainer.read(teamFormNotifierProvider.notifier).invalidateTenant();
+  } catch (_) {}
+  try {
+    refOrContainer.read(teamFormNotifierProvider.notifier).reset();
+  } catch (_) {}
+  try {
+    refOrContainer.read(teamsListNotifierProvider.notifier).reset();
+  } catch (_) {}
   try {
     refOrContainer.read(createMinistryNotifierProvider.notifier).reset();
   } catch (_) {}

@@ -9,6 +9,7 @@ import '../../domain/ministry_role.dart';
 import '../../domain/schedule.dart';
 import '../../domain/schedule_participant.dart';
 import '../../../repertoire/domain/song_summary.dart';
+import '../../../teams/presentation/widgets/team_picker_sheet.dart';
 import '../controllers/schedule_form_controller.dart';
 
 /// Screen for creating and editing schedules in LouvAIO Mobile.
@@ -207,6 +208,74 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen> {
           }
         },
       ),
+    );
+  }
+
+  void _openTeamPicker(BuildContext context) {
+    final formState = ref.read(scheduleFormNotifierProvider);
+    TeamPickerSheet.show(
+      context: context,
+      ministryId: widget.ministryId,
+      availableMembers: formState.availableMembers,
+      onTeamSelected: (team) {
+        // TEAM_IMPORT_TENANT_FENCING: Ensure current ministry still matches
+        final currentMid =
+            ref.read(ministryContextNotifierProvider).selectedMinistry?.id;
+        if (currentMid != widget.ministryId) {
+          return;
+        }
+
+        // TEAM_IMPORT_ACTIVE_MEMBER_FILTER:
+        // Resolve team members strictly against availableMembers for the active ministry.
+        // Stale / removed / foreign references are ignored.
+        final memberMap = {for (final m in formState.availableMembers) m.id: m};
+        final resolvableMembers = team.memberIds
+            .map((id) => memberMap[id])
+            .whereType<MinistryMember>()
+            .toList();
+
+        if (resolvableMembers.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Nenhum integrante ativo encontrado nesta equipe para importar.',
+                ),
+                duration: Duration(seconds: 3),
+              ),
+            );
+          }
+          return;
+        }
+
+        // TEAM_IMPORT_POLICY = SNAPSHOT
+        // Dispatches single batch mutation and single conflict reevaluation
+        final addedCount = ref
+            .read(scheduleFormNotifierProvider.notifier)
+            .addParticipants(resolvableMembers);
+
+        if (mounted) {
+          if (addedCount == 0) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Todos os integrantes da equipe já estão na escala.',
+                ),
+                duration: Duration(seconds: 2),
+              ),
+            );
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  '$addedCount ${addedCount == 1 ? 'integrante adicionado' : 'integrantes adicionados'}.',
+                ),
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          }
+        }
+      },
     );
   }
 
@@ -910,8 +979,11 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            Wrap(
+                              alignment: WrapAlignment.spaceBetween,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              spacing: 8,
+                              runSpacing: 8,
                               children: [
                                 Row(
                                   mainAxisSize: MainAxisSize.min,
@@ -959,15 +1031,31 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen> {
                                     ],
                                   ],
                                 ),
-                                FilledButton.tonalIcon(
-                                  key: const ValueKey('add_participant_button'),
-                                  onPressed: () => _openMemberPicker(context),
-                                  icon: const Icon(Icons.person_add_outlined,
-                                      size: 18),
-                                  label: const Text('Adicionar'),
-                                  style: FilledButton.styleFrom(
-                                    visualDensity: VisualDensity.compact,
-                                  ),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 4,
+                                  children: [
+                                    OutlinedButton.icon(
+                                      key: const ValueKey('import_team_button'),
+                                      onPressed: () => _openTeamPicker(context),
+                                      icon: const Icon(Icons.groups_outlined,
+                                          size: 18),
+                                      label: const Text('Importar Equipe'),
+                                      style: OutlinedButton.styleFrom(
+                                        visualDensity: VisualDensity.compact,
+                                      ),
+                                    ),
+                                    FilledButton.tonalIcon(
+                                      key: const ValueKey('add_participant_button'),
+                                      onPressed: () => _openMemberPicker(context),
+                                      icon: const Icon(Icons.person_add_outlined,
+                                          size: 18),
+                                      label: const Text('Adicionar'),
+                                      style: FilledButton.styleFrom(
+                                        visualDensity: VisualDensity.compact,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),

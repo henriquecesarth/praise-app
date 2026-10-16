@@ -536,6 +536,58 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
     return true;
   }
 
+  /// Adds multiple participants to the schedule in a single batch (e.g. from Team import).
+  /// Deduplicates against current participants and within the incoming batch.
+  /// Dispatches exactly one state mutation and triggers one logical conflict reevaluation.
+  /// Returns the count of newly added participants.
+  int addParticipants(List<MinistryMember> members) {
+    if (members.isEmpty) return 0;
+
+    final toAdd = <ScheduleParticipant>[];
+    for (final member in members) {
+      if (state.isMemberSelected(member.id, member.userId)) {
+        continue;
+      }
+      // Deduplicate within the batch itself
+      final alreadyInBatch = toAdd.any((p) {
+        if (p.id == member.id) return true;
+        if (member.userId != null &&
+            member.userId!.isNotEmpty &&
+            p.userId != null &&
+            p.userId == member.userId) {
+          return true;
+        }
+        return false;
+      });
+      if (alreadyInBatch) {
+        continue;
+      }
+
+      toAdd.add(
+        ScheduleParticipant(
+          id: member.id,
+          userId: member.userId,
+          name: member.name,
+          role: 'Integrante',
+        ),
+      );
+    }
+
+    if (toAdd.isEmpty) {
+      return 0;
+    }
+
+    state = state.copyWith(
+      participants: [...state.participants, ...toAdd],
+      isDirty: true,
+      clearError: true,
+    );
+
+    _scheduleConflictCheck(debounce: false);
+
+    return toAdd.length;
+  }
+
   /// Removes the participant at [index].
   void removeParticipant(int index) {
     if (index < 0 || index >= state.participants.length) return;
