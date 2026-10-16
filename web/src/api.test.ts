@@ -183,6 +183,7 @@ describe('API Client & Structured Error Handling', () => {
         userId: 'usr-1',
         title: 'Hosana',
         artistId: 'art-1',
+        artistName: null,
         songId: 'sng-1',
         originalKey: 'E',
         content: '[E]Hosana nas alturas',
@@ -354,6 +355,110 @@ describe('API Client & Structured Error Handling', () => {
       const [url, options] = fetchSpy.mock.calls[0];
       expect(url).toMatch(/\/smart-chords\/sc-to-delete$/);
       expect(options.method).toBe('DELETE');
+    });
+
+    it('createSmartChord envia artist_name no body', async () => {
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        text: vi.fn().mockResolvedValue(JSON.stringify({ id: 'sc-new', title: 'Nova', artist_name: 'Morada' })),
+      } as any);
+      global.fetch = fetchSpy;
+
+      const result = await api.createSmartChord({
+        title: 'Nova',
+        artistName: 'Morada',
+        originalKey: 'G',
+        content: '[G]Aleluia',
+      });
+
+      const [, options] = fetchSpy.mock.calls[0];
+      const body = JSON.parse(options.body);
+      expect(body.artist_name).toBe('Morada');
+      expect(result.artistName).toBe('Morada');
+    });
+
+    it('getSmartChordRepertoireLink consulta rota de ministério e mapeia resposta', async () => {
+      const mockLink = {
+        link: {
+          id: 'usr-1_sc-1_min-1',
+          user_id: 'usr-1',
+          smart_chord_id: 'sc-1',
+          ministry_id: 'min-1',
+          song_id: 'sng-1',
+          created_at: '2026-10-16T12:00:00Z',
+          updated_at: '2026-10-16T12:00:00Z',
+        },
+        song: {
+          id: 'sng-1',
+          ministry_id: 'min-1',
+          title: 'Canção Canônica',
+          artist_id: 'art-1',
+          artist_name: 'Artista',
+          original_key: 'D',
+        },
+      };
+
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify(mockLink)),
+      } as any);
+      global.fetch = fetchSpy;
+
+      const result = await api.getSmartChordRepertoireLink('min-1', 'sc-1');
+
+      const [url] = fetchSpy.mock.calls[0];
+      expect(url).toMatch(/\/ministries\/min-1\/smart-chords\/sc-1\/repertoire-link$/);
+      expect(result.link?.songId).toBe('sng-1');
+      expect(result.song?.title).toBe('Canção Canônica');
+    });
+
+    it('setSmartChordRepertoireLink envia PUT com song_id', async () => {
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify({ link: null, song: null })),
+      } as any);
+      global.fetch = fetchSpy;
+
+      await api.setSmartChordRepertoireLink('min-1', 'sc-1', 'sng-target');
+
+      const [url, options] = fetchSpy.mock.calls[0];
+      expect(url).toMatch(/\/ministries\/min-1\/smart-chords\/sc-1\/repertoire-link$/);
+      expect(options.method).toBe('PUT');
+      expect(JSON.parse(options.body)).toEqual({ song_id: 'sng-target' });
+    });
+
+    it('removeSmartChordRepertoireLink envia DELETE', async () => {
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 204,
+        text: vi.fn().mockResolvedValue(''),
+      } as any);
+      global.fetch = fetchSpy;
+
+      await api.removeSmartChordRepertoireLink('min-1', 'sc-1');
+
+      const [url, options] = fetchSpy.mock.calls[0];
+      expect(url).toMatch(/\/ministries\/min-1\/smart-chords\/sc-1\/repertoire-link$/);
+      expect(options.method).toBe('DELETE');
+    });
+
+    it('getMySmartChordsForSong consulta /ministries/:ministryId/songs/:songId/my-smart-chords', async () => {
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify({ data: [{ id: 'sc-1', title: 'Minha Cifra' }] })),
+      } as any);
+      global.fetch = fetchSpy;
+
+      const result = await api.getMySmartChordsForSong('min-1', 'sng-1');
+
+      const [url] = fetchSpy.mock.calls[0];
+      expect(url).toMatch(/\/ministries\/min-1\/songs\/sng-1\/my-smart-chords$/);
+      expect(result).toHaveLength(1);
+      expect(result[0].title).toBe('Minha Cifra');
     });
   });
 

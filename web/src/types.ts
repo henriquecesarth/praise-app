@@ -224,6 +224,7 @@ export interface SmartChord {
   userId: string;
   title: string;
   artistId: string | null;
+  artistName?: string | null;
   songId: string | null;
   originalKey: string;
   content: string;
@@ -237,6 +238,30 @@ export interface SmartChord {
     id: string;
     title: string;
   } | null;
+}
+
+export interface SmartChordSongLink {
+  id: string;
+  userId: string;
+  smartChordId: string;
+  ministryId: string;
+  songId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SmartChordSongSummary {
+  id: string;
+  ministryId: string;
+  title: string;
+  artistId?: string | null;
+  artistName?: string | null;
+  originalKey?: string | null;
+}
+
+export interface SmartChordRepertoireLink {
+  link: SmartChordSongLink | null;
+  song: SmartChordSongSummary | null;
 }
 
 export interface Artist {

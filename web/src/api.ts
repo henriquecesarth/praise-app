@@ -16,6 +16,9 @@ import {
   CheckoutCreationResult,
   BillingTransactionRecord,
   SmartChord,
+  SmartChordSongLink,
+  SmartChordSongSummary,
+  SmartChordRepertoireLink,
   Announcement,
   MemberUnavailability,
   CreateUnavailabilityPayload,
@@ -56,6 +59,9 @@ import { COMPLIANCE_CONFIG } from './config/compliance.config';
 
 export type {
   SmartChord,
+  SmartChordSongLink,
+  SmartChordSongSummary,
+  SmartChordRepertoireLink,
   Announcement,
   MemberUnavailability,
   CreateUnavailabilityPayload,
@@ -174,6 +180,7 @@ export function mapSmartChordFromApi(item: any): SmartChord {
     userId: item?.user_id ?? item?.userId ?? '',
     title: item?.title ?? '',
     artistId: item?.artist_id ?? item?.artistId ?? null,
+    artistName: item?.artist_name ?? item?.artistName ?? null,
     songId: item?.song_id ?? item?.songId ?? null,
     originalKey: item?.original_key ?? item?.originalKey ?? 'C',
     content: item?.content ?? '',
@@ -1271,6 +1278,9 @@ export const api = {
       original_key: payload.originalKey || 'C',
       content: payload.content || '',
     };
+    if (payload.artistName !== undefined) {
+      body.artist_name = payload.artistName || null;
+    }
     if (payload.artistId !== undefined) {
       body.artist_id = payload.artistId || null;
     }
@@ -1290,6 +1300,7 @@ export const api = {
   updateSmartChord: async (id: string, payload: Partial<SmartChord>): Promise<SmartChord> => {
     const body: Record<string, any> = {};
     if (payload.title !== undefined) body.title = payload.title;
+    if (payload.artistName !== undefined) body.artist_name = payload.artistName || null;
     if (payload.originalKey !== undefined) body.original_key = payload.originalKey;
     if (payload.content !== undefined) body.content = payload.content;
     if (payload.artistId !== undefined) body.artist_id = payload.artistId || null;
@@ -1310,6 +1321,77 @@ export const api = {
       headers: getHeaders(),
     });
     return handleResponse<void>(response);
+  },
+
+  getSmartChordRepertoireLink: async (ministryId: string, chordId: string): Promise<SmartChordRepertoireLink> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/smart-chords/${chordId}/repertoire-link`, {
+      headers: getHeaders(),
+    });
+    const result = await handleResponse<any>(response);
+    return {
+      link: result?.link ? {
+        id: result.link.id,
+        userId: result.link.user_id,
+        smartChordId: result.link.smart_chord_id,
+        ministryId: result.link.ministry_id,
+        songId: result.link.song_id,
+        createdAt: result.link.created_at,
+        updatedAt: result.link.updated_at,
+      } : null,
+      song: result?.song ? {
+        id: result.song.id,
+        ministryId: result.song.ministry_id,
+        title: result.song.title,
+        artistId: result.song.artist_id,
+        artistName: result.song.artist_name,
+        originalKey: result.song.original_key,
+      } : null,
+    };
+  },
+
+  setSmartChordRepertoireLink: async (ministryId: string, chordId: string, songId: string): Promise<SmartChordRepertoireLink> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/smart-chords/${chordId}/repertoire-link`, {
+      method: 'PUT',
+      headers: getHeaders(),
+      body: JSON.stringify({ song_id: songId }),
+    });
+    const result = await handleResponse<any>(response);
+    return {
+      link: result?.link ? {
+        id: result.link.id,
+        userId: result.link.user_id,
+        smartChordId: result.link.smart_chord_id,
+        ministryId: result.link.ministry_id,
+        songId: result.link.song_id,
+        createdAt: result.link.created_at,
+        updatedAt: result.link.updated_at,
+      } : null,
+      song: result?.song ? {
+        id: result.song.id,
+        ministryId: result.song.ministry_id,
+        title: result.song.title,
+        artistId: result.song.artist_id,
+        artistName: result.song.artist_name,
+        originalKey: result.song.original_key,
+      } : null,
+    };
+  },
+
+  removeSmartChordRepertoireLink: async (ministryId: string, chordId: string): Promise<void> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/smart-chords/${chordId}/repertoire-link`, {
+      method: 'DELETE',
+      headers: getHeaders(),
+    });
+    return handleResponse<void>(response);
+  },
+
+  getMySmartChordsForSong: async (ministryId: string, songId: string): Promise<SmartChord[]> => {
+    const response = await fetch(`${API_URL}/ministries/${ministryId}/songs/${songId}/my-smart-chords`, {
+      headers: getHeaders(),
+    });
+    const result = await handleResponse<any>(response);
+    const list = Array.isArray(result) ? result : (result?.data || []);
+    return list.map(mapSmartChordFromApi);
   },
 
   upsertSmartChord: async (songId: string, originalKey: string, content: string): Promise<SmartChord> => {

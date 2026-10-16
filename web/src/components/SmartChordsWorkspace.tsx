@@ -80,6 +80,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
   // Form State
   const [title, setTitle] = useState('');
   const [artistId, setArtistId] = useState('');
+  const [artistName, setArtistName] = useState('');
   const [songId, setSongId] = useState('');
   const [originalKey, setOriginalKey] = useState('C');
   const [content, setContent] = useState('');
@@ -142,17 +143,31 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
     loadChordsList(e.target.value);
   };
 
-  const handleSelectChord = (chord: SmartChord) => {
+  const handleSelectChord = async (chord: SmartChord) => {
     setSelectedChord(chord);
     setTitle(chord.title);
     setArtistId(chord.artistId || '');
-    setSongId(chord.songId || '');
+    setArtistName(chord.artistName || chord.artist?.name || '');
+    setSongId('');
     setNewSongTitle(chord.title);
     setAutoCreateSong(true);
     setUserModifiedNewSongTitle(false);
     setOriginalKey(chord.originalKey);
     setContent(chord.content);
     setSemitones(0);
+
+    if (ministryId && chord.id) {
+      try {
+        const linkData = await api.getSmartChordRepertoireLink(ministryId, chord.id);
+        if (linkData.link?.songId) {
+          setSongId(linkData.link.songId);
+        } else if (chord.songId) {
+          setSongId(chord.songId);
+        }
+      } catch {
+        setSongId(chord.songId || '');
+      }
+    }
   };
 
   const handleCreateNew = () => {
@@ -161,6 +176,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
       userId: '',
       title: 'Nova Cifra',
       artistId: '',
+      artistName: '',
       songId: '',
       originalKey: 'C',
       content: '[C]Insira a letra e [G]acordes aqui.',
@@ -169,6 +185,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
     });
     setTitle('Nova Cifra');
     setArtistId('');
+    setArtistName('');
     setSongId('');
     setNewSongTitle('Nova Cifra');
     setAutoCreateSong(true);
@@ -221,23 +238,37 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
 
       const payload: Partial<SmartChord> = {
         title: title.trim(),
+        artistName: artistName.trim() || undefined,
         artistId: artistId || undefined,
         songId: finalSongId && finalSongId !== 'new' ? finalSongId : undefined,
         originalKey,
         content: content.trim(),
       };
 
+      let activeChord: SmartChord;
       if (selectedChord && selectedChord.id) {
         // Update
-        const updated = await api.updateSmartChord(selectedChord.id, payload);
-        setSelectedChord(updated);
-        alert('Cifra salva com sucesso!');
+        activeChord = await api.updateSmartChord(selectedChord.id, payload);
       } else {
         // Create
-        const created = await api.createSmartChord(payload);
-        setSelectedChord(created);
-        alert('Cifra criada com sucesso!');
+        activeChord = await api.createSmartChord(payload);
       }
+      setSelectedChord(activeChord);
+
+      // Sincroniza vínculo canônico com o repertório do ministério ativo
+      if (ministryId && activeChord.id) {
+        if (finalSongId && finalSongId !== 'new') {
+          await api.setSmartChordRepertoireLink(ministryId, activeChord.id, finalSongId);
+        } else if (!finalSongId) {
+          try {
+            await api.removeSmartChordRepertoireLink(ministryId, activeChord.id);
+          } catch {
+            // Ignora se não havia vínculo prévio
+          }
+        }
+      }
+
+      alert(selectedChord?.id ? 'Cifra salva com sucesso!' : 'Cifra criada com sucesso!');
 
       // Reload list and songs dropdown list to include any newly created song
       loadChordsList(search);
@@ -413,7 +444,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
   // Parsing & pitch shifting preview
   const rawLines = content ? content.split('\n') : [];
   const currentKeyTransposed = transposeChord(originalKey, semitones);
-  const selectedArtistName = artists.find(a => a.id === artistId)?.name || 'Desconhecido';
+  const selectedArtistName = artistName || artists.find(a => a.id === artistId)?.name || 'Desconhecido';
 
   const keysList = [
     'C', 'Cm', 'C#', 'C#m', 'D', 'Dm', 'Eb', 'Ebm', 'E', 'Em', 'F', 'Fm',
@@ -515,7 +546,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
             <p style={{ textAlign: 'center', opacity: 0.5 }}>Nenhuma cifra encontrada.</p>
           ) : (
             smartChords.map(sc => {
-              const artistName = artists.find(a => a.id === sc.artistId)?.name || 'Artista desconhecido';
+              const itemArtist = sc.artistName || sc.artist?.name || artists.find(a => a.id === sc.artistId)?.name || 'Artista desconhecido';
               return (
                 <button
                   type="button"
@@ -540,7 +571,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
                 >
                   <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{sc.title}</div>
                   <div style={{ fontSize: '0.78rem', opacity: 0.7, marginTop: '2px', display: 'flex', justifyContent: 'space-between' }}>
-                    <span>{artistName}</span>
+                    <span>{itemArtist}</span>
                     <span style={{ color: 'var(--primary-light)', fontWeight: 600 }}>{sc.originalKey}</span>
                   </div>
                 </button>
@@ -582,19 +613,15 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
 
               <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                 <div className="form-group" style={{ flex: 1, minWidth: '150px' }}>
-                  <label className="form-label">Artista (Lista)</label>
-                  <select
+                  <label className="form-label">Artista</label>
+                  <input
+                    type="text"
                     className="form-control"
                     style={{ minHeight: '44px', fontSize: '0.95rem' }}
-                    value={artistId}
-                    onChange={e => setArtistId(e.target.value)}
-                    disabled={relationsLoading}
-                  >
-                    <option value="">Nenhum artista cadastrado</option>
-                    {artists.map(a => (
-                      <option key={a.id} value={a.id}>{a.name}</option>
-                    ))}
-                  </select>
+                    value={artistName}
+                    onChange={e => setArtistName(e.target.value)}
+                    placeholder="Ex: Gabriela Rocha"
+                  />
                 </div>
 
                 <div className="form-group" style={{ width: '120px' }}>
