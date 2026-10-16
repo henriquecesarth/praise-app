@@ -2,7 +2,9 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/core/errors/app_failure.dart';
 import 'package:louvaio_mobile/features/smart_chords/data/smart_chord_repository.dart';
+import 'package:louvaio_mobile/features/smart_chords/data/smart_chord_repertoire_link_repository.dart';
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord.dart';
+import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_repertoire_link.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/controllers/smart_chord_detail_controller.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/controllers/smart_chord_form_controller.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/controllers/smart_chord_list_controller.dart';
@@ -90,6 +92,45 @@ class FakeSmartChordRepository implements SmartChordRepository {
     deleteCallCount++;
     if (deleteCompleter != null) await deleteCompleter!.future;
     if (errorToThrow != null) throw errorToThrow!;
+  }
+}
+
+class FakeSmartChordRepertoireLinkRepository implements SmartChordRepertoireLinkRepository {
+  List<SmartChord> chordsToReturn = [];
+  int getMySmartChordsCallCount = 0;
+
+  @override
+  Future<SmartChordRepertoireLink> getRepertoireLink({
+    required String ministryId,
+    required String chordId,
+  }) async {
+    return const SmartChordRepertoireLink.unlinked();
+  }
+
+  @override
+  Future<SmartChordRepertoireLink> setRepertoireLink({
+    required String ministryId,
+    required String chordId,
+    required String songId,
+  }) async {
+    return const SmartChordRepertoireLink.unlinked();
+  }
+
+  @override
+  Future<SmartChordRepertoireLink> removeRepertoireLink({
+    required String ministryId,
+    required String chordId,
+  }) async {
+    return const SmartChordRepertoireLink.unlinked();
+  }
+
+  @override
+  Future<List<SmartChord>> getMySmartChordsForSong({
+    required String ministryId,
+    required String songId,
+  }) async {
+    getMySmartChordsCallCount++;
+    return chordsToReturn;
   }
 }
 
@@ -211,6 +252,33 @@ void main() {
       expect(notifier.state.songId, 'song-99');
       expect(notifier.state.items.first.id, 'sc-song');
       expect(repository.getBySongCallCount, 1);
+    });
+
+    test('load with ministryId delegates to linkRepository.getMySmartChordsForSong', () async {
+      final linkRepo = FakeSmartChordRepertoireLinkRepository();
+      linkRepo.chordsToReturn = [
+        const SmartChord(
+          id: 'sc-linked',
+          userId: 'u',
+          songId: 'song-100',
+          title: 'Linked Chord',
+          originalKey: 'A',
+          content: '',
+          createdAt: '',
+          updatedAt: '',
+        ),
+      ];
+
+      final notifier = SongSmartChordsNotifier(
+        repository: repository,
+        linkRepository: linkRepo,
+      );
+      await notifier.load('song-100', ministryId: 'min-1');
+
+      expect(notifier.state.items.length, 1);
+      expect(notifier.state.items.first.id, 'sc-linked');
+      expect(linkRepo.getMySmartChordsCallCount, 1);
+      expect(repository.getBySongCallCount, 0);
     });
 
     test('reset clears state', () {

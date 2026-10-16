@@ -1,7 +1,8 @@
-﻿import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/errors/app_failure.dart';
 import '../../data/smart_chord_repository.dart';
+import '../../data/smart_chord_repertoire_link_repository.dart';
 import '../../domain/smart_chord.dart';
 
 @immutable
@@ -43,13 +44,17 @@ class SongSmartChordsState {
 
 class SongSmartChordsNotifier extends StateNotifier<SongSmartChordsState> {
   final SmartChordRepository _repository;
+  final SmartChordRepertoireLinkRepository? _linkRepository;
   int _currentGeneration = 0;
 
-  SongSmartChordsNotifier({required SmartChordRepository repository})
-      : _repository = repository,
+  SongSmartChordsNotifier({
+    required SmartChordRepository repository,
+    SmartChordRepertoireLinkRepository? linkRepository,
+  })  : _repository = repository,
+        _linkRepository = linkRepository,
         super(const SongSmartChordsState());
 
-  Future<void> load(String songId, {bool force = false}) async {
+  Future<void> load(String songId, {String? ministryId, bool force = false}) async {
     if (!force && state.songId == songId && state.items.isNotEmpty && !state.isLoading) {
       return;
     }
@@ -63,7 +68,15 @@ class SongSmartChordsNotifier extends StateNotifier<SongSmartChordsState> {
     );
 
     try {
-      final list = await _repository.getSmartChordsBySong(songId);
+      final List<SmartChord> list;
+      if (ministryId != null && _linkRepository != null) {
+        list = await _linkRepository.getMySmartChordsForSong(
+          ministryId: ministryId,
+          songId: songId,
+        );
+      } else {
+        list = await _repository.getSmartChordsBySong(songId);
+      }
       if (generation != _currentGeneration) return;
 
       state = state.copyWith(

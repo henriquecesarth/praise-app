@@ -32,12 +32,12 @@ class SmartChordFormScreen extends ConsumerStatefulWidget {
 class _SmartChordFormScreenState extends ConsumerState<SmartChordFormScreen> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _titleController;
+  late final TextEditingController _artistController;
   late final TextEditingController _contentController;
   late String _selectedKey;
   String? _songId;
   String? _songTitle;
   String? _artistId;
-  String? _artistName;
   bool _showPreview = false;
   String? _boundUserId;
   String? _boundMinistryId;
@@ -60,6 +60,9 @@ class _SmartChordFormScreenState extends ConsumerState<SmartChordFormScreen> {
     _titleController = TextEditingController(
       text: chord?.title ?? widget.prefillSongTitle ?? '',
     );
+    _artistController = TextEditingController(
+      text: chord?.artistName ?? widget.prefillArtistName ?? '',
+    );
     _contentController = TextEditingController(
       text: chord?.content ?? '',
     );
@@ -71,7 +74,6 @@ class _SmartChordFormScreenState extends ConsumerState<SmartChordFormScreen> {
     _songId = chord?.songId ?? widget.prefillSongId;
     _songTitle = chord?.songTitle ?? widget.prefillSongTitle;
     _artistId = chord?.artistId ?? widget.prefillArtistId;
-    _artistName = chord?.artistName ?? widget.prefillArtistName;
   }
 
   void _dismissScreen() {
@@ -85,17 +87,18 @@ class _SmartChordFormScreenState extends ConsumerState<SmartChordFormScreen> {
 
   void _clearDraftControllers() {
     _titleController.clear();
+    _artistController.clear();
     _contentController.clear();
     _songId = null;
     _songTitle = null;
     _artistId = null;
-    _artistName = null;
   }
 
   @override
   void dispose() {
     _clearDraftControllers();
     _titleController.dispose();
+    _artistController.dispose();
     _contentController.dispose();
     super.dispose();
   }
@@ -136,7 +139,9 @@ class _SmartChordFormScreenState extends ConsumerState<SmartChordFormScreen> {
       songId: _songId,
       songTitle: _songTitle,
       artistId: _artistId,
-      artistName: _artistName,
+      artistName: _artistController.text.trim().isNotEmpty
+          ? _artistController.text.trim()
+          : null,
       createdAt: widget.initialChord?.createdAt ?? '',
       updatedAt: widget.initialChord?.updatedAt ?? '',
     );
@@ -290,6 +295,19 @@ class _SmartChordFormScreenState extends ConsumerState<SmartChordFormScreen> {
                             }
                             return null;
                           },
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Artist Field
+                        TextFormField(
+                          key: const ValueKey('smart_chord_artist_field'),
+                          controller: _artistController,
+                          enabled: !isSubmitting,
+                          decoration: const InputDecoration(
+                            labelText: 'Artista / Intérprete',
+                            hintText: 'Ex: Gabriela Rocha, Morada',
+                            border: OutlineInputBorder(),
+                          ),
                         ),
                         const SizedBox(height: 16),
 

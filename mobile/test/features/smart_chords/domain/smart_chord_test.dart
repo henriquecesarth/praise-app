@@ -57,13 +57,14 @@ void main() {
       expect(chord.hasLinkedArtist, isFalse);
     });
 
-    test('toRequestPayload trims fields and omits blank references', () {
+    test('toRequestPayload trims fields, handles artist_name and omits blank references', () {
       const chord = SmartChord(
         id: 'sc-1',
         userId: 'u-1',
         title: '  Oceanos  ',
         originalKey: '  D  ',
         content: '[D]Tua graça...',
+        artistName: '  Hillsong  ',
         artistId: '   ',
         songId: ' s-1 ',
         createdAt: '2026-10-13T00:00:00Z',
@@ -75,6 +76,7 @@ void main() {
       expect(payload['title'], 'Oceanos');
       expect(payload['original_key'], 'D');
       expect(payload['content'], '[D]Tua graça...');
+      expect(payload['artist_name'], 'Hillsong');
       expect(payload['artist_id'], isNull);
       expect(payload['song_id'], 's-1');
     });

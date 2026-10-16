@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/providers.dart';
 import '../../../auth/presentation/controllers/auth_controller.dart';
+import '../../../repertoire/presentation/views/song_detail_view.dart';
 import '../../domain/smart_chord.dart';
 import '../../domain/smart_chord_parser.dart';
 import '../controllers/smart_chord_form_controller.dart';
+import '../controllers/smart_chord_repertoire_link_controller.dart';
+import '../widgets/song_link_picker_modal.dart';
 import 'smart_chord_form_screen.dart';
 
 class SmartChordReaderScreen extends ConsumerStatefulWidget {
@@ -40,6 +43,13 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(smartChordDetailNotifierProvider.notifier).load(widget.chordId);
+      final activeMinistryId = ref.read(ministryContextNotifierProvider).selectedMinistry?.id;
+      if (activeMinistryId != null && activeMinistryId.isNotEmpty) {
+        ref.read(smartChordRepertoireLinkNotifierProvider.notifier).load(
+              ministryId: activeMinistryId,
+              chordId: widget.chordId,
+            );
+      }
     });
   }
 
@@ -144,7 +154,20 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
 
     final theme = Theme.of(context);
     final detailState = ref.watch(smartChordDetailNotifierProvider);
+    final linkState = ref.watch(smartChordRepertoireLinkNotifierProvider);
+    final activeMinistry = ref.watch(ministryContextNotifierProvider).selectedMinistry;
     final chord = detailState.chord ?? widget.initialChord;
+
+    ref.listen(ministryContextNotifierProvider, (previous, next) {
+      final nextMinId = next.selectedMinistry?.id;
+      if (nextMinId != null && nextMinId.isNotEmpty && nextMinId != previous?.selectedMinistry?.id) {
+        ref.read(smartChordRepertoireLinkNotifierProvider.notifier).load(
+              ministryId: nextMinId,
+              chordId: widget.chordId,
+              force: true,
+            );
+      }
+    });
 
     return Scaffold(
       appBar: AppBar(
@@ -259,6 +282,14 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
 
           return Column(
             children: [
+              _buildRepertoireLinkBanner(
+                context,
+                theme,
+                linkState,
+                activeMinistry?.id,
+                chord,
+              ),
+
               // Sticky Transposition & View Controls Toolbar
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -408,5 +439,212 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
         ],
       ),
     );
+  }
+
+  Widget _buildRepertoireLinkBanner(
+    BuildContext context,
+    ThemeData theme,
+    SmartChordRepertoireLinkState linkState,
+    String? ministryId,
+    SmartChord chord,
+  ) {
+    if (ministryId == null || ministryId.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    if (linkState.isLoading) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+        child: const Row(
+          children: [
+            SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 8),
+            Text('Verificando vínculo com o repertório...'),
+          ],
+        ),
+      );
+    }
+
+    if (linkState.isLinked) {
+      final songTitle = linkState.link?.songTitle ?? 'Música vinculada';
+      final artistName = linkState.link?.artistName;
+      final songId = linkState.link?.songId;
+
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
+          border: Border(
+            bottom: BorderSide(
+              color: theme.dividerColor.withValues(alpha: 0.2),
+            ),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.link, size: 20, color: theme.colorScheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: InkWell(
+                onTap: songId != null
+                    ? () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => SongDetailView(
+                              ministryId: ministryId,
+                              songId: songId,
+                            ),
+                          ),
+                        );
+                      }
+                    : null,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Vinculada: $songTitle',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: theme.colorScheme.primary,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (artistName != null && artistName.isNotEmpty)
+                      Text(
+                        artistName,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            PopupMenuButton<String>(
+              tooltip: 'Opções de vínculo',
+              icon: const Icon(Icons.more_vert, size: 20),
+              onSelected: (val) async {
+                if (val == 'change') {
+                  await SongLinkPickerModal.show(
+                    context,
+                    ministryId: ministryId,
+                    chordId: chord.id,
+                    chordTitle: chord.title,
+                    currentLinkedSongId: songId,
+                  );
+                } else if (val == 'unlink') {
+                  _confirmUnlink(ministryId, chord);
+                }
+              },
+              itemBuilder: (_) => [
+                const PopupMenuItem(
+                  value: 'change',
+                  child: Row(
+                    children: [
+                      Icon(Icons.swap_horiz, size: 18),
+                      SizedBox(width: 8),
+                      Text('Alterar música'),
+                    ],
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'unlink',
+                  child: Row(
+                    children: [
+                      Icon(Icons.link_off, size: 18),
+                      SizedBox(width: 8),
+                      Text('Desvincular'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.25),
+        border: Border(
+          bottom: BorderSide(
+            color: theme.dividerColor.withValues(alpha: 0.2),
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.link_off, size: 18, color: theme.colorScheme.outline),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Não vinculada ao repertório ativo',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          TextButton.icon(
+            style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+            icon: const Icon(Icons.add_link, size: 16),
+            label: const Text('Vincular'),
+            onPressed: () {
+              SongLinkPickerModal.show(
+                context,
+                ministryId: ministryId,
+                chordId: chord.id,
+                chordTitle: chord.title,
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _confirmUnlink(String ministryId, SmartChord chord) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Desvincular do Repertório'),
+          content: const Text(
+            'Deseja desvincular esta cifra do repertório deste ministério? A cifra continuará salva na sua conta pessoal.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Desvincular'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed == true && mounted) {
+      final success = await ref
+          .read(smartChordRepertoireLinkNotifierProvider.notifier)
+          .unlink(ministryId: ministryId, chordId: chord.id);
+      if (success && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Vínculo removido com sucesso.')),
+        );
+      }
+    }
   }
 }

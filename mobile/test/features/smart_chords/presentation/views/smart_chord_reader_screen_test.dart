@@ -9,13 +9,54 @@ import 'package:louvaio_mobile/features/auth/presentation/controllers/auth_contr
 import 'package:louvaio_mobile/features/ministry_context/domain/ministry.dart';
 import 'package:louvaio_mobile/features/ministry_context/presentation/controllers/ministry_context_controller.dart';
 import 'package:louvaio_mobile/features/smart_chords/data/smart_chord_repository.dart';
+import 'package:louvaio_mobile/features/smart_chords/data/smart_chord_repertoire_link_repository.dart';
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord.dart';
+import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_repertoire_link.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/views/smart_chord_reader_screen.dart';
 
 import 'package:firebase_auth/firebase_auth.dart' hide AuthProvider;
 import 'package:louvaio_mobile/core/storage/preferences_storage.dart';
 import 'package:louvaio_mobile/features/auth/data/auth_repository.dart';
 import 'package:louvaio_mobile/features/ministry_context/data/ministry_repository.dart';
+
+class _FakeSmartChordLinkRepo implements SmartChordRepertoireLinkRepository {
+  SmartChordRepertoireLink linkToReturn = const SmartChordRepertoireLink.unlinked();
+  int unlinkCallCount = 0;
+
+  @override
+  Future<SmartChordRepertoireLink> getRepertoireLink({
+    required String ministryId,
+    required String chordId,
+  }) async {
+    return linkToReturn;
+  }
+
+  @override
+  Future<SmartChordRepertoireLink> setRepertoireLink({
+    required String ministryId,
+    required String chordId,
+    required String songId,
+  }) async {
+    return linkToReturn;
+  }
+
+  @override
+  Future<SmartChordRepertoireLink> removeRepertoireLink({
+    required String ministryId,
+    required String chordId,
+  }) async {
+    unlinkCallCount++;
+    return const SmartChordRepertoireLink.unlinked();
+  }
+
+  @override
+  Future<List<SmartChord>> getMySmartChordsForSong({
+    required String ministryId,
+    required String songId,
+  }) async {
+    return [];
+  }
+}
 
 class _FakeAuthRepo implements AuthRepository {
   @override
@@ -134,6 +175,7 @@ class FakeSmartChordRepo implements SmartChordRepository {
 
 void main() {
   late FakeSmartChordRepo repo;
+  late _FakeSmartChordLinkRepo linkRepo;
   late FakeAuthNotifier authNotifier;
   late FakeMinistryContextNotifier ministryNotifier;
 
@@ -150,6 +192,7 @@ void main() {
 
   setUp(() {
     repo = FakeSmartChordRepo();
+    linkRepo = _FakeSmartChordLinkRepo();
     repo.chord = sampleChord;
     authNotifier = FakeAuthNotifier();
     ministryNotifier = FakeMinistryContextNotifier();
@@ -162,6 +205,7 @@ void main() {
     return ProviderScope(
       overrides: [
         smartChordRepositoryProvider.overrideWithValue(repo),
+        smartChordRepertoireLinkRepositoryProvider.overrideWithValue(linkRepo),
         authNotifierProvider.overrideWith((ref) => authNotifier),
         ministryContextNotifierProvider.overrideWith((ref) => ministryNotifier),
       ],
@@ -331,5 +375,44 @@ void main() {
     expect(find.text('Cifra excluída com sucesso.'), findsNothing);
     expect(find.text('Erro ao excluir cifra.'), findsNothing);
     expect(find.text('Abrir Reader'), findsOneWidget);
+  });
+
+  testWidgets('displays active ministry link banner when chord is linked to song', (tester) async {
+    linkRepo.linkToReturn = const SmartChordRepertoireLink(
+      link: SmartChordSongLink(
+        id: 'u-1_sc-1_min-alpha',
+        smartChordId: 'sc-1',
+        ministryId: 'min-alpha',
+        songId: 'song-oceanos',
+        userId: 'u-1',
+      ),
+      song: SmartChordSongSummary(
+        id: 'song-oceanos',
+        title: 'Oceanos - Ao Vivo',
+        artistName: 'Hillsong United',
+      ),
+    );
+
+    await tester.pumpWidget(buildApp(chordId: 'sc-1', initialChord: sampleChord));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Abrir Reader'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Vinculada: Oceanos - Ao Vivo'), findsOneWidget);
+    expect(find.text('Hillsong United'), findsOneWidget);
+  });
+
+  testWidgets('displays unlinked banner with Vincular button when not linked', (tester) async {
+    linkRepo.linkToReturn = const SmartChordRepertoireLink.unlinked();
+
+    await tester.pumpWidget(buildApp(chordId: 'sc-1', initialChord: sampleChord));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Abrir Reader'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Não vinculada ao repertório ativo'), findsOneWidget);
+    expect(find.text('Vincular'), findsOneWidget);
   });
 }

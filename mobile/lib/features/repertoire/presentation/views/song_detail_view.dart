@@ -6,6 +6,7 @@ import '../../../auth/presentation/controllers/auth_controller.dart';
 import '../../../ministry_context/presentation/controllers/ministry_context_controller.dart';
 import '../../../smart_chords/presentation/views/smart_chord_reader_screen.dart';
 import '../../../smart_chords/presentation/views/smart_chord_form_screen.dart';
+import '../../../smart_chords/presentation/widgets/smart_chord_picker_modal.dart';
 import '../../domain/song_detail.dart';
 import 'song_form_screen.dart';
 
@@ -43,7 +44,7 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
           .load(widget.ministryId, widget.songId);
       ref
           .read(songSmartChordsNotifierProvider.notifier)
-          .load(widget.songId);
+          .load(widget.songId, ministryId: widget.ministryId);
     });
   }
 
@@ -244,6 +245,7 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
     } else if (detailState.song != null) {
       body = _SongDetailContent(
         song: detailState.song!,
+        ministryId: widget.ministryId,
         onOpenLink: _safeLaunchUrl,
       );
     } else {
@@ -287,10 +289,12 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
 
 class _SongDetailContent extends ConsumerWidget {
   final SongDetail song;
+  final String ministryId;
   final ValueChanged<String> onOpenLink;
 
   const _SongDetailContent({
     required this.song,
+    required this.ministryId,
     required this.onOpenLink,
   });
 
@@ -488,12 +492,29 @@ class _SongDetailContent extends ConsumerWidget {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        'Cifras Inteligentes',
+                        'Minhas Cifras Inteligentes',
                         style: theme.textTheme.titleMedium?.copyWith(
                           fontWeight: FontWeight.bold,
                         ),
                       ),
                       const Spacer(),
+                      IconButton(
+                        tooltip: 'Vincular cifra existente',
+                        icon: const Icon(Icons.link, size: 20),
+                        onPressed: () async {
+                          final linked = await SmartChordPickerModal.show(
+                            context,
+                            ministryId: ministryId,
+                            songId: song.id,
+                            songTitle: song.title,
+                          );
+                          if (linked == true && context.mounted) {
+                            ref
+                                .read(songSmartChordsNotifierProvider.notifier)
+                                .load(song.id, ministryId: ministryId, force: true);
+                          }
+                        },
+                      ),
                       IconButton(
                         tooltip: 'Nova Cifra para esta música',
                         icon: const Icon(Icons.add_circle_outline, size: 20),
@@ -511,7 +532,7 @@ class _SongDetailContent extends ConsumerWidget {
                           if (created != null && context.mounted) {
                             ref
                                 .read(songSmartChordsNotifierProvider.notifier)
-                                .load(song.id, force: true);
+                                .load(song.id, ministryId: ministryId, force: true);
                           }
                         },
                       ),
@@ -563,13 +584,17 @@ class _SongDetailContent extends ConsumerWidget {
                                 ),
                               ),
                               title: Text(chords[i].title),
-                              subtitle: const Text(
-                                'Toque para abrir no leitor com transposição',
+                              subtitle: Text(
+                                chords[i].artistName?.isNotEmpty == true
+                                    ? chords[i].artistName!
+                                    : 'Toque para abrir no leitor com transposição',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
                               trailing:
                                   const Icon(Icons.chevron_right, size: 20),
-                              onTap: () {
-                                Navigator.of(context).push(
+                              onTap: () async {
+                                await Navigator.of(context).push(
                                   MaterialPageRoute(
                                     builder: (_) => SmartChordReaderScreen(
                                       chordId: chords[i].id,
@@ -577,6 +602,11 @@ class _SongDetailContent extends ConsumerWidget {
                                     ),
                                   ),
                                 );
+                                if (context.mounted) {
+                                  ref
+                                      .read(songSmartChordsNotifierProvider.notifier)
+                                      .load(song.id, ministryId: ministryId, force: true);
+                                }
                               },
                             ),
                           ],
@@ -592,33 +622,62 @@ class _SongDetailContent extends ConsumerWidget {
                           color: theme.dividerColor.withValues(alpha: 0.2),
                         ),
                       ),
-                      child: ListTile(
-                        leading: Icon(
-                          Icons.add_circle_outline,
-                          color: theme.colorScheme.primary,
-                        ),
-                        title: const Text('Cadastrar cifra inteligente'),
-                        subtitle: const Text(
-                          'Crie uma cifra com transposição dinâmica para esta música',
-                        ),
-                        trailing: const Icon(Icons.chevron_right, size: 20),
-                        onTap: () async {
-                          final created = await Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => SmartChordFormScreen(
-                                prefillSongId: song.id,
-                                prefillSongTitle: song.title,
-                                prefillArtistName: song.artistName,
-                                prefillKey: song.originalKey,
-                              ),
+                      child: Column(
+                        children: [
+                          ListTile(
+                            leading: Icon(
+                              Icons.link,
+                              color: theme.colorScheme.primary,
                             ),
-                          );
-                          if (created != null && context.mounted) {
-                            ref
-                                .read(songSmartChordsNotifierProvider.notifier)
-                                .load(song.id, force: true);
-                          }
-                        },
+                            title: const Text('Vincular cifra existente'),
+                            subtitle: const Text(
+                              'Conecte uma cifra pessoal ao repertório deste ministério',
+                            ),
+                            trailing: const Icon(Icons.chevron_right, size: 20),
+                            onTap: () async {
+                              final linked = await SmartChordPickerModal.show(
+                                context,
+                                ministryId: ministryId,
+                                songId: song.id,
+                                songTitle: song.title,
+                              );
+                              if (linked == true && context.mounted) {
+                                ref
+                                    .read(songSmartChordsNotifierProvider.notifier)
+                                    .load(song.id, ministryId: ministryId, force: true);
+                              }
+                            },
+                          ),
+                          const Divider(height: 1),
+                          ListTile(
+                            leading: Icon(
+                              Icons.add_circle_outline,
+                              color: theme.colorScheme.primary,
+                            ),
+                            title: const Text('Cadastrar nova cifra inteligente'),
+                            subtitle: const Text(
+                              'Crie uma cifra com transposição dinâmica para esta música',
+                            ),
+                            trailing: const Icon(Icons.chevron_right, size: 20),
+                            onTap: () async {
+                              final created = await Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => SmartChordFormScreen(
+                                    prefillSongId: song.id,
+                                    prefillSongTitle: song.title,
+                                    prefillArtistName: song.artistName,
+                                    prefillKey: song.originalKey,
+                                  ),
+                                ),
+                              );
+                              if (created != null && context.mounted) {
+                                ref
+                                    .read(songSmartChordsNotifierProvider.notifier)
+                                    .load(song.id, ministryId: ministryId, force: true);
+                              }
+                            },
+                          ),
+                        ],
                       ),
                     ),
                   const SizedBox(height: 24),

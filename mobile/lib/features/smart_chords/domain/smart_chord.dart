@@ -79,6 +79,7 @@ class SmartChord {
       'title': title.trim(),
       'original_key': originalKey.trim(),
       'content': content,
+      'artist_name': (artistName != null && artistName!.trim().isNotEmpty) ? artistName!.trim() : null,
       'artist_id': (artistId != null && artistId!.trim().isNotEmpty) ? artistId!.trim() : null,
       'song_id': (songId != null && songId!.trim().isNotEmpty) ? songId!.trim() : null,
     };
