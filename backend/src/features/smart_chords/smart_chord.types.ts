@@ -6,18 +6,24 @@ export const singleDocumentIdSchema = z
 
 export const createSmartChordSchema = z.object({
   title: z.string().trim().min(1, 'Título é obrigatório.').max(255),
-  artist_id: singleDocumentIdSchema.nullable().optional(),
-  song_id: singleDocumentIdSchema.nullable().optional(),
+  artist_name: z.string().trim().max(255).nullable().optional(),
+  artist_id: singleDocumentIdSchema.nullable().optional(), // @deprecated: compatibilidade com clientes legados
+  song_id: singleDocumentIdSchema.nullable().optional(), // @deprecated: compatibilidade com clientes legados
   original_key: z.string().trim().min(1, 'Tom original é obrigatório.').max(10),
   content: z.string().min(1, 'O conteúdo da cifra é obrigatório.'),
 });
 
 export const updateSmartChordSchema = z.object({
   title: z.string().trim().min(1, 'Título não pode ser vazio.').max(255).optional(),
-  artist_id: singleDocumentIdSchema.nullable().optional(),
-  song_id: singleDocumentIdSchema.nullable().optional(),
+  artist_name: z.string().trim().max(255).nullable().optional(),
+  artist_id: singleDocumentIdSchema.nullable().optional(), // @deprecated: compatibilidade com clientes legados
+  song_id: singleDocumentIdSchema.nullable().optional(), // @deprecated: compatibilidade com clientes legados
   original_key: z.string().trim().min(1, 'Tom original não pode ser vazio.').max(10).optional(),
   content: z.string().min(1, 'Conteúdo não pode ser vazio.').optional(),
+});
+
+export const setSmartChordRepertoireLinkSchema = z.object({
+  song_id: singleDocumentIdSchema,
 });
 
 export const smartChordsQuerySchema = z.object({
@@ -30,6 +36,7 @@ export interface SmartChord {
   id: string;
   user_id: string;
   title: string;
+  artist_name?: string | null;
   artist_id: string | null;
   song_id: string | null;
   original_key: string;
@@ -44,6 +51,30 @@ export interface SmartChord {
     id: string;
     title: string;
   } | null;
+}
+
+export interface SmartChordSongLink {
+  id: string; // ${user_id}_${smart_chord_id}_${ministry_id}
+  user_id: string;
+  smart_chord_id: string;
+  ministry_id: string;
+  song_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SmartChordSongSummary {
+  id: string;
+  ministry_id: string;
+  title: string;
+  artist_id?: string | null;
+  artist_name?: string | null;
+  original_key?: string | null;
+}
+
+export interface SmartChordRepertoireLinkResponse {
+  link: SmartChordSongLink | null;
+  song: SmartChordSongSummary | null;
 }
 
 export interface ISegment {

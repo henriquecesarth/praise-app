@@ -71,6 +71,7 @@ export class AccountDeletionRepository {
   private readonly jobsCol = db.collection('account_deletion_jobs');
   private readonly usersCol = db.collection('users');
   private readonly smartChordsCol = db.collection('smart_chords');
+  private readonly smartChordLinksCol = db.collection('smart_chord_song_links');
   private readonly unavailabilitiesCol = db.collection('member_unavailabilities');
   private readonly commentsCol = db.collection('schedule_comments');
   private readonly invitesCol = db.collection('ministry_invites');
@@ -312,6 +313,9 @@ export class AccountDeletionRepository {
 
     // 2. smart_chords
     await deleteQueryDocsChunked(this.smartChordsCol.where('user_id', '==', userId));
+
+    // 2.1. smart_chord_song_links
+    await deleteQueryDocsChunked(this.smartChordLinksCol.where('user_id', '==', userId));
 
     // 3. self-service unavailabilities
     await deleteQueryDocsChunked(this.unavailabilitiesCol.where('user_id', '==', userId));

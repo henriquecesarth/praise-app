@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import * as controller from './repertoire.controller';
+import * as smartChordController from '../smart_chords/smart_chord.controller';
 import { validate } from '../../middleware/validate';
 import { authenticate } from '../../middleware/auth';
 import { requireMinistryRole } from '../../middleware/rbac';
@@ -28,6 +29,7 @@ router.get('/counts', requireMinistryRole('member'), controller.getCounts);
 // ─── Songs ───────────────────────────────────────────────────
 router.get('/songs', requireMinistryRole('member'), validate(songsQuerySchema, 'query'), controller.listSongs);
 router.get('/songs/:songId', requireMinistryRole('member'), controller.getSong);
+router.get('/songs/:songId/my-smart-chords', requireMinistryRole('member'), smartChordController.getMySmartChordsForSong);
 router.post('/songs', requireMinistryRole('admin'), enforceOperationalAccess, validate(createSongSchema), controller.createSong);
 router.put('/songs/:songId', requireMinistryRole('admin'), enforceOperationalAccess, validate(updateSongSchema), controller.updateSong);
 router.delete('/songs/:songId', requireMinistryRole('admin'), enforceOperationalAccess.remediation, controller.deleteSong);

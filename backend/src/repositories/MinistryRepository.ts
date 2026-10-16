@@ -932,6 +932,11 @@ export class MinistryRepository {
     const inviteDeletes = invitesSnap.docs.map((d) => d.ref.delete());
     await Promise.all(inviteDeletes);
 
+    // Remove all smart_chord_song_links for this ministry
+    const { SmartChordLinkRepository } = await import('./SmartChordLinkRepository');
+    const linkRepo = new SmartChordLinkRepository();
+    await linkRepo.deleteLinksByMinistryId(ministryId);
+
     await this.ministriesCol.doc(ministryId).delete();
   }
 

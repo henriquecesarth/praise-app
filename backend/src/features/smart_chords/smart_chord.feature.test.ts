@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SmartChordRepository } from '../../repositories/SmartChordRepository';
+import { SmartChordLinkRepository } from '../../repositories/SmartChordLinkRepository';
 import { MinistryRepository } from '../../repositories/MinistryRepository';
 import { RepertoireRepository } from '../../repositories/RepertoireRepository';
 import { SmartChordService } from './smart_chord.service';
@@ -14,6 +15,7 @@ import { AppError } from '../../middleware/error-handler';
 
 describe('Smart Chords Feature Test Suite', () => {
   let smartChordRepo: SmartChordRepository;
+  let smartChordLinkRepo: SmartChordLinkRepository;
   let ministryRepo: MinistryRepository;
   let repertoireRepo: RepertoireRepository;
   let service: SmartChordService;
@@ -22,9 +24,12 @@ describe('Smart Chords Feature Test Suite', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     smartChordRepo = new SmartChordRepository();
+    smartChordLinkRepo = new SmartChordLinkRepository();
     ministryRepo = new MinistryRepository();
     repertoireRepo = new RepertoireRepository();
-    service = new SmartChordService(smartChordRepo, ministryRepo, repertoireRepo);
+    vi.spyOn(smartChordLinkRepo, 'setLink').mockResolvedValue({} as any);
+    vi.spyOn(smartChordLinkRepo, 'deleteLink').mockResolvedValue(true);
+    service = new SmartChordService(smartChordRepo, ministryRepo, repertoireRepo, smartChordLinkRepo);
     controller = new SmartChordController();
   });
 

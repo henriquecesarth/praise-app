@@ -554,7 +554,7 @@ export class SubscriptionRepository {
   }): Promise<{ deleted: boolean; usage: MinistryUsageRecord }> {
     const { ministryId, songId } = params;
 
-    return await db.runTransaction(async (transaction) => {
+    const result = await db.runTransaction(async (transaction) => {
       const songRef = this.songsCol.doc(songId);
       const songDoc = await transaction.get(songRef);
 
@@ -597,5 +597,15 @@ export class SubscriptionRepository {
         usage: updatedUsage,
       };
     });
+
+    try {
+      const { SmartChordLinkRepository } = await import('./SmartChordLinkRepository');
+      const linkRepo = new SmartChordLinkRepository();
+      await linkRepo.deleteLinksBySongId(ministryId, songId);
+    } catch (err) {
+      console.error('Erro ao limpar links de cifras da música excluída:', err);
+    }
+
+    return result;
   }
 }

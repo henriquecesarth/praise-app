@@ -9,6 +9,7 @@ export class SmartChordRepository {
       id,
       user_id: raw.user_id,
       title: raw.title || '',
+      artist_name: raw.artist_name ?? null,
       artist_id: raw.artist_id ?? null,
       song_id: raw.song_id ?? null,
       original_key: raw.original_key || 'C',
@@ -61,6 +62,7 @@ export class SmartChordRepository {
       id: ref.id,
       user_id: userId,
       title: data.title,
+      artist_name: data.artist_name || null,
       artist_id: data.artist_id || null,
       song_id: data.song_id || null,
       original_key: data.original_key,
@@ -82,6 +84,7 @@ export class SmartChordRepository {
     if (data.title !== undefined) updateData.title = data.title;
     if (data.original_key !== undefined) updateData.original_key = data.original_key;
     if (data.content !== undefined) updateData.content = data.content;
+    if (data.artist_name !== undefined) updateData.artist_name = data.artist_name || null;
     if (data.artist_id !== undefined) updateData.artist_id = data.artist_id || null;
     if (data.song_id !== undefined) updateData.song_id = data.song_id || null;
 
@@ -93,6 +96,9 @@ export class SmartChordRepository {
 
   async deleteSmartChord(id: string, userId: string) {
     await this.getSmartChordById(id, userId); // Valida existência e ownership
+    const { SmartChordLinkRepository } = await import('./SmartChordLinkRepository');
+    const linkRepo = new SmartChordLinkRepository();
+    await linkRepo.deleteLinksBySmartChordId(id);
     await this.smartChordsCol.doc(id).delete();
   }
 }
