@@ -27,7 +27,34 @@ class _FakeRepertoireRepo implements RepertoireRepository {
     int? page,
     int? limit,
   }) async {
-    return PaginatedSongs(songs: songs, total: songs.length);
+    var filtered = songs;
+    if (search != null && search.trim().isNotEmpty) {
+      final q = search.trim().toLowerCase();
+      filtered = filtered.where((s) => s.title.toLowerCase().contains(q)).toList();
+    }
+    final effectiveLimit = limit ?? 50;
+    final effectivePage = page ?? 1;
+    final startIndex = (effectivePage - 1) * effectiveLimit;
+    if (startIndex >= filtered.length) {
+      return PaginatedSongs(
+        songs: const [],
+        total: filtered.length,
+        hasMore: false,
+        page: effectivePage,
+        limit: effectiveLimit,
+      );
+    }
+    final endIndex = (startIndex + effectiveLimit).clamp(0, filtered.length);
+    final slice = filtered.sublist(startIndex, endIndex);
+    final hasMore = endIndex < filtered.length;
+    return PaginatedSongs(
+      songs: slice,
+      total: filtered.length,
+      hasMore: hasMore,
+      page: effectivePage,
+      limit: effectiveLimit,
+      nextCursor: hasMore ? 'cursor_$endIndex' : null,
+    );
   }
 
   @override
@@ -158,5 +185,45 @@ void main() {
 
     expect(fakeLinkRepo.lastLinkedChordId, equals('sc-grandes'));
     expect(fakeLinkRepo.lastLinkedSongId, equals('s-1'));
+  });
+
+  testWidgets('SONG_PICKER_CATALOG_COMPLETENESS: renders first page of 50, loads page 2 for 65 songs and links page 2 song', (tester) async {
+    fakeRepo.songs = List.generate(
+      65,
+      (i) => SongSummary(
+        id: 's-$i',
+        ministryId: 'min-1',
+        title: 'Música de Teste ${i.toString().padLeft(2, '0')}',
+        artistName: 'Artista Teste',
+      ),
+    );
+
+    await tester.pumpWidget(buildSubject(chordTitle: 'Minha Cifra'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Abrir Picker'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Vincular ao Repertório'), findsOneWidget);
+    // Page 1 songs are rendered (first song exists)
+    expect(find.text('Música de Teste 00'), findsOneWidget);
+    // Song 55 from page 2 should not be loaded yet
+    expect(find.text('Música de Teste 55'), findsNothing);
+
+    // Scrolling requests page 2 and appends remainder
+    await tester.scrollUntilVisible(
+      find.text('Música de Teste 55'),
+      300,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Música de Teste 55'), findsOneWidget);
+
+    // Tap to select song 55 from page 2
+    await tester.tap(find.text('Música de Teste 55'));
+    await tester.pumpAndSettle();
+
+    expect(fakeLinkRepo.lastLinkedChordId, equals('sc-grandes'));
+    expect(fakeLinkRepo.lastLinkedSongId, equals('s-55'));
   });
 }

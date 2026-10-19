@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/core/errors/app_failure.dart';
 import 'package:louvaio_mobile/features/smart_chords/data/smart_chord_repertoire_link_repository.dart';
@@ -11,6 +11,8 @@ class FakeSmartChordRepertoireLinkRepository
   SmartChordRepertoireLink? linkToReturn;
   Exception? errorToThrow;
   Completer<void>? loadCompleter;
+  Completer<void>? setLinkCompleter;
+  Completer<void>? removeLinkCompleter;
   int getLinkCallCount = 0;
   int setLinkCallCount = 0;
   int removeLinkCallCount = 0;
@@ -34,6 +36,7 @@ class FakeSmartChordRepertoireLinkRepository
     required String songId,
   }) async {
     setLinkCallCount++;
+    if (setLinkCompleter != null) await setLinkCompleter!.future;
     if (errorToThrow != null) throw errorToThrow!;
     return SmartChordRepertoireLink(
       link: SmartChordSongLink(
@@ -56,6 +59,7 @@ class FakeSmartChordRepertoireLinkRepository
     required String chordId,
   }) async {
     removeLinkCallCount++;
+    if (removeLinkCompleter != null) await removeLinkCompleter!.future;
     if (errorToThrow != null) throw errorToThrow!;
     return const SmartChordRepertoireLink.unlinked();
   }
@@ -227,6 +231,58 @@ void main() {
       expect(notifier.state.chordId, isNull);
       expect(notifier.state.ministryId, isNull);
       expect(notifier.state.errorMessage, isNull);
+    });
+
+    test('LINK_MUTATION_RACE_GUARD: parallel setLink is rejected while isSaving', () async {
+      repository.setLinkCompleter = Completer<void>();
+
+      final firstCall = notifier.setLink(
+        ministryId: 'min-1',
+        chordId: 'sc-1',
+        songId: 'song-1',
+      );
+      expect(notifier.state.isSaving, isTrue);
+
+      // Attempt second parallel setLink while first is in-flight
+      final secondCallResult = await notifier.setLink(
+        ministryId: 'min-1',
+        chordId: 'sc-1',
+        songId: 'song-2',
+      );
+      expect(secondCallResult, isFalse);
+      expect(repository.setLinkCallCount, equals(1));
+
+      // Complete first in-flight operation
+      repository.setLinkCompleter!.complete();
+      final firstCallResult = await firstCall;
+      expect(firstCallResult, isTrue);
+      expect(notifier.state.isSaving, isFalse);
+      expect(repository.setLinkCallCount, equals(1));
+    });
+
+    test('LINK_MUTATION_RACE_GUARD: parallel unlink is rejected while isSaving', () async {
+      repository.removeLinkCompleter = Completer<void>();
+
+      final firstCall = notifier.unlink(
+        ministryId: 'min-1',
+        chordId: 'sc-1',
+      );
+      expect(notifier.state.isSaving, isTrue);
+
+      // Attempt second parallel unlink while first is in-flight
+      final secondCallResult = await notifier.unlink(
+        ministryId: 'min-1',
+        chordId: 'sc-1',
+      );
+      expect(secondCallResult, isFalse);
+      expect(repository.removeLinkCallCount, equals(1));
+
+      // Complete first in-flight operation
+      repository.removeLinkCompleter!.complete();
+      final firstCallResult = await firstCall;
+      expect(firstCallResult, isTrue);
+      expect(notifier.state.isSaving, isFalse);
+      expect(repository.removeLinkCallCount, equals(1));
     });
   });
 }

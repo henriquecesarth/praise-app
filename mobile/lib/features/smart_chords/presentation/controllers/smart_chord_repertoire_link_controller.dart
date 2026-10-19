@@ -1,4 +1,4 @@
-﻿import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/errors/app_failure.dart';
 import '../../data/smart_chord_repertoire_link_repository.dart';
@@ -108,6 +108,7 @@ class SmartChordRepertoireLinkNotifier
     required String chordId,
     required String songId,
   }) async {
+    if (state.isSaving) return false;
     state = state.copyWith(isSaving: true, clearError: true);
     try {
       final link = await _repository.setRepertoireLink(
@@ -134,6 +135,7 @@ class SmartChordRepertoireLinkNotifier
     required String ministryId,
     required String chordId,
   }) async {
+    if (state.isSaving) return false;
     state = state.copyWith(isSaving: true, clearError: true);
     try {
       await _repository.removeRepertoireLink(
