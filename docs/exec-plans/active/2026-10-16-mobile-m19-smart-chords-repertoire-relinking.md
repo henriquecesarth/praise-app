@@ -1,7 +1,7 @@
 # ExecPlan: M19 — Smart Chords ↔ Repertoire Relinking
 
-- **Lifecycle**: COMPLETED
-- **Status**: CLOSED
+- **Lifecycle**: ACTIVE
+- **Status**: IMPLEMENTED — REMEDIATED — PENDING R2
 - **Milestone**: M19
 - **Scope**: Smart Chords ↔ Repertoire Relinking
 - **Base SHA**: `da92ef246a9a5257afc5a1ab4a14f43444239fd0`
@@ -311,28 +311,34 @@ Previously:
 
 ---
 
-## 7. Milestone Production Status & Acceptance Summary
+## 7. M19-R1 Remediation Details
+
+Following independent code review M19-R1 (`CHANGES_REQUIRED`), all findings were remediated across Backend, Web, and Mobile:
+
+- **F-M19-01 (HIGH) & F-M19-07 (TEST_GAP)**: Collision-Safe Canonical Link Document IDs:
+  - Document ID strategy updated to deterministic SHA-256 digest of canonical JSON array tuple: `JSON.stringify([userId, smartChordId, ministryId])`.
+  - Added defensive field checks in `SmartChordLinkRepository` (`getLink`, `deleteLink`) validating that retrieved document fields match the exact requested tuple (`raw.user_id === userId`, `raw.smart_chord_id === smartChordId`, `raw.ministry_id === ministryId`), failing closed if mismatched.
+  - Added adversarial tuple collision test cases in `backend/src/features/smart_chords/smart_chord_repertoire_link.test.ts` (8 ambiguous underscore tuples verified distinct and 64-char hex, plus defensive field guard tests).
+- **F-M19-02 (HIGH)**: Mobile Logout / Account Isolation:
+  - Updated `resetAuthenticatedFeatures` in `mobile/lib/app/providers.dart` to explicitly reset `smartChordRepertoireLinkNotifierProvider.notifier` (incrementing generation and clearing state) and invalidate the provider.
+  - Added integration test `mobile/test/features/smart_chords/presentation/controllers/smart_chord_repertoire_link_session_reset_test.dart` verifying state wipe upon logout (`AUTH_RESET_LINK_STATE_TEST`) and discarding of late async responses from previous sessions (`LATE_RESPONSE_AFTER_LOGOUT_TEST`).
+- **F-M19-03 (MEDIUM)**: Firestore Cascade Batch Limit Safety:
+  - Implemented `deleteQueryInBatches(query, chunkSize = 450)` in `SmartChordLinkRepository.ts`.
+  - Applied chunking to `deleteLinksBySongId`, `deleteLinksBySmartChordId`, `deleteLinksByUserId`, and `deleteLinksByMinistryId`.
+  - Added cascade test simulating 505 documents chunked across multiple batches (450 + 55).
+- **F-M19-04 (MEDIUM)**: Repertoire SongLinkPickerModal Catalog Completeness:
+  - Implemented complete catalog pagination in `SongLinkPickerModal` (`mobile/lib/features/smart_chords/presentation/widgets/song_link_picker_modal.dart`) with `_loadMore`, `_hasMore`, `_currentPage`, deduplication by song ID, `NotificationListener<ScrollNotification>` infinite scroll, and a "Carregar mais músicas" button.
+  - Added debounced search with 300ms timer and generation fencing (`_searchGeneration`).
+  - Added widget test in `song_link_picker_modal_test.dart` verifying 65 songs across page 1 and page 2, scrolling to page 2 and linking a page 2 song (`SONG_PICKER_CATALOG_COMPLETENESS`).
+- **F-M19-05 (MEDIUM)**: Web SmartChordsWorkspace Stale Async Relation Context Fencing:
+  - Added `linkRequestContextRef` in `web/src/components/SmartChordsWorkspace.tsx` tracking `{ ministryId, chordId, generation }`.
+  - Wrapped `api.getSmartChordRepertoireLink` in context validation: late responses from previous chords or ministries are discarded.
+  - Added automated tests in `web/src/components/SmartChordsWorkspace.test.tsx` verifying chord-switch (`WEB_CHORD_SWITCH_LATE_RESPONSE_TEST`) and ministry-switch (`WEB_MINISTRY_SWITCH_LATE_RESPONSE_TEST`) late responses are safely ignored.
+- **F-M19-06 (LOW)**: Mobile Controller Duplicate Mutation Guard:
+  - Added `if (state.isSaving) return false;` guard to both `setLink` and `unlink` in `SmartChordRepertoireLinkNotifier`.
+  - Added unit tests in `smart_chord_repertoire_link_controller_test.dart` verifying concurrent `setLink` and `unlink` requests are rejected (`LINK_MUTATION_RACE_GUARD`) and the repository is called exactly once.
 
 ```text
-M19_BASE_SHA = da92ef246a9a5257afc5a1ab4a14f43444239fd0
-M19_BACKEND_SHA = 933b904023924ee5937a8198d8562acc09530dc9
-M19_WEB_SHA = 784ea9d039fc1e042066409aaa39f56e65bda289
-M19_MOBILE_SHA = 5d67962f767daf19976d03e133256ef99da3f3ea
-M19_REVIEW_HEAD = faf5c946976cc8abae7f75c9eabb4f0767d55ec3
-
-M19_R1 = PASS
-M19_BACKEND_DEPLOY = SUCCESS (dpl_Ftap7oXB6jUce1toz1oWEC7GJmqD)
-M19_WEB_DEPLOY = SUCCESS (dpl_B4v8CWENdwjTF84okmfkqR9HH8Rf)
-
-M19_MOBILE_PHYSICAL_ACCEPTANCE = PASS (Lenovo Tab P11 Plus)
-M19_WEB_PRODUCTION_ACCEPTANCE = PASS (Headless Chromium Automation)
-
-BLOCKER_ENV_01 = RESOLVED
-HIGH_ENV_02 = RESOLVED
-
-M19_PRODUCTION_ACCEPTANCE = PASS
-M19 = CLOSED
-M19_LIFECYCLE = CLOSED
-
-NEXT_CANDIDATE = Smart Chords Import Hub
+M19_STATUS = IMPLEMENTED — REMEDIATED — PENDING R2
+NEXT_GATE = M19-R2 INDEPENDENT REVIEW
 ```

@@ -29,6 +29,21 @@ Monorepo com dois pacotes npm independentes (`backend` e `web`). A SPA usa web/s
 
 Ministry é a fronteira principal de tenant. Usuários podem ser admin ou member; também há funções musicais separadas. Recursos incluem membros, convites PR-*, equipes, funções, classificações, artistas, músicas/versões, pastas, escalas, comentários, modelos de roteiro, liturgias, cifras, assinaturas, quotas e transações de faturamento.
 
+### Smart Chords & Repertoire Relinking (M19)
+
+- `SmartChord`: entidade pessoal e portátil vinculada exclusivamente ao usuário (`user_id`).
+- `SmartChord.artist_name`: metadado descritivo de texto pessoal (`string | null`).
+- `SmartChord.artist_id` e `SmartChord.song_id`: campos legados de compatibilidade, mantidos para clientes legados sem bloquear o ciclo de vida pessoal da cifra.
+- Músicas e artistas de repertório: entidades catalogadas pertencentes estritamente a um ministério (`ministry_id`).
+- Relacionamento canônico: governado pela coleção `smart_chord_song_links`.
+  - Cardinalidade: até 1 música por ministério por cifra; múltiplos ministérios simultâneos para a mesma cifra; múltiplas cifras pessoais para a mesma música (Modelo N).
+  - Document ID determinístico: digest SHA-256 da serialização canônica JSON `[userId, smartChordId, ministryId]`.
+  - Validação defensiva: leituras e exclusões validam explicitamente a correspondência dos 3 campos no documento recuperado (`user_id`, `smart_chord_id`, `ministry_id`), falhando de forma fechada.
+  - Exclusão em cascata: exclusões de links por música/cifra/usuário/ministério usam lotes particionados de até 450 operações para respeitar o limite de 500 do Firestore.
+  - Isolamento de sessão mobile: logout e troca de usuário resetam e invalidam o link notifier antes de novo login, descartando respostas assíncronas obsoletas.
+  - Privacidade: vincular uma cifra ao repertório nunca expõe o conteúdo privado da cifra a outros membros ou administradores do ministério.
+  - Estado operacional: `M19 = REMEDIATED; NEXT_GATE = M19-R2 INDEPENDENT REVIEW`.
+
 ### Commercial Structure & Plans
 
 - 6 planos definidos em `backend/src/config/plans.config.ts`:
