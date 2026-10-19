@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api, SmartChord } from '../api';
 import { Artist, Song } from '../types';
 import { transposeChord, rawToVisual, visualToRaw } from '../utils/smart_chord';
@@ -88,6 +88,13 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
   const [printFontSize, setPrintFontSize] = useState(13);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
 
+  // Link request context ref for asynchronous stale response fencing (F-M19-05)
+  const linkRequestContextRef = useRef<{ ministryId: string; chordId: string; generation: number }>({
+    ministryId: '',
+    chordId: '',
+    generation: 0,
+  });
+
   // New Song Link options
   const [newSongTitle, setNewSongTitle] = useState('');
   const [autoCreateSong, setAutoCreateSong] = useState(true);
@@ -128,6 +135,11 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
   };
 
   useEffect(() => {
+    linkRequestContextRef.current = {
+      ministryId: ministryId || '',
+      chordId: '',
+      generation: linkRequestContextRef.current.generation + 1,
+    };
     const controller = new AbortController();
     setArtists([]);
     setRepertoireSongs([]);
@@ -157,20 +169,48 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
     setSemitones(0);
 
     if (ministryId && chord.id) {
+      const currentGen = linkRequestContextRef.current.generation + 1;
+      linkRequestContextRef.current = {
+        ministryId,
+        chordId: chord.id,
+        generation: currentGen,
+      };
+
       try {
         const linkData = await api.getSmartChordRepertoireLink(ministryId, chord.id);
+        const ctx = linkRequestContextRef.current;
+        // Stale context fencing: verify ministryId, chordId, and generation all match current active selection
+        if (ctx.ministryId !== ministryId || ctx.chordId !== chord.id || ctx.generation !== currentGen) {
+          return;
+        }
+
         if (linkData.link?.songId) {
           setSongId(linkData.link.songId);
         } else if (chord.songId) {
           setSongId(chord.songId);
         }
       } catch {
+        const ctx = linkRequestContextRef.current;
+        if (ctx.ministryId !== ministryId || ctx.chordId !== chord.id || ctx.generation !== currentGen) {
+          return;
+        }
         setSongId(chord.songId || '');
       }
+    } else {
+      linkRequestContextRef.current = {
+        ministryId: ministryId || '',
+        chordId: chord?.id || '',
+        generation: linkRequestContextRef.current.generation + 1,
+      };
     }
   };
 
   const handleCreateNew = () => {
+    linkRequestContextRef.current = {
+      ministryId: ministryId || '',
+      chordId: '',
+      generation: linkRequestContextRef.current.generation + 1,
+    };
     setSelectedChord({
       id: '',
       userId: '',

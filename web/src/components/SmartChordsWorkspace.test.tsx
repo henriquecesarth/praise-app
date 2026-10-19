@@ -9,6 +9,9 @@ const {
   createSmartChord,
   updateSmartChord,
   deleteSmartChord,
+  getSmartChordRepertoireLink,
+  setSmartChordRepertoireLink,
+  removeSmartChordRepertoireLink,
 } = vi.hoisted(() => ({
   getArtists: vi.fn(),
   getSongs: vi.fn(),
@@ -16,6 +19,9 @@ const {
   createSmartChord: vi.fn(),
   updateSmartChord: vi.fn(),
   deleteSmartChord: vi.fn(),
+  getSmartChordRepertoireLink: vi.fn(),
+  setSmartChordRepertoireLink: vi.fn(),
+  removeSmartChordRepertoireLink: vi.fn(),
 }));
 
 vi.mock('../api', () => ({
@@ -26,6 +32,9 @@ vi.mock('../api', () => ({
     createSmartChord,
     updateSmartChord,
     deleteSmartChord,
+    getSmartChordRepertoireLink,
+    setSmartChordRepertoireLink,
+    removeSmartChordRepertoireLink,
   },
 }));
 
@@ -38,6 +47,9 @@ describe('SmartChordsWorkspace', () => {
     createSmartChord.mockResolvedValue({ id: 'new-1', title: 'Nova Cifra' });
     updateSmartChord.mockResolvedValue({ id: 'c-1', title: 'Atualizada' });
     deleteSmartChord.mockResolvedValue(undefined);
+    getSmartChordRepertoireLink.mockResolvedValue({ link: null, song: null });
+    setSmartChordRepertoireLink.mockResolvedValue({ link: null, song: null });
+    removeSmartChordRepertoireLink.mockResolvedValue(undefined);
   });
 
   describe('Ministry loading & abortion', () => {
@@ -170,6 +182,113 @@ describe('SmartChordsWorkspace', () => {
       await waitFor(() => {
         expect(deleteSmartChord).toHaveBeenCalledWith('sc-del-1');
       });
+    });
+  });
+
+  describe('Stale Relation Request Fencing (F-M19-05)', () => {
+    it('WEB_CHORD_SWITCH_LATE_RESPONSE_TEST: discards late relation response from previous chord when user switches chords', async () => {
+      getSmartChords.mockResolvedValue([
+        { id: 'sc-1', title: 'Cifra Um', originalKey: 'C', content: '[C]' },
+        { id: 'sc-2', title: 'Cifra Dois', originalKey: 'D', content: '[D]' },
+      ]);
+      getSongs.mockResolvedValue({
+        songs: [
+          { id: 'song-1', title: 'Música 1' },
+          { id: 'song-2', title: 'Música 2' },
+        ],
+        totalCount: 2,
+      });
+
+      let resolveChord1Link!: (val: any) => void;
+      const chord1Promise = new Promise((resolve) => {
+        resolveChord1Link = resolve;
+      });
+
+      getSmartChordRepertoireLink.mockImplementation((_minId: string, chordId: string) => {
+        if (chordId === 'sc-1') {
+          return chord1Promise;
+        }
+        if (chordId === 'sc-2') {
+          return Promise.resolve({
+            link: { id: 'link-2', songId: 'song-2' },
+            song: { id: 'song-2', title: 'Música 2' },
+          });
+        }
+        return Promise.resolve({ link: null, song: null });
+      });
+
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Cifra Um')).toBeInTheDocument();
+        expect(screen.getByText('Cifra Dois')).toBeInTheDocument();
+      });
+
+      // 1. Click Cifra Um (triggers pending request)
+      fireEvent.click(screen.getByText('Cifra Um'));
+
+      // 2. Click Cifra Dois immediately (resolves fast with song-2)
+      fireEvent.click(screen.getByText('Cifra Dois'));
+
+      const comboboxes = await screen.findAllByRole('combobox');
+      const songSelect = comboboxes[1] as HTMLSelectElement;
+      await waitFor(() => {
+        expect(songSelect.value).toBe('song-2');
+      });
+
+      // 3. Late response for Cifra Um arrives
+      resolveChord1Link({
+        link: { id: 'link-1', songId: 'song-1' },
+        song: { id: 'song-1', title: 'Música 1' },
+      });
+
+      // 4. Assert that songSelect remains song-2 and was NOT overwritten by late response from sc-1
+      await new Promise((r) => setTimeout(r, 50));
+      expect(songSelect.value).toBe('song-2');
+    });
+
+    it('WEB_MINISTRY_SWITCH_LATE_RESPONSE_TEST: discards late relation response when active ministry changes', async () => {
+      getSmartChords.mockResolvedValue([
+        { id: 'sc-alpha', title: 'Cifra Alpha', originalKey: 'E', content: '[E]' },
+      ]);
+      getSongs.mockResolvedValue({
+        songs: [{ id: 'song-alpha', title: 'Música Alpha' }],
+        totalCount: 1,
+      });
+
+      let resolveAlphaLink!: (val: any) => void;
+      const alphaPromise = new Promise((resolve) => {
+        resolveAlphaLink = resolve;
+      });
+
+      getSmartChordRepertoireLink.mockImplementation((minId: string) => {
+        if (minId === 'min-alpha') {
+          return alphaPromise;
+        }
+        return Promise.resolve({ link: null, song: null });
+      });
+
+      const { rerender } = render(<SmartChordsWorkspace ministryId="min-alpha" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Cifra Alpha')).toBeInTheDocument();
+      });
+
+      // Select chord in Ministry Alpha
+      fireEvent.click(screen.getByText('Cifra Alpha'));
+
+      // Switch active ministry to Beta
+      rerender(<SmartChordsWorkspace ministryId="min-beta" />);
+
+      // Late response for Alpha arrives
+      resolveAlphaLink({
+        link: { id: 'link-alpha', songId: 'song-alpha' },
+        song: { id: 'song-alpha', title: 'Música Alpha' },
+      });
+
+      await new Promise((r) => setTimeout(r, 50));
+      // In Beta, editor should not display Cifra Alpha or its song-alpha link
+      expect(screen.queryByDisplayValue('Cifra Alpha')).toBeNull();
     });
   });
 });
