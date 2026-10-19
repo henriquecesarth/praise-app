@@ -54,7 +54,7 @@ export interface SmartChord {
 }
 
 export interface SmartChordSongLink {
-  id: string; // ${user_id}_${smart_chord_id}_${ministry_id}
+  id: string; // sha256(JSON.stringify([user_id, smart_chord_id, ministry_id]))
   user_id: string;
   smart_chord_id: string;
   ministry_id: string;

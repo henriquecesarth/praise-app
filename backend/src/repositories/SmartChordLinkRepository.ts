@@ -1,11 +1,13 @@
-﻿import { db } from '../lib/firebase';
+import { createHash } from 'node:crypto';
+import { db } from '../lib/firebase';
 import { SmartChordSongLink } from '../features/smart_chords/smart_chord.types';
 
 export class SmartChordLinkRepository {
   private readonly linksCol = db.collection('smart_chord_song_links');
 
   buildLinkId(userId: string, smartChordId: string, ministryId: string): string {
-    return `${userId}_${smartChordId}_${ministryId}`;
+    const canonicalTuple = JSON.stringify([userId, smartChordId, ministryId]);
+    return createHash('sha256').update(canonicalTuple, 'utf8').digest('hex');
   }
 
   private toDomain(id: string, raw: any): SmartChordSongLink {
@@ -24,7 +26,12 @@ export class SmartChordLinkRepository {
     const id = this.buildLinkId(userId, smartChordId, ministryId);
     const doc = await this.linksCol.doc(id).get();
     if (!doc.exists) return null;
-    return this.toDomain(doc.id, doc.data() || {});
+    const raw = doc.data() || {};
+    // Defensive identity check: fail closed if document fields diverge from requested tuple
+    if (raw.user_id !== userId || raw.smart_chord_id !== smartChordId || raw.ministry_id !== ministryId) {
+      return null;
+    }
+    return this.toDomain(doc.id, raw);
   }
 
   async setLink(userId: string, smartChordId: string, ministryId: string, songId: string): Promise<SmartChordSongLink> {
@@ -53,6 +60,11 @@ export class SmartChordLinkRepository {
     const ref = this.linksCol.doc(id);
     const doc = await ref.get();
     if (!doc.exists) return false;
+    const raw = doc.data() || {};
+    // Defensive identity check: fail closed if document fields diverge from requested tuple
+    if (raw.user_id !== userId || raw.smart_chord_id !== smartChordId || raw.ministry_id !== ministryId) {
+      return false;
+    }
     await ref.delete();
     return true;
   }
@@ -71,38 +83,38 @@ export class SmartChordLinkRepository {
     return snap.docs.map((d) => this.toDomain(d.id, d.data()));
   }
 
+  private async deleteQueryInBatches(query: FirebaseFirestore.Query, chunkSize = 450): Promise<void> {
+    while (true) {
+      const snap = await query.limit(chunkSize).get();
+      if (snap.empty) break;
+      const batch = db.batch();
+      snap.docs.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+      if (snap.size < chunkSize) break;
+    }
+  }
+
   async deleteLinksBySongId(ministryId: string, songId: string): Promise<void> {
-    const snap = await this.linksCol
-      .where('ministry_id', '==', ministryId)
-      .where('song_id', '==', songId)
-      .get();
-    if (snap.empty) return;
-    const batch = db.batch();
-    snap.docs.forEach((d) => batch.delete(d.ref));
-    await batch.commit();
+    await this.deleteQueryInBatches(
+      this.linksCol.where('ministry_id', '==', ministryId).where('song_id', '==', songId)
+    );
   }
 
   async deleteLinksBySmartChordId(smartChordId: string): Promise<void> {
-    const snap = await this.linksCol.where('smart_chord_id', '==', smartChordId).get();
-    if (snap.empty) return;
-    const batch = db.batch();
-    snap.docs.forEach((d) => batch.delete(d.ref));
-    await batch.commit();
+    await this.deleteQueryInBatches(
+      this.linksCol.where('smart_chord_id', '==', smartChordId)
+    );
   }
 
   async deleteLinksByUserId(userId: string): Promise<void> {
-    const snap = await this.linksCol.where('user_id', '==', userId).get();
-    if (snap.empty) return;
-    const batch = db.batch();
-    snap.docs.forEach((d) => batch.delete(d.ref));
-    await batch.commit();
+    await this.deleteQueryInBatches(
+      this.linksCol.where('user_id', '==', userId)
+    );
   }
 
   async deleteLinksByMinistryId(ministryId: string): Promise<void> {
-    const snap = await this.linksCol.where('ministry_id', '==', ministryId).get();
-    if (snap.empty) return;
-    const batch = db.batch();
-    snap.docs.forEach((d) => batch.delete(d.ref));
-    await batch.commit();
+    await this.deleteQueryInBatches(
+      this.linksCol.where('ministry_id', '==', ministryId)
+    );
   }
 }

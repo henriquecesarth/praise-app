@@ -29,7 +29,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
 
     vi.spyOn(smartChordLinkRepo, 'setLink').mockImplementation(
       async (userId, smartChordId, ministryId, songId) => ({
-        id: `${userId}_${smartChordId}_${ministryId}`,
+        id: smartChordLinkRepo.buildLinkId(userId, smartChordId, ministryId),
         user_id: userId,
         smart_chord_id: smartChordId,
         ministry_id: ministryId,
@@ -590,6 +590,131 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
       expect(res.json).toHaveBeenCalledWith({
         data: [{ id: 'chord-1', title: 'Cifra 1' }],
       });
+    });
+  });
+
+  describe('7. Collision Safety & Defensive Tuple Validation (F-M19-01 & F-M19-07)', () => {
+    it('COLLISION_TEST: generates unique SHA-256 document IDs for ambiguous underscore tuples', () => {
+      const realLinkRepo = new SmartChordLinkRepository();
+      const tuples: [string, string, string][] = [
+        ['usr', 'c_1', 'm1'],
+        ['usr_c', '1', 'm1'],
+        ['usr', 'c', '1_m1'],
+        ['u_a', 'b', 'c'],
+        ['u', 'a_b', 'c'],
+        ['user_1', 'chord', 'min1'],
+        ['user', '1_chord', 'min1'],
+        ['user', 'chord', '1_min1'],
+      ];
+
+      const ids = tuples.map(([u, c, m]) => realLinkRepo.buildLinkId(u, c, m));
+      const uniqueIds = new Set(ids);
+
+      expect(uniqueIds.size).toBe(tuples.length);
+      ids.forEach((id) => {
+        expect(id).toMatch(/^[a-f0-9]{64}$/);
+      });
+    });
+
+    it('DEFENSIVE_TUPLE_GUARD_TEST: getLink fails closed if stored document fields diverge from requested tuple', async () => {
+      const realLinkRepo = new SmartChordLinkRepository();
+      const mockDoc = {
+        exists: true,
+        id: 'some-hash',
+        data: () => ({
+          user_id: 'attacker-user',
+          smart_chord_id: 'chord-1',
+          ministry_id: 'min-1',
+          song_id: 'song-1',
+        }),
+      };
+      const docRef = { get: vi.fn().mockResolvedValue(mockDoc) };
+      (realLinkRepo as any).linksCol = { doc: vi.fn().mockReturnValue(docRef) };
+
+      const result = await realLinkRepo.getLink('legitimate-user', 'chord-1', 'min-1');
+      expect(result).toBeNull();
+    });
+
+    it('DEFENSIVE_TUPLE_GUARD_TEST: deleteLink refuses to delete and returns false if stored document belongs to another tuple', async () => {
+      const realLinkRepo = new SmartChordLinkRepository();
+      const deleteFn = vi.fn().mockResolvedValue(undefined);
+      const mockDoc = {
+        exists: true,
+        data: () => ({
+          user_id: 'other-user',
+          smart_chord_id: 'chord-1',
+          ministry_id: 'min-1',
+        }),
+      };
+      const docRef = {
+        get: vi.fn().mockResolvedValue(mockDoc),
+        delete: deleteFn,
+      };
+      (realLinkRepo as any).linksCol = { doc: vi.fn().mockReturnValue(docRef) };
+
+      const deleted = await realLinkRepo.deleteLink('target-user', 'chord-1', 'min-1');
+      expect(deleted).toBe(false);
+      expect(deleteFn).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('8. Firestore Cascade Batch Safety for 505+ documents (F-M19-03)', () => {
+    it('CASCADE_505_PLUS_TEST: deleteLinksByMinistryId chunks 505 documents into batches <= 450 without throwing', async () => {
+      const realLinkRepo = new SmartChordLinkRepository();
+      const commits: any[][] = [];
+
+      // Create 505 fake document references
+      const totalDocs = 505;
+      const fakeDocs = Array.from({ length: totalDocs }, (_, i) => ({
+        id: `link-doc-${i}`,
+        ref: { id: `link-doc-${i}` },
+      }));
+
+      let cursor = 0;
+      const mockQuery = {
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockImplementation((chunkSize: number) => ({
+          get: vi.fn().mockImplementation(async () => {
+            const chunk = fakeDocs.slice(cursor, cursor + chunkSize);
+            cursor += chunk.length;
+            return {
+              empty: chunk.length === 0,
+              size: chunk.length,
+              docs: chunk,
+            };
+          }),
+        })),
+      };
+
+      (realLinkRepo as any).linksCol = mockQuery;
+
+      // Mock Firestore batch
+      const { db } = await import('../../lib/firebase');
+      const originalBatch = db.batch;
+      vi.spyOn(db, 'batch').mockImplementation(() => {
+        const deletedInThisBatch: any[] = [];
+        return {
+          delete: (ref: any) => {
+            deletedInThisBatch.push(ref);
+          },
+          commit: async () => {
+            expect(deletedInThisBatch.length).toBeLessThanOrEqual(450);
+            commits.push([...deletedInThisBatch]);
+          },
+        } as any;
+      });
+
+      await realLinkRepo.deleteLinksByMinistryId('target-min');
+
+      // Verify that 505 items were processed in multiple batches (450 + 55)
+      expect(commits.length).toBe(2);
+      expect(commits[0].length).toBe(450);
+      expect(commits[1].length).toBe(55);
+
+      const totalDeleted = commits.reduce((sum, batch) => sum + batch.length, 0);
+      expect(totalDeleted).toBe(505);
+
+      db.batch = originalBatch;
     });
   });
 });
