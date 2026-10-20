@@ -123,4 +123,111 @@ describe('Smart Chord PDF Extractor Test Suite (Synthetic Fixtures)', () => {
       'Arquivo inválido. O arquivo fornecido não é um PDF válido.'
     );
   });
+
+  it('8. Three-Column PDF Layout (Ordering: Col 1 -> Col 2 -> Col 3)', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([842, 595]); // Landscape A4
+      page.drawText('Título: Canção Três Colunas', { x: 40, y: 550, size: 14, font });
+
+      // Column 1: x in [40, 160]
+      page.drawText('Verso 1:', { x: 40, y: 500, size: 10, font });
+      page.drawText('A        D', { x: 40, y: 480, size: 10, font });
+      page.drawText('Texto col um', { x: 40, y: 465, size: 10, font });
+
+      // Column 2: x in [220, 340]
+      page.drawText('Refrão:', { x: 220, y: 500, size: 10, font });
+      page.drawText('E        F#m', { x: 220, y: 480, size: 10, font });
+      page.drawText('Texto col dois', { x: 220, y: 465, size: 10, font });
+
+      // Column 3: x in [400, 520]
+      page.drawText('Ponte:', { x: 400, y: 500, size: 10, font });
+      page.drawText('Bm       E7', { x: 400, y: 480, size: 10, font });
+      page.drawText('Texto col tres', { x: 400, y: 465, size: 10, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.content).toContain('[Verso 1]');
+    expect(draft.content).toContain('[Refrão]');
+    expect(draft.content).toContain('[Ponte]');
+
+    // Assert strict ordering: Col 1 appears before Col 2, which appears before Col 3
+    const v1Idx = draft.content.indexOf('[Verso 1]');
+    const refIdx = draft.content.indexOf('[Refrão]');
+    const ponIdx = draft.content.indexOf('[Ponte]');
+    expect(v1Idx).toBeLessThan(refIdx);
+    expect(refIdx).toBeLessThan(ponIdx);
+
+    // Assert chords inside respective columns
+    expect(draft.content).toContain('[A]');
+    expect(draft.content).toContain('[D]');
+    expect(draft.content).toContain('[E]');
+    expect(draft.content).toContain('[F#m]');
+    expect(draft.content).toContain('[Bm]');
+  });
+
+  it('9. Asymmetric Two-Column Split (Gutter at X ~ 190)', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Título: Divisão Assimétrica', { x: 40, y: 800, size: 14, font });
+
+      // Narrow Left Column (x ~ 40..150)
+      page.drawText('Verso:', { x: 40, y: 750, size: 10, font });
+      page.drawText('C      G', { x: 40, y: 730, size: 10, font });
+      page.drawText('Linha curta', { x: 40, y: 715, size: 10, font });
+
+      // Wide Right Column (x ~ 230..500)
+      page.drawText('Refrão:', { x: 230, y: 750, size: 10, font });
+      page.drawText('Am     F             G', { x: 230, y: 730, size: 10, font });
+      page.drawText('Linha mais longa no refrão aqui', { x: 230, y: 715, size: 10, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    const versoPos = draft.content.indexOf('[Verso]');
+    const refPos = draft.content.indexOf('[Refrão]');
+    expect(versoPos).toBeLessThan(refPos);
+    expect(draft.content).toContain('[C]');
+    expect(draft.content).toContain('[Am]');
+  });
+
+  it('10. Complex Chords (A7M/9 and Cm7(5-)) & Exact Character Anchor Positioning', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Título: Canção com Acordes Complexos', { x: 50, y: 800, size: 14, font });
+      page.drawText('A7M/9          Cm7(5-)', { x: 50, y: 750, size: 11, font });
+      page.drawText('Senhor Jesus meu Salvador', { x: 50, y: 735, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.content).toContain('[A7M/9]');
+    expect(draft.content).toContain('[Cm7(5-)]');
+
+    // Anchors: A7M/9 should be at start, Cm7(5-) around Salvador
+    const a7mPos = draft.content.indexOf('[A7M/9]');
+    const cm7Pos = draft.content.indexOf('[Cm7(5-)]');
+    expect(a7mPos).toBeLessThan(cm7Pos);
+    expect(draft.content).toContain('[A7M/9]Senhor');
+    expect(draft.content).toContain('Salvador');
+  });
+
+  it('11. Mixed Performance Annotations, Dynamic Instructions & Repeat Blocks', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Título: Arranjo Completo', { x: 50, y: 800, size: 14, font });
+      page.drawText('||: D | A/C# | Bm7 | G :|| (2x)', { x: 50, y: 760, size: 10, font });
+      page.drawText('(violão solo)', { x: 50, y: 740, size: 10, font });
+      page.drawText('(cresce marcando)', { x: 50, y: 720, size: 10, font });
+      page.drawText('D          A/C#', { x: 50, y: 700, size: 10, font });
+      page.drawText('Entra toda a banda', { x: 50, y: 685, size: 10, font });
+      page.drawText('(corte)', { x: 50, y: 665, size: 10, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    // Assert all performance annotations survive verbatim
+    expect(draft.content).toContain('(violão solo)');
+    expect(draft.content).toContain('(cresce marcando)');
+    expect(draft.content).toContain('(corte)');
+    expect(draft.content).toContain('||: [D] | [A/C#] | [Bm7] | [G] :|| (2x)');
+    expect(draft.content).toContain('[D]');
+    expect(draft.content).toContain('[A/C#]');
+  });
 });

@@ -1,3 +1,4 @@
+import { extractTextItems } from 'unpdf';
 import { AppError } from '../../middleware/error-handler';
 import { SmartChordImportDraft, ImportWarning } from './smart_chord_import.types';
 import {
@@ -6,18 +7,6 @@ import {
   SECTION_HEADER_REGEX,
   BRACKETED_SECTION_REGEX,
 } from './smart_chord_normalizer';
-
-// Polyfills to silence node-canvas warnings in Node.js headless environment
-if (typeof (globalThis as any).DOMMatrix === 'undefined') {
-  (globalThis as any).DOMMatrix = class DOMMatrix {};
-}
-if (typeof (globalThis as any).Path2D === 'undefined') {
-  (globalThis as any).Path2D = class Path2D {};
-}
-
-// Lazy require pdfjs-dist CommonJS legacy build
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const pdfjs = require('pdfjs-dist/legacy/build/pdf.js');
 
 export const MAX_PDF_FILE_SIZE = 3 * 1024 * 1024; // 3 MiB
 export const MAX_PDF_PAGES = 10;
@@ -60,6 +49,93 @@ function splitTextItemIntoTokens(item: ExtractedTextItem): ExtractedTextItem[] {
 }
 
 /**
+ * Dynamically detects vertical whitespace gutters between columns (1, 2, 3+ columns)
+ * without arbitrary fixed X coordinates.
+ */
+function detectColumnBuckets(pageItems: ExtractedTextItem[]): ExtractedTextItem[][] {
+  if (pageItems.length < 6) return [pageItems];
+
+  const minX = Math.min(...pageItems.map(i => i.x));
+  const maxX = Math.max(...pageItems.map(i => i.x + i.width));
+  if (maxX - minX < 180) return [pageItems];
+
+  // Disregard single-line full-width headers at top 40pt of page when finding vertical gutters
+  const maxY = Math.max(...pageItems.map(i => i.y));
+  const bodyItems = pageItems.filter(i => (maxY - i.y) > 40);
+  if (bodyItems.length < 6) return [pageItems];
+
+  // Find candidate vertical gutters (empty X-spans of at least 15pt where no body item sits)
+  const gutterPoints: number[] = [];
+  let inGutter = false;
+  let gutterStart = 0;
+
+  for (let x = Math.floor(minX + 30); x <= Math.ceil(maxX - 30); x += 2) {
+    const hasOverlap = bodyItems.some(i => i.x <= x && (i.x + i.width) >= x);
+    if (!hasOverlap) {
+      if (!inGutter) {
+        inGutter = true;
+        gutterStart = x;
+      }
+    } else {
+      if (inGutter) {
+        inGutter = false;
+        const gutterWidth = x - gutterStart;
+        if (gutterWidth >= 15) {
+          const midPoint = gutterStart + gutterWidth / 2;
+          gutterPoints.push(midPoint);
+        }
+      }
+    }
+  }
+
+  // Filter gutters that have substantial body items on both sides and Y overlap
+  const validGutters: number[] = [];
+  for (const gp of gutterPoints) {
+    const left = bodyItems.filter(i => (i.x + i.width) <= gp);
+    const right = bodyItems.filter(i => i.x >= gp);
+    if (left.length >= 3 && right.length >= 3) {
+      const leftYMin = Math.min(...left.map(i => i.y));
+      const leftYMax = Math.max(...left.map(i => i.y));
+      const rightYMin = Math.min(...right.map(i => i.y));
+      const rightYMax = Math.max(...right.map(i => i.y));
+      const overlap = Math.min(leftYMax, rightYMax) - Math.max(leftYMin, rightYMin);
+      if (overlap > 25) {
+        validGutters.push(gp);
+      }
+    }
+  }
+
+  if (validGutters.length === 0) {
+    return [pageItems];
+  }
+
+  // Consolidate gutters that are too close (< 50pt apart)
+  const consolidatedGutters: number[] = [];
+  for (const g of validGutters) {
+    if (consolidatedGutters.length === 0 || g - consolidatedGutters[consolidatedGutters.length - 1] >= 50) {
+      consolidatedGutters.push(g);
+    }
+  }
+
+  // Divide all page items into columns based on consolidated gutters
+  const columns: ExtractedTextItem[][] = [];
+  for (let c = 0; c <= consolidatedGutters.length; c++) {
+    columns.push([]);
+  }
+
+  for (const item of pageItems) {
+    const itemCenter = item.x + item.width / 2;
+    let colIdx = 0;
+    while (colIdx < consolidatedGutters.length && itemCenter > consolidatedGutters[colIdx]) {
+      colIdx++;
+    }
+    columns[colIdx].push(item);
+  }
+
+  return columns.filter(col => col.length > 0);
+}
+
+/**
  * Extracts and reconstructs musical SmartChordDraft from a text-based digital PDF.
  */
 export async function extractSmartChordDraftFromPdf(buffer: Buffer): Promise<SmartChordImportDraft> {
@@ -75,15 +151,9 @@ export async function extractSmartChordDraftFromPdf(buffer: Buffer): Promise<Sma
     throw new AppError(400, 'Arquivo inválido. O arquivo fornecido não é um PDF válido.');
   }
 
-  let pdf: any;
+  let pdfResult: { totalPages: number; items: any[][] };
   try {
-    const loadingTask = pdfjs.getDocument({
-      data: new Uint8Array(buffer),
-      isEvalSupported: false,
-      useSystemFonts: true,
-      disableFontFace: true,
-    });
-    pdf = await loadingTask.promise;
+    pdfResult = await extractTextItems(new Uint8Array(buffer));
   } catch (err: any) {
     const msg = String(err?.message || err);
     if (msg.includes('Password') || msg.includes('encrypted')) {
@@ -93,26 +163,25 @@ export async function extractSmartChordDraftFromPdf(buffer: Buffer): Promise<Sma
   }
 
   // 3. Enforce page count limit
-  if (pdf.numPages > MAX_PDF_PAGES) {
-    throw new AppError(400, `O PDF possui ${pdf.numPages} páginas (máximo permitido: ${MAX_PDF_PAGES}).`);
+  if (pdfResult.totalPages > MAX_PDF_PAGES) {
+    throw new AppError(400, `O PDF possui ${pdfResult.totalPages} páginas (máximo permitido: ${MAX_PDF_PAGES}).`);
   }
 
   // 4. Extract text items with layout coordinates and split into tokens
   const allItems: ExtractedTextItem[] = [];
 
-  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-    const page = await pdf.getPage(pageNum);
-    const textContent = await page.getTextContent();
-    for (const item of textContent.items) {
+  for (let pageIdx = 0; pageIdx < pdfResult.totalPages; pageIdx++) {
+    const pageItems = pdfResult.items[pageIdx] || [];
+    for (const item of pageItems) {
       const str = (item.str || '').trim();
       if (!str) continue;
       const baseItem: ExtractedTextItem = {
         text: item.str,
-        x: item.transform[4],
-        y: item.transform[5],
+        x: item.x,
+        y: item.y,
         width: item.width || 0,
-        height: item.height || Math.abs(item.transform[0]) || 12,
-        page: pageNum,
+        height: item.height || 12,
+        page: pageIdx + 1,
       };
       const subTokens = splitTextItemIntoTokens(baseItem);
       for (const st of subTokens) {
@@ -144,22 +213,12 @@ export async function extractSmartChordDraftFromPdf(buffer: Buffer): Promise<Sma
   let originalKey: string | null = null;
   const reconstructedLines: string[] = [];
 
-  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+  for (let pageNum = 1; pageNum <= pdfResult.totalPages; pageNum++) {
     const pageItems = allItems.filter(item => item.page === pageNum);
     if (pageItems.length === 0) continue;
 
-    // Detect if page has two columns (split around X ~ 280)
-    const leftItems = pageItems.filter(i => (i.x + i.width / 2) < 280);
-    const rightItems = pageItems.filter(i => (i.x + i.width / 2) >= 280);
-
-    const isTwoColumn = (
-      leftItems.length >= 2 &&
-      rightItems.length >= 2 &&
-      Math.min(Math.max(...leftItems.map(i => i.y)), Math.max(...rightItems.map(i => i.y))) >
-      Math.max(Math.min(...leftItems.map(i => i.y)), Math.min(...rightItems.map(i => i.y)))
-    );
-
-    const columnBuckets: ExtractedTextItem[][] = isTwoColumn ? [leftItems, rightItems] : [pageItems];
+    // Dynamically detect column buckets (1, 2, 3+ columns)
+    const columnBuckets = detectColumnBuckets(pageItems);
 
     for (let colIdx = 0; colIdx < columnBuckets.length; colIdx++) {
       const itemsInCol = columnBuckets[colIdx];
