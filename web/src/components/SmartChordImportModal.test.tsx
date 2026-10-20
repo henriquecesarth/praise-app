@@ -258,4 +258,225 @@ describe('SmartChordImportModal Component', () => {
     fireEvent.click(screen.getByText('Concluir sem Vincular'));
     expect(mockOnSuccess).toHaveBeenCalledWith(expect.objectContaining({ id: 'sc-imported-1' }));
   });
+
+  describe('Race condition and stale async response fencing', () => {
+    function deferred<T>() {
+      let resolve!: (value: T | PromiseLike<T>) => void;
+      let reject!: (reason?: any) => void;
+      const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    }
+
+    it('Scenario A: closes modal during in-flight PDF extraction and discards late response on reopen', async () => {
+      const def = deferred<any>();
+      importSmartChordPdf.mockReturnValueOnce(def.promise);
+
+      const { rerender } = render(
+        <SmartChordImportModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onSuccess={mockOnSuccess}
+        />
+      );
+
+      const validFile = new File(['%PDF-1.4 test'], 'cifra-stale.pdf', { type: 'application/pdf' });
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      fireEvent.change(input, { target: { files: [validFile] } });
+      fireEvent.click(screen.getByText('Analisar e Pré-visualizar PDF'));
+
+      // Modal enters extracting state
+      expect(screen.getByText(/Analisando estrutura harmônica e alinhamento/i)).toBeInTheDocument();
+
+      // User closes modal
+      rerender(
+        <SmartChordImportModal
+          isOpen={false}
+          onClose={mockOnClose}
+          onSuccess={mockOnSuccess}
+        />
+      );
+
+      // Reopen modal
+      rerender(
+        <SmartChordImportModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onSuccess={mockOnSuccess}
+        />
+      );
+
+      // Stale promise resolves now
+      def.resolve({
+        title: 'Stale Song Title',
+        artistName: 'Stale Artist',
+        originalKey: 'D',
+        content: '[D]Late',
+        warnings: [],
+        sourceType: 'pdf',
+      });
+
+      // Allow microtasks to complete
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Must remain in fresh input state, NOT preview of stale response
+      expect(screen.getByText('Importar Cifra')).toBeInTheDocument();
+      expect(screen.queryByDisplayValue('Stale Song Title')).toBeNull();
+      expect(screen.getByText('Clique para selecionar um arquivo PDF')).toBeInTheDocument();
+    });
+
+    it('Scenario B: PDF A in-flight, user cancels and selects PDF B which resolves first; late PDF A is discarded', async () => {
+      const defA = deferred<any>();
+      const defB = deferred<any>();
+      importSmartChordPdf.mockReturnValueOnce(defA.promise).mockReturnValueOnce(defB.promise);
+
+      render(
+        <SmartChordImportModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onSuccess={mockOnSuccess}
+        />
+      );
+
+      const fileA = new File(['fileA'], 'fileA.pdf', { type: 'application/pdf' });
+      const fileB = new File(['fileB'], 'fileB.pdf', { type: 'application/pdf' });
+
+      // Start File A extraction
+      const inputA = document.querySelector('input[type="file"]') as HTMLInputElement;
+      fireEvent.change(inputA, { target: { files: [fileA] } });
+      fireEvent.click(screen.getByText('Analisar e Pré-visualizar PDF'));
+
+      expect(screen.getByText(/Analisando estrutura harmônica/i)).toBeInTheDocument();
+
+      // User cancels extraction
+      fireEvent.click(screen.getByText('Cancelar Extração'));
+      expect(screen.getByText('Analisar e Pré-visualizar PDF')).toBeInTheDocument();
+
+      // Select File B and extract
+      const inputB = document.querySelector('input[type="file"]') as HTMLInputElement;
+      fireEvent.change(inputB, { target: { files: [fileB] } });
+      fireEvent.click(screen.getByText('Analisar e Pré-visualizar PDF'));
+
+      // File B resolves first
+      defB.resolve({
+        title: 'Song B',
+        artistName: 'Artist B',
+        originalKey: 'G',
+        content: '[G]Song B',
+        warnings: [],
+        sourceType: 'pdf',
+      });
+
+      expect(await screen.findByDisplayValue('Song B')).toBeInTheDocument();
+
+      // Late File A resolves afterwards
+      defA.resolve({
+        title: 'Song A (Stale)',
+        artistName: 'Artist A',
+        originalKey: 'C',
+        content: '[C]Song A',
+        warnings: [],
+        sourceType: 'pdf',
+      });
+
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Preview should retain Song B and NOT overwrite with Song A
+      expect(screen.getByDisplayValue('Song B')).toBeInTheDocument();
+      expect(screen.queryByDisplayValue('Song A (Stale)')).toBeNull();
+    });
+
+    it('Scenario C: PDF extraction in-flight, user cancels and switches to Text which resolves; late PDF is discarded', async () => {
+      const defPdf = deferred<any>();
+      const defText = deferred<any>();
+      importSmartChordPdf.mockReturnValueOnce(defPdf.promise);
+      importSmartChordText.mockReturnValueOnce(defText.promise);
+
+      render(
+        <SmartChordImportModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onSuccess={mockOnSuccess}
+        />
+      );
+
+      const pdfFile = new File(['pdf content'], 'sheet.pdf', { type: 'application/pdf' });
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      fireEvent.change(input, { target: { files: [pdfFile] } });
+      fireEvent.click(screen.getByText('Analisar e Pré-visualizar PDF'));
+
+      expect(screen.getByText(/Analisando estrutura harmônica/i)).toBeInTheDocument();
+
+      // User cancels and switches to Text
+      fireEvent.click(screen.getByText('Cancelar Extração'));
+      fireEvent.click(screen.getByText('Colar Texto'));
+
+      const textarea = screen.getByPlaceholderText(/Graças Te dou pelo Teu amor/i);
+      fireEvent.change(textarea, { target: { value: 'A\nSanto' } });
+      fireEvent.click(screen.getByText('Analisar e Pré-visualizar Texto'));
+
+      // Text resolves
+      defText.resolve({
+        title: 'Text Song',
+        artistName: 'Text Artist',
+        originalKey: 'A',
+        content: '[A]Santo',
+        warnings: [],
+        sourceType: 'text',
+      });
+
+      expect(await screen.findByDisplayValue('Text Song')).toBeInTheDocument();
+
+      // Late PDF resolves
+      defPdf.resolve({
+        title: 'PDF Late Song',
+        artistName: 'PDF Artist',
+        originalKey: 'E',
+        content: '[E]Late',
+        warnings: [],
+        sourceType: 'pdf',
+      });
+
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Remains Text Song, does not overwrite with PDF Late Song
+      expect(screen.getByDisplayValue('Text Song')).toBeInTheDocument();
+      expect(screen.queryByDisplayValue('PDF Late Song')).toBeNull();
+    });
+
+    it('Scenario D: old request in-flight rejects after user cancels/dismisses; stale error is discarded', async () => {
+      const defPdf = deferred<any>();
+      importSmartChordPdf.mockReturnValueOnce(defPdf.promise);
+
+      render(
+        <SmartChordImportModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onSuccess={mockOnSuccess}
+        />
+      );
+
+      const pdfFile = new File(['corrupted'], 'corrupt.pdf', { type: 'application/pdf' });
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      fireEvent.change(input, { target: { files: [pdfFile] } });
+      fireEvent.click(screen.getByText('Analisar e Pré-visualizar PDF'));
+
+      expect(screen.getByText(/Analisando estrutura harmônica/i)).toBeInTheDocument();
+
+      // User cancels extraction
+      fireEvent.click(screen.getByText('Cancelar Extração'));
+      expect(screen.getByText('Analisar e Pré-visualizar PDF')).toBeInTheDocument();
+
+      // Old request now rejects with error
+      defPdf.reject(new Error('Corrupted stream'));
+
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Error must NOT be shown
+      expect(screen.queryByText('Corrupted stream')).toBeNull();
+      expect(screen.queryByText(/Falha ao processar o arquivo PDF/i)).toBeNull();
+    });
+  });
 });

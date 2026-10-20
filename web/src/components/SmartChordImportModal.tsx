@@ -47,9 +47,11 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
   const [linkError, setLinkError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const generationRef = useRef(0);
 
   // Reset state when opening/closing or switching ministry
   useEffect(() => {
+    generationRef.current += 1;
     if (isOpen) {
       setStep('input');
       setActiveTab('pdf');
@@ -70,11 +72,16 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
     }
   }, [isOpen, ministryId]);
 
+  const handleSafeClose = () => {
+    generationRef.current += 1;
+    onClose();
+  };
+
   // Escape key handler
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isOpen && !isSaving && !isLinking) {
-        onClose();
+        handleSafeClose();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -83,7 +90,14 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
 
   if (!isOpen) return null;
 
+  const handleTabSwitch = (tab: 'pdf' | 'text') => {
+    generationRef.current += 1;
+    setErrorMessage(null);
+    setActiveTab(tab);
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    generationRef.current += 1;
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -103,14 +117,17 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
       return;
     }
 
+    const currentGen = ++generationRef.current;
     setErrorMessage(null);
     setStep('extracting');
 
     try {
       const draft = await api.importSmartChordPdf(selectedFile);
+      if (currentGen !== generationRef.current) return;
       applyDraft(draft);
       setStep('preview');
     } catch (err: any) {
+      if (currentGen !== generationRef.current) return;
       console.error('Erro na extração do PDF:', err);
       setErrorMessage(err?.message || 'Falha ao processar o arquivo PDF. Verifique se é um PDF de texto válido.');
       setStep('input');
@@ -123,14 +140,17 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
       return;
     }
 
+    const currentGen = ++generationRef.current;
     setErrorMessage(null);
     setStep('extracting');
 
     try {
       const draft = await api.importSmartChordText(pastedText);
+      if (currentGen !== generationRef.current) return;
       applyDraft(draft);
       setStep('preview');
     } catch (err: any) {
+      if (currentGen !== generationRef.current) return;
       console.error('Erro na normalização do texto:', err);
       setErrorMessage(err?.message || 'Falha ao normalizar o texto fornecido.');
       setStep('input');
@@ -230,7 +250,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
       }}
       onClick={(e) => {
         if (e.target === e.currentTarget && !isSaving && !isLinking) {
-          onClose();
+          handleSafeClose();
         }
       }}
     >
@@ -257,7 +277,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
           <button
             type="button"
             className="btn btn-icon"
-            onClick={onClose}
+            onClick={handleSafeClose}
             disabled={isSaving || isLinking}
             style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '1.2rem' }}
           >
@@ -289,7 +309,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                     cursor: 'pointer',
                     fontWeight: 600,
                   }}
-                  onClick={() => { setActiveTab('pdf'); setErrorMessage(null); }}
+                  onClick={() => handleTabSwitch('pdf')}
                 >
                   Documento PDF
                 </button>
@@ -304,7 +324,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                     cursor: 'pointer',
                     fontWeight: 600,
                   }}
-                  onClick={() => { setActiveTab('text'); setErrorMessage(null); }}
+                  onClick={() => handleTabSwitch('text')}
                 >
                   Colar Texto
                 </button>
@@ -393,6 +413,25 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 0', gap: '16px' }}>
               <div className="spinner" style={{ width: '40px', height: '40px', border: '3px solid rgba(255,255,255,0.1)', borderTopColor: '#3b82f6', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
               <div style={{ color: '#cbd5e1', fontSize: '0.95rem' }}>Analisando estrutura harmônica e alinhamento...</div>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  generationRef.current += 1;
+                  setStep('input');
+                }}
+                style={{
+                  minHeight: '44px',
+                  padding: '8px 16px',
+                  borderRadius: '6px',
+                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                  color: '#e2e8f0',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  cursor: 'pointer',
+                }}
+              >
+                Cancelar Extração
+              </button>
             </div>
           )}
 
@@ -578,7 +617,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
         {/* Footer Actions */}
         <div style={{ padding: '16px 20px', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
           {step === 'input' && (
-            <button type="button" className="btn btn-secondary" onClick={onClose} style={{ minHeight: '40px' }}>
+            <button type="button" className="btn btn-secondary" onClick={handleSafeClose} style={{ minHeight: '40px' }}>
               Cancelar
             </button>
           )}
@@ -588,7 +627,10 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
               <button
                 type="button"
                 className="btn btn-secondary"
-                onClick={() => setStep('input')}
+                onClick={() => {
+                  generationRef.current += 1;
+                  setStep('input');
+                }}
                 disabled={isSaving}
                 style={{ minHeight: '40px' }}
               >
