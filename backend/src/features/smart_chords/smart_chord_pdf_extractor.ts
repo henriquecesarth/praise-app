@@ -135,6 +135,170 @@ function detectColumnBuckets(pageItems: ExtractedTextItem[]): ExtractedTextItem[
   return columns.filter(col => col.length > 0);
 }
 
+export function isRepeatProgressionLine(line: string): boolean {
+  if (!line || !line.trim()) return false;
+  return /\|\|:|:\|\||%/.test(line) || (line.includes('|') && line.split('|').length >= 3);
+}
+
+interface ProjectedLyricResult {
+  projected: string;
+  hasUncertainAlignment: boolean;
+}
+
+function projectChordsOntoLyrics(
+  chordItems: ExtractedTextItem[],
+  nonChordItems: ExtractedTextItem[],
+  lyricVLine: VisualPdfLine
+): ProjectedLyricResult {
+  let lyricString = '';
+  const charPositions: { char: string; x: number; width: number }[] = [];
+
+  for (let itemIdx = 0; itemIdx < lyricVLine.items.length; itemIdx++) {
+    const lItem = lyricVLine.items[itemIdx];
+    if (itemIdx > 0) {
+      const prevItem = lyricVLine.items[itemIdx - 1];
+      const spaceGap = lItem.x - (prevItem.x + prevItem.width);
+      if (spaceGap > 2) {
+        lyricString += ' ';
+        charPositions.push({ char: ' ', x: prevItem.x + prevItem.width, width: spaceGap });
+      }
+    }
+    const itemCharWidth = lItem.text.length > 0 ? lItem.width / lItem.text.length : 0;
+    for (let c = 0; c < lItem.text.length; c++) {
+      charPositions.push({
+        char: lItem.text[c],
+        x: lItem.x + c * itemCharWidth,
+        width: itemCharWidth,
+      });
+      lyricString += lItem.text[c];
+    }
+  }
+
+  // Find word boundaries
+  const words: { startIdx: number; endIdx: number; startX: number; endX: number; text: string }[] = [];
+  let inWord = false;
+  let wordStart = 0;
+  for (let i = 0; i < charPositions.length; i++) {
+    if (charPositions[i].char !== ' ') {
+      if (!inWord) {
+        inWord = true;
+        wordStart = i;
+      }
+    } else {
+      if (inWord) {
+        inWord = false;
+        words.push({
+          startIdx: wordStart,
+          endIdx: i,
+          startX: charPositions[wordStart].x,
+          endX: charPositions[i - 1].x + charPositions[i - 1].width,
+          text: lyricString.slice(wordStart, i),
+        });
+      }
+    }
+  }
+  if (inWord && charPositions.length > 0) {
+    words.push({
+      startIdx: wordStart,
+      endIdx: charPositions.length,
+      startX: charPositions[wordStart].x,
+      endX: charPositions[charPositions.length - 1].x + charPositions[charPositions.length - 1].width,
+      text: lyricString.slice(wordStart),
+    });
+  }
+
+  // Sort chords descending by X so insertions do not shift indices
+  const sortedChords = [...chordItems].sort((a, b) => b.x - a.x);
+  let projected = lyricString;
+  let hasUncertainAlignment = false;
+
+  for (const cItem of sortedChords) {
+    const chordText = cItem.text.trim();
+    const chordX = cItem.x;
+    const chordBracket = '[' + chordText + ']';
+
+    const lastPos = charPositions[charPositions.length - 1];
+    if (lastPos && chordX > lastPos.x + lastPos.width + 15) {
+      projected += ' ' + chordBracket;
+      continue;
+    }
+
+    let targetIndex = -1;
+
+    // Check if chord is positioned before the first word
+    if (words.length > 0 && chordX <= words[0].startX + 10) {
+      targetIndex = words[0].startIdx;
+    } else {
+      for (let wIdx = 0; wIdx < words.length; wIdx++) {
+        const w = words[wIdx];
+        const nextW = words[wIdx + 1];
+        const wordWidth = w.endX - w.startX;
+
+        // Near start of word (up to 45% of word width or within 18pt)
+        if (chordX >= w.startX - 15 && chordX <= w.startX + Math.max(12, wordWidth * 0.45)) {
+          targetIndex = w.startIdx;
+          break;
+        }
+
+        // In gap between words
+        if (nextW && chordX > w.endX && chordX < nextW.startX) {
+          const distToNext = nextW.startX - chordX;
+          const distToPrev = chordX - w.endX;
+          if (distToNext <= distToPrev + 5) {
+            targetIndex = nextW.startIdx;
+          } else {
+            targetIndex = w.endIdx;
+          }
+          break;
+        }
+
+        // Intentionally inside word (later syllable)
+        if (chordX > w.startX + Math.max(12, wordWidth * 0.45) && chordX <= w.endX) {
+          let bestInside = w.startIdx;
+          let minDiff = 999999;
+          for (let i = w.startIdx; i < w.endIdx; i++) {
+            const diff = Math.abs(charPositions[i].x - chordX);
+            if (diff < minDiff) {
+              minDiff = diff;
+              bestInside = i;
+            }
+          }
+          targetIndex = bestInside;
+          hasUncertainAlignment = true;
+          break;
+        }
+      }
+    }
+
+    if (targetIndex === -1) {
+      let minDiff = 999999;
+      targetIndex = 0;
+      for (let i = 0; i < charPositions.length; i++) {
+        const diff = Math.abs(charPositions[i].x - chordX);
+        if (diff < minDiff) {
+          minDiff = diff;
+          targetIndex = i;
+        }
+      }
+      hasUncertainAlignment = true;
+    }
+
+    projected = projected.slice(0, targetIndex) + chordBracket + projected.slice(targetIndex);
+  }
+
+  // Preserve non-chord annotations from the chord line
+  if (nonChordItems.length > 0) {
+    const annotations = nonChordItems
+      .map(i => i.text.trim())
+      .filter(t => t && !['|', '||:', ':||', '%'].includes(t));
+    if (annotations.length > 0) {
+      projected += ' ' + annotations.join(' ');
+    }
+  }
+
+  return { projected, hasUncertainAlignment };
+}
+
 /**
  * Extracts and reconstructs musical SmartChordDraft from a text-based digital PDF.
  */
@@ -273,16 +437,28 @@ export async function extractSmartChordDraftFromPdf(buffer: Buffer): Promise<Sma
             continue;
           }
 
-          // In standard single-line header (e.g. Certeza (Canção de Jó) as top line)
+          // In standard single-line header (e.g. Certeza (Canção de Jó) – Héber Bragança)
           if (!title && lineIdx === 0 && !isChordLine(lineText) && !SECTION_HEADER_REGEX.test(lineText)) {
-            title = lineText;
+            // Check for title - artist separator like "Title – Artist", "Title — Artist", "Title - Artist"
+            // Requires spaces around the dash to avoid splitting hyphenated words
+            const splitMatch = lineText.match(/^(.+?)\s+([–—-]|by|por)\s+(.+)$/i);
+            if (splitMatch) {
+              title = splitMatch[1].trim();
+              artistName = splitMatch[3].trim();
+            } else {
+              title = lineText.trim();
+            }
             lineIdx++;
             continue;
           }
+
           if (title && !artistName && lineIdx === 1 && !isChordLine(lineText) && !SECTION_HEADER_REGEX.test(lineText)) {
-            artistName = lineText;
-            lineIdx++;
-            continue;
+            // Only treat line 1 as artist if it's NOT a parenthesized annotation and NOT a repeat/progression structure
+            if (!/^\s*\(.*?\)\s*$/.test(lineText) && !isRepeatProgressionLine(lineText)) {
+              artistName = lineText.trim();
+              lineIdx++;
+              continue;
+            }
           }
         }
 
@@ -298,7 +474,7 @@ export async function extractSmartChordDraftFromPdf(buffer: Buffer): Promise<Sma
           continue;
         }
 
-        // Check for parenthetical annotation e.g. (violão/pad)
+        // Check for parenthetical annotation e.g. (violão/pad) or (todos)
         if (/^\s*\(.*?\)\s*$/.test(lineText)) {
           reconstructedLines.push(lineText);
           lineIdx++;
@@ -307,12 +483,14 @@ export async function extractSmartChordDraftFromPdf(buffer: Buffer): Promise<Sma
 
         // Check if current line is a chord line
         if (isChordLine(lineText)) {
+          const isProgression = isRepeatProgressionLine(lineText);
           const nextVLine = (lineIdx + 1 < visualLines.length) ? visualLines[lineIdx + 1] : null;
           const nextLineText = nextVLine ? nextVLine.items.map(i => i.text).join(' ').trim() : '';
           const yDiff = nextVLine ? Math.abs(vLine.y - nextVLine.y) : 999;
 
-          // If next line is physically close (< 35pt) and is a lyric line
+          // If it's NOT a repeat progression, and next line is physically close (< 35pt) and is a lyric line
           if (
+            !isProgression &&
             nextVLine &&
             yDiff < 35 &&
             nextLineText &&
@@ -321,69 +499,27 @@ export async function extractSmartChordDraftFromPdf(buffer: Buffer): Promise<Sma
             !BRACKETED_SECTION_REGEX.test(nextLineText) &&
             !/^\s*\(.*?\)\s*$/.test(nextLineText)
           ) {
-            // Coordinate-aware projection: project each chord item's X coordinate onto the lyric items
             const chordItems = vLine.items.filter(i => isMusicalChord(i.text.trim()));
-            // Sort chord items descending by X so insertion doesn't invalidate character indices
-            chordItems.sort((a, b) => b.x - a.x);
+            const nonChordItems = vLine.items.filter(i => !isMusicalChord(i.text.trim()));
 
-            // Reconstruct full lyric string with character coordinates
-            let lyricString = '';
-            const charPositions: { char: string; x: number }[] = [];
-
-            for (let itemIdx = 0; itemIdx < nextVLine.items.length; itemIdx++) {
-              const lItem = nextVLine.items[itemIdx];
-              if (itemIdx > 0) {
-                const prevItem = nextVLine.items[itemIdx - 1];
-                const spaceGap = lItem.x - (prevItem.x + prevItem.width);
-                if (spaceGap > 2) {
-                  lyricString += ' ';
-                  charPositions.push({ char: ' ', x: prevItem.x + prevItem.width });
-                }
-              }
-              const itemCharWidth = lItem.text.length > 0 ? (lItem.width / lItem.text.length) : 0;
-              for (let c = 0; c < lItem.text.length; c++) {
-                charPositions.push({
-                  char: lItem.text[c],
-                  x: lItem.x + c * itemCharWidth,
-                });
-                lyricString += lItem.text[c];
-              }
+            const { projected, hasUncertainAlignment } = projectChordsOntoLyrics(chordItems, nonChordItems, nextVLine);
+            if (hasUncertainAlignment && !warnings.some(w => w.code === 'CHORD_ALIGNMENT_UNCERTAIN')) {
+              warnings.push({
+                code: 'CHORD_ALIGNMENT_UNCERTAIN',
+                message: 'Alinhamento de acordes em linha com divisão intra-palavra pode requerer ajuste manual.',
+              });
             }
-
-            let projectedLyric = lyricString;
-
-            for (const cItem of chordItems) {
-              const chordText = cItem.text.trim();
-              const chordX = cItem.x;
-              const chordBracket = '[' + chordText + ']';
-
-              // Find closest character index matching chordX
-              let bestIndex = 0;
-              let minDiff = 999999;
-              for (let idx = 0; idx < charPositions.length; idx++) {
-                const diff = Math.abs(charPositions[idx].x - chordX);
-                if (diff < minDiff) {
-                  minDiff = diff;
-                  bestIndex = idx;
-                }
-              }
-
-              if (chordX > (charPositions[charPositions.length - 1]?.x || 0) + 15) {
-                // Chord is past the end of the lyric text
-                projectedLyric = projectedLyric + ' ' + chordBracket;
-              } else {
-                projectedLyric =
-                  projectedLyric.slice(0, bestIndex) +
-                  chordBracket +
-                  projectedLyric.slice(bestIndex);
-              }
-            }
-
-            reconstructedLines.push(projectedLyric);
-            lineIdx += 2; // Consumed both lines
+            reconstructedLines.push(projected);
+            lineIdx += 2; // Consumed both chord and lyric lines
             continue;
           } else {
-            // Progression or instrumental line
+            // Progression or instrumental line (including repeat blocks like ||: A9 | A7M/9 | D9 | % :||)
+            if (isProgression && nextVLine && yDiff < 35 && !isChordLine(nextLineText) && !warnings.some(w => w.code === 'REPEAT_STRUCTURE_AMBIGUOUS')) {
+              warnings.push({
+                code: 'REPEAT_STRUCTURE_AMBIGUOUS',
+                message: 'Progressão com repetição mantida em linha separada para preservar compassos e símbolos de repetição.',
+              });
+            }
             const formattedParts = vLine.items.map(item => {
               const t = item.text.trim();
               if (isMusicalChord(t)) return '[' + t + ']';

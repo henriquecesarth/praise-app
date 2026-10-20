@@ -1,4 +1,4 @@
-﻿import { z } from 'zod';
+import { z } from 'zod';
 
 export type ImportWarningCode =
   | 'CHORD_ALIGNMENT_UNCERTAIN'
@@ -6,7 +6,9 @@ export type ImportWarningCode =
   | 'UNSUPPORTED_LAYOUT'
   | 'MISSING_ORIGINAL_KEY'
   | 'POSSIBLE_SCANNED_PDF'
-  | 'EXCESSIVE_PAGES';
+  | 'EXCESSIVE_PAGES'
+  | 'REPEAT_STRUCTURE_AMBIGUOUS'
+  | 'METADATA_AMBIGUOUS';
 
 export interface ImportWarning {
   code: ImportWarningCode;
