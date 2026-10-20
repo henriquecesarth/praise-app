@@ -264,6 +264,21 @@ export interface SmartChordRepertoireLink {
   song: SmartChordSongSummary | null;
 }
 
+export interface ImportWarning {
+  code: string;
+  message: string;
+  line?: number;
+}
+
+export interface SmartChordImportDraft {
+  title: string;
+  artistName: string | null;
+  originalKey: string | null;
+  content: string;
+  warnings: ImportWarning[];
+  sourceType: 'pdf' | 'text';
+}
+
 export interface Artist {
   id: string;
   ministryId: string;

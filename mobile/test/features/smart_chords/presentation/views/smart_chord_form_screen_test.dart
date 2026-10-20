@@ -14,6 +14,7 @@ import 'package:louvaio_mobile/features/ministry_context/domain/ministry.dart';
 import 'package:louvaio_mobile/features/ministry_context/presentation/controllers/ministry_context_controller.dart';
 import 'package:louvaio_mobile/features/smart_chords/data/smart_chord_repository.dart';
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord.dart';
+import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_import.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/views/smart_chord_form_screen.dart';
 
 class _FakeAuthRepo implements AuthRepository {
@@ -149,6 +150,26 @@ class FakeSmartChordRepo implements SmartChordRepository {
 
   @override
   Future<void> deleteSmartChord(String id) async {}
+
+  @override
+  Future<SmartChordImportDraft> importPdfDraft(List<int> bytes, String filename) async {
+    return const SmartChordImportDraft(
+      title: 'Draft',
+      content: '',
+      warnings: [],
+      sourceType: 'pdf',
+    );
+  }
+
+  @override
+  Future<SmartChordImportDraft> importTextDraft(String text) async {
+    return const SmartChordImportDraft(
+      title: 'Draft',
+      content: '',
+      warnings: [],
+      sourceType: 'text',
+    );
+  }
 }
 
 void main() {

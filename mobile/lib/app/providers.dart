@@ -122,6 +122,9 @@ void resetAuthenticatedFeatures(dynamic refOrContainer) {
     refOrContainer.read(smartChordFormNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
+    refOrContainer.read(smartChordImportNotifierProvider.notifier).reset();
+  } catch (_) {}
+  try {
     refOrContainer.read(songFormNotifierProvider.notifier).reset();
   } catch (_) {}
 

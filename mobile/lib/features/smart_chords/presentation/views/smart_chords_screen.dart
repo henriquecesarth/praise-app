@@ -5,6 +5,7 @@ import '../../domain/smart_chord.dart';
 import '../controllers/smart_chord_providers.dart';
 import '../widgets/smart_chord_card.dart';
 import 'smart_chord_form_screen.dart';
+import 'smart_chord_import_screen.dart';
 import 'smart_chord_reader_screen.dart';
 
 class SmartChordsScreen extends ConsumerStatefulWidget {
@@ -61,6 +62,20 @@ class _SmartChordsScreenState extends ConsumerState<SmartChordsScreen> {
       appBar: AppBar(
         title: const Text('Cifras Inteligentes'),
         actions: [
+          IconButton(
+            tooltip: 'Importar cifra',
+            icon: const Icon(Icons.file_upload_outlined),
+            onPressed: () async {
+              final imported = await Navigator.of(context).push<SmartChord>(
+                MaterialPageRoute(
+                  builder: (_) => const SmartChordImportScreen(),
+                ),
+              );
+              if (imported != null && mounted) {
+                ref.read(smartChordListNotifierProvider.notifier).load(force: true);
+              }
+            },
+          ),
           IconButton(
             tooltip: 'Atualizar',
             icon: const Icon(Icons.refresh),

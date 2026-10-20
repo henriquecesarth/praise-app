@@ -14,11 +14,14 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
     "@types/jsonwebtoken": "^9.0.10",
+    "@types/multer": "^2.3.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "firebase-admin": "^14.2.0",
     "jsonwebtoken": "^9.0.3",
+    "multer": "^2.4.0",
+    "pdfjs-dist": "^3.11.174",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -26,6 +29,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^26.0.1",
     "firebase-tools": "^15.31.0",
+    "pdf-lib": "^1.17.1",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "vitest": "^4.1.11"

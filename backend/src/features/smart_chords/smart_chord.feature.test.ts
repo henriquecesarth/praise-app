@@ -730,4 +730,44 @@ describe('Smart Chords Feature Test Suite', () => {
       expect(next3).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
     });
   });
+
+  describe('7. Import Hub Controller Endpoints (Preview without DB mutation & Auth enforcement)', () => {
+    it('importTextDraft rejeita requisição não autenticada com 401', async () => {
+      const next = vi.fn();
+      await controller.importTextDraft({ user: undefined, body: { text: 'G C' } } as any, {} as any, next);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 401 }));
+    });
+
+    it('importTextDraft normaliza o texto e retorna o rascunho sem qualquer escrita no banco', async () => {
+      const createSpy = vi.spyOn(smartChordRepo, 'createSmartChord');
+      const jsonFn = vi.fn();
+      const res = { status: vi.fn().mockReturnThis(), json: jsonFn } as any;
+      const next = vi.fn();
+
+      await controller.importTextDraft(
+        { user: { id: 'user-a' }, body: { text: 'G            D/F#        Em\nGraças Te dou pelo Teu amor' } } as any,
+        res,
+        next
+      );
+
+      expect(createSpy).not.toHaveBeenCalled();
+      expect(jsonFn).toHaveBeenCalledWith(expect.objectContaining({
+        source_type: 'text',
+        original_key: 'G',
+        content: '[G]Graças Te dou[D/F#] pelo Teu am[Em]or',
+      }));
+    });
+
+    it('importPdfDraft rejeita requisição não autenticada com 401', async () => {
+      const next = vi.fn();
+      await controller.importPdfDraft({ user: undefined, file: { buffer: Buffer.from('%PDF-1.4') } } as any, {} as any, next);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 401 }));
+    });
+
+    it('importPdfDraft rejeita ausência de arquivo com 400', async () => {
+      const next = vi.fn();
+      await controller.importPdfDraft({ user: { id: 'user-a' }, file: undefined, body: {} } as any, {} as any, next);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400, message: 'Nenhum arquivo PDF foi enviado na requisição.' }));
+    });
+  });
 });

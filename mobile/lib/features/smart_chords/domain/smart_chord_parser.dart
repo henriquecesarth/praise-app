@@ -258,14 +258,53 @@ class SmartChordParser {
     return scale[newIndex];
   }
 
+  static final RegExp rootRegex =
+      RegExp(r'^([A-G][#b]?)(.*)$', caseSensitive: false);
+  static final RegExp extRegex = RegExp(
+    r'^(m|min|maj|M|dim|aug|sus[24]?|add[249]?|[0-9]+|\+|\-|\((b5|#5|b9|#9|9|11|#11|13|b13|5-|5\+)\)|b5|#5|b9|#9|b13|#11|alt|7M|M7)*$',
+  );
+
+  /// Validates whether a token is a legitimate musical chord and not a word or annotation
+  /// (e.g. Baixo, Corte, Dedilhado, Fim).
+  static bool isMusicalChord(String token) {
+    if (token.isEmpty) return false;
+    final trimmed = token.trim();
+    if (trimmed.isEmpty) return false;
+
+    final slashParts = trimmed.split('/');
+    if (slashParts.length > 2) return false;
+
+    final mainPart = slashParts[0];
+    final match = rootRegex.firstMatch(mainPart);
+    if (match == null) return false;
+
+    final ext = match.group(2) ?? '';
+    if (ext.isNotEmpty && !extRegex.hasMatch(ext)) return false;
+
+    if (slashParts.length == 2) {
+      final bassPart = slashParts[1];
+      if (bassPart.isEmpty) return false;
+      final bassMatch = rootRegex.firstMatch(bassPart);
+      final isBassRoot = bassMatch != null && extRegex.hasMatch(bassMatch.group(2) ?? '');
+      final isNumericExtension = RegExp(r'^[0-9]+$').hasMatch(bassPart);
+      if (!isBassRoot && !isNumericExtension) return false;
+    }
+
+    return true;
+  }
+
   /// Transposes a single root chord (without slashes), e.g. "C#m7", "Gadd9".
   static String _transposeChordSingle(String chord, int semitones) {
     if (chord.isEmpty) return chord;
-    final match = _rootSuffixRegex.firstMatch(chord);
+    final match = rootRegex.firstMatch(chord);
     if (match == null) return chord;
 
     final root = match.group(1)!;
     final suffix = match.group(2) ?? '';
+    if (suffix.isNotEmpty && !extRegex.hasMatch(suffix)) {
+      // Non-chord annotation like Baixo, Corte - preserve as-is
+      return chord;
+    }
     final newRoot = transposeNote(root, semitones);
     return newRoot + suffix;
   }
@@ -274,9 +313,14 @@ class SmartChordParser {
   static String transposeChord(String chord, int semitones) {
     if (chord.isEmpty) return '';
     if (semitones == 0) return chord;
+    if (!isMusicalChord(chord)) return chord;
 
     if (chord.contains('/')) {
       final parts = chord.split('/');
+      if (parts.length == 2 && RegExp(r'^[0-9]+$').hasMatch(parts[1])) {
+        // Compound extension like A7M/9
+        return '${_transposeChordSingle(parts[0], semitones)}/${parts[1]}';
+      }
       return parts
           .map((part) => _transposeChordSingle(part, semitones))
           .join('/');

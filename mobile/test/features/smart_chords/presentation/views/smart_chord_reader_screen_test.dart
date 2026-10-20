@@ -11,6 +11,7 @@ import 'package:louvaio_mobile/features/ministry_context/presentation/controller
 import 'package:louvaio_mobile/features/smart_chords/data/smart_chord_repository.dart';
 import 'package:louvaio_mobile/features/smart_chords/data/smart_chord_repertoire_link_repository.dart';
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord.dart';
+import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_import.dart';
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_repertoire_link.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/views/smart_chord_reader_screen.dart';
 
@@ -170,6 +171,26 @@ class FakeSmartChordRepo implements SmartChordRepository {
     lastDeletedId = id;
     if (deleteCompleter != null) await deleteCompleter!.future;
     if (deleteErrorToThrow != null) throw deleteErrorToThrow!;
+  }
+
+  @override
+  Future<SmartChordImportDraft> importPdfDraft(List<int> bytes, String filename) async {
+    return const SmartChordImportDraft(
+      title: 'Draft',
+      content: '',
+      warnings: [],
+      sourceType: 'pdf',
+    );
+  }
+
+  @override
+  Future<SmartChordImportDraft> importTextDraft(String text) async {
+    return const SmartChordImportDraft(
+      title: 'Draft',
+      content: '',
+      warnings: [],
+      sourceType: 'text',
+    );
   }
 }
 

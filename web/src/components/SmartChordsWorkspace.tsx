@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { api, SmartChord } from '../api';
 import { Artist, Song } from '../types';
 import { transposeChord, rawToVisual, visualToRaw } from '../utils/smart_chord';
+import { SmartChordImportModal } from './SmartChordImportModal';
 
 function getHarmonicFieldChords(originalKey: string): string[] {
   let key = originalKey;
@@ -87,6 +88,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
   const [semitones, setSemitones] = useState(0);
   const [printFontSize, setPrintFontSize] = useState(13);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   // Link request context ref for asynchronous stale response fencing (F-M19-05)
   const linkRequestContextRef = useRef<{ ministryId: string; chordId: string; generation: number }>({
@@ -554,11 +556,27 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
 
       {/* ─── Web Sidebar: Saved SmartChords List ─── */}
       <div className="glass-panel smart-chords-sidebar no-print" style={{ width: '320px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px', flexShrink: 0 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Minhas Cifras</h2>
-          <button type="button" className="btn btn-primary" style={{ minHeight: '44px', padding: '8px 16px', fontSize: '0.9rem', borderRadius: '8px', display: 'inline-flex', alignItems: 'center' }} onClick={handleCreateNew}>
-            Criar Cifra
-          </button>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 600, margin: 0 }}>Minhas Cifras</h2>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ minHeight: '44px', padding: '8px 12px', fontSize: '0.85rem', borderRadius: '8px', display: 'inline-flex', alignItems: 'center' }}
+              onClick={() => setIsImportModalOpen(true)}
+              title="Importar cifra de PDF ou texto"
+            >
+              Importar
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{ minHeight: '44px', padding: '8px 12px', fontSize: '0.85rem', borderRadius: '8px', display: 'inline-flex', alignItems: 'center' }}
+              onClick={handleCreateNew}
+            >
+              Criar Cifra
+            </button>
+          </div>
         </div>
 
         <input
@@ -1213,6 +1231,20 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
             </div>
           </div>
         </div>
+      )}
+
+      {isImportModalOpen && (
+        <SmartChordImportModal
+          isOpen={isImportModalOpen}
+          ministryId={ministryId}
+          repertoireSongs={repertoireSongs}
+          onClose={() => setIsImportModalOpen(false)}
+          onSuccess={(newChord) => {
+            setIsImportModalOpen(false);
+            loadChordsList();
+            handleSelectChord(newChord);
+          }}
+        />
       )}
     </div>
   );

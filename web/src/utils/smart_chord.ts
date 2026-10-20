@@ -65,8 +65,38 @@ export function transposeNote(note: string, semitones: number): string {
   return scale[newIndex];
 }
 
+export const ROOT_REGEX = /^([A-G][#b]?)(.*)$/i;
+export const EXT_REGEX = /^(m|min|maj|M|dim|aug|sus[24]?|add[249]?|[0-9]+|\+|\-|\((b5|#5|b9|#9|9|11|#11|13|b13|5-|5\+)\)|b5|#5|b9|#9|b13|#11|alt|7M|M7)*$/;
+
+export function isMusicalChord(token: string): boolean {
+  if (!token || typeof token !== 'string') return false;
+  const trimmed = token.trim();
+  if (!trimmed) return false;
+
+  const slashParts = trimmed.split('/');
+  if (slashParts.length > 2) return false;
+
+  const mainPart = slashParts[0];
+  const match = mainPart.match(ROOT_REGEX);
+  if (!match) return false;
+
+  const ext = match[2];
+  if (ext && !EXT_REGEX.test(ext)) return false;
+
+  if (slashParts.length === 2) {
+    const bassPart = slashParts[1];
+    if (!bassPart) return false;
+    const isBassRoot = ROOT_REGEX.test(bassPart) && EXT_REGEX.test(bassPart.match(ROOT_REGEX)?.[2] || '');
+    const isNumericExtension = /^[0-9]+$/.test(bassPart);
+    if (!isBassRoot && !isNumericExtension) return false;
+  }
+
+  return true;
+}
+
 function transposeChordSingle(chord: string, semitones: number): string {
-  const match = chord.match(/^([A-G][#b]?)(.*)$/);
+  if (!isMusicalChord(chord)) return chord;
+  const match = chord.match(ROOT_REGEX);
   if (!match) return chord;
   const root = match[1];
   const suffix = match[2];
@@ -75,12 +105,16 @@ function transposeChordSingle(chord: string, semitones: number): string {
 }
 
 /**
- * Transposes a chord string (e.g. C#m7 or C/E) by n semitones.
+ * Transposes a chord string (e.g. C#m7 or C/E) by n semitones safely.
  */
 export function transposeChord(chord: string, semitones: number): string {
-  if (!chord) return '';
+  if (!chord || semitones === 0) return chord;
+  if (!isMusicalChord(chord)) return chord;
   if (chord.includes('/')) {
     const parts = chord.split('/');
+    if (parts.length === 2 && /^[0-9]+$/.test(parts[1])) {
+      return transposeChordSingle(parts[0], semitones) + '/' + parts[1];
+    }
     return parts.map(part => transposeChordSingle(part, semitones)).join('/');
   }
   return transposeChordSingle(chord, semitones);

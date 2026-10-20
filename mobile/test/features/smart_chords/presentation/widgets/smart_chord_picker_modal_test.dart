@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/features/smart_chords/data/smart_chord_repository.dart';
 import 'package:louvaio_mobile/features/smart_chords/data/smart_chord_repertoire_link_repository.dart';
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord.dart';
+import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_import.dart';
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_repertoire_link.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/controllers/smart_chord_providers.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/smart_chord_picker_modal.dart';
@@ -33,6 +34,26 @@ class _FakeChordRepo implements SmartChordRepository {
 
   @override
   Future<void> deleteSmartChord(String id) async {}
+
+  @override
+  Future<SmartChordImportDraft> importPdfDraft(List<int> bytes, String filename) async {
+    return const SmartChordImportDraft(
+      title: 'Draft',
+      content: '',
+      warnings: [],
+      sourceType: 'pdf',
+    );
+  }
+
+  @override
+  Future<SmartChordImportDraft> importTextDraft(String text) async {
+    return const SmartChordImportDraft(
+      title: 'Draft',
+      content: '',
+      warnings: [],
+      sourceType: 'text',
+    );
+  }
 }
 
 class _FakeLinkRepo implements SmartChordRepertoireLinkRepository {

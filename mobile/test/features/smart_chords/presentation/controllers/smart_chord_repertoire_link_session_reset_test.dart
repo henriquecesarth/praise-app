@@ -1,11 +1,10 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/app/providers.dart';
 import 'package:louvaio_mobile/features/smart_chords/data/smart_chord_repertoire_link_repository.dart';
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord.dart';
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_repertoire_link.dart';
-import 'package:louvaio_mobile/features/smart_chords/presentation/controllers/smart_chord_providers.dart';
 
 class _FakeLinkRepository implements SmartChordRepertoireLinkRepository {
   Completer<SmartChordRepertoireLink>? loadCompleter;

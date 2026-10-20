@@ -19,6 +19,8 @@ import {
   SmartChordSongLink,
   SmartChordSongSummary,
   SmartChordRepertoireLink,
+  SmartChordImportDraft,
+  ImportWarning,
   Announcement,
   MemberUnavailability,
   CreateUnavailabilityPayload,
@@ -62,6 +64,8 @@ export type {
   SmartChordSongLink,
   SmartChordSongSummary,
   SmartChordRepertoireLink,
+  SmartChordImportDraft,
+  ImportWarning,
   Announcement,
   MemberUnavailability,
   CreateUnavailabilityPayload,
@@ -1400,6 +1404,49 @@ export const api = {
       return api.updateSmartChord(existing.id, { originalKey, content, songId });
     }
     return api.createSmartChord({ title: 'Cifra Inteligente', originalKey, content, songId });
+  },
+
+  importSmartChordText: async (text: string): Promise<SmartChordImportDraft> => {
+    const response = await fetch(`${API_URL}/smart-chords/import/text`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ text }),
+    });
+    const result = await handleResponse<any>(response);
+    return {
+      title: result.title || '',
+      artistName: result.artist_name || null,
+      originalKey: result.original_key || null,
+      content: result.content || '',
+      warnings: result.warnings || [],
+      sourceType: result.source_type || 'text',
+    };
+  },
+
+  importSmartChordPdf: async (file: File): Promise<SmartChordImportDraft> => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const token = localStorage.getItem('token');
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${API_URL}/smart-chords/import/pdf`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+    const result = await handleResponse<any>(response);
+    return {
+      title: result.title || '',
+      artistName: result.artist_name || null,
+      originalKey: result.original_key || null,
+      content: result.content || '',
+      warnings: result.warnings || [],
+      sourceType: result.source_type || 'pdf',
+    };
   },
 
   // Comentários da Escala

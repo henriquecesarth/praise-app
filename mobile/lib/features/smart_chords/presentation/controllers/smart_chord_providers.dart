@@ -4,6 +4,7 @@ import '../../data/smart_chord_repository.dart';
 import '../../data/smart_chord_repertoire_link_repository.dart';
 import 'smart_chord_detail_controller.dart';
 import 'smart_chord_form_controller.dart';
+import 'smart_chord_import_controller.dart';
 import 'smart_chord_list_controller.dart';
 import 'smart_chord_repertoire_link_controller.dart';
 import 'song_smart_chords_controller.dart';
@@ -51,4 +52,14 @@ final smartChordFormNotifierProvider =
     StateNotifierProvider<SmartChordFormNotifier, SmartChordFormState>((ref) {
   final repository = ref.watch(smartChordRepositoryProvider);
   return SmartChordFormNotifier(repository: repository);
+});
+
+final smartChordImportNotifierProvider =
+    StateNotifierProvider<SmartChordImportNotifier, SmartChordImportState>((ref) {
+  final repository = ref.watch(smartChordRepositoryProvider);
+  final linkRepository = ref.watch(smartChordRepertoireLinkRepositoryProvider);
+  return SmartChordImportNotifier(
+    repository: repository,
+    linkRepository: linkRepository,
+  );
 });
