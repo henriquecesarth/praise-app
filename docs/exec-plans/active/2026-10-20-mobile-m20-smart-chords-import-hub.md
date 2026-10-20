@@ -1,7 +1,7 @@
 # M20 — Smart Chords Import Hub (Phase 1)
 
 ## Status
-PHASE_1_R4_REMEDIATED_PENDING_R5_REVIEW
+PHASE_1_AUTH_HOTFIX_REMEDIATED_PENDING_REVIEW (M20_P1_R5 = PASS, PREDEPLOY_VISUAL = PASS_WITH_AUTHENTICATION_EXCEPTION, AUTHENTICATION_DEFECT = CONFIRMED_AND_REMEDIATED_PENDING_REVIEW)
 
 ## Objective
 Implement Phase 1 of M20: Smart Chords Import Hub across backend, Web, and Flutter mobile, enabling musicians to import digital text-based PDF chord sheets and plain-text (chords-over-lyrics or bracketed) chord sheets into their personal Smart Chords library with interactive preview, manual correction, and optional M19 Repertoire linking.
@@ -57,6 +57,12 @@ Implement Phase 1 of M20: Smart Chords Import Hub across backend, Web, and Flutt
 - [x] Stage 11: M20-P1-R4 HIGH Findings Remediation (`M20-R4-01`, `M20-R4-02`):
   - M20-R4-01: First Lyric Swallowed as Artist — eliminated speculative `hasSubsequentKeyMeta` artist inference on visual line 1. Visual line 1 is only treated as an artist if explicitly labeled (`Artista:`, `Artist:`, `Banda:`, `Por:`, `By:`, `Intérprete:`, `Compositor:`) or separated by spaced dash on title line. Plain lyric lines on visual line 1 are preserved in the musical content with `artist_name = null`. Added synthetic tests 27–31 covering Cases A through E.
   - M20-R4-02: Multi-Word Annotations Diluting Chord Line Classification — updated tokenizers in `smart_chord_normalizer.ts` and `smart_chord_pdf_extractor.ts` to treat parenthesized expressions `\([^()]*\)` and bracketed expressions `\[[^[\]]*\]` as atomic tokens. Multi-word parenthesized performance annotations (e.g., `(cresce marcando)`, `(violão solo)`, `(marca/corte)`) are recognized as single annotation tokens, properly discounted from non-chord counts in `isChordLine`, and preserved intact during chord projection. Complex chords with parentheses (`Cm7(5-)`, `F#m7(b5)`) remain recognized as chords. Added 4 normalizer unit tests and synthetic tests 32–35.
+- [x] Stage 12: M20-P1 Web Import Authentication Hotfix:
+  - Discovered defect: `importSmartChordPdf` in `web/src/api.ts` line 1430 mistakenly read `localStorage.getItem('token')` instead of the canonical `praise_auth_token` key used across the rest of the application.
+  - Remediation: introduced `getAuthHeaders()` in `web/src/api.ts` returning `Authorization: Bearer <praise_auth_token>` and `Accept: application/json` without forcing `Content-Type: application/json`, preserving browser-generated multipart boundary for `FormData`.
+  - Added regression test suite in `web/src/api.test.ts` (canonical auth only, missing token 401 rejection, expired token rejection, text import auth).
+  - Added UI negative test cases in `SmartChordImportModal.test.tsx` (Scenario E: 401 rejection handling, Scenario F: cross-session draft leakage protection).
+  - Real browser reacceptance executed via Playwright with legitimate UI login (`musician_m20@louvaio.test`) and zero synthetic legacy token injection.
 
 ## Verification Evidence
 - **Backend Build & Tests**:
@@ -66,6 +72,7 @@ Implement Phase 1 of M20: Smart Chords Import Hub across backend, Web, and Flutt
   - Feature & Relinking: 63/63 tests pass (`smart_chord.feature.test.ts`, `smart_chord_repertoire_link.test.ts`).
   - All 113 smart chords feature tests pass (100% pass).
   - Security & Repertoire Regression: 23/23 tests pass (`RepertoireRepository.test.ts`, `idor-security.test.ts`).
+  - Middleware & Anti-IDOR: 18/18 tests pass (`auth-security.test.ts`, `quota-enforcement.test.ts`).
   - Real PDF Validation (`Certeza.pdf`):
     - Title: `Certeza (Canção de Jó)` — PASS
     - Artist: `Héber Bragança` — PASS
@@ -76,8 +83,10 @@ Implement Phase 1 of M20: Smart Chords Import Hub across backend, Web, and Flutt
     - Zero `UNKNOWN_CHORD_TOKEN` or `METADATA_AMBIGUOUS` on canonical PDF — PASS
 - **Web Build & Tests**:
   - `npm --prefix web run build` — PASS (Vite production build succeeds).
-  - Import modal & Workspace: `SmartChordImportModal.test.tsx` (11 tests, including Scenarios A-D), `SmartChordsWorkspace.test.tsx` (9 tests).
-  - Full Web Test Suite: 25 test files passed, 418 tests passed (100% pass).
+  - Import modal & Workspace: `SmartChordImportModal.test.tsx` (13 tests, including Scenarios A-F), `SmartChordsWorkspace.test.tsx` (9 tests).
+  - API Client Regression: `api.test.ts` (31 tests, including canonical auth & 401 negative cases).
+  - Full Web Test Suite: 25 test files passed, 424 tests passed (100% pass, up from 418).
+  - Real Browser Reacceptance: PASS (clean UI login, zero synthetic token injection, authenticated PDF extraction, safe cancel without writes, personal chord creation, transposition in workspace).
 - **Mobile Analyzer & Tests**:
   - `flutter analyze` in `mobile/` — `No issues found! (0 errors, 0 warnings, 0 infos)`.
   - Transposition safety: `smart_chord_parser_transposition_safety_test.dart` (4 tests pass).
