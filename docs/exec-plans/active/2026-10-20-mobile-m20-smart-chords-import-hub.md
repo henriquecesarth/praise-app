@@ -1,7 +1,7 @@
 # M20 — Smart Chords Import Hub (Phase 1)
 
 ## Status
-PHASE_1_REMEDIATED_REAL_PDF_VERIFIED
+PHASE_1_R3_REMEDIATED_PENDING_R4_REVIEW
 
 ## Objective
 Implement Phase 1 of M20: Smart Chords Import Hub across backend, Web, and Flutter mobile, enabling musicians to import digital text-based PDF chord sheets and plain-text (chords-over-lyrics or bracketed) chord sheets into their personal Smart Chords library with interactive preview, manual correction, and optional M19 Repertoire linking.
@@ -47,21 +47,29 @@ Implement Phase 1 of M20: Smart Chords Import Hub across backend, Web, and Flutt
   - REALPDF_03_REPEAT_STRUCTURE: Repeat progression lines containing `||:`, `:||`, `%`, or multiple `|` separated from following vocalises (`Uh uh uh...`), preserving repeat delimiters, barlines, and simile markers intact. Emits `REPEAT_STRUCTURE_AMBIGUOUS` warning.
   - REALPDF_04_CHORD_ALIGNMENT: Replaced blind Euclidean nearest character slicing with word-boundary snapping (`words[wIdx].startIdx`) when chord is within the first 45% of word width, preventing mid-word slices (`s[A7M/9]ei`, `tudo p[D9]odes`). Emits `CHORD_ALIGNMENT_UNCERTAIN` warning when chord lands on later syllables.
   - Added synthetic regression tests 12-17 in `smart_chord_pdf_extractor.test.ts`.
+- [x] Stage 10: M20-P1-R3 Targeted Findings Remediation (`M20-R3-01` through `M20-R3-06`):
+  - M20-R3-01: Metadata False Positives — replaced greedy regex with strict spaced dash delimiters (` – `, ` — `, ` - `) and explicit prefixes (`Artista:`, `Artist:`, `Banda:`, `Por:`, `By:`, `Intérprete:`, `Compositor:`). Emits `METADATA_AMBIGUOUS` on ambiguous headers (multiple dashes or version subtitles). Plain words `por` and `by` in titles (e.g. `Salvo por Amor`, `Stand by Me`) are preserved without splitting.
+  - M20-R3-02 / M20-R3-03: Annotation Token Order Preservation & Multi-Token Annotations — replaced end-of-line dumping with position-aware relative horizontal ordering of chords, barlines (`|`), and parenthesized performance annotations. Adjacent parenthesized tokens are consolidated (`(cresce marcando)`). Single barlines are preserved.
+  - M20-R3-04: Non-Chord Token Discard & Warning Emission — unrecognized chord-like tokens on chord lines emit `UNKNOWN_CHORD_TOKEN` warning with offending token, while preserving the token wrapped in brackets. Ordinary lyrics remain warning-free.
+  - M20-R3-05: Single Barline Preservation in Chord-Over-Lyric Lines — measure barlines (`|`) occurring on chord-over-lyric lines are preserved inline without dropping.
+  - M20-R3-06: Unlabeled First Lyric Line Preservation — eliminated speculative `lineIdx === 1` artist consumption. Unlabeled line 1 is only recognized as artist when preceded by title and supported by subsequent key metadata (`Tom:` / `Key:`); otherwise preserved in musical body.
+  - Added synthetic regression tests 18–26 in `smart_chord_pdf_extractor.test.ts`.
 
 ## Verification Evidence
 - **Backend Build & Tests**:
   - `npm --prefix backend run build` — PASS (zero errors).
-  - Normalizer & PDF Extractor: 28/28 tests pass (`smart_chord_normalizer.test.ts`, `smart_chord_pdf_extractor.test.ts`).
+  - Normalizer & PDF Extractor: 37/37 tests pass (`smart_chord_normalizer.test.ts`, `smart_chord_pdf_extractor.test.ts`).
   - Feature & Relinking: 63/63 tests pass (`smart_chord.feature.test.ts`, `smart_chord_repertoire_link.test.ts`).
-  - All 91 smart chords feature tests pass (100% pass).
+  - All 100 smart chords feature tests pass (100% pass).
   - Security & Repertoire Regression: 23/23 tests pass (`RepertoireRepository.test.ts`, `idor-security.test.ts`).
   - Real PDF Validation (`Certeza.pdf`):
     - Title: `Certeza (Canção de Jó)` — PASS
     - Artist: `Héber Bragança` — PASS
-    - Key: `A` — PASS
     - Repeat blocks preserved: 4/4 (`||:`, `|`, `%`, `:||`) — PASS
-    - Inline annotations preserved: 7/7 (`(todos)`, `(violão/pad)`, `(marca/corte)`, `(cresce marcando)`, `(cresc/corte)`, `(riff viol)`, `(gaita)`) — PASS
+    - Inline annotations preserved: 9 total (`(todos)`, `(riff viol)`, `(violão/pad)`, `(marca/corte)`, `(cresce marcando)`, `(gaita)`, `(cresc/corte)`, `(Violao/Perc marcando)`, `(volta crescendo todos)`) — PASS
     - Chord occurrences preserved: 108/108 (100%) — PASS
+    - Expected warnings emitted: `REPEAT_STRUCTURE_AMBIGUOUS`, `CHORD_ALIGNMENT_UNCERTAIN` — PASS
+    - Zero `UNKNOWN_CHORD_TOKEN` or `METADATA_AMBIGUOUS` on canonical PDF — PASS
 - **Web Build & Tests**:
   - `npm --prefix web run build` — PASS (Vite production build succeeds).
   - Import modal & Workspace: `SmartChordImportModal.test.tsx` (11 tests, including Scenarios A-D), `SmartChordsWorkspace.test.tsx` (9 tests).
@@ -72,6 +80,6 @@ Implement Phase 1 of M20: Smart Chords Import Hub across backend, Web, and Flutt
   - Import controller: `smart_chord_import_controller_test.dart` (7 tests pass).
   - Import screen widget: `smart_chord_import_screen_test.dart` (2 tests pass).
   - Full Smart Chords Mobile Suite: `flutter test test/features/smart_chords/` — 111 tests passed (100% pass).
+  - Full Mobile Test Suite: `flutter test` — 773 tests passed (100% pass).
 - **Repository Integrity**:
   - `git diff --check` — PASS (clean).
-
