@@ -557,20 +557,8 @@ export async function extractSmartChordDraftFromPdf(buffer: Buffer): Promise<Sma
             continue;
           }
 
-          // Positional lyric preservation with supporting metadata check:
-          // An unlabeled line 1 is only identified as artist if supported by subsequent metadata (e.g. Tom: A).
-          // Otherwise, plain lyrics on line 1 are preserved in the musical body.
-          if (title && !artistName && lineIdx === 1 && !isChordLine(lineText) && !SECTION_HEADER_REGEX.test(lineText)) {
-            const hasSubsequentKeyMeta = visualLines.slice(2, 6).some(l => {
-              const lt = l.items.map(i => i.text).join(' ').trim();
-              return /^(?:Tom|Key|Tom\s+Original):\s*([A-G][#b]?(?:m|maj|min)?)/i.test(lt);
-            });
-            if (hasSubsequentKeyMeta && lineText.length < 50 && !/^\s*\([^()]*\)\s*$/.test(lineText) && !isRepeatProgressionLine(lineText)) {
-              artistName = lineText.trim();
-              lineIdx++;
-              continue;
-            }
-          }
+          // Unlabeled line 1 is never consumed as artist solely by position or key metadata.
+          // Plain lyrics or annotations on line 1 are preserved in the musical body.
         }
 
         // Check for section header

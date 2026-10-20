@@ -16,7 +16,7 @@ describe('Smart Chord PDF Extractor Test Suite (Synthetic Fixtures)', () => {
     const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
       const page = doc.addPage([595, 842]); // A4
       page.drawText('Certeza (Canção de Jó)', { x: 50, y: 800, size: 16, font });
-      page.drawText('Héber Bragança', { x: 50, y: 780, size: 12, font });
+      page.drawText('Artista: Héber Bragança', { x: 50, y: 780, size: 12, font });
       page.drawText('Tom: A', { x: 50, y: 760, size: 10, font });
       page.drawText('||: A9 | A7M/9 | D9 | % :||', { x: 50, y: 730, size: 11, font });
       page.drawText('(violão/pad)', { x: 50, y: 705, size: 10, font });
