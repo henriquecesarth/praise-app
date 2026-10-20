@@ -363,16 +363,22 @@ const getCleanApiUrl = (): string => {
 export const DEFAULT_MINISTRY_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
 export const API_URL = getCleanApiUrl();
 
-const getHeaders = () => {
+export const getAuthHeaders = (): Record<string, string> => {
   const token = localStorage.getItem('praise_auth_token');
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
     'Accept': 'application/json',
   };
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
   return headers;
+};
+
+export const getHeaders = () => {
+  return {
+    ...getAuthHeaders(),
+    'Content-Type': 'application/json',
+  };
 };
 
 const handleResponse = async <T>(response: Response): Promise<T> => {
@@ -1427,15 +1433,9 @@ export const api = {
     const formData = new FormData();
     formData.append('file', file);
 
-    const token = localStorage.getItem('token');
-    const headers: Record<string, string> = {};
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-
     const response = await fetch(`${API_URL}/smart-chords/import/pdf`, {
       method: 'POST',
-      headers,
+      headers: getAuthHeaders(),
       body: formData,
     });
     const result = await handleResponse<any>(response);
