@@ -423,7 +423,7 @@ export async function extractSmartChordDraftFromPdf(buffer: Buffer): Promise<Sma
             continue;
           }
 
-          const artistMatch = lineText.match(/^(?:Artista|Artist|Banda):\s*(.+)$/i);
+          const artistMatch = lineText.match(/^(?:Artista|Artist|Banda|Por|By|Intérprete|Interprete|Compositor):\s*(.+)$/i);
           if (artistMatch) {
             artistName = artistMatch[1].trim();
             lineIdx++;
@@ -437,29 +437,52 @@ export async function extractSmartChordDraftFromPdf(buffer: Buffer): Promise<Sma
             continue;
           }
 
-          // In standard single-line header (e.g. Certeza (Canção de Jó) – Héber Bragança)
+          // In standard single-line header on first visual line
           if (!title && lineIdx === 0 && !isChordLine(lineText) && !SECTION_HEADER_REGEX.test(lineText)) {
-            // Check for title - artist separator like "Title – Artist", "Title — Artist", "Title - Artist"
-            // Requires spaces around the dash to avoid splitting hyphenated words
-            const splitMatch = lineText.match(/^(.+?)\s+([–—-]|by|por)\s+(.+)$/i);
-            if (splitMatch) {
-              title = splitMatch[1].trim();
-              artistName = splitMatch[3].trim();
+            // Check for explicit spaced dash: "Title – Artist", "Title — Artist", "Title - Artist"
+            // Note: plain words "por" or "by" inside ordinary text are NOT artist separators.
+            const dashMatches = lineText.split(/\s+[–—-]\s+/);
+            if (dashMatches.length === 2) {
+              const left = dashMatches[0].trim();
+              const right = dashMatches[1].trim();
+
+              // Check if right side is an arrangement or version note rather than an artist name
+              const isVersionSubtitle = /^\(?(?:versão|versao|ao vivo|playback|acústico|acustico|acoustic|live|cover|instrumental|parte\s*\d+|part\s*\d+)/i.test(right);
+              if (isVersionSubtitle) {
+                title = lineText.trim();
+                warnings.push({
+                  code: 'METADATA_AMBIGUOUS',
+                  message: 'Cabeçalho com subtítulo mantido no título: verifique se título e artista foram identificados corretamente.',
+                });
+              } else {
+                title = left;
+                artistName = right;
+              }
+            } else if (dashMatches.length > 2) {
+              // Ambiguous multiple dashes: preserve first as title, remainder as artist with warning
+              title = dashMatches[0].trim();
+              artistName = dashMatches.slice(1).join(' - ').trim();
+              warnings.push({
+                code: 'METADATA_AMBIGUOUS',
+                message: 'Cabeçalho com múltiplos separadores: verifique se título e artista foram identificados corretamente.',
+              });
             } else {
-              title = lineText.trim();
+              // No spaced dash: check explicit "by:" or "por:" with colon
+              const explicitPor = lineText.match(/^(.+?)\s+(?:por|by):\s*(.+)$/i);
+              if (explicitPor) {
+                title = explicitPor[1].trim();
+                artistName = explicitPor[2].trim();
+              } else {
+                title = lineText.trim();
+              }
             }
             lineIdx++;
             continue;
           }
 
-          if (title && !artistName && lineIdx === 1 && !isChordLine(lineText) && !SECTION_HEADER_REGEX.test(lineText)) {
-            // Only treat line 1 as artist if it's NOT a parenthesized annotation and NOT a repeat/progression structure
-            if (!/^\s*\(.*?\)\s*$/.test(lineText) && !isRepeatProgressionLine(lineText)) {
-              artistName = lineText.trim();
-              lineIdx++;
-              continue;
-            }
-          }
+          // Positional lyric preservation:
+          // Never swallow unlabeled line 1 as artist solely by line index.
+          // Plain lyrics on line 1 are preserved in the musical body.
         }
 
         // Check for section header

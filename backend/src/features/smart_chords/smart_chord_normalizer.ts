@@ -179,7 +179,7 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
       continue;
     }
 
-    const artistMatch = trimmed.match(/^(?:Artista|Artist|Banda):\s*(.+)$/i);
+    const artistMatch = trimmed.match(/^(?:Artista|Artist|Banda|Por|By|Intérprete|Interprete|Compositor):\s*(.+)$/i);
     if (artistMatch) {
       artistName = artistMatch[1].trim();
       i++;
