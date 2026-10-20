@@ -230,4 +230,92 @@ describe('Smart Chord PDF Extractor Test Suite (Synthetic Fixtures)', () => {
     expect(draft.content).toContain('[D]');
     expect(draft.content).toContain('[A/C#]');
   });
+
+  it('12. METADATA_TITLE_ARTIST_SPLIT_TEST: Splits single-line title and artist across spaced dash without losing parentheses', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Meu Louvor (Canção Eterna) – João da Silva', { x: 50, y: 800, size: 14, font });
+      page.drawText('C            G', { x: 50, y: 760, size: 11, font });
+      page.drawText('Glória seja dada ao Senhor', { x: 50, y: 745, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.title).toBe('Meu Louvor (Canção Eterna)');
+    expect(draft.artist_name).toBe('João da Silva');
+    expect(draft.content).toContain('[C]Glória');
+  });
+
+  it('13. PERFORMANCE_NOTE_NOT_ARTIST_TEST: Line 1 parenthesized note is retained in content and not used as artist', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Título: Canção Com Coral', { x: 50, y: 800, size: 14, font });
+      page.drawText('(todos cantam)', { x: 50, y: 780, size: 10, font });
+      page.drawText('D            A', { x: 50, y: 750, size: 11, font });
+      page.drawText('Santo é o Cordeiro', { x: 50, y: 735, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.title).toBe('Canção Com Coral');
+    expect(draft.artist_name).toBeNull();
+    expect(draft.content).toContain('(todos cantam)');
+    expect(draft.content).toContain('[D]Santo');
+  });
+
+  it('14. MIXED_CHORD_ANNOTATION_TEST & NON_CHORD_TOKEN_PRESERVATION: Preserves inline performance directions on chord lines', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Título: Canção Com Corte', { x: 50, y: 800, size: 14, font });
+      page.drawText('F#m   E9   D9   (marca/corte)', { x: 50, y: 760, size: 11, font });
+      page.drawText('E eu sei que vais me guardar', { x: 50, y: 745, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.content).toContain('[F#m]');
+    expect(draft.content).toContain('[E9]');
+    expect(draft.content).toContain('[D9]');
+    expect(draft.content).toContain('(marca/corte)');
+    expect(draft.content).not.toContain('[(marca/corte)]');
+    expect(draft.content).toMatch(/me guardar.*\(marca\/corte\)/);
+  });
+
+  it('15. REPEAT_FOLLOWED_BY_VOCALISE_TEST & BARLINE_PRESERVATION: Keeps repeat delimiters, barlines, and simile markers intact', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Título: Canto Com Vocalise', { x: 50, y: 800, size: 14, font });
+      page.drawText('||: A9 | A7M/9 | D9 | % :||', { x: 50, y: 760, size: 11, font });
+      page.drawText('Uh uh uh uh uh uh uh uh uh uh pa pa pa ra', { x: 50, y: 745, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.content).toContain('||: [A9] | [A7M/9] | [D9] | % :||');
+    expect(draft.content).toContain('Uh uh uh uh uh uh uh uh uh uh pa pa pa ra');
+    expect(draft.warnings.some(w => w.code === 'REPEAT_STRUCTURE_AMBIGUOUS')).toBe(true);
+  });
+
+  it('16. WORD_BOUNDARY_CHORD_ANCHOR_TEST: Snaps chord positioned near word start to word boundary instead of mid-word slice', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Título: Alinhamento Palavra', { x: 50, y: 800, size: 14, font });
+      page.drawText('A9   A7M/9', { x: 45, y: 760, size: 11, font });
+      page.drawText('Eu sei que tudo podes', { x: 50, y: 745, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.content).toContain('[A9]Eu');
+    expect(draft.content).toContain('[A7M/9]sei');
+    expect(draft.content).not.toContain('s[A7M/9]ei');
+  });
+
+  it('17. INTENTIONAL_INTRA_WORD_CHORD_TEST & IMPORT_WARNINGS_ACCURACY_TEST: Retains intra-word chord and emits CHORD_ALIGNMENT_UNCERTAIN warning', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Título: Cifra com Sílaba Tônica', { x: 50, y: 800, size: 14, font });
+      page.drawText('D', { x: 115, y: 760, size: 11, font });
+      page.drawText('Deus maravilhoso e digno', { x: 50, y: 745, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.content).toContain('[D]');
+    expect(draft.warnings.some(w => w.code === 'CHORD_ALIGNMENT_UNCERTAIN')).toBe(true);
+  });
 });
