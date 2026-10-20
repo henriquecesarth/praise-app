@@ -1,7 +1,7 @@
 # M20 — Smart Chords Import Hub (Phase 1)
 
 ## Status
-PHASE_1_R3_REMEDIATED_PENDING_R4_REVIEW
+PHASE_1_R4_REMEDIATED_PENDING_R5_REVIEW
 
 ## Objective
 Implement Phase 1 of M20: Smart Chords Import Hub across backend, Web, and Flutter mobile, enabling musicians to import digital text-based PDF chord sheets and plain-text (chords-over-lyrics or bracketed) chord sheets into their personal Smart Chords library with interactive preview, manual correction, and optional M19 Repertoire linking.
@@ -54,13 +54,17 @@ Implement Phase 1 of M20: Smart Chords Import Hub across backend, Web, and Flutt
   - M20-R3-05: Single Barline Preservation in Chord-Over-Lyric Lines — measure barlines (`|`) occurring on chord-over-lyric lines are preserved inline without dropping.
   - M20-R3-06: Unlabeled First Lyric Line Preservation — eliminated speculative `lineIdx === 1` artist consumption. Unlabeled line 1 is only recognized as artist when preceded by title and supported by subsequent key metadata (`Tom:` / `Key:`); otherwise preserved in musical body.
   - Added synthetic regression tests 18–26 in `smart_chord_pdf_extractor.test.ts`.
+- [x] Stage 11: M20-P1-R4 HIGH Findings Remediation (`M20-R4-01`, `M20-R4-02`):
+  - M20-R4-01: First Lyric Swallowed as Artist — eliminated speculative `hasSubsequentKeyMeta` artist inference on visual line 1. Visual line 1 is only treated as an artist if explicitly labeled (`Artista:`, `Artist:`, `Banda:`, `Por:`, `By:`, `Intérprete:`, `Compositor:`) or separated by spaced dash on title line. Plain lyric lines on visual line 1 are preserved in the musical content with `artist_name = null`. Added synthetic tests 27–31 covering Cases A through E.
+  - M20-R4-02: Multi-Word Annotations Diluting Chord Line Classification — updated tokenizers in `smart_chord_normalizer.ts` and `smart_chord_pdf_extractor.ts` to treat parenthesized expressions `\([^()]*\)` and bracketed expressions `\[[^[\]]*\]` as atomic tokens. Multi-word parenthesized performance annotations (e.g., `(cresce marcando)`, `(violão solo)`, `(marca/corte)`) are recognized as single annotation tokens, properly discounted from non-chord counts in `isChordLine`, and preserved intact during chord projection. Complex chords with parentheses (`Cm7(5-)`, `F#m7(b5)`) remain recognized as chords. Added 4 normalizer unit tests and synthetic tests 32–35.
 
 ## Verification Evidence
 - **Backend Build & Tests**:
   - `npm --prefix backend run build` — PASS (zero errors).
-  - Normalizer & PDF Extractor: 37/37 tests pass (`smart_chord_normalizer.test.ts`, `smart_chord_pdf_extractor.test.ts`).
+  - Normalizer: 15/15 tests pass (`smart_chord_normalizer.test.ts`).
+  - PDF Extractor: 35/35 tests pass (`smart_chord_pdf_extractor.test.ts`).
   - Feature & Relinking: 63/63 tests pass (`smart_chord.feature.test.ts`, `smart_chord_repertoire_link.test.ts`).
-  - All 100 smart chords feature tests pass (100% pass).
+  - All 113 smart chords feature tests pass (100% pass).
   - Security & Repertoire Regression: 23/23 tests pass (`RepertoireRepository.test.ts`, `idor-security.test.ts`).
   - Real PDF Validation (`Certeza.pdf`):
     - Title: `Certeza (Canção de Jó)` — PASS
