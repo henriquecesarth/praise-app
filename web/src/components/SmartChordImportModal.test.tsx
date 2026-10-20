@@ -478,5 +478,72 @@ describe('SmartChordImportModal Component', () => {
       expect(screen.queryByText('Corrupted stream')).toBeNull();
       expect(screen.queryByText(/Falha ao processar o arquivo PDF/i)).toBeNull();
     });
+
+    it('Scenario E: 401 unauthenticated / expired session displays controlled error message and remains in input step', async () => {
+      importSmartChordPdf.mockRejectedValueOnce(new Error('Sessão inválida ou expirada. Faça login novamente.'));
+
+      render(
+        <SmartChordImportModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onSuccess={mockOnSuccess}
+        />
+      );
+
+      const pdfFile = new File(['valid-content'], 'test.pdf', { type: 'application/pdf' });
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      fireEvent.change(input, { target: { files: [pdfFile] } });
+      fireEvent.click(screen.getByText('Analisar e Pré-visualizar PDF'));
+
+      expect(await screen.findByText(/Sessão inválida ou expirada\. Faça login novamente\./i)).toBeInTheDocument();
+      expect(screen.getByText('Analisar e Pré-visualizar PDF')).toBeInTheDocument();
+      expect(screen.queryByText('Salvar Cifra Pessoal')).toBeNull();
+    });
+
+    it('Scenario F: session / ministry switch while PDF import in-flight discards stale draft and protects against cross-session draft leakage', async () => {
+      const defPdf = deferred<any>();
+      importSmartChordPdf.mockReturnValueOnce(defPdf.promise);
+
+      const { rerender } = render(
+        <SmartChordImportModal
+          isOpen={true}
+          ministryId="ministry-session-1"
+          onClose={mockOnClose}
+          onSuccess={mockOnSuccess}
+        />
+      );
+
+      const pdfFile = new File(['content'], 'test.pdf', { type: 'application/pdf' });
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      fireEvent.change(input, { target: { files: [pdfFile] } });
+      fireEvent.click(screen.getByText('Analisar e Pré-visualizar PDF'));
+
+      expect(screen.getByText(/Analisando estrutura harmônica/i)).toBeInTheDocument();
+
+      // Ministry / session switches while request in flight
+      rerender(
+        <SmartChordImportModal
+          isOpen={true}
+          ministryId="ministry-session-2"
+          onClose={mockOnClose}
+          onSuccess={mockOnSuccess}
+        />
+      );
+
+      // In-flight resolves now
+      defPdf.resolve({
+        title: 'Leaked Stale Song',
+        artistName: 'Old Session Artist',
+        originalKey: 'C',
+        content: '[C]Stale',
+        warnings: [],
+        sourceType: 'pdf',
+      });
+
+      await new Promise((r) => setTimeout(r, 50));
+
+      expect(screen.queryByDisplayValue('Leaked Stale Song')).toBeNull();
+      expect(screen.getByText('Clique para selecionar um arquivo PDF')).toBeInTheDocument();
+    });
   });
 });

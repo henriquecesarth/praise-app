@@ -460,6 +460,123 @@ describe('API Client & Structured Error Handling', () => {
       expect(result).toHaveLength(1);
       expect(result[0].title).toBe('Minha Cifra');
     });
+
+    describe('SmartChord Import Hub API Client', () => {
+      beforeEach(() => {
+        localStorage.clear();
+      });
+
+      it('importSmartChordPdf envia FormData com autenticação canônica praise_auth_token e sem token legado', async () => {
+        localStorage.setItem('praise_auth_token', 'canonical-user-token-xyz');
+        localStorage.removeItem('token');
+
+        const mockResponse = {
+          title: 'Certeza (Canção de Jó)',
+          artist_name: 'Héber Bragança',
+          original_key: 'A',
+          content: '||: [A] | [A7M] | [D] | % :||',
+          warnings: [{ code: 'REPEAT_STRUCTURE_AMBIGUOUS', message: 'Progressão com repetição mantida' }],
+          source_type: 'pdf',
+        };
+
+        const fetchSpy = vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          text: vi.fn().mockResolvedValue(JSON.stringify(mockResponse)),
+        } as any);
+        global.fetch = fetchSpy;
+
+        const fakePdf = new File(['fake-pdf-content'], 'Certeza.pdf', { type: 'application/pdf' });
+        const draft = await api.importSmartChordPdf(fakePdf);
+
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        const [url, init] = fetchSpy.mock.calls[0];
+        expect(url).toMatch(/\/smart-chords\/import\/pdf$/);
+        expect(init.method).toBe('POST');
+
+        // Headers checks
+        expect(init.headers['Authorization']).toBe('Bearer canonical-user-token-xyz');
+        expect(init.headers['Accept']).toBe('application/json');
+        expect(init.headers['Content-Type']).toBeUndefined(); // Never force JSON on multipart FormData
+
+        // Body checks
+        expect(init.body).toBeInstanceOf(FormData);
+        expect((init.body as FormData).get('file')).toBe(fakePdf);
+
+        // Result mapped properly
+        expect(draft).toEqual({
+          title: 'Certeza (Canção de Jó)',
+          artistName: 'Héber Bragança',
+          originalKey: 'A',
+          content: '||: [A] | [A7M] | [D] | % :||',
+          warnings: [{ code: 'REPEAT_STRUCTURE_AMBIGUOUS', message: 'Progressão com repetição mantida' }],
+          sourceType: 'pdf',
+        });
+      });
+
+      it('importSmartChordPdf falha com ApiError 401 controlado quando não há autenticação', async () => {
+        localStorage.removeItem('praise_auth_token');
+        localStorage.removeItem('token');
+
+        const fetchSpy = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 401,
+          text: vi.fn().mockResolvedValue(JSON.stringify({ error: { message: 'Token de autenticação não fornecido.' } })),
+        } as any);
+        global.fetch = fetchSpy;
+
+        const fakePdf = new File(['fake-pdf-content'], 'test.pdf', { type: 'application/pdf' });
+        await expect(api.importSmartChordPdf(fakePdf)).rejects.toThrow('Token de autenticação não fornecido.');
+
+        const [, init] = fetchSpy.mock.calls[0];
+        expect(init.headers['Authorization']).toBeUndefined();
+      });
+
+      it('importSmartChordPdf propaga 401 controlado quando o token expira', async () => {
+        localStorage.setItem('praise_auth_token', 'expired-token');
+
+        const fetchSpy = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 401,
+          text: vi.fn().mockResolvedValue(JSON.stringify({ error: { message: 'Sessão inválida ou expirada. Faça login novamente.' } })),
+        } as any);
+        global.fetch = fetchSpy;
+
+        const fakePdf = new File(['fake-pdf-content'], 'test.pdf', { type: 'application/pdf' });
+        await expect(api.importSmartChordPdf(fakePdf)).rejects.toThrow('Sessão inválida ou expirada. Faça login novamente.');
+      });
+
+      it('importSmartChordText envia JSON com autenticação canônica praise_auth_token e Content-Type application/json', async () => {
+        localStorage.setItem('praise_auth_token', 'canonical-user-token-xyz');
+
+        const mockResponse = {
+          title: 'Minha Cifra em Texto',
+          artist_name: 'Autor',
+          original_key: 'G',
+          content: '[G]Graças Te dou',
+          warnings: [],
+          source_type: 'text',
+        };
+
+        const fetchSpy = vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          text: vi.fn().mockResolvedValue(JSON.stringify(mockResponse)),
+        } as any);
+        global.fetch = fetchSpy;
+
+        const draft = await api.importSmartChordText('G\nGraças Te dou');
+
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        const [url, init] = fetchSpy.mock.calls[0];
+        expect(url).toMatch(/\/smart-chords\/import\/text$/);
+        expect(init.method).toBe('POST');
+        expect(init.headers['Authorization']).toBe('Bearer canonical-user-token-xyz');
+        expect(init.headers['Content-Type']).toBe('application/json');
+        expect(JSON.parse(init.body)).toEqual({ text: 'G\nGraças Te dou' });
+        expect(draft.sourceType).toBe('text');
+      });
+    });
   });
 
   describe('Announcements API Client', () => {
