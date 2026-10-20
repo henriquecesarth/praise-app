@@ -129,4 +129,34 @@ describe('Smart Chord Normalizer & Chord Grammar Test Suite', () => {
       expect(draft.warnings.some(w => w.code === 'MISSING_ORIGINAL_KEY')).toBe(true);
     });
   });
+
+  describe('4. Annotation-Aware Chord Line Classification (M20-R4-02)', () => {
+    it('classifies chord lines containing multi-word parenthesized annotations as chord lines', () => {
+      expect(isChordLine('A9 (cresce marcando) D9')).toBe(true);
+      expect(isChordLine('A9 (violão solo) D9')).toBe(true);
+      expect(isChordLine('A9 (marca/corte) D9')).toBe(true);
+      expect(isChordLine('A9 (parada geral) D9')).toBe(true);
+      expect(isChordLine('A9 (cresce marcando) D9 (corte)')).toBe(true);
+      expect(isChordLine('A9 (violão solo)')).toBe(true);
+      expect(isChordLine('A7M/9 (cresce marcando) D/F#')).toBe(true);
+      expect(isChordLine('Cm7(5-) (violão solo) F#m7(b5)')).toBe(true);
+    });
+
+    it('rejects ordinary lyric lines containing parenthesized phrases', () => {
+      expect(isChordLine('Eu canto (com alegria) nesta manhã')).toBe(false);
+      expect(isChordLine('(todos cantando)')).toBe(false);
+      expect(isChordLine('A promessa (que espero) permanece')).toBe(false);
+    });
+
+    it('handles incomplete or malformed parentheses safely without silent crash', () => {
+      expect(isChordLine('A9 (cresce marcando D9')).toBe(false);
+    });
+
+    it('preserves multi-word annotations on chord-over-lyric lines during plain text import', () => {
+      const input = 'A9          (cresce marcando)          D9\nEu sei que tudo vais fazer';
+      const draft = normalizeChordText(input);
+      expect(draft.content).toContain('[A9]');
+      expect(draft.content).toContain('[D9]');
+    });
+  });
 });

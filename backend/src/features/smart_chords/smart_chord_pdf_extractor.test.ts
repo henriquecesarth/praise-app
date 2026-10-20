@@ -483,4 +483,158 @@ describe('Smart Chord PDF Extractor Test Suite (Synthetic Fixtures)', () => {
     expect(unknownWarning).toBeDefined();
     expect(unknownWarning!.message).toContain('H7');
   });
+
+  it('27. FIRST_LYRIC_FOLLOWED_BY_TOM_META_TEST (Case A): Preserves first lyric and does not swallow as artist when Tom: appears', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Minha Canção', { x: 50, y: 800, size: 14, font });
+      page.drawText('Quando amanhece eu volto a cantar', { x: 50, y: 780, size: 11, font });
+      page.drawText('Tom: A', { x: 50, y: 760, size: 10, font });
+      page.drawText('D            A', { x: 50, y: 740, size: 11, font });
+      page.drawText('Ao Teu santo nome Senhor', { x: 50, y: 725, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.title).toBe('Minha Canção');
+    expect(draft.artist_name).toBeNull();
+    expect(draft.original_key).toBe('A');
+    expect(draft.content).toContain('Quando amanhece eu volto a cantar');
+    expect(draft.content).toContain('[D]Ao Teu [A]santo nome Senhor');
+  });
+
+  it('28. SHORT_FIRST_LYRIC_FOLLOWED_BY_KEY_META_TEST (Case B): Preserves short first lyric when Key: appears below', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Meu Refúgio', { x: 50, y: 800, size: 14, font });
+      page.drawText('Santo, Santo', { x: 50, y: 780, size: 11, font });
+      page.drawText('Key: D', { x: 50, y: 760, size: 10, font });
+      page.drawText('G            C', { x: 50, y: 740, size: 11, font });
+      page.drawText('Digno de glória', { x: 50, y: 725, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.title).toBe('Meu Refúgio');
+    expect(draft.artist_name).toBeNull();
+    expect(draft.original_key).toBe('D');
+    expect(draft.content).toContain('Santo, Santo');
+    expect(draft.content).toContain('[G]Digno de [C]glória');
+  });
+
+  it('29. EXPLICIT_ARTIST_LABEL_ON_SEPARATE_LINE_TEST (Case C): Extracts artist when explicit Artista: label is present', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Canção de Exemplo', { x: 50, y: 800, size: 14, font });
+      page.drawText('Artista: Nome Exemplo', { x: 50, y: 780, size: 11, font });
+      page.drawText('Tom: A', { x: 50, y: 760, size: 10, font });
+      page.drawText('D            A', { x: 50, y: 740, size: 11, font });
+      page.drawText('Ao Teu nome', { x: 50, y: 725, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.title).toBe('Canção de Exemplo');
+    expect(draft.artist_name).toBe('Nome Exemplo');
+    expect(draft.original_key).toBe('A');
+    expect(draft.content).toContain('[D]Ao Teu [A]nome');
+  });
+
+  it('30. COMBINED_TITLE_SPACED_DASH_WITH_ANNOTATION_AND_KEY_TEST (Case D): Preserves combined title-artist and annotation', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Minha Canção – Artista Exemplo', { x: 50, y: 800, size: 14, font });
+      page.drawText('(todos)', { x: 50, y: 780, size: 10, font });
+      page.drawText('Tom: A', { x: 50, y: 760, size: 10, font });
+      page.drawText('D            A', { x: 50, y: 740, size: 11, font });
+      page.drawText('Ao Teu nome', { x: 50, y: 725, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.title).toBe('Minha Canção');
+    expect(draft.artist_name).toBe('Artista Exemplo');
+    expect(draft.original_key).toBe('A');
+    expect(draft.content).toContain('(todos)');
+    expect(draft.content).toContain('[D]Ao Teu [A]nome');
+  });
+
+  it('31. FIRST_LYRIC_WITHOUT_SECTION_HEADER_NO_KEY_TEST (Case E): Retains first lyric when no key metadata is present', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Canto Matinal', { x: 50, y: 800, size: 14, font });
+      page.drawText('Nas primeiras horas do dia', { x: 50, y: 780, size: 11, font });
+      page.drawText('E            B', { x: 50, y: 750, size: 11, font });
+      page.drawText('Ergo minha voz', { x: 50, y: 735, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.title).toBe('Canto Matinal');
+    expect(draft.artist_name).toBeNull();
+    expect(draft.original_key).toBe('E');
+    expect(draft.content).toContain('Nas primeiras horas do dia');
+    expect(draft.content).toContain('[E]Ergo min[B]ha voz');
+  });
+
+  it('32. PAREN_ANNOTATION_FOLLOWED_BY_KEY_TEST (Case F): Retains parenthesized annotation on line 1 followed by key', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Canto de Esperança', { x: 50, y: 800, size: 14, font });
+      page.drawText('(violão/pad)', { x: 50, y: 780, size: 10, font });
+      page.drawText('Tom: A', { x: 50, y: 760, size: 10, font });
+      page.drawText('D            A', { x: 50, y: 740, size: 11, font });
+      page.drawText('Ao Teu nome', { x: 50, y: 725, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.title).toBe('Canto de Esperança');
+    expect(draft.artist_name).toBeNull();
+    expect(draft.original_key).toBe('A');
+    expect(draft.content).toContain('(violão/pad)');
+  });
+
+  it('33. MULTIWORD_ANNOTATION_CHORD_PROJECTION_TEST (M20-R4-02): Recognizes chord line with multiword annotation and projects in order', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Título: Canção Com Anotação Longa', { x: 50, y: 800, size: 14, font });
+      page.drawText('A9       (cresce marcando)       D9', { x: 50, y: 760, size: 11, font });
+      page.drawText('Eu sei que tudo vais fazer', { x: 50, y: 745, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.content).toContain('[A9]');
+    expect(draft.content).toContain('[D9]');
+    expect(draft.content).toContain('(cresce marcando)');
+    const line = draft.content.split('\n').find(l => l.includes('(cresce marcando)'));
+    expect(line).toBeDefined();
+    const a9Idx = line!.indexOf('[A9]');
+    const cresceIdx = line!.indexOf('(cresce marcando)');
+    const d9Idx = line!.indexOf('[D9]');
+    expect(a9Idx).toBeLessThan(cresceIdx);
+    expect(cresceIdx).toBeLessThan(d9Idx);
+  });
+
+  it('34. COMPLEX_CHORDS_WITH_MULTIWORD_ANNOTATION_TEST: Preserves complex chords alongside multiword annotations', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Título: Harmonia Avançada', { x: 50, y: 800, size: 14, font });
+      page.drawText('Cm7(5-)       (violão solo)       F#m7(b5)', { x: 50, y: 760, size: 11, font });
+      page.drawText('Toda a criação declara Tua glória', { x: 50, y: 745, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.content).toContain('[Cm7(5-)]');
+    expect(draft.content).toContain('(violão solo)');
+    expect(draft.content).toContain('[F#m7(b5)]');
+  });
+
+  it('35. ORDINARY_LYRICS_WITH_PARENS_NOT_CHORD_LINE_TEST: Does not misclassify ordinary lyrics with parens as chord line', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Título: Hino de Louvor', { x: 50, y: 800, size: 14, font });
+      page.drawText('Eu canto (com alegria) nesta manhã', { x: 50, y: 760, size: 11, font });
+      page.drawText('E Te bendigo Senhor', { x: 50, y: 745, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.content).toContain('Eu canto (com alegria) nesta manhã');
+    expect(draft.content).toContain('E Te bendigo Senhor');
+    expect(draft.content).not.toContain('[');
+  });
 });
