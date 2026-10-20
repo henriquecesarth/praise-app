@@ -1,7 +1,7 @@
 # M20 — Smart Chords Import Hub (Phase 1)
 
 ## Status
-PHASE 1 COMPLETE — VERIFIED (Phase 2 Deferred)
+PHASE_1_REMEDIATED_PENDING_R2
 
 ## Objective
 Implement Phase 1 of M20: Smart Chords Import Hub across backend, Web, and Flutter mobile, enabling musicians to import digital text-based PDF chord sheets and plain-text (chords-over-lyrics or bracketed) chord sheets into their personal Smart Chords library with interactive preview, manual correction, and optional M19 Repertoire linking.
@@ -14,15 +14,15 @@ Implement Phase 1 of M20: Smart Chords Import Hub across backend, Web, and Flutt
 - Vercel serverless bounds: MAX_PDF_FILE_SIZE = 3 MiB, MAX_PDF_PAGES = 10, no persistent server storage of uploaded PDFs.
 
 ## Scope
-### In Scope (Phase 1) — DELIVERED
+### In Scope (Phase 1) — DELIVERED & REMEDIATED
 1. Shared format & golden synthetic PDF/text fixtures.
 2. Plain-text chords-over-lyrics normalizer and chord grammar parser (Web, Mobile, Backend).
 3. Transposition safety fix for annotations in Web and Mobile (`isMusicalChord` whitelist verification).
-4. Authenticated backend endpoints `POST /api/v1/smart-chords/import/pdf` (Multer + coordinate-aware `pdfjs-dist`) and `POST /api/v1/smart-chords/import/text` (Zod schema).
-5. Web Import Hub UX (`SmartChordImportModal.tsx`, `SmartChordsWorkspace.tsx`, preview, edit, save, optional M19 link).
+4. Authenticated backend endpoints `POST /api/v1/smart-chords/import/pdf` (Multer + safe coordinate-aware `unpdf`) and `POST /api/v1/smart-chords/import/text` (Zod schema).
+5. Web Import Hub UX (`SmartChordImportModal.tsx`, `SmartChordsWorkspace.tsx`, preview, edit, save, optional M19 link, generation token race safety).
 6. Mobile Flutter Import Hub UX (`SmartChordImportScreen.dart`, `SmartChordImportController.dart`, providers, preview, edit, save, session fencing, post-save M19 linking dialog).
 7. Partial success safety: if save succeeds and optional repertoire link fails, SmartChord remains saved.
-8. Comprehensive test suites (Backend, Web, Flutter).
+8. Comprehensive test suites (Backend, Web, Flutter) and PDF layout diversity testing.
 
 ### Deferred to Phase 2 / Future
 - Android Share Intent (`ACTION_SEND` for `text/plain` and `application/pdf`).
@@ -37,17 +37,23 @@ Implement Phase 1 of M20: Smart Chords Import Hub across backend, Web, and Flutt
 - [x] Stage 5: Mobile Flutter import UX (screens, providers, preview, editing, save, session fencing).
 - [x] Stage 6: Post-save optional M19 relationship and partial success safety across Web and Mobile.
 - [x] Stage 7: Full regression testing across Backend, Web, and Mobile.
+- [x] Stage 8: M20-P1-R1 Findings Remediation:
+  - F-M20-01 (BLOCKER): Removed vulnerable `pdfjs-dist@3.11.174` (CVE-2024-4367, CVE-2026-16633) and replaced with secure, dependency-free `unpdf: ^1.9.1`. Zero high/critical vulnerabilities.
+  - F-M20-02 (MEDIUM): Added generation token fencing (`generationRef.current`) to `SmartChordImportModal.tsx`, explicit Cancel extraction button, and 4 automated race tests for Scenarios A, B, C, D in `SmartChordImportModal.test.tsx`.
+  - F-M20-03 (TEST_GAP): Replaced hardcoded vertical split with dynamic vertical gutter detection (`detectColumnBuckets`) supporting symmetric, asymmetric, and 3+ column layouts. Expanded `smart_chord_pdf_extractor.test.ts` to 11 layout diversity tests.
 
 ## Verification Evidence
 - **Backend Build & Tests**:
   - `npm --prefix backend run build` — PASS (zero errors).
-  - Normalizer & PDF Extractor: 18/18 tests pass (`smart_chord_normalizer.test.ts`, `smart_chord_pdf_extractor.test.ts`).
+  - Normalizer & PDF Extractor: 22/22 tests pass (`smart_chord_normalizer.test.ts`, `smart_chord_pdf_extractor.test.ts`).
   - Feature & Relinking: 63/63 tests pass (`smart_chord.feature.test.ts`, `smart_chord_repertoire_link.test.ts`).
-  - All 81 feature unit & integration tests pass.
+  - All 85 feature unit & integration tests pass (100% pass).
+  - Runtime smoke test on `dist/features/smart_chords/smart_chord_pdf_extractor.js` — PASS.
+  - `npm audit` on backend runtime — ZERO high/critical PDF vulnerabilities.
 - **Web Build & Tests**:
   - `npm --prefix web run build` — PASS (Vite production build succeeds).
-  - Import modal & Workspace: `SmartChordImportModal.test.tsx` (7 tests), `SmartChordsWorkspace.test.tsx` (9 tests).
-  - Full Web Test Suite: 25 test files passed, 414 tests passed (100% pass).
+  - Import modal & Workspace: `SmartChordImportModal.test.tsx` (11 tests, including Scenarios A-D), `SmartChordsWorkspace.test.tsx` (9 tests).
+  - Full Web Test Suite: 25 test files passed, 418 tests passed (100% pass).
 - **Mobile Analyzer & Tests**:
   - `flutter analyze` in `mobile/` — `No issues found! (0 errors, 0 warnings, 0 infos)`.
   - Transposition safety: `smart_chord_parser_transposition_safety_test.dart` (4 tests pass).
@@ -55,5 +61,5 @@ Implement Phase 1 of M20: Smart Chords Import Hub across backend, Web, and Flutt
   - Import screen widget: `smart_chord_import_screen_test.dart` (2 tests pass).
   - Full Smart Chords Mobile Suite: `flutter test test/features/smart_chords/` — 111 tests passed (100% pass).
 - **Repository Integrity**:
-  - `git diff --check` — PASS (no trailing whitespace or conflict markers).
+  - `git diff --check` — PASS (clean).
 
