@@ -101,7 +101,7 @@ export interface TokenWithPosition {
 
 export function tokenizeLine(line: string): TokenWithPosition[] {
   const tokens: TokenWithPosition[] = [];
-  const regex = /\S+/g;
+  const regex = /\([^()]*\)|\[[^[\]]*\]|\S+/g;
   let match: RegExpExecArray | null;
   while ((match = regex.exec(line)) !== null) {
     tokens.push({

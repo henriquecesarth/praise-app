@@ -28,7 +28,7 @@ interface VisualPdfLine {
 
 function splitTextItemIntoTokens(item: ExtractedTextItem): ExtractedTextItem[] {
   const tokens: ExtractedTextItem[] = [];
-  const regex = /\S+/g;
+  const regex = /\([^()]*\)|\[[^[\]]*\]|\S+/g;
   let match: RegExpExecArray | null;
   const totalChars = item.text.length;
   const charWidth = totalChars > 0 ? (item.width / totalChars) : 0;
