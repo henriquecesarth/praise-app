@@ -265,7 +265,7 @@ describe('Smart Chord PDF Extractor Test Suite (Synthetic Fixtures)', () => {
     const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
       const page = doc.addPage([595, 842]);
       page.drawText('Título: Canção Com Corte', { x: 50, y: 800, size: 14, font });
-      page.drawText('F#m   E9   D9   (marca/corte)', { x: 50, y: 760, size: 11, font });
+      page.drawText('F#m   E9   D9                        (marca/corte)', { x: 50, y: 760, size: 11, font });
       page.drawText('E eu sei que vais me guardar', { x: 50, y: 745, size: 11, font });
     });
 
@@ -317,5 +317,170 @@ describe('Smart Chord PDF Extractor Test Suite (Synthetic Fixtures)', () => {
     const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
     expect(draft.content).toContain('[D]');
     expect(draft.warnings.some(w => w.code === 'CHORD_ALIGNMENT_UNCERTAIN')).toBe(true);
+  });
+
+  it('18. TITLE_WITH_POR_OR_BY_NOT_SPLIT: Does not split titles containing words por or by into title/artist pairs', async () => {
+    const pdfBuffer1 = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Salvo por Amor', { x: 50, y: 800, size: 14, font });
+      page.drawText('G            D', { x: 50, y: 760, size: 11, font });
+      page.drawText('Graça e salvação', { x: 50, y: 745, size: 11, font });
+    });
+
+    const draft1 = await extractSmartChordDraftFromPdf(pdfBuffer1);
+    expect(draft1.title).toBe('Salvo por Amor');
+    expect(draft1.artist_name).toBeNull();
+    expect(draft1.content).toContain('[G]Graça');
+
+    const pdfBuffer2 = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Stand by Me', { x: 50, y: 800, size: 14, font });
+      page.drawText('A            F#m', { x: 50, y: 760, size: 11, font });
+      page.drawText('When the night has come', { x: 50, y: 745, size: 11, font });
+    });
+
+    const draft2 = await extractSmartChordDraftFromPdf(pdfBuffer2);
+    expect(draft2.title).toBe('Stand by Me');
+    expect(draft2.artist_name).toBeNull();
+  });
+
+  it('19. TITLE_ARTIST_EXPLICIT_DELIMITER_TEST: Splits title and artist across spaced dashes and explicit prefixes', async () => {
+    const pdfBuffer1 = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Certeza do Amanhã – Artista Exemplo', { x: 50, y: 800, size: 14, font });
+      page.drawText('C            F', { x: 50, y: 760, size: 11, font });
+      page.drawText('Caminhando vou', { x: 50, y: 745, size: 11, font });
+    });
+
+    const draft1 = await extractSmartChordDraftFromPdf(pdfBuffer1);
+    expect(draft1.title).toBe('Certeza do Amanhã');
+    expect(draft1.artist_name).toBe('Artista Exemplo');
+
+    const pdfBuffer2 = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Caminho - Artista Exemplo', { x: 50, y: 800, size: 14, font });
+      page.drawText('D            G', { x: 50, y: 760, size: 11, font });
+      page.drawText('Seguirei Teus passos', { x: 50, y: 745, size: 11, font });
+    });
+
+    const draft2 = await extractSmartChordDraftFromPdf(pdfBuffer2);
+    expect(draft2.title).toBe('Caminho');
+    expect(draft2.artist_name).toBe('Artista Exemplo');
+  });
+
+  it('20. TITLE_ARTIST_AMBIGUOUS_TEST & METADATA_AMBIGUOUS_EMISSION: Emits METADATA_AMBIGUOUS on ambiguous headers and version subtitles', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Meu Coração - Versão Acústica', { x: 50, y: 800, size: 14, font });
+      page.drawText('E            B', { x: 50, y: 760, size: 11, font });
+      page.drawText('Te dou meu louvor', { x: 50, y: 745, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.title).toBe('Meu Coração - Versão Acústica');
+    expect(draft.artist_name).toBeNull();
+    expect(draft.warnings.some(w => w.code === 'METADATA_AMBIGUOUS')).toBe(true);
+  });
+
+  it('21. UNLABELED_FIRST_LYRIC_PRESERVED_TEST: Does not swallow first lyric line as artist name', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Minha Canção', { x: 50, y: 800, size: 14, font });
+      page.drawText('Quando amanhece eu volto a cantar', { x: 50, y: 780, size: 11, font });
+      page.drawText('D            A', { x: 50, y: 750, size: 11, font });
+      page.drawText('Ao Teu santo nome Senhor', { x: 50, y: 735, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.title).toBe('Minha Canção');
+    expect(draft.artist_name).toBeNull();
+    expect(draft.content).toContain('Quando amanhece eu volto a cantar');
+    expect(draft.content).toContain('[D]Ao Teu [A]santo');
+  });
+
+  it('22. SHORT_FIRST_LYRIC_PRESERVED_TEST: Retains short first lyric line in musical body', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Meu Refúgio', { x: 50, y: 800, size: 14, font });
+      page.drawText('Santo, Santo', { x: 50, y: 780, size: 11, font });
+      page.drawText('G            C', { x: 50, y: 750, size: 11, font });
+      page.drawText('Digno de glória', { x: 50, y: 735, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.title).toBe('Meu Refúgio');
+    expect(draft.artist_name).toBeNull();
+    expect(draft.content).toContain('Santo, Santo');
+  });
+
+  it('23. MID_LINE_ANNOTATION_ORDER_TEST: Preserves relative horizontal order of annotations between chords', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Título: Canção Com Marcação', { x: 50, y: 800, size: 14, font });
+      page.drawText('A9       (marcado)       D9', { x: 50, y: 760, size: 11, font });
+      page.drawText('Eu sei que tudo podes me dar', { x: 50, y: 745, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.content).toContain('[A9]');
+    expect(draft.content).toContain('[D9]');
+    expect(draft.content).toContain('(marcado)');
+    // Assert (marcado) is located before [D9] in the line, not displaced to the end
+    const line = draft.content.split('\n').find(l => l.includes('(marcado)'));
+    expect(line).toBeDefined();
+    const markedIdx = line!.indexOf('(marcado)');
+    const d9Idx = line!.indexOf('[D9]');
+    expect(markedIdx).toBeLessThan(d9Idx);
+  });
+
+  it('24. MULTIPLE_ANNOTATION_ORDER_TEST: Preserves annotations at line start, middle, and end without shifting', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Título: Canção Multi-Anotações', { x: 50, y: 800, size: 14, font });
+      page.drawText('(suave)   A9   D9   (corte)', { x: 40, y: 760, size: 11, font });
+      page.drawText('Eu sei que tudo podes', { x: 50, y: 745, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    const line = draft.content.split('\n').find(l => l.includes('(suave)'));
+    expect(line).toBeDefined();
+    const suaveIdx = line!.indexOf('(suave)');
+    const a9Idx = line!.indexOf('[A9]');
+    const corteIdx = line!.indexOf('(corte)');
+    expect(suaveIdx).toBeLessThan(a9Idx);
+    expect(a9Idx).toBeLessThan(corteIdx);
+  });
+
+  it('25. SINGLE_BARLINE_CHORD_OVER_LYRIC_TEST: Preserves single measure dividers inline without silent dropping', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Título: Canção Com Compasso', { x: 50, y: 800, size: 14, font });
+      page.drawText('A9       |       D9', { x: 50, y: 760, size: 11, font });
+      page.drawText('Eu sei que podes me guiar', { x: 50, y: 745, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.content).toContain('[A9]');
+    expect(draft.content).toContain('[D9]');
+    expect(draft.content).toContain('|');
+    const line = draft.content.split('\n').find(l => l.includes('|'));
+    expect(line).toBeDefined();
+    expect(line).toContain('[A9]');
+    expect(line).toContain('[D9]');
+  });
+
+  it('26. UNKNOWN_CHORD_TOKEN_EMISSION_TEST: Emits UNKNOWN_CHORD_TOKEN for unrecognized chord tokens and keeps lyrics warning-free', async () => {
+    const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
+      const page = doc.addPage([595, 842]);
+      page.drawText('Título: Canção Com Acorde Estranho', { x: 50, y: 800, size: 14, font });
+      page.drawText('C       G/B       Am       H7', { x: 50, y: 760, size: 11, font });
+      page.drawText('Toda a terra se prostrará diante de Ti', { x: 50, y: 745, size: 11, font });
+    });
+
+    const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
+    expect(draft.content).toContain('[H7]');
+    const unknownWarning = draft.warnings.find(w => w.code === 'UNKNOWN_CHORD_TOKEN');
+    expect(unknownWarning).toBeDefined();
+    expect(unknownWarning!.message).toContain('H7');
   });
 });

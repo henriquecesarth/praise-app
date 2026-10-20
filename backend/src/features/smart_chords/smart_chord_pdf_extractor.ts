@@ -557,9 +557,20 @@ export async function extractSmartChordDraftFromPdf(buffer: Buffer): Promise<Sma
             continue;
           }
 
-          // Positional lyric preservation:
-          // Never swallow unlabeled line 1 as artist solely by line index.
-          // Plain lyrics on line 1 are preserved in the musical body.
+          // Positional lyric preservation with supporting metadata check:
+          // An unlabeled line 1 is only identified as artist if supported by subsequent metadata (e.g. Tom: A).
+          // Otherwise, plain lyrics on line 1 are preserved in the musical body.
+          if (title && !artistName && lineIdx === 1 && !isChordLine(lineText) && !SECTION_HEADER_REGEX.test(lineText)) {
+            const hasSubsequentKeyMeta = visualLines.slice(2, 6).some(l => {
+              const lt = l.items.map(i => i.text).join(' ').trim();
+              return /^(?:Tom|Key|Tom\s+Original):\s*([A-G][#b]?(?:m|maj|min)?)/i.test(lt);
+            });
+            if (hasSubsequentKeyMeta && lineText.length < 50 && !/^\s*\([^()]*\)\s*$/.test(lineText) && !isRepeatProgressionLine(lineText)) {
+              artistName = lineText.trim();
+              lineIdx++;
+              continue;
+            }
+          }
         }
 
         // Check for section header
@@ -575,7 +586,7 @@ export async function extractSmartChordDraftFromPdf(buffer: Buffer): Promise<Sma
         }
 
         // Check for parenthetical annotation e.g. (violão/pad) or (todos)
-        if (/^\s*\(.*?\)\s*$/.test(lineText)) {
+        if (/^\s*\([^()]*\)\s*$/.test(lineText)) {
           reconstructedLines.push(lineText);
           lineIdx++;
           continue;
@@ -597,7 +608,7 @@ export async function extractSmartChordDraftFromPdf(buffer: Buffer): Promise<Sma
             !isChordLine(nextLineText) &&
             !SECTION_HEADER_REGEX.test(nextLineText) &&
             !BRACKETED_SECTION_REGEX.test(nextLineText) &&
-            !/^\s*\(.*?\)\s*$/.test(nextLineText)
+            !/^\s*\([^()]*\)\s*$/.test(nextLineText)
           ) {
             const { projected, hasUncertainAlignment, unknownTokens } = projectChordsOntoLyrics(vLine, nextVLine);
             if (hasUncertainAlignment && !warnings.some(w => w.code === 'CHORD_ALIGNMENT_UNCERTAIN')) {

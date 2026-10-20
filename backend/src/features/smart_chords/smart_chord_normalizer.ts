@@ -119,8 +119,8 @@ export function isChordLine(line: string): boolean {
   if (SECTION_HEADER_REGEX.test(line.trim()) || BRACKETED_SECTION_REGEX.test(line.trim())) {
     return false;
   }
-  // If line is enclosed in parentheses, it's an annotation
-  if (/^\s*\(.*?\)\s*$/.test(line.trim())) {
+  // If line is a single parenthesized annotation, it's an annotation line, not a chord line
+  if (/^\s*\([^()]*\)\s*$/.test(line.trim())) {
     return false;
   }
 
@@ -128,13 +128,19 @@ export function isChordLine(line: string): boolean {
   if (tokens.length === 0) return false;
 
   let chordCount = 0;
+  let nonAnnotationCount = 0;
   for (const t of tokens) {
+    if (/^\([^()]*\)$/.test(t.text) || /^\[[^[\]]*\]$/.test(t.text)) {
+      continue;
+    }
+    nonAnnotationCount++;
     if (t.isChord || ['|', '||:', ':||', '%', '/'].includes(t.text)) {
       chordCount++;
     }
   }
 
-  return (chordCount / tokens.length) >= 0.6;
+  if (nonAnnotationCount === 0) return false;
+  return (chordCount / nonAnnotationCount) >= 0.6;
 }
 
 /**
