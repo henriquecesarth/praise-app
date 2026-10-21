@@ -1,7 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api, SmartChord } from '../api';
 import { Artist, Song } from '../types';
-import { transposeChord, rawToVisual, visualToRaw } from '../utils/smart_chord';
+import {
+  transposeChord,
+  rawToVisual,
+  visualToRaw,
+  hasBarProgression,
+  parseBarProgressionLine,
+  updateBarProgressionChord,
+  isMusicalChord,
+} from '../utils/smart_chord';
 import { SmartChordImportModal } from './SmartChordImportModal';
 
 function getHarmonicFieldChords(originalKey: string): string[] {
@@ -370,7 +378,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
   };
 
   // State for inline chord editor
-  const [editingCell, setEditingCell] = useState<{ lineIdx: number; charIdx: number } | null>(null);
+  const [editingCell, setEditingCell] = useState<{ lineIdx: number; charIdx?: number; barChordIdx?: number } | null>(null);
   const [editingChordValue, setEditingChordValue] = useState('');
 
   const saveInlineChord = (lineIdx: number, charIdx: number, value: string) => {
@@ -390,8 +398,28 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
     setEditingCell(null);
   };
 
-  const renderInlineEditor = (lineIdx: number, charIdx: number) => {
+  const saveBarChord = (lineIdx: number, barChordIdx: number, value: string) => {
+    const lines = content.split('\n');
+    const lineText = lines[lineIdx] || '';
+    const trimmed = value.trim();
+
+    if (trimmed && isMusicalChord(trimmed)) {
+      lines[lineIdx] = updateBarProgressionChord(lineText, barChordIdx, trimmed);
+      setContent(lines.join('\n'));
+    }
+    setEditingCell(null);
+  };
+
+  const renderInlineEditor = (lineIdx: number, charIdx?: number, barChordIdx?: number) => {
     const suggestions = getSuggestions(editingChordValue, originalKey);
+
+    const commitEdit = (val: string) => {
+      if (barChordIdx !== undefined) {
+        saveBarChord(lineIdx, barChordIdx, val);
+      } else if (charIdx !== undefined) {
+        saveInlineChord(lineIdx, charIdx, val);
+      }
+    };
 
     return (
       <div 
@@ -429,7 +457,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
                 type="button"
                 onMouseDown={(e) => {
                   e.preventDefault();
-                  saveInlineChord(lineIdx, charIdx, chordSug);
+                  commitEdit(chordSug);
                 }}
                 style={{
                   padding: '2px 6px',
@@ -450,6 +478,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
 
         <input
           type="text"
+          data-testid="inline-chord-input"
           name={`chord-input-${Math.random()}`}
           value={editingChordValue}
           autoFocus
@@ -457,10 +486,10 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
           data-autocomplete="off"
           spellCheck={false}
           onChange={(e) => setEditingChordValue(e.target.value)}
-          onBlur={() => saveInlineChord(lineIdx, charIdx, editingChordValue)}
+          onBlur={() => commitEdit(editingChordValue)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
-              saveInlineChord(lineIdx, charIdx, editingChordValue);
+              commitEdit(editingChordValue);
             } else if (e.key === 'Escape') {
               setEditingCell(null);
             }
@@ -841,6 +870,107 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
                 {/* Sheet segments */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {rawLines.map((lineText, lineIdx) => {
+                    if (hasBarProgression(lineText)) {
+                      const tokens = parseBarProgressionLine(lineText);
+                      return (
+                        <div
+                          key={lineIdx}
+                          role="group"
+                          aria-label={lineText || 'Linha de compassos'}
+                          style={{
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            alignItems: 'baseline',
+                            rowGap: `${printFontSize + 7}px`,
+                            fontFamily: 'monospace',
+                            fontSize: `${printFontSize}px`,
+                            lineHeight: '1.4',
+                            paddingTop: `${printFontSize + 3}px`
+                          }}
+                        >
+                          {tokens.map((token, tokenIdx) => {
+                            if (token.type === 'chord') {
+                              const isEditing = editingCell && editingCell.lineIdx === lineIdx && editingCell.barChordIdx === token.chordIndex;
+                              const transposedChord = transposeChord(token.value, semitones);
+                              return (
+                                <div
+                                  key={tokenIdx}
+                                  onClick={() => {
+                                    if (!isEditing && token.chordIndex !== undefined) {
+                                      setEditingCell({ lineIdx, barChordIdx: token.chordIndex });
+                                      setEditingChordValue(token.value);
+                                    }
+                                  }}
+                                  style={{
+                                    position: 'relative',
+                                    cursor: 'pointer',
+                                    userSelect: 'none',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    minHeight: '28px'
+                                  }}
+                                >
+                                  {isEditing ? (
+                                    renderInlineEditor(lineIdx, undefined, token.chordIndex)
+                                  ) : (
+                                    <span
+                                      className="has-chord"
+                                      data-bar-chord-idx={token.chordIndex}
+                                      style={{
+                                        color: 'var(--primary-light)',
+                                        fontWeight: 'bold',
+                                        textDecoration: 'underline 2px solid var(--primary-light)',
+                                        padding: '0 1px'
+                                      }}
+                                    >
+                                      {transposedChord}
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            }
+
+                            if (token.type === 'delimiter') {
+                              return (
+                                <span
+                                  key={tokenIdx}
+                                  style={{
+                                    color: token.value === '%' ? 'var(--primary-light)' : 'var(--text-secondary)',
+                                    fontWeight: 'bold',
+                                    userSelect: 'none'
+                                  }}
+                                >
+                                  {token.value}
+                                </span>
+                              );
+                            }
+
+                            if (token.type === 'whitespace') {
+                              return (
+                                <span key={tokenIdx} style={{ whiteSpace: 'pre' }}>
+                                  {token.value}
+                                </span>
+                              );
+                            }
+
+                            if (token.type === 'bracket_open' || token.type === 'bracket_close') {
+                              return (
+                                <span key={tokenIdx} style={{ color: 'var(--text-muted, #888)', userSelect: 'none' }}>
+                                  {token.value}
+                                </span>
+                              );
+                            }
+
+                            return (
+                              <span key={tokenIdx} style={{ color: 'var(--text-primary)' }}>
+                                {token.value}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      );
+                    }
+
                     const visual = rawToVisual(lineText);
                     const text = visual.cleanText;
 
@@ -1120,6 +1250,83 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
                 {/* Sheet lines */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {rawLines.map((lineText, lineIdx) => {
+                    if (hasBarProgression(lineText)) {
+                      const tokens = parseBarProgressionLine(lineText);
+                      return (
+                        <div
+                          key={lineIdx}
+                          role="group"
+                          aria-label={lineText || 'Linha de compassos'}
+                          style={{
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            alignItems: 'baseline',
+                            rowGap: `${printFontSize + 7}px`,
+                            fontFamily: 'monospace',
+                            fontSize: `${printFontSize}px`,
+                            lineHeight: '1.4',
+                            paddingTop: `${printFontSize + 3}px`,
+                            position: 'relative'
+                          }}
+                        >
+                          {tokens.map((token, tokenIdx) => {
+                            if (token.type === 'chord') {
+                              const transposedChord = transposeChord(token.value, semitones);
+                              return (
+                                <span
+                                  key={tokenIdx}
+                                  className="print-chord-span"
+                                  style={{
+                                    color: 'black',
+                                    fontWeight: 'bold',
+                                    padding: '0 1px'
+                                  }}
+                                >
+                                  {transposedChord}
+                                </span>
+                              );
+                            }
+
+                            if (token.type === 'delimiter') {
+                              return (
+                                <span
+                                  key={tokenIdx}
+                                  style={{
+                                    color: token.value === '%' ? 'black' : '#444',
+                                    fontWeight: 'bold'
+                                  }}
+                                >
+                                  {token.value}
+                                </span>
+                              );
+                            }
+
+                            if (token.type === 'whitespace') {
+                              return (
+                                <span key={tokenIdx} style={{ whiteSpace: 'pre' }}>
+                                  {token.value}
+                                </span>
+                              );
+                            }
+
+                            if (token.type === 'bracket_open' || token.type === 'bracket_close') {
+                              return (
+                                <span key={tokenIdx} style={{ color: '#666' }}>
+                                  {token.value}
+                                </span>
+                              );
+                            }
+
+                            return (
+                              <span key={tokenIdx} style={{ color: 'black' }}>
+                                {token.value}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      );
+                    }
+
                     const visual = rawToVisual(lineText);
                     const text = visual.cleanText;
 

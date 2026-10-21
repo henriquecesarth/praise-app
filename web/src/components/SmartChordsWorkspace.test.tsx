@@ -291,4 +291,190 @@ describe('SmartChordsWorkspace', () => {
       expect(screen.queryByDisplayValue('Cifra Alpha')).toBeNull();
     });
   });
+
+  describe('Instrumental Bar Progression UI Safety (Hotfix R1.2)', () => {
+    it('renders bracketed bar progressions with independently clickable chords and preserved delimiters', async () => {
+      getSmartChords.mockResolvedValue([
+        {
+          id: 'sc-bars',
+          title: 'Instrumental Track',
+          originalKey: 'A',
+          content: '[||: A9 | A7M/9 | D9 | % :||]',
+        },
+      ]);
+
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Instrumental Track')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText('Instrumental Track'));
+
+      await waitFor(() => {
+        expect(screen.getByText('||:')).toBeInTheDocument();
+        expect(screen.getByText(':||')).toBeInTheDocument();
+        expect(screen.getByText('%')).toBeInTheDocument();
+        expect(screen.getByText('A9')).toBeInTheDocument();
+        expect(screen.getByText('A7M/9')).toBeInTheDocument();
+        expect(screen.getByText('D9')).toBeInTheDocument();
+      });
+    });
+
+    it('safely edits only the third chord D9 -> E9 preserving all delimiters, spaces and other chords', async () => {
+      getSmartChords.mockResolvedValue([
+        {
+          id: 'sc-bars-edit',
+          title: 'Instrumental Edit Track',
+          originalKey: 'A',
+          content: '[||: A9 | A7M/9 | D9 | % :||]',
+        },
+      ]);
+
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Instrumental Edit Track')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText('Instrumental Edit Track'));
+
+      // Wait for sheet to display the chords
+      const d9Span = await screen.findByText('D9');
+      expect(d9Span).toBeInTheDocument();
+
+      // Click D9 (chordIndex 2)
+      fireEvent.click(d9Span);
+
+      // Input appears with prefilled value D9
+      const input = await screen.findByDisplayValue('D9');
+      expect(input).toBeInTheDocument();
+
+      // Edit D9 -> E9 and press Enter
+      fireEvent.change(input, { target: { value: 'E9' } });
+      fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+
+      // Verify sheet and textarea content
+      await waitFor(() => {
+        expect(screen.getByText('E9')).toBeInTheDocument();
+        expect(screen.queryByText('D9')).toBeNull();
+        expect(screen.getByText('A9')).toBeInTheDocument();
+        expect(screen.getByText('A7M/9')).toBeInTheDocument();
+        expect(screen.getByText('||:')).toBeInTheDocument();
+        expect(screen.getByText(':||')).toBeInTheDocument();
+        expect(screen.getByText('%')).toBeInTheDocument();
+      });
+
+      const textarea = screen.getByDisplayValue('[||: A9 | A7M/9 | E9 | % :||]');
+      expect(textarea).toBeInTheDocument();
+    });
+
+    it('cancels inline editing on Escape key without mutating progression', async () => {
+      getSmartChords.mockResolvedValue([
+        {
+          id: 'sc-bars-esc',
+          title: 'Escape Track',
+          originalKey: 'A',
+          content: '[||: A9 | A7M/9 | D9 | % :||]',
+        },
+      ]);
+
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Escape Track')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText('Escape Track'));
+
+      const a9Span = await screen.findByText('A9');
+      fireEvent.click(a9Span);
+
+      const input = await screen.findByTestId('inline-chord-input');
+      expect(input).toHaveValue('A9');
+      fireEvent.change(input, { target: { value: 'B9' } });
+      fireEvent.keyDown(input, { key: 'Escape', code: 'Escape' });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('inline-chord-input')).toBeNull();
+        expect(screen.getByText('A9')).toBeInTheDocument();
+      });
+
+      const textarea = screen.getByDisplayValue('[||: A9 | A7M/9 | D9 | % :||]');
+      expect(textarea).toBeInTheDocument();
+    });
+
+    it('edits repeated chord instances independently in [| A | F#m | A | E |]', async () => {
+      getSmartChords.mockResolvedValue([
+        {
+          id: 'sc-bars-repeat',
+          title: 'Repeat Chords Track',
+          originalKey: 'A',
+          content: '[| A | F#m | A | E |]',
+        },
+      ]);
+
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Repeat Chords Track')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText('Repeat Chords Track'));
+
+      // Find chord tokens with data-bar-chord-idx="2" (second A)
+      const secondA = await waitFor(() => {
+        const el = document.querySelector('[data-bar-chord-idx="2"]');
+        expect(el).not.toBeNull();
+        expect(el?.textContent).toBe('A');
+        return el!;
+      });
+
+      fireEvent.click(secondA);
+
+      const input = await screen.findByTestId('inline-chord-input');
+      expect(input).toHaveValue('A');
+      fireEvent.change(input, { target: { value: 'D' } });
+      fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+
+      await waitFor(() => {
+        const textarea = screen.getByDisplayValue('[| A | F#m | D | E |]');
+        expect(textarea).toBeInTheDocument();
+      });
+
+      // Assert first A is still present at chordIndex 0
+      const firstA = document.querySelector('[data-bar-chord-idx="0"]');
+      expect(firstA?.textContent).toBe('A');
+      const editedD = document.querySelector('[data-bar-chord-idx="2"]');
+      expect(editedD?.textContent).toBe('D');
+    });
+
+    it('renders empty measures [| | | | | |] and section barlines [||] without fake chords', async () => {
+      getSmartChords.mockResolvedValue([
+        {
+          id: 'sc-empty-bars',
+          title: 'Empty Measures Track',
+          originalKey: 'C',
+          content: '[| | | | | |]\n[||]',
+        },
+      ]);
+
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Empty Measures Track')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText('Empty Measures Track'));
+
+      await waitFor(() => {
+        const groupLines = screen.getAllByRole('group');
+        expect(groupLines.length).toBeGreaterThanOrEqual(2);
+      });
+
+      // No chord spans with data-bar-chord-idx should exist
+      const chordSpans = document.querySelectorAll('[data-bar-chord-idx]');
+      expect(chordSpans.length).toBe(0);
+    });
+  });
 });

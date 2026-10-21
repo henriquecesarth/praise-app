@@ -253,3 +253,121 @@ export function visualToRaw(visual: IVisualLine): string {
   }
   return raw;
 }
+
+export type BarTokenType = 'bracket_open' | 'bracket_close' | 'delimiter' | 'chord' | 'whitespace' | 'text';
+
+export interface IBarProgressionToken {
+  type: BarTokenType;
+  value: string;
+  startIndex: number;
+  endIndex: number;
+  chordIndex?: number;
+}
+
+export function isBarProgression(token: string): boolean {
+  if (!token || typeof token !== 'string') return false;
+  return token.includes('|') || token.includes('%');
+}
+
+export function hasBarProgression(lineText: string): boolean {
+  if (!lineText || typeof lineText !== 'string') return false;
+  return /\[[^\]]*[|%][^\]]*\]/.test(lineText);
+}
+
+export function parseBarProgressionLine(lineText: string): IBarProgressionToken[] {
+  if (!lineText) return [];
+  const tokens: IBarProgressionToken[] = [];
+  const bracketRegex = /\[(.*?)\]/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let chordCounter = 0;
+
+  while ((match = bracketRegex.exec(lineText)) !== null) {
+    if (match.index > lastIndex) {
+      const text = lineText.substring(lastIndex, match.index);
+      tokens.push({
+        type: 'text',
+        value: text,
+        startIndex: lastIndex,
+        endIndex: match.index,
+      });
+    }
+
+    const openBracketIdx = match.index;
+    tokens.push({
+      type: 'bracket_open',
+      value: '[',
+      startIndex: openBracketIdx,
+      endIndex: openBracketIdx + 1,
+    });
+
+    const innerContent = match[1];
+    const innerStart = openBracketIdx + 1;
+    const innerRegex = /(\|\|:|:\|\||\|\||\|:|:\||\||%|:+|\s+|[^\s|%:]+)/g;
+    let innerMatch: RegExpExecArray | null;
+
+    while ((innerMatch = innerRegex.exec(innerContent)) !== null) {
+      const val = innerMatch[0];
+      const start = innerStart + innerMatch.index;
+      const end = start + val.length;
+
+      if (/^\s+$/.test(val)) {
+        tokens.push({ type: 'whitespace', value: val, startIndex: start, endIndex: end });
+      } else if (/^(\|\|:|:\|\||\|\||\|:|:\||\||%)$/.test(val)) {
+        tokens.push({ type: 'delimiter', value: val, startIndex: start, endIndex: end });
+      } else if (isMusicalChord(val)) {
+        tokens.push({
+          type: 'chord',
+          value: val,
+          startIndex: start,
+          endIndex: end,
+          chordIndex: chordCounter++,
+        });
+      } else {
+        tokens.push({ type: 'text', value: val, startIndex: start, endIndex: end });
+      }
+    }
+
+    const closeBracketIdx = openBracketIdx + match[0].length - 1;
+    tokens.push({
+      type: 'bracket_close',
+      value: ']',
+      startIndex: closeBracketIdx,
+      endIndex: closeBracketIdx + 1,
+    });
+
+    lastIndex = bracketRegex.lastIndex;
+  }
+
+  if (lastIndex < lineText.length) {
+    tokens.push({
+      type: 'text',
+      value: lineText.substring(lastIndex),
+      startIndex: lastIndex,
+      endIndex: lineText.length,
+    });
+  }
+
+  return tokens;
+}
+
+export function updateBarProgressionChord(
+  rawLine: string,
+  targetChordIndex: number,
+  newChord: string
+): string {
+  if (!rawLine) return rawLine;
+  const trimmed = newChord ? newChord.trim() : '';
+  if (!isMusicalChord(trimmed)) {
+    return rawLine;
+  }
+
+  const tokens = parseBarProgressionLine(rawLine);
+  const targetToken = tokens.find(t => t.type === 'chord' && t.chordIndex === targetChordIndex);
+  if (!targetToken) {
+    return rawLine;
+  }
+
+  targetToken.value = trimmed;
+  return tokens.map(t => t.value).join('');
+}
