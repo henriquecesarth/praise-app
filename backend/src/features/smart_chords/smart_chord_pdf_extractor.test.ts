@@ -32,7 +32,7 @@ describe('Smart Chord PDF Extractor Test Suite (Synthetic Fixtures)', () => {
     expect(draft.original_key).toBe('A');
 
     // Musical fidelity assertions
-    expect(draft.content).toContain('||: [A9] | [A7M/9] | [D9] | % :||');
+    expect(draft.content).toContain('[||: A9 | A7M/9 | D9 | % :||]');
     expect(draft.content).toContain('(violão/pad)');
     expect(draft.content).toContain('[A9]');
     expect(draft.content).toContain('[A7M/9]');
@@ -226,7 +226,7 @@ describe('Smart Chord PDF Extractor Test Suite (Synthetic Fixtures)', () => {
     expect(draft.content).toContain('(violão solo)');
     expect(draft.content).toContain('(cresce marcando)');
     expect(draft.content).toContain('(corte)');
-    expect(draft.content).toContain('||: [D] | [A/C#] | [Bm7] | [G] :|| (2x)');
+    expect(draft.content).toContain('[||: D | A/C# | Bm7 | G :||] (2x)');
     expect(draft.content).toContain('[D]');
     expect(draft.content).toContain('[A/C#]');
   });
@@ -287,7 +287,7 @@ describe('Smart Chord PDF Extractor Test Suite (Synthetic Fixtures)', () => {
     });
 
     const draft = await extractSmartChordDraftFromPdf(pdfBuffer);
-    expect(draft.content).toContain('||: [A9] | [A7M/9] | [D9] | % :||');
+    expect(draft.content).toContain('[||: A9 | A7M/9 | D9 | % :||]');
     expect(draft.content).toContain('Uh uh uh uh uh uh uh uh uh uh pa pa pa ra');
     expect(draft.warnings.some(w => w.code === 'REPEAT_STRUCTURE_AMBIGUOUS')).toBe(true);
   });
@@ -569,7 +569,7 @@ describe('Smart Chord PDF Extractor Test Suite (Synthetic Fixtures)', () => {
     expect(draft.artist_name).toBeNull();
     expect(draft.original_key).toBe('E');
     expect(draft.content).toContain('Nas primeiras horas do dia');
-    expect(draft.content).toContain('[E]Ergo min[B]ha voz');
+    expect(draft.content).toContain('[E]Ergo mi[B]nha voz');
   });
 
   it('32. PAREN_ANNOTATION_FOLLOWED_BY_KEY_TEST (Case F): Retains parenthesized annotation on line 1 followed by key', async () => {

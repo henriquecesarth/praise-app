@@ -313,6 +313,18 @@ class SmartChordParser {
   static String transposeChord(String chord, int semitones) {
     if (chord.isEmpty) return '';
     if (semitones == 0) return chord;
+
+    if (chord.contains('|') || chord.contains('%')) {
+      final barPattern = RegExp(r'([A-G][#b]?(?:[^\s|%:]*))');
+      return chord.replaceAllMapped(barPattern, (match) {
+        final t = match.group(1)!;
+        if (isMusicalChord(t)) {
+          return transposeChord(t, semitones);
+        }
+        return t;
+      });
+    }
+
     if (!isMusicalChord(chord)) return chord;
 
     if (chord.contains('/')) {

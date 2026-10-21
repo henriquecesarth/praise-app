@@ -7,6 +7,7 @@ import {
   SECTION_HEADER_REGEX,
   BRACKETED_SECTION_REGEX,
 } from './smart_chord_normalizer';
+import { syllabifyPortugueseWord } from './portuguese_syllabifier';
 
 export const MAX_PDF_FILE_SIZE = 3 * 1024 * 1024; // 3 MiB
 export const MAX_PDF_PAGES = 10;
@@ -242,6 +243,45 @@ function projectChordsOntoLyrics(
     });
   }
 
+  interface SyllableSegment {
+    text: string;
+    globalStartIdx: number;
+    globalEndIdx: number;
+    startX: number;
+    endX: number;
+  }
+
+  interface WordWithSyllables {
+    startIdx: number;
+    endIdx: number;
+    startX: number;
+    endX: number;
+    text: string;
+    syllables: SyllableSegment[];
+  }
+
+  const wordsWithSyllables: WordWithSyllables[] = words.map(w => {
+    const sylTokens = syllabifyPortugueseWord(w.text);
+    const syllables: SyllableSegment[] = sylTokens.map(st => {
+      const gStart = w.startIdx + st.startIdx;
+      const gEnd = w.startIdx + st.endIdx;
+      const sStartX = charPositions[gStart]?.x ?? w.startX;
+      const lastChar = charPositions[Math.max(gStart, gEnd - 1)];
+      const sEndX = lastChar ? lastChar.x + lastChar.width : w.endX;
+      return {
+        text: st.text,
+        globalStartIdx: gStart,
+        globalEndIdx: gEnd,
+        startX: sStartX,
+        endX: sEndX,
+      };
+    });
+    return {
+      ...w,
+      syllables,
+    };
+  });
+
   // Sort items descending by X so insertions from right to left do not shift indices
   const sortedItems = [...consolidated].sort((a, b) => b.x - a.x);
   let projected = lyricString;
@@ -310,20 +350,13 @@ function projectChordsOntoLyrics(
       continue;
     }
 
-    // Musical Chord placement
-    if (words.length > 0 && itemX <= words[0].startX + 10) {
-      targetIndex = words[0].startIdx;
+    // Musical Chord placement (Syllable-First Alignment)
+    if (wordsWithSyllables.length > 0 && itemX <= wordsWithSyllables[0].startX + 5) {
+      targetIndex = wordsWithSyllables[0].startIdx;
     } else {
-      for (let wIdx = 0; wIdx < words.length; wIdx++) {
-        const w = words[wIdx];
-        const nextW = words[wIdx + 1];
-        const wordWidth = w.endX - w.startX;
-
-        // Near start of word (up to 45% of word width or within 12pt)
-        if (itemX >= w.startX - 15 && itemX <= w.startX + Math.max(12, wordWidth * 0.45)) {
-          targetIndex = w.startIdx;
-          break;
-        }
+      for (let wIdx = 0; wIdx < wordsWithSyllables.length; wIdx++) {
+        const w = wordsWithSyllables[wIdx];
+        const nextW = wordsWithSyllables[wIdx + 1];
 
         // In gap between words
         if (nextW && itemX > w.endX && itemX < nextW.startX) {
@@ -337,32 +370,57 @@ function projectChordsOntoLyrics(
           break;
         }
 
-        // Intentionally inside word (later syllable)
-        if (itemX > w.startX + Math.max(12, wordWidth * 0.45) && itemX <= w.endX) {
-          let bestInside = w.startIdx;
-          let minDiff = 999999;
-          for (let i = w.startIdx; i < w.endIdx; i++) {
-            const diff = Math.abs(charPositions[i].x - itemX);
-            if (diff < minDiff) {
-              minDiff = diff;
-              bestInside = i;
+        // Within or near word w
+        if (itemX >= w.startX - 15 && itemX <= w.endX + 3) {
+          // If word has only 1 syllable (monosyllables like pro, que, meu, paz):
+          if (w.syllables.length <= 1) {
+            targetIndex = w.startIdx;
+            break;
+          }
+
+          // Polysyllabic word: find matching syllable
+          if (itemX <= w.syllables[0].endX) {
+            targetIndex = w.startIdx;
+            break;
+          }
+
+          // Search subsequent syllables
+          let chosenSyllable = w.syllables[0];
+          let minSylDiff = 999999;
+          for (let sIdx = 0; sIdx < w.syllables.length; sIdx++) {
+            const syl = w.syllables[sIdx];
+            // If itemX falls directly inside or near start of this syllable
+            if (itemX >= syl.startX - 3 && itemX < syl.endX) {
+              chosenSyllable = syl;
+              break;
+            }
+            const diff = Math.abs(syl.startX - itemX);
+            if (diff < minSylDiff) {
+              minSylDiff = diff;
+              chosenSyllable = syl;
             }
           }
-          targetIndex = bestInside;
-          hasUncertainAlignment = true;
+
+          targetIndex = chosenSyllable.globalStartIdx;
+          if (chosenSyllable !== w.syllables[0]) {
+            hasUncertainAlignment = true;
+          }
           break;
         }
       }
     }
 
     if (targetIndex === -1) {
+      // Fallback: snap to the nearest syllable boundary across all words
       let minDiff = 999999;
       targetIndex = 0;
-      for (let i = 0; i < charPositions.length; i++) {
-        const diff = Math.abs(charPositions[i].x - itemX);
-        if (diff < minDiff) {
-          minDiff = diff;
-          targetIndex = i;
+      for (const w of wordsWithSyllables) {
+        for (const syl of w.syllables) {
+          const diff = Math.abs(syl.startX - itemX);
+          if (diff < minDiff) {
+            minDiff = diff;
+            targetIndex = syl.globalStartIdx;
+          }
         }
       }
       hasUncertainAlignment = true;
@@ -625,21 +683,63 @@ export async function extractSmartChordDraftFromPdf(buffer: Buffer): Promise<Sma
               });
             }
             const consolidated = consolidateVisualLineItems(vLine.items);
-            const formattedParts = consolidated.map(item => {
-              const t = item.text.trim();
-              if (isMusicalChord(t)) return '[' + t + ']';
-              if (!['|', '||', '||:', ':||', '%'].includes(t) && !/^\(.*?\)$/.test(t) && !/^\[.*?\]$/.test(t) && !SECTION_HEADER_REGEX.test(t) && !/^(Intro|Solo|Verso|Refrão|Refrao|Coro|Ponte|Pausa|Interlúdio|Interludio|Final)[:\s]*$/i.test(t)) {
-                if (!warnings.some(w => w.code === 'UNKNOWN_CHORD_TOKEN' && w.message.includes(t))) {
-                  warnings.push({
-                    code: 'UNKNOWN_CHORD_TOKEN',
-                    message: `Acorde ou símbolo não reconhecido "${t}" mantido no texto para revisão.`,
-                  });
+            const isBarToken = (t: string) => ['|', '||', '||:', ':||', '%'].includes(t);
+            const isSection = (t: string) => SECTION_HEADER_REGEX.test(t) || /^(Intro|Solo|Verso|Refrão|Refrao|Coro|Ponte|Pausa|Interlúdio|Interludio|Final)[:\s]*$/i.test(t);
+            const isAnnotation = (t: string) => /^\(.*?\)$/.test(t) || /^\[.*?\]$/.test(t);
+
+            const hasBarlines = consolidated.some(it => isBarToken(it.text.trim()));
+
+            if (!hasBarlines) {
+              const formattedParts = consolidated.map(item => {
+                const t = item.text.trim();
+                if (isMusicalChord(t)) return '[' + t + ']';
+                if (!isAnnotation(t) && !isSection(t)) {
+                  if (!warnings.some(w => w.code === 'UNKNOWN_CHORD_TOKEN' && w.message.includes(t))) {
+                    warnings.push({
+                      code: 'UNKNOWN_CHORD_TOKEN',
+                      message: `Acorde ou símbolo não reconhecido "${t}" mantido no texto para revisão.`,
+                    });
+                  }
+                  return '[' + t + ']';
                 }
-                return '[' + t + ']';
+                return t;
+              });
+              reconstructedLines.push(formattedParts.join(' '));
+            } else {
+              // Group contiguous bar structure into bracketed bar markup [| ... |]
+              const resultParts: string[] = [];
+              let currentBarRun: string[] = [];
+
+              const flushBarRun = () => {
+                if (currentBarRun.length > 0) {
+                  resultParts.push('[' + currentBarRun.join(' ') + ']');
+                  currentBarRun = [];
+                }
+              };
+
+              for (const item of consolidated) {
+                const t = item.text.trim();
+                if (!t) continue;
+
+                if (isSection(t) || isAnnotation(t)) {
+                  flushBarRun();
+                  resultParts.push(t);
+                } else if (isBarToken(t) || isMusicalChord(t)) {
+                  currentBarRun.push(t);
+                } else {
+                  if (!warnings.some(w => w.code === 'UNKNOWN_CHORD_TOKEN' && w.message.includes(t))) {
+                    warnings.push({
+                      code: 'UNKNOWN_CHORD_TOKEN',
+                      message: `Acorde ou símbolo não reconhecido "${t}" mantido no texto para revisão.`,
+                    });
+                  }
+                  currentBarRun.push(t);
+                }
               }
-              return t;
-            });
-            reconstructedLines.push(formattedParts.join(' '));
+
+              flushBarRun();
+              reconstructedLines.push(resultParts.join(' '));
+            }
             lineIdx++;
             continue;
           }
@@ -659,7 +759,7 @@ export async function extractSmartChordDraftFromPdf(buffer: Buffer): Promise<Sma
   }
 
   if (!originalKey) {
-    const firstChordMatch = finalContent.match(/\[([A-G][#b]?(?:m|maj|min)?)[^\]]*\]/);
+    const firstChordMatch = finalContent.match(/\[[|:\s]*([A-G][#b]?(?:m|maj|min)?)[^\]]*\]/);
     if (firstChordMatch) {
       originalKey = firstChordMatch[1];
     } else {

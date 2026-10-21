@@ -79,6 +79,16 @@ function transposeSingleChordRoot(part: string, semitones: number): string {
  */
 export function transposeChordSafe(chord: string, semitones: number): string {
   if (!chord || semitones === 0) return chord;
+
+  if (chord.includes('|') || chord.includes('%')) {
+    return chord.replace(/([A-G][#b]?(?:[^\s|%:]*))/g, (match) => {
+      if (isMusicalChord(match)) {
+        return transposeChordSafe(match, semitones);
+      }
+      return match;
+    });
+  }
+
   if (!isMusicalChord(chord)) return chord;
 
   if (chord.includes('/')) {
@@ -134,7 +144,7 @@ export function isChordLine(line: string): boolean {
       continue;
     }
     nonAnnotationCount++;
-    if (t.isChord || ['|', '||:', ':||', '%', '/'].includes(t.text)) {
+    if (t.isChord || ['|', '||', '||:', ':||', '|:', '%', '/'].includes(t.text)) {
       chordCount++;
     }
   }
@@ -204,7 +214,7 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
 
   // Check if text already has widespread inline brackets [Chord]
   const remainingText = rawLines.slice(i).join('\n');
-  const bracketMatches = remainingText.match(/\[([A-G][#b]?[^\]]*)\]/g);
+  const bracketMatches = remainingText.match(/\[(?:[|:\s]*[A-G][#b]?[^\]]*|[A-G][#b]?[^\]]*)\]/g);
   const isAlreadyBracketed = (bracketMatches && bracketMatches.length >= 3);
 
   if (isAlreadyBracketed) {
@@ -278,11 +288,44 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
         } else {
           // Instrumental progression line without lyrics (e.g. Intro progression or solo)
           const tokens = tokenizeLine(currentLine);
-          const formattedParts = tokens.map(t => {
-            if (t.isChord) return '[' + t.text + ']';
-            return t.text;
-          });
-          contentLines.push(formattedParts.join(' '));
+          const hasBarlines = tokens.some(t => ['|', '||', '||:', ':||', '%'].includes(t.text));
+
+          if (!hasBarlines) {
+            const formattedParts = tokens.map(t => {
+              if (t.isChord) return '[' + t.text + ']';
+              return t.text;
+            });
+            contentLines.push(formattedParts.join(' '));
+          } else {
+            // Group bar structure into bracketed bar markup [| ... |]
+            const resultParts: string[] = [];
+            let currentBarRun: string[] = [];
+
+            const flushBarRun = () => {
+              if (currentBarRun.length > 0) {
+                resultParts.push('[' + currentBarRun.join(' ') + ']');
+                currentBarRun = [];
+              }
+            };
+
+            for (const t of tokens) {
+              const isBar = ['|', '||', '||:', ':||', '%'].includes(t.text);
+              const isAnnot = /^\(.*?\)$/.test(t.text) || /^\[.*?\]$/.test(t.text);
+              const isSec = SECTION_HEADER_REGEX.test(t.text) || /^(Intro|Solo|Verso|Refrão|Refrao|Coro|Ponte|Pausa|Interlúdio|Interludio|Final)[:\s]*$/i.test(t.text);
+
+              if (isAnnot || isSec) {
+                flushBarRun();
+                resultParts.push(t.text);
+              } else if (isBar || t.isChord) {
+                currentBarRun.push(t.text);
+              } else {
+                currentBarRun.push(t.text);
+              }
+            }
+
+            flushBarRun();
+            contentLines.push(resultParts.join(' '));
+          }
           i++;
           continue;
         }
@@ -312,7 +355,7 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
 
   // If original key was not extracted, try to deduce from the first valid chord
   if (!originalKey) {
-    const firstChordMatch = finalContent.match(/\[([A-G][#b]?(?:m|maj|min)?)[^\]]*\]/);
+    const firstChordMatch = finalContent.match(/\[[|:\s]*([A-G][#b]?(?:m|maj|min)?)[^\]]*\]/);
     if (firstChordMatch) {
       originalKey = firstChordMatch[1];
     } else {

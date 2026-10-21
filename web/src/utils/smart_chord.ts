@@ -109,6 +109,16 @@ function transposeChordSingle(chord: string, semitones: number): string {
  */
 export function transposeChord(chord: string, semitones: number): string {
   if (!chord || semitones === 0) return chord;
+
+  if (chord.includes('|') || chord.includes('%')) {
+    return chord.replace(/([A-G][#b]?(?:[^\s|%:]*))/g, (match) => {
+      if (isMusicalChord(match)) {
+        return transposeChord(match, semitones);
+      }
+      return match;
+    });
+  }
+
   if (!isMusicalChord(chord)) return chord;
   if (chord.includes('/')) {
     const parts = chord.split('/');

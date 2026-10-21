@@ -64,6 +64,13 @@ describe('Smart Chord Normalizer & Chord Grammar Test Suite', () => {
       expect(transposeChordSafe('C#m7', 1)).toBe('Dm7');
     });
 
+    it('transposes bracketed bar progressions safely preserving barlines and repeat markers', () => {
+      expect(transposeChordSafe('||: A | A7M | D | % :||', 2)).toBe('||: B | B7M | E | % :||');
+      expect(transposeChordSafe('| A9 | D9 |', 2)).toBe('| B9 | E9 |');
+      expect(transposeChordSafe('| | | |', 2)).toBe('| | | |');
+      expect(transposeChordSafe('||', 2)).toBe('||');
+    });
+
     it('PREVENTS transposition bug on descriptive words and annotations', () => {
       // Must not transpose Baixo to Caixo
       expect(transposeChordSafe('Baixo', 1)).toBe('Baixo');
@@ -101,7 +108,7 @@ describe('Smart Chord Normalizer & Chord Grammar Test Suite', () => {
       const draft = normalizeChordText(input);
 
       expect(draft.content).toContain('[Intro]');
-      expect(draft.content).toContain('||: [A9] | [A7M/9] | [D9] | % :||');
+      expect(draft.content).toContain('[||: A9 | A7M/9 | D9 | % :||]');
     });
 
     it('preserves parenthetical performance annotations without bracket corruption', () => {
