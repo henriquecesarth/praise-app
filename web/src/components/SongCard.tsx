@@ -10,7 +10,7 @@ interface SongCardProps {
 export const SongCard: React.FC<SongCardProps> = ({ song, onTap }) => {
   const avatarLetter = song.title ? song.title.charAt(0).toUpperCase() : '?';
 
-  const artistText = song.artist || song.artistName || 'Artista não especificado';
+  const artistText = (typeof song.artist === 'string' ? song.artist : (song.artist as any)?.name) || song.artistName || 'Artista não especificado';
   const primaryVersion = song.versions && song.versions.length > 0 ? song.versions[0] : null;
 
   const displayKey = primaryVersion?.key || song.originalKey;

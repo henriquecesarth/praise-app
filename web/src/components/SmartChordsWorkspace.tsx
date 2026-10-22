@@ -73,9 +73,10 @@ const getSuggestions = (query: string, originalKey: string): string[] => {
 
 interface SmartChordsWorkspaceProps {
   ministryId: string;
+  initialChordId?: string;
 }
 
-export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ ministryId }) => {
+export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ ministryId, initialChordId }) => {
   const [smartChords, setSmartChords] = useState<SmartChord[]>([]);
   const [selectedChord, setSelectedChord] = useState<SmartChord | null>(null);
   const [search, setSearch] = useState('');
@@ -169,6 +170,15 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
     loadRelations(controller.signal);
     return () => controller.abort();
   }, [ministryId, relationsRetry]);
+
+  useEffect(() => {
+    if (initialChordId && smartChords.length > 0) {
+      const found = smartChords.find((c) => c.id === initialChordId);
+      if (found && selectedChord?.id !== found.id) {
+        handleSelectChord(found);
+      }
+    }
+  }, [initialChordId, smartChords]);
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearch(e.target.value);

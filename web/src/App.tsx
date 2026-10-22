@@ -117,6 +117,7 @@ export default function App() {
   const [showArtistModal, setShowArtistModal] = useState(false);
   const [artistName, setArtistName] = useState('');
   const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
+  const [selectedSmartChordId, setSelectedSmartChordId] = useState<string | null>(null);
 
   // Loading & Feedback
   const [loadingSongs, setLoadingSongs] = useState(true);
@@ -1093,12 +1094,17 @@ export default function App() {
           {selectedSong && (
             <SongDetail
               song={selectedSong}
+              ministryId={activeGroup?.id || selectedSong.ministryId || groupId}
               onBack={handleBackToMain}
               onEdit={userRole === 'admin' ? () => {
                 setSongToEdit(selectedSong);
                 setShowSongModal(true);
               } : undefined}
               onDelete={userRole === 'admin' ? () => handleDeleteSong(selectedSong.id) : undefined}
+              onOpenSmartChord={(chordId) => {
+                setSelectedSmartChordId(chordId);
+                setMainModule('cifrador');
+              }}
             />
           )}
 
@@ -1342,7 +1348,7 @@ export default function App() {
               )}
 
               {mainModule === 'cifrador' && (
-                <SmartChordsWorkspace ministryId={groupId} />
+                <SmartChordsWorkspace ministryId={groupId} initialChordId={selectedSmartChordId || undefined} />
               )}
 
               {mainModule === 'ministry' && activeGroup && currentUser && (

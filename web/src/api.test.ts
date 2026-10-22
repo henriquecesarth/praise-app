@@ -917,4 +917,177 @@ describe('API Client & Structured Error Handling', () => {
       consoleWarnSpy.mockRestore();
     });
   });
+
+  describe('Song Versions API Client Mapping', () => {
+    it('deve serializar e mapear versões de músicas na criação e recuperação', async () => {
+      const mockApiSong = {
+        id: 'song-versions-1',
+        ministry_id: 'min-1',
+        title: 'Hosana',
+        artist: 'Hillsong Worship',
+        notes: 'Observações gerais da música',
+        versions: [
+          {
+            id: 'v1',
+            name: 'Original',
+            classification_ids: ['class-1'],
+            notes: 'Versão principal de domingo',
+            key: 'E',
+            bpm: 76,
+            duration: '05:30',
+            links: [
+              { label: 'Letra', url: 'https://letras.test/hosana' },
+              { label: 'Cifra', url: 'https://cifras.test/hosana' },
+              { label: 'Áudio', url: 'https://audio.test/hosana.mp3' },
+              { label: 'Vídeo', url: 'https://youtube.com/watch?v=123' },
+              { label: 'Partitura', url: 'https://drive.test/score.pdf', isCustom: true },
+            ],
+          },
+          {
+            id: 'v2',
+            name: 'Acústico',
+            classification_ids: ['class-2'],
+            notes: 'Versão voz e violão',
+            key: 'D',
+            bpm: 72,
+            duration: '04:45',
+            links: [
+              { label: 'Áudio', url: 'https://audio.test/acustico.mp3' },
+            ],
+          },
+        ],
+      };
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify({ data: mockApiSong })),
+      } as any);
+
+      const song = await api.getSongById('song-versions-1', 'min-1');
+
+      expect(song.id).toBe('song-versions-1');
+      expect(song.title).toBe('Hosana');
+      expect(song.versions).toHaveLength(2);
+      expect(song.versions[0].name).toBe('Original');
+      expect(song.versions[0].key).toBe('E');
+      expect(song.versions[0].classificationIds).toEqual(['class-1']);
+      expect(song.versions[0].links).toHaveLength(5);
+      expect(song.versions[1].name).toBe('Acústico');
+      expect(song.versions[1].key).toBe('D');
+    });
+
+    it('deve sintetizar versão padrão para músicas legadas sem array de versões', async () => {
+      const legacyApiSong = {
+        id: 'legacy-1',
+        ministry_id: 'min-1',
+        title: 'Música Antiga',
+        artist: 'Cantor Legado',
+        classification_id: 'class-legada',
+        original_key: 'A',
+        bpm: 100,
+        duration: '03:30',
+        chord_sheet_url: 'https://cifras.test/legada',
+        youtube_url: 'https://youtube.com/watch?v=legada',
+        lyrics: 'Letra legada',
+      };
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify({ data: legacyApiSong })),
+      } as any);
+
+      const song = await api.getSongById('legacy-1', 'min-1');
+
+      expect(song.versions).toHaveLength(1);
+      expect(song.versions[0].name).toBe('Original');
+      expect(song.versions[0].key).toBe('A');
+      expect(song.versions[0].classificationIds).toEqual(['class-legada']);
+      expect(song.versions[0].bpm).toBe(100);
+      expect(song.versions[0].links.some((l) => l.label === 'Cifra')).toBe(true);
+      expect(song.versions[0].links.some((l) => l.label === 'Vídeo')).toBe(true);
+    });
+
+    it('deve sempre normalizar song.artist e song.artistName para string mesmo se backend retornar objeto artist (F-R1-01)', async () => {
+      const apiSongWithObjectArtist = {
+        id: 'song-obj-artist',
+        ministry_id: 'min-1',
+        title: 'Lugar Secreto',
+        artist: { id: 'art-99', name: 'Gabriela Rocha' }, // Objeto do backend
+        artist_name: 'Gabriela Rocha',
+        versions: [{ id: 'v1', name: 'Original', key: 'C', links: [] }],
+      };
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify({ data: apiSongWithObjectArtist })),
+      } as any);
+
+      const song = await api.getSongById('song-obj-artist', 'min-1');
+
+      // Garante que é string primitiva, NUNCA objeto
+      expect(typeof song.artist).toBe('string');
+      expect(song.artist).toBe('Gabriela Rocha');
+      expect(typeof song.artistName).toBe('string');
+      expect(song.artistName).toBe('Gabriela Rocha');
+    });
+
+    it('deve serializar clearing explícito de campos opcionais em mapSongToApi (F-R1-04)', async () => {
+      let capturedBody: any = null;
+      global.fetch = vi.fn().mockImplementation(async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ data: { id: 'song-1', ...capturedBody } }),
+        };
+      });
+
+      await api.updateSong('song-1', {
+        title: 'Música Atualizada',
+        artist: 'Cantor',
+        versions: [
+          {
+            id: 'v1',
+            name: 'Original',
+            key: 'C',
+            bpm: '',
+            notes: '',
+            duration: '',
+            classificationIds: [],
+            links: [],
+          },
+        ],
+      }, 'min-1');
+
+      expect(capturedBody.versions[0].bpm).toBeNull();
+      expect(capturedBody.versions[0].notes).toBeNull();
+      expect(capturedBody.versions[0].duration).toBeNull();
+      expect(capturedBody.versions[0].classificationIds).toEqual([]);
+    });
+
+    it('R3-03: deve preservar key: null e originalKey: null sem converter para "C" no round-trip Web', async () => {
+      const apiSongWithClearedKey = {
+        id: 'song-cleared-key',
+        ministry_id: 'min-1',
+        title: 'Música Sem Tom',
+        original_key: null,
+        versions: [{ id: 'v1', name: 'Original', key: null, links: [] }],
+      };
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify({ data: apiSongWithClearedKey })),
+      } as any);
+
+      const song = await api.getSongById('song-cleared-key', 'min-1');
+
+      // Falha esperada antes do fix: key é 'C' e originalKey é 'C' em vez de null
+      expect(song.versions[0].key).toBeNull();
+      expect(song.originalKey).toBeNull();
+    });
+  });
 });

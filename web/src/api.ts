@@ -403,6 +403,13 @@ const handleResponse = async <T>(response: Response): Promise<T> => {
   throw new ApiError(errorMessage, response.status, details);
 };
 
+const resolveArtistString = (raw: any): string => {
+  if (!raw) return '';
+  if (typeof raw === 'string') return raw;
+  if (typeof raw === 'object' && typeof raw.name === 'string') return raw.name;
+  return '';
+};
+
 const mapSongFromApi = (apiSong: any): Song => {
   const defaultLinks: SongLink[] = [
     { label: 'Letra', url: apiSong.external_links?.letras || '' },
@@ -419,36 +426,48 @@ const mapSongFromApi = (apiSong: any): Song => {
     });
   }
 
+  const defaultKey = apiSong.original_key !== undefined && apiSong.original_key !== null && apiSong.original_key !== ''
+    ? apiSong.original_key
+    : null;
+
   const defaultVersion: SongVersion = {
     id: apiSong.id ? `${apiSong.id}_v1` : 'v1',
     name: 'Original',
     classificationIds: apiSong.classification_id ? [apiSong.classification_id] : (apiSong.classification_ids || []),
     notes: apiSong.version_notes || undefined,
-    key: apiSong.original_key || 'C',
+    key: defaultKey,
     bpm: apiSong.bpm || undefined,
     duration: apiSong.duration || undefined,
     links: defaultLinks,
   };
 
   const versions: SongVersion[] = Array.isArray(apiSong.versions) && apiSong.versions.length > 0
-    ? apiSong.versions.map((v: any, idx: number) => ({
-        id: v.id || `v_${idx + 1}`,
-        name: v.name || (idx === 0 ? 'Original' : `Versão ${idx + 1}`),
-        classificationIds: Array.isArray(v.classificationIds) ? v.classificationIds : (v.classificationId ? [v.classificationId] : []),
-        notes: v.notes || undefined,
-        key: v.key || v.originalKey || 'C',
-        bpm: v.bpm || undefined,
-        duration: v.duration || undefined,
-        links: Array.isArray(v.links) ? v.links : [],
-      }))
+    ? apiSong.versions.map((v: any, idx: number) => {
+        const rawKey = v.key !== undefined ? v.key : (v.original_key !== undefined ? v.original_key : v.originalKey);
+        const resolvedKey = rawKey !== undefined && rawKey !== null && rawKey !== '' ? rawKey : null;
+        return {
+          id: v.id || `v_${idx + 1}`,
+          name: v.name || (idx === 0 ? 'Original' : `Versão ${idx + 1}`),
+          classificationIds: Array.isArray(v.classificationIds)
+            ? v.classificationIds
+            : (Array.isArray(v.classification_ids) ? v.classification_ids : (v.classificationId ? [v.classificationId] : [])),
+          notes: v.notes || undefined,
+          key: resolvedKey,
+          bpm: v.bpm || undefined,
+          duration: v.duration || undefined,
+          links: Array.isArray(v.links) ? v.links : [],
+        };
+      })
     : [defaultVersion];
+
+  const resolvedArtist = resolveArtistString(apiSong.artist) || resolveArtistString(apiSong.artist_name) || '';
 
   return {
     id: apiSong.id,
     ministryId: apiSong.ministry_id || apiSong.group_id,
     userId: apiSong.user_id,
     title: apiSong.title || '',
-    artist: apiSong.artist || apiSong.artist_name || apiSong.artist?.name || '',
+    artist: resolvedArtist,
     notes: apiSong.notes || apiSong.lyrics || undefined,
     versions,
     createdAt: apiSong.created_at,
@@ -456,11 +475,11 @@ const mapSongFromApi = (apiSong: any): Song => {
     
     // Propriedades retrocompatíveis
     artistId: apiSong.artist_id || undefined,
-    artistName: apiSong.artist || apiSong.artist_name || apiSong.artist?.name || '',
+    artistName: resolvedArtist,
     classificationId: versions[0]?.classificationIds?.[0] || apiSong.classification_id || undefined,
     classificationName: apiSong.classification?.name || undefined,
     classificationColor: apiSong.classification?.color || undefined,
-    originalKey: versions[0]?.key || apiSong.original_key || undefined,
+    originalKey: versions[0]?.key !== undefined ? versions[0].key : (defaultKey ?? null),
     bpm: versions[0]?.bpm ? Number(versions[0].bpm) : (apiSong.bpm || undefined),
     duration: versions[0]?.duration || apiSong.duration || undefined,
     lyrics: apiSong.lyrics || undefined,
@@ -480,39 +499,69 @@ const mapSongToApi = (song: Partial<Song>): any => {
   const apiSong: any = {};
   if (song.title !== undefined) apiSong.title = song.title;
   if (song.artist !== undefined) {
-    apiSong.artist = song.artist;
-    apiSong.artist_name = song.artist;
+    const artistStr = resolveArtistString(song.artist);
+    apiSong.artist = artistStr;
+    apiSong.artist_name = artistStr;
   }
-  if (song.notes !== undefined) apiSong.notes = song.notes;
-  if (song.versions !== undefined) apiSong.versions = song.versions;
-
-  const primaryVersion = song.versions?.[0];
-  if (primaryVersion) {
-    apiSong.original_key = primaryVersion.key || null;
-    apiSong.bpm = primaryVersion.bpm ? Number(primaryVersion.bpm) : null;
-    apiSong.duration = primaryVersion.duration || null;
-    if (primaryVersion.classificationIds && primaryVersion.classificationIds.length > 0) {
-      apiSong.classification_id = primaryVersion.classificationIds[0];
-    }
-    
-    // Mapear links da versão principal para campos planos
-    const letraLink = primaryVersion.links?.find((l) => l.label.toLowerCase() === 'letra');
-    const cifraLink = primaryVersion.links?.find((l) => l.label.toLowerCase() === 'cifra');
-    const audioLink = primaryVersion.links?.find((l) => l.label.toLowerCase() === 'áudio' || l.label.toLowerCase() === 'audio');
-    const videoLink = primaryVersion.links?.find((l) => l.label.toLowerCase() === 'vídeo' || l.label.toLowerCase() === 'video');
-
-    if (cifraLink) apiSong.chord_sheet_url = cifraLink.url || null;
-    if (videoLink) apiSong.youtube_url = videoLink.url || null;
-    if (audioLink) apiSong.audio_url = audioLink.url || null;
-    
-    const extLinks: Record<string, string> = {};
-    if (letraLink?.url) extLinks.letras = letraLink.url;
-    primaryVersion.links?.forEach((link) => {
-      if (link.isCustom && link.label && link.url) {
-        extLinks[link.label] = link.url;
+  if (song.notes !== undefined) {
+    apiSong.notes = song.notes === '' ? null : song.notes;
+  }
+  if (song.versions !== undefined) {
+    apiSong.versions = song.versions.map((v) => {
+      const versionObj: any = {};
+      if (v.id !== undefined) versionObj.id = v.id;
+      if (v.name !== undefined) versionObj.name = v.name;
+      if (v.classificationIds !== undefined) {
+        versionObj.classificationIds = v.classificationIds;
+        versionObj.classification_ids = v.classificationIds;
       }
+      if (v.notes !== undefined) {
+        versionObj.notes = v.notes === '' ? null : v.notes;
+      }
+      if (v.key !== undefined) {
+        versionObj.key = v.key === '' ? null : v.key;
+      }
+      if (v.bpm !== undefined) {
+        versionObj.bpm = v.bpm === '' || v.bpm === null ? null : (isNaN(Number(v.bpm)) ? v.bpm : Number(v.bpm));
+      }
+      if (v.duration !== undefined) {
+        versionObj.duration = v.duration === '' ? null : v.duration;
+      }
+      if (v.links !== undefined) {
+        versionObj.links = Array.isArray(v.links) ? v.links : [];
+      }
+      return versionObj;
     });
-    apiSong.external_links = extLinks;
+  }
+
+  // Preserve legacy flat fields only if explicitly supplied by caller;
+  // Primary-version-to-flat synchronization belongs strictly to the Backend authoritative layer.
+  if (song.originalKey !== undefined) {
+    apiSong.original_key = song.originalKey === '' ? null : song.originalKey;
+  }
+  if (song.bpm !== undefined) {
+    apiSong.bpm = song.bpm === null || (song.bpm as any) === '' ? null : Number(song.bpm);
+  }
+  if (song.duration !== undefined) {
+    apiSong.duration = song.duration === '' ? null : song.duration;
+  }
+  if (song.classificationId !== undefined) {
+    apiSong.classification_id = song.classificationId || null;
+  }
+  if (song.chordSheetUrl !== undefined) {
+    apiSong.chord_sheet_url = song.chordSheetUrl || null;
+  }
+  if (song.youtubeUrl !== undefined) {
+    apiSong.youtube_url = song.youtubeUrl || null;
+  }
+  if (song.audioUrl !== undefined) {
+    apiSong.audio_url = song.audioUrl || null;
+  }
+  if (song.lyrics !== undefined) {
+    apiSong.lyrics = song.lyrics || null;
+  }
+  if (song.externalLinks !== undefined) {
+    apiSong.external_links = song.externalLinks;
   }
 
   return apiSong;

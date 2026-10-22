@@ -181,7 +181,7 @@ export interface SongVersion {
   name: string; // Padrão da primeira versão: "Original"
   classificationIds: string[]; // Classificações da versão
   notes?: string; // Observações específicas desta versão
-  key: string; // Tom (ex: "G", "C#m")
+  key: string | null; // Tom (ex: "G", "C#m" ou null se não informado)
   bpm?: string | number; // BPM (ex: 120)
   duration?: string; // Duração formatada em HH:MM:SS
   links: SongLink[]; // 4 links padrão + links customizados
@@ -204,7 +204,7 @@ export interface Song {
   classificationId?: string;
   classificationName?: string;
   classificationColor?: string;
-  originalKey?: string;
+  originalKey?: string | null;
   bpm?: number;
   duration?: string;
   lyrics?: string;

@@ -1,19 +1,165 @@
-import React, { useState } from 'react';
-import { Song, SongVersion } from '../types';
+import React, { useState, useEffect } from 'react';
+import { Song, SongVersion, SmartChord } from '../types';
+import { api } from '../api';
 import { renderSmartChordLine, transposeChord } from '../utils/smart_chord';
-import { ArrowLeft, Edit2, Play, Headphones, Music, FileText, Globe, ExternalLink, Trash2, Layers } from 'lucide-react';
+import {
+  ArrowLeft,
+  Edit2,
+  Play,
+  Headphones,
+  Music,
+  FileText,
+  Globe,
+  ExternalLink,
+  Trash2,
+  Layers,
+  Link,
+  Unlink,
+  AlertCircle,
+  X,
+  RefreshCw,
+} from 'lucide-react';
 import { Header } from './Header';
 
 interface SongDetailProps {
   song: Song;
+  ministryId?: string;
   onBack: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
+  onOpenSmartChord?: (chordId: string) => void;
 }
 
-export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, onDelete }) => {
-  const [activeView, setActiveView] = useState<'lyrics' | 'cifra'>(song.smartChord ? 'cifra' : 'lyrics');
+export const SongDetail: React.FC<SongDetailProps> = ({
+  song,
+  ministryId,
+  onBack,
+  onEdit,
+  onDelete,
+  onOpenSmartChord,
+}) => {
+  const effectiveMinistryId = ministryId || song.ministryId;
+
+  const [linkedChords, setLinkedChords] = useState<SmartChord[]>([]);
+  const [loadingChords, setLoadingChords] = useState(false);
+  const [chordsError, setChordsError] = useState<string | null>(null);
+  const [chordsRetryNonce, setChordsRetryNonce] = useState(0);
+  const [selectedChordIndex, setSelectedChordIndex] = useState(0);
+
+  // Link Modal State
+  const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
+  const [availableChords, setAvailableChords] = useState<SmartChord[]>([]);
+  const [loadingAvailableChords, setLoadingAvailableChords] = useState(false);
+  const [availableChordsError, setAvailableChordsError] = useState<string | null>(null);
+  const [selectedChordToLink, setSelectedChordToLink] = useState<SmartChord | null>(null);
+  const [isLinking, setIsLinking] = useState(false);
+  const [linkingError, setLinkingError] = useState<string | null>(null);
+
+  // Unlink State
+  const [isUnlinking, setIsUnlinking] = useState(false);
+  const [unlinkError, setUnlinkError] = useState<string | null>(null);
+
+  const activeChord: SmartChord | undefined = (linkedChords && linkedChords.length > 0)
+    ? linkedChords[selectedChordIndex] || linkedChords[0]
+    : (song.smartChord as SmartChord | undefined);
+
+  const hasSmartChord = !!activeChord;
+
+  const [activeView, setActiveView] = useState<'lyrics' | 'cifra'>(() => (song.smartChord ? 'cifra' : 'lyrics'));
   const [semitones, setSemitones] = useState(0);
+
+  // Synchronize active view when linked chords load
+  useEffect(() => {
+    if (linkedChords.length > 0) {
+      setActiveView('cifra');
+    }
+  }, [linkedChords.length]);
+
+  // Load user's linked personal chords for this song with cancellation fencing
+  useEffect(() => {
+    let active = true;
+    if (!effectiveMinistryId || !song.id) {
+      setLinkedChords([]);
+      setLoadingChords(false);
+      setChordsError(null);
+      return;
+    }
+
+    setLoadingChords(true);
+    setChordsError(null);
+
+    api.getMySmartChordsForSong(effectiveMinistryId, song.id)
+      .then((chords) => {
+        if (!active) return;
+        setLinkedChords(chords || []);
+        setSelectedChordIndex(0);
+        setLoadingChords(false);
+      })
+      .catch((err) => {
+        if (!active) return;
+        setChordsError(err?.message || 'Erro ao carregar cifras vinculadas');
+        setLoadingChords(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [effectiveMinistryId, song.id, chordsRetryNonce]);
+
+  // Reset modal and selection when ministry changes
+  useEffect(() => {
+    setIsLinkModalOpen(false);
+    setSelectedChordToLink(null);
+    setLinkingError(null);
+  }, [effectiveMinistryId]);
+
+  const handleOpenLinkModal = async () => {
+    if (!effectiveMinistryId) return;
+    setIsLinkModalOpen(true);
+    setSelectedChordToLink(null);
+    setLinkingError(null);
+    setAvailableChordsError(null);
+    setLoadingAvailableChords(true);
+
+    try {
+      const chords = await api.getSmartChords(effectiveMinistryId);
+      setAvailableChords(chords || []);
+    } catch (err: any) {
+      setAvailableChordsError(err?.message || 'Erro ao carregar cifras para vínculo.');
+    } finally {
+      setLoadingAvailableChords(false);
+    }
+  };
+
+  const handleConfirmLink = async () => {
+    if (!effectiveMinistryId || !selectedChordToLink) return;
+    setIsLinking(true);
+    setLinkingError(null);
+    try {
+      await api.setSmartChordRepertoireLink(effectiveMinistryId, selectedChordToLink.id, song.id);
+      setIsLinking(false);
+      setIsLinkModalOpen(false);
+      setChordsRetryNonce((n) => n + 1);
+    } catch (err: any) {
+      setIsLinking(false);
+      setLinkingError(err?.message || 'Falha ao vincular cifra.');
+    }
+  };
+
+  const handleUnlinkChord = async (chordId: string) => {
+    if (!effectiveMinistryId) return;
+    setIsUnlinking(true);
+    setUnlinkError(null);
+    try {
+      await api.removeSmartChordRepertoireLink(effectiveMinistryId, chordId);
+      setIsUnlinking(false);
+      setSelectedChordIndex(0);
+      setChordsRetryNonce((n) => n + 1);
+    } catch (err: any) {
+      setIsUnlinking(false);
+      setUnlinkError(err?.message || 'Falha ao desvincular cifra.');
+    }
+  };
 
   const versions: SongVersion[] = song.versions && song.versions.length > 0
     ? song.versions
@@ -159,10 +305,10 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
     );
   };
 
-  const originalKey = activeVersion.key || song.smartChord?.originalKey || song.originalKey || 'C';
+  const originalKey = activeChord?.originalKey || activeVersion.key || song.originalKey || 'C';
   const currentKeyTransposed = transposeChord(originalKey, semitones);
-  const rawLines = song.smartChord ? song.smartChord.content.split('\n') : [];
-  const artistText = song.artist || song.artistName || 'Artista não especificado';
+  const rawLines = activeChord ? activeChord.content.split('\n') : [];
+  const artistText = (typeof song.artist === 'string' ? song.artist : (song.artist as any)?.name) || song.artistName || 'Artista não especificado';
 
   return (
     <div
@@ -294,44 +440,263 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
 
       <div className="detail-content-layout">
         <div className="detail-main-content">
-          {song.smartChord && (
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
+          {/* Error banners */}
+          {chordsError && (
+            <div
+              role="alert"
+              style={{
+                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                borderRadius: '10px',
+                padding: '12px 16px',
+                marginBottom: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+                color: '#EF4444',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <AlertCircle size={18} />
+                <span>{chordsError}</span>
+              </div>
               <button
-                className={`btn ${activeView === 'cifra' ? 'btn-primary' : 'btn-secondary'}`}
-                style={{
-                  minHeight: '44px',
-                  padding: '10px 18px',
-                  fontSize: '0.88rem',
-                  borderRadius: '10px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                }}
-                onClick={() => setActiveView('cifra')}
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setChordsRetryNonce((n) => n + 1)}
+                style={{ minHeight: '36px', padding: '6px 14px', fontSize: '0.82rem' }}
               >
-                <Music size={18} />
-                Cifra Inteligente
-              </button>
-              <button
-                className={`btn ${activeView === 'lyrics' ? 'btn-primary' : 'btn-secondary'}`}
-                style={{
-                  minHeight: '44px',
-                  padding: '10px 18px',
-                  fontSize: '0.88rem',
-                  borderRadius: '10px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                }}
-                onClick={() => setActiveView('lyrics')}
-              >
-                <FileText size={18} />
-                Apenas Letra
+                Tentar novamente
               </button>
             </div>
           )}
 
-          {activeView === 'cifra' && song.smartChord ? (
+          {unlinkError && (
+            <div
+              role="alert"
+              style={{
+                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                borderRadius: '10px',
+                padding: '12px 16px',
+                marginBottom: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+                color: '#EF4444',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <AlertCircle size={18} />
+                <span>{unlinkError}</span>
+              </div>
+              <button
+                type="button"
+                className="action-icon-btn"
+                onClick={() => setUnlinkError(null)}
+                style={{ width: '32px', height: '32px' }}
+                aria-label="Fechar aviso"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
+
+          {/* Smart Chords Toolbar */}
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '12px',
+              marginBottom: '16px',
+            }}
+          >
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+              {loadingChords && (
+                <span
+                  style={{
+                    fontSize: '0.82rem',
+                    color: 'var(--text-secondary)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '6px 10px',
+                  }}
+                >
+                  <RefreshCw size={14} className="spin" />
+                  Carregando cifras...
+                </span>
+              )}
+              {hasSmartChord && (
+                <>
+                  <button
+                    type="button"
+                    className={`btn ${activeView === 'cifra' ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{
+                      minHeight: '44px',
+                      padding: '10px 18px',
+                      fontSize: '0.88rem',
+                      borderRadius: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                    }}
+                    onClick={() => setActiveView('cifra')}
+                  >
+                    <Music size={18} />
+                    Cifra Inteligente
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn ${activeView === 'lyrics' ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{
+                      minHeight: '44px',
+                      padding: '10px 18px',
+                      fontSize: '0.88rem',
+                      borderRadius: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                    }}
+                    onClick={() => setActiveView('lyrics')}
+                  >
+                    <FileText size={18} />
+                    Apenas Letra
+                  </button>
+                </>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+              {effectiveMinistryId && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={handleOpenLinkModal}
+                  style={{
+                    minHeight: '44px',
+                    padding: '8px 14px',
+                    borderRadius: '10px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    fontSize: '0.85rem',
+                  }}
+                  title="Vincular Cifra Inteligente"
+                  aria-label="Vincular Cifra Inteligente"
+                >
+                  <Link size={16} />
+                  <span>{linkedChords.length > 0 ? 'Vincular Outra Cifra' : 'Vincular Cifra'}</span>
+                </button>
+              )}
+
+              {activeChord?.id && onOpenSmartChord && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => onOpenSmartChord(activeChord.id)}
+                  style={{
+                    minHeight: '44px',
+                    padding: '8px 14px',
+                    borderRadius: '10px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    fontSize: '0.85rem',
+                  }}
+                  title="Abrir no Cifrador"
+                  aria-label="Abrir no Cifrador"
+                >
+                  <ExternalLink size={16} />
+                  <span>Abrir no Cifrador</span>
+                </button>
+              )}
+
+              {activeChord?.id && linkedChords.some((c) => c.id === activeChord.id) && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => handleUnlinkChord(activeChord.id)}
+                  disabled={isUnlinking}
+                  style={{
+                    minHeight: '44px',
+                    padding: '8px 14px',
+                    borderRadius: '10px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    fontSize: '0.85rem',
+                    color: '#EF4444',
+                    borderColor: 'rgba(239, 68, 68, 0.3)',
+                    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+                  }}
+                  title="Desvincular Cifra"
+                  aria-label="Desvincular Cifra"
+                >
+                  <Unlink size={16} />
+                  <span>{isUnlinking ? 'Desvinculando...' : 'Desvincular'}</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Multiple linked chords tabs */}
+          {linkedChords.length > 1 && (
+            <div
+              className="tab-bar"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                marginBottom: '16px',
+                overflowX: 'auto',
+                paddingBottom: '4px',
+                width: '100%',
+                maxWidth: '100%',
+                minWidth: 0,
+              }}
+            >
+              <span
+                style={{
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                  color: 'var(--text-secondary)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  marginRight: '4px',
+                }}
+              >
+                <Music size={16} /> Cifras:
+              </span>
+              {linkedChords.map((chord, idx) => (
+                <button
+                  key={chord.id || idx}
+                  type="button"
+                  className={`tab-btn ${selectedChordIndex === idx ? 'active' : ''}`}
+                  onClick={() => {
+                    setSelectedChordIndex(idx);
+                    setSemitones(0);
+                  }}
+                  style={{
+                    minHeight: '40px',
+                    padding: '0 14px',
+                    borderRadius: '20px',
+                    fontSize: '0.85rem',
+                    fontWeight: 600,
+                  }}
+                >
+                  {chord.title || `Cifra ${idx + 1}`} ({chord.originalKey})
+                </button>
+              ))}
+            </div>
+          )}
+
+          {activeView === 'cifra' && hasSmartChord ? (
             <div className="lyrics-box" style={{ fontFamily: 'monospace', overflowX: 'auto', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' }}>
               <div
                 style={{
@@ -500,6 +865,250 @@ export const SongDetail: React.FC<SongDetailProps> = ({ song, onBack, onEdit, on
           </div>
         </div>
       </div>
+
+      {/* Modal Vincular Cifra Inteligente */}
+      {isLinkModalOpen && (
+        <div
+          className="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="link-chord-modal-title"
+          onClick={() => {
+            if (!isLinking) setIsLinkModalOpen(false);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' && !isLinking) setIsLinkModalOpen(false);
+          }}
+          tabIndex={-1}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '16px',
+            boxSizing: 'border-box',
+          }}
+        >
+          <div
+            className="modal-content"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: 'var(--surface-color)',
+              borderRadius: 'var(--border-radius)',
+              border: '1px solid var(--border-color)',
+              maxWidth: '520px',
+              width: '100%',
+              maxHeight: '90vh',
+              display: 'flex',
+              flexDirection: 'column',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)',
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '16px 20px',
+                borderBottom: '1px solid var(--border-color)',
+              }}
+            >
+              <h2
+                id="link-chord-modal-title"
+                style={{ fontSize: '1.15rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}
+              >
+                <Link size={20} style={{ color: 'var(--primary-color)' }} />
+                Vincular Cifra Inteligente
+              </h2>
+              <button
+                type="button"
+                className="action-icon-btn"
+                onClick={() => {
+                  if (!isLinking) setIsLinkModalOpen(false);
+                }}
+                disabled={isLinking}
+                style={{ width: '36px', height: '36px' }}
+                aria-label="Fechar"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{ padding: '20px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
+                Selecione uma de suas cifras inteligentes pessoais para vincular à música{' '}
+                <strong>{song.title}</strong> neste ministério.
+              </p>
+
+              {linkingError && (
+                <div
+                  role="alert"
+                  style={{
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                    borderRadius: '8px',
+                    padding: '10px 14px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    color: '#EF4444',
+                    fontSize: '0.85rem',
+                  }}
+                >
+                  <AlertCircle size={16} />
+                  <span>{linkingError}</span>
+                </div>
+              )}
+
+              {loadingAvailableChords ? (
+                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '32px 0' }}>
+                  <RefreshCw size={24} className="spin" style={{ color: 'var(--primary-color)' }} />
+                  <span style={{ marginLeft: '10px', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                    Carregando suas cifras...
+                  </span>
+                </div>
+              ) : availableChordsError ? (
+                <div
+                  role="alert"
+                  style={{
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                    borderRadius: '8px',
+                    padding: '12px',
+                    color: '#EF4444',
+                    fontSize: '0.85rem',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
+                  <span>{availableChordsError}</span>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={handleOpenLinkModal}
+                    style={{ minHeight: '32px', padding: '4px 10px', fontSize: '0.8rem' }}
+                  >
+                    Tentar novamente
+                  </button>
+                </div>
+              ) : availableChords.length === 0 ? (
+                <div
+                  style={{
+                    textAlign: 'center',
+                    padding: '28px 16px',
+                    backgroundColor: 'var(--surface-color-secondary, rgba(0,0,0,0.02))',
+                    borderRadius: '8px',
+                    border: '1px dashed var(--border-color)',
+                  }}
+                >
+                  <Music size={32} style={{ opacity: 0.4, marginBottom: '8px' }} />
+                  <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
+                    Você não possui cifras inteligentes cadastradas neste ministério.
+                  </p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '240px', overflowY: 'auto' }}>
+                  {availableChords.map((chord) => {
+                    const isSelected = selectedChordToLink?.id === chord.id;
+                    const isAlreadyLinked = linkedChords.some((c) => c.id === chord.id);
+                    return (
+                      <div
+                        key={chord.id}
+                        onClick={() => {
+                          if (!isAlreadyLinked) {
+                            setSelectedChordToLink(chord);
+                            setLinkingError(null);
+                          }
+                        }}
+                        style={{
+                          padding: '12px 14px',
+                          borderRadius: '10px',
+                          border: isSelected
+                            ? '2px solid var(--primary-color)'
+                            : '1px solid var(--border-color)',
+                          backgroundColor: isSelected
+                            ? 'rgba(var(--primary-rgb, 15, 42, 31), 0.08)'
+                            : 'var(--surface-color)',
+                          cursor: isAlreadyLinked ? 'default' : 'pointer',
+                          opacity: isAlreadyLinked ? 0.6 : 1,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: '12px',
+                          transition: 'all 0.15s ease',
+                        }}
+                      >
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ fontWeight: 600, fontSize: '0.92rem' }}>{chord.title}</div>
+                          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                            Tom Original: <strong>{chord.originalKey}</strong>
+                            {chord.artistName && ` • ${chord.artistName}`}
+                          </div>
+                        </div>
+                        {isAlreadyLinked && (
+                          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                            Já vinculada
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'flex-end',
+                gap: '10px',
+                padding: '16px 20px',
+                borderTop: '1px solid var(--border-color)',
+                backgroundColor: 'var(--surface-color)',
+              }}
+            >
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setIsLinkModalOpen(false)}
+                disabled={isLinking}
+                style={{ minHeight: '44px', padding: '0 18px', borderRadius: '10px' }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleConfirmLink}
+                disabled={!selectedChordToLink || isLinking}
+                style={{
+                  minHeight: '44px',
+                  padding: '0 20px',
+                  borderRadius: '10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                }}
+              >
+                {isLinking ? (
+                  <>
+                    <RefreshCw size={16} className="spin" />
+                    <span>Vinculando...</span>
+                  </>
+                ) : (
+                  <span>Confirmar Vínculo</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
