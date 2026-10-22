@@ -1,4 +1,4 @@
-# LouvAIO — instruções permanentes para Gemini CLI
+# LouvAIO — instruções permanentes para Antigravity CLI (agy) e agentes compatíveis
 
 @./AGENTS.md
 
@@ -12,14 +12,14 @@
 
 ## Tarefas recebidas pelo GitHub
 
-Quando o usuário solicitar a implementação de uma Issue (por exemplo, #42):
+Quando o usuário solicitar a implementação de uma Issue (por exemplo, #42), inclusive por um fluxo automatizado explicitamente autorizado:
 
 1. Leia título, descrição e comentários da Issue usando `gh issue view 42 --json title,body,comments` (substitua o número).
 2. Confira a branch atual, o estado do Git e o escopo. Trabalhe em uma branch de feature específica, nunca diretamente na `main`.
 3. Inspecione o código existente e siga os agentes especializados e as instruções de `AGENTS.md` conforme a área.
 4. Implemente o menor conjunto coerente de alterações, execute as validações aplicáveis e revise `git diff --check`.
 5. Prepare um relatório factual contendo: Issue, resumo, arquivos, decisões, testes realmente executados e resultados, riscos, limitações e eventuais alterações de arquitetura.
-6. Quando **autorizado expressamente pelo usuário na sessão**, faça push apenas da branch de trabalho e crie/atualize um **Draft Pull Request** para `main`, usando o relatório como descrição. Mencione a Issue no PR.
+6. Quando **autorizado expressamente pelo usuário**, faça push apenas da branch de trabalho e crie/atualize um **Draft Pull Request** para `main`, usando o relatório como descrição. Mencione a Issue no PR.
 7. Retorne a URL do PR para que o ChatGPT possa consultar código, diff e relatório diretamente no GitHub.
 
 ## Limites operacionais
