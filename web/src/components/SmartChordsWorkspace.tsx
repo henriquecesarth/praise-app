@@ -383,7 +383,8 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
       filename: filename,
       image: { type: 'jpeg', quality: 0.98 },
       html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'] }
     };
 
     (window as any).html2pdf().set(opt).from(element).save();
@@ -526,6 +527,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
 
   // Parsing & pitch shifting preview
   const rawLines = content ? content.split('\n') : [];
+  const printLines = (content || '').trimEnd().split('\n');
   const currentKeyTransposed = transposeChord(originalKey, semitones);
   const selectedArtistName = artistName || artists.find(a => a.id === artistId)?.name || 'Desconhecido';
 
@@ -1283,60 +1285,67 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
             </div>
 
             {/* Modal Body: Scrollable Sheet Preview */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '10px', backgroundColor: '#111', borderRadius: '8px' }}>
-              {/* This is the box that is sent to html2pdf generator */}
-              <div 
-                id="printable-sheet-pdf" 
-                style={{ 
-                  background: 'white', 
-                  color: 'black', 
-                  padding: '30px', 
-                  fontFamily: activeFontFamilyCss,
-                  borderRadius: '4px',
-                  boxShadow: '0 4px 8px rgba(0,0,0,0.2)',
-                  minHeight: '297mm', // A4 aspect ratio height placeholder
-                  width: '100%',
-                  boxSizing: 'border-box'
-                }}
-              >
-                {/* PDF document styles for PDF generation */}
-                <style>{`
-                  #printable-sheet-pdf * {
-                    color: black !important;
-                    font-family: ${activeFontFamilyCss} !important;
-                  }
-                  #printable-sheet-pdf .print-chord-span {
-                    color: black !important;
-                    font-weight: bold !important;
-                    font-family: ${activeFontFamilyCss} !important;
-                  }
-                  #printable-sheet-pdf .has-chord {
-                    text-decoration: underline 1px solid black !important;
-                    text-decoration-color: black !important;
-                  }
-                `}</style>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px', backgroundColor: '#111', borderRadius: '8px' }}>
+              {/* PDF document styles for PDF generation */}
+              <style>{`
+                #printable-sheet-pdf * {
+                  color: black !important;
+                  font-family: ${activeFontFamilyCss} !important;
+                }
+                #printable-sheet-pdf .print-chord-span {
+                  color: black !important;
+                  font-weight: bold !important;
+                  font-family: ${activeFontFamilyCss} !important;
+                }
+                #printable-sheet-pdf .has-chord {
+                  text-decoration: underline 1px solid black !important;
+                  text-decoration-color: black !important;
+                }
+                #printable-sheet-pdf .pdf-line-row {
+                  break-inside: avoid !important;
+                  page-break-inside: avoid !important;
+                }
+                #printable-sheet-pdf .pdf-header {
+                  break-inside: avoid !important;
+                  page-break-inside: avoid !important;
+                }
+              `}</style>
 
-                {/* Document Header */}
-                <div style={{ borderBottom: '2px solid #ccc', paddingBottom: '12px', marginBottom: '20px' }}>
-                  <h2 style={{ fontSize: '24px', fontWeight: 700, margin: '0 0 6px 0', color: 'black', fontFamily: activeFontFamilyCss }}>
-                    {title || 'Sem Título'}
-                  </h2>
-                  <div style={{ fontSize: '13px', display: 'flex', gap: '20px', flexWrap: 'wrap', color: '#555', fontFamily: activeFontFamilyCss }}>
-                    <span><strong>Artista:</strong> {selectedArtistName}</span>
-                    <span><strong>Tom Original:</strong> {originalKey}</span>
-                    <span><strong>Tom Atual:</strong> {currentKeyTransposed}</span>
+              <div style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.5)', borderRadius: '4px', overflow: 'hidden' }}>
+                {/* This is the box that is sent to html2pdf generator */}
+                <div
+                  id="printable-sheet-pdf"
+                  style={{
+                    background: 'white',
+                    color: 'black',
+                    padding: '24px 30px',
+                    fontFamily: activeFontFamilyCss,
+                    width: '100%',
+                    boxSizing: 'border-box'
+                  }}
+                >
+                  {/* Document Header */}
+                  <div className="pdf-header" style={{ borderBottom: '2px solid #ccc', paddingBottom: '12px', marginBottom: '20px' }}>
+                    <h2 style={{ fontSize: '24px', fontWeight: 700, margin: '0 0 6px 0', color: 'black', fontFamily: activeFontFamilyCss }}>
+                      {title || 'Sem Título'}
+                    </h2>
+                    <div style={{ fontSize: '13px', display: 'flex', gap: '20px', flexWrap: 'wrap', color: '#555', fontFamily: activeFontFamilyCss }}>
+                      <span><strong>Artista:</strong> {selectedArtistName}</span>
+                      <span><strong>Tom Original:</strong> {originalKey}</span>
+                      <span><strong>Tom Atual:</strong> {currentKeyTransposed}</span>
+                    </div>
                   </div>
-                </div>
 
-                {/* Sheet lines */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {rawLines.map((lineText, lineIdx) => {
+                  {/* Sheet lines */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {printLines.map((lineText, lineIdx) => {
                     if (hasBarProgression(lineText)) {
                       const tokens = parseBarProgressionLine(lineText);
                       return (
                         <div
                           key={lineIdx}
                           role="group"
+                          className="pdf-line-row"
                           aria-label={lineText || 'Linha de compassos'}
                           style={{
                             display: 'flex',
@@ -1347,7 +1356,9 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
                             fontSize: `${printFontSize}px`,
                             lineHeight: '1.4',
                             paddingTop: `${printFontSize + 3}px`,
-                            position: 'relative'
+                            position: 'relative',
+                            breakInside: 'avoid',
+                            pageBreakInside: 'avoid'
                           }}
                         >
                           {tokens.map((token, tokenIdx) => {
@@ -1415,6 +1426,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
                       <div 
                         key={lineIdx} 
                         role="group"
+                        className="pdf-line-row"
                         aria-label={lineText || 'Linha vazia'}
                         style={{ 
                           display: 'flex', 
@@ -1424,7 +1436,9 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
                           fontSize: `${printFontSize}px`, 
                           lineHeight: '1.4',
                           paddingTop: `${printFontSize + 3}px`,
-                          position: 'relative'
+                          position: 'relative',
+                          breakInside: 'avoid',
+                          pageBreakInside: 'avoid'
                         }}
                       >
                         {text.split('').map((char, charIdx) => {
@@ -1511,6 +1525,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
                     );
                   })}
                 </div>
+              </div>
               </div>
             </div>
           </div>

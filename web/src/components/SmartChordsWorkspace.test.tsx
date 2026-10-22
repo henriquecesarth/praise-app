@@ -664,5 +664,63 @@ describe('SmartChordsWorkspace', () => {
         expect(screen.queryByTestId('inline-chord-input')).toBeNull();
       });
     });
+
+    it('ensures printable-sheet-pdf avoids forced 297mm minHeight and configures pagebreak safety (Hotfix R1.3.1)', async () => {
+      getSmartChords.mockResolvedValue([
+        {
+          id: 'sc-pdf-pagination',
+          title: 'Compact PDF Track',
+          originalKey: 'G',
+          content: 'Intro: [||: G | D | Em | C :||]\n[G]Gracas [D]Te dou [Em]pelo Teu [C]amor',
+        },
+      ]);
+
+      const mockSave = vi.fn();
+      const mockFrom = vi.fn().mockReturnValue({ save: mockSave });
+      const mockSet = vi.fn().mockReturnValue({ from: mockFrom });
+      const mockHtml2pdf = vi.fn().mockReturnValue({ set: mockSet });
+      (window as any).html2pdf = mockHtml2pdf;
+
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Compact PDF Track')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText('Compact PDF Track'));
+      fireEvent.click(screen.getByRole('button', { name: /Exportar PDF/i }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('modal-font-family-select')).toBeInTheDocument();
+      });
+
+      const pdfContainer = document.querySelector('#printable-sheet-pdf') as HTMLElement;
+      expect(pdfContainer).not.toBeNull();
+
+      // R1.3.1: Must NOT force minHeight: 297mm which pushes empty 20mm onto blank page 2
+      expect(pdfContainer.style.minHeight).not.toBe('297mm');
+      expect(pdfContainer.style.boxShadow).not.toContain('0 4px 8px');
+
+      // R1.3.1: Style block must declare break-inside: avoid for line rows and header
+      const styleTag = document.querySelector('style[data-pdf-styles], .glass-panel style, #printable-sheet-pdf style') ||
+        Array.from(document.querySelectorAll('style')).find((s) => s.textContent?.includes('pdf-line-row'));
+      expect(styleTag?.textContent).toContain('break-inside: avoid !important');
+      expect(styleTag?.textContent).toContain('page-break-inside: avoid !important');
+
+      // Test generatePDF options
+      const downloadBtn = screen.getByRole('button', { name: /Baixar PDF/i });
+      fireEvent.click(downloadBtn);
+
+      expect(mockHtml2pdf).toHaveBeenCalled();
+      expect(mockSet).toHaveBeenCalledWith(
+        expect.objectContaining({
+          margin: 10,
+          jsPDF: expect.objectContaining({ format: 'a4', orientation: 'portrait' }),
+          pagebreak: { mode: ['css', 'legacy'] },
+        })
+      );
+      expect(mockFrom).toHaveBeenCalledWith(pdfContainer);
+      expect(mockSave).toHaveBeenCalled();
+    });
   });
 });
