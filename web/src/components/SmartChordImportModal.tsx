@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api, SmartChord, SmartChordImportDraft, ImportWarning } from '../api';
 import { Song } from '../types';
-import { parseSmartChord } from '../utils/smart_chord';
+import { parseSmartChord, hasBarProgression, parseBarProgressionLine } from '../utils/smart_chord';
 
 interface SmartChordImportModalProps {
   isOpen: boolean;
@@ -549,7 +549,29 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                     lineHeight: 1.4,
                   }}
                 >
-                  {parseSmartChord(content).map((line, idx) => {
+                  {content.split('\n').map((lineText, idx) => {
+                    if (hasBarProgression(lineText)) {
+                      const tokens = parseBarProgressionLine(lineText);
+                      return (
+                        <div key={idx} style={{ marginBottom: '8px', color: '#e2e8f0', whiteSpace: 'pre-wrap' }}>
+                          {tokens.map((token, tIdx) => {
+                            if (token.type === 'bracket_open' || token.type === 'bracket_close') return null;
+                            if (token.type === 'chord') {
+                              return <span key={tIdx} style={{ color: '#38bdf8', fontWeight: 'bold' }}>{token.value}</span>;
+                            }
+                            if (token.type === 'delimiter') {
+                              return <span key={tIdx} style={{ color: token.value === '%' ? '#38bdf8' : '#94a3b8', fontWeight: 'bold' }}>{token.value}</span>;
+                            }
+                            if (token.type === 'whitespace') {
+                              return <span key={tIdx} style={{ whiteSpace: 'pre' }}>{token.value}</span>;
+                            }
+                            return <span key={tIdx}>{token.value}</span>;
+                          })}
+                        </div>
+                      );
+                    }
+                    const parsedLines = parseSmartChord(lineText);
+                    const line = parsedLines[0] || { segments: [] };
                     const hasChords = line.segments.some((s) => s.chord);
                     if (!hasChords) {
                       return <div key={idx} style={{ color: '#94a3b8', minHeight: '1.2em' }}>{line.segments.map(s => s.text).join('')}</div>;

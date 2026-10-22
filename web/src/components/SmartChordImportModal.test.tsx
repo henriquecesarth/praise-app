@@ -546,4 +546,50 @@ describe('SmartChordImportModal Component', () => {
       expect(screen.getByText('Clique para selecionar um arquivo PDF')).toBeInTheDocument();
     });
   });
+
+  describe('Instrumental Bar Progression Preview Rendering', () => {
+    it('hides structural opening and closing brackets in the aligned preview tab', async () => {
+      importSmartChordText.mockResolvedValueOnce({
+        title: 'Bar Progression Song',
+        artistName: 'Test Band',
+        originalKey: 'A',
+        content: '[||: A9 | A7M/9 | D9 | % :||]',
+        warnings: [],
+        sourceType: 'text',
+      });
+
+      render(
+        <SmartChordImportModal
+          isOpen={true}
+          ministryId="min-1"
+          onClose={mockOnClose}
+          onSuccess={mockOnSuccess}
+        />
+      );
+
+      fireEvent.click(screen.getByText('Colar Texto'));
+      const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
+      fireEvent.change(textarea, { target: { value: 'Intro: [||: A9 | A7M/9 | D9 | % :||]' } });
+      fireEvent.click(screen.getByRole('button', { name: /Analisar.*Texto/i }));
+
+      await waitFor(() => {
+        expect(screen.getByDisplayValue('Bar Progression Song')).toBeInTheDocument();
+      });
+
+      // Switch to aligned preview tab
+      fireEvent.click(screen.getByRole('button', { name: /Visualiza.*Alinhada/i }));
+
+      // Musical elements must be visible
+      expect(screen.getByText('A9')).toBeInTheDocument();
+      expect(screen.getByText('A7M/9')).toBeInTheDocument();
+      expect(screen.getByText('D9')).toBeInTheDocument();
+      expect(screen.getByText('||:')).toBeInTheDocument();
+      expect(screen.getByText(':||')).toBeInTheDocument();
+      expect(screen.getByText('%')).toBeInTheDocument();
+
+      // Structural brackets [ and ] must NOT be visually rendered
+      expect(screen.queryByText('[')).toBeNull();
+      expect(screen.queryByText(']')).toBeNull();
+    });
+  });
 });

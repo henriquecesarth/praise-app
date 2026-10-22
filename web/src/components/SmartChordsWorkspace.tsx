@@ -9,6 +9,8 @@ import {
   parseBarProgressionLine,
   updateBarProgressionChord,
   isMusicalChord,
+  CHORD_FONT_FAMILIES,
+  getFontFamilyCss,
 } from '../utils/smart_chord';
 import { SmartChordImportModal } from './SmartChordImportModal';
 
@@ -95,6 +97,14 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
   const [content, setContent] = useState('');
   const [semitones, setSemitones] = useState(0);
   const [printFontSize, setPrintFontSize] = useState(13);
+  const [sheetFontFamily, setSheetFontFamily] = useState<string>(() => {
+    try {
+      return localStorage.getItem('louvaio_smart_chord_font_family') || 'monospace';
+    } catch {
+      return 'monospace';
+    }
+  });
+  const activeFontFamilyCss = getFontFamilyCss(sheetFontFamily);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
@@ -166,6 +176,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
   };
 
   const handleSelectChord = async (chord: SmartChord) => {
+    setEditingCell(null);
     setSelectedChord(chord);
     setTitle(chord.title);
     setArtistId(chord.artistId || '');
@@ -216,6 +227,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
   };
 
   const handleCreateNew = () => {
+    setEditingCell(null);
     linkRequestContextRef.current = {
       ministryId: ministryId || '',
       chordId: '',
@@ -840,6 +852,41 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '0.85rem', opacity: 0.7 }}>Fonte:</span>
+                  <select
+                    aria-label="Selecionar fonte da cifra"
+                    data-testid="font-family-select"
+                    className="form-control"
+                    value={sheetFontFamily}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setSheetFontFamily(val);
+                      try {
+                        localStorage.setItem('louvaio_smart_chord_font_family', val);
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                    style={{
+                      minHeight: '44px',
+                      padding: '6px 12px',
+                      fontSize: '0.85rem',
+                      backgroundColor: 'var(--surface-variant)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '8px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {CHORD_FONT_FAMILIES.map(opt => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{ fontSize: '0.85rem', opacity: 0.7 }}>Tamanho da Fonte:</span>
                   <button type="button" aria-label="Diminuir tamanho da fonte" className="btn btn-secondary smart-chords-touch-btn" style={{ width: '44px', height: '44px', minWidth: '44px', minHeight: '44px', padding: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '1.1rem', fontWeight: 700, borderRadius: '8px' }} onClick={() => setPrintFontSize(prev => Math.max(10, prev - 1))}>
                     -
@@ -855,12 +902,12 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
 
 
               {/* Rendered sheet box (will be fully printable and contain header) */}
-              <div className="print-sheet-box" style={{ flex: 1, padding: '20px', borderRadius: '12px', backgroundColor: 'var(--surface-variant)', border: '1px solid var(--border)', overflowX: 'auto', fontFamily: 'monospace' }}>
+              <div className="print-sheet-box" style={{ flex: 1, padding: '20px', borderRadius: '12px', backgroundColor: 'var(--surface-variant)', border: '1px solid var(--border)', overflowX: 'auto', fontFamily: activeFontFamilyCss }}>
                 
                 {/* Print/Visual header inside the sheet container */}
                 <div style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', marginBottom: '20px' }}>
-                  <h2 style={{ fontSize: '1.5rem', fontWeight: 700, margin: '0 0 4px 0' }}>{title || 'Nova Cifra'}</h2>
-                  <div style={{ fontSize: '0.85rem', opacity: 0.7, display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                  <h2 style={{ fontSize: '1.5rem', fontWeight: 700, margin: '0 0 4px 0', fontFamily: activeFontFamilyCss }}>{title || 'Nova Cifra'}</h2>
+                  <div style={{ fontSize: '0.85rem', opacity: 0.7, display: 'flex', gap: '20px', flexWrap: 'wrap', fontFamily: activeFontFamilyCss }}>
                     <span><strong>Artista:</strong> {selectedArtistName}</span>
                     <span><strong>Tom Original:</strong> {originalKey}</span>
                     <span><strong>Tom Atual:</strong> {currentKeyTransposed}</span>
@@ -882,7 +929,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
                             flexWrap: 'wrap',
                             alignItems: 'baseline',
                             rowGap: `${printFontSize + 7}px`,
-                            fontFamily: 'monospace',
+                            fontFamily: activeFontFamilyCss,
                             fontSize: `${printFontSize}px`,
                             lineHeight: '1.4',
                             paddingTop: `${printFontSize + 3}px`
@@ -954,11 +1001,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
                             }
 
                             if (token.type === 'bracket_open' || token.type === 'bracket_close') {
-                              return (
-                                <span key={tokenIdx} style={{ color: 'var(--text-muted, #888)', userSelect: 'none' }}>
-                                  {token.value}
-                                </span>
-                              );
+                              return null;
                             }
 
                             return (
@@ -1018,7 +1061,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
                           display: 'flex', 
                           flexWrap: 'wrap', 
                           rowGap: `${printFontSize + 7}px`, 
-                          fontFamily: 'monospace', 
+                          fontFamily: activeFontFamilyCss,
                           fontSize: `${printFontSize}px`, 
                           lineHeight: '1.4',
                           paddingTop: `${printFontSize + 3}px` // Space for absolute chords
@@ -1180,6 +1223,42 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
               <h3 style={{ fontSize: '1.2rem', fontWeight: 600, color: 'var(--text-primary)' }}>Pré-visualização do PDF</h3>
               
               <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                {/* Font Family controls inside Modal */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '0.85rem', opacity: 0.7 }}>Fonte:</span>
+                  <select
+                    aria-label="Selecionar fonte do PDF"
+                    data-testid="modal-font-family-select"
+                    className="form-control"
+                    value={sheetFontFamily}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setSheetFontFamily(val);
+                      try {
+                        localStorage.setItem('louvaio_smart_chord_font_family', val);
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                    style={{
+                      minHeight: '44px',
+                      padding: '6px 12px',
+                      fontSize: '0.85rem',
+                      backgroundColor: 'var(--surface-variant)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '8px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {CHORD_FONT_FAMILIES.map(opt => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 {/* Font Size controls inside Modal */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{ fontSize: '0.85rem', opacity: 0.7 }}>Tamanho da Letra:</span>
@@ -1212,7 +1291,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
                   background: 'white', 
                   color: 'black', 
                   padding: '30px', 
-                  fontFamily: 'monospace',
+                  fontFamily: activeFontFamilyCss,
                   borderRadius: '4px',
                   boxShadow: '0 4px 8px rgba(0,0,0,0.2)',
                   minHeight: '297mm', // A4 aspect ratio height placeholder
@@ -1224,10 +1303,12 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
                 <style>{`
                   #printable-sheet-pdf * {
                     color: black !important;
+                    font-family: ${activeFontFamilyCss} !important;
                   }
                   #printable-sheet-pdf .print-chord-span {
                     color: black !important;
                     font-weight: bold !important;
+                    font-family: ${activeFontFamilyCss} !important;
                   }
                   #printable-sheet-pdf .has-chord {
                     text-decoration: underline 1px solid black !important;
@@ -1237,10 +1318,10 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
 
                 {/* Document Header */}
                 <div style={{ borderBottom: '2px solid #ccc', paddingBottom: '12px', marginBottom: '20px' }}>
-                  <h2 style={{ fontSize: '24px', fontWeight: 700, margin: '0 0 6px 0', color: 'black' }}>
+                  <h2 style={{ fontSize: '24px', fontWeight: 700, margin: '0 0 6px 0', color: 'black', fontFamily: activeFontFamilyCss }}>
                     {title || 'Sem Título'}
                   </h2>
-                  <div style={{ fontSize: '13px', display: 'flex', gap: '20px', flexWrap: 'wrap', color: '#555' }}>
+                  <div style={{ fontSize: '13px', display: 'flex', gap: '20px', flexWrap: 'wrap', color: '#555', fontFamily: activeFontFamilyCss }}>
                     <span><strong>Artista:</strong> {selectedArtistName}</span>
                     <span><strong>Tom Original:</strong> {originalKey}</span>
                     <span><strong>Tom Atual:</strong> {currentKeyTransposed}</span>
@@ -1262,7 +1343,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
                             flexWrap: 'wrap',
                             alignItems: 'baseline',
                             rowGap: `${printFontSize + 7}px`,
-                            fontFamily: 'monospace',
+                            fontFamily: activeFontFamilyCss,
                             fontSize: `${printFontSize}px`,
                             lineHeight: '1.4',
                             paddingTop: `${printFontSize + 3}px`,
@@ -1310,11 +1391,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
                             }
 
                             if (token.type === 'bracket_open' || token.type === 'bracket_close') {
-                              return (
-                                <span key={tokenIdx} style={{ color: '#666' }}>
-                                  {token.value}
-                                </span>
-                              );
+                              return null;
                             }
 
                             return (
@@ -1343,7 +1420,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
                           display: 'flex', 
                           flexWrap: 'wrap', 
                           rowGap: `${printFontSize + 7}px`, 
-                          fontFamily: 'monospace', 
+                          fontFamily: activeFontFamilyCss,
                           fontSize: `${printFontSize}px`, 
                           lineHeight: '1.4',
                           paddingTop: `${printFontSize + 3}px`,

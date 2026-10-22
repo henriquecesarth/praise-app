@@ -12,6 +12,8 @@ import {
   isBarProgression,
   parseBarProgressionLine,
   updateBarProgressionChord,
+  CHORD_FONT_FAMILIES,
+  getFontFamilyCss,
 } from './smart_chord';
 
 describe('Web Smart Chord Utility Test Suite', () => {
@@ -368,6 +370,55 @@ describe('Web Smart Chord Utility Test Suite', () => {
         const parsed = parseSmartChord(reloaded);
         expect(parsed).toHaveLength(3);
       });
+    });
+  });
+
+  describe('7. Sheet Typography & Font Families', () => {
+    it('exports all 6 standard font family options including monospace default', () => {
+      expect(CHORD_FONT_FAMILIES).toHaveLength(6);
+      const values = CHORD_FONT_FAMILIES.map(f => f.value);
+      expect(values).toEqual([
+        'monospace',
+        'Arial',
+        'Times New Roman',
+        'Georgia',
+        'Verdana',
+        'Courier New',
+      ]);
+    });
+
+    it('resolves correct CSS font-family strings for each option', () => {
+      expect(getFontFamilyCss('monospace')).toBe('monospace, "Courier New", Courier');
+      expect(getFontFamilyCss('Arial')).toBe('Arial, Helvetica, sans-serif');
+      expect(getFontFamilyCss('Times New Roman')).toBe('"Times New Roman", Times, serif');
+      expect(getFontFamilyCss('Georgia')).toBe('Georgia, serif');
+      expect(getFontFamilyCss('Verdana')).toBe('Verdana, Geneva, sans-serif');
+      expect(getFontFamilyCss('Courier New')).toBe('"Courier New", Courier, monospace');
+    });
+
+    it('falls back safely to monospaced font on unknown, empty or undefined font family', () => {
+      expect(getFontFamilyCss('')).toBe('monospace, "Courier New", Courier');
+      expect(getFontFamilyCss('Comic Sans')).toBe('monospace, "Courier New", Courier');
+      expect(getFontFamilyCss(undefined as unknown as string)).toBe('monospace, "Courier New", Courier');
+    });
+
+    it('resolves CSS correctly when queried by label instead of value', () => {
+      expect(getFontFamilyCss('Padrão (monoespaçada)')).toBe('monospace, "Courier New", Courier');
+      expect(getFontFamilyCss('Arial')).toBe('Arial, Helvetica, sans-serif');
+    });
+
+    it('maintains chord and syllable parsing invariants regardless of selected font', () => {
+      const raw = '[A9]Graças Te [A7M/9]dou';
+      const parsed = parseSmartChord(raw);
+      expect(parsed[0].segments[0].chord).toBe('A9');
+      expect(parsed[0].segments[0].text).toBe('Graças Te ');
+      expect(parsed[0].segments[1].chord).toBe('A7M/9');
+      expect(parsed[0].segments[1].text).toBe('dou');
+
+      const bar = '[||: A9 | A7M/9 | D9 | % :||]';
+      const tokens = parseBarProgressionLine(bar);
+      expect(tokens[0].type).toBe('bracket_open');
+      expect(tokens[tokens.length - 1].type).toBe('bracket_close');
     });
   });
 });

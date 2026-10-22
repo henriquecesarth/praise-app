@@ -477,4 +477,192 @@ describe('SmartChordsWorkspace', () => {
       expect(chordSpans.length).toBe(0);
     });
   });
+
+  describe('R1.3 Visual Cleanup & Typography', () => {
+    it('hides structural opening and closing brackets in the rendered sheet view while preserving tokens and raw content', async () => {
+      getSmartChords.mockResolvedValue([
+        {
+          id: 'sc-clean-bars',
+          title: 'Clean Progression Track',
+          originalKey: 'A',
+          content: '[||: A9 | A7M/9 | D9 | % :||]',
+        },
+      ]);
+
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Clean Progression Track')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText('Clean Progression Track'));
+
+      await waitFor(() => {
+        expect(screen.getByText('A9')).toBeInTheDocument();
+        expect(screen.getByText('A7M/9')).toBeInTheDocument();
+        expect(screen.getByText('D9')).toBeInTheDocument();
+        expect(screen.getByText('||:')).toBeInTheDocument();
+        expect(screen.getByText(':||')).toBeInTheDocument();
+        expect(screen.getByText('%')).toBeInTheDocument();
+      });
+
+      const sheetBox = document.querySelector('.print-sheet-box');
+      expect(sheetBox).not.toBeNull();
+      expect(sheetBox?.textContent).not.toContain('[');
+      expect(sheetBox?.textContent).not.toContain(']');
+
+      const textarea = screen.getByDisplayValue('[||: A9 | A7M/9 | D9 | % :||]');
+      expect(textarea).toBeInTheDocument();
+    });
+
+    it('hides structural brackets in the printable PDF preview modal', async () => {
+      getSmartChords.mockResolvedValue([
+        {
+          id: 'sc-modal-brackets',
+          title: 'Modal Progression Track',
+          originalKey: 'A',
+          content: '[||: A9 | A7M/9 | D9 | % :||]',
+        },
+      ]);
+
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Modal Progression Track')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText('Modal Progression Track'));
+
+      const printBtn = screen.getByRole('button', { name: /Exportar PDF/i });
+      fireEvent.click(printBtn);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('modal-font-family-select')).toBeInTheDocument();
+      });
+
+      const pdfContainer = document.querySelector('#printable-sheet-pdf');
+      expect(pdfContainer).not.toBeNull();
+      expect(pdfContainer?.textContent).toContain('A9');
+      expect(pdfContainer?.textContent).toContain('||:');
+      expect(pdfContainer?.textContent).not.toContain('[');
+      expect(pdfContainer?.textContent).not.toContain(']');
+    });
+
+    it('renders font family selector with default monospace and persists selection in localStorage', async () => {
+      localStorage.clear();
+      getSmartChords.mockResolvedValue([
+        {
+          id: 'sc-font-test',
+          title: 'Typography Track',
+          originalKey: 'C',
+          content: '[C]Aleluia [G]ao Senhor',
+        },
+      ]);
+
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Typography Track')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText('Typography Track'));
+
+      const fontSelect = screen.getByTestId('font-family-select') as HTMLSelectElement;
+      expect(fontSelect).toBeInTheDocument();
+      expect(fontSelect.value).toBe('monospace');
+
+      fireEvent.change(fontSelect, { target: { value: 'Arial' } });
+      expect(fontSelect.value).toBe('Arial');
+      expect(localStorage.getItem('louvaio_smart_chord_font_family')).toBe('Arial');
+
+      const sheetBox = document.querySelector('.print-sheet-box') as HTMLElement;
+      expect(sheetBox.style.fontFamily).toContain('Arial');
+    });
+
+    it('synchronizes font family changes made in the PDF preview modal', async () => {
+      getSmartChords.mockResolvedValue([
+        {
+          id: 'sc-modal-font',
+          title: 'Modal Font Track',
+          originalKey: 'D',
+          content: '[D]Gloria [A]a Deus',
+        },
+      ]);
+
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Modal Font Track')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText('Modal Font Track'));
+
+      fireEvent.click(screen.getByRole('button', { name: /Exportar PDF/i }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('modal-font-family-select')).toBeInTheDocument();
+      });
+
+      const modalFontSelect = screen.getByTestId('modal-font-family-select') as HTMLSelectElement;
+      fireEvent.change(modalFontSelect, { target: { value: 'Georgia' } });
+
+      const pdfContainer = document.querySelector('#printable-sheet-pdf') as HTMLElement;
+      expect(pdfContainer.style.fontFamily).toContain('Georgia');
+
+      const closeBtn = screen.getByRole('button', { name: /Fechar/i });
+      fireEvent.click(closeBtn);
+
+      const toolbarSelect = screen.getByTestId('font-family-select') as HTMLSelectElement;
+      expect(toolbarSelect.value).toBe('Georgia');
+    });
+
+    it('resets inline editing cell state when switching chords or creating a new chord (Finding LOW-01)', async () => {
+      getSmartChords.mockResolvedValue([
+        {
+          id: 'sc-low-1',
+          title: 'Chord Track One',
+          originalKey: 'A',
+          content: '[||: A9 | D9 :||]',
+        },
+        {
+          id: 'sc-low-2',
+          title: 'Chord Track Two',
+          originalKey: 'C',
+          content: '[C]Santo',
+        },
+      ]);
+
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Chord Track One')).toBeInTheDocument();
+        expect(screen.getByText('Chord Track Two')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText('Chord Track One'));
+      const a9Span = await screen.findByText('A9');
+      fireEvent.click(a9Span);
+
+      const input = await screen.findByTestId('inline-chord-input');
+      expect(input).toBeInTheDocument();
+
+      fireEvent.click(screen.getByText('Chord Track Two'));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('inline-chord-input')).toBeNull();
+      });
+
+      fireEvent.click(screen.getByText('Chord Track One'));
+      const a9SpanAgain = await screen.findByText('A9');
+      fireEvent.click(a9SpanAgain);
+
+      expect(await screen.findByTestId('inline-chord-input')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: /Criar Cifra/i }));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('inline-chord-input')).toBeNull();
+      });
+    });
+  });
 });

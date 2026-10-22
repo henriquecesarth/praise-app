@@ -371,3 +371,23 @@ export function updateBarProgressionChord(
   targetToken.value = trimmed;
   return tokens.map(t => t.value).join('');
 }
+
+export interface IFontFamilyOption {
+  label: string;
+  value: string;
+  css: string;
+}
+
+export const CHORD_FONT_FAMILIES: IFontFamilyOption[] = [
+  { label: 'Padr\u00e3o (monoespa\u00e7ada)', value: 'monospace', css: 'monospace, "Courier New", Courier' },
+  { label: 'Arial', value: 'Arial', css: 'Arial, Helvetica, sans-serif' },
+  { label: 'Times New Roman', value: 'Times New Roman', css: '"Times New Roman", Times, serif' },
+  { label: 'Georgia', value: 'Georgia', css: 'Georgia, serif' },
+  { label: 'Verdana', value: 'Verdana', css: 'Verdana, Geneva, sans-serif' },
+  { label: 'Courier New', value: 'Courier New', css: '"Courier New", Courier, monospace' },
+];
+
+export function getFontFamilyCss(value: string): string {
+  const match = CHORD_FONT_FAMILIES.find(f => f.value === value || f.label === value);
+  return match ? match.css : 'monospace, "Courier New", Courier';
+}
