@@ -34,15 +34,11 @@ key.properties
 Thumbs.db
 
 .agents/*
-!.agents/feature-engineer.md
-!.agents/feature-reviewer.md
-!.agents/policies.md
-!.agents/workflow.md
+!.agents/agents/
 
-# Agent Manager V2 runtime state
+# Local transient agent tooling
 .logs/
 .worktrees/
-agent-manager.config.json
 
 # Logs
 *-debug.log
