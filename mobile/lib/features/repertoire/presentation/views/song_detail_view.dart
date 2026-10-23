@@ -287,7 +287,7 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
   }
 }
 
-class _SongDetailContent extends ConsumerWidget {
+class _SongDetailContent extends ConsumerStatefulWidget {
   final SongDetail song;
   final String ministryId;
   final ValueChanged<String> onOpenLink;
@@ -299,11 +299,126 @@ class _SongDetailContent extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_SongDetailContent> createState() => _SongDetailContentState();
+}
+
+class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
+  int _selectedVersionIndex = 0;
+
+  @override
+  void didUpdateWidget(covariant _SongDetailContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.song.id != widget.song.id) {
+      _selectedVersionIndex = 0;
+    } else {
+      final len = widget.song.effectiveVersions.length;
+      if (_selectedVersionIndex >= len) {
+        _selectedVersionIndex = 0;
+      }
+    }
+  }
+
+  ({String title, IconData icon, Color color}) _resolveLinkPresentation(
+    SongLink link,
+    ThemeData theme,
+  ) {
+    final lower = link.label.trim().toLowerCase();
+    if (!link.isCustom) {
+      if (lower == 'vídeo' || lower == 'video' || lower == 'youtube') {
+        return (
+          title: 'Vídeo no YouTube',
+          icon: Icons.smart_display_rounded,
+          color: Colors.red.shade700,
+        );
+      }
+      if (lower == 'cifra') {
+        return (
+          title: 'Cifra / Partitura',
+          icon: Icons.description_outlined,
+          color: theme.colorScheme.primary,
+        );
+      }
+      if (lower == 'áudio' || lower == 'audio') {
+        return (
+          title: 'Áudio de Referência',
+          icon: Icons.headphones_outlined,
+          color: theme.colorScheme.secondary,
+        );
+      }
+    }
+    return (
+      title: link.label.trim().isNotEmpty ? link.label.trim() : 'Link Externo',
+      icon: Icons.link,
+      color: theme.colorScheme.primary,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final song = widget.song;
+    final ministryId = widget.ministryId;
+    final onOpenLink = widget.onOpenLink;
     final theme = Theme.of(context);
-    final classification = song.classification;
-    final classColor =
-        classification?.displayColor ?? theme.colorScheme.primary;
+
+    final versions = song.effectiveVersions;
+    final activeIndex =
+        _selectedVersionIndex < versions.length ? _selectedVersionIndex : 0;
+    final activeVersion = versions[activeIndex];
+
+    final activeKey =
+        (activeVersion.key != null && activeVersion.key!.trim().isNotEmpty)
+            ? activeVersion.key!.trim()
+            : null;
+    final activeBpm = activeVersion.bpm;
+    final activeDuration = (activeVersion.duration != null &&
+            activeVersion.duration!.trim().isNotEmpty)
+        ? activeVersion.duration!.trim()
+        : null;
+    final activeVersionNotes =
+        (activeVersion.notes != null && activeVersion.notes!.trim().isNotEmpty)
+            ? activeVersion.notes!.trim()
+            : null;
+    final activeLinks = activeVersion.links
+        .where((l) => l.url.trim().isNotEmpty)
+        .toList();
+
+    // Resolve classifications for active version
+    final listClassifications =
+        ref.watch(repertoireListNotifierProvider).availableClassifications;
+    final formClassifications =
+        ref.watch(songFormNotifierProvider).classifications;
+
+    final resolvedClassifications = <({String id, String name, Color color})>[];
+    if (activeVersion.classificationIds.isNotEmpty) {
+      for (final cId in activeVersion.classificationIds) {
+        if (song.classification != null && song.classification!.id == cId) {
+          resolvedClassifications.add((
+            id: cId,
+            name: song.classification!.name,
+            color:
+                song.classification!.displayColor ?? theme.colorScheme.primary,
+          ));
+          continue;
+        }
+        final found = listClassifications
+                .where((c) => c.id == cId)
+                .firstOrNull ??
+            formClassifications.where((c) => c.id == cId).firstOrNull;
+        if (found != null) {
+          resolvedClassifications.add((
+            id: found.id,
+            name: found.name,
+            color: found.displayColor ?? theme.colorScheme.primary,
+          ));
+        }
+      }
+    } else if (activeIndex == 0 && song.classification != null) {
+      resolvedClassifications.add((
+        id: song.classification!.id,
+        name: song.classification!.name,
+        color: song.classification!.displayColor ?? theme.colorScheme.primary,
+      ));
+    }
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20.0),
@@ -327,49 +442,89 @@ class _SongDetailContent extends ConsumerWidget {
           ),
           const SizedBox(height: 16),
 
-          // Metadata Chips / Badges
+          // Versions Selector Chips
+          if (versions.isNotEmpty) ...[
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.layers_outlined,
+                    size: 16,
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Versão:',
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  for (int i = 0; i < versions.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 8),
+                    ChoiceChip(
+                      key: ValueKey(
+                        'detail_version_chip_${versions[i].id ?? i}',
+                      ),
+                      label: Text(versions[i].name),
+                      selected: activeIndex == i,
+                      onSelected: (_) {
+                        setState(() {
+                          _selectedVersionIndex = i;
+                        });
+                      },
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+
+          // Metadata Chips / Badges for Active Version
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
-              if (song.displayKey != null)
+              if (activeKey != null)
                 Chip(
                   avatar: const Icon(Icons.music_note, size: 16),
-                  label: Text('Tom: ${song.displayKey}'),
+                  label: Text('Tom: $activeKey'),
                   backgroundColor:
                       theme.colorScheme.primary.withValues(alpha: 0.1),
                   side: BorderSide.none,
                 ),
-              if (song.bpm != null)
+              if (activeBpm != null)
                 Chip(
                   avatar: const Icon(Icons.speed, size: 16),
-                  label: Text('${song.bpm} BPM'),
+                  label: Text(activeBpm is num ? '$activeBpm BPM' : '$activeBpm'),
                   backgroundColor: theme.colorScheme.surfaceContainerHighest
                       .withValues(alpha: 0.6),
                   side: BorderSide.none,
                 ),
-              if (song.duration != null && song.duration!.trim().isNotEmpty)
+              if (activeDuration != null)
                 Chip(
                   avatar: const Icon(Icons.timer_outlined, size: 16),
-                  label: Text(song.duration!.trim()),
+                  label: Text(activeDuration),
                   backgroundColor: theme.colorScheme.surfaceContainerHighest
                       .withValues(alpha: 0.6),
                   side: BorderSide.none,
                 ),
-              if (classification != null)
+              for (final cls in resolvedClassifications)
                 Chip(
-                  avatar:
-                      Icon(Icons.label_outline, size: 16, color: classColor),
+                  avatar: Icon(Icons.label_outline, size: 16, color: cls.color),
                   label: Text(
-                    classification.name,
+                    cls.name,
                     style: TextStyle(
-                      color: classColor,
+                      color: cls.color,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  backgroundColor: classColor.withValues(alpha: 0.12),
+                  backgroundColor: cls.color.withValues(alpha: 0.12),
                   side: BorderSide(
-                    color: classColor.withValues(alpha: 0.3),
+                    color: cls.color.withValues(alpha: 0.3),
                     width: 0.8,
                   ),
                 ),
@@ -377,8 +532,40 @@ class _SongDetailContent extends ConsumerWidget {
           ),
           const SizedBox(height: 20),
 
-          // External Links / Resources
-          if (song.hasAnyLinks) ...[
+          // Active Version Notes
+          if (activeVersionNotes != null) ...[
+            Text(
+              'Observações da Versão (${activeVersion.name})',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Card(
+              elevation: 0,
+              color: theme.colorScheme.surfaceContainerHighest
+                  .withValues(alpha: 0.3),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(
+                  color: theme.dividerColor.withValues(alpha: 0.2),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: SelectableText(
+                  activeVersionNotes,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    height: 1.5,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+          ],
+
+          // External Links / Resources for Active Version
+          if (activeLinks.isNotEmpty) ...[
             Text(
               'Links e Recursos',
               style: theme.textTheme.titleMedium?.copyWith(
@@ -396,76 +583,25 @@ class _SongDetailContent extends ConsumerWidget {
               ),
               child: Column(
                 children: [
-                  if (song.youtubeUrl != null &&
-                      song.youtubeUrl!.trim().isNotEmpty)
-                    ListTile(
-                      leading: Icon(
-                        Icons.smart_display_rounded,
-                        color: Colors.red.shade700,
-                      ),
-                      title: const Text('Vídeo no YouTube'),
-                      subtitle: Text(
-                        song.youtubeUrl!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                      trailing: const Icon(Icons.open_in_new, size: 18),
-                      onTap: () => onOpenLink(song.youtubeUrl!),
-                    ),
-                  if (song.chordSheetUrl != null &&
-                      song.chordSheetUrl!.trim().isNotEmpty) ...[
-                    if (song.youtubeUrl != null &&
-                        song.youtubeUrl!.trim().isNotEmpty)
-                      const Divider(height: 1),
-                    ListTile(
-                      leading: Icon(
-                        Icons.description_outlined,
-                        color: theme.colorScheme.primary,
-                      ),
-                      title: const Text('Cifra / Partitura'),
-                      subtitle: Text(
-                        song.chordSheetUrl!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                      trailing: const Icon(Icons.open_in_new, size: 18),
-                      onTap: () => onOpenLink(song.chordSheetUrl!),
-                    ),
-                  ],
-                  if (song.audioUrl != null &&
-                      song.audioUrl!.trim().isNotEmpty) ...[
-                    const Divider(height: 1),
-                    ListTile(
-                      leading: Icon(
-                        Icons.headphones_outlined,
-                        color: theme.colorScheme.secondary,
-                      ),
-                      title: const Text('Áudio de Referência'),
-                      subtitle: Text(
-                        song.audioUrl!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                      trailing: const Icon(Icons.open_in_new, size: 18),
-                      onTap: () => onOpenLink(song.audioUrl!),
-                    ),
-                  ],
-                  for (final entry in song.externalLinks.entries) ...[
-                    const Divider(height: 1),
-                    ListTile(
-                      leading: const Icon(Icons.link),
-                      title: Text(entry.key),
-                      subtitle: Text(
-                        entry.value,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                      trailing: const Icon(Icons.open_in_new, size: 18),
-                      onTap: () => onOpenLink(entry.value),
+                  for (int i = 0; i < activeLinks.length; i++) ...[
+                    if (i > 0) const Divider(height: 1),
+                    Builder(
+                      builder: (context) {
+                        final link = activeLinks[i];
+                        final pres = _resolveLinkPresentation(link, theme);
+                        return ListTile(
+                          leading: Icon(pres.icon, color: pres.color),
+                          title: Text(pres.title),
+                          subtitle: Text(
+                            link.url,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          trailing: const Icon(Icons.open_in_new, size: 18),
+                          onTap: () => onOpenLink(link.url),
+                        );
+                      },
                     ),
                   ],
                 ],
@@ -525,7 +661,7 @@ class _SongDetailContent extends ConsumerWidget {
                                 prefillSongId: song.id,
                                 prefillSongTitle: song.title,
                                 prefillArtistName: song.artistName,
-                                prefillKey: song.originalKey,
+                                prefillKey: activeKey,
                               ),
                             ),
                           );
@@ -666,7 +802,7 @@ class _SongDetailContent extends ConsumerWidget {
                                     prefillSongId: song.id,
                                     prefillSongTitle: song.title,
                                     prefillArtistName: song.artistName,
-                                    prefillKey: song.originalKey,
+                                    prefillKey: activeKey,
                                   ),
                                 ),
                               );
@@ -686,7 +822,7 @@ class _SongDetailContent extends ConsumerWidget {
             },
           ),
 
-          // Notes Section
+          // General Song Notes Section
           if (song.hasNotes) ...[
             Text(
               'Observações',

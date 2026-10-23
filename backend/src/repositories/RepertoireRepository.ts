@@ -2,7 +2,7 @@ import { FieldPath } from 'firebase-admin/firestore';
 import { randomUUID } from 'crypto';
 import { db } from '../lib/firebase';
 import { AppError } from '../middleware/error-handler';
-import { SongSummary, SongVersion, validateFlatVsVersionConflicts } from '../features/repertoire/repertoire.types';
+import { SongSummary, SongVersion, normalizeBpmValue, validateFlatVsVersionConflicts } from '../features/repertoire/repertoire.types';
 
 export interface SongCursorData {
   id: string;
@@ -50,9 +50,7 @@ export function normalizeSongVersions(raw: any): SongVersion[] {
         notes: v.notes || null,
         key,
         original_key: key,
-        bpm: v.bpm !== undefined && v.bpm !== null && v.bpm !== ''
-          ? (typeof v.bpm === 'number' ? v.bpm : (isNaN(Number(v.bpm)) ? v.bpm : Number(v.bpm)))
-          : null,
+        bpm: normalizeBpmValue(v.bpm),
         duration: v.duration || null,
         links: Array.isArray(v.links) ? v.links : [],
       };
@@ -93,7 +91,7 @@ export function normalizeSongVersions(raw: any): SongVersion[] {
       notes: raw.version_notes || null,
       key: legacyKey,
       original_key: legacyKey,
-      bpm: raw.bpm !== undefined && raw.bpm !== null ? (typeof raw.bpm === 'number' ? raw.bpm : Number(raw.bpm) || null) : null,
+      bpm: normalizeBpmValue(raw.bpm),
       duration: raw.duration || null,
       links: defaultLinks,
     },
@@ -115,7 +113,7 @@ export function mapToSongSummary(raw: any): SongSummary {
     artist_id: raw.artist_id || null,
     classification_id: raw.classification_id || null,
     original_key: raw.original_key || null,
-    bpm: raw.bpm ? Number(raw.bpm) : null,
+    bpm: normalizeBpmValue(raw.bpm),
     duration: raw.duration || null,
     youtube_url: raw.youtube_url || null,
     audio_url: raw.audio_url || null,
@@ -515,10 +513,10 @@ export class RepertoireRepository {
               : (idx === 0 && data.original_key !== undefined
                   ? (data.original_key === '' || data.original_key === null ? null : data.original_key)
                   : null));
-        const bpm = v.bpm !== undefined && v.bpm !== null && v.bpm !== ''
-          ? (typeof v.bpm === 'number' ? v.bpm : (isNaN(Number(v.bpm)) ? v.bpm : Number(v.bpm)))
-          : (idx === 0 && data.bpm !== undefined && data.bpm !== null && data.bpm !== ''
-              ? Number(data.bpm)
+        const bpm = v.bpm !== undefined
+          ? normalizeBpmValue(v.bpm)
+          : (idx === 0 && data.bpm !== undefined
+              ? normalizeBpmValue(data.bpm)
               : null);
         const duration = v.duration !== undefined
           ? (v.duration || null)
@@ -558,8 +556,8 @@ export class RepertoireRepository {
       ? (data.original_key || null)
       : (primaryVersion?.key || null);
     const bpm = data.bpm !== undefined
-      ? (data.bpm === null || data.bpm === '' ? null : Number(data.bpm) || null)
-      : (primaryVersion?.bpm !== undefined && primaryVersion?.bpm !== null ? Number(primaryVersion.bpm) || null : null);
+      ? normalizeBpmValue(data.bpm)
+      : (primaryVersion?.bpm !== undefined ? normalizeBpmValue(primaryVersion.bpm) : null);
     const duration = data.duration !== undefined ? (data.duration || null) : (primaryVersion?.duration || null);
     const classificationId = data.classification_id !== undefined
       ? (data.classification_id || null)
@@ -708,10 +706,10 @@ export class RepertoireRepository {
                     ? (data.original_key === '' || data.original_key === null ? null : data.original_key)
                     : prev.key));
           const bpm = v.bpm !== undefined
-            ? (v.bpm === null || v.bpm === '' ? null : (isNaN(Number(v.bpm)) ? v.bpm : Number(v.bpm)))
+            ? normalizeBpmValue(v.bpm)
             : (idx === 0 && data.bpm !== undefined
-                ? (data.bpm === null || data.bpm === '' ? null : Number(data.bpm))
-                : prev.bpm);
+                ? normalizeBpmValue(data.bpm)
+                : normalizeBpmValue(prev.bpm));
           const duration = v.duration !== undefined
             ? (v.duration === '' ? null : v.duration)
             : (idx === 0 && data.duration !== undefined
@@ -727,7 +725,7 @@ export class RepertoireRepository {
             notes: notes ?? null,
             key: key ?? null,
             original_key: key ?? null,
-            bpm: bpm !== undefined && bpm !== null && !isNaN(Number(bpm)) ? Number(bpm) : null,
+            bpm,
             duration: duration || null,
             links: Array.isArray(links) ? links : [],
           };
@@ -743,9 +741,9 @@ export class RepertoireRepository {
                 : (idx === 0 && data.original_key !== undefined
                     ? (data.original_key === '' || data.original_key === null ? null : data.original_key)
                     : null));
-          const bpm = v.bpm !== undefined && v.bpm !== null && v.bpm !== ''
-            ? Number(v.bpm)
-            : (idx === 0 && data.bpm !== undefined && data.bpm !== null && data.bpm !== '' ? Number(data.bpm) : null);
+          const bpm = v.bpm !== undefined
+            ? normalizeBpmValue(v.bpm)
+            : (idx === 0 && data.bpm !== undefined ? normalizeBpmValue(data.bpm) : null);
           const duration = v.duration || (idx === 0 && data.duration ? data.duration : null);
           const notes = v.notes || null;
           const links = Array.isArray(v.links) ? v.links : [];
@@ -758,7 +756,7 @@ export class RepertoireRepository {
             notes,
             key: key ?? null,
             original_key: key ?? null,
-            bpm: bpm !== null && !isNaN(Number(bpm)) ? bpm : null,
+            bpm,
             duration,
             links,
           };
@@ -773,7 +771,9 @@ export class RepertoireRepository {
         updateData.original_key = primary ? (primary.key ?? null) : null;
       }
       if (data.bpm === undefined) {
-        updateData.bpm = primary && primary.bpm !== undefined && primary.bpm !== null ? Number(primary.bpm) || null : null;
+        updateData.bpm = primary && primary.bpm !== undefined ? normalizeBpmValue(primary.bpm) : null;
+      } else {
+        updateData.bpm = normalizeBpmValue(data.bpm);
       }
       if (data.duration === undefined) {
         updateData.duration = primary ? primary.duration || null : null;
@@ -815,6 +815,9 @@ export class RepertoireRepository {
       }
     } else {
       // F-R1-03 & R2-01: When ONLY legacy flat fields are updated, synchronize the corresponding primary-version properties!
+      if (data.bpm !== undefined) {
+        updateData.bpm = normalizeBpmValue(data.bpm);
+      }
       if (existing.versions && existing.versions.length > 0) {
         const hasLegacyUpdate =
           data.original_key !== undefined ||
@@ -833,8 +836,8 @@ export class RepertoireRepository {
               ? (data.original_key === '' || data.original_key === null ? null : data.original_key)
               : v.key;
             const bpm = data.bpm !== undefined
-              ? (data.bpm === null || data.bpm === '' ? null : Number(data.bpm) || null)
-              : v.bpm;
+              ? normalizeBpmValue(data.bpm)
+              : normalizeBpmValue(v.bpm);
             const duration = data.duration !== undefined ? (data.duration || null) : v.duration;
             let classificationIds = v.classificationIds;
             if (data.classification_id !== undefined) {
@@ -856,7 +859,7 @@ export class RepertoireRepository {
               ...v,
               key: key ?? null,
               original_key: key ?? null,
-              bpm: bpm !== undefined && bpm !== null && !isNaN(Number(bpm)) ? Number(bpm) : null,
+              bpm,
               duration,
               classificationIds,
               classification_ids: classificationIds,

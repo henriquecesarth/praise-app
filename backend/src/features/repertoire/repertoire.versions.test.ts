@@ -1014,5 +1014,123 @@ describe('Repertoire Song Versions Persistence & Schema Hardening', () => {
       // ID da nova versão não pode ser o ID de v1 que existia
       expect(updated.versions[1].id).not.toBe('song-r3-04_v1');
     });
+
+    it('F01 (Mobile R3): updateSong deve preservar BPM textual ("Rubato" e " Rubato ") ao renomear versão secundária', async () => {
+      let storedSong: any = {
+        id: 'song-f01-rubato',
+        ministry_id: 'min-alpha',
+        title: 'Santo Espírito',
+        bpm: 72,
+        versions: [
+          { id: 'v1', name: 'Original', key: 'E', bpm: 72 },
+          { id: 'secondary-version', name: 'Live', key: 'G', bpm: 'Rubato' },
+          { id: 'v3-spaced', name: 'Spontaneous', key: 'G', bpm: ' Rubato ' },
+        ],
+      };
+
+      (repo as any).songsCol = {
+        doc: vi.fn().mockReturnValue({
+          get: vi.fn().mockImplementation(async () => ({ exists: true, id: storedSong.id, data: () => storedSong })),
+          update: vi.fn().mockImplementation(async (up: any) => { storedSong = { ...storedSong, ...up }; }),
+        }),
+      };
+      (repo as any).classificationsCol = {
+        doc: vi.fn().mockReturnValue({ get: vi.fn().mockResolvedValue({ exists: false }) }),
+      };
+
+      const payload = updateSongSchema.parse({
+        title: 'Santo Espírito',
+        bpm: 72,
+        versions: [
+          { id: 'v1', name: 'Original', key: 'E', bpm: 72 },
+          { id: 'secondary-version', name: 'Live (Renamed)', key: 'G', bpm: 'Rubato' },
+          { id: 'v3-spaced', name: 'Spontaneous', key: 'G', bpm: ' Rubato ' },
+        ],
+      });
+
+      const updated = await repo.updateSong('song-f01-rubato', 'min-alpha', payload);
+
+      expect(updated.versions[1].name).toBe('Live (Renamed)');
+      expect(updated.versions[1].bpm).toBe('Rubato');
+      expect(storedSong.versions[1].bpm).toBe('Rubato');
+      expect(updated.versions[2].bpm).toBe(' Rubato ');
+      expect(storedSong.versions[2].bpm).toBe(' Rubato ');
+    });
+
+    it('F01 (Mobile R3): deve suportar 72, 72.5, 0.5, "Rubato", " Rubato ", null e omissão em create/update e sincronização plana <-> primária', async () => {
+      let storedSong: any = {
+        id: 'song-f01-matrix',
+        ministry_id: 'min-alpha',
+        title: 'Matriz BPM',
+        bpm: 'Rubato',
+        versions: [
+          { id: 'v1', name: 'Original', key: 'C', bpm: 'Rubato' },
+          { id: 'v2', name: 'Frac 72.5', key: 'D', bpm: 72.5 },
+          { id: 'v3', name: 'Frac 0.5', key: 'E', bpm: 0.5 },
+          { id: 'v4', name: 'Spaced', key: 'F', bpm: ' Rubato ' },
+        ],
+      };
+
+      const updateMock = vi.fn().mockImplementation(async (up: any) => {
+        storedSong = { ...storedSong, ...up };
+      });
+      (repo as any).songsCol = {
+        doc: vi.fn().mockReturnValue({
+          get: vi.fn().mockImplementation(async () => ({ exists: true, id: storedSong.id, data: () => storedSong })),
+          update: updateMock,
+        }),
+      };
+      (repo as any).classificationsCol = {
+        doc: vi.fn().mockReturnValue({ get: vi.fn().mockResolvedValue({ exists: false }) }),
+      };
+
+      // 1. Payload com bpm plano e primário idênticos ("Rubato") e omissão em v2/v3/v4, mais nova versão com " Rubato "
+      const payload1 = updateSongSchema.parse({
+        bpm: 'Rubato',
+        versions: [
+          { id: 'v1', name: 'Original', bpm: 'Rubato' },
+          { id: 'v2', name: 'Frac 72.5' }, // bpm omitido -> deve preservar 72.5
+          { id: 'v3', name: 'Frac 0.5' }, // bpm omitido -> deve preservar 0.5
+          { id: 'v4', name: 'Spaced' }, // bpm omitido -> deve preservar " Rubato "
+          { id: 'v5', name: 'Nova Textual', bpm: ' Rubato ' },
+        ],
+      });
+
+      const updated1 = await repo.updateSong('song-f01-matrix', 'min-alpha', payload1);
+      expect(updated1.bpm).toBe('Rubato');
+      expect(updated1.versions[0].bpm).toBe('Rubato');
+      expect(updated1.versions[1].bpm).toBe(72.5);
+      expect(updated1.versions[2].bpm).toBe(0.5);
+      expect(updated1.versions[3].bpm).toBe(' Rubato ');
+      expect(updated1.versions[4].bpm).toBe(' Rubato ');
+
+      // 2. Limpeza explícita (null) em v1 sincroniza com campo plano quando bpm plano é omitido
+      const payload2 = updateSongSchema.parse({
+        versions: [
+          { id: 'v1', name: 'Original', bpm: null },
+          { id: 'v2', name: 'Frac 72.5', bpm: 72 },
+        ],
+      });
+      const updated2 = await repo.updateSong('song-f01-matrix', 'min-alpha', payload2);
+      expect(updated2.bpm).toBeNull();
+      expect(updated2.versions[0].bpm).toBeNull();
+      expect(updated2.versions[1].bpm).toBe(72);
+
+      // 3. Conflito entre bpm plano textual e versions[0].bpm diferente deve rejeitar sem escrita
+      updateMock.mockClear();
+      expect(() =>
+        updateSongSchema.parse({
+          bpm: 'Rubato',
+          versions: [{ id: 'v1', name: 'Original', bpm: 'Allegro' }],
+        })
+      ).toThrow();
+      await expect(
+        repo.updateSong('song-f01-matrix', 'min-alpha', {
+          bpm: 'Rubato',
+          versions: [{ id: 'v1', name: 'Original', bpm: 'Allegro' }],
+        })
+      ).rejects.toThrow(AppError);
+      expect(updateMock).not.toHaveBeenCalled();
+    });
   });
 });

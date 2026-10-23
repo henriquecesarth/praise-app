@@ -37,6 +37,16 @@ export const songLinkSchema = z.object({
   isCustom: z.boolean().optional(),
 });
 
+export const bpmSchema = z
+  .union([
+    z.number().positive().max(999),
+    z.string().max(10).refine((val) => val === '' || val.trim().length > 0, {
+      message: 'BPM não pode conter apenas espaços em branco.',
+    }),
+  ])
+  .nullable()
+  .optional();
+
 export const songVersionSchema = z.object({
   id: z.string().optional(),
   name: z.string().trim().min(1, 'Nome da versão é obrigatório.').max(255),
@@ -45,7 +55,7 @@ export const songVersionSchema = z.object({
   notes: z.string().max(5000).nullable().optional(),
   key: z.string().max(10).nullable().optional(),
   original_key: z.string().max(10).nullable().optional(),
-  bpm: z.union([z.number().positive().max(999), z.string().max(10)]).nullable().optional(),
+  bpm: bpmSchema,
   duration: z.string().max(20).nullable().optional(),
   links: z.array(songLinkSchema).max(20, 'Uma versão pode ter no máximo 20 links.').optional(),
 }).transform((v) => {
@@ -74,6 +84,17 @@ const versionsValidator = z
     { message: 'IDs de versões duplicados não são permitidos.' }
   );
 
+export function normalizeBpmValue(raw: any): number | string | null {
+  if (raw === undefined || raw === null || raw === '') return null;
+  if (typeof raw === 'number') {
+    return Number.isFinite(raw) ? raw : null;
+  }
+  if (typeof raw === 'string') {
+    return raw;
+  }
+  return null;
+}
+
 export function validateFlatVsVersionConflicts(data: any): boolean {
   if (!data.versions || !Array.isArray(data.versions) || data.versions.length === 0) {
     return true;
@@ -90,10 +111,10 @@ export function validateFlatVsVersionConflicts(data: any): boolean {
     }
   }
 
-  // BPM conflict: if both are provided, numeric or null values must be identical
+  // BPM conflict: if both are provided, normalized values (numeric, textual, or null) must be identical
   if (data.bpm !== undefined && primary.bpm !== undefined) {
-    const flatBpm = data.bpm === null || data.bpm === '' ? null : Number(data.bpm);
-    const verBpm = primary.bpm === null || primary.bpm === '' ? null : Number(primary.bpm);
+    const flatBpm = normalizeBpmValue(data.bpm);
+    const verBpm = normalizeBpmValue(primary.bpm);
     if (flatBpm !== verBpm) {
       return false;
     }
@@ -135,7 +156,7 @@ export const createSongSchema = z
       .max(10)
       .nullable()
       .optional(),
-    bpm: z.union([z.number().positive().max(999), z.string().max(10)]).nullable().optional(),
+    bpm: bpmSchema,
     duration: z.string().nullable().optional(),
     lyrics: z.string().nullable().optional(),
     chord_sheet_url: z.string().url().nullable().optional().or(z.literal('')),
@@ -157,7 +178,7 @@ export const updateSongSchema = z
     versions: versionsValidator.optional(),
     classification_id: z.string().nullable().optional(),
     original_key: z.string().max(10).nullable().optional(),
-    bpm: z.union([z.number().positive().max(999), z.string().max(10)]).nullable().optional(),
+    bpm: bpmSchema,
     duration: z.string().nullable().optional(),
     lyrics: z.string().nullable().optional(),
     chord_sheet_url: z.string().url().nullable().optional().or(z.literal('')),
@@ -248,7 +269,7 @@ export interface SongSummary {
   artist_id: string | null;
   classification_id: string | null;
   original_key: string | null;
-  bpm: number | null;
+  bpm: number | string | null;
   duration: string | null;
   youtube_url: string | null;
   audio_url: string | null;

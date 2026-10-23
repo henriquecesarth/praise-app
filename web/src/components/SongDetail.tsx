@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Song, SongVersion, SmartChord } from '../types';
 import { api } from '../api';
 import { renderSmartChordLine, transposeChord } from '../utils/smart_chord';
@@ -61,42 +61,160 @@ export const SongDetail: React.FC<SongDetailProps> = ({
 
   const activeChord: SmartChord | undefined = (linkedChords && linkedChords.length > 0)
     ? linkedChords[selectedChordIndex] || linkedChords[0]
-    : (song.smartChord as SmartChord | undefined);
+    : undefined;
 
   const hasSmartChord = !!activeChord;
 
-  const [activeView, setActiveView] = useState<'lyrics' | 'cifra'>(() => (song.smartChord ? 'cifra' : 'lyrics'));
+  const [activeView, setActiveView] = useState<'lyrics' | 'cifra'>('lyrics');
   const [semitones, setSemitones] = useState(0);
 
   // Synchronize active view when linked chords load
   useEffect(() => {
     if (linkedChords.length > 0) {
       setActiveView('cifra');
+    } else {
+      setActiveView('lyrics');
     }
   }, [linkedChords.length]);
 
-  // Load user's linked personal chords for this song with cancellation fencing
+  const getAuthSession = (): string => {
+    try {
+      return typeof window !== 'undefined' ? localStorage.getItem('praise_auth_token') || '' : '';
+    } catch {
+      return '';
+    }
+  };
+
+  const [sessionToken, setSessionToken] = useState<string>(getAuthSession);
+
+  // Synchronize sessionToken during render if localStorage praise_auth_token changed
+  const rawSession = getAuthSession();
+  if (rawSession !== sessionToken) {
+    setSessionToken(rawSession);
+  }
+
+  // Cross-tab and same-tab event listeners for auth changes
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (!e.key || e.key === 'praise_auth_token') {
+        const next = getAuthSession();
+        setSessionToken((prev) => (prev !== next ? next : prev));
+      }
+    };
+    const handleAuthChange = () => {
+      const next = getAuthSession();
+      setSessionToken((prev) => (prev !== next ? next : prev));
+    };
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('praise_auth_changed', handleAuthChange);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('praise_auth_changed', handleAuthChange);
+    };
+  }, []);
+
+  const [prevContext, setPrevContext] = useState({
+    ministryId: effectiveMinistryId,
+    songId: song.id,
+    session: sessionToken,
+  });
+
+  // Context ref for asynchronous stale response and mutation fencing (F02, F03, R2-01, R2-02, R3)
+  const requestContextRef = useRef<{
+    ministryId: string;
+    songId: string;
+    session: string;
+    generation: number;
+  }>({
+    ministryId: effectiveMinistryId || '',
+    songId: song.id,
+    session: sessionToken,
+    generation: 0,
+  });
+
+  const modalGenerationRef = useRef<number>(0);
+
+  const contextChanged =
+    prevContext.ministryId !== effectiveMinistryId ||
+    prevContext.songId !== song.id ||
+    prevContext.session !== sessionToken;
+
+  if (contextChanged) {
+    setPrevContext({
+      ministryId: effectiveMinistryId,
+      songId: song.id,
+      session: sessionToken,
+    });
+    requestContextRef.current = {
+      ministryId: effectiveMinistryId || '',
+      songId: song.id,
+      session: sessionToken,
+      generation: requestContextRef.current.generation + 1,
+    };
+    modalGenerationRef.current += 1;
+
+    // Immediately clear loaded chords, active selection and errors upon context switch
+    setLinkedChords([]);
+    setSelectedChordIndex(0);
+    setChordsError(null);
+    setSemitones(0);
+
+    // Reset modal and mutation state immediately so new context starts clean without stale pending operations
+    setIsLinkModalOpen(false);
+    setSelectedChordToLink(null);
+    setLinkingError(null);
+    setAvailableChords([]);
+    setAvailableChordsError(null);
+    setLoadingAvailableChords(false);
+
+    setIsLinking(false);
+    setIsUnlinking(false);
+    setUnlinkError(null);
+  }
+
+  // Load user's linked personal chords for this song with immediate invalidation and cancellation fencing (F02, R3)
   useEffect(() => {
     let active = true;
-    if (!effectiveMinistryId || !song.id) {
-      setLinkedChords([]);
+    const currentGen = requestContextRef.current.generation;
+    const currentMinistryId = effectiveMinistryId;
+    const currentSongId = song.id;
+    const sessionSnapshot = sessionToken;
+
+    // Do not trigger a fetch if unauthenticated, or if ministry or song is missing
+    if (!currentMinistryId || !currentSongId || !sessionSnapshot) {
       setLoadingChords(false);
-      setChordsError(null);
       return;
     }
 
     setLoadingChords(true);
-    setChordsError(null);
 
-    api.getMySmartChordsForSong(effectiveMinistryId, song.id)
+    api.getMySmartChordsForSong(currentMinistryId, currentSongId)
       .then((chords) => {
         if (!active) return;
+        const ctx = requestContextRef.current;
+        if (
+          ctx.ministryId !== currentMinistryId ||
+          ctx.songId !== currentSongId ||
+          ctx.generation !== currentGen ||
+          ctx.session !== sessionSnapshot
+        ) {
+          return;
+        }
         setLinkedChords(chords || []);
         setSelectedChordIndex(0);
         setLoadingChords(false);
       })
       .catch((err) => {
         if (!active) return;
+        const ctx = requestContextRef.current;
+        if (
+          ctx.ministryId !== currentMinistryId ||
+          ctx.songId !== currentSongId ||
+          ctx.generation !== currentGen ||
+          ctx.session !== sessionSnapshot
+        ) {
+          return;
+        }
         setChordsError(err?.message || 'Erro ao carregar cifras vinculadas');
         setLoadingChords(false);
       });
@@ -104,58 +222,132 @@ export const SongDetail: React.FC<SongDetailProps> = ({
     return () => {
       active = false;
     };
-  }, [effectiveMinistryId, song.id, chordsRetryNonce]);
+  }, [effectiveMinistryId, song.id, sessionToken, chordsRetryNonce]);
 
-  // Reset modal and selection when ministry changes
-  useEffect(() => {
+  const handleCloseLinkModal = () => {
+    if (isLinking) return;
+    modalGenerationRef.current += 1;
     setIsLinkModalOpen(false);
     setSelectedChordToLink(null);
     setLinkingError(null);
-  }, [effectiveMinistryId]);
+    setAvailableChordsError(null);
+  };
 
   const handleOpenLinkModal = async () => {
     if (!effectiveMinistryId) return;
+
+    modalGenerationRef.current += 1;
+    const currentModalGen = modalGenerationRef.current;
+    const currentContextGen = requestContextRef.current.generation;
+    const targetMinistryId = effectiveMinistryId;
+    const targetSongId = song.id;
+    const sessionSnapshot = sessionToken;
+
     setIsLinkModalOpen(true);
     setSelectedChordToLink(null);
     setLinkingError(null);
     setAvailableChordsError(null);
+    setAvailableChords([]);
     setLoadingAvailableChords(true);
 
+    const isCurrentModalRequest = () => {
+      const ctx = requestContextRef.current;
+      return (
+        ctx.ministryId === targetMinistryId &&
+        ctx.songId === targetSongId &&
+        ctx.generation === currentContextGen &&
+        ctx.session === sessionSnapshot &&
+        modalGenerationRef.current === currentModalGen
+      );
+    };
+
     try {
-      const chords = await api.getSmartChords(effectiveMinistryId);
+      const chords = await api.getSmartChords(targetMinistryId);
+      if (!isCurrentModalRequest()) return;
       setAvailableChords(chords || []);
     } catch (err: any) {
+      if (!isCurrentModalRequest()) return;
       setAvailableChordsError(err?.message || 'Erro ao carregar cifras para vínculo.');
     } finally {
-      setLoadingAvailableChords(false);
+      if (isCurrentModalRequest()) {
+        setLoadingAvailableChords(false);
+      }
     }
   };
 
   const handleConfirmLink = async () => {
-    if (!effectiveMinistryId || !selectedChordToLink) return;
+    if (!effectiveMinistryId || !song.id || !selectedChordToLink || isLinking) return;
+    const targetMinistryId = effectiveMinistryId;
+    const targetSongId = song.id;
+    const targetChordId = selectedChordToLink.id;
+    const currentContextGen = requestContextRef.current.generation;
+    const sessionSnapshot = sessionToken;
+
     setIsLinking(true);
     setLinkingError(null);
+
+    const isCurrentContext = () => {
+      const ctx = requestContextRef.current;
+      return (
+        ctx.ministryId === targetMinistryId &&
+        ctx.songId === targetSongId &&
+        ctx.generation === currentContextGen &&
+        ctx.session === sessionSnapshot
+      );
+    };
+
     try {
-      await api.setSmartChordRepertoireLink(effectiveMinistryId, selectedChordToLink.id, song.id);
+      await api.setSmartChordRepertoireLink(targetMinistryId, targetChordId, targetSongId);
+      if (!isCurrentContext()) {
+        return;
+      }
       setIsLinking(false);
       setIsLinkModalOpen(false);
+      modalGenerationRef.current += 1;
       setChordsRetryNonce((n) => n + 1);
     } catch (err: any) {
+      if (!isCurrentContext()) {
+        return;
+      }
       setIsLinking(false);
       setLinkingError(err?.message || 'Falha ao vincular cifra.');
     }
   };
 
   const handleUnlinkChord = async (chordId: string) => {
-    if (!effectiveMinistryId) return;
+    if (!effectiveMinistryId || !song.id || loadingChords || isUnlinking) return;
+    if (!linkedChords.some((c) => c.id === chordId)) return;
+
+    const targetMinistryId = effectiveMinistryId;
+    const targetSongId = song.id;
+    const currentContextGen = requestContextRef.current.generation;
+    const sessionSnapshot = sessionToken;
+
     setIsUnlinking(true);
     setUnlinkError(null);
+
+    const isCurrentContext = () => {
+      const ctx = requestContextRef.current;
+      return (
+        ctx.ministryId === targetMinistryId &&
+        ctx.songId === targetSongId &&
+        ctx.generation === currentContextGen &&
+        ctx.session === sessionSnapshot
+      );
+    };
+
     try {
-      await api.removeSmartChordRepertoireLink(effectiveMinistryId, chordId);
+      await api.removeSmartChordRepertoireLink(targetMinistryId, chordId);
+      if (!isCurrentContext()) {
+        return;
+      }
       setIsUnlinking(false);
       setSelectedChordIndex(0);
       setChordsRetryNonce((n) => n + 1);
     } catch (err: any) {
+      if (!isCurrentContext()) {
+        return;
+      }
       setIsUnlinking(false);
       setUnlinkError(err?.message || 'Falha ao desvincular cifra.');
     }
@@ -634,8 +826,8 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                     borderColor: 'rgba(239, 68, 68, 0.3)',
                     backgroundColor: 'rgba(239, 68, 68, 0.08)',
                   }}
-                  title="Desvincular Cifra"
-                  aria-label="Desvincular Cifra"
+                  title={isUnlinking ? 'Desvinculando...' : 'Desvincular Cifra'}
+                  aria-label={isUnlinking ? 'Desvinculando...' : 'Desvincular Cifra'}
                 >
                   <Unlink size={16} />
                   <span>{isUnlinking ? 'Desvinculando...' : 'Desvincular'}</span>
@@ -873,11 +1065,9 @@ export const SongDetail: React.FC<SongDetailProps> = ({
           role="dialog"
           aria-modal="true"
           aria-labelledby="link-chord-modal-title"
-          onClick={() => {
-            if (!isLinking) setIsLinkModalOpen(false);
-          }}
+          onClick={handleCloseLinkModal}
           onKeyDown={(e) => {
-            if (e.key === 'Escape' && !isLinking) setIsLinkModalOpen(false);
+            if (e.key === 'Escape') handleCloseLinkModal();
           }}
           tabIndex={-1}
           style={{
@@ -927,9 +1117,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
               <button
                 type="button"
                 className="action-icon-btn"
-                onClick={() => {
-                  if (!isLinking) setIsLinkModalOpen(false);
-                }}
+                onClick={handleCloseLinkModal}
                 disabled={isLinking}
                 style={{ width: '36px', height: '36px' }}
                 aria-label="Fechar"
@@ -1076,7 +1264,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
               <button
                 type="button"
                 className="btn btn-secondary"
-                onClick={() => setIsLinkModalOpen(false)}
+                onClick={handleCloseLinkModal}
                 disabled={isLinking}
                 style={{ minHeight: '44px', padding: '0 18px', borderRadius: '10px' }}
               >

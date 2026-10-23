@@ -723,4 +723,62 @@ describe('SmartChordsWorkspace', () => {
       expect(mockSave).toHaveBeenCalled();
     });
   });
+
+  describe('F04 — Persistent initialChordId', () => {
+    it('consumes initialChordId once so manual selection survives subsequent search and refresh', async () => {
+      const chordA: any = {
+        id: 'c-1',
+        title: 'Chord A',
+        originalKey: 'C',
+        content: '[C]Chord A',
+        userId: 'u-1',
+        artistId: null,
+        songId: null,
+      };
+      const chordB: any = {
+        id: 'c-2',
+        title: 'Chord B',
+        originalKey: 'D',
+        content: '[D]Chord B',
+        userId: 'u-1',
+        artistId: null,
+        songId: null,
+      };
+
+      getSmartChords.mockResolvedValue([chordA, chordB]);
+      const onInitialChordConsumed = vi.fn();
+
+      render(
+        <SmartChordsWorkspace
+          ministryId="min-1"
+          initialChordId="c-1"
+          onInitialChordConsumed={onInitialChordConsumed}
+        />
+      );
+
+      // Initially chord A is selected from initialChordId
+      await waitFor(() => {
+        expect(screen.getByDisplayValue('Chord A')).toBeInTheDocument();
+      });
+
+      // User manually selects chord B
+      const chordBItem = screen.getByText('Chord B');
+      fireEvent.click(chordBItem);
+
+      await waitFor(() => {
+        expect(screen.getByDisplayValue('Chord B')).toBeInTheDocument();
+      });
+
+      // User types in search bar triggering list refresh
+      const searchInput = screen.getByPlaceholderText(/buscar cifra/i);
+      getSmartChords.mockResolvedValue([chordA, chordB]);
+      fireEvent.change(searchInput, { target: { value: 'Chord' } });
+
+      // Selection must REMAIN chord B, not reset back to chord A!
+      await waitFor(() => {
+        expect(screen.getByDisplayValue('Chord B')).toBeInTheDocument();
+      });
+      expect(screen.queryByDisplayValue('Chord A')).not.toBeInTheDocument();
+    });
+  });
 });

@@ -1,0 +1,39 @@
+{
+  "description": "LouvAIO BPM contract matrix shared by Backend (vitest) and Mobile (flutter test). Accepted inputs must persist exactly as expectStored; legacy values are seeded directly into storage and must survive unrelated edits. mobileWire is what Mobile must send for that version on an unrelated edit: {send: value} or {omit: true} (omission tells the Backend to preserve the stored value).",
+  "cases": [
+    { "id": "num-int-72", "kind": "accepted", "input": 72, "expectStored": 72, "mobileWire": { "send": 72 } },
+    { "id": "num-frac-72.5", "kind": "accepted", "input": 72.5, "expectStored": 72.5, "mobileWire": { "send": 72.5 } },
+    { "id": "num-frac-0.5", "kind": "accepted", "input": 0.5, "expectStored": 0.5, "mobileWire": { "send": 0.5 } },
+    { "id": "num-min-0.001", "kind": "accepted", "input": 0.001, "expectStored": 0.001, "mobileWire": { "send": 0.001 } },
+    { "id": "num-1", "kind": "accepted", "input": 1, "expectStored": 1, "mobileWire": { "send": 1 } },
+    { "id": "num-max-999", "kind": "accepted", "input": 999, "expectStored": 999, "mobileWire": { "send": 999 } },
+    { "id": "str-text-Rubato", "kind": "accepted", "input": "Rubato", "expectStored": "Rubato", "mobileWire": { "send": "Rubato" } },
+    { "id": "str-text-spaced", "kind": "accepted", "input": " Rubato ", "expectStored": " Rubato ", "mobileWire": { "send": " Rubato " } },
+    { "id": "str-zero", "kind": "accepted", "input": "0", "expectStored": "0", "mobileWire": { "send": "0" } },
+    { "id": "str-1000", "kind": "accepted", "input": "1000", "expectStored": "1000", "mobileWire": { "send": "1000" } },
+    { "id": "str-numeric-72", "kind": "accepted", "input": "72", "expectStored": "72", "mobileWire": { "send": "72" } },
+    { "id": "str-numeric-spaced", "kind": "accepted", "input": " 72 ", "expectStored": " 72 ", "mobileWire": { "send": " 72 " } },
+    { "id": "str-numeric-trailing-zero", "kind": "accepted", "input": "72.50", "expectStored": "72.50", "mobileWire": { "send": "72.50" } },
+    { "id": "str-negative", "kind": "accepted", "input": "-5", "expectStored": "-5", "mobileWire": { "send": "-5" } },
+    { "id": "str-exponent", "kind": "accepted", "input": "1e2", "expectStored": "1e2", "mobileWire": { "send": "1e2" } },
+    { "id": "str-hex", "kind": "accepted", "input": "0x10", "expectStored": "0x10", "mobileWire": { "send": "0x10" } },
+    { "id": "str-infinity", "kind": "accepted", "input": "Infinity", "expectStored": "Infinity", "mobileWire": { "send": "Infinity" } },
+    { "id": "str-max-len-10", "kind": "accepted", "input": "1234567890", "expectStored": "1234567890", "mobileWire": { "send": "1234567890" } },
+    { "id": "str-empty-clear", "kind": "accepted", "input": "", "expectStored": null, "mobileWire": { "send": null } },
+    { "id": "null-clear", "kind": "accepted", "input": null, "expectStored": null, "mobileWire": { "send": null } },
+
+    { "id": "rej-num-0", "kind": "rejected", "input": 0 },
+    { "id": "rej-num-1000", "kind": "rejected", "input": 1000 },
+    { "id": "rej-num-negative", "kind": "rejected", "input": -1 },
+    { "id": "rej-num-above-max", "kind": "rejected", "input": 999.0001 },
+    { "id": "rej-str-11-chars", "kind": "rejected", "input": "12345678901" },
+    { "id": "rej-str-whitespace-only", "kind": "rejected", "input": "   " },
+
+    { "id": "legacy-num-1000", "kind": "legacy", "stored": 1000, "mobileWire": { "omit": true } },
+    { "id": "legacy-num-0", "kind": "legacy", "stored": 0, "mobileWire": { "omit": true } },
+    { "id": "legacy-num-negative", "kind": "legacy", "stored": -5, "mobileWire": { "omit": true } },
+    { "id": "legacy-str-too-long", "kind": "legacy", "stored": "Lento e expressivo", "mobileWire": { "omit": true } },
+    { "id": "legacy-str-numeric-120", "kind": "legacy", "stored": "120", "mobileWire": { "send": "120" } },
+    { "id": "legacy-num-72.5", "kind": "legacy", "stored": 72.5, "mobileWire": { "send": 72.5 } }
+  ]
+}

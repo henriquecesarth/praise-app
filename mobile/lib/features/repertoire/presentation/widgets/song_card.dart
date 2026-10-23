@@ -127,7 +127,9 @@ class SongCard extends StatelessWidget {
                               ),
                             if (song.bpm != null)
                               Text(
-                                '${song.bpm} BPM',
+                                song.bpm is num
+                                    ? '${song.bpm} BPM'
+                                    : '${song.bpm}',
                                 style: theme.textTheme.bodySmall?.copyWith(
                                   fontSize: 11,
                                   color: theme.colorScheme.onSurface

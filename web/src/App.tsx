@@ -141,6 +141,9 @@ export default function App() {
 
   const setMainModule = (module: MainModuleType) => {
     clearDetailSelection();
+    if (module !== 'cifrador') {
+      setSelectedSmartChordId(null);
+    }
     navigate(MODULE_PATHS[module]);
   };
 
@@ -165,6 +168,7 @@ export default function App() {
 
   // Reload data when activeGroup changes
   useEffect(() => {
+    setSelectedSmartChordId(null);
     if (activeGroup) {
       loadSubscription(activeGroup.id);
     } else {
@@ -1348,7 +1352,11 @@ export default function App() {
               )}
 
               {mainModule === 'cifrador' && (
-                <SmartChordsWorkspace ministryId={groupId} initialChordId={selectedSmartChordId || undefined} />
+                <SmartChordsWorkspace
+                  ministryId={groupId}
+                  initialChordId={selectedSmartChordId || undefined}
+                  onInitialChordConsumed={() => setSelectedSmartChordId(null)}
+                />
               )}
 
               {mainModule === 'ministry' && activeGroup && currentUser && (

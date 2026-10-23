@@ -74,9 +74,14 @@ const getSuggestions = (query: string, originalKey: string): string[] => {
 interface SmartChordsWorkspaceProps {
   ministryId: string;
   initialChordId?: string;
+  onInitialChordConsumed?: () => void;
 }
 
-export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ ministryId, initialChordId }) => {
+export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
+  ministryId,
+  initialChordId,
+  onInitialChordConsumed,
+}) => {
   const [smartChords, setSmartChords] = useState<SmartChord[]>([]);
   const [selectedChord, setSelectedChord] = useState<SmartChord | null>(null);
   const [search, setSearch] = useState('');
@@ -171,11 +176,23 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({ mini
     return () => controller.abort();
   }, [ministryId, relationsRetry]);
 
+  // Track consumed initialChordId so it acts strictly as a one-time navigation request (F04)
+  const consumedInitialChordRef = useRef<string | null>(null);
+
+  // Reset consumed tracking when initialChordId or ministry changes
   useEffect(() => {
-    if (initialChordId && smartChords.length > 0) {
+    if (initialChordId !== consumedInitialChordRef.current) {
+      consumedInitialChordRef.current = null;
+    }
+  }, [initialChordId, ministryId]);
+
+  useEffect(() => {
+    if (initialChordId && smartChords.length > 0 && consumedInitialChordRef.current !== initialChordId) {
       const found = smartChords.find((c) => c.id === initialChordId);
-      if (found && selectedChord?.id !== found.id) {
+      if (found) {
+        consumedInitialChordRef.current = initialChordId;
         handleSelectChord(found);
+        onInitialChordConsumed?.();
       }
     }
   }, [initialChordId, smartChords]);

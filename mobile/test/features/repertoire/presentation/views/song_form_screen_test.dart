@@ -114,6 +114,7 @@ class FakeRepertoireRepo implements RepertoireRepository {
   SongFormData? lastCreatedData;
   SongFormData? lastUpdatedData;
   AppFailure? artistErrorToThrow;
+  AppFailure? saveErrorToThrow;
 
   @override
   Future<PaginatedSongs> listSongs(String ministryId,
@@ -142,12 +143,14 @@ class FakeRepertoireRepo implements RepertoireRepository {
 
   @override
   Future<SongDetail> createSong(String ministryId, SongFormData data) async {
+    if (saveErrorToThrow != null) throw saveErrorToThrow!;
     lastCreatedData = data;
     return SongDetail(id: 'new-song-id', ministryId: ministryId, title: data.title);
   }
 
   @override
   Future<SongDetail> updateSong(String ministryId, String songId, SongFormData data) async {
+    if (saveErrorToThrow != null) throw saveErrorToThrow!;
     lastUpdatedData = data;
     return SongDetail(id: songId, ministryId: ministryId, title: data.title);
   }
@@ -429,6 +432,838 @@ void main() {
       expect(find.text('Grande é o Senhor'), findsOneWidget);
       expect(find.text('128'), findsOneWidget);
       expect(find.text('Aleluia ao Deus Vivo'), findsOneWidget);
+    });
+
+    testWidgets('creates a new version, edits it, and serializes both versions on save', (tester) async {
+      await tester.pumpWidget(buildSubject());
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const ValueKey('song_title_input')), 'Lugar Secreto');
+      await tester.ensureVisible(find.byKey(const ValueKey('key_chip_C')));
+      await tester.tap(find.byKey(const ValueKey('key_chip_C')));
+      await tester.pumpAndSettle();
+
+      // Add a second version
+      await tester.ensureVisible(find.byKey(const ValueKey('add_version_button')));
+      await tester.tap(find.byKey(const ValueKey('add_version_button')));
+      await tester.pumpAndSettle();
+
+      // Edit the newly added second version
+      await tester.ensureVisible(find.byKey(const ValueKey('song_version_name_input')));
+      await tester.enterText(find.byKey(const ValueKey('song_version_name_input')), 'Acústico');
+      await tester.ensureVisible(find.byKey(const ValueKey('key_chip_A')));
+      await tester.tap(find.byKey(const ValueKey('key_chip_A')));
+      await tester.enterText(find.byKey(const ValueKey('song_bpm_input')), '75');
+      await tester.pumpAndSettle();
+
+      // Save song
+      await tester.ensureVisible(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.tap(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.pumpAndSettle();
+
+      final created = fakeRepo.lastCreatedData;
+      expect(created, isNotNull);
+      expect(created!.versions, isNotNull);
+      expect(created.versions, hasLength(2));
+      expect(created.versions![0].name, equals('Original'));
+      expect(created.versions![0].key, equals('C'));
+      expect(created.versions![1].name, equals('Acústico'));
+      expect(created.versions![1].key, equals('A'));
+      expect(created.versions![1].bpm, equals(75));
+      expect(created.versions![0].id, isNot(equals(created.versions![1].id)));
+    });
+
+    testWidgets('editing one version preserves other versions, their stable IDs, classifications and links', (tester) async {
+      const existing = SongDetail(
+        id: 'song-multi-edit',
+        ministryId: 'min_1',
+        title: 'Bondade de Deus',
+        versions: [
+          SongVersion(
+            id: 'v_orig_stable',
+            name: 'Original',
+            key: 'Ab',
+            bpm: 63,
+            duration: '04:55',
+            classificationIds: ['cls-1'],
+            notes: 'Nota original preservada',
+            links: [
+              SongLink(label: 'Vídeo', url: 'https://youtube.com/watch?v=bondade1'),
+            ],
+          ),
+          SongVersion(
+            id: 'v_sec_stable',
+            name: 'Versão Jovem',
+            key: 'G',
+            bpm: 70,
+            duration: '04:30',
+            notes: 'Nota antiga',
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(buildSubject(initialSong: existing));
+      await tester.pumpAndSettle();
+
+      // Switch to second version to edit it
+      await tester.ensureVisible(find.byKey(const ValueKey('edit_version_button_1')));
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_1')));
+      await tester.pumpAndSettle();
+
+      // Modify second version's name and BPM
+      await tester.ensureVisible(find.byKey(const ValueKey('song_version_name_input')));
+      await tester.enterText(find.byKey(const ValueKey('song_version_name_input')), 'Versão Jovem (Ao Vivo)');
+      await tester.enterText(find.byKey(const ValueKey('song_bpm_input')), '74');
+      await tester.pumpAndSettle();
+
+      // Save
+      await tester.ensureVisible(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.tap(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.pumpAndSettle();
+
+      final updated = fakeRepo.lastUpdatedData;
+      expect(updated, isNotNull);
+      expect(updated!.versions, hasLength(2));
+      // Version 0 is completely preserved
+      expect(updated.versions![0].id, equals('v_orig_stable'));
+      expect(updated.versions![0].name, equals('Original'));
+      expect(updated.versions![0].key, equals('Ab'));
+      expect(updated.versions![0].bpm, equals(63));
+      expect(updated.versions![0].duration, equals('04:55'));
+      expect(updated.versions![0].classificationIds, equals(['cls-1']));
+      expect(updated.versions![0].notes, equals('Nota original preservada'));
+      expect(updated.versions![0].links, hasLength(1));
+      expect(updated.versions![0].links.first.url, equals('https://youtube.com/watch?v=bondade1'));
+
+      // Version 1 has updated values and preserved stable ID
+      expect(updated.versions![1].id, equals('v_sec_stable'));
+      expect(updated.versions![1].name, equals('Versão Jovem (Ao Vivo)'));
+      expect(updated.versions![1].key, equals('G'));
+      expect(updated.versions![1].bpm, equals(74));
+    });
+
+    testWidgets('duplicating a version generates a distinct ID and copies fields; deleting a version requires confirmation', (tester) async {
+      const existing = SongDetail(
+        id: 'song-dup-del',
+        ministryId: 'min_1',
+        title: ' Leão ',
+        versions: [
+          SongVersion(
+            id: 'v_base_1',
+            name: 'Estúdio',
+            key: 'F#m',
+            bpm: 130,
+            classificationIds: ['cls-1'],
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(buildSubject(initialSong: existing));
+      await tester.pumpAndSettle();
+
+      // Duplicate version 0
+      await tester.ensureVisible(find.byKey(const ValueKey('duplicate_version_button_0')));
+      await tester.tap(find.byKey(const ValueKey('duplicate_version_button_0')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('version_card_0')), findsOneWidget);
+      expect(find.byKey(const ValueKey('version_card_1')), findsOneWidget);
+      expect(find.text('Estúdio (Cópia)'), findsWidgets);
+
+      // Add a 3rd version so we can delete one and still have 2 versions
+      await tester.ensureVisible(find.byKey(const ValueKey('add_version_button')));
+      await tester.tap(find.byKey(const ValueKey('add_version_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('version_card_2')), findsOneWidget);
+
+      // Delete version 2 with confirmation
+      await tester.ensureVisible(find.byKey(const ValueKey('delete_version_button_2')));
+      await tester.tap(find.byKey(const ValueKey('delete_version_button_2')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('confirm_delete_version_button')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('confirm_delete_version_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('version_card_2')), findsNothing);
+
+      // Save and verify version 0 and duplicated version 1 have distinct IDs
+      await tester.ensureVisible(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.tap(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.pumpAndSettle();
+
+      final updated = fakeRepo.lastUpdatedData!;
+      expect(updated.versions, hasLength(2));
+      expect(updated.versions![0].id, equals('v_base_1'));
+      expect(updated.versions![1].id, isNotNull);
+      expect(updated.versions![1].id, isNot(equals('v_base_1')));
+      expect(updated.versions![1].name, equals('Estúdio (Cópia)'));
+      expect(updated.versions![1].key, equals('F#m'));
+      expect(updated.versions![1].bpm, equals(130));
+      expect(updated.versions![1].classificationIds, equals(['cls-1']));
+    });
+
+    testWidgets('save failure surfaces error snackbar without popping or losing edited versions', (tester) async {
+      fakeRepo.saveErrorToThrow = const AppFailure(
+        message: 'Falha ao salvar versões no servidor.',
+        statusCode: 500,
+      );
+
+      const existing = SongDetail(
+        id: 'song-err-1',
+        ministryId: 'min_1',
+        title: 'Santo Pra Sempre',
+        versions: [
+          SongVersion(id: 'v_1', name: 'Original', key: 'G'),
+        ],
+      );
+
+      await tester.pumpWidget(buildPushableSubject(initialSong: existing));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Open Song Form'));
+      await tester.pumpAndSettle();
+
+      // Add a second version and edit it
+      await tester.ensureVisible(find.byKey(const ValueKey('add_version_button')));
+      await tester.tap(find.byKey(const ValueKey('add_version_button')));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.byKey(const ValueKey('song_version_name_input')));
+      await tester.enterText(find.byKey(const ValueKey('song_version_name_input')), 'Versão Piano');
+      await tester.pumpAndSettle();
+
+      // Attempt save
+      await tester.ensureVisible(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.tap(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.pumpAndSettle();
+
+      // Error snackbar is surfaced, form remains open with both versions intact
+      expect(find.text('Falha ao salvar versões no servidor.'), findsOneWidget);
+      expect(find.byKey(const ValueKey('song_form_save_button')), findsOneWidget);
+      expect(find.byKey(const ValueKey('version_card_0')), findsOneWidget);
+      expect(find.byKey(const ValueKey('version_card_1')), findsOneWidget);
+      expect(find.text('Versão Piano'), findsWidgets);
+    });
+
+    testWidgets(
+        'F01: Web-created song with free-text artist {id: "", name: "Free Artist"} survives secondary-version edit and save without sending artist_id: null',
+        (tester) async {
+      final loadedFromBackend = SongDetail.fromJson(const {
+        'id': 'song-free-1',
+        'ministry_id': 'min_1',
+        'title': 'Canção Web',
+        'artist_id': null,
+        'artist': {'id': '', 'name': 'Free Artist'},
+        'artist_name': 'Free Artist',
+        'versions': [
+          {
+            'id': 'v_1',
+            'name': 'Original',
+            'key': 'G',
+            'bpm': 72,
+            'notes': 'Nota v1',
+          },
+          {
+            'id': 'v_2',
+            'name': 'Acústico',
+            'key': 'E',
+            'bpm': 68,
+            'notes': 'Nota v2 inicial',
+          },
+        ],
+      });
+
+      await tester.pumpWidget(buildSubject(initialSong: loadedFromBackend));
+      await tester.pumpAndSettle();
+
+      // Free-text artist name is displayed on the artist picker tile
+      expect(find.text('Free Artist'), findsOneWidget);
+
+      // Switch to secondary version (index 1) and modify its notes
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('edit_version_button_1')),
+      );
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_1')));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('song_version_notes_input')),
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('song_version_notes_input')),
+        'Nota v2 editada no mobile',
+      );
+      await tester.pumpAndSettle();
+
+      // Save
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('song_form_save_button')),
+      );
+      await tester.tap(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.pumpAndSettle();
+
+      final updated = fakeRepo.lastUpdatedData;
+      expect(updated, isNotNull);
+      final serializedJson = updated!.toJson();
+      // Must NOT send artist_id: null when user did not modify the artist
+      expect(serializedJson.containsKey('artist_id'), isFalse);
+      expect(updated.versions![1].notes, equals('Nota v2 editada no mobile'));
+    });
+
+    testWidgets(
+        'F01: ID-backed artist survives an unrelated edit and intentional artist removal sends artist_id: null',
+        (tester) async {
+      final loadedWithIdArtist = SongDetail.fromJson(const {
+        'id': 'song-id-art',
+        'ministry_id': 'min_1',
+        'title': 'Pra Onde Eu Iria',
+        'artist_id': 'art-1',
+        'artist': {'id': 'art-1', 'name': 'Morada'},
+        'artist_name': 'Morada',
+        'versions': [
+          {
+            'id': 'v_1',
+            'name': 'Original',
+            'key': 'G',
+            'bpm': 128,
+            'notes': 'Nota inicial',
+          },
+        ],
+      });
+
+      await tester.pumpWidget(buildSubject(initialSong: loadedWithIdArtist));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Morada'), findsOneWidget);
+
+      // Edit version notes without touching artist
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('song_version_notes_input')),
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('song_version_notes_input')),
+        'Nota atualizada',
+      );
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('song_form_save_button')),
+      );
+      await tester.tap(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.pumpAndSettle();
+
+      final updated = fakeRepo.lastUpdatedData!;
+      expect(updated.artistId, equals('art-1'));
+      expect(updated.toJson()['artist_id'], equals('art-1'));
+    });
+
+    testWidgets(
+        'F01: intentional artist removal on free-text artist sends explicit artist_id: null',
+        (tester) async {
+      final loadedFromBackend = SongDetail.fromJson(const {
+        'id': 'song-free-unlink',
+        'ministry_id': 'min_1',
+        'title': 'Canção Para Desvincular',
+        'artist_id': null,
+        'artist': {'id': '', 'name': 'Free Artist'},
+        'artist_name': 'Free Artist',
+        'versions': [
+          {'id': 'v_1', 'name': 'Original', 'key': 'G', 'bpm': 72},
+        ],
+      });
+
+      await tester.pumpWidget(buildSubject(initialSong: loadedFromBackend));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Free Artist'), findsOneWidget);
+
+      // Open artist picker and tap "Sem artista / Desvincular"
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('artist_picker_tile')),
+      );
+      await tester.tap(find.byKey(const ValueKey('artist_picker_tile')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Sem artista / Desvincular'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Nenhum artista selecionado'), findsOneWidget);
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('song_form_save_button')),
+      );
+      await tester.tap(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.pumpAndSettle();
+
+      final updated = fakeRepo.lastUpdatedData!;
+      final serializedJson = updated.toJson();
+      expect(serializedJson.containsKey('artist_id'), isTrue);
+      expect(serializedJson['artist_id'], isNull);
+    });
+
+    testWidgets(
+        'F03: editing a version notes preserves fractional BPM and artist without truncation',
+        (tester) async {
+      final loadedWithFractionalBpm = SongDetail.fromJson(const {
+        'id': 'song-frac-edit',
+        'ministry_id': 'min_1',
+        'title': 'Canção Fracionada',
+        'artist_id': null,
+        'artist': {'id': '', 'name': 'Free Artist'},
+        'artist_name': 'Free Artist',
+        'bpm': 72.5,
+        'versions': [
+          {
+            'id': 'v_1',
+            'name': 'Original',
+            'key': 'E',
+            'bpm': 72.5,
+            'notes': 'Nota original',
+          },
+        ],
+      });
+
+      await tester.pumpWidget(
+        buildSubject(initialSong: loadedWithFractionalBpm),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('72.5'), findsOneWidget);
+
+      // Edit version notes only
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('song_version_notes_input')),
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('song_version_notes_input')),
+        'Nota alterada sem mexer no BPM',
+      );
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('song_form_save_button')),
+      );
+      await tester.tap(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.pumpAndSettle();
+
+      final updated = fakeRepo.lastUpdatedData;
+      expect(updated, isNotNull);
+      final serializedJson = updated!.toJson();
+      expect(serializedJson['bpm'], equals(72.5));
+      expect((serializedJson['versions'] as List)[0]['bpm'], equals(72.5));
+      expect(serializedJson.containsKey('artist_id'), isFalse);
+    });
+
+    testWidgets(
+        'F03: entering fractional BPM in form validates and serializes exact decimal while integer BPM remains compatible',
+        (tester) async {
+      await tester.pumpWidget(buildSubject());
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const ValueKey('song_title_input')),
+        'Nova Música Fracionada',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('song_bpm_input')),
+        '68.5',
+      );
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('song_form_save_button')),
+      );
+      await tester.tap(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.pumpAndSettle();
+
+      final created = fakeRepo.lastCreatedData;
+      expect(created, isNotNull);
+      expect(created!.bpm, equals(68.5));
+      expect(created.versions![0].bpm, equals(68.5));
+      expect(created.toJson()['bpm'], equals(68.5));
+      expect((created.toJson()['versions'] as List)[0]['bpm'], equals(68.5));
+    });
+
+    testWidgets(
+        'F04: renaming a version preserves textual BPM "Rubato" in the HTTP payload',
+        (tester) async {
+      final loadedWithTextBpm = SongDetail.fromJson(const {
+        'id': 'song-rubato-edit',
+        'ministry_id': 'min_1',
+        'title': 'Canção Rubato',
+        'bpm': 'Rubato',
+        'versions': [
+          {
+            'id': 'v_1',
+            'name': 'Original',
+            'key': 'E',
+            'bpm': 'Rubato',
+            'notes': 'Nota original',
+          },
+          {
+            'id': 'v_2',
+            'name': 'Live',
+            'key': 'G',
+            'bpm': 'Rubato',
+            'notes': 'Live version',
+          },
+        ],
+      });
+
+      await tester.pumpWidget(
+        buildSubject(initialSong: loadedWithTextBpm),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Rubato'), findsWidgets);
+
+      // Select secondary version (v_2) and rename it
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('edit_version_button_1')),
+      );
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_1')));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('song_version_name_input')),
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('song_version_name_input')),
+        'Live Renamed',
+      );
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('song_form_save_button')),
+      );
+      await tester.tap(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.pumpAndSettle();
+
+      final updated = fakeRepo.lastUpdatedData;
+      expect(updated, isNotNull);
+      final serializedJson = updated!.toJson();
+      expect(serializedJson['bpm'], equals('Rubato'));
+      expect((serializedJson['versions'] as List)[1]['name'], equals('Live Renamed'));
+      expect((serializedJson['versions'] as List)[1]['bpm'], equals('Rubato'));
+    });
+
+    testWidgets(
+        'F04: switching between versions preserves distinct textual and numeric BPM values',
+        (tester) async {
+      final multiBpmSong = SongDetail.fromJson(const {
+        'id': 'song-mixed-bpm',
+        'ministry_id': 'min_1',
+        'title': 'Canção Mista',
+        'versions': [
+          {
+            'id': 'v_1',
+            'name': 'Original',
+            'bpm': 72,
+          },
+          {
+            'id': 'v_2',
+            'name': 'Acústico',
+            'bpm': 'Rubato',
+          },
+        ],
+      });
+
+      await tester.pumpWidget(buildSubject(initialSong: multiBpmSong));
+      await tester.pumpAndSettle();
+
+      // Version 0 has 72
+      expect(find.text('72'), findsOneWidget);
+
+      // Switch to Version 1 (Rubato)
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('edit_version_button_1')),
+      );
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_1')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Rubato'), findsOneWidget);
+
+      // Switch back to Version 0 (72)
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('edit_version_button_0')),
+      );
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('72'), findsOneWidget);
+    });
+
+    testWidgets(
+        'F04: textual BPM can be changed to numeric and vice versa',
+        (tester) async {
+      final song = SongDetail.fromJson(const {
+        'id': 'song-change-bpm',
+        'ministry_id': 'min_1',
+        'title': 'Troca de BPM',
+        'versions': [
+          {
+            'id': 'v_1',
+            'name': 'Original',
+            'bpm': 'Rubato',
+          },
+        ],
+      });
+
+      await tester.pumpWidget(buildSubject(initialSong: song));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Rubato'), findsOneWidget);
+
+      // Change from 'Rubato' to '80'
+      await tester.enterText(
+        find.byKey(const ValueKey('song_bpm_input')),
+        '80',
+      );
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('song_form_save_button')),
+      );
+      await tester.tap(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.pumpAndSettle();
+
+      final updated = fakeRepo.lastUpdatedData!;
+      expect(updated.bpm, equals(80));
+      expect(updated.versions![0].bpm, equals(80));
+      expect(updated.toJson()['bpm'], equals(80));
+      expect((updated.toJson()['versions'] as List)[0]['bpm'], equals(80));
+    });
+
+    testWidgets(
+        'F02 (R3): invalid BPM 1000 across version switching does not convert BPM to null, blocks save visibly, preserves invalid draft on return, and saves after correction',
+        (tester) async {
+      final song = SongDetail.fromJson(const {
+        'id': 'song-f02-invalid-switch',
+        'ministry_id': 'min_1',
+        'title': 'Teste F02',
+        'bpm': 120,
+        'versions': [
+          {
+            'id': 'v_1',
+            'name': 'Original',
+            'key': 'C',
+            'bpm': 120,
+          },
+          {
+            'id': 'v_2',
+            'name': 'Secundária',
+            'key': 'G',
+            'bpm': 72.5,
+          },
+        ],
+      });
+
+      await tester.pumpWidget(buildSubject(initialSong: song));
+      await tester.pumpAndSettle();
+
+      // 1. Select secondary version (v_2 with BPM 72.5)
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('edit_version_button_1')),
+      );
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_1')));
+      await tester.pumpAndSettle();
+      expect(find.text('72.5'), findsOneWidget);
+
+      // 2. Enter invalid BPM 1000
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('song_bpm_input')),
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('song_bpm_input')),
+        '1000',
+      );
+      await tester.pumpAndSettle();
+
+      // 3. Switch to primary version (v_1)
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('edit_version_button_0')),
+      );
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
+      await tester.pumpAndSettle();
+
+      // 4. Attempt to save while on v_1 -> must fail visibly without issuing HTTP request
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('song_form_save_button')),
+      );
+      await tester.tap(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.pumpAndSettle();
+
+      expect(fakeRepo.lastUpdatedData, isNull);
+      expect(
+        find.text('1 a 999 ou texto de até 10 caracteres'),
+        findsOneWidget,
+      );
+      expect(find.text('1000'), findsOneWidget);
+
+      // 5. Switch to v_1 and return to v_2 -> invalid draft '1000' is still preserved
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('edit_version_button_0')),
+      );
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('edit_version_button_1')),
+      );
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_1')));
+      await tester.pumpAndSettle();
+      expect(find.text('1000'), findsOneWidget);
+
+      // 6. Correct the invalid field to 84.5 and save normally
+      await tester.enterText(
+        find.byKey(const ValueKey('song_bpm_input')),
+        '84.5',
+      );
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('song_form_save_button')),
+      );
+      await tester.tap(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.pumpAndSettle();
+
+      expect(fakeRepo.lastUpdatedData, isNotNull);
+      final serialized = fakeRepo.lastUpdatedData!.toJson();
+      expect((serialized['versions'] as List)[0]['bpm'], equals(120));
+      expect((serialized['versions'] as List)[1]['bpm'], equals(84.5));
+    });
+
+    testWidgets(
+        'F02 (R3): explicit user clearing after invalid BPM draft saves bpm as null',
+        (tester) async {
+      final song = SongDetail.fromJson(const {
+        'id': 'song-f02-clear',
+        'ministry_id': 'min_1',
+        'title': 'Teste F02 Clear',
+        'versions': [
+          {
+            'id': 'v_1',
+            'name': 'Original',
+            'bpm': 120,
+          },
+          {
+            'id': 'v_2',
+            'name': 'Secundária',
+            'bpm': 72.5,
+          },
+        ],
+      });
+
+      await tester.pumpWidget(buildSubject(initialSong: song));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('edit_version_button_1')),
+      );
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_1')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const ValueKey('song_bpm_input')),
+        '1000',
+      );
+      await tester.pumpAndSettle();
+
+      // Switch to v_1 and back to v_2
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('edit_version_button_0')),
+      );
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('edit_version_button_1')),
+      );
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_1')));
+      await tester.pumpAndSettle();
+
+      // Explicitly clear BPM
+      await tester.enterText(
+        find.byKey(const ValueKey('song_bpm_input')),
+        '',
+      );
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('song_form_save_button')),
+      );
+      await tester.tap(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.pumpAndSettle();
+
+      expect(fakeRepo.lastUpdatedData, isNotNull);
+      final serialized = fakeRepo.lastUpdatedData!.toJson();
+      expect((serialized['versions'] as List)[1]['bpm'], isNull);
+    });
+
+    testWidgets(
+        'F03 (R3): untouched textual BPM " Rubato " is preserved byte-for-byte when renaming version and switching versions',
+        (tester) async {
+      final song = SongDetail.fromJson(const {
+        'id': 'song-f03-spaced',
+        'ministry_id': 'min_1',
+        'title': 'Teste F03 Spaced',
+        'bpm': ' Rubato ',
+        'versions': [
+          {
+            'id': 'v_1',
+            'name': 'Original',
+            'bpm': ' Rubato ',
+          },
+          {
+            'id': 'v_2',
+            'name': 'Secundária',
+            'bpm': ' Rubato ',
+          },
+        ],
+      });
+
+      await tester.pumpWidget(buildSubject(initialSong: song));
+      await tester.pumpAndSettle();
+
+      // Switch to v_2, rename it without touching BPM, switch back to v_1, and save
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('edit_version_button_1')),
+      );
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_1')));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('song_version_name_input')),
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('song_version_name_input')),
+        'Secundária Renomeada',
+      );
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('edit_version_button_0')),
+      );
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('song_form_save_button')),
+      );
+      await tester.tap(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.pumpAndSettle();
+
+      expect(fakeRepo.lastUpdatedData, isNotNull);
+      final serialized = fakeRepo.lastUpdatedData!.toJson();
+      expect(serialized['bpm'], equals(' Rubato '));
+      expect((serialized['versions'] as List)[0]['bpm'], equals(' Rubato '));
+      expect(
+        (serialized['versions'] as List)[1]['name'],
+        equals('Secundária Renomeada'),
+      );
+      expect((serialized['versions'] as List)[1]['bpm'], equals(' Rubato '));
     });
   });
 }

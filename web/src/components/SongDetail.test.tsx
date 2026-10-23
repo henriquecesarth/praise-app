@@ -67,6 +67,7 @@ describe('SongDetail Web Repertoire <-> Smart Chords Integration', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.setItem('praise_auth_token', 'test-auth-token');
     getMySmartChordsForSong.mockResolvedValue([]);
     getSmartChords.mockResolvedValue([]);
     setSmartChordRepertoireLink.mockResolvedValue({ link: { id: 'link-1' }, song: null });
@@ -302,6 +303,784 @@ describe('SongDetail Web Repertoire <-> Smart Chords Integration', () => {
       const originalKeyEl = screen.getByText('Tom Original:').parentElement;
       expect(originalKeyEl).toHaveTextContent('D');
       expect(originalKeyEl).not.toHaveTextContent('G');
+    });
+  });
+
+  describe('F01 — HIGH: Legacy privacy fallback', () => {
+    it('never renders legacy song.smartChord when getMySmartChordsForSong returns empty response', async () => {
+      const songWithLegacyChord: Song = {
+        ...mockSong,
+        smartChord: {
+          id: 'legacy-foreign-chord',
+          originalKey: 'F#',
+          content: '[F#]Legacy Foreign Chord [B]Private Content',
+        },
+      };
+
+      getMySmartChordsForSong.mockResolvedValue([]);
+
+      render(
+        <SongDetail
+          song={songWithLegacyChord}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      await waitFor(() => {
+        expect(getMySmartChordsForSong).toHaveBeenCalledWith('min-1', 'song-123');
+      });
+
+      // Must NOT render foreign chord content or key F#
+      expect(screen.queryByText(/Legacy Foreign Chord/)).not.toBeInTheDocument();
+      expect(screen.queryByText('F#')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^cifra inteligente$/i })).not.toBeInTheDocument();
+    });
+
+    it('never renders legacy song.smartChord when getMySmartChordsForSong fails with an error', async () => {
+      const songWithLegacyChord: Song = {
+        ...mockSong,
+        smartChord: {
+          id: 'legacy-foreign-chord',
+          originalKey: 'F#',
+          content: '[F#]Legacy Foreign Chord [B]Private Content',
+        },
+      };
+
+      getMySmartChordsForSong.mockRejectedValue(new Error('Network error'));
+
+      render(
+        <SongDetail
+          song={songWithLegacyChord}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      expect(await screen.findByRole('alert')).toBeInTheDocument();
+      expect(screen.queryByText(/Legacy Foreign Chord/)).not.toBeInTheDocument();
+      expect(screen.queryByText('F#')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('F02 — Stale context across ministries', () => {
+    it('immediately invalidates loaded chord data and unlinking action upon ministry switch', async () => {
+      getMySmartChordsForSong.mockResolvedValueOnce([mockChord1]);
+
+      const { rerender } = render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-alpha"
+          onBack={vi.fn()}
+        />
+      );
+
+      expect(await screen.findByText(/Graça admirável/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /desvincular/i })).toBeInTheDocument();
+
+      // Pending promise for ministry beta
+      let resolveBeta: (val: any) => void;
+      const betaPromise = new Promise((resolve) => {
+        resolveBeta = resolve;
+      });
+      getMySmartChordsForSong.mockReturnValueOnce(betaPromise);
+
+      rerender(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-beta"
+          onBack={vi.fn()}
+        />
+      );
+
+      // Previous chord from min-alpha must be cleared immediately, not displayed while loading
+      expect(screen.queryByText(/Graça admirável/)).not.toBeInTheDocument();
+      // Desvincular button must NOT be present or active for the old chord
+      expect(screen.queryByRole('button', { name: /desvincular/i })).not.toBeInTheDocument();
+
+      resolveBeta!([]);
+      await waitFor(() => {
+        expect(screen.queryByText(/Graça admirável/)).not.toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('F03 — Stale linking modal', () => {
+    it('resets modal state when song changes to prevent linking chord to unintended song', async () => {
+      getMySmartChordsForSong.mockResolvedValue([]);
+      getSmartChords.mockResolvedValue([mockChord1]);
+
+      const { rerender } = render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      // Open link modal
+      const linkBtn = await screen.findByRole('button', { name: /vincular cifra/i });
+      fireEvent.click(linkBtn);
+
+      await waitFor(() => {
+        expect(screen.getByText('Vincular Cifra Inteligente')).toBeInTheDocument();
+      });
+
+      // Select chord1
+      fireEvent.click(screen.getByText('Graça Admirável (Violão)'));
+
+      // Switch song
+      const song2: Song = {
+        ...mockSong,
+        id: 'song-456',
+        title: 'Outra Música',
+      };
+
+      rerender(
+        <SongDetail
+          song={song2}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      // Modal must be closed and state reset
+      expect(screen.queryByText('Vincular Cifra Inteligente')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('R2-01 — Stale pending operations', () => {
+    it('does not leave isLinking active in new song when linking was pending in previous song', async () => {
+      getMySmartChordsForSong.mockResolvedValue([]);
+      getSmartChords.mockResolvedValue([mockChord1]);
+
+      let resolveLinkA: (val: any) => void;
+      const linkPromiseA = new Promise((resolve) => {
+        resolveLinkA = resolve;
+      });
+      setSmartChordRepertoireLink.mockReturnValueOnce(linkPromiseA);
+
+      const { rerender } = render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      // Open link modal in Song A
+      const linkBtnA = await screen.findByRole('button', { name: /vincular cifra/i });
+      fireEvent.click(linkBtnA);
+
+      await waitFor(() => {
+        expect(screen.getByText('Vincular Cifra Inteligente')).toBeInTheDocument();
+      });
+
+      // Select chord1 and confirm link in Song A
+      fireEvent.click(screen.getByText('Graça Admirável (Violão)'));
+      const confirmBtnA = screen.getByRole('button', { name: /confirmar vínculo/i });
+      fireEvent.click(confirmBtnA);
+
+      // Song A has isLinking = true
+      expect(screen.getByText('Vinculando...')).toBeInTheDocument();
+
+      // User switches to Song B while link is still in-flight
+      const songB: Song = {
+        ...mockSong,
+        id: 'song-456',
+        title: 'Segunda Música',
+      };
+
+      rerender(
+        <SongDetail
+          song={songB}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      // Open link modal in Song B
+      const linkBtnB = await screen.findByRole('button', { name: /vincular cifra/i });
+      fireEvent.click(linkBtnB);
+
+      await waitFor(() => {
+        expect(screen.getByText('Vincular Cifra Inteligente')).toBeInTheDocument();
+      });
+
+      // Confirm button in Song B must NOT be stuck in "Vinculando..." or disabled by old pending operation
+      expect(screen.queryByText('Vinculando...')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /confirmar vínculo/i })).toBeInTheDocument();
+
+      // Now resolve Song A's link promise
+      resolveLinkA!({ link: { id: 'link-old' }, song: null });
+
+      // Song B's modal must stay open and unchanged
+      expect(screen.getByText('Vincular Cifra Inteligente')).toBeInTheDocument();
+      expect(screen.queryByText('Vinculando...')).not.toBeInTheDocument();
+    });
+
+    it('does not display stale error in Song B if Song A link operation rejects after switch', async () => {
+      getMySmartChordsForSong.mockResolvedValue([]);
+      getSmartChords.mockResolvedValue([mockChord1]);
+
+      let rejectLinkA: (err: any) => void;
+      const linkPromiseA = new Promise((_, reject) => {
+        rejectLinkA = reject;
+      });
+      setSmartChordRepertoireLink.mockReturnValueOnce(linkPromiseA);
+
+      const { rerender } = render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      // Open modal in Song A and initiate link
+      const linkBtnA = await screen.findByRole('button', { name: /vincular cifra/i });
+      fireEvent.click(linkBtnA);
+      await waitFor(() => expect(screen.getByText('Vincular Cifra Inteligente')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByText('Graça Admirável (Violão)'));
+      fireEvent.click(screen.getByRole('button', { name: /confirmar vínculo/i }));
+
+      // Switch to Song B
+      const songB: Song = { ...mockSong, id: 'song-456', title: 'Segunda Música' };
+      rerender(
+        <SongDetail
+          song={songB}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      // Open modal in Song B
+      const linkBtnB = await screen.findByRole('button', { name: /vincular cifra/i });
+      fireEvent.click(linkBtnB);
+      await waitFor(() => expect(screen.getByText('Vincular Cifra Inteligente')).toBeInTheDocument());
+
+      // Reject Song A's link promise
+      rejectLinkA!(new Error('Erro de vínculo de Song A'));
+
+      // Song B's modal must NOT show Song A's error and must not be stuck disabled
+      await waitFor(() => {
+        expect(screen.queryByText(/Erro de vínculo de Song A/)).not.toBeInTheDocument();
+      });
+      expect(screen.queryByText('Vinculando...')).not.toBeInTheDocument();
+    });
+
+    it('does not leave isUnlinking active when switching songs while unlink is pending', async () => {
+      getMySmartChordsForSong.mockResolvedValue([mockChord1]);
+
+      let resolveUnlinkA: (val: any) => void;
+      const unlinkPromiseA = new Promise((resolve) => {
+        resolveUnlinkA = resolve;
+      });
+      removeSmartChordRepertoireLink.mockReturnValueOnce(unlinkPromiseA);
+
+      const { rerender } = render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      // Song A has linked chord
+      const unlinkBtnA = await screen.findByRole('button', { name: /desvincular/i });
+      fireEvent.click(unlinkBtnA);
+
+      // Unlink is pending in Song A
+      expect(screen.getByRole('button', { name: /desvinculando\.\.\./i })).toBeInTheDocument();
+
+      // Switch to Song B which also has a linked chord
+      const songB: Song = { ...mockSong, id: 'song-456', title: 'Segunda Música' };
+      rerender(
+        <SongDetail
+          song={songB}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      // Wait for Song B's chords to load
+      const unlinkBtnB = await screen.findByRole('button', { name: /desvincular/i });
+      // In Song B, Desvincular button must NOT be disabled or show "Desvinculando..."
+      expect(unlinkBtnB).not.toBeDisabled();
+      expect(screen.queryByRole('button', { name: /desvinculando/i })).not.toBeInTheDocument();
+
+      // Resolve Song A's unlink
+      resolveUnlinkA!(undefined);
+
+      // Song B must remain interactive
+      expect(screen.getByRole('button', { name: /desvincular/i })).not.toBeDisabled();
+    });
+  });
+
+  describe('R2-02 — Stale modal fetch errors', () => {
+    it('does not overwrite Song B available chords when Song A modal fetch rejects', async () => {
+      let rejectFetchA: (err: any) => void;
+      const fetchPromiseA = new Promise<SmartChord[]>((_, reject) => {
+        rejectFetchA = reject;
+      });
+
+      // Song A fetch will hang until rejected
+      getSmartChords.mockReturnValueOnce(fetchPromiseA);
+
+      const { rerender } = render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      // Open modal in Song A
+      const linkBtnA = await screen.findByRole('button', { name: /vincular cifra/i });
+      fireEvent.click(linkBtnA);
+
+      // Switch to Song B while fetch A is in flight
+      const songB: Song = { ...mockSong, id: 'song-456', title: 'Segunda Música' };
+      // Song B's getSmartChords resolves successfully with mockChord2
+      getSmartChords.mockResolvedValueOnce([mockChord2]);
+
+      rerender(
+        <SongDetail
+          song={songB}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      // Open modal in Song B
+      const linkBtnB = await screen.findByRole('button', { name: /vincular cifra/i });
+      fireEvent.click(linkBtnB);
+
+      // Song B successfully loads mockChord2
+      expect(await screen.findByText('Graça Admirável (Tom Baixo)')).toBeInTheDocument();
+
+      // Now reject Song A's fetch
+      rejectFetchA!(new Error('Falha grave de rede de Song A'));
+
+      // Song B's modal must still show mockChord2 and NOT the error from Song A
+      await waitFor(() => {
+        expect(screen.queryByText(/Falha grave de rede de Song A/)).not.toBeInTheDocument();
+      });
+      expect(screen.getByText('Graça Admirável (Tom Baixo)')).toBeInTheDocument();
+    });
+
+    it('does not overwrite Song B available chords when Song A modal fetch succeeds late', async () => {
+      let resolveFetchA: (val: any) => void;
+      const fetchPromiseA = new Promise<SmartChord[]>((resolve) => {
+        resolveFetchA = resolve;
+      });
+
+      getSmartChords.mockReturnValueOnce(fetchPromiseA);
+
+      const { rerender } = render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      // Open modal in Song A
+      const linkBtnA = await screen.findByRole('button', { name: /vincular cifra/i });
+      fireEvent.click(linkBtnA);
+
+      // Switch to Song B
+      const songB: Song = { ...mockSong, id: 'song-456', title: 'Segunda Música' };
+      getSmartChords.mockResolvedValueOnce([mockChord2]);
+
+      rerender(
+        <SongDetail
+          song={songB}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      // Open modal in Song B
+      const linkBtnB = await screen.findByRole('button', { name: /vincular cifra/i });
+      fireEvent.click(linkBtnB);
+
+      expect(await screen.findByText('Graça Admirável (Tom Baixo)')).toBeInTheDocument();
+
+      // Resolve Song A's fetch with mockChord1
+      resolveFetchA!([mockChord1]);
+
+      // mockChord1 must never appear in Song B's modal
+      await waitFor(() => {
+        expect(screen.getByText('Graça Admirável (Tom Baixo)')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Graça Admirável (Violão)')).not.toBeInTheDocument();
+    });
+
+    it('invalidates previous fetch when modal is closed and reopened', async () => {
+      let rejectFetch1: (err: any) => void;
+      const fetchPromise1 = new Promise<SmartChord[]>((_, reject) => {
+        rejectFetch1 = reject;
+      });
+
+      getSmartChords.mockReturnValueOnce(fetchPromise1);
+
+      render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      // Open modal (first time)
+      const linkBtn = await screen.findByRole('button', { name: /vincular cifra/i });
+      fireEvent.click(linkBtn);
+      await waitFor(() => expect(screen.getByText('Vincular Cifra Inteligente')).toBeInTheDocument());
+
+      // Close modal
+      const cancelBtn = screen.getByRole('button', { name: /cancelar/i });
+      fireEvent.click(cancelBtn);
+      expect(screen.queryByText('Vincular Cifra Inteligente')).not.toBeInTheDocument();
+
+      // Reopen modal (second time) - resolves with mockChord1
+      getSmartChords.mockResolvedValueOnce([mockChord1]);
+      fireEvent.click(linkBtn);
+
+      expect(await screen.findByText('Graça Admirável (Violão)')).toBeInTheDocument();
+
+      // First fetch now rejects
+      rejectFetch1!(new Error('Erro de requisição anterior cancelada'));
+
+      // The old error must NOT overwrite the current modal content
+      await waitFor(() => {
+        expect(screen.queryByText(/Erro de requisição anterior/)).not.toBeInTheDocument();
+      });
+      expect(screen.getByText('Graça Admirável (Violão)')).toBeInTheDocument();
+    });
+  });
+
+  describe('Scenario 8 — Duplicate submissions prevention in active context', () => {
+    it('prevents multiple simultaneous link submissions in the same active context', async () => {
+      getMySmartChordsForSong.mockResolvedValue([]);
+      getSmartChords.mockResolvedValue([mockChord1]);
+
+      let resolveLink: (val: any) => void;
+      const linkPromise = new Promise((resolve) => {
+        resolveLink = resolve;
+      });
+      setSmartChordRepertoireLink.mockReturnValueOnce(linkPromise);
+
+      render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      const linkBtn = await screen.findByRole('button', { name: /vincular cifra/i });
+      fireEvent.click(linkBtn);
+      await waitFor(() => expect(screen.getByText('Vincular Cifra Inteligente')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByText('Graça Admirável (Violão)'));
+      const confirmBtn = screen.getByRole('button', { name: /confirmar vínculo/i });
+
+      // Click once
+      fireEvent.click(confirmBtn);
+      expect(setSmartChordRepertoireLink).toHaveBeenCalledTimes(1);
+
+      // Attempt duplicate click while in-flight
+      fireEvent.click(confirmBtn);
+      expect(setSmartChordRepertoireLink).toHaveBeenCalledTimes(1);
+
+      // Confirm button is disabled
+      expect(confirmBtn).toBeDisabled();
+
+      resolveLink!({ link: { id: 'link-1' }, song: null });
+    });
+
+    it('prevents multiple simultaneous unlink submissions in the same active context', async () => {
+      getMySmartChordsForSong.mockResolvedValue([mockChord1]);
+
+      let resolveUnlink: (val: any) => void;
+      const unlinkPromise = new Promise((resolve) => {
+        resolveUnlink = resolve;
+      });
+      removeSmartChordRepertoireLink.mockReturnValueOnce(unlinkPromise);
+
+      render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      const unlinkBtn = await screen.findByRole('button', { name: /desvincular cifra/i });
+
+      // Click once
+      fireEvent.click(unlinkBtn);
+      expect(removeSmartChordRepertoireLink).toHaveBeenCalledTimes(1);
+
+      // Attempt second click while in-flight
+      fireEvent.click(unlinkBtn);
+      expect(removeSmartChordRepertoireLink).toHaveBeenCalledTimes(1);
+
+      // Unlink button is disabled
+      expect(unlinkBtn).toBeDisabled();
+
+      resolveUnlink!(undefined);
+    });
+  });
+
+  describe('R3 — Session Reload & Lifecycle', () => {
+    it('switching praise_auth_token from session A to session B re-triggers authorized fetch and renders session B chords', async () => {
+      localStorage.setItem('praise_auth_token', 'token-session-a');
+      getMySmartChordsForSong.mockResolvedValueOnce([mockChord1]);
+
+      const { rerender } = render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      // Session A chords load
+      expect(await screen.findByText(/Graça admirável que salvou/)).toBeInTheDocument();
+      expect(screen.getByText('Tom Original:').parentElement).toHaveTextContent('G');
+      expect(getMySmartChordsForSong).toHaveBeenCalledTimes(1);
+
+      // Switch auth token to session B without changing song or ministry
+      localStorage.setItem('praise_auth_token', 'token-session-b');
+      const mockChordB: SmartChord = {
+        ...mockChord2,
+        id: 'chord-b',
+        userId: 'user-b',
+        originalKey: 'E',
+        content: '[E]Conteúdo exclusivo da sessão B',
+      };
+      getMySmartChordsForSong.mockResolvedValueOnce([mockChordB]);
+
+      rerender(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      // Must re-trigger fetch for session B and render session B chords
+      await waitFor(() => {
+        expect(getMySmartChordsForSong).toHaveBeenCalledTimes(2);
+      });
+      expect(await screen.findByText(/Conteúdo exclusivo da sessão B/)).toBeInTheDocument();
+      expect(screen.getByText('Tom Original:').parentElement).toHaveTextContent('E');
+      expect(screen.queryByText(/Graça admirável que salvou/)).not.toBeInTheDocument();
+    });
+
+    it('logout clears personal data without making unauthorized fetch', async () => {
+      localStorage.setItem('praise_auth_token', 'token-session-a');
+      getMySmartChordsForSong.mockResolvedValueOnce([mockChord1]);
+
+      const { rerender } = render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      expect(await screen.findByText(/Graça admirável que salvou/)).toBeInTheDocument();
+      expect(getMySmartChordsForSong).toHaveBeenCalledTimes(1);
+
+      // User logs out (token removed)
+      localStorage.removeItem('praise_auth_token');
+
+      rerender(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      // Personal chords from session A must be immediately cleared
+      expect(screen.queryByText(/Graça admirável que salvou/)).not.toBeInTheDocument();
+
+      // No new fetch should be triggered while unauthenticated
+      expect(getMySmartChordsForSong).toHaveBeenCalledTimes(1);
+    });
+
+    it('stale session A response cannot overwrite session B', async () => {
+      localStorage.setItem('praise_auth_token', 'token-session-a');
+      let resolveSessionA: (val: any) => void;
+      const promiseA = new Promise((resolve) => {
+        resolveSessionA = resolve;
+      });
+      getMySmartChordsForSong.mockReturnValueOnce(promiseA);
+
+      const { rerender } = render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      // Switch to session B while session A is in-flight
+      localStorage.setItem('praise_auth_token', 'token-session-b');
+      const mockChordB: SmartChord = {
+        ...mockChord2,
+        id: 'chord-b',
+        userId: 'user-b',
+        originalKey: 'E',
+        content: '[E]Conteúdo exclusivo da sessão B',
+      };
+      getMySmartChordsForSong.mockResolvedValueOnce([mockChordB]);
+
+      rerender(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      expect(await screen.findByText(/Conteúdo exclusivo da sessão B/)).toBeInTheDocument();
+
+      // Session A completes late
+      resolveSessionA!([mockChord1]);
+
+      // Session B data remains, session A data is ignored
+      await waitFor(() => {
+        expect(screen.getByText(/Conteúdo exclusivo da sessão B/)).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/Graça admirável que salvou/)).not.toBeInTheDocument();
+    });
+
+    it('session B returning empty list renders empty state without falling back to legacy song.smartChord', async () => {
+      localStorage.setItem('praise_auth_token', 'token-session-a');
+      getMySmartChordsForSong.mockResolvedValueOnce([mockChord1]);
+
+      const songWithLegacy: Song = {
+        ...mockSong,
+        smartChord: {
+          id: 'legacy-chord',
+          originalKey: 'Ab',
+          content: '[Ab]Legacy Chord',
+        },
+      };
+
+      const { rerender } = render(
+        <SongDetail
+          song={songWithLegacy}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      expect(await screen.findByText(/Graça admirável que salvou/)).toBeInTheDocument();
+
+      // Switch to session B which has no personal chords
+      localStorage.setItem('praise_auth_token', 'token-session-b');
+      getMySmartChordsForSong.mockResolvedValueOnce([]);
+
+      rerender(
+        <SongDetail
+          song={songWithLegacy}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      await waitFor(() => {
+        expect(getMySmartChordsForSong).toHaveBeenCalledTimes(2);
+      });
+
+      // Neither session A nor legacy fallback should be rendered
+      expect(screen.queryByText(/Graça admirável que salvou/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Legacy Chord/)).not.toBeInTheDocument();
+    });
+
+    it('session B failure displays error alert without exposing session A data', async () => {
+      localStorage.setItem('praise_auth_token', 'token-session-a');
+      getMySmartChordsForSong.mockResolvedValueOnce([mockChord1]);
+
+      const { rerender } = render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      expect(await screen.findByText(/Graça admirável que salvou/)).toBeInTheDocument();
+
+      // Switch to session B which fails with a network error
+      localStorage.setItem('praise_auth_token', 'token-session-b');
+      getMySmartChordsForSong.mockRejectedValueOnce(new Error('Erro ao carregar cifras da sessão B'));
+
+      rerender(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      expect(await screen.findByText(/Erro ao carregar cifras da sessão B/)).toBeInTheDocument();
+      expect(screen.queryByText(/Graça admirável que salvou/)).not.toBeInTheDocument();
+    });
+
+    it('no repeated fetch loop occurs after successful fetch in session B', async () => {
+      localStorage.setItem('praise_auth_token', 'token-session-a');
+      getMySmartChordsForSong.mockResolvedValueOnce([mockChord1]);
+
+      const { rerender } = render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      expect(await screen.findByText(/Graça admirável que salvou/)).toBeInTheDocument();
+
+      localStorage.setItem('praise_auth_token', 'token-session-b');
+      const mockChordB: SmartChord = {
+        ...mockChord2,
+        id: 'chord-b',
+        userId: 'user-b',
+        originalKey: 'E',
+        content: '[E]Conteúdo exclusivo da sessão B',
+      };
+      getMySmartChordsForSong.mockResolvedValueOnce([mockChordB]);
+
+      rerender(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      expect(await screen.findByText(/Conteúdo exclusivo da sessão B/)).toBeInTheDocument();
+      expect(getMySmartChordsForSong).toHaveBeenCalledTimes(2);
+
+      // Re-render again with session B unchanged
+      rerender(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      // Call count must remain 2 (no loop)
+      expect(getMySmartChordsForSong).toHaveBeenCalledTimes(2);
     });
   });
 });
