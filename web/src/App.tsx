@@ -12,6 +12,7 @@ import { SongDetail } from './components/SongDetail';
 import { SongFormModal } from './components/SongFormModal';
 import { FolderDetail } from './components/FolderDetail';
 import { SmartChordsWorkspace } from './components/SmartChordsWorkspace';
+import { preferenceWriter } from './utils/preferenceWriter';
 import { JoinGroupModal } from './components/JoinGroupModal';
 import { InviteCodeModal } from './components/InviteCodeModal';
 import { CreateGroupModal } from './components/CreateGroupModal';
@@ -43,6 +44,9 @@ interface UserState {
   id: string;
   email: string;
   name: string;
+  preferences?: {
+    chordFontFamily?: string;
+  };
 }
 
 export default function App() {
@@ -72,6 +76,32 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<UserState | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [showLoginForDeletion, setShowLoginForDeletion] = useState(false);
+
+  // Synchronize authoritative user font preference across App, SmartChordsWorkspace, and SongDetail
+  useEffect(() => {
+    const handleFontChange = (e: any) => {
+      const newFont = e?.detail?.font;
+      const eventUserId = e?.detail?.userId;
+      if (newFont) {
+        setCurrentUser((prev) => {
+          if (!prev) return prev;
+          if (eventUserId && prev.id !== eventUserId) return prev;
+          if (prev.preferences?.chordFontFamily === newFont) return prev;
+          return {
+            ...prev,
+            preferences: {
+              ...prev.preferences,
+              chordFontFamily: newFont,
+            },
+          };
+        });
+      }
+    };
+    window.addEventListener('louvaio_chord_font_changed', handleFontChange);
+    return () => {
+      window.removeEventListener('louvaio_chord_font_changed', handleFontChange);
+    };
+  }, []);
 
   // Groups & Role States
   const [groups, setGroups] = useState<Group[]>([]);
@@ -247,11 +277,21 @@ export default function App() {
 
     if (!result.tokenValid) {
       if (token) localStorage.removeItem('praise_auth_token');
+      localStorage.removeItem('louvaio_last_auth_user_id');
+      localStorage.removeItem('louvaio_smart_chord_font_family');
+      preferenceWriter.reset();
       setCurrentUser(null);
       setGroups([]);
       setActiveGroup(null);
     } else {
       setCurrentUser(result.user);
+      if (result.user?.id) {
+        localStorage.setItem('louvaio_last_auth_user_id', result.user.id);
+        const font = result.user.preferences?.chordFontFamily || 'monospace';
+        localStorage.setItem(`louvaio_chord_font_user_${result.user.id}`, font);
+        localStorage.setItem('louvaio_smart_chord_font_family', font);
+        preferenceWriter.setSession(result.user.id, font);
+      }
       setGroups(result.groups);
       setActiveGroup(result.groups[0] || null);
     }
@@ -260,6 +300,9 @@ export default function App() {
 
   const handleLogout = () => {
     localStorage.removeItem('praise_auth_token');
+    localStorage.removeItem('louvaio_last_auth_user_id');
+    localStorage.removeItem('louvaio_smart_chord_font_family');
+    preferenceWriter.reset();
     setCurrentUser(null);
     setActiveGroup(null);
     setGroups([]);
@@ -1099,6 +1142,7 @@ export default function App() {
             <SongDetail
               song={selectedSong}
               ministryId={activeGroup?.id || selectedSong.ministryId || groupId}
+              chordFontFamily={currentUser?.preferences?.chordFontFamily}
               onBack={handleBackToMain}
               onEdit={userRole === 'admin' ? () => {
                 setSongToEdit(selectedSong);
@@ -1356,6 +1400,20 @@ export default function App() {
                   ministryId={groupId}
                   initialChordId={selectedSmartChordId || undefined}
                   onInitialChordConsumed={() => setSelectedSmartChordId(null)}
+                  chordFontFamily={currentUser?.preferences?.chordFontFamily}
+                  onFontPreferenceChange={(font) => {
+                    setCurrentUser((prev) => {
+                      if (!prev) return prev;
+                      if (prev.preferences?.chordFontFamily === font) return prev;
+                      return {
+                        ...prev,
+                        preferences: {
+                          ...prev.preferences,
+                          chordFontFamily: font,
+                        },
+                      };
+                    });
+                  }}
                 />
               )}
 

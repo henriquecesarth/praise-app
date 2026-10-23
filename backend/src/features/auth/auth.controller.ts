@@ -38,9 +38,22 @@ export class AuthController extends BaseController {
       this.handleError(err, res, next);
     }
   };
+
+  updatePreferences = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (!req.user?.id) {
+        throw new AppError(401, 'Sessão inválida ou expirada. Faça login novamente.');
+      }
+      const preferences = await this.authService.updatePreferences(req.user.id, req.body);
+      this.handleSuccess(res, { preferences });
+    } catch (err) {
+      this.handleError(err, res, next);
+    }
+  };
 }
 
 const instance = new AuthController();
 export const signUp = instance.signUp;
 export const login = instance.login;
 export const getMe = instance.getMe;
+export const updatePreferences = instance.updatePreferences;

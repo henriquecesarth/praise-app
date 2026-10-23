@@ -98,6 +98,11 @@ class _FakePreferencesStorage implements PreferencesStorage {
 }
 
 class FakeAuthNotifier extends AuthNotifier {
+  int updateFontCallCount = 0;
+  String? lastUpdatedFont;
+  Exception? updateFontErrorToThrow;
+  Completer<void>? updateFontCompleter;
+
   FakeAuthNotifier([
     AuthState initialState = const AuthState.authenticated(
       AuthUser(id: 'user-a', email: 'user.a@test.com', name: 'User A'),
@@ -111,6 +116,20 @@ class FakeAuthNotifier extends AuthNotifier {
       state = AuthState.authenticated(user);
     } else {
       state = const AuthState.unauthenticated();
+    }
+  }
+
+  @override
+  Future<void> updateChordFontPreference(String fontFamily) async {
+    updateFontCallCount++;
+    lastUpdatedFont = fontFamily;
+    if (updateFontCompleter != null) await updateFontCompleter!.future;
+    if (updateFontErrorToThrow != null) throw updateFontErrorToThrow!;
+    final currentUser = state.user;
+    if (currentUser != null) {
+      state = state.copyWith(
+        user: currentUser.copyWith(chordFontFamily: fontFamily),
+      );
     }
   }
 
@@ -222,6 +241,7 @@ void main() {
   Widget buildApp({
     required String chordId,
     SmartChord? initialChord,
+    String? chordFontOverride,
   }) {
     return ProviderScope(
       overrides: [
@@ -229,6 +249,8 @@ void main() {
         smartChordRepertoireLinkRepositoryProvider.overrideWithValue(linkRepo),
         authNotifierProvider.overrideWith((ref) => authNotifier),
         ministryContextNotifierProvider.overrideWith((ref) => ministryNotifier),
+        if (chordFontOverride != null)
+          chordFontPreferenceProvider.overrideWithValue(chordFontOverride),
       ],
       child: MaterialApp(
         home: Scaffold(
@@ -435,5 +457,366 @@ void main() {
 
     expect(find.text('Não vinculada ao repertório ativo'), findsOneWidget);
     expect(find.text('Vincular'), findsOneWidget);
+  });
+
+  group('ChordFontFamilyResolver', () {
+    test('resolves canonical fonts with appropriate platform fallbacks', () {
+      final monospace = ChordFontFamilyResolver.resolve('monospace');
+      expect(monospace.fontFamily, 'monospace');
+      expect(monospace.fallback, isEmpty);
+      expect(monospace.isMonospace, isTrue);
+
+      final courier = ChordFontFamilyResolver.resolve('Courier New');
+      expect(courier.fontFamily, 'Courier New');
+      expect(courier.fallback, ['monospace']);
+      expect(courier.isMonospace, isTrue);
+
+      final georgia = ChordFontFamilyResolver.resolve('Georgia');
+      expect(georgia.fontFamily, 'Georgia');
+      expect(georgia.fallback, ['serif']);
+      expect(georgia.isMonospace, isFalse);
+
+      final times = ChordFontFamilyResolver.resolve('Times New Roman');
+      expect(times.fontFamily, 'Times New Roman');
+      expect(times.fallback, ['serif']);
+      expect(times.isMonospace, isFalse);
+
+      final arial = ChordFontFamilyResolver.resolve('Arial');
+      expect(arial.fontFamily, 'Arial');
+      expect(arial.fallback, ['sans-serif']);
+      expect(arial.isMonospace, isFalse);
+
+      final verdana = ChordFontFamilyResolver.resolve('Verdana');
+      expect(verdana.fontFamily, 'Verdana');
+      expect(verdana.fallback, ['sans-serif']);
+      expect(verdana.isMonospace, isFalse);
+    });
+
+    test('falls back safely to monospace for null or unknown fonts', () {
+      final nullFont = ChordFontFamilyResolver.resolve(null);
+      expect(nullFont.fontFamily, 'monospace');
+      expect(nullFont.isMonospace, isTrue);
+
+      final unknown = ChordFontFamilyResolver.resolve('Papyrus');
+      expect(unknown.fontFamily, 'monospace');
+      expect(unknown.isMonospace, isTrue);
+    });
+  });
+
+  group('SmartChordReaderScreen font preferences & rendering', () {
+    testWidgets('renders monospace by default with SelectableText space-padded lines', (tester) async {
+      await tester.pumpWidget(buildApp(chordId: 'sc-1', initialChord: sampleChord));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+
+      // In monospace mode, SelectableText widgets are used
+      final selectableTexts = tester.widgetList<SelectableText>(find.byType(SelectableText));
+      expect(selectableTexts, isNotEmpty);
+      final firstSelectable = selectableTexts.first;
+      expect(firstSelectable.style?.fontFamily, 'monospace');
+    });
+
+    testWidgets('renders proportional font (Georgia) with anchored Column segments and serif fallback', (tester) async {
+      await tester.pumpWidget(buildApp(
+        chordId: 'sc-1',
+        initialChord: sampleChord,
+        chordFontOverride: 'Georgia',
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+
+      // Proportional mode renders with Wrap containing anchored Columns
+      expect(find.byType(Wrap), findsWidgets);
+
+      // Verify Georgia font and serif fallback on rendered text
+      final textWidgets = tester.widgetList<Text>(find.byType(Text));
+      final chordTexts = textWidgets.where((t) => t.style?.fontFamily == 'Georgia').toList();
+      expect(chordTexts, isNotEmpty);
+      expect(chordTexts.first.style?.fontFamilyFallback, ['serif']);
+
+      // Chords C and G are rendered
+      expect(find.text('C'), findsWidgets);
+      expect(find.text('G'), findsWidgets);
+      expect(find.text('Tu '), findsOneWidget);
+      expect(find.text('és '), findsOneWidget);
+      expect(find.text('Deus'), findsOneWidget);
+    });
+
+    testWidgets('transposition works accurately with proportional font', (tester) async {
+      await tester.pumpWidget(buildApp(
+        chordId: 'sc-1',
+        initialChord: sampleChord,
+        chordFontOverride: 'Georgia',
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('C'), findsWidgets);
+      expect(find.text('G'), findsWidgets);
+
+      // Transpose +2 semitones: C -> D, G -> A
+      await tester.tap(find.byTooltip('Meio tom acima (+1)'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Meio tom acima (+1)'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Tom: D'), findsOneWidget);
+      expect(find.text('D'), findsWidgets);
+      expect(find.text('A'), findsWidgets);
+      expect(find.text('Tu '), findsOneWidget);
+      expect(find.text('és '), findsOneWidget);
+      expect(find.text('Deus'), findsOneWidget);
+    });
+
+    testWidgets('font size stepper scales proportional font text widgets', (tester) async {
+      await tester.pumpWidget(buildApp(
+        chordId: 'sc-1',
+        initialChord: sampleChord,
+        chordFontOverride: 'Arial',
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+
+      // Find initial font size
+      final initialTexts = tester.widgetList<Text>(find.byType(Text)).where((t) => t.style?.fontFamily == 'Arial');
+      final initialSize = initialTexts.first.style?.fontSize;
+      expect(initialSize, 15.0);
+
+      // Tap increase font size button
+      await tester.tap(find.byTooltip('Aumentar fonte'));
+      await tester.pumpAndSettle();
+
+      final increasedTexts = tester.widgetList<Text>(find.byType(Text)).where((t) => t.style?.fontFamily == 'Arial');
+      expect(increasedTexts.first.style?.fontSize, 16.0);
+    });
+
+    testWidgets('reactively switches rendering from monospace to proportional on preference change', (tester) async {
+      // Start with user having monospace preference
+      authNotifier.setUser(const AuthUser(
+        id: 'user-a',
+        email: 'user.a@test.com',
+        name: 'User A',
+        chordFontFamily: 'monospace',
+      ));
+
+      await tester.pumpWidget(buildApp(chordId: 'sc-1', initialChord: sampleChord));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+
+      // Initially monospace: SelectableText is used, no Wrap
+      expect(find.byType(Wrap), findsNothing);
+
+      // Update user preference reactively to Georgia
+      authNotifier.setUser(const AuthUser(
+        id: 'user-a',
+        email: 'user.a@test.com',
+        name: 'User A',
+        chordFontFamily: 'Georgia',
+      ));
+      await tester.pumpAndSettle();
+
+      // Rebuilt reactively into proportional Wrap
+      expect(find.byType(Wrap), findsWidgets);
+      final georgiaTexts = tester.widgetList<Text>(find.byType(Text)).where((t) => t.style?.fontFamily == 'Georgia');
+      expect(georgiaTexts, isNotEmpty);
+    });
+  });
+
+  group('SmartChordReaderScreen font selector', () {
+    testWidgets('displays font selector button and opens menu with 6 canonical options and fallback labels', (tester) async {
+      await tester.pumpWidget(buildApp(chordId: 'sc-1', initialChord: sampleChord));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+
+      final fontSelectorButton = find.byTooltip('Fonte das cifras');
+      expect(fontSelectorButton, findsOneWidget);
+
+      await tester.tap(fontSelectorButton);
+      await tester.pumpAndSettle();
+
+      final menuItems = tester.widgetList<CheckedPopupMenuItem<String>>(
+        find.byType(CheckedPopupMenuItem<String>),
+      ).toList();
+
+      expect(menuItems.length, 6);
+      expect(menuItems.map((m) => m.value).toList(), [
+        'monospace',
+        'Arial',
+        'Times New Roman',
+        'Georgia',
+        'Verdana',
+        'Courier New',
+      ]);
+
+      // Initially monospace is checked
+      final monospaceItem = menuItems.firstWhere((m) => m.value == 'monospace');
+      expect(monospaceItem.checked, isTrue);
+
+      final arialItem = menuItems.firstWhere((m) => m.value == 'Arial');
+      expect(arialItem.checked, isFalse);
+
+      // Fallback descriptions
+      expect(find.text('Substituto: sans-serif'), findsNWidgets(2)); // Arial and Verdana
+      expect(find.text('Substituto: serif'), findsNWidgets(2)); // Times New Roman and Georgia
+      expect(find.text('Substituto: monospace'), findsOneWidget); // Courier New
+    });
+
+    testWidgets('selecting a new font calls updateChordFontPreference and updates reader appearance', (tester) async {
+      await tester.pumpWidget(buildApp(chordId: 'sc-1', initialChord: sampleChord));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Fonte das cifras'));
+      await tester.pumpAndSettle();
+
+      // Select Georgia
+      await tester.tap(find.text('Georgia'), warnIfMissed: false);
+      await tester.pumpAndSettle();
+
+      expect(authNotifier.updateFontCallCount, 1);
+      expect(authNotifier.lastUpdatedFont, 'Georgia');
+
+      // Reader now renders in Georgia proportional mode
+      expect(find.byType(Wrap), findsWidgets);
+      final georgiaTexts = tester.widgetList<Text>(find.byType(Text)).where((t) => t.style?.fontFamily == 'Georgia');
+      expect(georgiaTexts, isNotEmpty);
+
+      // Reopening menu shows Georgia as checked
+      await tester.tap(find.byTooltip('Fonte das cifras'));
+      await tester.pumpAndSettle();
+
+      final menuItems = tester.widgetList<CheckedPopupMenuItem<String>>(
+        find.byType(CheckedPopupMenuItem<String>),
+      ).toList();
+      final georgiaItem = menuItems.firstWhere((m) => m.value == 'Georgia');
+      expect(georgiaItem.checked, isTrue);
+      final monospaceItem = menuItems.firstWhere((m) => m.value == 'monospace');
+      expect(monospaceItem.checked, isFalse);
+    });
+
+    testWidgets('selecting the current active font is a no-op and does not call update', (tester) async {
+      await tester.pumpWidget(buildApp(chordId: 'sc-1', initialChord: sampleChord));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Fonte das cifras'));
+      await tester.pumpAndSettle();
+
+      // Tap monospace (already selected)
+      await tester.tap(find.text('monospace'), warnIfMissed: false);
+      await tester.pumpAndSettle();
+
+      expect(authNotifier.updateFontCallCount, 0);
+      expect(authNotifier.lastUpdatedFont, isNull);
+    });
+
+    testWidgets('displays error snackbar and retains font when update fails', (tester) async {
+      await tester.pumpWidget(buildApp(chordId: 'sc-1', initialChord: sampleChord));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+
+      authNotifier.updateFontErrorToThrow = Exception('Network error');
+
+      await tester.tap(find.byTooltip('Fonte das cifras'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Arial'), warnIfMissed: false);
+      await tester.pumpAndSettle();
+
+      expect(authNotifier.updateFontCallCount, 1);
+      expect(find.text('Erro ao salvar preferência de fonte.'), findsOneWidget);
+
+      // Reader remains in monospace mode and does not switch to Arial
+      final arialTexts = tester.widgetList<Text>(find.byType(Text)).where((t) => t.style?.fontFamily == 'Arial');
+      expect(arialTexts, isEmpty);
+      final selectables = tester.widgetList<SelectableText>(find.byType(SelectableText));
+      expect(selectables, isNotEmpty);
+      expect(selectables.first.style?.fontFamily, 'monospace');
+      expect(authNotifier.state.chordFontFamily, 'monospace');
+    });
+
+    testWidgets('shows loading indicator while saving and disables selector', (tester) async {
+      await tester.pumpWidget(buildApp(chordId: 'sc-1', initialChord: sampleChord));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+
+      authNotifier.updateFontCompleter = Completer<void>();
+
+      await tester.tap(find.byTooltip('Fonte das cifras'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Verdana'), warnIfMissed: false);
+      await tester.pump(); // Start save async, before completion
+
+      // CircularProgressIndicator should be visible in the button
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+      // PopupMenuButton is disabled while saving
+      final popupButton = tester.widget<PopupMenuButton<String>>(find.byType(PopupMenuButton<String>));
+      expect(popupButton.enabled, isFalse);
+
+      // Complete async save
+      authNotifier.updateFontCompleter!.complete();
+      await tester.pumpAndSettle();
+
+      // Spinner disappears, button is re-enabled, font is updated
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      final reenabledButton = tester.widget<PopupMenuButton<String>>(find.byType(PopupMenuButton<String>));
+      expect(reenabledButton.enabled, isTrue);
+      expect(authNotifier.lastUpdatedFont, 'Verdana');
+    });
+
+    testWidgets('fences stale save completion after user logs out or switches', (tester) async {
+      await tester.pumpWidget(buildApp(chordId: 'sc-1', initialChord: sampleChord));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+
+      authNotifier.updateFontCompleter = Completer<void>();
+
+      await tester.tap(find.byTooltip('Fonte das cifras'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Courier New'), warnIfMissed: false);
+      await tester.pump();
+
+      // Screen is saving
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+      // User logs out while save is in flight
+      await authNotifier.logout();
+      await tester.pumpAndSettle();
+
+      // Screen was dismissed because user logged out
+      expect(find.text('Abrir Reader'), findsOneWidget);
+
+      // Now complete the stale save
+      authNotifier.updateFontCompleter!.complete();
+      await tester.pumpAndSettle();
+
+      // No uncaught errors or snackbars
+      expect(find.byType(SnackBar), findsNothing);
+    });
   });
 }

@@ -3,11 +3,17 @@ import { config } from '../config/unifiedConfig';
 import { AppError } from '../middleware/error-handler';
 import jwt from 'jsonwebtoken';
 
+export interface UserPreferences {
+  chord_font_family?: string;
+  [key: string]: any;
+}
+
 export interface UserRecordData {
   id: string;
   email: string;
   name: string;
   createdAt?: string;
+  preferences?: UserPreferences;
 }
 
 export class UserRepository {
@@ -120,6 +126,7 @@ export class UserRepository {
           email: data?.email || '',
           name: data?.name || (data?.email ? data.email.split('@')[0] : 'Usuário'),
           createdAt: data?.createdAt,
+          preferences: data?.preferences,
         };
       }
       if (authAdmin && typeof authAdmin.getUser === 'function') {
@@ -128,12 +135,43 @@ export class UserRepository {
           id: userRecord.uid,
           email: userRecord.email || '',
           name: userRecord.displayName || (userRecord.email ? userRecord.email.split('@')[0] : 'Usuário'),
+          preferences: undefined,
         };
       }
       return null;
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Atualiza preferências do usuário autenticado no Firestore com preservação estrita de campos existentes
+   */
+  async updatePreferences(userId: string, patch: Partial<UserPreferences>): Promise<UserPreferences> {
+    const userDocRef = this.usersCollection.doc(userId);
+    const doc = await userDocRef.get();
+    if (!doc.exists) {
+      throw new AppError(404, 'Perfil de usuário não encontrado.');
+    }
+
+    const currentData = doc.data() as Partial<UserRecordData> | undefined;
+    const currentPreferences = (currentData?.preferences && typeof currentData.preferences === 'object')
+      ? currentData.preferences
+      : {};
+
+    const updatedPreferences: UserPreferences = {
+      ...currentPreferences,
+      ...patch,
+    };
+
+    await userDocRef.set(
+      {
+        preferences: updatedPreferences,
+      },
+      { merge: true }
+    );
+
+    return updatedPreferences;
   }
 
   /**

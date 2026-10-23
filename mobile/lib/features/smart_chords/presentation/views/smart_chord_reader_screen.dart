@@ -10,6 +10,84 @@ import '../controllers/smart_chord_repertoire_link_controller.dart';
 import '../widgets/song_link_picker_modal.dart';
 import 'smart_chord_form_screen.dart';
 
+/// Resolved font family and fallback configuration for chord rendering.
+class ChordFontConfig {
+  final String fontFamily;
+  final List<String> fallback;
+  final bool isMonospace;
+
+  const ChordFontConfig({
+    required this.fontFamily,
+    required this.fallback,
+    required this.isMonospace,
+  });
+}
+
+/// Resolves font family and system fallbacks for Android/iOS/Desktop.
+/// Platform availability of specific named fonts (e.g. Arial, Georgia) is not guaranteed
+/// on Android devices without bundled assets. Explicit fallback families ('serif', 'sans-serif', 'monospace')
+/// ensure graceful platform rendering without external network downloads.
+class ChordFontFamilyResolver {
+  static const supportedFonts = [
+    'monospace',
+    'Arial',
+    'Times New Roman',
+    'Georgia',
+    'Verdana',
+    'Courier New',
+  ];
+
+  static bool isMonospace(String font) {
+    return font == 'monospace' || font == 'Courier New';
+  }
+
+  static ChordFontConfig resolve(String? font) {
+    final effectiveFont = (font != null && supportedFonts.contains(font))
+        ? font
+        : 'monospace';
+
+    switch (effectiveFont) {
+      case 'Arial':
+        return const ChordFontConfig(
+          fontFamily: 'Arial',
+          fallback: ['sans-serif'],
+          isMonospace: false,
+        );
+      case 'Times New Roman':
+        return const ChordFontConfig(
+          fontFamily: 'Times New Roman',
+          fallback: ['serif'],
+          isMonospace: false,
+        );
+      case 'Georgia':
+        return const ChordFontConfig(
+          fontFamily: 'Georgia',
+          fallback: ['serif'],
+          isMonospace: false,
+        );
+      case 'Verdana':
+        return const ChordFontConfig(
+          fontFamily: 'Verdana',
+          fallback: ['sans-serif'],
+          isMonospace: false,
+        );
+      case 'Courier New':
+        return const ChordFontConfig(
+          fontFamily: 'Courier New',
+          fallback: ['monospace'],
+          isMonospace: true,
+        );
+      case 'monospace':
+      default:
+        return const ChordFontConfig(
+          fontFamily: 'monospace',
+          fallback: [],
+          isMonospace: true,
+        );
+    }
+  }
+}
+
 class SmartChordReaderScreen extends ConsumerStatefulWidget {
   final String chordId;
   final SmartChord? initialChord;
@@ -28,6 +106,54 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
   double _fontSize = 15.0;
   String? _boundUserId;
   bool _isDismissed = false;
+  bool _isSavingFont = false;
+  int _fontSaveRequestId = 0;
+
+  String _getFontSubtext(String font) {
+    final config = ChordFontFamilyResolver.resolve(font);
+    if (config.fallback.isNotEmpty) {
+      return 'Substituto: ${config.fallback.first}';
+    }
+    return '';
+  }
+
+  Future<void> _onSelectChordFont(String newFont, String currentFont) async {
+    if (newFont == currentFont) return;
+    if (_boundUserId == null || _boundUserId!.isEmpty) return;
+
+    final requestId = ++_fontSaveRequestId;
+    setState(() {
+      _isSavingFont = true;
+    });
+
+    try {
+      await ref
+          .read(authNotifierProvider.notifier)
+          .updateChordFontPreference(newFont);
+
+      if (!mounted || _isDismissed) return;
+      final currentUid = ref.read(authNotifierProvider).user?.id;
+      if (requestId == _fontSaveRequestId && currentUid == _boundUserId) {
+        setState(() {
+          _isSavingFont = false;
+        });
+      }
+    } catch (e) {
+      if (!mounted || _isDismissed) return;
+      final currentUid = ref.read(authNotifierProvider).user?.id;
+      if (requestId == _fontSaveRequestId && currentUid == _boundUserId) {
+        setState(() {
+          _isSavingFont = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Erro ao salvar preferência de fonte.'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
+  }
 
   @override
   void initState() {
@@ -156,6 +282,8 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
     final detailState = ref.watch(smartChordDetailNotifierProvider);
     final linkState = ref.watch(smartChordRepertoireLinkNotifierProvider);
     final activeMinistry = ref.watch(ministryContextNotifierProvider).selectedMinistry;
+    final chordFont = ref.watch(chordFontPreferenceProvider);
+    final fontConfig = ChordFontFamilyResolver.resolve(chordFont);
     final chord = detailState.chord ?? widget.initialChord;
 
     ref.listen(ministryContextNotifierProvider, (previous, next) {
@@ -362,6 +490,50 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
                       ),
                     ],
                     const Spacer(),
+                    // Font Family Selector
+                    PopupMenuButton<String>(
+                      tooltip: 'Fonte das cifras',
+                      initialValue: chordFont,
+                      enabled: !_isSavingFont,
+                      icon: _isSavingFont
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.text_fields_rounded, size: 20),
+                      onSelected: (newFont) => _onSelectChordFont(newFont, chordFont),
+                      itemBuilder: (context) => [
+                        for (final font in ChordFontFamilyResolver.supportedFonts)
+                          CheckedPopupMenuItem<String>(
+                            value: font,
+                            checked: font == chordFont,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  font,
+                                  style: TextStyle(
+                                    fontFamily: ChordFontFamilyResolver.resolve(font).fontFamily,
+                                    fontFamilyFallback: ChordFontFamilyResolver.resolve(font).fallback,
+                                    fontWeight: font == chordFont ? FontWeight.bold : FontWeight.normal,
+                                  ),
+                                ),
+                                if (font != 'monospace')
+                                  Text(
+                                    _getFontSubtext(font),
+                                    style: theme.textTheme.labelSmall?.copyWith(
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                      fontSize: 10,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(width: 4),
                     // Font Size Steppers
                     IconButton(
                       tooltip: 'Diminuir fonte',
@@ -388,7 +560,7 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       for (int i = 0; i < lines.length; i++) ...[
-                        _buildRenderedLine(lines[i], semitones, theme),
+                        _buildRenderedLine(lines[i], semitones, theme, fontConfig),
                       ],
                       const SizedBox(height: 48),
                     ],
@@ -402,7 +574,38 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
     );
   }
 
-  Widget _buildRenderedLine(String lineText, int semitones, ThemeData theme) {
+  Widget _buildRenderedLine(
+    String lineText,
+    int semitones,
+    ThemeData theme,
+    ChordFontConfig fontConfig,
+  ) {
+    if (fontConfig.isMonospace) {
+      return _buildMonospaceLine(
+        lineText,
+        semitones,
+        theme,
+        fontConfig.fontFamily,
+        fontConfig.fallback,
+      );
+    } else {
+      return _buildProportionalLine(
+        lineText,
+        semitones,
+        theme,
+        fontConfig.fontFamily,
+        fontConfig.fallback,
+      );
+    }
+  }
+
+  Widget _buildMonospaceLine(
+    String lineText,
+    int semitones,
+    ThemeData theme,
+    String fontFamily,
+    List<String> fontFamilyFallback,
+  ) {
     if (lineText.trim().isEmpty) {
       return SizedBox(height: _fontSize * 0.8);
     }
@@ -418,7 +621,8 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
             SelectableText(
               rendered.chordLine,
               style: TextStyle(
-                fontFamily: 'monospace',
+                fontFamily: fontFamily,
+                fontFamilyFallback: fontFamilyFallback,
                 fontSize: _fontSize,
                 fontWeight: FontWeight.bold,
                 color: theme.colorScheme.primary,
@@ -429,7 +633,8 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
           SelectableText(
             rendered.lyricsLine.isEmpty ? ' ' : rendered.lyricsLine,
             style: TextStyle(
-              fontFamily: 'monospace',
+              fontFamily: fontFamily,
+              fontFamilyFallback: fontFamilyFallback,
               fontSize: _fontSize,
               color: theme.colorScheme.onSurface,
               letterSpacing: 0.3,
@@ -438,6 +643,131 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildProportionalLine(
+    String lineText,
+    int semitones,
+    ThemeData theme,
+    String fontFamily,
+    List<String> fontFamilyFallback,
+  ) {
+    if (lineText.trim().isEmpty) {
+      return SizedBox(height: _fontSize * 0.8);
+    }
+
+    final parsedLines = SmartChordParser.parse(lineText);
+    if (parsedLines.isEmpty) {
+      return SizedBox(height: _fontSize * 0.8);
+    }
+
+    final line = parsedLines.first;
+    final hasChords = line.segments.any((s) => s.chord.trim().isNotEmpty);
+
+    final lyricStyle = TextStyle(
+      fontFamily: fontFamily,
+      fontFamilyFallback: fontFamilyFallback,
+      fontSize: _fontSize,
+      color: theme.colorScheme.onSurface,
+      height: 1.3,
+    );
+
+    if (!hasChords) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 4.0),
+        child: SelectableText(
+          lineText,
+          style: lyricStyle,
+        ),
+      );
+    }
+
+    final chordStyle = TextStyle(
+      fontFamily: fontFamily,
+      fontFamilyFallback: fontFamilyFallback,
+      fontSize: _fontSize,
+      fontWeight: FontWeight.bold,
+      color: theme.colorScheme.primary,
+      height: 1.2,
+    );
+
+    final items = <Widget>[];
+
+    for (final seg in line.segments) {
+      final chord = seg.chord.trim();
+      final text = seg.text;
+      final transposedChord =
+          chord.isNotEmpty ? SmartChordParser.transposeChord(chord, semitones) : '';
+
+      if (text.contains(' ') && text.trim().isNotEmpty) {
+        final firstSpaceIndex = text.indexOf(' ');
+        final firstWord = text.substring(0, firstSpaceIndex + 1);
+        final remainingText = text.substring(firstSpaceIndex + 1);
+
+        items.add(_buildSegmentColumn(
+          chord: transposedChord,
+          text: firstWord,
+          chordStyle: chordStyle,
+          lyricStyle: lyricStyle,
+        ));
+
+        final words = remainingText.split(' ');
+        for (int i = 0; i < words.length; i++) {
+          final word = words[i];
+          final isLast = i == words.length - 1;
+          final wordWithSpace = isLast ? word : '$word ';
+          if (wordWithSpace.isNotEmpty) {
+            items.add(_buildSegmentColumn(
+              chord: '',
+              text: wordWithSpace,
+              chordStyle: chordStyle,
+              lyricStyle: lyricStyle,
+            ));
+          }
+        }
+      } else {
+        items.add(_buildSegmentColumn(
+          chord: transposedChord,
+          text: text.isEmpty ? ' ' : text,
+          chordStyle: chordStyle,
+          lyricStyle: lyricStyle,
+        ));
+      }
+    }
+
+    return SelectionArea(
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 6.0),
+        child: Wrap(
+          crossAxisAlignment: WrapCrossAlignment.end,
+          children: items,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSegmentColumn({
+    required String chord,
+    required String text,
+    required TextStyle chordStyle,
+    required TextStyle lyricStyle,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          chord.isNotEmpty ? chord : ' ',
+          style: chordStyle.copyWith(
+            color: chord.isNotEmpty ? chordStyle.color : Colors.transparent,
+          ),
+        ),
+        Text(
+          text,
+          style: lyricStyle,
+        ),
+      ],
     );
   }
 

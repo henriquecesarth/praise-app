@@ -43,5 +43,32 @@ void main() {
       expect(storage.getSelectedMinistryId(), isNull);
       expect(storage.getThemeMode(), isNull);
     });
+
+    test('gets and sets chord font family scoped by user ID with account isolation', () async {
+      expect(storage.getUserChordFontFamily('usr_a'), isNull);
+      expect(storage.getUserChordFontFamily('usr_b'), isNull);
+
+      await storage.setUserChordFontFamily('usr_a', 'Georgia');
+      expect(storage.getUserChordFontFamily('usr_a'), 'Georgia');
+      expect(storage.getUserChordFontFamily('usr_b'), isNull);
+
+      await storage.setUserChordFontFamily('usr_b', 'Arial');
+      expect(storage.getUserChordFontFamily('usr_a'), 'Georgia');
+      expect(storage.getUserChordFontFamily('usr_b'), 'Arial');
+
+      await storage.setUserChordFontFamily('usr_a', null);
+      expect(storage.getUserChordFontFamily('usr_a'), isNull);
+      expect(storage.getUserChordFontFamily('usr_b'), 'Arial');
+    });
+
+    test('clear does not wipe cached user chord font preferences across session clear', () async {
+      await storage.setSelectedMinistryId('min_xyz');
+      await storage.setUserChordFontFamily('usr_a', 'Georgia');
+
+      await storage.clear();
+
+      expect(storage.getSelectedMinistryId(), isNull);
+      expect(storage.getUserChordFontFamily('usr_a'), 'Georgia');
+    });
   });
 }

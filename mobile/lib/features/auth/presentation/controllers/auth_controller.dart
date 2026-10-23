@@ -57,6 +57,8 @@ class AuthState {
   bool get hasBootstrapError => status == AuthStatus.bootstrapError;
   bool get hasError =>
       status == AuthStatus.error || status == AuthStatus.bootstrapError;
+  String get chordFontFamily =>
+      user?.chordFontFamily ?? AuthUser.defaultChordFont;
 
   AuthState copyWith({
     AuthStatus? status,
@@ -87,6 +89,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
   final AuthRepository _repository;
   final Future<void> Function()? _onBeforeSignOut;
   StreamSubscription<User?>? _authSubscription;
+  int _authOpId = 0;
+  int _preferenceOpId = 0;
+  int _confirmedPreferenceOpId = 0;
 
   AuthNotifier(
     this._repository, {
@@ -99,21 +104,40 @@ class AuthNotifier extends StateNotifier<AuthState> {
   void _init() {
     _authSubscription =
         _repository.authStateChanges().listen((firebaseUser) async {
+      final opId = ++_authOpId;
       if (firebaseUser == null) {
+        ++_preferenceOpId;
+        ++_confirmedPreferenceOpId;
         if (!state.isUnauthenticated) {
           state = const AuthState.unauthenticated();
         }
       } else {
-        await _fetchAuthoritativeUser();
+        await _fetchAuthoritativeUser(opId);
       }
     });
   }
 
-  Future<void> _fetchAuthoritativeUser() async {
+  Future<void> _fetchAuthoritativeUser([int? expectedOpId]) async {
+    final opId = expectedOpId ?? ++_authOpId;
+    final confirmedPrefIdAtStart = _confirmedPreferenceOpId;
     try {
       final authUser = await _repository.getMe();
-      state = AuthState.authenticated(authUser);
+      if (opId == _authOpId) {
+        final currentUser = state.user;
+        final hasNewerPreference = currentUser != null &&
+            currentUser.id == authUser.id &&
+            confirmedPrefIdAtStart != _confirmedPreferenceOpId;
+
+        final effectiveFont = hasNewerPreference
+            ? currentUser.chordFontFamily
+            : authUser.chordFontFamily;
+
+        state = AuthState.authenticated(
+          authUser.copyWith(chordFontFamily: effectiveFont),
+        );
+      }
     } catch (e) {
+      if (opId != _authOpId) return;
       final failure = AuthFailureNormalizer.normalize(e);
       if (failure.statusCode == 401 ||
           failure.statusCode == 403 ||
@@ -131,14 +155,16 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   /// Retries fetching authoritative profile when in recoverable bootstrap error state.
   Future<void> retryBootstrap() async {
+    final opId = ++_authOpId;
     state = const AuthState.initializing();
-    await _fetchAuthoritativeUser();
+    await _fetchAuthoritativeUser(opId);
   }
 
   Future<void> login({
     required String email,
     required String password,
   }) async {
+    final opId = ++_authOpId;
     state = const AuthState.authenticating();
     try {
       await _repository.signInWithEmailAndPassword(
@@ -146,10 +172,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
         password: password,
       );
       final user = await _repository.getMe();
-      state = AuthState.authenticated(user);
+      if (opId == _authOpId) {
+        state = AuthState.authenticated(user);
+      }
     } catch (e) {
-      final failure = AuthFailureNormalizer.normalize(e);
-      state = AuthState.error(failure);
+      if (opId == _authOpId) {
+        final failure = AuthFailureNormalizer.normalize(e);
+        state = AuthState.error(failure);
+      }
       rethrow;
     }
   }
@@ -159,6 +189,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
     required String email,
     required String password,
   }) async {
+    final opId = ++_authOpId;
     state = const AuthState.authenticating();
     try {
       final user = await _repository.signUp(
@@ -166,15 +197,46 @@ class AuthNotifier extends StateNotifier<AuthState> {
         email: email,
         password: password,
       );
-      state = AuthState.authenticated(user);
+      if (opId == _authOpId) {
+        state = AuthState.authenticated(user);
+      }
     } catch (e) {
-      final failure = AuthFailureNormalizer.normalize(e);
-      state = AuthState.error(failure);
+      if (opId == _authOpId) {
+        final failure = AuthFailureNormalizer.normalize(e);
+        state = AuthState.error(failure);
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> updateChordFontPreference(String fontFamily) async {
+    final currentUser = state.user;
+    if (currentUser == null) return;
+
+    final opId = ++_preferenceOpId;
+    try {
+      final confirmedFont = await _repository.updateChordFontPreference(
+        chordFontFamily: fontFamily,
+      );
+
+      // Fencing: ignore if a newer preference op ran or if user changed / logged out
+      if (opId == _preferenceOpId &&
+          state.isAuthenticated &&
+          state.user?.id == currentUser.id) {
+        _confirmedPreferenceOpId = opId;
+        state = state.copyWith(
+          user: currentUser.copyWith(chordFontFamily: confirmedFont),
+        );
+      }
+    } catch (e) {
       rethrow;
     }
   }
 
   Future<void> logout() async {
+    ++_authOpId;
+    ++_preferenceOpId;
+    ++_confirmedPreferenceOpId;
     if (_onBeforeSignOut != null) {
       try {
         await _onBeforeSignOut();

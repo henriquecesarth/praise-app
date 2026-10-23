@@ -13,3 +13,26 @@ export const loginSchema = z.object({
 
 export type SignupInput = z.infer<typeof signupSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
+
+export const SUPPORTED_CHORD_FONTS = [
+  'monospace',
+  'Arial',
+  'Times New Roman',
+  'Georgia',
+  'Verdana',
+  'Courier New',
+] as const;
+
+export type SupportedChordFont = (typeof SUPPORTED_CHORD_FONTS)[number];
+
+export const DEFAULT_CHORD_FONT: SupportedChordFont = 'monospace';
+
+export const updatePreferencesSchema = z
+  .object({
+    chord_font_family: z.enum(SUPPORTED_CHORD_FONTS, {
+      message: 'Fonte de acordes não suportada.',
+    }),
+  })
+  .strict();
+
+export type UpdatePreferencesInput = z.infer<typeof updatePreferencesSchema>;

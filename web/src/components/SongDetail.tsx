@@ -1,7 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Song, SongVersion, SmartChord } from '../types';
 import { api } from '../api';
-import { renderSmartChordLine, transposeChord } from '../utils/smart_chord';
+import {
+  transposeChord,
+  rawToVisual,
+  hasBarProgression,
+  parseBarProgressionLine,
+  getFontFamilyCss,
+  CHORD_FONT_FAMILIES,
+} from '../utils/smart_chord';
 import {
   ArrowLeft,
   Edit2,
@@ -21,9 +28,33 @@ import {
 } from 'lucide-react';
 import { Header } from './Header';
 
+function resolveEffectiveFont(preferred?: string): string {
+  if (preferred && CHORD_FONT_FAMILIES.some((f) => f.value === preferred)) {
+    return preferred;
+  }
+  try {
+    const activeUser = localStorage.getItem('louvaio_last_auth_user_id');
+    if (activeUser) {
+      const cached = localStorage.getItem(`louvaio_chord_font_user_${activeUser}`);
+      if (cached && CHORD_FONT_FAMILIES.some((f) => f.value === cached)) {
+        return cached;
+      }
+      return 'monospace';
+    }
+    const generic = localStorage.getItem('louvaio_smart_chord_font_family');
+    if (generic && CHORD_FONT_FAMILIES.some((f) => f.value === generic)) {
+      return generic;
+    }
+  } catch {
+    // ignore
+  }
+  return 'monospace';
+}
+
 interface SongDetailProps {
   song: Song;
   ministryId?: string;
+  chordFontFamily?: string;
   onBack: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
@@ -33,12 +64,37 @@ interface SongDetailProps {
 export const SongDetail: React.FC<SongDetailProps> = ({
   song,
   ministryId,
+  chordFontFamily,
   onBack,
   onEdit,
   onDelete,
   onOpenSmartChord,
 }) => {
   const effectiveMinistryId = ministryId || song.ministryId;
+
+  const [effectiveFontFamily, setEffectiveFontFamily] = useState<string>(() =>
+    resolveEffectiveFont(chordFontFamily)
+  );
+
+  useEffect(() => {
+    setEffectiveFontFamily(resolveEffectiveFont(chordFontFamily));
+  }, [chordFontFamily]);
+
+  useEffect(() => {
+    const handleFontChange = (e: any) => {
+      const newFont = e?.detail?.font;
+      setEffectiveFontFamily(resolveEffectiveFont(newFont || chordFontFamily));
+    };
+
+    window.addEventListener('louvaio_chord_font_changed', handleFontChange);
+    window.addEventListener('storage', handleFontChange);
+    return () => {
+      window.removeEventListener('louvaio_chord_font_changed', handleFontChange);
+      window.removeEventListener('storage', handleFontChange);
+    };
+  }, [chordFontFamily]);
+
+  const activeFontFamilyCss = getFontFamilyCss(effectiveFontFamily);
 
   const [linkedChords, setLinkedChords] = useState<SmartChord[]>([]);
   const [loadingChords, setLoadingChords] = useState(false);
@@ -889,7 +945,17 @@ export const SongDetail: React.FC<SongDetailProps> = ({
           )}
 
           {activeView === 'cifra' && hasSmartChord ? (
-            <div className="lyrics-box" style={{ fontFamily: 'monospace', overflowX: 'auto', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' }}>
+            <div
+              className="lyrics-box"
+              data-testid="song-detail-chord-sheet"
+              style={{
+                fontFamily: activeFontFamilyCss,
+                overflowX: 'auto',
+                minWidth: 0,
+                maxWidth: '100%',
+                boxSizing: 'border-box',
+              }}
+            >
               <div
                 style={{
                   display: 'flex',
@@ -965,17 +1031,213 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                 </div>
               </div>
 
-              {rawLines.map((line, idx) => {
-                const parsed = renderSmartChordLine(line, semitones);
-                return (
-                  <div key={idx} style={{ marginBottom: '8px' }}>
-                    <div style={{ color: 'var(--primary-light)', fontWeight: 'bold', minHeight: '1.2em' }}>
-                      {parsed.chordLine}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {rawLines.map((lineText, lineIdx) => {
+                  if (hasBarProgression(lineText)) {
+                    const tokens = parseBarProgressionLine(lineText);
+                    return (
+                      <div
+                        key={lineIdx}
+                        role="group"
+                        aria-label={lineText || 'Linha de compassos'}
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          alignItems: 'baseline',
+                          rowGap: '20px',
+                          fontFamily: activeFontFamilyCss,
+                          fontSize: '14px',
+                          lineHeight: '1.4',
+                          paddingTop: '16px',
+                        }}
+                      >
+                        {tokens.map((token, tokenIdx) => {
+                          if (token.type === 'chord') {
+                            const transposedChord = transposeChord(token.value, semitones);
+                            return (
+                              <span
+                                key={tokenIdx}
+                                className="has-chord"
+                                data-bar-chord-idx={token.chordIndex}
+                                style={{
+                                  color: 'var(--primary-light)',
+                                  fontWeight: 'bold',
+                                  textDecoration: 'underline 2px solid var(--primary-light)',
+                                  padding: '0 1px',
+                                }}
+                              >
+                                {transposedChord}
+                              </span>
+                            );
+                          }
+
+                          if (token.type === 'delimiter') {
+                            return (
+                              <span
+                                key={tokenIdx}
+                                style={{
+                                  color: token.value === '%' ? 'var(--primary-light)' : 'var(--text-secondary)',
+                                  fontWeight: 'bold',
+                                  userSelect: 'none',
+                                }}
+                              >
+                                {token.value}
+                              </span>
+                            );
+                          }
+
+                          if (token.type === 'whitespace') {
+                            return (
+                              <span key={tokenIdx} style={{ whiteSpace: 'pre' }}>
+                                {token.value}
+                              </span>
+                            );
+                          }
+
+                          if (token.type === 'bracket_open' || token.type === 'bracket_close') {
+                            return null;
+                          }
+
+                          return (
+                            <span key={tokenIdx} style={{ color: 'var(--text-primary)' }}>
+                              {token.value}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    );
+                  }
+
+                  const visual = rawToVisual(lineText);
+                  const text = visual.cleanText;
+
+                  if (!text && Object.keys(visual.chords).length === 0) {
+                    return <div key={lineIdx} style={{ height: '1.4em' }} />;
+                  }
+
+                  return (
+                    <div
+                      key={lineIdx}
+                      role="group"
+                      aria-label={lineText || 'Linha vazia'}
+                      style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        rowGap: '20px',
+                        fontFamily: activeFontFamilyCss,
+                        fontSize: '14px',
+                        lineHeight: '1.4',
+                        paddingTop: '16px',
+                      }}
+                    >
+                      {/* Accessible clean lyric line for screen readers and text matchers */}
+                      <span
+                        className="sr-only"
+                        style={{
+                          position: 'absolute',
+                          width: '1px',
+                          height: '1px',
+                          padding: 0,
+                          margin: '-1px',
+                          overflow: 'hidden',
+                          clip: 'rect(0, 0, 0, 0)',
+                          whiteSpace: 'nowrap',
+                          border: 0,
+                        }}
+                      >
+                        {text}
+                      </span>
+                      {text.split('').map((char, charIdx) => {
+                        const hasChord = visual.chords[charIdx] !== undefined;
+                        const chord = visual.chords[charIdx] || '';
+                        const transposedChord = hasChord ? transposeChord(chord, semitones) : '';
+
+                        return (
+                          <div
+                            key={charIdx}
+                            data-char-idx={charIdx}
+                            style={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              position: 'relative',
+                            }}
+                          >
+                            {hasChord && (
+                              <span
+                                aria-hidden="true"
+                                className="print-chord-span"
+                                data-chord={transposedChord}
+                                data-anchor-idx={charIdx}
+                                style={{
+                                  position: 'absolute',
+                                  bottom: '100%',
+                                  left: 0,
+                                  color: 'var(--primary-light)',
+                                  fontWeight: 'bold',
+                                  fontSize: '12px',
+                                  whiteSpace: 'nowrap',
+                                  padding: '0 1px',
+                                }}
+                              >
+                                {transposedChord}
+                              </span>
+                            )}
+                            <span
+                              className={hasChord ? 'has-chord' : ''}
+                              style={{
+                                color: 'var(--text-primary)',
+                                whiteSpace: 'pre',
+                              }}
+                            >
+                              {char}
+                            </span>
+                          </div>
+                        );
+                      })}
+
+                      {/* Extra chord at end of line (if any, at text.length) */}
+                      {(() => {
+                        const hasExtraChord = visual.chords[text.length] !== undefined;
+                        const extraChord = visual.chords[text.length] || '';
+                        if (!hasExtraChord) return null;
+                        const transposedExtra = transposeChord(extraChord, semitones);
+                        return (
+                          <div
+                            key="extra"
+                            data-char-idx={text.length}
+                            style={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              position: 'relative',
+                              marginLeft: '4px',
+                            }}
+                          >
+                            <span
+                              aria-hidden="true"
+                              className="print-chord-span"
+                              data-chord={transposedExtra}
+                              data-anchor-idx={text.length}
+                              style={{
+                                position: 'absolute',
+                                bottom: '100%',
+                                left: 0,
+                                color: 'var(--primary-light)',
+                                fontWeight: 'bold',
+                                fontSize: '12px',
+                                whiteSpace: 'nowrap',
+                                padding: '0 1px',
+                              }}
+                            >
+                              {transposedExtra}
+                            </span>
+                            <span style={{ visibility: 'hidden', whiteSpace: 'pre' }}> </span>
+                          </div>
+                        );
+                      })()}
                     </div>
-                    <div style={{ color: 'var(--text-primary)' }}>{parsed.lyricsLine}</div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           ) : (
             <div className="lyrics-box" style={{ overflowX: 'auto', whiteSpace: 'pre-wrap', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' }}>

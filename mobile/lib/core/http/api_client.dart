@@ -12,14 +12,29 @@ class ApiClient {
   final Dio dio;
   final AppLogger logger;
 
+  SessionContextProvider? _sessionContextProvider;
+
+  SessionContextProvider? get sessionContextProvider => _sessionContextProvider;
+
+  set sessionContextProvider(SessionContextProvider? provider) {
+    _sessionContextProvider = provider;
+    for (final interceptor in dio.interceptors) {
+      if (interceptor is AuthInterceptor) {
+        interceptor.sessionContextProvider = provider;
+      }
+    }
+  }
+
   ApiClient({
     required AppEnvironment environment,
     required this.logger,
     Dio? customDio,
     Interceptor? authInterceptor,
     TokenProvider? tokenProvider,
+    SessionContextProvider? sessionContextProvider,
     AuthFailureCallback? onAuthenticationFailed,
-  }) : dio = customDio ??
+  })  : _sessionContextProvider = sessionContextProvider,
+        dio = customDio ??
             Dio(
               BaseOptions(
                 baseUrl: environment.apiBaseUrl,
@@ -33,6 +48,9 @@ class ApiClient {
               ),
             ) {
     if (authInterceptor != null) {
+      if (authInterceptor is AuthInterceptor && sessionContextProvider != null) {
+        authInterceptor.sessionContextProvider = sessionContextProvider;
+      }
       dio.interceptors.add(authInterceptor);
     } else if (tokenProvider != null) {
       dio.interceptors.add(
@@ -40,6 +58,7 @@ class ApiClient {
           tokenProvider: tokenProvider,
           onAuthenticationFailed: onAuthenticationFailed ?? () async {},
           dio: dio,
+          sessionContextProvider: sessionContextProvider,
         ),
       );
     }

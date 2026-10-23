@@ -175,7 +175,8 @@ final preferencesStorageProvider = Provider<PreferencesStorage>((ref) {
   return InMemoryPreferencesStorage();
 });
 
-class InMemoryPreferencesStorage implements PreferencesStorage {
+class InMemoryPreferencesStorage
+    implements PreferencesStorage, UserChordFontPreferencesStorage {
   final Map<String, String> _data = {};
 
   @override
@@ -201,6 +202,20 @@ class InMemoryPreferencesStorage implements PreferencesStorage {
 
   @override
   String? getThemeMode() => _data['themeMode'];
+
+  @override
+  Future<void> setUserChordFontFamily(String userId, String? fontFamily) async {
+    final key = 'louvaio_chord_font_user_$userId';
+    if (fontFamily == null) {
+      _data.remove(key);
+    } else {
+      _data[key] = fontFamily;
+    }
+  }
+
+  @override
+  String? getUserChordFontFamily(String userId) =>
+      _data['louvaio_chord_font_user_$userId'];
 
   @override
   Future<void> clear() async {
@@ -256,7 +271,8 @@ final authRepositoryProvider = Provider<AuthRepository>((ref) {
   );
 });
 
-class _NoopAuthRepository implements AuthRepository {
+class _NoopAuthRepository
+    implements AuthRepository, ChordFontPreferenceUpdater {
   const _NoopAuthRepository();
 
   @override
@@ -285,6 +301,11 @@ class _NoopAuthRepository implements AuthRepository {
   Future<AuthUser> getMe() => throw UnimplementedError();
 
   @override
+  Future<String> updateChordFontPreference({
+    required String chordFontFamily,
+  }) => throw UnimplementedError();
+
+  @override
   Future<void> signOut() async {}
 }
 
@@ -299,6 +320,12 @@ final authNotifierProvider =
       } catch (_) {}
     },
   );
+});
+
+/// Reactive provider for the active user's effective chord font preference.
+final chordFontPreferenceProvider = Provider<String>((ref) {
+  final authState = ref.watch(authNotifierProvider);
+  return authState.chordFontFamily;
 });
 
 /// Provider for the ministry repository.

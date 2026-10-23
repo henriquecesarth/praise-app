@@ -48,6 +48,8 @@ import {
   CompleteWhatsAppOnboardingInput,
   UpdateWhatsAppConnectionInput,
   DisconnectWhatsAppConnectionResponseDto,
+  UserPreferences,
+  AuthenticatedUser,
 } from './types';
 import type {
   AccountDeletionBlocker,
@@ -648,11 +650,37 @@ export const api = {
     return handleResponse<any>(response);
   },
 
-  getMe: async (): Promise<{ id: string; email: string; name: string }> => {
+  getMe: async (): Promise<AuthenticatedUser> => {
     const response = await fetch(`${API_URL}/auth/me`, {
       headers: getHeaders(),
     });
-    return handleResponse<any>(response);
+    const result = await handleResponse<any>(response);
+    return {
+      id: result.id,
+      email: result.email,
+      name: result.name,
+      preferences: {
+        chordFontFamily: result.preferences?.chord_font_family || 'monospace',
+      },
+    };
+  },
+
+  updateUserPreferences: async (preferences: { chordFontFamily?: string }): Promise<{ preferences: UserPreferences }> => {
+    const payload: Record<string, any> = {};
+    if (preferences.chordFontFamily !== undefined) {
+      payload.chord_font_family = preferences.chordFontFamily;
+    }
+    const response = await fetch(`${API_URL}/auth/me/preferences`, {
+      method: 'PATCH',
+      headers: getHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const result = await handleResponse<any>(response);
+    return {
+      preferences: {
+        chordFontFamily: result.preferences?.chord_font_family || 'monospace',
+      },
+    };
   },
 
   // Ministérios e Convites

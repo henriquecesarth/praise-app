@@ -13,6 +13,7 @@ import {
   getFontFamilyCss,
 } from '../utils/smart_chord';
 import { SmartChordImportModal } from './SmartChordImportModal';
+import { preferenceWriter } from '../utils/preferenceWriter';
 
 function getHarmonicFieldChords(originalKey: string): string[] {
   let key = originalKey;
@@ -75,12 +76,16 @@ interface SmartChordsWorkspaceProps {
   ministryId: string;
   initialChordId?: string;
   onInitialChordConsumed?: () => void;
+  chordFontFamily?: string;
+  onFontPreferenceChange?: (font: string) => void;
 }
 
 export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
   ministryId,
   initialChordId,
   onInitialChordConsumed,
+  chordFontFamily,
+  onFontPreferenceChange,
 }) => {
   const [smartChords, setSmartChords] = useState<SmartChord[]>([]);
   const [selectedChord, setSelectedChord] = useState<SmartChord | null>(null);
@@ -105,7 +110,18 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
   const [printFontSize, setPrintFontSize] = useState(13);
   const [sheetFontFamily, setSheetFontFamily] = useState<string>(() => {
     try {
-      return localStorage.getItem('louvaio_smart_chord_font_family') || 'monospace';
+      const activeUser = localStorage.getItem('louvaio_last_auth_user_id');
+      if (activeUser) {
+        const cached = localStorage.getItem(`louvaio_chord_font_user_${activeUser}`);
+        if (cached && CHORD_FONT_FAMILIES.some((f) => f.value === cached)) {
+          return cached;
+        }
+      }
+      const generic = localStorage.getItem('louvaio_smart_chord_font_family');
+      if (generic && CHORD_FONT_FAMILIES.some((f) => f.value === generic)) {
+        return generic;
+      }
+      return 'monospace';
     } catch {
       return 'monospace';
     }
@@ -113,6 +129,86 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
   const activeFontFamilyCss = getFontFamilyCss(sheetFontFamily);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+
+  // User Font Preference Request Context Ref for asynchronous stale response fencing
+  const preferenceRequestRef = useRef<{
+    generation: number;
+    activeUserId: string | null;
+  }>({
+    generation: 0,
+    activeUserId: null,
+  });
+
+  const userSelectedFontRef = useRef<string | null>(null);
+
+  // Synchronize with chordFontFamily prop if provided
+  useEffect(() => {
+    if (chordFontFamily && CHORD_FONT_FAMILIES.some((f) => f.value === chordFontFamily)) {
+      setSheetFontFamily(chordFontFamily);
+    }
+  }, [chordFontFamily]);
+
+  // Load authoritative backend preference on mount
+  useEffect(() => {
+    let active = true;
+    const currentGen = ++preferenceRequestRef.current.generation;
+
+    if (chordFontFamily && CHORD_FONT_FAMILIES.some((f) => f.value === chordFontFamily)) {
+      setSheetFontFamily(chordFontFamily);
+    }
+
+    if (typeof api?.getMe === 'function') {
+      api.getMe()
+        .then((user) => {
+          if (!active || currentGen !== preferenceRequestRef.current.generation) return;
+          if (!user || !user.id) return;
+
+          preferenceRequestRef.current.activeUserId = user.id;
+          preferenceWriter.setSession(user.id, user.preferences?.chordFontFamily);
+
+          // If the user already explicitly selected a font in this workspace before getMe resolved, preserve it
+          if (userSelectedFontRef.current) {
+            return;
+          }
+
+          const backendFont = user.preferences?.chordFontFamily;
+          const effectiveFont = (backendFont && CHORD_FONT_FAMILIES.some((f) => f.value === backendFont))
+            ? backendFont
+            : (chordFontFamily || 'monospace');
+
+          setSheetFontFamily(effectiveFont);
+          try {
+            localStorage.setItem('louvaio_last_auth_user_id', user.id);
+            localStorage.setItem(`louvaio_chord_font_user_${user.id}`, effectiveFont);
+            localStorage.setItem('louvaio_smart_chord_font_family', effectiveFont);
+          } catch {
+            // ignore storage errors
+          }
+        })
+        .catch(() => {
+          // Unauthenticated or network error: preserve safe fallback
+        });
+    }
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Handle font family change: updates UI immediately, syncs local cache, and serializes writes to backend
+  const handleFontFamilyChange = async (val: string) => {
+    const effectiveFont = CHORD_FONT_FAMILIES.some((f) => f.value === val) ? val : 'monospace';
+    userSelectedFontRef.current = effectiveFont;
+    setSheetFontFamily(effectiveFont);
+    onFontPreferenceChange?.(effectiveFont);
+
+    const activeUserId = preferenceRequestRef.current.activeUserId;
+    try {
+      await preferenceWriter.updateFont(effectiveFont, activeUserId);
+    } catch {
+      // Failed update does not falsely report success or crash UI
+    }
+  };
 
   // Link request context ref for asynchronous stale response fencing (F-M19-05)
   const linkRequestContextRef = useRef<{ ministryId: string; chordId: string; generation: number }>({
@@ -887,15 +983,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                     data-testid="font-family-select"
                     className="form-control"
                     value={sheetFontFamily}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setSheetFontFamily(val);
-                      try {
-                        localStorage.setItem('louvaio_smart_chord_font_family', val);
-                      } catch {
-                        // ignore
-                      }
-                    }}
+                    onChange={(e) => handleFontFamilyChange(e.target.value)}
                     style={{
                       minHeight: '44px',
                       padding: '6px 12px',
@@ -1260,15 +1348,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                     data-testid="modal-font-family-select"
                     className="form-control"
                     value={sheetFontFamily}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setSheetFontFamily(val);
-                      try {
-                        localStorage.setItem('louvaio_smart_chord_font_family', val);
-                      } catch {
-                        // ignore
-                      }
-                    }}
+                    onChange={(e) => handleFontFamilyChange(e.target.value)}
                     style={{
                       minHeight: '44px',
                       padding: '6px 12px',

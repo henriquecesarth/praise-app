@@ -108,6 +108,9 @@ describe('Auth Feature & Mobile V1-M0 Firebase ID Token Compatibility Suite', ()
         id: validLegacyUid,
         email: validLegacyEmail,
         name: validLegacyName,
+        preferences: {
+          chord_font_family: 'monospace',
+        },
       });
     });
 
@@ -281,6 +284,9 @@ describe('Auth Feature & Mobile V1-M0 Firebase ID Token Compatibility Suite', ()
         id: pwaUid,
         email: pwaEmail,
         name: pwaName,
+        preferences: {
+          chord_font_family: 'monospace',
+        },
       });
     });
 
@@ -333,6 +339,9 @@ describe('Auth Feature & Mobile V1-M0 Firebase ID Token Compatibility Suite', ()
         id: 'usr-direct-1',
         email: 'direct@louvaio.com',
         name: 'Direct User',
+        preferences: {
+          chord_font_family: 'monospace',
+        },
       });
       // Crucial: verifyToken must NOT have been called when userId is provided directly
       expect(verifyTokenSpy).not.toHaveBeenCalled();
@@ -353,6 +362,9 @@ describe('Auth Feature & Mobile V1-M0 Firebase ID Token Compatibility Suite', ()
         id: 'user.with.dots',
         email: 'dotted.user@louvaio.com',
         name: 'Dotted UID User',
+        preferences: {
+          chord_font_family: 'monospace',
+        },
       });
       // Crucial: verifyToken must NOT be called; dotted UID must NOT be parsed as token syntax
       expect(verifyTokenSpy).not.toHaveBeenCalled();

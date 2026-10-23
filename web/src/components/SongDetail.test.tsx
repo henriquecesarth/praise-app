@@ -129,7 +129,7 @@ describe('SongDetail Web Repertoire <-> Smart Chords Integration', () => {
 
     // Now chord 2 content and key D should be active
     await waitFor(() => {
-      expect(screen.getByText('D')).toBeInTheDocument();
+      expect(screen.getAllByText('D')[0]).toBeInTheDocument();
     });
   });
 
@@ -1081,6 +1081,218 @@ describe('SongDetail Web Repertoire <-> Smart Chords Integration', () => {
 
       // Call count must remain 2 (no loop)
       expect(getMySmartChordsForSong).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('Universal Chord Font — SongDetail Web Repertoire Rendering', () => {
+    const testChord: SmartChord = {
+      id: 'chord-anchored-1',
+      userId: 'user-1',
+      artistId: null,
+      songId: null,
+      title: 'Cifra com Ancoragem',
+      originalKey: 'G',
+      content: '[G]Graça admirável [C]que salvou',
+      createdAt: '2026-01-01',
+      updatedAt: '2026-01-02',
+    };
+
+    beforeEach(() => {
+      localStorage.setItem('praise_auth_token', 'test-auth-token');
+      getMySmartChordsForSong.mockResolvedValue([testChord]);
+    });
+
+    it('1. applies Arial font preference to chord sheet container', async () => {
+      render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          chordFontFamily="Arial"
+          onBack={vi.fn()}
+        />
+      );
+
+      const sheet = await screen.findByTestId('song-detail-chord-sheet');
+      expect(sheet).toHaveStyle({ fontFamily: 'Arial, Helvetica, sans-serif' });
+    });
+
+    it('2. applies Georgia font preference to chord sheet container', async () => {
+      render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          chordFontFamily="Georgia"
+          onBack={vi.fn()}
+        />
+      );
+
+      const sheet = await screen.findByTestId('song-detail-chord-sheet');
+      expect(sheet).toHaveStyle({ fontFamily: 'Georgia, serif' });
+    });
+
+    it('3. defaults safely to monospace when no authenticated preference is available', async () => {
+      localStorage.removeItem('louvaio_smart_chord_font_family');
+      localStorage.removeItem('louvaio_last_auth_user_id');
+
+      render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      const sheet = await screen.findByTestId('song-detail-chord-sheet');
+      expect(sheet).toHaveStyle({ fontFamily: 'monospace, "Courier New", Courier' });
+    });
+
+    it('4. verifies structural chord anchoring to exact lyric character positions', async () => {
+      render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          chordFontFamily="Arial"
+          onBack={vi.fn()}
+        />
+      );
+
+      await screen.findByTestId('song-detail-chord-sheet');
+
+      // First chord [G] must be anchored to character 0 ('G' in 'Graça')
+      const chordG = document.querySelector('[data-anchor-idx="0"]');
+      expect(chordG).toBeInTheDocument();
+      expect(chordG).toHaveTextContent('G');
+      const charCell0 = document.querySelector('[data-char-idx="0"]');
+      expect(charCell0).toContainElement(chordG as HTMLElement);
+      expect(charCell0).toHaveTextContent(/G/);
+
+      // Second chord [C] must be anchored to character 16 ('q' in 'que salvou')
+      const chordC = document.querySelector('[data-anchor-idx="16"]');
+      expect(chordC).toBeInTheDocument();
+      expect(chordC).toHaveTextContent('C');
+      const charCell16 = document.querySelector('[data-char-idx="16"]');
+      expect(charCell16).toContainElement(chordC as HTMLElement);
+      expect(charCell16).toHaveTextContent(/q/);
+    });
+
+    it('5. preserves transposition with character-anchored chords', async () => {
+      render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          chordFontFamily="Georgia"
+          onBack={vi.fn()}
+        />
+      );
+
+      await screen.findByTestId('song-detail-chord-sheet');
+
+      // Click +1 Semitom
+      const transposeUpBtn = screen.getByText('+1 Semitom');
+      fireEvent.click(transposeUpBtn);
+
+      await waitFor(() => {
+        expect(screen.getByText('Tom Atual:')).toBeInTheDocument();
+        expect(screen.getAllByText('G#')[0]).toBeInTheDocument();
+      });
+
+      // Verify transposed chords at anchored positions: G -> G#, C -> C#
+      const chordGSharp = document.querySelector('[data-anchor-idx="0"]');
+      expect(chordGSharp).toHaveTextContent('G#');
+
+      const chordCSharp = document.querySelector('[data-anchor-idx="16"]');
+      expect(chordCSharp).toHaveTextContent('C#');
+    });
+
+    it('6. preserves font preference and anchoring across multiple linked chords', async () => {
+      getMySmartChordsForSong.mockResolvedValue([mockChord1, mockChord2]);
+
+      render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          chordFontFamily="Verdana"
+          onBack={vi.fn()}
+        />
+      );
+
+      const sheet = await screen.findByTestId('song-detail-chord-sheet');
+      expect(sheet).toHaveStyle({ fontFamily: 'Verdana, Geneva, sans-serif' });
+
+      // Switch to Chord 2 (Tom Baixo)
+      fireEvent.click(screen.getByText(/Graça Admirável \(Tom Baixo\)/));
+
+      await waitFor(() => {
+        expect(screen.getAllByText('D')[0]).toBeInTheDocument();
+      });
+
+      // Font style remains Verdana
+      expect(screen.getByTestId('song-detail-chord-sheet')).toHaveStyle({
+        fontFamily: 'Verdana, Geneva, sans-serif',
+      });
+    });
+
+    it('7. updates font view dynamically when preference change event is fired without reload', async () => {
+      render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          chordFontFamily="monospace"
+          onBack={vi.fn()}
+        />
+      );
+
+      const sheet = await screen.findByTestId('song-detail-chord-sheet');
+      expect(sheet).toHaveStyle({ fontFamily: 'monospace, "Courier New", Courier' });
+
+      // Fire louvaio_chord_font_changed event
+      fireEvent(
+        window,
+        new CustomEvent('louvaio_chord_font_changed', { detail: { font: 'Georgia' } })
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('song-detail-chord-sheet')).toHaveStyle({
+          fontFamily: 'Georgia, serif',
+        });
+      });
+    });
+
+    it('8. isolates preferences between user accounts when switching users', async () => {
+      localStorage.setItem('louvaio_chord_font_user_user-a', 'Arial');
+      localStorage.setItem('louvaio_chord_font_user_user-b', 'Georgia');
+      localStorage.setItem('louvaio_last_auth_user_id', 'user-b');
+
+      render(
+        <SongDetail
+          song={mockSong}
+          ministryId="min-1"
+          onBack={vi.fn()}
+        />
+      );
+
+      const sheet = await screen.findByTestId('song-detail-chord-sheet');
+      // Must use User B's Georgia, NOT User A's Arial
+      expect(sheet).toHaveStyle({ fontFamily: 'Georgia, serif' });
+    });
+
+    it('9. preserves M19 privacy behavior: falls back to lyrics and hides chord sheet when unlinked or unauthenticated', async () => {
+      getMySmartChordsForSong.mockResolvedValue([]);
+
+      render(
+        <SongDetail
+          song={{ ...mockSong, notes: 'Observação da letra' }}
+          ministryId="min-1"
+          chordFontFamily="Arial"
+          onBack={vi.fn()}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Observação da letra')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId('song-detail-chord-sheet')).toBeNull();
     });
   });
 });

@@ -1,10 +1,6 @@
-import type { Group } from './types';
+import type { Group, AuthenticatedUser } from './types';
 
-export interface AuthenticatedUser {
-  id: string;
-  email: string;
-  name: string;
-}
+export type { AuthenticatedUser };
 
 export interface AuthBootstrapResult {
   user: AuthenticatedUser | null;

@@ -12,6 +12,8 @@ const {
   getSmartChordRepertoireLink,
   setSmartChordRepertoireLink,
   removeSmartChordRepertoireLink,
+  getMe,
+  updateUserPreferences,
 } = vi.hoisted(() => ({
   getArtists: vi.fn(),
   getSongs: vi.fn(),
@@ -22,6 +24,8 @@ const {
   getSmartChordRepertoireLink: vi.fn(),
   setSmartChordRepertoireLink: vi.fn(),
   removeSmartChordRepertoireLink: vi.fn(),
+  getMe: vi.fn(),
+  updateUserPreferences: vi.fn(),
 }));
 
 vi.mock('../api', () => ({
@@ -35,12 +39,15 @@ vi.mock('../api', () => ({
     getSmartChordRepertoireLink,
     setSmartChordRepertoireLink,
     removeSmartChordRepertoireLink,
+    getMe,
+    updateUserPreferences,
   },
 }));
 
 describe('SmartChordsWorkspace', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     getArtists.mockResolvedValue([]);
     getSongs.mockResolvedValue({ songs: [], totalCount: 0 });
     getSmartChords.mockResolvedValue([]);
@@ -50,6 +57,15 @@ describe('SmartChordsWorkspace', () => {
     getSmartChordRepertoireLink.mockResolvedValue({ link: null, song: null });
     setSmartChordRepertoireLink.mockResolvedValue({ link: null, song: null });
     removeSmartChordRepertoireLink.mockResolvedValue(undefined);
+    getMe.mockResolvedValue({
+      id: 'user-default',
+      email: 'user@example.com',
+      name: 'Default User',
+      preferences: { chordFontFamily: 'monospace' },
+    });
+    updateUserPreferences.mockImplementation(async (prefs: any) => ({
+      preferences: { chordFontFamily: prefs?.chordFontFamily || 'monospace' },
+    }));
   });
 
   describe('Ministry loading & abortion', () => {
@@ -779,6 +795,262 @@ describe('SmartChordsWorkspace', () => {
         expect(screen.getByDisplayValue('Chord B')).toBeInTheDocument();
       });
       expect(screen.queryByDisplayValue('Chord A')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('User Chord Font Preferences', () => {
+    const openEditor = async () => {
+      const newBtn = screen.getByRole('button', { name: /Criar Cifra/i });
+      fireEvent.click(newBtn);
+      await waitFor(() => {
+        expect(screen.getByTestId('font-family-select')).toBeInTheDocument();
+      });
+    };
+
+    it('1. initializes with default monospace when user has no custom preference', async () => {
+      getMe.mockResolvedValue({
+        id: 'user-default',
+        email: 'user@example.com',
+        name: 'Default User',
+        preferences: { chordFontFamily: 'monospace' },
+      });
+
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+      await openEditor();
+
+      await waitFor(() => {
+        const select = screen.getByTestId('font-family-select') as HTMLSelectElement;
+        expect(select.value).toBe('monospace');
+      });
+    });
+
+    it('2. loads saved Arial preference from backend on entry', async () => {
+      getMe.mockResolvedValue({
+        id: 'user-1',
+        email: 'user1@example.com',
+        name: 'User 1',
+        preferences: { chordFontFamily: 'Arial' },
+      });
+
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+      await openEditor();
+
+      await waitFor(() => {
+        const select = screen.getByTestId('font-family-select') as HTMLSelectElement;
+        expect(select.value).toBe('Arial');
+      });
+
+      const printSheetBox = document.querySelector('.print-sheet-box') as HTMLElement;
+      expect(printSheetBox).toHaveStyle({ fontFamily: 'Arial, Helvetica, sans-serif' });
+    });
+
+    it('3. sends PATCH to backend when user changes font to Georgia', async () => {
+      getMe.mockResolvedValue({
+        id: 'user-1',
+        email: 'user1@example.com',
+        name: 'User 1',
+        preferences: { chordFontFamily: 'monospace' },
+      });
+      updateUserPreferences.mockResolvedValue({
+        preferences: { chordFontFamily: 'Georgia' },
+      });
+
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+      await openEditor();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('font-family-select')).toHaveValue('monospace');
+      });
+
+      fireEvent.change(screen.getByTestId('font-family-select'), {
+        target: { value: 'Georgia' },
+      });
+
+      await waitFor(() => {
+        expect(updateUserPreferences).toHaveBeenCalledWith({ chordFontFamily: 'Georgia' });
+      });
+
+      expect(screen.getByTestId('font-family-select')).toHaveValue('Georgia');
+    });
+
+    it('4. synchronizes workspace toolbar selector and print modal selector', async () => {
+      getMe.mockResolvedValue({
+        id: 'user-1',
+        email: 'user1@example.com',
+        name: 'User 1',
+        preferences: { chordFontFamily: 'Arial' },
+      });
+
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+      await openEditor();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('font-family-select')).toHaveValue('Arial');
+      });
+
+      // Open print modal
+      fireEvent.click(screen.getByText(/Exportar PDF/i));
+
+      const modalSelect = screen.getByTestId('modal-font-family-select') as HTMLSelectElement;
+      expect(modalSelect.value).toBe('Arial');
+
+      // Change in modal
+      fireEvent.change(modalSelect, { target: { value: 'Verdana' } });
+
+      const toolbarSelect = screen.getByTestId('font-family-select') as HTMLSelectElement;
+      expect(toolbarSelect.value).toBe('Verdana');
+      expect(modalSelect.value).toBe('Verdana');
+
+      await waitFor(() => {
+        expect(updateUserPreferences).toHaveBeenCalledWith({ chordFontFamily: 'Verdana' });
+      });
+    });
+
+    it('5. applies selected font to PDF modal preview', async () => {
+      getMe.mockResolvedValue({
+        id: 'user-1',
+        email: 'user1@example.com',
+        name: 'User 1',
+        preferences: { chordFontFamily: 'Times New Roman' },
+      });
+
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+      await openEditor();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('font-family-select')).toHaveValue('Times New Roman');
+      });
+
+      // Open print modal
+      fireEvent.click(screen.getByText(/Exportar PDF/i));
+
+      // Sheet in modal contains Times New Roman
+      const modalSheet = document.getElementById('printable-sheet-pdf');
+      expect(modalSheet).toBeInTheDocument();
+      expect(modalSheet).toHaveStyle({ fontFamily: '"Times New Roman", Times, serif' });
+    });
+
+    it('6. preserves font on remount using local cache and backend confirmation', async () => {
+      getMe.mockResolvedValue({
+        id: 'user-1',
+        email: 'user1@example.com',
+        name: 'User 1',
+        preferences: { chordFontFamily: 'Courier New' },
+      });
+
+      const { unmount } = render(<SmartChordsWorkspace ministryId="min-1" />);
+      await openEditor();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('font-family-select')).toHaveValue('Courier New');
+      });
+
+      unmount();
+
+      // Second mount: immediately reads cached preference
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+      await openEditor();
+      const select = screen.getByTestId('font-family-select') as HTMLSelectElement;
+      expect(select.value).toBe('Courier New');
+    });
+
+    it('7. isolates preferences between different authenticated user accounts', async () => {
+      // User A previously cached Arial
+      localStorage.setItem('louvaio_chord_font_user_user-a', 'Arial');
+
+      // User B is active
+      localStorage.setItem('louvaio_last_auth_user_id', 'user-b');
+      getMe.mockResolvedValue({
+        id: 'user-b',
+        email: 'userb@example.com',
+        name: 'User B',
+        preferences: { chordFontFamily: 'Georgia' },
+      });
+
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+      await openEditor();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('font-family-select')).toHaveValue('Georgia');
+      });
+
+      // User A's storage was not polluted
+      expect(localStorage.getItem('louvaio_chord_font_user_user-a')).toBe('Arial');
+      expect(localStorage.getItem('louvaio_chord_font_user_user-b')).toBe('Georgia');
+    });
+
+    it('8. rejects stale async preference response when user changes font before response arrives', async () => {
+      let resolveGetMe: any;
+      getMe.mockReturnValue(
+        new Promise((resolve) => {
+          resolveGetMe = resolve;
+        })
+      );
+
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+      await openEditor();
+
+      // User immediately changes font to Verdana before getMe finishes
+      fireEvent.change(screen.getByTestId('font-family-select'), {
+        target: { value: 'Verdana' },
+      });
+
+      expect(screen.getByTestId('font-family-select')).toHaveValue('Verdana');
+
+      // Now getMe resolves with stale 'Arial'
+      resolveGetMe({
+        id: 'user-1',
+        email: 'user1@example.com',
+        name: 'User 1',
+        preferences: { chordFontFamily: 'Arial' },
+      });
+
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Selection must remain Verdana, not overwritten by Arial
+      expect(screen.getByTestId('font-family-select')).toHaveValue('Verdana');
+    });
+
+    it('9. gracefully handles preference update API failure without crashing', async () => {
+      getMe.mockResolvedValue({
+        id: 'user-1',
+        email: 'user1@example.com',
+        name: 'User 1',
+        preferences: { chordFontFamily: 'monospace' },
+      });
+      updateUserPreferences.mockRejectedValue(new Error('Network failure'));
+
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+      await openEditor();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('font-family-select')).toHaveValue('monospace');
+      });
+
+      // Changing font still updates UI optimistically without throwing an uncaught error
+      expect(() => {
+        fireEvent.change(screen.getByTestId('font-family-select'), {
+          target: { value: 'Georgia' },
+        });
+      }).not.toThrow();
+
+      expect(screen.getByTestId('font-family-select')).toHaveValue('Georgia');
+    });
+
+    it('10. falls back to monospace when backend or stored font is unsupported', async () => {
+      getMe.mockResolvedValue({
+        id: 'user-1',
+        email: 'user1@example.com',
+        name: 'User 1',
+        preferences: { chordFontFamily: 'Comic Sans MS' },
+      });
+
+      render(<SmartChordsWorkspace ministryId="min-1" />);
+      await openEditor();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('font-family-select')).toHaveValue('monospace');
+      });
     });
   });
 });

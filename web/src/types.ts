@@ -571,3 +571,14 @@ export interface AccountDeletionResult {
   job: AccountDeletionJobRecord;
 }
 
+export interface UserPreferences {
+  chordFontFamily?: string;
+}
+
+export interface AuthenticatedUser {
+  id: string;
+  email: string;
+  name: string;
+  preferences?: UserPreferences;
+}
+

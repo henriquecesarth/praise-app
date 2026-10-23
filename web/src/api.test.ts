@@ -1090,4 +1090,63 @@ describe('API Client & Structured Error Handling', () => {
       expect(song.originalKey).toBeNull();
     });
   });
+
+  describe('User Preferences API', () => {
+    it('deve mapear preferences.chord_font_family para chordFontFamily em getMe', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify({
+          id: 'user-123',
+          email: 'user@example.com',
+          name: 'Usuário Teste',
+          preferences: {
+            chord_font_family: 'Arial',
+          },
+        })),
+      } as any);
+
+      const user = await api.getMe();
+      expect(user.id).toBe('user-123');
+      expect(user.preferences?.chordFontFamily).toBe('Arial');
+    });
+
+    it('deve utilizar fallback monospace quando preferences.chord_font_family for nulo ou ausente em getMe', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify({
+          id: 'user-456',
+          email: 'user2@example.com',
+          name: 'Usuário Sem Pref',
+        })),
+      } as any);
+
+      const user = await api.getMe();
+      expect(user.id).toBe('user-456');
+      expect(user.preferences?.chordFontFamily).toBe('monospace');
+    });
+
+    it('deve enviar PATCH /auth/me/preferences e mapear resposta corretamente', async () => {
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify({
+          preferences: {
+            chord_font_family: 'Georgia',
+          },
+        })),
+      } as any);
+      global.fetch = fetchSpy;
+
+      const result = await api.updateUserPreferences({ chordFontFamily: 'Georgia' });
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const [url, options] = fetchSpy.mock.calls[0];
+      expect(url).toMatch(/\/auth\/me\/preferences$/);
+      expect(options.method).toBe('PATCH');
+      expect(JSON.parse(options.body)).toEqual({ chord_font_family: 'Georgia' });
+      expect(result.preferences.chordFontFamily).toBe('Georgia');
+    });
+  });
 });

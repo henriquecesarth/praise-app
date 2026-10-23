@@ -186,5 +186,424 @@ void main() {
       expect(forceRefreshTokenCount, 1);
       expect(authFailedCalled, true);
     });
+
+    test('Scenario A: Pre-dispatch account switch rejects request and sends NO request with new account token', () async {
+      AuthSessionContext? activeSession = const AuthSessionContext(
+        userId: 'usr_a',
+        sessionGeneration: 1,
+      );
+
+      final List<String?> observedTokens = [];
+
+      final interceptor = AuthInterceptor(
+        tokenProvider: ({bool forceRefresh = false}) async {
+          return 'token_of_${activeSession?.userId}';
+        },
+        sessionContextProvider: () => activeSession,
+        onAuthenticationFailed: () async => authFailedCalled = true,
+        dio: dio,
+      );
+
+      dio.httpClientAdapter = MockAdapter([
+        (options) {
+          observedTokens.add(options.headers['Authorization'] as String?);
+          return ResponseBody.fromString('{"ok": true}', 200);
+        },
+      ]);
+      dio.interceptors.add(interceptor);
+
+      final requestOptions = Options(
+        extra: {
+          AuthInterceptor.sessionUserIdKey: 'usr_a',
+          AuthInterceptor.sessionGenerationKey: 1,
+        },
+      );
+
+      // Account switches to B BEFORE interceptor dispatch!
+      activeSession = const AuthSessionContext(
+        userId: 'usr_b',
+        sessionGeneration: 2,
+      );
+
+      await expectLater(
+        dio.patch<dynamic>('/auth/me/preferences', data: {'chord_font_family': 'Georgia'}, options: requestOptions),
+        throwsA(isA<DioException>()),
+      );
+
+      expect(observedTokens, isEmpty);
+      expect(authFailedCalled, false);
+    });
+
+    test('Scenario B: Account switch during in-flight 401 prevents retry under new account', () async {
+      AuthSessionContext? activeSession = const AuthSessionContext(
+        userId: 'usr_a',
+        sessionGeneration: 1,
+      );
+
+      final List<String?> observedTokens = [];
+
+      final interceptor = AuthInterceptor(
+        tokenProvider: ({bool forceRefresh = false}) async {
+          return 'token_of_${activeSession?.userId}';
+        },
+        sessionContextProvider: () => activeSession,
+        onAuthenticationFailed: () async => authFailedCalled = true,
+        dio: dio,
+      );
+
+      dio.httpClientAdapter = MockAdapter([
+        (options) {
+          observedTokens.add(options.headers['Authorization'] as String?);
+          // Account switches to B while A's request is in-flight!
+          activeSession = const AuthSessionContext(
+            userId: 'usr_b',
+            sessionGeneration: 2,
+          );
+          return ResponseBody.fromString('{"error": "Unauthorized"}', 401);
+        },
+        (options) {
+          observedTokens.add(options.headers['Authorization'] as String?);
+          return ResponseBody.fromString('{"ok": true}', 200);
+        },
+      ]);
+      dio.interceptors.add(interceptor);
+
+      final requestOptions = Options(
+        extra: {
+          AuthInterceptor.sessionUserIdKey: 'usr_a',
+          AuthInterceptor.sessionGenerationKey: 1,
+        },
+      );
+
+      await expectLater(
+        dio.patch<dynamic>('/auth/me/preferences', data: {'chord_font_family': 'Georgia'}, options: requestOptions),
+        throwsA(isA<DioException>()),
+      );
+
+      // Only attempt 1 with A's token occurred. Attempt 2 with B's token must NOT occur!
+      expect(observedTokens, ['Bearer token_of_usr_a']);
+      // New account B must NOT be logged out by A's 401
+      expect(authFailedCalled, false);
+    });
+
+    test('Scenario C: A remains authenticated, receives 401 -> ordinary refresh and retry still work', () async {
+      AuthSessionContext? activeSession = const AuthSessionContext(
+        userId: 'usr_a',
+        sessionGeneration: 1,
+      );
+
+      final List<String?> observedTokens = [];
+
+      final interceptor = AuthInterceptor(
+        tokenProvider: ({bool forceRefresh = false}) async {
+          if (forceRefresh) {
+            return 'refreshed_token_of_${activeSession.userId}';
+          }
+          return 'stale_token_of_${activeSession.userId}';
+        },
+        sessionContextProvider: () => activeSession,
+        onAuthenticationFailed: () async => authFailedCalled = true,
+        dio: dio,
+      );
+
+      dio.httpClientAdapter = MockAdapter([
+        (options) {
+          observedTokens.add(options.headers['Authorization'] as String?);
+          return ResponseBody.fromString('{"error": "Unauthorized"}', 401);
+        },
+        (options) {
+          observedTokens.add(options.headers['Authorization'] as String?);
+          return ResponseBody.fromString('{"ok": true}', 200);
+        },
+      ]);
+      dio.interceptors.add(interceptor);
+
+      final requestOptions = Options(
+        extra: {
+          AuthInterceptor.sessionUserIdKey: 'usr_a',
+          AuthInterceptor.sessionGenerationKey: 1,
+        },
+      );
+
+      final response = await dio.patch<dynamic>(
+        '/auth/me/preferences',
+        data: {'chord_font_family': 'Georgia'},
+        options: requestOptions,
+      );
+
+      expect(response.statusCode, 200);
+      expect(observedTokens, [
+        'Bearer stale_token_of_usr_a',
+        'Bearer refreshed_token_of_usr_a',
+      ]);
+      expect(authFailedCalled, false);
+    });
+
+    test('Scenario D: A logs out while PATCH is pending -> 401 does not substitute credentials or retry', () async {
+      AuthSessionContext? activeSession = const AuthSessionContext(
+        userId: 'usr_a',
+        sessionGeneration: 1,
+      );
+
+      final List<String?> observedTokens = [];
+
+      final interceptor = AuthInterceptor(
+        tokenProvider: ({bool forceRefresh = false}) async {
+          return 'token_of_${activeSession?.userId}';
+        },
+        sessionContextProvider: () => activeSession,
+        onAuthenticationFailed: () async => authFailedCalled = true,
+        dio: dio,
+      );
+
+      dio.httpClientAdapter = MockAdapter([
+        (options) {
+          observedTokens.add(options.headers['Authorization'] as String?);
+          // User logs out while request is pending!
+          activeSession = null;
+          return ResponseBody.fromString('{"error": "Unauthorized"}', 401);
+        },
+      ]);
+      dio.interceptors.add(interceptor);
+
+      final requestOptions = Options(
+        extra: {
+          AuthInterceptor.sessionUserIdKey: 'usr_a',
+          AuthInterceptor.sessionGenerationKey: 1,
+        },
+      );
+
+      await expectLater(
+        dio.patch<dynamic>('/auth/me/preferences', data: {'chord_font_family': 'Georgia'}, options: requestOptions),
+        throwsA(isA<DioException>()),
+      );
+
+      expect(observedTokens, ['Bearer token_of_usr_a']);
+      expect(authFailedCalled, false);
+    });
+
+    test('Scenario E: A logs out and logs back in to same UID -> old session generation 1 cannot replay under generation 2', () async {
+      AuthSessionContext? activeSession = const AuthSessionContext(
+        userId: 'usr_a',
+        sessionGeneration: 1,
+      );
+
+      final List<String?> observedTokens = [];
+
+      final interceptor = AuthInterceptor(
+        tokenProvider: ({bool forceRefresh = false}) async {
+          return 'token_gen${activeSession?.sessionGeneration}';
+        },
+        sessionContextProvider: () => activeSession,
+        onAuthenticationFailed: () async => authFailedCalled = true,
+        dio: dio,
+      );
+
+      dio.httpClientAdapter = MockAdapter([
+        (options) {
+          observedTokens.add(options.headers['Authorization'] as String?);
+          // A logs out and logs back in with generation 2!
+          activeSession = const AuthSessionContext(
+            userId: 'usr_a',
+            sessionGeneration: 2,
+          );
+          return ResponseBody.fromString('{"error": "Unauthorized"}', 401);
+        },
+        (options) {
+          observedTokens.add(options.headers['Authorization'] as String?);
+          return ResponseBody.fromString('{"ok": true}', 200);
+        },
+      ]);
+      dio.interceptors.add(interceptor);
+
+      final requestOptions = Options(
+        extra: {
+          AuthInterceptor.sessionUserIdKey: 'usr_a',
+          AuthInterceptor.sessionGenerationKey: 1,
+        },
+      );
+
+      await expectLater(
+        dio.patch<dynamic>('/auth/me/preferences', data: {'chord_font_family': 'Georgia'}, options: requestOptions),
+        throwsA(isA<DioException>()),
+      );
+
+      // Only attempt 1 with gen 1 token occurred. Attempt 2 with gen 2 token was prevented!
+      expect(observedTokens, ['Bearer token_gen1']);
+      expect(authFailedCalled, false);
+    });
+
+    test('Scenario F: Account A retry receives 401 after switching to Account B -> must NOT log out Account B', () async {
+      AuthSessionContext? activeSession = const AuthSessionContext(
+        userId: 'usr_a',
+        sessionGeneration: 1,
+      );
+
+      final List<String?> observedTokens = [];
+
+      final interceptor = AuthInterceptor(
+        tokenProvider: ({bool forceRefresh = false}) async {
+          if (forceRefresh) {
+            return 'refreshed_token_of_${activeSession?.userId}';
+          }
+          return 'stale_token_of_${activeSession?.userId}';
+        },
+        sessionContextProvider: () => activeSession,
+        onAuthenticationFailed: () async => authFailedCalled = true,
+        dio: dio,
+      );
+
+      dio.httpClientAdapter = MockAdapter([
+        // 1. Initial request from usr_a returns 401
+        (options) {
+          observedTokens.add(options.headers['Authorization'] as String?);
+          return ResponseBody.fromString('{"error": "Unauthorized"}', 401);
+        },
+        // 2. Retry request from usr_a: while retry is in flight, account switches to usr_b!
+        (options) {
+          observedTokens.add(options.headers['Authorization'] as String?);
+          activeSession = const AuthSessionContext(
+            userId: 'usr_b',
+            sessionGeneration: 2,
+          );
+          // usr_a's retry receives 401
+          return ResponseBody.fromString('{"error": "Unauthorized"}', 401);
+        },
+      ]);
+      dio.interceptors.add(interceptor);
+
+      final requestOptions = Options(
+        extra: {
+          AuthInterceptor.sessionUserIdKey: 'usr_a',
+          AuthInterceptor.sessionGenerationKey: 1,
+        },
+      );
+
+      await expectLater(
+        dio.patch<dynamic>('/auth/me/preferences', data: {'chord_font_family': 'Georgia'}, options: requestOptions),
+        throwsA(isA<DioException>()),
+      );
+
+      expect(observedTokens, [
+        'Bearer stale_token_of_usr_a',
+        'Bearer refreshed_token_of_usr_a',
+      ]);
+      // Account B must NOT be logged out by Account A's obsolete retry failure!
+      expect(authFailedCalled, false);
+      expect(activeSession?.userId, 'usr_b');
+    });
+
+    test('Scenario G: Account A retry receives 401 after logout and reauth to same UID -> must NOT log out generation 2', () async {
+      AuthSessionContext? activeSession = const AuthSessionContext(
+        userId: 'usr_a',
+        sessionGeneration: 1,
+      );
+
+      final List<String?> observedTokens = [];
+
+      final interceptor = AuthInterceptor(
+        tokenProvider: ({bool forceRefresh = false}) async {
+          if (forceRefresh) {
+            return 'refreshed_token_gen${activeSession?.sessionGeneration}';
+          }
+          return 'stale_token_gen${activeSession?.sessionGeneration}';
+        },
+        sessionContextProvider: () => activeSession,
+        onAuthenticationFailed: () async => authFailedCalled = true,
+        dio: dio,
+      );
+
+      dio.httpClientAdapter = MockAdapter([
+        // 1. Initial request with gen 1 token returns 401
+        (options) {
+          observedTokens.add(options.headers['Authorization'] as String?);
+          return ResponseBody.fromString('{"error": "Unauthorized"}', 401);
+        },
+        // 2. Retry with gen 1 token: while retry is in flight, user logs out & reauths as gen 2!
+        (options) {
+          observedTokens.add(options.headers['Authorization'] as String?);
+          activeSession = const AuthSessionContext(
+            userId: 'usr_a',
+            sessionGeneration: 2,
+          );
+          return ResponseBody.fromString('{"error": "Unauthorized"}', 401);
+        },
+      ]);
+      dio.interceptors.add(interceptor);
+
+      final requestOptions = Options(
+        extra: {
+          AuthInterceptor.sessionUserIdKey: 'usr_a',
+          AuthInterceptor.sessionGenerationKey: 1,
+        },
+      );
+
+      await expectLater(
+        dio.patch<dynamic>('/auth/me/preferences', data: {'chord_font_family': 'Georgia'}, options: requestOptions),
+        throwsA(isA<DioException>()),
+      );
+
+      expect(observedTokens, [
+        'Bearer stale_token_gen1',
+        'Bearer refreshed_token_gen1',
+      ]);
+      // The new generation 2 session must NOT be logged out by gen 1 retry failure!
+      expect(authFailedCalled, false);
+      expect(activeSession?.sessionGeneration, 2);
+    });
+
+    test('Scenario H: Genuine authentication failure of active session triggers onAuthenticationFailed', () async {
+      AuthSessionContext? activeSession = const AuthSessionContext(
+        userId: 'usr_a',
+        sessionGeneration: 1,
+      );
+
+      final List<String?> observedTokens = [];
+
+      final interceptor = AuthInterceptor(
+        tokenProvider: ({bool forceRefresh = false}) async {
+          if (forceRefresh) {
+            return 'refreshed_token';
+          }
+          return 'stale_token';
+        },
+        sessionContextProvider: () => activeSession,
+        onAuthenticationFailed: () async => authFailedCalled = true,
+        dio: dio,
+      );
+
+      dio.httpClientAdapter = MockAdapter([
+        // 1. Initial request gets 401
+        (options) {
+          observedTokens.add(options.headers['Authorization'] as String?);
+          return ResponseBody.fromString('{"error": "Unauthorized"}', 401);
+        },
+        // 2. Retry request still gets 401 (session unchanged, credentials genuinely revoked)
+        (options) {
+          observedTokens.add(options.headers['Authorization'] as String?);
+          return ResponseBody.fromString('{"error": "Unauthorized"}', 401);
+        },
+      ]);
+      dio.interceptors.add(interceptor);
+
+      final requestOptions = Options(
+        extra: {
+          AuthInterceptor.sessionUserIdKey: 'usr_a',
+          AuthInterceptor.sessionGenerationKey: 1,
+        },
+      );
+
+      await expectLater(
+        dio.patch<dynamic>('/auth/me/preferences', data: {'chord_font_family': 'Georgia'}, options: requestOptions),
+        throwsA(isA<DioException>()),
+      );
+
+      expect(observedTokens, [
+        'Bearer stale_token',
+        'Bearer refreshed_token',
+      ]);
+      // Genuine failure of active session MUST trigger onAuthenticationFailed!
+      expect(authFailedCalled, true);
+    });
   });
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -15,7 +16,8 @@ class MockUser extends Mock implements User {}
 
 class MockUserCredential extends Mock implements UserCredential {}
 
-class MockPreferencesStorage extends Mock implements PreferencesStorage {}
+class MockPreferencesStorage extends Mock
+    implements PreferencesStorage, UserChordFontPreferencesStorage {}
 
 class MockAdapter implements HttpClientAdapter {
   final Future<ResponseBody> Function(RequestOptions options) handler;
@@ -54,6 +56,9 @@ void main() {
       environment: env,
       logger: const AppLogger(isDebug: false),
     );
+
+    when(() => mockPreferencesStorage.setUserChordFontFamily(any(), any()))
+        .thenAnswer((_) async {});
 
     repository = FirebaseAuthRepository(
       firebaseAuth: mockFirebaseAuth,
@@ -210,6 +215,117 @@ void main() {
                   'Este endereço de e-mail já está cadastrado.'),
         ),
       );
+    });
+
+    test('getMe caches chord font preference in preferencesStorage', () async {
+      apiClient.dio.httpClientAdapter = MockAdapter((options) async {
+        return ResponseBody.fromString(
+          '{"id": "usr_999", "email": "me@louvaio.com", "name": "Me User", "preferences": {"chord_font_family": "Georgia"}}',
+          200,
+          headers: {
+            Headers.contentTypeHeader: [Headers.jsonContentType],
+          },
+        );
+      });
+
+      final user = await repository.getMe();
+
+      expect(user.chordFontFamily, 'Georgia');
+      verify(() => mockPreferencesStorage.setUserChordFontFamily('usr_999', 'Georgia')).called(1);
+    });
+
+    test('updateChordFontPreference sends PATCH to backend and caches confirmed preference', () async {
+      final mockUser = MockUser();
+      when(() => mockUser.uid).thenReturn('usr_current_123');
+      when(() => mockFirebaseAuth.currentUser).thenReturn(mockUser);
+
+      apiClient.dio.httpClientAdapter = MockAdapter((options) async {
+        expect(options.path, contains('/auth/me/preferences'));
+        expect(options.method, 'PATCH');
+        expect(options.data, {'chord_font_family': 'Verdana'});
+
+        return ResponseBody.fromString(
+          '{"preferences": {"chord_font_family": "Verdana"}}',
+          200,
+          headers: {
+            Headers.contentTypeHeader: [Headers.jsonContentType],
+          },
+        );
+      });
+
+      final confirmedFont = await repository.updateChordFontPreference(
+        chordFontFamily: 'Verdana',
+      );
+
+      expect(confirmedFont, 'Verdana');
+      verify(() => mockPreferencesStorage.setUserChordFontFamily('usr_current_123', 'Verdana')).called(1);
+    });
+
+    test('updateChordFontPreference falls back to monospace for invalid font', () async {
+      final mockUser = MockUser();
+      when(() => mockUser.uid).thenReturn('usr_current_123');
+      when(() => mockFirebaseAuth.currentUser).thenReturn(mockUser);
+
+      apiClient.dio.httpClientAdapter = MockAdapter((options) async {
+        expect(options.data, {'chord_font_family': 'monospace'});
+
+        return ResponseBody.fromString(
+          '{"preferences": {"chord_font_family": "monospace"}}',
+          200,
+          headers: {
+            Headers.contentTypeHeader: [Headers.jsonContentType],
+          },
+        );
+      });
+
+      final confirmedFont = await repository.updateChordFontPreference(
+        chordFontFamily: 'InvalidFont123',
+      );
+
+      expect(confirmedFont, 'monospace');
+      verify(() => mockPreferencesStorage.setUserChordFontFamily('usr_current_123', 'monospace')).called(1);
+    });
+
+    test('MOB-02: User A late PATCH cannot contaminate User B local cache after account switch', () async {
+      final mockUserA = MockUser();
+      when(() => mockUserA.uid).thenReturn('usr_a');
+      final mockUserB = MockUser();
+      when(() => mockUserB.uid).thenReturn('usr_b');
+
+      // Initially user A is logged in
+      when(() => mockFirebaseAuth.currentUser).thenReturn(mockUserA);
+
+      final patchCompleter = Completer<ResponseBody>();
+      apiClient.dio.httpClientAdapter = MockAdapter((options) {
+        return patchCompleter.future;
+      });
+
+      // 1. User A starts updating preference to Georgia
+      final updateFuture = repository.updateChordFontPreference(
+        chordFontFamily: 'Georgia',
+      );
+
+      // 2. While PATCH is in-flight, Firebase currentUser switches to User B!
+      when(() => mockFirebaseAuth.currentUser).thenReturn(mockUserB);
+
+      // 3. User A's PATCH now completes
+      patchCompleter.complete(
+        ResponseBody.fromString(
+          '{"preferences": {"chord_font_family": "Georgia"}}',
+          200,
+          headers: {
+            Headers.contentTypeHeader: [Headers.jsonContentType],
+          },
+        ),
+      );
+
+      final confirmed = await updateFuture;
+      expect(confirmed, 'Georgia');
+
+      // 4. Must NOT cache under User B!
+      verifyNever(() => mockPreferencesStorage.setUserChordFontFamily('usr_b', any()));
+      // Must cache under User A (the initiating user)
+      verify(() => mockPreferencesStorage.setUserChordFontFamily('usr_a', 'Georgia')).called(1);
     });
   });
 }
