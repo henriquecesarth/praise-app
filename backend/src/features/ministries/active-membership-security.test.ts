@@ -335,10 +335,12 @@ describe('Active Membership Security Hardening (M12A-R4)', { timeout: 30000 }, (
         removed_at: new Date().toISOString(),
       });
 
+      const futureDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
       await expect(
         scheduleRepo.createSchedule(minId, 'creator-id', {
           title: 'Ensaio Geral',
-          date: '2026-10-15',
+          date: futureDate,
           participants: [{ id: memRef.id, name: 'Removido', role: 'Vocal' }],
         })
       ).rejects.toMatchObject({
@@ -356,7 +358,7 @@ describe('Active Membership Security Hardening (M12A-R4)', { timeout: 30000 }, (
 
       const sched = await scheduleRepo.createSchedule(minId, 'creator-id', {
         title: 'Culto Domingo',
-        date: '2026-10-15',
+        date: futureDate,
         participants: [{ id: activeMemRef.id, name: 'Ativo', role: 'Violão' }],
       });
 

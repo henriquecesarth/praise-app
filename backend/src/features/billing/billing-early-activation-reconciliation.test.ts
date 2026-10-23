@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { BillingService } from './billing.service.js';
 import { BillingReconcilerWorker } from './billing-reconciler.worker.js';
 import {
@@ -141,6 +141,9 @@ describe('Phase 3C.5A — Early Activation Known-Checkout Reconciliation Worker'
   });
 
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-15T12:00:00.000Z'));
+
     planChangesStore.clear();
     activeSlotsStore.clear();
     subscriptionsStore.clear();
@@ -552,6 +555,10 @@ describe('Phase 3C.5A — Early Activation Known-Checkout Reconciliation Worker'
     );
 
     reconcilerWorker = new BillingReconcilerWorker(billingService, mockBillingRepo);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   // 1. known checkout + zero payments -> unchanged
