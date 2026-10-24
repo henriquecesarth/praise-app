@@ -7,6 +7,7 @@ import { MetaWhatsAppProvider } from './meta-whatsapp.provider';
 import { WhatsAppProvider, WhatsAppWabaReconciliationJobRecord, normalizeToE164 } from './whatsapp.types';
 import { WhatsAppProviderCleanupJobRepository } from '../../repositories/WhatsAppProviderCleanupJobRepository';
 import { AppError } from '../../middleware/error-handler';
+import { isPreviewEnvironment } from '../../config/unifiedConfig';
 import { db } from '../../lib/firebase';
 import { WhatsAppExecutionDeadline } from './whatsapp-execution-deadline';
 import { ZernioHttpClient } from './zernio-http-client';
@@ -39,6 +40,14 @@ export class WhatsAppReconciliationService {
     acquisitionCutoffMs?: number;
     deadline?: WhatsAppExecutionDeadline;
   } = {}): Promise<ReconciliationExecutionSummary> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Execução de jobs de reconciliação de WhatsApp desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const batchSize = Math.min(Math.max(1, options.batchSize ?? 10), 25);
     const softBudgetMs = options.softBudgetMs ?? 20_000;
     const acquisitionCutoffMs = options.acquisitionCutoffMs ?? 15_000;

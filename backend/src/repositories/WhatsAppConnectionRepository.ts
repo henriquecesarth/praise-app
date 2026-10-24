@@ -1,6 +1,7 @@
 import { db } from '../lib/firebase';
 import { FieldPath } from 'firebase-admin/firestore';
 import { AppError } from '../middleware/error-handler';
+import { isPreviewEnvironment } from '../config/unifiedConfig';
 import crypto from 'crypto';
 import {
   WhatsAppConnectionRecord,
@@ -337,6 +338,14 @@ export class WhatsAppConnectionRepository {
   }
 
   async disconnectConnection(orgId: string, connectionId: string): Promise<void> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Desconexão de WhatsApp desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     return await db.runTransaction(async (tx) => {
       const connRef = this.connectionsCol.doc(connectionId);
       const connDoc = await tx.get(connRef);

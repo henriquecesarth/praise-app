@@ -8,6 +8,7 @@ import { WhatsAppEncryptionService } from './whatsapp-encryption.service';
 import { MetaWhatsAppProvider } from './meta-whatsapp.provider';
 import { WhatsAppProvider, WhatsAppProviderCleanupJobRecord, normalizeToE164 } from './whatsapp.types';
 import { AppError } from '../../middleware/error-handler';
+import { isPreviewEnvironment } from '../../config/unifiedConfig';
 import { ZernioHttpClient } from './zernio-http-client';
 import { ZernioError, isZernioAccountProvenAbsent, ZernioAccount } from './zernio.types';
 
@@ -49,6 +50,14 @@ export class WhatsAppCleanupService {
     acquisitionCutoffMs?: number;
     deadline?: WhatsAppExecutionDeadline;
   } = {}): Promise<CleanupExecutionSummary> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Execução de jobs de cleanup de WhatsApp desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const batchSize = Math.min(Math.max(1, options.batchSize ?? 10), 25);
     const softBudgetMs = options.softBudgetMs ?? 20_000;
     const acquisitionCutoffMs = options.acquisitionCutoffMs ?? 15_000;
@@ -498,6 +507,14 @@ export class WhatsAppCleanupService {
     operatorId: string,
     reason?: string
   ): Promise<WhatsAppProviderCleanupJobRecord> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Reinicialização de jobs de cleanup de WhatsApp desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const job = await this.cleanupJobRepo.getJobById(jobId);
     if (!job) {
       throw new AppError(404, 'CLEANUP_JOB_NOT_FOUND: Job de cleanup não encontrado.', {

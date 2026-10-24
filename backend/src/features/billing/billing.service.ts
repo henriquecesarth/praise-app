@@ -13,7 +13,7 @@ import {
   ProviderSubscriptionReactivateResult,
 } from './providers/billing-provider.interface';
 import { AsaasBillingProvider } from './providers/asaas/asaas.provider';
-import { config } from '../../config/unifiedConfig';
+import { config, isPreviewEnvironment } from '../../config/unifiedConfig';
 import {
   PlanId,
   BillingInterval,
@@ -491,6 +491,14 @@ export class BillingService {
    * não libere a exclusão de uma conta cujo e-mail ainda é o contato ativo.
    */
   async setBillingContact(ministryId: string, contactUserId: string): Promise<void> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Atualização de contato de faturamento desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const contact = await this.userRepo.findById(contactUserId);
     if (!contact || !contact.email) {
       throw new AppError(404, 'Usuário escolhido para contato de cobrança não encontrado.', {
@@ -595,6 +603,14 @@ export class BillingService {
     userId: string,
     request: CheckoutCreationRequest
   ): Promise<CheckoutCreationResult> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Criação de checkout desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const { planId, interval, addonBlocks = 0, successUrl, cancelUrl } = request;
 
     if (!isPlanId(planId)) {
@@ -1310,6 +1326,14 @@ export class BillingService {
     rawBody: any,
     now: Date = new Date()
   ): Promise<{ status: string; processed: boolean; reason?: string; error?: string }> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Processamento de webhook de faturamento desabilitado no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     // 1. Validar autenticidade do webhook (Webhook Authentication Token)
     const isValid = this.provider.validateWebhookRequest(headers, rawBody);
     if (!isValid) {
@@ -2182,6 +2206,14 @@ export class BillingService {
     ministryId: string,
     options?: { userId?: string; now?: Date | string }
   ): Promise<BillingTransitionV1Record> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Preparação de transição de cancelamento desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     if (!ministryId || typeof ministryId !== 'string' || !ministryId.trim()) {
       throw new AppError(400, 'ministryId é obrigatório para cancelamento.');
     }
@@ -3527,6 +3559,13 @@ export class BillingService {
     ministryId: string,
     options?: { userId?: string; now?: Date | string }
   ): Promise<BillingSubscriptionRecord & { transition?: ScheduledCancelToFreeResponseDto }> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Cancelamento de assinatura desabilitado no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
     return this.cancelSubscriptionV1(ministryId, options);
   }
 
@@ -3535,6 +3574,13 @@ export class BillingService {
    * a infraestrutura de transições V1 / slots (Section 38).
    */
   async cancelSubscriptionLegacy(ministryId: string): Promise<BillingSubscriptionRecord> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Cancelamento de assinatura desabilitado no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
     const billingSub = await this.billingRepo.getSubscription(ministryId, this.provider.name);
     if (!billingSub || billingSub.status === 'canceled') {
       throw new AppError(400, 'Não há assinatura ativa para cancelar neste ministério.');
@@ -3621,6 +3667,14 @@ export class BillingService {
     ministryId: string,
     options?: { userId?: string; now?: Date | string }
   ): Promise<BillingSubscriptionRecord & { transition?: ScheduledCancelToFreeResponseDto }> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Cancelamento de assinatura desabilitado no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     // 1. Preparar/reaproveitar transição V1
     const transition = await this.prepareScheduledCancelToFreeTransition(ministryId, options);
 
@@ -4288,6 +4342,14 @@ export class BillingService {
     actorUserId?: string,
     options?: { now?: Date; transitionId?: string }
   ): Promise<BillingSubscriptionRecord & { reversalResult?: any }> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Reativação de assinatura desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const trimmedMinistryId = ministryId.trim();
 
     // 1. Verificar se existe transição canônica V1 de cancelamento para Free ativa
@@ -4513,6 +4575,14 @@ export class BillingService {
     planChangeId: string,
     lockWorkerId: string = 'worker_reconciler'
   ): Promise<{ success: boolean; planChange?: BillingPlanChangeRecord; reason?: string }> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Transição de plano desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const change = await this.billingRepo.claimPlanChangeForRetry(planChangeId, lockWorkerId);
     if (!change) {
       return { success: false, reason: 'already_completed_or_locked' };
@@ -4659,6 +4729,14 @@ export class BillingService {
     reconciled: boolean;
     message: string;
   }> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Reconciliação de faturamento desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const appSub = await this.subscriptionRepo.getSubscription(ministryId);
     if (appSub?.subscription_mode === 'complimentary') {
       return {
@@ -9538,6 +9616,14 @@ export class BillingService {
     transitionId: string,
     options?: { now?: Date | string }
   ): Promise<EarlyActivationQuoteResponseDto> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Cotação de ativação antecipada desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     if (!ministryId || !transitionId) {
       throw new AppError(400, 'ministryId e transitionId são obrigatórios.');
     }
@@ -9764,6 +9850,13 @@ export class BillingService {
     minutesToExpire: number;
     expiresAt: string | null;
   }> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Checkout de ativação antecipada desabilitado no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
     // 1. Obter a transição V1 vigente
     const transition = await this.billingRepo.getPlanChange(transitionId);
     if (!transition) {

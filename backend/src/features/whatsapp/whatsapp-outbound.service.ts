@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { AppError } from '../../middleware/error-handler';
+import { isPreviewEnvironment } from '../../config/unifiedConfig';
 import { ZernioHttpClient } from './zernio-http-client';
 import { WhatsAppConnectionRepository } from '../../repositories/WhatsAppConnectionRepository';
 import { WhatsAppOutboundDispatchRepository } from '../../repositories/WhatsAppOutboundDispatchRepository';
@@ -173,6 +174,14 @@ export class WhatsAppOutboundService {
     templateLanguage: string;
     templateParams?: unknown[] | Record<string, unknown>;
   }): Promise<WhatsAppOutboundDispatchRecord> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Operações de envio de WhatsApp estão desabilitadas no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const cleanDispatchId = params.dispatchId?.trim();
     if (!cleanDispatchId) {
       throw new AppError(400, 'dispatchId é obrigatório.');
@@ -302,6 +311,14 @@ export class WhatsAppOutboundService {
     connectionId?: string;
     messageText: string;
   }): Promise<WhatsAppOutboundDispatchRecord> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Operações de envio de WhatsApp estão desabilitadas no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const cleanDispatchId = params.dispatchId?.trim();
     if (!cleanDispatchId) {
       throw new AppError(400, 'dispatchId é obrigatório.');

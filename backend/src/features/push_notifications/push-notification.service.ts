@@ -1,5 +1,7 @@
 import { messagingAdmin } from '../../lib/firebase';
 import { PushDeviceRepository } from '../../repositories/PushDeviceRepository';
+import { AppError } from '../../middleware/error-handler';
+import { isPreviewEnvironment } from '../../config/unifiedConfig';
 import {
   PushNotificationPayload,
   SendPushResult,
@@ -24,6 +26,14 @@ export class PushNotificationService {
     payload: PushNotificationPayload,
     options?: { now?: Date }
   ): Promise<SendPushResult> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Disparo de push notifications (FCM) desabilitado no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const devices = await this.pushDeviceRepo.getDevicesByUserId(userId, {
       onlyActive: true,
       now: options?.now,

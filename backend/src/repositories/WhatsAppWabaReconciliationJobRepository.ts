@@ -1,6 +1,7 @@
 import { db } from '../lib/firebase';
 import crypto from 'crypto';
 import { AppError } from '../middleware/error-handler';
+import { isPreviewEnvironment } from '../config/unifiedConfig';
 import { WhatsAppWabaReconciliationJobRecord } from '../features/whatsapp/whatsapp.types';
 
 export class WhatsAppWabaReconciliationJobRepository {
@@ -37,6 +38,14 @@ export class WhatsAppWabaReconciliationJobRepository {
     },
     tx?: FirebaseFirestore.Transaction
   ): Promise<void> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Enfileiramento de jobs de reconciliação de WhatsApp desabilitado no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const jobId = `recon_zernio_${params.connectionId}`;
     const docRef = this.jobsCol.doc(jobId);
     const nowIso = new Date().toISOString();
@@ -118,6 +127,14 @@ export class WhatsAppWabaReconciliationJobRepository {
     desiredState: 'subscribed' | 'unsubscribed' = 'subscribed',
     tx?: FirebaseFirestore.Transaction
   ): Promise<void> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Enfileiramento de jobs de reconciliação de WhatsApp desabilitado no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const docRef = this.getJobRef(wabaId);
     const nowIso = new Date().toISOString();
 

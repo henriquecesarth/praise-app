@@ -1,6 +1,7 @@
 import { db } from '../lib/firebase';
 import crypto from 'crypto';
 import { AppError } from '../middleware/error-handler';
+import { isPreviewEnvironment } from '../config/unifiedConfig';
 import {
   WhatsAppProviderCleanupJobRecord,
   WhatsAppUnresolvedRemoteMutation,
@@ -36,6 +37,14 @@ export class WhatsAppProviderCleanupJobRepository {
     jobId: string,
     data: Partial<WhatsAppProviderCleanupJobRecord>
   ): Promise<void> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Atualização de jobs de cleanup de WhatsApp desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const docRef = this.getJobRef(jobId);
     await docRef.update({
       ...data,
@@ -47,6 +56,14 @@ export class WhatsAppProviderCleanupJobRepository {
     job: WhatsAppProviderCleanupJobRecord,
     tx?: FirebaseFirestore.Transaction
   ): Promise<void> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Enfileiramento de jobs de cleanup de WhatsApp desabilitado no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const docRef = this.getJobRef(job.id);
     if (tx) {
       tx.set(docRef, job);
@@ -141,6 +158,14 @@ export class WhatsAppProviderCleanupJobRepository {
     phoneNumberId: string;
     normalizedPhoneNumber: string;
   }): Promise<void> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Materialização de posse de negação e jobs de cleanup desabilitadas no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const { organizationId, connectionId, sessionId, wabaId, phoneNumberId, normalizedPhoneNumber } = params;
     const nowIso = new Date().toISOString();
 

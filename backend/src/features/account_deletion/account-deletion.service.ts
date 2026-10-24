@@ -1,5 +1,6 @@
 import { authAdmin } from '../../lib/firebase';
 import { AppError } from '../../middleware/error-handler';
+import { isPreviewEnvironment } from '../../config/unifiedConfig';
 import { AccountDeletionRepository } from '../../repositories/AccountDeletionRepository';
 import {
   AccountDeletionJobRecord,
@@ -81,6 +82,14 @@ export class AccountDeletionService {
     userId: string,
     userEmail?: string
   ): Promise<{ success: boolean; message: string; job: AccountDeletionJobRecord }> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Exclusão de contas desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     // 1. Checagem de preflight
     const preflight = await this.evaluatePreflight(userId);
     if (!preflight.deletionAllowed) {

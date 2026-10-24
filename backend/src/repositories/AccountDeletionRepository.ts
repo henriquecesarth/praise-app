@@ -1,5 +1,6 @@
 import { db } from '../lib/firebase';
 import { AppError } from '../middleware/error-handler';
+import { isPreviewEnvironment } from '../config/unifiedConfig';
 import {
   AccountDeletionJobRecord,
   AccountDeletionBlocker,
@@ -106,6 +107,13 @@ export class AccountDeletionRepository {
   }
 
   async saveJob(job: AccountDeletionJobRecord): Promise<void> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Criação de jobs de exclusão de conta desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
     await this.jobsCol.doc(job.id).set(job, { merge: true });
   }
 

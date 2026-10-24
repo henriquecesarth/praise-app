@@ -4,6 +4,7 @@ import { WhatsAppController } from '../whatsapp/whatsapp.controller';
 import { authenticate } from '../../middleware/auth';
 import { requireOrganizationRole } from '../../middleware/rbac';
 import { validate } from '../../middleware/validate';
+import { blockInPreview } from '../../middleware/preview-guard';
 import { addOrganizationMemberSchema } from './organization.types';
 import {
   updateWhatsAppConnectionSchema,
@@ -51,12 +52,14 @@ router.get(
 );
 router.patch(
   '/:organizationId/whatsapp/connections/:connectionId',
+  blockInPreview('Atualização de conexão WhatsApp'),
   requireOrganizationRole('admin'),
   validate(updateWhatsAppConnectionSchema),
   whatsappController.updateConnection
 );
 router.delete(
   '/:organizationId/whatsapp/connections/:connectionId',
+  blockInPreview('Desconexão de WhatsApp'),
   requireOrganizationRole('admin'),
   whatsappController.disconnectConnection
 );
@@ -64,12 +67,14 @@ router.delete(
 // WhatsApp Onboarding (Phase 7D1)
 router.post(
   '/:organizationId/whatsapp/onboarding/start',
+  blockInPreview('Início de onboarding WhatsApp'),
   requireOrganizationRole('admin'),
   validate(startWhatsAppOnboardingSchema),
   whatsappController.startOnboarding
 );
 router.post(
   '/:organizationId/whatsapp/onboarding/complete',
+  blockInPreview('Conclusão de onboarding WhatsApp'),
   requireOrganizationRole('admin'),
   validate(completeWhatsAppOnboardingSchema),
   whatsappController.completeOnboarding

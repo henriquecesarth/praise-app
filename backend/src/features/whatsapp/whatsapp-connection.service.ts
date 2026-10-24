@@ -2,7 +2,7 @@ import { db } from '../../lib/firebase';
 import crypto from 'crypto';
 import { FieldValue } from 'firebase-admin/firestore';
 import { AppError } from '../../middleware/error-handler';
-import { config, requireZernioWebhookSecret } from '../../config/unifiedConfig';
+import { config, requireZernioWebhookSecret, isPreviewEnvironment } from '../../config/unifiedConfig';
 import { WhatsAppConnectionRepository } from '../../repositories/WhatsAppConnectionRepository';
 import { WhatsAppConnectionSecretRepository } from '../../repositories/WhatsAppConnectionSecretRepository';
 import { WhatsAppProviderIdentityClaimRepository } from '../../repositories/WhatsAppProviderIdentityClaimRepository';
@@ -143,6 +143,14 @@ export class WhatsAppConnectionService {
     input: UpdateWhatsAppConnectionInput,
     actorUserId: string
   ): Promise<WhatsAppConnectionDto> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Atualização de conexão WhatsApp desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const member = await this.orgRepo.getOrganizationMember(orgId, actorUserId);
     if (!member) {
       throw new AppError(404, 'Organização não encontrada.');
@@ -740,6 +748,14 @@ export class WhatsAppConnectionService {
     providerProfileId?: string | null;
     phoneNumber: string;
   }): Promise<void> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Transição de conexão e reconciliação Zernio desabilitadas no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const { orgId, connectionId, providerAccountId, phoneNumber } = params;
     const providerProfileId = params.providerProfileId ?? null;
     const now = new Date().toISOString();
@@ -1796,6 +1812,14 @@ export class WhatsAppConnectionService {
     actorUserId: string,
     input: StartWhatsAppOnboardingInput
   ): Promise<StartWhatsAppOnboardingResponseDto> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Início de onboarding WhatsApp desabilitado no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const member = await this.orgRepo.getOrganizationMember(orgId, actorUserId);
     if (!member) {
       throw new AppError(404, 'Organização não encontrada.');
@@ -2236,6 +2260,14 @@ export class WhatsAppConnectionService {
     actorUserId: string,
     input: CompleteWhatsAppOnboardingInput
   ): Promise<WhatsAppConnectionDto> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Conclusão de onboarding WhatsApp desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const member = await this.orgRepo.getOrganizationMember(orgId, actorUserId);
     if (!member) {
       throw new AppError(404, 'Organização não encontrada.');
@@ -2860,6 +2892,14 @@ export class WhatsAppConnectionService {
     connectionId: string,
     actorUserId: string
   ): Promise<void> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Desconexão de WhatsApp desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const member = await this.orgRepo.getOrganizationMember(orgId, actorUserId);
     if (!member) {
       throw new AppError(404, 'Organização não encontrada.');

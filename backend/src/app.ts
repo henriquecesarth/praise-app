@@ -19,7 +19,7 @@ import organizationRoutes from './features/organizations/organization.routes';
 import internalWhatsAppRoutes from './features/whatsapp/internal-whatsapp.routes';
 import publicWhatsAppRoutes from './features/whatsapp/public-whatsapp.routes';
 import { errorHandler } from './middleware/error-handler';
-import { config } from './config/unifiedConfig';
+import { config, isPreviewEnvironment } from './config/unifiedConfig';
 
 const app = express();
 
@@ -43,7 +43,12 @@ app.use((_req, res, next) => {
 
 // ─── Health Check ────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'praise-backend', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    service: 'praise-backend',
+    preview: isPreviewEnvironment(),
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // ─── Diagnostic Endpoint (Sanitizado em Produção) ─────────────
@@ -53,6 +58,7 @@ app.get('/api/diag', (_req, res) => {
       status: 'ok',
       service: 'praise-backend',
       environment: 'production',
+      preview: isPreviewEnvironment(),
       timestamp: new Date().toISOString(),
     });
     return;
@@ -61,6 +67,7 @@ app.get('/api/diag', (_req, res) => {
   res.json({
     port: config.port,
     nodeEnv: config.nodeEnv,
+    preview: isPreviewEnvironment(),
     firebaseProjectId: config.firebase.projectId || 'dev',
     defaultMinistryId: config.defaultMinistryId,
   });

@@ -47,7 +47,7 @@ const configSchema = z.object({
     environment: z.enum(['sandbox', 'production']).default('sandbox'),
   }),
 }).refine((cfg) => {
-  if (cfg.nodeEnv === 'production' && cfg.jwtSecret === DEFAULT_DEV_JWT_SECRET) {
+  if (cfg.nodeEnv === 'production' && !isPreviewEnvironment() && cfg.jwtSecret === DEFAULT_DEV_JWT_SECRET) {
     return false;
   }
   return true;
@@ -55,6 +55,19 @@ const configSchema = z.object({
   message: 'JWT_SECRET inseguro detectado em ambiente de produção. Forneça uma chave secreta exclusiva via variável de ambiente.',
   path: ['jwtSecret'],
 });
+
+export function isPreviewEnvironment(): boolean {
+  if (process.env.VERCEL_ENV === 'production') {
+    return false;
+  }
+  if (process.env.VERCEL_ENV === 'preview') {
+    return true;
+  }
+  if (process.env.VERCEL === '1' || process.env.VERCEL === 'true') {
+    return true;
+  }
+  return process.env.PREVIEW_MODE === 'true';
+}
 
 const rawConfig = {
   port: process.env.PORT,
@@ -71,7 +84,10 @@ const rawConfig = {
   defaultMinistryId: process.env.DEFAULT_MINISTRY_ID,
   platformAdminSecret: process.env.PLATFORM_ADMIN_SECRET,
   billingTimezone: process.env.BILLING_TIMEZONE || 'America/Sao_Paulo',
-  billingReconciliationEnabled: process.env.BILLING_RECONCILIATION_ENABLED !== 'false' && process.env.NODE_ENV !== 'test',
+  billingReconciliationEnabled:
+    !isPreviewEnvironment() &&
+    process.env.BILLING_RECONCILIATION_ENABLED !== 'false' &&
+    process.env.NODE_ENV !== 'test',
   billingReconciliationIntervalMinutes: process.env.BILLING_RECONCILIATION_INTERVAL_MINUTES || 15,
   webAppUrl: process.env.WEB_APP_URL || 'http://localhost:5173',
   billingPublicApiUrl: process.env.BILLING_PUBLIC_API_URL,

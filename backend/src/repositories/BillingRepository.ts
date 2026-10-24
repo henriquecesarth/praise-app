@@ -1,6 +1,7 @@
 import { FieldPath } from 'firebase-admin/firestore';
 import { db } from '../lib/firebase';
 import { AppError } from '../middleware/error-handler';
+import { isPreviewEnvironment } from '../config/unifiedConfig';
 import {
   BillingCustomerRecord,
   BillingSubscriptionRecord,
@@ -428,6 +429,13 @@ export class BillingRepository {
   }
 
   async setPlanChange(record: BillingPlanChangeRecord): Promise<void> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Persistência de transições de plano desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
     await this.planChangesCollection.doc(record.id).set(record, { merge: true });
   }
 
@@ -608,6 +616,14 @@ export class BillingRepository {
   async createTransitionAndClaimSlot(
     record: BillingPlanChangeRecord
   ): Promise<{ planChange: BillingPlanChangeRecord; slot: BillingActiveTransitionSlotRecord }> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Criação de transição e reivindicação de slot desabilitadas no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     if (!record.id || !record.ministry_id || !record.provider) {
       throw new AppError(400, 'Dados de transição incompletos para criação atômica.');
     }
@@ -1813,6 +1829,14 @@ export class BillingRepository {
     quote: BillingEarlyActivationQuote;
     nowIso?: string;
   }): Promise<{ transition: BillingTransitionV1Record; quote: BillingEarlyActivationQuote }> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Persistência de cotação de early activation desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const { ministryId, transitionId, quote, nowIso = new Date().toISOString() } = params;
 
     const docRef = this.planChangesCollection.doc(transitionId);

@@ -35,7 +35,7 @@ import {
 } from '../billing/customer-transition-summary.mapper';
 import { AppError } from '../../middleware/error-handler';
 import { getBillingDate, normalizeToBillingDate } from '../../utils/billing-date';
-import { config } from '../../config/unifiedConfig';
+import { config, isPreviewEnvironment } from '../../config/unifiedConfig';
 import {
   evaluateWhatsAppCommercialEntitlement,
   WhatsAppCommercialEntitlementResult,
@@ -336,6 +336,14 @@ export class SubscriptionService {
     grantReason?: string,
     expiresAt?: string | null
   ): Promise<MinistrySubscriptionRecord> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Concessão de plano cortesia desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     if (!isPlanId(targetPlanId)) {
       throw new AppError(400, `Plano inválido para concessão: ${targetPlanId}`);
     }
@@ -382,6 +390,14 @@ export class SubscriptionService {
     ministryId: string,
     revokedBy: string
   ): Promise<MinistrySubscriptionRecord> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Revogação de plano cortesia desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const { subscription, usage } = await this.subscriptionRepo.ensureSubscriptionAndUsage(ministryId);
     const now = new Date();
 
@@ -421,6 +437,14 @@ export class SubscriptionService {
    * Não apaga dados em caso de downgrade.
    */
   async changePlan(ministryId: string, targetPlanId: PlanId): Promise<MinistrySubscriptionRecord> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Alteração de plano desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     if (!isPlanId(targetPlanId)) {
       throw new AppError(400, `Plano inválido: ${targetPlanId}`);
     }

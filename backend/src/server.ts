@@ -1,5 +1,6 @@
 import app from './app';
 import { env } from './config/env';
+import { isPreviewEnvironment } from './config/unifiedConfig';
 import { billingReconcilerWorker } from './features/billing/billing-reconciler.worker';
 
 const server = app.listen(env.port, () => {
@@ -7,7 +8,9 @@ const server = app.listen(env.port, () => {
   console.log(`   Environment: ${env.nodeEnv}`);
   console.log(`   Health check: http://localhost:${env.port}/api/health`);
 
-  billingReconcilerWorker.start();
+  if (!isPreviewEnvironment()) {
+    billingReconcilerWorker.start();
+  }
 });
 
 const gracefulShutdown = () => {

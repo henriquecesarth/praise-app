@@ -1,4 +1,4 @@
-import { requireZernioApiKey, ZERNIO_DEFAULT_BASE_URL } from '../../config/unifiedConfig';
+import { requireZernioApiKey, ZERNIO_DEFAULT_BASE_URL, isPreviewEnvironment } from '../../config/unifiedConfig';
 import { AppError } from '../../middleware/error-handler';
 import {
   ZernioCreateProfileDto,
@@ -264,6 +264,14 @@ export class ZernioHttpClient {
   }
 
   async request<T>(endpoint: string, options?: ZernioHttpRequestOptions): Promise<T> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        'PREVIEW_MODE_BLOCKED: Chamada ao provedor Zernio desabilitada no ambiente de Preview.',
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+
     const apiKey = this.getApiKey();
 
     if (options?.signal?.aborted) {

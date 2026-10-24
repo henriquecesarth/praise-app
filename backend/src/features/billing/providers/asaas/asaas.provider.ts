@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { config } from '../../../../config/unifiedConfig';
+import { config, isPreviewEnvironment } from '../../../../config/unifiedConfig';
 import { PlanId, BillingInterval } from '../../../../config/plans.config';
 import { BillingProviderName } from '../../billing.types';
 import {
@@ -87,6 +87,21 @@ export class AsaasBillingProvider implements BillingProvider {
     this.webhookToken = options && 'webhookToken' in options ? options.webhookToken : config.asaas.webhookToken;
   }
 
+  private assertPreviewSafe(operation: string): void {
+    if (isPreviewEnvironment()) {
+      throw new AppError(
+        403,
+        `PREVIEW_MODE_BLOCKED: Chamada ao provedor de faturamento Asaas (${operation}) desabilitada no ambiente de Preview.`,
+        { code: 'PREVIEW_MODE_BLOCKED' }
+      );
+    }
+  }
+
+  private async safeFetch(url: string, init?: RequestInit): Promise<Response> {
+    this.assertPreviewSafe('HTTP request');
+    return fetch(url, init);
+  }
+
   /**
    * Classifica se uma falha na chamada de criação de recurso é definitiva
    * (certeza de que nenhum recurso financeiro foi gerado no provedor) ou incerta (timeout, 5xx, perda de conexão).
@@ -144,12 +159,14 @@ export class AsaasBillingProvider implements BillingProvider {
     taxId?: string;
     phone?: string;
   }): Promise<{ providerCustomerId: string }> {
+    this.assertPreviewSafe('createCustomer');
+
     if (!this.apiKey) {
       throw new AppError(500, 'Gateway Asaas não configurado.');
     }
 
     try {
-      const response = await fetch(`${this.apiUrl}/customers`, {
+      const response = await this.safeFetch(`${this.apiUrl}/customers`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -187,11 +204,12 @@ export class AsaasBillingProvider implements BillingProvider {
     providerCustomerId: string,
     params: { name?: string; email?: string; phone?: string; taxId?: string }
   ): Promise<void> {
+    this.assertPreviewSafe('updateCustomer');
     if (!this.apiKey) {
       throw new AppError(500, 'Gateway Asaas não configurado.');
     }
     try {
-      const response = await fetch(`${this.apiUrl}/customers/${providerCustomerId}`, {
+      const response = await this.safeFetch(`${this.apiUrl}/customers/${providerCustomerId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -231,7 +249,7 @@ export class AsaasBillingProvider implements BillingProvider {
         limit: '5',
       });
 
-      const response = await fetch(`${this.apiUrl}/customers?${queryParams.toString()}`, {
+      const response = await this.safeFetch(`${this.apiUrl}/customers?${queryParams.toString()}`, {
         headers: {
           access_token: this.apiKey,
         },
@@ -278,7 +296,7 @@ export class AsaasBillingProvider implements BillingProvider {
         limit: '5',
       });
 
-      const response = await fetch(`${this.apiUrl}/subscriptions?${queryParams.toString()}`, {
+      const response = await this.safeFetch(`${this.apiUrl}/subscriptions?${queryParams.toString()}`, {
         headers: {
           access_token: this.apiKey,
         },
@@ -334,7 +352,7 @@ export class AsaasBillingProvider implements BillingProvider {
           limit: String(limit),
         });
 
-        const response = await fetch(`${this.apiUrl}/payments?${queryParams.toString()}`, {
+        const response = await this.safeFetch(`${this.apiUrl}/payments?${queryParams.toString()}`, {
           headers: {
             access_token: this.apiKey,
           },
@@ -414,6 +432,7 @@ export class AsaasBillingProvider implements BillingProvider {
     };
     nextDueDate?: string;
   }): Promise<{ checkoutUrl: string; checkoutId: string; expiresAt: string | null }> {
+    this.assertPreviewSafe('createHostedCheckout');
     const value = centsToProviderBrlDecimal(params.amountCents);
     const cycle = params.interval === 'annual' ? 'YEARLY' : 'MONTHLY';
     const checkoutDescription = `LouvAIO - Plano ${params.planName} (${params.interval === 'annual' ? 'Anual com 10% OFF' : 'Mensal'})`;
@@ -465,7 +484,7 @@ export class AsaasBillingProvider implements BillingProvider {
         };
       }
 
-      const response = await fetch(`${this.apiUrl}/checkouts`, {
+      const response = await this.safeFetch(`${this.apiUrl}/checkouts`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -566,7 +585,7 @@ export class AsaasBillingProvider implements BillingProvider {
       }
 
       const isSandbox = this.apiUrl.includes('sandbox');
-      const response = await fetch(`${this.apiUrl}/checkouts`, {
+      const response = await this.safeFetch(`${this.apiUrl}/checkouts`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -614,6 +633,7 @@ export class AsaasBillingProvider implements BillingProvider {
    * Não presume cancelamento seguro em erros (404, 401, 403, 5xx, timeout).
    */
   async cancelCheckout(checkoutId: string): Promise<{ success: boolean; status?: string }> {
+    this.assertPreviewSafe('cancelCheckout');
     if (!this.apiKey) {
       throw new AppError(500, 'Gateway Asaas não configurado.');
     }
@@ -624,7 +644,7 @@ export class AsaasBillingProvider implements BillingProvider {
     }
 
     try {
-      const response = await fetch(`${this.apiUrl}/checkouts/${cleanId}/cancel`, {
+      const response = await this.safeFetch(`${this.apiUrl}/checkouts/${cleanId}/cancel`, {
         method: 'POST',
         headers: {
           access_token: this.apiKey,
@@ -663,12 +683,13 @@ export class AsaasBillingProvider implements BillingProvider {
    * existentes pendentes/vencidas e o histórico financeiro da conta.
    */
   async inactivateSubscription(providerSubscriptionId: string): Promise<{ success: boolean }> {
+    this.assertPreviewSafe('inactivateSubscription');
     if (!this.apiKey) {
       throw new AppError(500, 'Gateway Asaas não configurado.');
     }
 
     try {
-      const response = await fetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
+      const response = await this.safeFetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
         method: 'PUT',
         headers: {
           access_token: this.apiKey,
@@ -698,6 +719,7 @@ export class AsaasBillingProvider implements BillingProvider {
   async inactivateSubscriptionStrict(
     providerSubscriptionId: string
   ): Promise<ProviderSubscriptionInactivateResult> {
+    this.assertPreviewSafe('inactivateSubscriptionStrict');
     if (!this.apiKey) {
       return {
         outcome: 'AUTH_ERROR',
@@ -707,7 +729,7 @@ export class AsaasBillingProvider implements BillingProvider {
     }
 
     try {
-      const response = await fetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
+      const response = await this.safeFetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
         method: 'PUT',
         headers: {
           access_token: this.apiKey,
@@ -769,12 +791,13 @@ export class AsaasBillingProvider implements BillingProvider {
    * exclui cobranças pendentes/overdue não pagas. Usar apenas quando remoção explícita for requerida.
    */
   async removeSubscription(providerSubscriptionId: string): Promise<{ success: boolean }> {
+    this.assertPreviewSafe('removeSubscription');
     if (!this.apiKey) {
       throw new AppError(500, 'Gateway Asaas não configurado.');
     }
 
     try {
-      const response = await fetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
+      const response = await this.safeFetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
         method: 'DELETE',
         headers: {
           access_token: this.apiKey,
@@ -803,6 +826,7 @@ export class AsaasBillingProvider implements BillingProvider {
     providerSubscriptionId: string,
     cancelAtPeriodEnd: boolean = true
   ): Promise<{ success: boolean; canceledAtPeriodEnd: boolean }> {
+    this.assertPreviewSafe('cancelSubscription');
     await this.inactivateSubscription(providerSubscriptionId);
     return { success: true, canceledAtPeriodEnd: cancelAtPeriodEnd };
   }
@@ -811,6 +835,7 @@ export class AsaasBillingProvider implements BillingProvider {
    * Reativa uma assinatura inativada no Asaas (PUT /v3/subscriptions/{id} com status: ACTIVE e nextDueDate).
    */
   async reactivateSubscription(providerSubscriptionId: string, nextDueDate?: string): Promise<{ success: boolean }> {
+    this.assertPreviewSafe('reactivateSubscription');
     if (!this.apiKey) {
       throw new AppError(500, 'Gateway Asaas não configurado.');
     }
@@ -821,7 +846,7 @@ export class AsaasBillingProvider implements BillingProvider {
         bodyPayload.nextDueDate = nextDueDate;
       }
 
-      const response = await fetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
+      const response = await this.safeFetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
         method: 'PUT',
         headers: {
           access_token: this.apiKey,
@@ -853,6 +878,7 @@ export class AsaasBillingProvider implements BillingProvider {
     providerSubscriptionId: string,
     nextDueDate?: string
   ): Promise<ProviderSubscriptionReactivateResult> {
+    this.assertPreviewSafe('reactivateSubscriptionStrict');
     if (!this.apiKey) {
       return {
         outcome: 'AUTH_ERROR',
@@ -867,7 +893,7 @@ export class AsaasBillingProvider implements BillingProvider {
         bodyPayload.nextDueDate = nextDueDate;
       }
 
-      const response = await fetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
+      const response = await this.safeFetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
         method: 'PUT',
         headers: {
           access_token: this.apiKey,
@@ -961,7 +987,7 @@ export class AsaasBillingProvider implements BillingProvider {
           queryParams.set('status', statusFilter);
         }
 
-        const response = await fetch(
+        const response = await this.safeFetch(
           `${this.apiUrl}/subscriptions/${providerSubscriptionId}/payments?${queryParams.toString()}`,
           {
             headers: {
@@ -1058,7 +1084,7 @@ export class AsaasBillingProvider implements BillingProvider {
           limit: String(limit),
         });
 
-        const response = await fetch(
+        const response = await this.safeFetch(
           `${this.apiUrl}/subscriptions/${providerSubscriptionId}/payments?${queryParams.toString()}`,
           {
             headers: {
@@ -1199,7 +1225,7 @@ export class AsaasBillingProvider implements BillingProvider {
     }
 
     try {
-      const response = await fetch(`${this.apiUrl}/payments/${providerPaymentId}`, {
+      const response = await this.safeFetch(`${this.apiUrl}/payments/${providerPaymentId}`, {
         method: 'DELETE',
         headers: {
           access_token: this.apiKey,
@@ -1228,7 +1254,7 @@ export class AsaasBillingProvider implements BillingProvider {
     }
 
     try {
-      const response = await fetch(`${this.apiUrl}/payments/${providerPaymentId}`, {
+      const response = await this.safeFetch(`${this.apiUrl}/payments/${providerPaymentId}`, {
         headers: {
           access_token: this.apiKey,
         },
@@ -1276,7 +1302,7 @@ export class AsaasBillingProvider implements BillingProvider {
     }
 
     try {
-      const response = await fetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
+      const response = await this.safeFetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
         headers: {
           access_token: this.apiKey,
         },
@@ -1315,7 +1341,7 @@ export class AsaasBillingProvider implements BillingProvider {
     }
 
     try {
-      const response = await fetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
+      const response = await this.safeFetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
         headers: {
           access_token: this.apiKey,
         },
