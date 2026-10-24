@@ -234,10 +234,24 @@ void main() {
 
       expect(find.byKey(const ValueKey('song_title_input')), findsOneWidget);
       expect(find.byKey(const ValueKey('song_form_save_button')), findsOneWidget);
+      expect(find.byKey(const ValueKey('artist_picker_tile')), findsOneWidget);
+      expect(find.byKey(const ValueKey('version_card_0')), findsOneWidget);
+      expect(find.byKey(const ValueKey('add_version_button')), findsOneWidget);
+      expect(find.byKey(const ValueKey('song_lyrics_input')), findsOneWidget);
+      expect(find.byKey(const ValueKey('song_notes_input')), findsOneWidget);
+
+      // Open version editor sheet to view version-specific fields
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('song_version_name_input')), findsOneWidget);
       expect(find.byKey(const ValueKey('song_bpm_input')), findsOneWidget);
       expect(find.byKey(const ValueKey('song_duration_input')), findsOneWidget);
-      expect(find.byKey(const ValueKey('song_lyrics_input')), findsOneWidget);
       expect(find.byKey(const ValueKey('key_chip_G')), findsOneWidget);
+      expect(find.byKey(const ValueKey('save_version_sheet_button')), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('cancel_version_sheet_button')));
+      await tester.pumpAndSettle();
     });
 
     testWidgets('validates required title on submit', (tester) async {
@@ -256,8 +270,16 @@ void main() {
       await tester.pumpWidget(buildSubject());
       await tester.pumpAndSettle();
 
+      // Open version editor
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
+      await tester.pumpAndSettle();
+
       // Tap 'D' tone chip
       await tester.tap(find.byKey(const ValueKey('key_chip_D')));
+      await tester.pumpAndSettle();
+
+      // Confirm version
+      await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
       await tester.pumpAndSettle();
 
       // Enter title
@@ -304,7 +326,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Musica Existente'), findsOneWidget);
-      expect(find.text('110'), findsOneWidget);
+      expect(find.text('110 BPM'), findsOneWidget);
       expect(find.text('04:00'), findsOneWidget);
     });
 
@@ -399,9 +421,12 @@ void main() {
 
       // Fill in draft data
       await tester.enterText(find.byKey(const ValueKey('song_title_input')), 'Grande é o Senhor');
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
+      await tester.pumpAndSettle();
       await tester.enterText(find.byKey(const ValueKey('song_bpm_input')), '128');
       await tester.ensureVisible(find.byKey(const ValueKey('key_chip_G')));
       await tester.tap(find.byKey(const ValueKey('key_chip_G')));
+      await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
       await tester.pumpAndSettle();
 
       await tester.ensureVisible(find.byKey(const ValueKey('song_lyrics_input')));
@@ -430,7 +455,7 @@ void main() {
 
       // Verify draft inputs are PRESERVED
       expect(find.text('Grande é o Senhor'), findsOneWidget);
-      expect(find.text('128'), findsOneWidget);
+      expect(find.text('128 BPM'), findsOneWidget);
       expect(find.text('Aleluia ao Deus Vivo'), findsOneWidget);
     });
 
@@ -439,21 +464,28 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.enterText(find.byKey(const ValueKey('song_title_input')), 'Lugar Secreto');
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
+      await tester.pumpAndSettle();
       await tester.ensureVisible(find.byKey(const ValueKey('key_chip_C')));
       await tester.tap(find.byKey(const ValueKey('key_chip_C')));
+      await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
       await tester.pumpAndSettle();
 
-      // Add a second version
+      // Add a second version (opens bottom sheet)
       await tester.ensureVisible(find.byKey(const ValueKey('add_version_button')));
       await tester.tap(find.byKey(const ValueKey('add_version_button')));
       await tester.pumpAndSettle();
 
-      // Edit the newly added second version
+      // Edit the newly added second version in sheet
       await tester.ensureVisible(find.byKey(const ValueKey('song_version_name_input')));
       await tester.enterText(find.byKey(const ValueKey('song_version_name_input')), 'Acústico');
       await tester.ensureVisible(find.byKey(const ValueKey('key_chip_A')));
       await tester.tap(find.byKey(const ValueKey('key_chip_A')));
       await tester.enterText(find.byKey(const ValueKey('song_bpm_input')), '75');
+      await tester.pumpAndSettle();
+
+      // Save version sheet
+      await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
       await tester.pumpAndSettle();
 
       // Save song
@@ -505,7 +537,7 @@ void main() {
       await tester.pumpWidget(buildSubject(initialSong: existing));
       await tester.pumpAndSettle();
 
-      // Switch to second version to edit it
+      // Open second version in sheet to edit it
       await tester.ensureVisible(find.byKey(const ValueKey('edit_version_button_1')));
       await tester.tap(find.byKey(const ValueKey('edit_version_button_1')));
       await tester.pumpAndSettle();
@@ -514,6 +546,10 @@ void main() {
       await tester.ensureVisible(find.byKey(const ValueKey('song_version_name_input')));
       await tester.enterText(find.byKey(const ValueKey('song_version_name_input')), 'Versão Jovem (Ao Vivo)');
       await tester.enterText(find.byKey(const ValueKey('song_bpm_input')), '74');
+      await tester.pumpAndSettle();
+
+      // Save version sheet
+      await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
       await tester.pumpAndSettle();
 
       // Save
@@ -575,6 +611,9 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('add_version_button')));
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
+      await tester.pumpAndSettle();
+
       expect(find.byKey(const ValueKey('version_card_2')), findsOneWidget);
 
       // Delete version 2 with confirmation
@@ -632,6 +671,9 @@ void main() {
 
       await tester.ensureVisible(find.byKey(const ValueKey('song_version_name_input')));
       await tester.enterText(find.byKey(const ValueKey('song_version_name_input')), 'Versão Piano');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
       await tester.pumpAndSettle();
 
       // Attempt save
@@ -697,6 +739,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
+      await tester.pumpAndSettle();
+
       // Save
       await tester.ensureVisible(
         find.byKey(const ValueKey('song_form_save_button')),
@@ -740,12 +785,21 @@ void main() {
 
       // Edit version notes without touching artist
       await tester.ensureVisible(
+        find.byKey(const ValueKey('edit_version_button_0')),
+      );
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(
         find.byKey(const ValueKey('song_version_notes_input')),
       );
       await tester.enterText(
         find.byKey(const ValueKey('song_version_notes_input')),
         'Nota atualizada',
       );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
       await tester.pumpAndSettle();
 
       await tester.ensureVisible(
@@ -830,9 +884,15 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('72.5'), findsOneWidget);
+      expect(find.text('72.5 BPM'), findsOneWidget);
 
       // Edit version notes only
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('edit_version_button_0')),
+      );
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
+      await tester.pumpAndSettle();
+
       await tester.ensureVisible(
         find.byKey(const ValueKey('song_version_notes_input')),
       );
@@ -840,6 +900,9 @@ void main() {
         find.byKey(const ValueKey('song_version_notes_input')),
         'Nota alterada sem mexer no BPM',
       );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
       await tester.pumpAndSettle();
 
       await tester.ensureVisible(
@@ -866,10 +929,17 @@ void main() {
         find.byKey(const ValueKey('song_title_input')),
         'Nova Música Fracionada',
       );
+
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
+      await tester.pumpAndSettle();
+
       await tester.enterText(
         find.byKey(const ValueKey('song_bpm_input')),
         '68.5',
       );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
       await tester.pumpAndSettle();
 
       await tester.ensureVisible(
@@ -935,6 +1005,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
+      await tester.pumpAndSettle();
+
       await tester.ensureVisible(
         find.byKey(const ValueKey('song_form_save_button')),
       );
@@ -973,19 +1046,25 @@ void main() {
       await tester.pumpWidget(buildSubject(initialSong: multiBpmSong));
       await tester.pumpAndSettle();
 
-      // Version 0 has 72
-      expect(find.text('72'), findsOneWidget);
+      // Version 0 has 72 BPM on card
+      expect(find.text('72 BPM'), findsOneWidget);
+      // Version 1 has Rubato on card
+      expect(find.text('Rubato'), findsOneWidget);
 
-      // Switch to Version 1 (Rubato)
+      // Open Version 1 (Rubato)
       await tester.ensureVisible(
         find.byKey(const ValueKey('edit_version_button_1')),
       );
       await tester.tap(find.byKey(const ValueKey('edit_version_button_1')));
       await tester.pumpAndSettle();
 
-      expect(find.text('Rubato'), findsOneWidget);
+      expect(find.text('Rubato'), findsWidgets);
 
-      // Switch back to Version 0 (72)
+      // Close sheet
+      await tester.tap(find.byKey(const ValueKey('cancel_version_sheet_button')));
+      await tester.pumpAndSettle();
+
+      // Open Version 0 (72)
       await tester.ensureVisible(
         find.byKey(const ValueKey('edit_version_button_0')),
       );
@@ -993,6 +1072,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('72'), findsOneWidget);
+
+      // Close sheet
+      await tester.tap(find.byKey(const ValueKey('cancel_version_sheet_button')));
+      await tester.pumpAndSettle();
     });
 
     testWidgets(
@@ -1016,11 +1099,18 @@ void main() {
 
       expect(find.text('Rubato'), findsOneWidget);
 
+      // Open version 0
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
+      await tester.pumpAndSettle();
+
       // Change from 'Rubato' to '80'
       await tester.enterText(
         find.byKey(const ValueKey('song_bpm_input')),
         '80',
       );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
       await tester.pumpAndSettle();
 
       await tester.ensureVisible(
@@ -1081,18 +1171,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // 3. Switch to primary version (v_1)
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('edit_version_button_0')),
-      );
-      await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
-      await tester.pumpAndSettle();
-
-      // 4. Attempt to save while on v_1 -> must fail visibly without issuing HTTP request
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('song_form_save_button')),
-      );
-      await tester.tap(find.byKey(const ValueKey('song_form_save_button')));
+      // 3. Attempt to save sheet with invalid BPM -> validation blocks it visibly
+      await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
       await tester.pumpAndSettle();
 
       expect(fakeRepo.lastUpdatedData, isNull);
@@ -1102,27 +1182,17 @@ void main() {
       );
       expect(find.text('1000'), findsOneWidget);
 
-      // 5. Switch to v_1 and return to v_2 -> invalid draft '1000' is still preserved
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('edit_version_button_0')),
-      );
-      await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
-      await tester.pumpAndSettle();
-
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('edit_version_button_1')),
-      );
-      await tester.tap(find.byKey(const ValueKey('edit_version_button_1')));
-      await tester.pumpAndSettle();
-      expect(find.text('1000'), findsOneWidget);
-
-      // 6. Correct the invalid field to 84.5 and save normally
+      // 4. Correct the invalid field to 84.5 and save sheet
       await tester.enterText(
         find.byKey(const ValueKey('song_bpm_input')),
         '84.5',
       );
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
+      await tester.pumpAndSettle();
+
+      // 5. Save song form normally
       await tester.ensureVisible(
         find.byKey(const ValueKey('song_form_save_button')),
       );
@@ -1171,24 +1241,20 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Switch to v_1 and back to v_2
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('edit_version_button_0')),
-      );
-      await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
+      // Attempt save sheet -> validation error
+      await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
       await tester.pumpAndSettle();
-
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('edit_version_button_1')),
-      );
-      await tester.tap(find.byKey(const ValueKey('edit_version_button_1')));
-      await tester.pumpAndSettle();
+      expect(find.text('1 a 999 ou texto de até 10 caracteres'), findsOneWidget);
 
       // Explicitly clear BPM
       await tester.enterText(
         find.byKey(const ValueKey('song_bpm_input')),
         '',
       );
+      await tester.pumpAndSettle();
+
+      // Save sheet -> now valid
+      await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
       await tester.pumpAndSettle();
 
       await tester.ensureVisible(
@@ -1227,7 +1293,7 @@ void main() {
       await tester.pumpWidget(buildSubject(initialSong: song));
       await tester.pumpAndSettle();
 
-      // Switch to v_2, rename it without touching BPM, switch back to v_1, and save
+      // Open v_2 in sheet, rename it without touching BPM, save sheet, and save form
       await tester.ensureVisible(
         find.byKey(const ValueKey('edit_version_button_1')),
       );
@@ -1243,10 +1309,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('edit_version_button_0')),
-      );
-      await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
+      await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
       await tester.pumpAndSettle();
 
       await tester.ensureVisible(

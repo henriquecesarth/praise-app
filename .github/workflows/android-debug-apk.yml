@@ -1,12 +1,6 @@
 name: Android Debug APK
 
 on:
-  push:
-    branches:
-      - wip/repertoire-versions-smartchords-20261022
-    paths:
-      - 'mobile/**'
-      - '.github/workflows/android-debug-apk.yml'
   workflow_dispatch:
     inputs:
       target_mode:
