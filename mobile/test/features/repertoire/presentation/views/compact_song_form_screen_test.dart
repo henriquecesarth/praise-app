@@ -257,7 +257,13 @@ void main() {
 
       // Sheet is open
       expect(find.byType(VersionEditorSheet), findsOneWidget);
-      expect(find.text('Nova Versão'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(VersionEditorSheet),
+          matching: find.text('Nova Versão'),
+        ),
+        findsOneWidget,
+      );
       expect(find.byKey(const ValueKey('song_version_name_input')), findsOneWidget);
 
       // Enter draft name
@@ -609,7 +615,7 @@ void main() {
       expect(fakeRepo.lastUpdatedData!.title, equals('Música Com Artista Avulso'));
       expect(fakeRepo.lastUpdatedData!.duration, equals('04:10'));
       // Artist ID must remain omitted to not wipe web free-text artist
-      expect(fakeRepo.lastUpdatedData!.artistId, equals(songFieldOmitted));
+      expect(fakeRepo.lastUpdatedData!.toJson().containsKey('artist_id'), isFalse);
     });
   });
 }
