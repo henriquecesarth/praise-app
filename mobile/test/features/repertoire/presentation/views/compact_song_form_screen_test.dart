@@ -100,7 +100,7 @@ class _FakeRepertoireRepo implements RepertoireRepository {
       id: 'created-id-1',
       ministryId: ministryId,
       title: data.title,
-      artistId: data.artistId as String?,
+      artistId: data.artistId,
       versions: data.versions ?? const [],
     );
   }
@@ -116,7 +116,7 @@ class _FakeRepertoireRepo implements RepertoireRepository {
       id: songId,
       ministryId: ministryId,
       title: data.title,
-      artistId: data.artistId as String?,
+      artistId: data.artistId,
       versions: data.versions ?? const [],
     );
   }
