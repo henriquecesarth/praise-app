@@ -133,6 +133,7 @@ Future<MusicalKeySelectionResult?> showMusicalKeyPickerSheet({
                   child: ListView(
                     key: const ValueKey('musical_key_picker_list'),
                     controller: scrollController,
+                    cacheExtent: 2500,
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     children: [
                       if (allowNone)

@@ -358,7 +358,10 @@ void main() {
         find.byKey(const ValueKey('song_version_name_input')),
         'Arranjo Especial',
       );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('musical_key_selector_field')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const ValueKey('key_option_A')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('key_option_A')));
       await tester.pumpAndSettle();

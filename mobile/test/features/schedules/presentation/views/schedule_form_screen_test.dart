@@ -510,6 +510,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('musical_key_picker_sheet')), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const ValueKey('key_option_A')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('key_option_A')));
       await tester.pumpAndSettle();
 

@@ -426,7 +426,10 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
       await tester.pumpAndSettle();
       await tester.enterText(find.byKey(const ValueKey('song_bpm_input')), '128');
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('musical_key_selector_field')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const ValueKey('key_option_G')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('key_option_G')));
       await tester.pumpAndSettle();
@@ -483,9 +486,11 @@ void main() {
       await tester.pumpAndSettle();
 
       // Edit the newly added second version in sheet
-      await tester.ensureVisible(find.byKey(const ValueKey('song_version_name_input')));
       await tester.enterText(find.byKey(const ValueKey('song_version_name_input')), 'Acústico');
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('musical_key_selector_field')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const ValueKey('key_option_A')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('key_option_A')));
       await tester.pumpAndSettle();
