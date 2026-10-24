@@ -1,12 +1,6 @@
 name: Android Debug APK
 
 on:
-  # One-shot R4-M3-approved Android full-app build; remove after artifact upload.
-  push:
-    branches:
-      - wip/repertoire-versions-smartchords-20261022
-    paths:
-      - '.github/workflows/android-debug-apk.yml'
   workflow_dispatch:
     inputs:
       target_mode:
