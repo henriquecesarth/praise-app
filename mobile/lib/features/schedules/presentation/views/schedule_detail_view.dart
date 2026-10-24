@@ -421,11 +421,15 @@ class _InfoSection extends StatelessWidget {
                           color: theme.colorScheme.onSecondaryContainer,
                         ),
                         const SizedBox(width: 4),
-                        Text(
-                          'Privado (apenas admins)',
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: theme.colorScheme.onSecondaryContainer,
-                            fontWeight: FontWeight.w600,
+                        Flexible(
+                          child: Text(
+                            'Privado (apenas admins)',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.onSecondaryContainer,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                       ],
@@ -520,11 +524,15 @@ class _StatChip extends StatelessWidget {
         children: [
           Icon(icon, size: 13, color: theme.colorScheme.primary),
           const SizedBox(width: 4),
-          Text(
-            label,
-            style: theme.textTheme.labelSmall?.copyWith(
-              fontWeight: FontWeight.w600,
-              color: theme.colorScheme.onSurfaceVariant,
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelSmall?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
         ],
@@ -684,10 +692,12 @@ class _ConfirmationSection extends ConsumerWidget {
                   Icon(Icons.how_to_reg_outlined,
                       size: 18, color: theme.colorScheme.primary),
                   const SizedBox(width: 8),
-                  Text(
-                    'Confirmação de Presença',
-                    style: theme.textTheme.titleSmall
-                        ?.copyWith(fontWeight: FontWeight.w600),
+                  Flexible(
+                    child: Text(
+                      'Confirmação de Presença',
+                      style: theme.textTheme.titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w600),
+                    ),
                   ),
                 ],
               ),
@@ -770,8 +780,15 @@ class _ConfirmationSection extends ConsumerWidget {
                             .read(scheduleDetailNotifierProvider.notifier)
                             .confirm(ministryId, scheduleId, false),
                     icon: const Icon(Icons.cancel_outlined, size: 17),
-                    label: const Text('Não vou'),
+                    label: const Flexible(
+                      child: Text(
+                        'Não vou',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                     style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
                       foregroundColor: theme.colorScheme.error,
                       side: BorderSide(
                           color:
@@ -797,7 +814,16 @@ class _ConfirmationSection extends ConsumerWidget {
                             child: CircularProgressIndicator(
                                 strokeWidth: 2, color: Colors.white))
                         : const Icon(Icons.check_circle_outline, size: 17),
-                    label: Text(isConfirming ? 'Confirmando...' : 'Confirmar'),
+                    label: Flexible(
+                      child: Text(
+                        isConfirming ? 'Confirmando...' : 'Confirmar',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
                   ),
                 ),
               ),
@@ -1062,9 +1088,11 @@ class _ClothingSection extends StatelessWidget {
                   Icon(Icons.checkroom_outlined,
                       size: 18, color: theme.colorScheme.primary),
                   const SizedBox(width: 8),
-                  Text('Vestimenta',
-                      style: theme.textTheme.titleSmall
-                          ?.copyWith(fontWeight: FontWeight.w600)),
+                  Flexible(
+                    child: Text('Vestimenta',
+                        style: theme.textTheme.titleSmall
+                            ?.copyWith(fontWeight: FontWeight.w600)),
+                  ),
                 ],
               ),
               if (hasPalette)
@@ -1209,9 +1237,11 @@ class _CommentsSection extends ConsumerWidget {
             Icon(Icons.chat_bubble_outline,
                 size: 18, color: theme.colorScheme.primary),
             const SizedBox(width: 8),
-            Text('Comentários',
-                style: theme.textTheme.titleSmall
-                    ?.copyWith(fontWeight: FontWeight.w600)),
+            Expanded(
+              child: Text('Comentários',
+                  style: theme.textTheme.titleSmall
+                      ?.copyWith(fontWeight: FontWeight.w600)),
+            ),
           ]),
           const SizedBox(height: 10),
           if (commentsState.isCommerciallyRestricted) ...[
