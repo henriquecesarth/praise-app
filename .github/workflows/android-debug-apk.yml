@@ -6,11 +6,15 @@ on:
       target_mode:
         description: 'Build target mode'
         required: true
-        default: 'preview'
+        default: 'full'
         type: choice
         options:
+          - full
           - preview
-          - standard
+      api_base_url:
+        description: 'LouvAIO API Base URL (for full build)'
+        required: false
+        default: 'https://praise-app-git-wip-repertoire-1978b6-henriquecesarths-projects.vercel.app/api/v1'
 
 concurrency:
   group: android-debug-apk-${{ github.ref }}
@@ -53,15 +57,51 @@ jobs:
 
       - name: Build Android Debug APK
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.target_mode }}" = "standard" ]; then
-            echo "Building standard production debug APK..."
-            flutter build apk --debug --flavor production
-          else
-            echo "Building isolated safe preview debug APK (R3-B)..."
-            flutter build apk --debug --flavor preview --target lib/main_preview.dart --dart-define=SAFE_PREVIEW_MODE=true
+          MODE="${{ github.event.inputs.target_mode }}"
+          if [ -z "$MODE" ]; then
+            MODE="full"
           fi
 
-      - name: Verify APK Isolation & Inspect Merged Manifest
+          if [ "$MODE" = "full" ]; then
+            API_URL="${{ github.event.inputs.api_base_url }}"
+            if [ -z "$API_URL" ]; then
+              API_URL="https://praise-app-git-wip-repertoire-1978b6-henriquecesarths-projects.vercel.app/api/v1"
+            fi
+
+            echo "=== Validating API_BASE_URL ==="
+            echo "API_BASE_URL: $API_URL"
+            if [ -z "$API_URL" ]; then
+              echo "ERROR: API_BASE_URL must not be empty for full app build."
+              exit 1
+            fi
+            if [[ "$API_URL" != https://* ]]; then
+              echo "ERROR: API_BASE_URL must use HTTPS protocol: $API_URL"
+              exit 1
+            fi
+            if [[ "$API_URL" == *"localhost"* ]] || [[ "$API_URL" == *"127.0.0.1"* ]] || [[ "$API_URL" == *"10.0.2.2"* ]]; then
+              echo "ERROR: API_BASE_URL must not be a local address in full app build: $API_URL"
+              exit 1
+            fi
+            if [[ "$API_URL" == *"praise-app-gray.vercel.app"* ]]; then
+              echo "ERROR: API_BASE_URL must NOT point to the Production Backend alias: $API_URL"
+              exit 1
+            fi
+
+            echo "=== Building Real Full Android Debug APK ==="
+            flutter build apk --debug \
+              --flavor production \
+              --target lib/main.dart \
+              --dart-define=APP_ENV=staging \
+              --dart-define=API_BASE_URL="$API_URL"
+          else
+            echo "=== Building Isolated Safe Preview Debug APK (R3-B) ==="
+            flutter build apk --debug \
+              --flavor preview \
+              --target lib/main_preview.dart \
+              --dart-define=SAFE_PREVIEW_MODE=true
+          fi
+
+      - name: Verify APK Integrity & Inspect Merged Manifest
         run: |
           echo "=== 1. Check generated APK outputs ==="
           ls -la build/app/outputs/flutter-apk/
@@ -73,48 +113,93 @@ jobs:
           fi
           echo "Found APK: $APK_FILE"
 
-          echo "=== 2. Locate and inspect merged AndroidManifest.xml ==="
-          MERGED_MANIFEST=$(find build/app/intermediates -path "*preview*Debug*" -name "AndroidManifest.xml" | head -n 1)
-          if [ -z "$MERGED_MANIFEST" ]; then
-            MERGED_MANIFEST=$(find build/app/intermediates -name "AndroidManifest.xml" | head -n 1)
-          fi
-          echo "Merged manifest location: $MERGED_MANIFEST"
-          if [ -n "$MERGED_MANIFEST" ] && [ -f "$MERGED_MANIFEST" ]; then
-            cat "$MERGED_MANIFEST"
-
-            echo "=== 3. Security Assertions on Merged Manifest ==="
-            if grep -i 'android.permission.INTERNET' "$MERGED_MANIFEST"; then
-              echo "SECURITY VIOLATION: android.permission.INTERNET found in preview manifest!"
-              exit 1
-            else
-              echo "PASS: android.permission.INTERNET is completely absent from preview manifest."
-            fi
-
-            if grep -i 'FirebaseInitProvider' "$MERGED_MANIFEST"; then
-              echo "SECURITY VIOLATION: FirebaseInitProvider found in preview manifest!"
-              exit 1
-            else
-              echo "PASS: FirebaseInitProvider is completely disabled / removed."
-            fi
+          MODE="${{ github.event.inputs.target_mode }}"
+          if [ -z "$MODE" ]; then
+            MODE="full"
           fi
 
-          echo "=== 4. AAPT Badging & Package Inspection ==="
-          AAPT_BIN=$(find "$ANDROID_HOME/build-tools" -name aapt | sort -V | tail -n 1)
-          if [ -n "$AAPT_BIN" ] && [ -x "$AAPT_BIN" ]; then
-            echo "Using AAPT: $AAPT_BIN"
-            "$AAPT_BIN" dump badging "$APK_FILE" | grep -E 'package|permission' || true
-            if "$AAPT_BIN" dump permissions "$APK_FILE" | grep -i 'android.permission.INTERNET'; then
-              echo "SECURITY VIOLATION: android.permission.INTERNET found in APK binary permissions!"
-              exit 1
-            else
-              echo "PASS: APK binary permissions verified free of INTERNET permission."
+          if [ "$MODE" = "preview" ]; then
+            echo "=== 2. Locate and inspect preview merged AndroidManifest.xml ==="
+            MERGED_MANIFEST=$(find build/app/intermediates -path "*preview*Debug*" -name "AndroidManifest.xml" | head -n 1)
+            if [ -z "$MERGED_MANIFEST" ]; then
+              MERGED_MANIFEST=$(find build/app/intermediates -name "AndroidManifest.xml" | head -n 1)
+            fi
+            echo "Merged manifest location: $MERGED_MANIFEST"
+            if [ -n "$MERGED_MANIFEST" ] && [ -f "$MERGED_MANIFEST" ]; then
+              cat "$MERGED_MANIFEST"
+
+              echo "=== 3. Security Assertions on Preview Merged Manifest ==="
+              if grep -i 'android.permission.INTERNET' "$MERGED_MANIFEST"; then
+                echo "SECURITY VIOLATION: android.permission.INTERNET found in preview manifest!"
+                exit 1
+              else
+                echo "PASS: android.permission.INTERNET is completely absent from preview manifest."
+              fi
+
+              if grep -i 'FirebaseInitProvider' "$MERGED_MANIFEST"; then
+                echo "SECURITY VIOLATION: FirebaseInitProvider found in preview manifest!"
+                exit 1
+              else
+                echo "PASS: FirebaseInitProvider is completely disabled / removed."
+              fi
+            fi
+
+            echo "=== 4. AAPT Badging & Package Inspection (Preview) ==="
+            AAPT_BIN=$(find "$ANDROID_HOME/build-tools" -name aapt | sort -V | tail -n 1)
+            if [ -n "$AAPT_BIN" ] && [ -x "$AAPT_BIN" ]; then
+              echo "Using AAPT: $AAPT_BIN"
+              "$AAPT_BIN" dump badging "$APK_FILE" | grep -E 'package|permission' || true
+              if "$AAPT_BIN" dump permissions "$APK_FILE" | grep -i 'android.permission.INTERNET'; then
+                echo "SECURITY VIOLATION: android.permission.INTERNET found in preview APK binary permissions!"
+                exit 1
+              else
+                echo "PASS: APK binary permissions verified free of INTERNET permission."
+              fi
+            fi
+          else
+            echo "=== 2. Locate and inspect production debug merged AndroidManifest.xml ==="
+            MERGED_MANIFEST=$(find build/app/intermediates -path "*production*Debug*" -name "AndroidManifest.xml" | head -n 1)
+            if [ -z "$MERGED_MANIFEST" ]; then
+              MERGED_MANIFEST=$(find build/app/intermediates -name "AndroidManifest.xml" | head -n 1)
+            fi
+            echo "Merged manifest location: $MERGED_MANIFEST"
+            if [ -n "$MERGED_MANIFEST" ] && [ -f "$MERGED_MANIFEST" ]; then
+              cat "$MERGED_MANIFEST"
+
+              echo "=== 3. Integrity Assertions on Full App Merged Manifest ==="
+              if ! grep -i 'android.permission.INTERNET' "$MERGED_MANIFEST"; then
+                echo "ERROR: android.permission.INTERNET missing from full app manifest!"
+                exit 1
+              else
+                echo "PASS: android.permission.INTERNET is present in full app manifest."
+              fi
+            fi
+
+            echo "=== 4. AAPT Badging & Package Inspection (Full App) ==="
+            AAPT_BIN=$(find "$ANDROID_HOME/build-tools" -name aapt | sort -V | tail -n 1)
+            if [ -n "$AAPT_BIN" ] && [ -x "$AAPT_BIN" ]; then
+              echo "Using AAPT: $AAPT_BIN"
+              "$AAPT_BIN" dump badging "$APK_FILE" | grep -E 'package|permission' || true
+              if ! "$AAPT_BIN" dump permissions "$APK_FILE" | grep -i 'android.permission.INTERNET'; then
+                echo "ERROR: android.permission.INTERNET missing from APK binary permissions!"
+                exit 1
+              else
+                echo "PASS: APK binary permissions verified containing INTERNET permission."
+              fi
+
+              if ! "$AAPT_BIN" dump badging "$APK_FILE" | grep "package: name='com.louvaio.app'"; then
+                echo "ERROR: Package name must be com.louvaio.app!"
+                exit 1
+              else
+                echo "PASS: Package name confirmed as com.louvaio.app."
+              fi
             fi
           fi
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: louvaio-android-debug-apk-r3b
+          name: ${{ (github.event.inputs.target_mode == 'preview') && 'louvaio-android-debug-apk-r3b' || 'louvaio-android-debug-full-app' }}
           path: mobile/build/app/outputs/flutter-apk/*.apk
           retention-days: 7
           if-no-files-found: error
