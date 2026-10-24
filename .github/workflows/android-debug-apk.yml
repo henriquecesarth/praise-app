@@ -1,12 +1,6 @@
 name: Android Debug APK
 
 on:
-  # Temporary one-shot full-app build trigger; revert with [skip ci] after completion.
-  push:
-    branches:
-      - wip/repertoire-versions-smartchords-20261022
-    paths:
-      - '.github/workflows/android-debug-apk.yml'
   workflow_dispatch:
     inputs:
       target_mode:
