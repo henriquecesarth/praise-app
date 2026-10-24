@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" tools:node="remove" />
 
     <application
+        android:label="LouvAIO Preview"
         tools:replace="android:label">
 
         <provider

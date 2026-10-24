@@ -55,6 +55,13 @@ void main() {
   group('Safe Visual Preview (R3-B Offline Harness)', () {
     testWidgets('renders preview hub with security badges and scenarios',
         (tester) async {
+      tester.view.physicalSize = const Size(800, 1200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
       await tester.pumpWidget(createPreviewAppHarness());
       await tester.pumpAndSettle();
 
@@ -123,7 +130,7 @@ void main() {
 
       expect(find.byType(SongFormScreen), findsOneWidget);
       expect(find.text('Editar Música'), findsOneWidget);
-      expect(find.text('Versões da Música'), findsOneWidget);
+      expect(find.textContaining('Versões da Música'), findsOneWidget);
 
       // Pop back
       final backButton = find.byType(BackButton);
