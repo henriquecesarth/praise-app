@@ -241,7 +241,12 @@ class PreviewMinistryRepository implements MinistryRepository {
 
   @override
   Future<JoinMinistryResult> joinMinistryByCode({required String code}) async =>
-      JoinMinistryResult(ministry: ministry, message: 'Entrou no ministério com sucesso');
+      JoinMinistryResult(
+        ministry: ministry,
+        message: 'Entrou no ministério com sucesso',
+        role: 'admin',
+      );
+
 
   @override
   Future<MinistryInvite> createInviteCode(String ministryId, {int expiresInDays = 7}) async =>
@@ -357,8 +362,9 @@ class PreviewRepertoireRepository implements RepertoireRepository {
       lyrics: data.lyrics,
       chordSheetUrl: data.chordSheetUrl,
       notes: data.notes,
-      versions: data.versions,
+      versions: data.versions ?? const [],
     );
+
     return _song;
   }
 
@@ -468,6 +474,26 @@ class PreviewSmartChordLinkRepository implements SmartChordRepertoireLinkReposit
   }
 }
 
+class PreviewAuthNotifier extends AuthNotifier {
+  PreviewAuthNotifier(super.repository, AuthUser user) {
+    state = AuthState.authenticated(user);
+  }
+}
+
+class PreviewMinistryContextNotifier extends MinistryContextNotifier {
+  PreviewMinistryContextNotifier({
+    required super.repository,
+    required super.preferencesStorage,
+    required Ministry ministry,
+  }) {
+    state = MinistryContextState(
+      status: MinistryBootstrapStatus.ready,
+      availableMinistries: [ministry],
+      selectedMinistry: ministry,
+    );
+  }
+}
+
 // =============================================================================
 // MAIN ENTRYPOINT & WIDGET TREE
 // =============================================================================
@@ -496,18 +522,15 @@ void main() {
         preferencesStorageProvider.overrideWithValue(inMemoryPrefs),
         authRepositoryProvider.overrideWithValue(authRepo),
         authNotifierProvider.overrideWith(
-          (ref) => AuthNotifier(authRepo)..state = const AuthState.authenticated(mockUser),
+          (ref) => PreviewAuthNotifier(authRepo, mockUser),
         ),
         ministryRepositoryProvider.overrideWithValue(ministryRepo),
         ministryContextNotifierProvider.overrideWith(
-          (ref) => MinistryContextNotifier(
+          (ref) => PreviewMinistryContextNotifier(
             repository: ministryRepo,
             preferencesStorage: inMemoryPrefs,
-          )..state = const MinistryContextState(
-              status: MinistryBootstrapStatus.ready,
-              availableMinistries: [mockMinistry],
-              selectedMinistry: mockMinistry,
-            ),
+            ministry: mockMinistry,
+          ),
         ),
         repertoireRepositoryProvider.overrideWithValue(repertoireRepo),
         smartChordRepositoryProvider.overrideWithValue(chordRepo),
@@ -521,6 +544,7 @@ void main() {
     ),
   );
 }
+
 
 class SafeVisualPreviewApp extends StatelessWidget {
   const SafeVisualPreviewApp({super.key});

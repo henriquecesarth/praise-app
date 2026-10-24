@@ -31,20 +31,17 @@ void main() {
         preferencesStorageProvider.overrideWithValue(inMemoryPrefs),
         authRepositoryProvider.overrideWithValue(authRepo),
         authNotifierProvider.overrideWith(
-          (ref) => AuthNotifier(authRepo)
-            ..state = const AuthState.authenticated(mockUser),
+          (ref) => PreviewAuthNotifier(authRepo, mockUser),
         ),
         ministryRepositoryProvider.overrideWithValue(ministryRepo),
         ministryContextNotifierProvider.overrideWith(
-          (ref) => MinistryContextNotifier(
+          (ref) => PreviewMinistryContextNotifier(
             repository: ministryRepo,
             preferencesStorage: inMemoryPrefs,
-          )..state = const MinistryContextState(
-              status: MinistryBootstrapStatus.ready,
-              availableMinistries: [mockMinistry],
-              selectedMinistry: mockMinistry,
-            ),
+            ministry: mockMinistry,
+          ),
         ),
+
         repertoireRepositoryProvider.overrideWithValue(repertoireRepo),
         smartChordRepositoryProvider.overrideWithValue(chordRepo),
         smartChordRepertoireLinkRepositoryProvider.overrideWithValue(linkRepo),
