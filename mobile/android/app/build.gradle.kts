@@ -36,6 +36,19 @@ android {
         versionName = flutter.versionName
     }
 
+    flavorDimensions += "environment"
+    productFlavors {
+        create("production") {
+            dimension = "environment"
+            applicationId = "com.louvaio.app"
+        }
+        create("preview") {
+            dimension = "environment"
+            applicationId = "com.louvaio.app.preview"
+        }
+    }
+
+
     signingConfigs {
         create("release") {
             val keyAliasProp = keystoreProperties.getProperty("keyAlias")

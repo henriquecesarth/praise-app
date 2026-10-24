@@ -66,6 +66,6 @@ jobs:
             echo "Running all mobile tests..."
             flutter test
           else
-            echo "Running focused mobile tests (Repertoire, Smart Chords, Auth, Core)..."
-            flutter test test/features/repertoire test/features/smart_chords test/features/auth test/core
+            echo "Running focused mobile tests (Repertoire, Smart Chords, Auth, Core, Preview)..."
+            flutter test test/features/repertoire test/features/smart_chords test/features/auth test/core test/preview
           fi
