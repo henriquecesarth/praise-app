@@ -726,6 +726,63 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
     );
   }
 
+  /// Applies a [ScheduleTemplate] to the roteiro timeline.
+  ///
+  /// Matches Web `convertTemplateToTimeline` and `handleApplyTemplate`:
+  /// - `'song'` slots are populated in order with selected songs from [state.songs],
+  ///   falling back to the template item's `title`.
+  /// - `'event'` items use their `title`, formatted duration as `time`, and `icon` (or `'Evento'`) as `type`.
+  /// - When [replace] is `true`, replaces [state.timeline]; otherwise appends to [state.timeline].
+  void applyTemplate(ScheduleTemplate template, {required bool replace}) {
+    final songs = state.songs;
+    var songSlotIndex = 0;
+    final nowMicros = DateTime.now().microsecondsSinceEpoch;
+    final newItems = <ScheduleTimelineItem>[];
+
+    for (var i = 0; i < template.items.length; i++) {
+      final item = template.items[i];
+      if (item.type == 'song') {
+        final realSong =
+            songSlotIndex < songs.length ? songs[songSlotIndex] : null;
+        songSlotIndex++;
+        final resolvedTitle =
+            (realSong?.title != null && realSong!.title!.trim().isNotEmpty)
+                ? realSong.title!.trim()
+                : item.title;
+        newItems.add(
+          ScheduleTimelineItem(
+            id: 'tl_${nowMicros}_$i',
+            title: resolvedTitle,
+            time: null,
+            type: 'Música',
+          ),
+        );
+      } else {
+        final formattedDur = item.formattedDuration;
+        final resolvedType =
+            (item.icon != null && item.icon!.trim().isNotEmpty)
+                ? item.icon!.trim()
+                : 'Evento';
+        newItems.add(
+          ScheduleTimelineItem(
+            id: 'tl_${nowMicros}_$i',
+            title: item.title,
+            time: formattedDur.isNotEmpty ? formattedDur : null,
+            type: resolvedType,
+          ),
+        );
+      }
+    }
+
+    final updatedTimeline =
+        replace ? newItems : [...state.timeline, ...newItems];
+    state = state.copyWith(
+      timeline: updatedTimeline,
+      isDirty: true,
+      clearError: true,
+    );
+  }
+
   // ─── Clothing / Vestimenta Management ──────────────────────────────────
 
   /// Adds a clothing piece.

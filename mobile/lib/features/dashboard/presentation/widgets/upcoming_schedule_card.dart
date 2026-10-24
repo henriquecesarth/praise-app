@@ -106,13 +106,17 @@ class UpcomingScheduleCard extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(width: 6),
-                          Text(
-                            schedule.formattedDateTime,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: theme.colorScheme.onSurface.withValues(
-                                alpha: 0.8,
+                          Expanded(
+                            child: Text(
+                              schedule.formattedDateTime,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: theme.colorScheme.onSurface.withValues(
+                                  alpha: 0.8,
+                                ),
+                                fontWeight: FontWeight.w500,
                               ),
-                              fontWeight: FontWeight.w500,
                             ),
                           ),
                         ],

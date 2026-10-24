@@ -368,6 +368,70 @@ void main() {
       // Announcement is visible on dashboard
       expect(find.text('Reunião de Alinhamento'), findsOneWidget);
     });
+
+    testWidgets(
+        'renders long ministry name, admin role badge, and cards without overflow at 320px, 360px, and 393px widths with 1.3x text scale',
+        (tester) async {
+      const longMinistry = Ministry(
+        id: 'min_long',
+        name:
+            'Ministério de Louvor e Adoração Congregacional da Igreja Batista Central',
+        slug: 'ministerio-longo',
+        role: 'admin',
+        ownerUserId: 'user_1',
+      );
+
+      repo.schedules = [
+        const DashboardScheduleSummary(
+          id: 'sch_long',
+          ministryId: 'min_long',
+          title: 'Culto Especial de Celebração e Santa Ceia do Senhor',
+          date: '2099-10-24',
+          time: '19:30',
+          participants: [
+            DashboardScheduleParticipant(
+                id: 'p1', name: 'Henrique', role: 'Ministro', confirmed: true),
+          ],
+        ),
+      ];
+      repo.announcements = [
+        const Announcement(
+          id: 'ann_long',
+          ministryId: 'min_long',
+          title: 'Comunicado Importante de Ensaio Geral e Passagem de Som',
+          content: 'Todos devem chegar no horário combinado.',
+          author: 'Coordenação Musical',
+          important: true,
+        ),
+      ];
+
+      for (final width in [320.0, 360.0, 393.0]) {
+        tester.view.physicalSize = Size(width, 800);
+        tester.view.devicePixelRatio = 1.0;
+
+        await tester.pumpWidget(
+          MediaQuery(
+            data: MediaQueryData(
+              size: Size(width, 800),
+              textScaler: width == 320.0
+                  ? const TextScaler.linear(1.3)
+                  : TextScaler.noScaling,
+            ),
+            child: createWidget(
+              repo: repo,
+              ministry: longMinistry,
+              hasMultiple: true,
+              size: Size(width, 800),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull,
+            reason: 'No overflow on DashboardView at ${width}px');
+      }
+
+      addTearDown(tester.view.resetPhysicalSize);
+    });
   });
 }
 

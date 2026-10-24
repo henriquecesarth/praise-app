@@ -1,6 +1,8 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../../domain/classification.dart';
 import '../../domain/song_detail.dart';
+import '../widgets/musical_key_selector.dart';
 
 /// Result returned when a version is edited or created via [VersionEditorSheet].
 class SongVersionEditorResult {
@@ -17,7 +19,7 @@ class SongVersionEditorResult {
 
 /// Dedicated modal sheet for creating or editing a specific song version.
 ///
-/// Contains all version-scoped fields: name, musical key chips, BPM,
+/// Contains all version-scoped fields: name, compact musical key selector, BPM,
 /// duration, classification chips, version notes, and reference links.
 class VersionEditorSheet extends StatefulWidget {
   final SongVersion initialVersion;
@@ -31,7 +33,7 @@ class VersionEditorSheet extends StatefulWidget {
     required this.initialVersion,
     required this.initialBpmDraft,
     required this.isNew,
-    required this.musicalKeys,
+    this.musicalKeys = kSupportedMusicalKeys,
     required this.classifications,
   });
 
@@ -187,14 +189,17 @@ class _VersionEditorSheetState extends State<VersionEditorSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final mediaQuery = MediaQuery.of(context);
+    final keyboardInset = mediaQuery.viewInsets.bottom;
+    final bottomSafeInset = keyboardInset > 0
+        ? 0.0
+        : math.max(mediaQuery.padding.bottom, mediaQuery.viewPadding.bottom);
 
     return Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-      ),
+      padding: EdgeInsets.only(bottom: keyboardInset),
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.88,
+          maxHeight: mediaQuery.size.height * 0.88,
           maxWidth: 760,
         ),
         child: Column(
@@ -215,27 +220,26 @@ class _VersionEditorSheetState extends State<VersionEditorSheet> {
             ),
             // Header
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    children: [
-                      Icon(
-                        widget.isNew
-                            ? Icons.add_circle_outline
-                            : Icons.tune_outlined,
-                        color: theme.colorScheme.primary,
-                        size: 22,
+                  Icon(
+                    widget.isNew
+                        ? Icons.add_circle_outline
+                        : Icons.tune_outlined,
+                    color: theme.colorScheme.primary,
+                    size: 22,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      widget.isNew ? 'Nova Versão' : 'Editar Versão',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
                       ),
-                      const SizedBox(width: 8),
-                      Text(
-                        widget.isNew ? 'Nova Versão' : 'Editar Versão',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.close),
@@ -250,7 +254,7 @@ class _VersionEditorSheetState extends State<VersionEditorSheet> {
             Flexible(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
+                  horizontal: 16,
                   vertical: 16,
                 ),
                 child: Form(
@@ -277,47 +281,18 @@ class _VersionEditorSheetState extends State<VersionEditorSheet> {
                       ),
                       const SizedBox(height: 16),
 
-                      // Musical Key (Tom)
-                      Text(
-                        'Tom Original',
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
+                      // Compact Musical Key Selector
+                      MusicalKeySelectorField(
+                        selectedKey: _selectedKey,
+                        onKeyChanged: (newKey) {
+                          setState(() => _selectedKey = newKey);
+                        },
                       ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          ChoiceChip(
-                            key: const ValueKey('key_chip_none'),
-                            label: const Text('Sem tom'),
-                            selected: _selectedKey == null,
-                            onSelected: (selected) {
-                              if (selected) {
-                                setState(() => _selectedKey = null);
-                              }
-                            },
-                          ),
-                          ...widget.musicalKeys.map((key) {
-                            final isSelected = _selectedKey == key;
-                            return ChoiceChip(
-                              key: ValueKey('key_chip_$key'),
-                              label: Text(key),
-                              selected: isSelected,
-                              onSelected: (selected) {
-                                setState(() {
-                                  _selectedKey = selected ? key : null;
-                                });
-                              },
-                            );
-                          }),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
+                      const SizedBox(height: 16),
 
                       // BPM & Duration Row
                       Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Expanded(
                             child: TextFormField(
@@ -326,23 +301,33 @@ class _VersionEditorSheetState extends State<VersionEditorSheet> {
                               keyboardType: TextInputType.text,
                               decoration: const InputDecoration(
                                 labelText: 'BPM',
-                                hintText: 'ex: 72 ou Rubato',
+                                hintText: '72 ou Rubato',
                                 border: OutlineInputBorder(),
-                                prefixIcon: Icon(Icons.speed),
+                                isDense: true,
+                                prefixIcon: Icon(Icons.speed, size: 20),
+                                prefixIconConstraints: BoxConstraints(
+                                  minWidth: 36,
+                                  minHeight: 36,
+                                ),
                               ),
                               validator: _validateBpm,
                             ),
                           ),
-                          const SizedBox(width: 16),
+                          const SizedBox(width: 12),
                           Expanded(
                             child: TextFormField(
                               key: const ValueKey('song_duration_input'),
                               controller: _durationController,
                               decoration: const InputDecoration(
                                 labelText: 'Duração',
-                                hintText: 'ex: 04:30',
+                                hintText: '04:30',
                                 border: OutlineInputBorder(),
-                                prefixIcon: Icon(Icons.timer_outlined),
+                                isDense: true,
+                                prefixIcon: Icon(Icons.timer_outlined, size: 20),
+                                prefixIconConstraints: BoxConstraints(
+                                  minWidth: 36,
+                                  minHeight: 36,
+                                ),
                               ),
                             ),
                           ),
@@ -493,14 +478,23 @@ class _VersionEditorSheetState extends State<VersionEditorSheet> {
               ),
             ),
             const Divider(height: 1),
-            // Footer actions
+            // Footer actions protected from Android navigation bar & keyboard
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              key: const ValueKey('version_editor_footer'),
+              padding: EdgeInsets.fromLTRB(
+                16,
+                12,
+                16,
+                12 + bottomSafeInset,
+              ),
               child: Row(
                 children: [
                   Expanded(
                     child: OutlinedButton(
                       key: const ValueKey('cancel_version_sheet_button'),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(0, 44),
+                      ),
                       onPressed: () => Navigator.of(context).pop(),
                       child: const Text('Cancelar'),
                     ),
@@ -509,6 +503,9 @@ class _VersionEditorSheetState extends State<VersionEditorSheet> {
                   Expanded(
                     child: FilledButton(
                       key: const ValueKey('save_version_sheet_button'),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 44),
+                      ),
                       onPressed: _save,
                       child: Text(widget.isNew ? 'Adicionar' : 'Concluir'),
                     ),

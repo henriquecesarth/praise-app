@@ -839,12 +839,15 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
 
                             // Versions Management Section
                             Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text(
-                                  'Versões da Música (${_versions.length})',
-                                  style: theme.textTheme.titleSmall?.copyWith(
-                                    fontWeight: FontWeight.bold,
+                                Expanded(
+                                  child: Text(
+                                    'Versões da Música (${_versions.length})',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.titleSmall?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
                                 ),
                                 TextButton.icon(
@@ -892,22 +895,23 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
                                         Row(
                                           children: [
                                             Expanded(
-                                              child: Row(
+                                              child: Wrap(
+                                                spacing: 8,
+                                                runSpacing: 4,
+                                                crossAxisAlignment: WrapCrossAlignment.center,
                                                 children: [
-                                                  Flexible(
-                                                    child: Text(
-                                                      ver.name.isEmpty
-                                                          ? (isPrimary ? 'Original' : 'Versão ${idx + 1}')
-                                                          : ver.name,
-                                                      style: const TextStyle(
-                                                        fontSize: 15,
-                                                        fontWeight: FontWeight.bold,
-                                                      ),
-                                                      overflow: TextOverflow.ellipsis,
+                                                  Text(
+                                                    ver.name.isEmpty
+                                                        ? (isPrimary ? 'Original' : 'Versão ${idx + 1}')
+                                                        : ver.name,
+                                                    style: const TextStyle(
+                                                      fontSize: 15,
+                                                      fontWeight: FontWeight.bold,
                                                     ),
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
                                                   ),
-                                                  if (isPrimary) ...[
-                                                    const SizedBox(width: 8),
+                                                  if (isPrimary)
                                                     Container(
                                                       padding: const EdgeInsets.symmetric(
                                                         horizontal: 6,
@@ -926,19 +930,20 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
                                                         ),
                                                       ),
                                                     ),
-                                                  ],
                                                 ],
                                               ),
                                             ),
                                             IconButton(
                                               key: ValueKey('edit_version_button_$idx'),
                                               tooltip: 'Editar versão',
+                                              visualDensity: VisualDensity.compact,
                                               icon: const Icon(Icons.edit_outlined, size: 20),
                                               onPressed: () => _openVersionEditor(index: idx),
                                             ),
                                             IconButton(
                                               key: ValueKey('duplicate_version_button_$idx'),
                                               tooltip: 'Duplicar versão',
+                                              visualDensity: VisualDensity.compact,
                                               icon: const Icon(Icons.copy_outlined, size: 20),
                                               onPressed: () => _duplicateVersion(idx),
                                             ),
@@ -946,6 +951,7 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
                                               IconButton(
                                                 key: ValueKey('delete_version_button_$idx'),
                                                 tooltip: 'Excluir versão',
+                                                visualDensity: VisualDensity.compact,
                                                 icon: Icon(
                                                   Icons.delete_outline,
                                                   size: 20,

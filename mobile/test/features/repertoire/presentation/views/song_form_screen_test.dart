@@ -247,7 +247,7 @@ void main() {
       expect(find.byKey(const ValueKey('song_version_name_input')), findsOneWidget);
       expect(find.byKey(const ValueKey('song_bpm_input')), findsOneWidget);
       expect(find.byKey(const ValueKey('song_duration_input')), findsOneWidget);
-      expect(find.byKey(const ValueKey('key_chip_G')), findsOneWidget);
+      expect(find.byKey(const ValueKey('musical_key_selector_field')), findsOneWidget);
       expect(find.byKey(const ValueKey('save_version_sheet_button')), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('cancel_version_sheet_button')));
@@ -274,8 +274,10 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
       await tester.pumpAndSettle();
 
-      // Tap 'D' tone chip
-      await tester.tap(find.byKey(const ValueKey('key_chip_D')));
+      // Tap compact tone selector and choose 'D'
+      await tester.tap(find.byKey(const ValueKey('musical_key_selector_field')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('key_option_D')));
       await tester.pumpAndSettle();
 
       // Confirm version
@@ -424,8 +426,10 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
       await tester.pumpAndSettle();
       await tester.enterText(find.byKey(const ValueKey('song_bpm_input')), '128');
-      await tester.ensureVisible(find.byKey(const ValueKey('key_chip_G')));
-      await tester.tap(find.byKey(const ValueKey('key_chip_G')));
+      await tester.tap(find.byKey(const ValueKey('musical_key_selector_field')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('key_option_G')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
       await tester.pumpAndSettle();
 
@@ -466,8 +470,10 @@ void main() {
       await tester.enterText(find.byKey(const ValueKey('song_title_input')), 'Lugar Secreto');
       await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.byKey(const ValueKey('key_chip_C')));
-      await tester.tap(find.byKey(const ValueKey('key_chip_C')));
+      await tester.tap(find.byKey(const ValueKey('musical_key_selector_field')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('key_option_C')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
       await tester.pumpAndSettle();
 
@@ -479,8 +485,10 @@ void main() {
       // Edit the newly added second version in sheet
       await tester.ensureVisible(find.byKey(const ValueKey('song_version_name_input')));
       await tester.enterText(find.byKey(const ValueKey('song_version_name_input')), 'Acústico');
-      await tester.ensureVisible(find.byKey(const ValueKey('key_chip_A')));
-      await tester.tap(find.byKey(const ValueKey('key_chip_A')));
+      await tester.tap(find.byKey(const ValueKey('musical_key_selector_field')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('key_option_A')));
+      await tester.pumpAndSettle();
       await tester.enterText(find.byKey(const ValueKey('song_bpm_input')), '75');
       await tester.pumpAndSettle();
 

@@ -47,7 +47,42 @@ abstract class ScheduleRepository {
   Future<List<MinistryRole>> getMinistryRoles(String ministryId);
 }
 
-class HttpScheduleRepository implements ScheduleRepository {
+/// Optional capability interface for repositories that support schedule deletion.
+abstract class ScheduleDeletionCapable {
+  /// Deletes an existing schedule. Requires admin role.
+  Future<void> deleteSchedule(String ministryId, String scheduleId);
+}
+
+extension ScheduleRepositoryDeleteExtension on ScheduleRepository {
+  Future<void> deleteSchedule(String ministryId, String scheduleId) async {
+    final self = this;
+    if (self is ScheduleDeletionCapable) {
+      await self.deleteSchedule(ministryId, scheduleId);
+    }
+  }
+}
+
+/// Optional capability interface for repositories that support schedule roteiro templates.
+abstract class ScheduleTemplateCapable {
+  /// Lists all schedule templates for [ministryId].
+  Future<List<ScheduleTemplate>> getScheduleTemplates(String ministryId);
+}
+
+extension ScheduleRepositoryTemplateExtension on ScheduleRepository {
+  Future<List<ScheduleTemplate>> getScheduleTemplates(String ministryId) async {
+    final self = this;
+    if (self is ScheduleTemplateCapable) {
+      return self.getScheduleTemplates(ministryId);
+    }
+    return const [];
+  }
+}
+
+class HttpScheduleRepository
+    implements
+        ScheduleRepository,
+        ScheduleDeletionCapable,
+        ScheduleTemplateCapable {
   final ApiClient _apiClient;
 
   HttpScheduleRepository({required ApiClient apiClient})
@@ -240,6 +275,40 @@ class HttpScheduleRepository implements ScheduleRepository {
     } catch (e) {
       if (e is AppFailure) rethrow;
       throw AppFailure(message: 'Erro ao carregar funções ministeriais: $e');
+    }
+  }
+
+  @override
+  Future<void> deleteSchedule(String ministryId, String scheduleId) async {
+    try {
+      await _apiClient.dio.delete<void>(
+        '/ministries/$ministryId/schedules/$scheduleId',
+      );
+    } on DioException catch (e) {
+      throw _apiClient.mapDioException(e);
+    } catch (e) {
+      if (e is AppFailure) rethrow;
+      throw AppFailure(message: 'Erro ao excluir escala: $e');
+    }
+  }
+
+  @override
+  Future<List<ScheduleTemplate>> getScheduleTemplates(String ministryId) async {
+    try {
+      final response = await _apiClient.dio.get<List<dynamic>>(
+        '/ministries/$ministryId/schedule-templates',
+      );
+      final data = response.data;
+      if (data == null) return [];
+      return data
+          .whereType<Map<String, dynamic>>()
+          .map(ScheduleTemplate.fromJson)
+          .toList();
+    } on DioException catch (e) {
+      throw _apiClient.mapDioException(e);
+    } catch (e) {
+      if (e is AppFailure) rethrow;
+      throw AppFailure(message: 'Erro ao carregar modelos de roteiro: $e');
     }
   }
 }

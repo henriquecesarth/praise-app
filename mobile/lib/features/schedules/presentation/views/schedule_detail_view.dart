@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/providers.dart';
 import '../../../ministry_context/presentation/controllers/ministry_context_controller.dart';
+import '../../../repertoire/presentation/views/song_detail_view.dart';
 import '../../domain/schedule.dart';
 import '../../domain/schedule_comment.dart';
 import '../../domain/schedule_participant.dart';
@@ -12,7 +13,8 @@ import 'schedule_form_screen.dart';
 ///
 /// State is keyed by [ministryId] + [scheduleId].
 /// Contains: title, date/time, duration, notes, participants,
-/// songs/timeline/clothing (when present), confirmation section, comments.
+/// songs/timeline/clothing (when present), confirmation section, comments,
+/// and admin edit/delete controls.
 class ScheduleDetailView extends ConsumerStatefulWidget {
   final String ministryId;
   final String scheduleId;
@@ -55,6 +57,62 @@ class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
     _commentController.dispose();
     _commentFocusNode.dispose();
     super.dispose();
+  }
+
+  Future<void> _confirmAndDeleteSchedule(
+    BuildContext context,
+    ScheduleDetail schedule,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Excluir escala?'),
+        content: Text(
+          'Tem certeza que deseja excluir a escala "${schedule.title}"? Esta ação não pode ser desfeita.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const ValueKey('confirm_delete_schedule_button'),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    final deleted = await ref
+        .read(scheduleDetailNotifierProvider.notifier)
+        .deleteSchedule(widget.ministryId, widget.scheduleId);
+
+    if (!mounted) return;
+
+    if (deleted) {
+      ref.read(scheduleListNotifierProvider.notifier).refresh();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Escala "${schedule.title}" excluída com sucesso.'),
+        ),
+      );
+      Navigator.of(context).maybePop();
+    } else {
+      final err = ref.read(scheduleDetailNotifierProvider).deleteError ??
+          'Não foi possível excluir a escala.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(err),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+    }
   }
 
   @override
@@ -128,7 +186,7 @@ class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
           overflow: TextOverflow.ellipsis,
         ),
         actions: [
-          if (isAdmin && detailState.schedule != null)
+          if (isAdmin && detailState.schedule != null) ...[
             IconButton(
               key: const ValueKey('edit_schedule_button'),
               icon: const Icon(Icons.edit_outlined),
@@ -144,6 +202,27 @@ class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
                 );
               },
             ),
+            IconButton(
+              key: const ValueKey('delete_schedule_button'),
+              icon: detailState.isDeleting
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      Icons.delete_outline,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+              tooltip: 'Excluir escala',
+              onPressed: detailState.isDeleting
+                  ? null
+                  : () => _confirmAndDeleteSchedule(
+                        context,
+                        detailState.schedule!,
+                      ),
+            ),
+          ],
         ],
       ),
       body: SafeArea(child: body),
@@ -186,7 +265,8 @@ class _DetailContent extends ConsumerWidget {
           children: [
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.all(20),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
                 children: [
                   _InfoSection(schedule: schedule),
                   const SizedBox(height: 16),
@@ -203,7 +283,10 @@ class _DetailContent extends ConsumerWidget {
                   ),
                   const SizedBox(height: 16),
                   if (schedule.songs.isNotEmpty) ...[
-                    _SongsSection(songs: schedule.songs),
+                    _SongsSection(
+                      songs: schedule.songs,
+                      ministryId: ministryId,
+                    ),
                     const SizedBox(height: 16),
                   ],
                   if (schedule.timeline.isNotEmpty) ...[
@@ -302,6 +385,13 @@ class _InfoSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final dressCount = schedule.clothingPieces.length +
+        ((schedule.colorPalette != null &&
+                schedule.colorPalette!.trim().isNotEmpty &&
+                schedule.clothingPieces.isEmpty)
+            ? 1
+            : 0);
+
     return _SectionCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -309,6 +399,60 @@ class _InfoSection extends StatelessWidget {
           Text(schedule.title,
               style: theme.textTheme.titleLarge
                   ?.copyWith(fontWeight: FontWeight.bold)),
+          if (!schedule.isVisible || schedule.requireConfirmation) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: [
+                if (!schedule.isVisible)
+                  Container(
+                    key: const ValueKey('schedule_private_badge'),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.secondaryContainer,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.visibility_off_outlined,
+                          size: 13,
+                          color: theme.colorScheme.onSecondaryContainer,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Privado (apenas admins)',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onSecondaryContainer,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (schedule.requireConfirmation)
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primaryContainer
+                          .withValues(alpha: 0.6),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      'Confirmação solicitada',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onPrimaryContainer,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
           const SizedBox(height: 12),
           _InfoRow(
               icon: Icons.calendar_today_outlined,
@@ -326,6 +470,65 @@ class _InfoSection extends StatelessWidget {
               text: schedule.weeksUntil(),
               color: theme.colorScheme.primary,
             ),
+          const SizedBox(height: 12),
+          const Divider(height: 1),
+          const SizedBox(height: 10),
+          Wrap(
+            key: const ValueKey('schedule_detail_stats_row'),
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              _StatChip(
+                icon: Icons.people_outline,
+                label: '${schedule.participants.length} int.',
+              ),
+              _StatChip(
+                icon: Icons.music_note_outlined,
+                label: '${schedule.songs.length} mús.',
+              ),
+              _StatChip(
+                icon: Icons.view_timeline_outlined,
+                label: '${schedule.timeline.length} rot.',
+              ),
+              _StatChip(
+                icon: Icons.checkroom_outlined,
+                label: '$dressCount vest.',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  const _StatChip({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: theme.colorScheme.primary),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: theme.textTheme.labelSmall?.copyWith(
+              fontWeight: FontWeight.w600,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
         ],
       ),
     );
@@ -351,9 +554,13 @@ class _ParticipantsSection extends StatelessWidget {
             Icon(Icons.people_outline,
                 size: 18, color: theme.colorScheme.primary),
             const SizedBox(width: 8),
-            Text('Participantes ($confirmed/$total confirmados)',
+            Expanded(
+              child: Text(
+                'Participantes ($confirmed/$total confirmados)',
                 style: theme.textTheme.titleSmall
-                    ?.copyWith(fontWeight: FontWeight.w600)),
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
           ]),
           const SizedBox(height: 12),
           ...participants.map((p) => _ParticipantRow(participant: p)),
@@ -390,10 +597,17 @@ class _ParticipantRow extends StatelessWidget {
         const SizedBox(width: 8),
         Expanded(
             child: Text(participant.name, style: theme.textTheme.bodyMedium)),
-        if (participant.role.isNotEmpty)
-          Text(participant.role,
+        if (participant.role.isNotEmpty) ...[
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              participant.role,
+              textAlign: TextAlign.end,
               style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.55))),
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.55)),
+            ),
+          ),
+        ],
       ]),
     );
   }
@@ -436,18 +650,80 @@ class _ConfirmationSection extends ConsumerWidget {
         ]),
       );
     }
+
+    final authUser = ref.watch(authNotifierProvider).user;
+    ScheduleParticipant? myParticipant;
+    if (authUser != null) {
+      for (final p in schedule.participants) {
+        if (p.userId == authUser.id ||
+            p.id == authUser.id ||
+            (p.userId == null &&
+                authUser.name.trim().isNotEmpty &&
+                p.name.trim().toLowerCase() ==
+                    authUser.name.trim().toLowerCase())) {
+          myParticipant = p;
+          break;
+        }
+      }
+    }
+
+    final isExplicitlyUnscheduledUser =
+        authUser != null && myParticipant == null;
+
     return _SectionCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            Icon(Icons.how_to_reg_outlined,
-                size: 18, color: theme.colorScheme.primary),
-            const SizedBox(width: 8),
-            Text('Confirmação de Presença',
-                style: theme.textTheme.titleSmall
-                    ?.copyWith(fontWeight: FontWeight.w600)),
-          ]),
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.how_to_reg_outlined,
+                      size: 18, color: theme.colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Confirmação de Presença',
+                    style: theme.textTheme.titleSmall
+                        ?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+              if (myParticipant != null)
+                Container(
+                  key: const ValueKey('my_confirmation_status_badge'),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: myParticipant.confirmed == true
+                        ? Colors.green.withValues(alpha: 0.15)
+                        : myParticipant.confirmed == false
+                            ? theme.colorScheme.errorContainer
+                            : theme.colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    myParticipant.confirmed == true
+                        ? 'Confirmado'
+                        : myParticipant.confirmed == false
+                            ? 'Recusado'
+                            : 'Pendente',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: myParticipant.confirmed == true
+                          ? Colors.green.shade700
+                          : myParticipant.confirmed == false
+                              ? theme.colorScheme.onErrorContainer
+                              : theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+            ],
+          ),
           const SizedBox(height: 12),
           if (error != null) ...[
             Container(
@@ -475,48 +751,59 @@ class _ConfirmationSection extends ConsumerWidget {
             ),
             const SizedBox(height: 10),
           ],
-          Row(children: [
-            Expanded(
-              child: SizedBox(
-                height: 44,
-                child: OutlinedButton.icon(
-                  onPressed: isConfirming
-                      ? null
-                      : () => ref
-                          .read(scheduleDetailNotifierProvider.notifier)
-                          .confirm(ministryId, scheduleId, false),
-                  icon: const Icon(Icons.cancel_outlined, size: 17),
-                  label: const Text('Não vou'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: theme.colorScheme.error,
-                    side: BorderSide(
-                        color: theme.colorScheme.error.withValues(alpha: 0.5)),
+          if (isExplicitlyUnscheduledUser)
+            Text(
+              'Você não está escalado nesta escala.',
+              key: const ValueKey('not_scheduled_participant_notice'),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                fontStyle: FontStyle.italic,
+              ),
+            )
+          else
+            Row(children: [
+              Expanded(
+                child: SizedBox(
+                  height: 44,
+                  child: OutlinedButton.icon(
+                    onPressed: isConfirming
+                        ? null
+                        : () => ref
+                            .read(scheduleDetailNotifierProvider.notifier)
+                            .confirm(ministryId, scheduleId, false),
+                    icon: const Icon(Icons.cancel_outlined, size: 17),
+                    label: const Text('Não vou'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: theme.colorScheme.error,
+                      side: BorderSide(
+                          color:
+                              theme.colorScheme.error.withValues(alpha: 0.5)),
+                    ),
                   ),
                 ),
               ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: SizedBox(
-                height: 44,
-                child: FilledButton.icon(
-                  onPressed: isConfirming
-                      ? null
-                      : () => ref
-                          .read(scheduleDetailNotifierProvider.notifier)
-                          .confirm(ministryId, scheduleId, true),
-                  icon: isConfirming
-                      ? const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white))
-                      : const Icon(Icons.check_circle_outline, size: 17),
-                  label: Text(isConfirming ? 'Confirmando...' : 'Confirmar'),
+              const SizedBox(width: 10),
+              Expanded(
+                child: SizedBox(
+                  height: 44,
+                  child: FilledButton.icon(
+                    onPressed: isConfirming
+                        ? null
+                        : () => ref
+                            .read(scheduleDetailNotifierProvider.notifier)
+                            .confirm(ministryId, scheduleId, true),
+                    icon: isConfirming
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white))
+                        : const Icon(Icons.check_circle_outline, size: 17),
+                    label: Text(isConfirming ? 'Confirmando...' : 'Confirmar'),
+                  ),
                 ),
               ),
-            ),
-          ]),
+            ]),
         ],
       ),
     );
@@ -527,7 +814,12 @@ class _ConfirmationSection extends ConsumerWidget {
 
 class _SongsSection extends StatelessWidget {
   final List<ScheduleSong> songs;
-  const _SongsSection({required this.songs});
+  final String ministryId;
+
+  const _SongsSection({
+    required this.songs,
+    required this.ministryId,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -540,31 +832,93 @@ class _SongsSection extends StatelessWidget {
             Icon(Icons.queue_music_outlined,
                 size: 18, color: theme.colorScheme.primary),
             const SizedBox(width: 8),
-            Text('Músicas (${songs.length})',
+            Expanded(
+              child: Text(
+                'Músicas (${songs.length})',
                 style: theme.textTheme.titleSmall
-                    ?.copyWith(fontWeight: FontWeight.w600)),
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
           ]),
           const SizedBox(height: 10),
           ...songs.asMap().entries.map((e) {
             final idx = e.key + 1;
             final song = e.value;
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 3),
-              child: Row(children: [
-                Text('$idx.',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurface
-                            .withValues(alpha: 0.5))),
-                const SizedBox(width: 8),
-                Expanded(
-                    child: Text(song.title ?? '—',
-                        style: theme.textTheme.bodyMedium)),
-                if (song.artist != null)
-                  Text(song.artist!,
+            final canOpenDetail = song.id.trim().isNotEmpty;
+            return InkWell(
+              key: ValueKey('detail_song_row_$idx'),
+              onTap: canOpenDetail
+                  ? () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => SongDetailView(
+                            ministryId: ministryId,
+                            songId: song.id,
+                            initialTitle: song.title,
+                          ),
+                        ),
+                      );
+                    }
+                  : null,
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                child: Row(children: [
+                  Text('$idx.',
                       style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurface
-                              .withValues(alpha: 0.55))),
-              ]),
+                              .withValues(alpha: 0.5))),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(song.title ?? '—',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w500,
+                            )),
+                        if (song.artist != null && song.artist!.isNotEmpty)
+                          Text(
+                            song.artist!,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurface
+                                    .withValues(alpha: 0.55)),
+                          ),
+                      ],
+                    ),
+                  ),
+                  if (song.key != null && song.key!.trim().isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      key: ValueKey('detail_song_key_${song.id}'),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                            color: theme.colorScheme.outlineVariant),
+                      ),
+                      child: Text(
+                        'Tom: ${song.key}',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (canOpenDetail) ...[
+                    const SizedBox(width: 4),
+                    Icon(
+                      Icons.chevron_right,
+                      size: 18,
+                      color:
+                          theme.colorScheme.onSurface.withValues(alpha: 0.45),
+                    ),
+                  ],
+                ]),
+              ),
             );
           }),
         ],
@@ -579,6 +933,34 @@ class _TimelineSection extends StatelessWidget {
   final List<ScheduleTimelineItem> items;
   const _TimelineSection({required this.items});
 
+  String _getTimelineTypeLabel(String type) {
+    switch (type) {
+      case 'worship':
+      case 'Louvor':
+      case 'Música':
+        return 'Louvor';
+      case 'word':
+      case 'Palavra':
+        return 'Palavra';
+      case 'prayer':
+      case 'Oração':
+        return 'Oração';
+      case 'transition':
+      case 'Transição':
+        return 'Transição';
+      case 'Avisos':
+        return 'Avisos';
+      case 'Oferta':
+        return 'Oferta';
+      case 'Evento':
+        return 'Evento';
+      case 'other':
+      case 'Outro':
+      default:
+        return '';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -590,30 +972,53 @@ class _TimelineSection extends StatelessWidget {
             Icon(Icons.view_timeline_outlined,
                 size: 18, color: theme.colorScheme.primary),
             const SizedBox(width: 8),
-            Text('Roteiro',
+            Expanded(
+              child: Text(
+                'Roteiro',
                 style: theme.textTheme.titleSmall
-                    ?.copyWith(fontWeight: FontWeight.w600)),
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
           ]),
           const SizedBox(height: 10),
-          ...items.map((item) => Padding(
-                padding: const EdgeInsets.symmetric(vertical: 3),
-                child: Row(children: [
-                  SizedBox(
-                    width: 42,
+          ...items.map((item) {
+            final typeLabel = _getTimelineTypeLabel(item.type);
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(children: [
+                SizedBox(
+                  width: 46,
+                  child: Text(
+                    item.time ?? '',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                        color:
+                            theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                        fontFamily: 'monospace'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                    child: Text(item.title, style: theme.textTheme.bodyMedium)),
+                if (typeLabel.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
                     child: Text(
-                      item.time ?? '',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurface
-                              .withValues(alpha: 0.5),
-                          fontFamily: 'monospace'),
+                      typeLabel,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                      child:
-                          Text(item.title, style: theme.textTheme.bodyMedium)),
-                ]),
-              )),
+                ],
+              ]),
+            );
+          }),
         ],
       ),
     );
@@ -647,32 +1052,41 @@ class _ClothingSection extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            Icon(Icons.checkroom_outlined,
-                size: 18, color: theme.colorScheme.primary),
-            const SizedBox(width: 8),
-            Text('Vestimenta',
-                style: theme.textTheme.titleSmall
-                    ?.copyWith(fontWeight: FontWeight.w600)),
-            if (hasPalette) ...[
-              const Spacer(),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  palette!.trim(),
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w600,
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.checkroom_outlined,
+                      size: 18, color: theme.colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Text('Vestimenta',
+                      style: theme.textTheme.titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w600)),
+                ],
+              ),
+              if (hasPalette)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    palette!.trim(),
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-              ),
             ],
-          ]),
+          ),
           if (pieces.isEmpty && hasPalette)
             Padding(
               padding: const EdgeInsets.only(top: 8.0),
@@ -683,49 +1097,53 @@ class _ClothingSection extends StatelessWidget {
             ),
           if (pieces.isNotEmpty) ...[
             const SizedBox(height: 10),
-            ...pieces.map((piece) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 3),
-                  child: Row(children: [
-                    if (piece.colors.isNotEmpty)
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: piece.colors.map((c) {
-                          return Container(
-                            width: 14,
-                            height: 14,
-                            margin: const EdgeInsets.only(right: 4),
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: _parseColor(c) ??
-                                  theme.colorScheme.primary,
-                              border: Border.all(
-                                  color: theme.colorScheme.outlineVariant),
-                            ),
-                          );
-                        }).toList(),
-                      )
-                    else if (piece.colorHex != null)
-                      Container(
-                        width: 14,
-                        height: 14,
-                        margin: const EdgeInsets.only(right: 8),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: _parseColor(piece.colorHex!) ??
-                              theme.colorScheme.primary,
-                          border: Border.all(
-                              color: theme.colorScheme.outlineVariant),
-                        ),
+            ...pieces.map((piece) {
+              final label = piece.description.isNotEmpty
+                  ? piece.description
+                  : piece.name;
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(children: [
+                  if (piece.colors.isNotEmpty)
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: piece.colors.map((c) {
+                        return Container(
+                          width: 14,
+                          height: 14,
+                          margin: const EdgeInsets.only(right: 4),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _parseColor(c) ?? theme.colorScheme.primary,
+                            border: Border.all(
+                                color: theme.colorScheme.outlineVariant),
+                          ),
+                        );
+                      }).toList(),
+                    )
+                  else if (piece.colorHex != null)
+                    Container(
+                      width: 14,
+                      height: 14,
+                      margin: const EdgeInsets.only(right: 8),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: _parseColor(piece.colorHex!) ??
+                            theme.colorScheme.primary,
+                        border:
+                            Border.all(color: theme.colorScheme.outlineVariant),
                       ),
-                    if (piece.description.isNotEmpty)
-                      Expanded(
-                        child: Text(
-                          piece.description,
-                          style: theme.textTheme.bodyMedium,
-                        ),
+                    ),
+                  if (label.isNotEmpty)
+                    Expanded(
+                      child: Text(
+                        label,
+                        style: theme.textTheme.bodyMedium,
                       ),
-                  ]),
-                )),
+                    ),
+                ]),
+              );
+            }),
           ],
         ],
       ),
@@ -750,9 +1168,13 @@ class _NotesSection extends StatelessWidget {
             Icon(Icons.notes_outlined,
                 size: 18, color: theme.colorScheme.primary),
             const SizedBox(width: 8),
-            Text('Observações',
+            Expanded(
+              child: Text(
+                'Observações',
                 style: theme.textTheme.titleSmall
-                    ?.copyWith(fontWeight: FontWeight.w600)),
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
           ]),
           const SizedBox(height: 8),
           Text(notes, style: theme.textTheme.bodyMedium),

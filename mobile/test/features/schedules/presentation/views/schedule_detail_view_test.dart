@@ -17,15 +17,24 @@ import 'package:louvaio_mobile/features/schedules/domain/schedule_participant.da
 import 'package:louvaio_mobile/features/schedules/presentation/controllers/schedule_detail_controller.dart';
 import 'package:louvaio_mobile/features/schedules/presentation/views/schedule_detail_view.dart';
 
-class FakeDetailScheduleRepo implements ScheduleRepository {
+class FakeDetailScheduleRepo
+    implements ScheduleRepository, ScheduleDeletionCapable {
   ScheduleDetail? detail;
   List<ScheduleComment> comments = [];
   Exception? detailError;
   Exception? confirmError;
   Exception? commentPostError;
+  Exception? deleteError;
 
   bool? lastConfirmed;
   String? lastPostedComment;
+  int deleteCalls = 0;
+
+  @override
+  Future<void> deleteSchedule(String ministryId, String scheduleId) async {
+    deleteCalls++;
+    if (deleteError != null) throw deleteError!;
+  }
 
   @override
   Future<List<ScheduleSummary>> listSchedules(String ministryId) async => [];
@@ -185,7 +194,12 @@ void main() {
         ),
       ],
       songs: [
-        ScheduleSong(id: 's1', title: 'Bondade de Deus', artist: 'Isaías Saad'),
+        ScheduleSong(
+          id: 's1',
+          title: 'Bondade de Deus',
+          artist: 'Isaías Saad',
+          key: 'G',
+        ),
         ScheduleSong(id: 's2', title: 'A Casa É Sua', artist: 'Casa Worship'),
       ],
       timeline: [
@@ -526,12 +540,13 @@ void main() {
       expect(find.text('Shell Screen'), findsOneWidget);
     });
 
-    testWidgets('ordinary member does not see edit schedule button',
+    testWidgets('ordinary member does not see edit or delete schedule buttons',
         (tester) async {
       await tester.pumpWidget(createSubject(role: 'member'));
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('edit_schedule_button')), findsNothing);
+      expect(find.byKey(const ValueKey('delete_schedule_button')), findsNothing);
     });
 
     testWidgets(
@@ -548,6 +563,66 @@ void main() {
 
       expect(find.text('Editar Escala'), findsOneWidget);
       expect(find.text('Culto de Domingo Especial'), findsWidgets);
+    });
+
+    testWidgets(
+        'admin sees delete schedule button and confirming deletion calls deleteSchedule',
+        (tester) async {
+      await tester.pumpWidget(createSubject(role: 'admin'));
+      await tester.pumpAndSettle();
+
+      final deleteBtn = find.byKey(const ValueKey('delete_schedule_button'));
+      expect(deleteBtn, findsOneWidget);
+
+      await tester.tap(deleteBtn);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Excluir escala?'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('confirm_delete_schedule_button')));
+      await tester.pumpAndSettle();
+
+      expect(fakeRepo.deleteCalls, equals(1));
+    });
+
+    testWidgets('displays song key badge, timeline type labels, and stats summary row',
+        (tester) async {
+      tester.view.physicalSize = const Size(1024, 2048);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('schedule_detail_stats_row')), findsOneWidget);
+      expect(find.byKey(const ValueKey('detail_song_key_s1')), findsOneWidget);
+      expect(find.text('Tom: G'), findsOneWidget);
+      expect(find.text('Oração'), findsOneWidget);
+      expect(find.text('Louvor'), findsOneWidget);
+    });
+
+    testWidgets('renders schedule detail without overflow at 320px, 360px, and 393px widths and 1.3x text scale',
+        (tester) async {
+      for (final width in [320.0, 360.0, 393.0]) {
+        tester.view.physicalSize = Size(width, 780);
+        tester.view.devicePixelRatio = 1.0;
+
+        await tester.pumpWidget(
+          MediaQuery(
+            data: MediaQueryData(
+              size: Size(width, 780),
+              textScaler: width == 320.0
+                  ? const TextScaler.linear(1.3)
+                  : TextScaler.noScaling,
+            ),
+            child: createSubject(role: 'admin'),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull,
+            reason: 'No overflow on ScheduleDetailView at ${width}px');
+      }
+
+      addTearDown(tester.view.resetPhysicalSize);
     });
   });
 }

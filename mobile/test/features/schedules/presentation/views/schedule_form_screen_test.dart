@@ -97,12 +97,22 @@ class _FakePreferencesStorage implements PreferencesStorage {
   Future<void> setThemeMode(String? themeMode) async {}
 }
 
-class _FakeScheduleRepo implements ScheduleRepository {
+class _FakeScheduleRepo
+    implements ScheduleRepository, ScheduleTemplateCapable {
   List<MinistryMember> members = [];
   List<MinistryRole> roles = [];
+  List<ScheduleTemplate> templates = [];
+  Exception? templatesError;
   ScheduleDetail? detailToReturn;
   Map<String, dynamic>? lastCreatedData;
   Map<String, dynamic>? lastUpdatedData;
+
+  @override
+  Future<List<ScheduleTemplate>> getScheduleTemplates(
+      String ministryId) async {
+    if (templatesError != null) throw templatesError!;
+    return templates;
+  }
 
   @override
   Future<List<ScheduleSummary>> listSchedules(String ministryId) async => [];
@@ -255,8 +265,9 @@ void main() {
     );
   }
 
-  group('ScheduleFormScreen Presentation', () {
-    testWidgets('renders create form with default values', (tester) async {
+  group('ScheduleFormScreen Presentation & 5-Tab Architecture (R4-M1)', () {
+    testWidgets('renders create form with 5 tabs and default values on Geral tab',
+        (tester) async {
       tester.view.physicalSize = const Size(1024, 2048);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
@@ -265,15 +276,28 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Nova Escala'), findsOneWidget);
+      expect(find.byKey(const ValueKey('schedule_form_tab_bar')), findsOneWidget);
+      expect(find.byKey(const ValueKey('schedule_tab_geral')), findsOneWidget);
+      expect(find.byKey(const ValueKey('schedule_tab_integrantes')), findsOneWidget);
+      expect(find.byKey(const ValueKey('schedule_tab_musicas')), findsOneWidget);
+      expect(find.byKey(const ValueKey('schedule_tab_roteiro')), findsOneWidget);
+      expect(find.byKey(const ValueKey('schedule_tab_vestimenta')), findsOneWidget);
+
       expect(find.text('Culto'), findsOneWidget);
       expect(find.text('Informações do Evento'), findsOneWidget);
       expect(find.text('Exigir confirmação de presença'), findsOneWidget);
-      expect(find.text('Integrantes (0)'), findsOneWidget);
-      expect(find.text('Nenhum integrante adicionado à escala.'), findsOneWidget);
+      expect(find.text('Visível para a equipe'), findsOneWidget);
       expect(find.text('Criar Escala'), findsOneWidget);
+
+      // Navigate to Integrantes tab
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_integrantes')));
+      await tester.pumpAndSettle();
+      expect(find.text('Integrantes (0)'), findsWidgets);
+      expect(find.text('Nenhum integrante adicionado à escala.'), findsOneWidget);
     });
 
-    testWidgets('renders edit form with initial schedule data', (tester) async {
+    testWidgets('renders edit form with initial schedule data across tabs',
+        (tester) async {
       tester.view.physicalSize = const Size(1024, 2048);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
@@ -288,7 +312,8 @@ void main() {
         notes: 'Trazer instrumentos acústicos',
         requireConfirmation: true,
         participants: [
-          ScheduleParticipant(id: 'm1', userId: 'u1', name: 'Alice Silva', role: 'Vocal'),
+          ScheduleParticipant(
+              id: 'm1', userId: 'u1', name: 'Alice Silva', role: 'Vocal'),
         ],
       );
 
@@ -297,10 +322,15 @@ void main() {
 
       expect(find.text('Editar Escala'), findsOneWidget);
       expect(find.text('Vigília Especial'), findsOneWidget);
-      expect(find.text('Integrantes (1)'), findsOneWidget);
+      expect(find.text('Salvar Alterações'), findsOneWidget);
+
+      // Switch to Integrantes tab
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_integrantes')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Integrantes (1)'), findsWidgets);
       expect(find.text('Alice Silva'), findsOneWidget);
       expect(find.text('Vocal'), findsOneWidget);
-      expect(find.text('Salvar Alterações'), findsOneWidget);
     });
 
     testWidgets('adding participant via member picker adds member to schedule',
@@ -310,6 +340,9 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
 
       await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_integrantes')));
       await tester.pumpAndSettle();
 
       // Tap "Adicionar" button for participants
@@ -333,7 +366,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Participant is now in the list
-      expect(find.text('Integrantes (1)'), findsOneWidget);
+      expect(find.text('Integrantes (1)'), findsWidgets);
       expect(find.text('Alice Silva'), findsOneWidget);
     });
 
@@ -348,11 +381,15 @@ void main() {
         title: 'Culto',
         date: '2026-10-10',
         participants: [
-          ScheduleParticipant(id: 'm1', userId: 'u1', name: 'Alice Silva', role: 'Vocal'),
+          ScheduleParticipant(
+              id: 'm1', userId: 'u1', name: 'Alice Silva', role: 'Vocal'),
         ],
       );
 
       await tester.pumpWidget(createSubject(initialSchedule: initial));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_integrantes')));
       await tester.pumpAndSettle();
 
       expect(find.text('Alice Silva'), findsOneWidget);
@@ -414,7 +451,7 @@ void main() {
       expect(find.text('Previous Screen'), findsOneWidget);
     });
 
-    testWidgets('renders content sections: songs, timeline, clothing, and palette',
+    testWidgets('all 5 tabs are reachable and render their respective content sections',
         (tester) async {
       tester.view.physicalSize = const Size(1024, 2048);
       tester.view.devicePixelRatio = 1.0;
@@ -423,22 +460,36 @@ void main() {
       await tester.pumpWidget(createSubject());
       await tester.pumpAndSettle();
 
-      expect(find.text('Músicas (0)'), findsOneWidget);
+      // Tab 2: Músicas
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_musicas')));
+      await tester.pumpAndSettle();
+      expect(find.text('Músicas (0)'), findsWidgets);
       expect(find.text('Nenhuma música adicionada à escala.'), findsOneWidget);
-      expect(find.text('Roteiro (0)'), findsOneWidget);
+
+      // Tab 3: Roteiro
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_roteiro')));
+      await tester.pumpAndSettle();
+      expect(find.text('Roteiro (0)'), findsWidgets);
       expect(find.text('Nenhum momento adicionado ao roteiro.'), findsOneWidget);
+
+      // Tab 4: Vestimenta
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_vestimenta')));
+      await tester.pumpAndSettle();
       expect(find.text('Vestimenta & Cores'), findsOneWidget);
       expect(find.text('Paleta de Cores / Tema'), findsOneWidget);
       expect(find.text('Tons Terrosos'), findsOneWidget);
     });
 
-    testWidgets('adding song via song picker sheet adds song to schedule',
+    testWidgets('adding song via song picker sheet and changing its musical key via compact selector',
         (tester) async {
       tester.view.physicalSize = const Size(1024, 2048);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
 
       await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_musicas')));
       await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(const ValueKey('add_song_button')));
@@ -450,9 +501,19 @@ void main() {
       await tester.tap(find.text('Porque Ele Vive'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Músicas (1)'), findsOneWidget);
+      expect(find.text('Músicas (1)'), findsWidgets);
       expect(find.text('Porque Ele Vive'), findsOneWidget);
       expect(find.text('Tom: G'), findsOneWidget);
+
+      // Tap song key chip to change key via compact picker sheet
+      await tester.tap(find.byKey(const ValueKey('schedule_song_key_chip_0')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('musical_key_picker_sheet')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('key_option_A')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Tom: A'), findsOneWidget);
     });
 
     testWidgets('adding timeline moment via timeline dialog adds item to schedule',
@@ -462,6 +523,9 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
 
       await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_roteiro')));
       await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(const ValueKey('add_timeline_button')));
@@ -479,18 +543,21 @@ void main() {
       await tester.tap(find.text('Salvar'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Roteiro (1)'), findsOneWidget);
+      expect(find.text('Roteiro (1)'), findsWidgets);
       expect(find.text('Louvor de Abertura'), findsOneWidget);
       expect(find.text('19:15'), findsOneWidget);
     });
 
-    testWidgets('adding clothing piece and selecting palette preset',
+    testWidgets('adding clothing piece and selecting palette preset on Vestimenta tab',
         (tester) async {
       tester.view.physicalSize = const Size(1024, 2048);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
 
       await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_vestimenta')));
       await tester.pumpAndSettle();
 
       // Tap preset chip
@@ -513,7 +580,7 @@ void main() {
       expect(find.text('Peças (1)'), findsOneWidget);
     });
 
-    testWidgets('save button submits songs, timeline, clothing, and palette',
+    testWidgets('switching tabs preserves unsaved draft state across all 5 tabs and submits complete payload',
         (tester) async {
       tester.view.physicalSize = const Size(1024, 2048);
       tester.view.devicePixelRatio = 1.0;
@@ -522,13 +589,24 @@ void main() {
       await tester.pumpWidget(createSubject());
       await tester.pumpAndSettle();
 
-      // Add song
+      // Tab 0 (Geral): Enter custom title
+      await tester.enterText(
+        find.byKey(const ValueKey('schedule_title_field')),
+        'Culto de Jovens',
+      );
+      await tester.pump();
+
+      // Tab 2 (Músicas): Add song
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_musicas')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('add_song_button')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Porque Ele Vive'));
       await tester.pumpAndSettle();
 
-      // Add timeline
+      // Tab 3 (Roteiro): Add timeline
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_roteiro')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('add_timeline_button')));
       await tester.pumpAndSettle();
       await tester.enterText(
@@ -537,7 +615,9 @@ void main() {
       await tester.tap(find.text('Salvar'));
       await tester.pumpAndSettle();
 
-      // Add clothing piece
+      // Tab 4 (Vestimenta): Add clothing piece & palette
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_vestimenta')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('add_clothing_button')));
       await tester.pumpAndSettle();
       await tester.enterText(
@@ -545,10 +625,13 @@ void main() {
           'Camisa Preta');
       await tester.tap(find.byKey(const ValueKey('confirm_add_clothing_button')));
       await tester.pumpAndSettle();
-
-      // Set palette
       await tester.tap(find.text('Preto e Branco'));
       await tester.pumpAndSettle();
+
+      // Switch back to Geral tab and verify title was preserved
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_geral')));
+      await tester.pumpAndSettle();
+      expect(find.text('Culto de Jovens'), findsOneWidget);
 
       // Submit
       await tester.tap(find.text('Criar Escala'));
@@ -556,10 +639,318 @@ void main() {
 
       expect(fakeRepo.lastCreatedData, isNotNull);
       final data = fakeRepo.lastCreatedData!;
+      expect(data['title'], equals('Culto de Jovens'));
       expect(data['colorPalette'], equals('Preto e Branco'));
       expect((data['songs'] as List).length, equals(1));
       expect((data['timeline'] as List).length, equals(1));
       expect((data['clothingPieces'] as List).length, equals(1));
+    });
+
+    testWidgets('editing one tab preserves preloaded data in all other tabs on save',
+        (tester) async {
+      tester.view.physicalSize = const Size(1024, 2048);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      const initial = ScheduleDetail(
+        id: 'sch_existing',
+        ministryId: 'min_1',
+        title: 'Culto Original',
+        date: '2026-10-24',
+        time: '19:30',
+        durationMinutes: 120,
+        notes: 'Notas preservadas',
+        participants: [
+          ScheduleParticipant(
+              id: 'm1', userId: 'u1', name: 'Alice Silva', role: 'Vocal'),
+        ],
+        songs: [
+          ScheduleSong(
+              id: 'song_1',
+              title: 'Porque Ele Vive',
+              artist: 'Harpa Cristã',
+              key: 'G'),
+        ],
+        timeline: [
+          ScheduleTimelineItem(
+              id: 't1', title: 'Oração Inicial', time: '19:30', type: 'prayer'),
+        ],
+        clothingPieces: [
+          ScheduleClothingPiece(
+              name: 'Blazer Azul',
+              description: 'Blazer Azul',
+              colors: ['#2563EB']),
+        ],
+        colorPalette: 'Tons de Azul',
+      );
+
+      await tester.pumpWidget(createSubject(initialSchedule: initial));
+      await tester.pumpAndSettle();
+
+      // Modify only the title on Tab 0 (Geral)
+      await tester.enterText(
+        find.byKey(const ValueKey('schedule_title_field')),
+        'Culto Renomeado',
+      );
+      await tester.pump();
+
+      await tester.tap(find.text('Salvar Alterações'));
+      await tester.pumpAndSettle();
+
+      expect(fakeRepo.lastUpdatedData, isNotNull);
+      final updated = fakeRepo.lastUpdatedData!;
+      expect(updated['title'], equals('Culto Renomeado'));
+      expect(updated['notes'], equals('Notas preservadas'));
+      expect(updated['colorPalette'], equals('Tons de Azul'));
+      expect((updated['participants'] as List).length, equals(1));
+      expect((updated['songs'] as List).length, equals(1));
+      expect((updated['timeline'] as List).length, equals(1));
+      expect((updated['clothingPieces'] as List).length, equals(1));
+    });
+
+    testWidgets('validation failure on empty title switches back to Geral tab and shows error badge',
+        (tester) async {
+      tester.view.physicalSize = const Size(1024, 2048);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+
+      // Clear title on Geral tab
+      await tester.enterText(
+        find.byKey(const ValueKey('schedule_title_field')),
+        '',
+      );
+      await tester.pump();
+
+      // Navigate away to Vestimenta tab
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_vestimenta')));
+      await tester.pumpAndSettle();
+
+      // Attempt to submit from Vestimenta tab
+      await tester.tap(find.text('Criar Escala'));
+      await tester.pumpAndSettle();
+
+      // Form automatically navigates back to Geral tab and displays validation error
+      expect(find.byKey(const ValueKey('schedule_tab_geral_error_badge')), findsOneWidget);
+      expect(find.text('O título da escala é obrigatório.'), findsOneWidget);
+      expect(fakeRepo.lastCreatedData, isNull);
+    });
+
+    testWidgets('renders all 5 tabs and single-line date without overflow on 320px, 360px, 393px widths and 1.3x text scale',
+        (tester) async {
+      const initial = ScheduleDetail(
+        id: 'sch_narrow',
+        ministryId: 'min_1',
+        title: 'Culto de Domingo',
+        date: '2026-10-24',
+        time: '19:00',
+      );
+
+      for (final width in [320.0, 360.0, 393.0]) {
+        tester.view.physicalSize = Size(width, 780);
+        tester.view.devicePixelRatio = 1.0;
+
+        await tester.pumpWidget(
+          MediaQuery(
+            data: MediaQueryData(
+              size: Size(width, 780),
+              textScaler: width == 320.0
+                  ? const TextScaler.linear(1.3)
+                  : TextScaler.noScaling,
+            ),
+            child: createSubject(initialSchedule: initial),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull,
+            reason: 'No overflow on Geral tab at ${width}px');
+
+        // Verify date 24/10/2026 is rendered on a single line (maxLines == 1)
+        final dateText = tester.widget<Text>(find.text('24/10/2026'));
+        expect(dateText.maxLines, equals(1));
+        expect(dateText.softWrap, isFalse);
+
+        for (final tabKey in [
+          'schedule_tab_integrantes',
+          'schedule_tab_musicas',
+          'schedule_tab_roteiro',
+          'schedule_tab_vestimenta',
+        ]) {
+          final tabFinder = find.byKey(ValueKey(tabKey));
+          await tester.ensureVisible(tabFinder);
+          await tester.tap(tabFinder);
+          await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull,
+              reason: 'No overflow on $tabKey at ${width}px');
+        }
+      }
+
+      addTearDown(tester.view.resetPhysicalSize);
+    });
+
+    testWidgets(
+        'Roteiro template selector handles error/retry and applies template mapping selected songs into song slots',
+        (tester) async {
+      tester.view.physicalSize = const Size(1024, 2048);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      fakeRepo.templatesError = Exception('Network error');
+      fakeRepo.templates = const [
+        ScheduleTemplate(
+          id: 'tpl_1',
+          name: 'Culto Dominical Padrão',
+          items: [
+            ScheduleTemplateItem(
+              id: 'ti_1',
+              type: 'event',
+              title: 'Boas-vindas e Oração',
+              durationSeconds: 300,
+              icon: 'Oração',
+              order: 0,
+            ),
+            ScheduleTemplateItem(
+              id: 'ti_2',
+              type: 'song',
+              title: 'Música 1',
+              order: 1,
+            ),
+            ScheduleTemplateItem(
+              id: 'ti_3',
+              type: 'song',
+              title: 'Música 2',
+              order: 2,
+            ),
+          ],
+        ),
+      ];
+
+      await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+
+      // Add 1 song on Músicas tab so slot 1 gets filled with 'Porque Ele Vive' and slot 2 stays 'Música 2'
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_musicas')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('add_song_button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Porque Ele Vive'));
+      await tester.pumpAndSettle();
+
+      // Switch to Roteiro tab and open Modelos
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_roteiro')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('open_templates_button')));
+      await tester.pumpAndSettle();
+
+      // Error state is shown first
+      expect(
+        find.text('Não foi possível carregar os modelos de roteiro.'),
+        findsOneWidget,
+      );
+
+      // Clear error and tap retry
+      fakeRepo.templatesError = null;
+      await tester.tap(find.byKey(const ValueKey('retry_load_templates_button')));
+      await tester.pumpAndSettle();
+
+      // Template list is shown
+      expect(find.text('Culto Dominical Padrão'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('template_option_tpl_1')));
+      await tester.pumpAndSettle();
+
+      // Confirm preview view shows mapped song title and event duration
+      expect(find.byKey(const ValueKey('apply_template_confirm_view')), findsOneWidget);
+      expect(find.text('Boas-vindas e Oração'), findsOneWidget);
+      expect(find.text('5min'), findsOneWidget);
+      expect(find.text('Porque Ele Vive'), findsOneWidget);
+      expect(find.text('Música 2'), findsOneWidget);
+
+      // Apply template onto empty roteiro
+      await tester.tap(find.byKey(const ValueKey('apply_template_replace_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Roteiro (3)'), findsWidgets);
+      expect(find.text('Boas-vindas e Oração'), findsOneWidget);
+      expect(find.text('Porque Ele Vive'), findsOneWidget);
+      expect(find.text('Música 2'), findsOneWidget);
+    });
+
+    testWidgets(
+        'Roteiro template selector supports both append and replace when existing timeline items exist',
+        (tester) async {
+      tester.view.physicalSize = const Size(1024, 2048);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      fakeRepo.templates = const [
+        ScheduleTemplate(
+          id: 'tpl_2',
+          name: 'Encerramento',
+          items: [
+            ScheduleTemplateItem(
+              id: 'ti_end',
+              type: 'event',
+              title: 'Bênção Apostólica',
+              durationSeconds: 180,
+              icon: 'Oração',
+              order: 0,
+            ),
+          ],
+        ),
+      ];
+
+      const initial = ScheduleDetail(
+        id: 'sch_roteiro',
+        ministryId: 'min_1',
+        title: 'Culto',
+        date: '2026-10-24',
+        timeline: [
+          ScheduleTimelineItem(
+            id: 'existing_1',
+            title: 'Abertura Existente',
+            time: '19:00',
+            type: 'Evento',
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(createSubject(initialSchedule: initial));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_roteiro')));
+      await tester.pumpAndSettle();
+      expect(find.text('Abertura Existente'), findsOneWidget);
+
+      // 1) Test APPEND mode
+      await tester.tap(find.byKey(const ValueKey('open_templates_button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('template_option_tpl_2')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('template_existing_items_warning')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('apply_template_append_button')));
+      await tester.pumpAndSettle();
+
+      // Both existing and appended items are present
+      expect(find.text('Roteiro (2)'), findsWidgets);
+      expect(find.text('Abertura Existente'), findsOneWidget);
+      expect(find.text('Bênção Apostólica'), findsOneWidget);
+
+      // 2) Test REPLACE mode
+      await tester.tap(find.byKey(const ValueKey('open_templates_button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('template_option_tpl_2')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('apply_template_replace_button')));
+      await tester.pumpAndSettle();
+
+      // Existing items replaced by template item
+      expect(find.text('Roteiro (1)'), findsWidgets);
+      expect(find.text('Abertura Existente'), findsNothing);
+      expect(find.text('Bênção Apostólica'), findsOneWidget);
     });
   });
 }

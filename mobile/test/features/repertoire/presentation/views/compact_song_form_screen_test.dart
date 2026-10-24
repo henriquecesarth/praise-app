@@ -323,7 +323,9 @@ void main() {
         find.byKey(const ValueKey('song_version_name_input')),
         'Nome Modificado Descartado',
       );
-      await tester.tap(find.byKey(const ValueKey('key_chip_D')));
+      await tester.tap(find.byKey(const ValueKey('musical_key_selector_field')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('key_option_D')));
       await tester.pumpAndSettle();
 
       // Cancel
@@ -356,7 +358,10 @@ void main() {
         find.byKey(const ValueKey('song_version_name_input')),
         'Arranjo Especial',
       );
-      await tester.tap(find.byKey(const ValueKey('key_chip_A')));
+      await tester.tap(find.byKey(const ValueKey('musical_key_selector_field')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('key_option_A')));
+      await tester.pumpAndSettle();
       await tester.enterText(
         find.byKey(const ValueKey('song_bpm_input')),
         '105',
@@ -419,7 +424,10 @@ void main() {
         find.byKey(const ValueKey('song_version_name_input')),
         'Versão Acústica',
       );
-      await tester.tap(find.byKey(const ValueKey('key_chip_E')));
+      await tester.tap(find.byKey(const ValueKey('musical_key_selector_field')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('key_option_E')));
+      await tester.pumpAndSettle();
       await tester.enterText(
         find.byKey(const ValueKey('song_bpm_input')),
         '70',
@@ -616,6 +624,90 @@ void main() {
       expect(fakeRepo.lastUpdatedData!.duration, equals('04:10'));
       // Artist ID must remain omitted to not wipe web free-text artist
       expect(fakeRepo.lastUpdatedData!.toJson().containsKey('artist_id'), isFalse);
+    });
+
+    testWidgets(
+        'R4-M1: compact tone selector supports minor/enharmonic keys and clearing to Sem tom',
+        (tester) async {
+      const initialSong = SongDetail(
+        id: 's-key-test',
+        ministryId: 'min_1',
+        title: 'Música Em F#m',
+        versions: [
+          SongVersion(id: 'v_1', name: 'Original', key: 'F#m'),
+        ],
+      );
+
+      tester.view.physicalSize = const Size(360, 740);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      await tester.pumpWidget(buildSubject(initialSong: initialSong));
+      await tester.pumpAndSettle();
+
+      expect(find.text('F#m'), findsOneWidget);
+
+      // Open version editor
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
+      await tester.pumpAndSettle();
+
+      // Verify compact selector displays F#m and no chip grid exists
+      expect(find.byKey(const ValueKey('musical_key_selector_field')), findsOneWidget);
+      expect(find.byKey(const ValueKey('key_chip_G')), findsNothing);
+
+      // Open key picker sheet and select Sem tom
+      await tester.tap(find.byKey(const ValueKey('musical_key_selector_field')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('key_option_none')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('key_option_none')));
+      await tester.pumpAndSettle();
+
+      // Save version sheet
+      await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Sem tom'), findsOneWidget);
+    });
+
+    testWidgets(
+        'R4-M1: narrow-screen responsiveness (320px, 360px, 393px + 1.3x text scale + keyboard/safe-area) has zero overflow',
+        (tester) async {
+      for (final width in [320.0, 360.0, 393.0]) {
+        tester.view.physicalSize = Size(width, 740);
+        tester.view.devicePixelRatio = 1.0;
+
+        await tester.pumpWidget(
+          MediaQuery(
+            data: MediaQueryData(
+              size: Size(width, 740),
+              padding: const EdgeInsets.only(bottom: 48),
+              viewPadding: const EdgeInsets.only(bottom: 48),
+              viewInsets: EdgeInsets.only(bottom: width == 360.0 ? 220 : 0),
+              textScaler: const TextScaler.linear(1.3),
+            ),
+            child: buildSubject(),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+
+        await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(find.byKey(const ValueKey('version_editor_footer')), findsOneWidget);
+
+        await tester.tap(find.byKey(const ValueKey('cancel_version_sheet_button')));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      }
+
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
     });
   });
 }
