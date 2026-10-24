@@ -780,12 +780,10 @@ class _ConfirmationSection extends ConsumerWidget {
                             .read(scheduleDetailNotifierProvider.notifier)
                             .confirm(ministryId, scheduleId, false),
                     icon: const Icon(Icons.cancel_outlined, size: 17),
-                    label: const Flexible(
-                      child: Text(
-                        'Não vou',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                    label: const Text(
+                      'Não vou',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -814,12 +812,10 @@ class _ConfirmationSection extends ConsumerWidget {
                             child: CircularProgressIndicator(
                                 strokeWidth: 2, color: Colors.white))
                         : const Icon(Icons.check_circle_outline, size: 17),
-                    label: Flexible(
-                      child: Text(
-                        isConfirming ? 'Confirmando...' : 'Confirmar',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                    label: Text(
+                      isConfirming ? 'Confirmando...' : 'Confirmar',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                     style: FilledButton.styleFrom(
                       padding: const EdgeInsets.symmetric(horizontal: 8),
