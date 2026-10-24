@@ -48,7 +48,7 @@ abstract class ScheduleRepository {
 }
 
 /// Optional capability interface for repositories that support schedule deletion.
-abstract class ScheduleDeletionCapable {
+abstract class ScheduleDeletionCapable extends ScheduleRepository {
   /// Deletes an existing schedule. Requires admin role.
   Future<void> deleteSchedule(String ministryId, String scheduleId);
 }
@@ -57,13 +57,14 @@ extension ScheduleRepositoryDeleteExtension on ScheduleRepository {
   Future<void> deleteSchedule(String ministryId, String scheduleId) async {
     final self = this;
     if (self is ScheduleDeletionCapable) {
-      await self.deleteSchedule(ministryId, scheduleId);
+      final ScheduleDeletionCapable capable = self;
+      await capable.deleteSchedule(ministryId, scheduleId);
     }
   }
 }
 
 /// Optional capability interface for repositories that support schedule roteiro templates.
-abstract class ScheduleTemplateCapable {
+abstract class ScheduleTemplateCapable extends ScheduleRepository {
   /// Lists all schedule templates for [ministryId].
   Future<List<ScheduleTemplate>> getScheduleTemplates(String ministryId);
 }
@@ -72,7 +73,8 @@ extension ScheduleRepositoryTemplateExtension on ScheduleRepository {
   Future<List<ScheduleTemplate>> getScheduleTemplates(String ministryId) async {
     final self = this;
     if (self is ScheduleTemplateCapable) {
-      return self.getScheduleTemplates(ministryId);
+      final ScheduleTemplateCapable capable = self;
+      return capable.getScheduleTemplates(ministryId);
     }
     return const [];
   }

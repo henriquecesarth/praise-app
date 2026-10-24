@@ -167,12 +167,16 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
               color: theme.colorScheme.primary,
             ),
             const SizedBox(width: 6),
-            Text(
-              'PAINEL DO INTEGRANTE',
-              style: theme.textTheme.labelSmall?.copyWith(
-                fontWeight: FontWeight.bold,
-                letterSpacing: 0.8,
-                color: theme.colorScheme.primary,
+            Expanded(
+              child: Text(
+                'PAINEL DO INTEGRANTE',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.8,
+                  color: theme.colorScheme.primary,
+                ),
               ),
             ),
           ],

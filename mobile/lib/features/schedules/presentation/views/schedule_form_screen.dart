@@ -2982,75 +2982,78 @@ class _ScheduleTemplatePickerSheetState
                 )
               else
                 Expanded(
-                  child: ListView(
+                  child: SingleChildScrollView(
                     key: const ValueKey('schedule_templates_list'),
                     controller: scrollController,
                     padding: const EdgeInsets.all(16),
-                    children: [
-                      Text(
-                        formState.songs.isNotEmpty
-                            ? 'Selecione um modelo para preencher o roteiro desta escala. As ${formState.songs.length} músicas selecionadas serão posicionadas automaticamente nos slots de música do modelo.'
-                            : 'Selecione um modelo para preencher o roteiro desta escala.',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      for (final tmpl in _templates)
-                        Card(
-                          key: ValueKey('template_option_${tmpl.id}'),
-                          elevation: 0,
-                          margin: const EdgeInsets.only(bottom: 10),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            side: BorderSide(
-                              color: theme.colorScheme.outlineVariant,
-                            ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          formState.songs.isNotEmpty
+                              ? 'Selecione um modelo para preencher o roteiro desta escala. As ${formState.songs.length} músicas selecionadas serão posicionadas automaticamente nos slots de música do modelo.'
+                              : 'Selecione um modelo para preencher o roteiro desta escala.',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
                           ),
-                          child: ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor:
-                                  theme.colorScheme.primaryContainer,
-                              child: Icon(
-                                Icons.layers_outlined,
-                                size: 18,
-                                color: theme.colorScheme.onPrimaryContainer,
+                        ),
+                        const SizedBox(height: 12),
+                        for (final tmpl in _templates)
+                          Card(
+                            key: ValueKey('template_option_${tmpl.id}'),
+                            elevation: 0,
+                            margin: const EdgeInsets.only(bottom: 10),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                              side: BorderSide(
+                                color: theme.colorScheme.outlineVariant,
                               ),
                             ),
-                            title: Text(
-                              tmpl.name,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            subtitle: Wrap(
-                              spacing: 8,
-                              runSpacing: 2,
-                              children: [
-                                if (tmpl.songsCount > 0)
-                                  Text(
-                                    '${tmpl.songsCount} ${tmpl.songsCount == 1 ? 'música' : 'músicas'}',
-                                    style: theme.textTheme.bodySmall,
-                                  ),
-                                if (tmpl.eventsCount > 0)
-                                  Text(
-                                    '${tmpl.eventsCount} ${tmpl.eventsCount == 1 ? 'evento' : 'eventos'}',
-                                    style: theme.textTheme.bodySmall,
-                                  ),
-                                Text(
-                                  '• ${tmpl.items.length} itens no total',
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: theme.colorScheme.onSurfaceVariant,
-                                  ),
+                            child: ListTile(
+                              leading: CircleAvatar(
+                                backgroundColor:
+                                    theme.colorScheme.primaryContainer,
+                                child: Icon(
+                                  Icons.layers_outlined,
+                                  size: 18,
+                                  color: theme.colorScheme.onPrimaryContainer,
                                 ),
-                              ],
+                              ),
+                              title: Text(
+                                tmpl.name,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              subtitle: Wrap(
+                                spacing: 8,
+                                runSpacing: 2,
+                                children: [
+                                  if (tmpl.songsCount > 0)
+                                    Text(
+                                      '${tmpl.songsCount} ${tmpl.songsCount == 1 ? 'música' : 'músicas'}',
+                                      style: theme.textTheme.bodySmall,
+                                    ),
+                                  if (tmpl.eventsCount > 0)
+                                    Text(
+                                      '${tmpl.eventsCount} ${tmpl.eventsCount == 1 ? 'evento' : 'eventos'}',
+                                      style: theme.textTheme.bodySmall,
+                                    ),
+                                  Text(
+                                    '• ${tmpl.items.length} itens no total',
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () =>
+                                  setState(() => _pendingTemplate = tmpl),
                             ),
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: () =>
-                                setState(() => _pendingTemplate = tmpl),
                           ),
-                        ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
             ],
@@ -3069,129 +3072,133 @@ class _ScheduleTemplatePickerSheetState
   ) {
     final hasExistingItems = formState.timeline.isNotEmpty;
     var songIdx = 0;
+    final previewItems = <({String type, String title, String duration})>[];
+    for (final item in pending.items) {
+      var displayTitle = item.title;
+      if (item.type == 'song') {
+        final realSong = songIdx < formState.songs.length
+            ? formState.songs[songIdx]
+            : null;
+        songIdx++;
+        if (realSong?.title != null && realSong!.title!.trim().isNotEmpty) {
+          displayTitle = realSong.title!.trim();
+        }
+      }
+      previewItems.add((
+        type: item.type,
+        title: displayTitle,
+        duration: item.formattedDuration,
+      ));
+    }
 
     return Column(
       key: const ValueKey('apply_template_confirm_view'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Expanded(
-          child: ListView(
+          child: SingleChildScrollView(
             controller: scrollController,
             padding: const EdgeInsets.all(16),
-            children: [
-              Text(
-                'Como deseja aplicar este modelo ao roteiro atual?',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest
-                      .withValues(alpha: 0.5),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: theme.colorScheme.outlineVariant,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Como deseja aplicar este modelo ao roteiro atual?',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'PRÉVIA DO ROTEIRO',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    for (var i = 0; i < pending.items.length; i++) ...[
-                      Builder(
-                        builder: (_) {
-                          final item = pending.items[i];
-                          var displayTitle = item.title;
-                          if (item.type == 'song') {
-                            final realSong = songIdx < formState.songs.length
-                                ? formState.songs[songIdx]
-                                : null;
-                            songIdx++;
-                            if (realSong?.title != null &&
-                                realSong!.title!.trim().isNotEmpty) {
-                              displayTitle = realSong.title!.trim();
-                            }
-                          }
-                          final dur = item.formattedDuration;
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 4),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  item.type == 'song'
-                                      ? Icons.music_note_outlined
-                                      : Icons.event_note_outlined,
-                                  size: 16,
-                                  color: theme.colorScheme.primary,
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    displayTitle,
-                                    style: theme.textTheme.bodyMedium,
-                                  ),
-                                ),
-                                if (dur.isNotEmpty)
-                                  Text(
-                                    dur,
-                                    style: theme.textTheme.labelSmall?.copyWith(
-                                      color: theme.colorScheme.onSurfaceVariant,
-                                      fontFamily: 'monospace',
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-                      if (i < pending.items.length - 1)
-                        const Divider(height: 8, thickness: 0.5),
-                    ],
-                  ],
-                ),
-              ),
-              if (hasExistingItems) ...[
                 const SizedBox(height: 12),
                 Container(
-                  key: const ValueKey('template_existing_items_warning'),
-                  padding: const EdgeInsets.all(10),
+                  padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.amber.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(8),
+                    color: theme.colorScheme.surfaceContainerHighest
+                        .withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(10),
                     border: Border.all(
-                      color: Colors.amber.withValues(alpha: 0.4),
+                      color: theme.colorScheme.outlineVariant,
                     ),
                   ),
-                  child: Row(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(
-                        Icons.warning_amber_rounded,
-                        size: 18,
-                        color: Colors.amber,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'O roteiro atual tem ${formState.timeline.length} ${formState.timeline.length == 1 ? 'item' : 'itens'}. Escolha abaixo o que fazer.',
-                          style: theme.textTheme.bodySmall,
+                      Text(
+                        'PRÉVIA DO ROTEIRO',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: theme.colorScheme.onSurfaceVariant,
                         ),
                       ),
+                      const SizedBox(height: 8),
+                      for (var i = 0; i < previewItems.length; i++) ...[
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(
+                            children: [
+                              Icon(
+                                previewItems[i].type == 'song'
+                                    ? Icons.music_note_outlined
+                                    : Icons.event_note_outlined,
+                                size: 16,
+                                color: theme.colorScheme.primary,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  previewItems[i].title,
+                                  style: theme.textTheme.bodyMedium,
+                                ),
+                              ),
+                              if (previewItems[i].duration.isNotEmpty)
+                                Text(
+                                  previewItems[i].duration,
+                                  style: theme.textTheme.labelSmall?.copyWith(
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                    fontFamily: 'monospace',
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        if (i < previewItems.length - 1)
+                          const Divider(height: 8, thickness: 0.5),
+                      ],
                     ],
                   ),
                 ),
+                if (hasExistingItems) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    key: const ValueKey('template_existing_items_warning'),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: Colors.amber.withValues(alpha: 0.4),
+                      ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(
+                          Icons.warning_amber_rounded,
+                          size: 18,
+                          color: Colors.amber,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'O roteiro atual tem ${formState.timeline.length} ${formState.timeline.length == 1 ? 'item' : 'itens'}. Escolha abaixo o que fazer.',
+                            style: theme.textTheme.bodySmall,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
         const Divider(height: 1),

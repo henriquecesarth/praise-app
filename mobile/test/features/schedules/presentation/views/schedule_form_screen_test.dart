@@ -593,7 +593,7 @@ void main() {
 
       // Tab 0 (Geral): Enter custom title
       await tester.enterText(
-        find.byKey(const ValueKey('schedule_title_field')),
+        find.byKey(const ValueKey('schedule_title_input')),
         'Culto de Jovens',
       );
       await tester.pump();
@@ -691,7 +691,7 @@ void main() {
 
       // Modify only the title on Tab 0 (Geral)
       await tester.enterText(
-        find.byKey(const ValueKey('schedule_title_field')),
+        find.byKey(const ValueKey('schedule_title_input')),
         'Culto Renomeado',
       );
       await tester.pump();
@@ -721,7 +721,7 @@ void main() {
 
       // Clear title on Geral tab
       await tester.enterText(
-        find.byKey(const ValueKey('schedule_title_field')),
+        find.byKey(const ValueKey('schedule_title_input')),
         '',
       );
       await tester.pump();
@@ -766,6 +766,12 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
+
+        final geralTabFinder = find.byKey(const ValueKey('schedule_tab_geral'));
+        await tester.ensureVisible(geralTabFinder);
+        await tester.tap(geralTabFinder);
+        await tester.pumpAndSettle();
+
         expect(tester.takeException(), isNull,
             reason: 'No overflow on Geral tab at ${width}px');
 
