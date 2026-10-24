@@ -60,7 +60,6 @@ class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
   }
 
   Future<void> _confirmAndDeleteSchedule(
-    BuildContext context,
     ScheduleDetail schedule,
   ) async {
     final confirmed = await showDialog<bool>(
@@ -218,7 +217,6 @@ class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
               onPressed: detailState.isDeleting
                   ? null
                   : () => _confirmAndDeleteSchedule(
-                        context,
                         detailState.schedule!,
                       ),
             ),
