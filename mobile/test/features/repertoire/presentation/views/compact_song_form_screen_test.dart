@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart' hide AuthProvider;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -32,6 +33,12 @@ class _FakePreferencesStorage implements PreferencesStorage {
 }
 
 class _FakeAuthRepo implements AuthRepository {
+  @override
+  Stream<User?> authStateChanges() => const Stream.empty();
+  @override
+  User? get currentFirebaseUser => null;
+  @override
+  Future<String?> getIdToken({bool forceRefresh = false}) async => null;
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
