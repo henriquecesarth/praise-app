@@ -714,10 +714,6 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
       }
     });
 
-    final currentArtist = formState.artists
-        .where((a) => a.id == _selectedArtistId)
-        .firstOrNull;
-
     String artistLabel = 'Nenhum artista selecionado';
     if (_selectedArtistId != null) {
       final found = formState.artists

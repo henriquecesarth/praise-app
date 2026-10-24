@@ -4,14 +4,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/app/environment/app_environment.dart';
 import 'package:louvaio_mobile/app/providers.dart';
 import 'package:louvaio_mobile/core/storage/preferences_storage.dart';
+import 'package:louvaio_mobile/features/auth/data/auth_repository.dart';
 import 'package:louvaio_mobile/features/auth/domain/auth_user.dart';
 import 'package:louvaio_mobile/features/auth/presentation/controllers/auth_controller.dart';
+import 'package:louvaio_mobile/features/ministry_context/data/ministry_repository.dart';
 import 'package:louvaio_mobile/features/ministry_context/domain/ministry.dart';
 import 'package:louvaio_mobile/features/ministry_context/presentation/controllers/ministry_context_controller.dart';
 import 'package:louvaio_mobile/features/repertoire/data/repertoire_repository.dart';
 import 'package:louvaio_mobile/features/repertoire/domain/artist.dart';
 import 'package:louvaio_mobile/features/repertoire/domain/classification.dart';
-import 'package:louvaio_mobile/features/repertoire/domain/paginated_songs.dart';
 import 'package:louvaio_mobile/features/repertoire/domain/song_detail.dart';
 import 'package:louvaio_mobile/features/repertoire/domain/song_form_data.dart';
 import 'package:louvaio_mobile/features/repertoire/presentation/views/song_form_screen.dart';
@@ -30,17 +31,57 @@ class _FakePreferencesStorage implements PreferencesStorage {
   Future<void> setThemeMode(String? themeMode) async {}
 }
 
+class _FakeAuthRepo implements AuthRepository {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakeMinistryRepo implements MinistryRepository {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+
+  @override
+  Future<List<Ministry>> getMyMinistries() async => [];
+}
+
+class FakeAuthNotifier extends AuthNotifier {
+  FakeAuthNotifier()
+      : super(
+          _FakeAuthRepo(),
+        ) {
+    state = const AuthState.authenticated(
+      AuthUser(id: 'admin_user', email: 'admin@test.com', name: 'Admin'),
+    );
+  }
+}
+
+class FakeMinistryContextNotifier extends MinistryContextNotifier {
+  FakeMinistryContextNotifier()
+      : super(
+          repository: _FakeMinistryRepo(),
+          preferencesStorage: _FakePreferencesStorage(),
+        ) {
+    state = const MinistryContextState(
+      status: MinistryBootstrapStatus.ready,
+      selectedMinistry: Ministry(id: 'min_1', name: 'Min 1', role: 'admin'),
+      availableMinistries: [
+        Ministry(id: 'min_1', name: 'Min 1', role: 'admin'),
+      ],
+    );
+  }
+}
+
 class _FakeRepertoireRepo implements RepertoireRepository {
   SongFormData? lastCreatedData;
   SongFormData? lastUpdatedData;
 
   @override
-  Future<List<Artist>> getArtists(String ministryId) async => [
+  Future<List<Artist>> listArtists(String ministryId, {String? search}) async => [
         const Artist(id: 'art_1', ministryId: 'min_1', name: 'Aline Barros'),
       ];
 
   @override
-  Future<List<Classification>> getClassifications(String ministryId) async => [
+  Future<List<Classification>> listClassifications(String ministryId) async => [
         const Classification(
           id: 'cls_1',
           ministryId: 'min_1',
@@ -50,33 +91,33 @@ class _FakeRepertoireRepo implements RepertoireRepository {
       ];
 
   @override
-  Future<SongDetail> createSong({
-    required String ministryId,
-    required SongFormData data,
-  }) async {
+  Future<SongDetail> createSong(
+    String ministryId,
+    SongFormData data,
+  ) async {
     lastCreatedData = data;
     return SongDetail(
       id: 'created-id-1',
       ministryId: ministryId,
       title: data.title,
       artistId: data.artistId as String?,
-      versions: data.versions,
+      versions: data.versions ?? const [],
     );
   }
 
   @override
-  Future<SongDetail> updateSong({
-    required String ministryId,
-    required String songId,
-    required SongFormData data,
-  }) async {
+  Future<SongDetail> updateSong(
+    String ministryId,
+    String songId,
+    SongFormData data,
+  ) async {
     lastUpdatedData = data;
     return SongDetail(
       id: songId,
       ministryId: ministryId,
       title: data.title,
       artistId: data.artistId as String?,
-      versions: data.versions,
+      versions: data.versions ?? const [],
     );
   }
 
@@ -104,22 +145,8 @@ void main() {
           ),
         ),
         repertoireRepositoryProvider.overrideWithValue(fakeRepo),
-        authNotifierProvider.overrideWith(
-          (ref) => AuthNotifier.initial(
-            const AuthState.authenticated(
-              AuthUser(id: 'admin_user', email: 'admin@test.com', name: 'Admin'),
-            ),
-          ),
-        ),
-        ministryContextNotifierProvider.overrideWith(
-          (ref) => MinistryContextNotifier.initial(
-            MinistryContextState(
-              status: MinistryBootstrapStatus.ready,
-              selectedMinistry:
-                  const Ministry(id: 'min_1', name: 'Min 1', role: 'admin'),
-            ),
-          ),
-        ),
+        authNotifierProvider.overrideWith((ref) => FakeAuthNotifier()),
+        ministryContextNotifierProvider.overrideWith((ref) => FakeMinistryContextNotifier()),
       ],
       child: MaterialApp(
         home: SongFormScreen(
@@ -141,22 +168,8 @@ void main() {
           ),
         ),
         repertoireRepositoryProvider.overrideWithValue(fakeRepo),
-        authNotifierProvider.overrideWith(
-          (ref) => AuthNotifier.initial(
-            const AuthState.authenticated(
-              AuthUser(id: 'admin_user', email: 'admin@test.com', name: 'Admin'),
-            ),
-          ),
-        ),
-        ministryContextNotifierProvider.overrideWith(
-          (ref) => MinistryContextNotifier.initial(
-            MinistryContextState(
-              status: MinistryBootstrapStatus.ready,
-              selectedMinistry:
-                  const Ministry(id: 'min_1', name: 'Min 1', role: 'admin'),
-            ),
-          ),
-        ),
+        authNotifierProvider.overrideWith((ref) => FakeAuthNotifier()),
+        ministryContextNotifierProvider.overrideWith((ref) => FakeMinistryContextNotifier()),
       ],
       child: MaterialApp(
         home: Scaffold(
