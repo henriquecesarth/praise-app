@@ -1,6 +1,12 @@
 name: Android Debug APK
 
 on:
+  # Temporary one-shot full-app build trigger; revert with [skip ci] after completion.
+  push:
+    branches:
+      - wip/repertoire-versions-smartchords-20261022
+    paths:
+      - '.github/workflows/android-debug-apk.yml'
   workflow_dispatch:
     inputs:
       target_mode:
@@ -34,6 +40,24 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Preflight approved LouvAIO Preview API
+        run: |
+          set -euo pipefail
+          URL="https://praise-app-git-wip-repertoire-1978b6-henriquecesarths-projects.vercel.app"
+          echo "Checking public Preview API health..."
+          STATUS=$(curl --silent --show-error --max-time 25 --output /tmp/louvaio-health.json --write-out '%{http_code}' "$URL/api/health")
+          echo "Health HTTP: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "ERROR: Preview API must respond HTTP 200 without Vercel SSO redirection."
+            exit 1
+          fi
+          AUTH_STATUS=$(curl --silent --show-error --max-time 25 --output /dev/null --write-out '%{http_code}' "$URL/api/v1/auth/me")
+          echo "Unauthorized /auth/me HTTP: $AUTH_STATUS"
+          if [ "$AUTH_STATUS" != "401" ]; then
+            echo "ERROR: Preview API must return application-level HTTP 401, not Vercel SSO."
+            exit 1
+          fi
 
       - name: Set up Java
         uses: actions/setup-java@v4
