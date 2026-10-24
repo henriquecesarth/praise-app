@@ -130,90 +130,93 @@ Future<MusicalKeySelectionResult?> showMusicalKeyPickerSheet({
                 ),
                 const Divider(height: 1),
                 Expanded(
-                  child: ListView(
+                  child: SingleChildScrollView(
                     key: const ValueKey('musical_key_picker_list'),
                     controller: scrollController,
-                    cacheExtent: 2500,
                     padding: const EdgeInsets.symmetric(vertical: 8),
-                    children: [
-                      if (allowNone)
-                        ListTile(
-                          key: const ValueKey('key_option_none'),
-                          leading: Icon(
-                            Icons.block_outlined,
-                            size: 20,
-                            color: normalizedCurrent == null
-                                ? theme.colorScheme.primary
-                                : theme.colorScheme.onSurfaceVariant,
-                          ),
-                          title: Text(
-                            emptyLabel,
-                            style: TextStyle(
-                              fontWeight: normalizedCurrent == null
-                                  ? FontWeight.w700
-                                  : FontWeight.w500,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (allowNone)
+                          ListTile(
+                            key: const ValueKey('key_option_none'),
+                            leading: Icon(
+                              Icons.block_outlined,
+                              size: 20,
                               color: normalizedCurrent == null
                                   ? theme.colorScheme.primary
-                                  : theme.colorScheme.onSurface,
+                                  : theme.colorScheme.onSurfaceVariant,
                             ),
-                          ),
-                          trailing: normalizedCurrent == null
-                              ? Icon(
-                                  Icons.check_circle,
-                                  color: theme.colorScheme.primary,
-                                )
-                              : null,
-                          onTap: () => Navigator.of(ctx).pop(
-                            const MusicalKeySelectionResult(null),
-                          ),
-                        ),
-                      for (final key in effectiveKeys)
-                        ListTile(
-                          key: ValueKey('key_option_$key'),
-                          leading: Container(
-                            width: 36,
-                            height: 36,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              color: normalizedCurrent == key
-                                  ? theme.colorScheme.primaryContainer
-                                  : theme.colorScheme.surfaceContainerHighest,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              key,
-                              style: theme.textTheme.labelLarge?.copyWith(
-                                fontWeight: FontWeight.w700,
-                                color: normalizedCurrent == key
-                                    ? theme.colorScheme.onPrimaryContainer
+                            title: Text(
+                              emptyLabel,
+                              style: TextStyle(
+                                fontWeight: normalizedCurrent == null
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                                color: normalizedCurrent == null
+                                    ? theme.colorScheme.primary
                                     : theme.colorScheme.onSurface,
                               ),
                             ),
-                          ),
-                          title: Text(
-                            key.endsWith('m')
-                                ? '$key (Menor)'
-                                : '$key (Maior)',
-                            style: TextStyle(
-                              fontWeight: normalizedCurrent == key
-                                  ? FontWeight.w700
-                                  : FontWeight.w500,
-                              color: normalizedCurrent == key
-                                  ? theme.colorScheme.primary
-                                  : theme.colorScheme.onSurface,
+                            trailing: normalizedCurrent == null
+                                ? Icon(
+                                    Icons.check_circle,
+                                    color: theme.colorScheme.primary,
+                                  )
+                                : null,
+                            onTap: () => Navigator.of(ctx).pop(
+                              const MusicalKeySelectionResult(null),
                             ),
                           ),
-                          trailing: normalizedCurrent == key
-                              ? Icon(
-                                  Icons.check_circle,
-                                  color: theme.colorScheme.primary,
-                                )
-                              : null,
-                          onTap: () => Navigator.of(ctx).pop(
-                            MusicalKeySelectionResult(key),
+                        for (final key in effectiveKeys)
+                          ListTile(
+                            key: ValueKey('key_option_$key'),
+                            leading: Container(
+                              width: 36,
+                              height: 36,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: normalizedCurrent == key
+                                    ? theme.colorScheme.primaryContainer
+                                    : theme.colorScheme.surfaceContainerHighest,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                key,
+                                style: theme.textTheme.labelLarge?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  color: normalizedCurrent == key
+                                      ? theme.colorScheme.onPrimaryContainer
+                                      : theme.colorScheme.onSurface,
+                                ),
+                              ),
+                            ),
+                            title: Text(
+                              key.endsWith('m')
+                                  ? '$key (Menor)'
+                                  : '$key (Maior)',
+                              style: TextStyle(
+                                fontWeight: normalizedCurrent == key
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                                color: normalizedCurrent == key
+                                    ? theme.colorScheme.primary
+                                    : theme.colorScheme.onSurface,
+                              ),
+                            ),
+                            trailing: normalizedCurrent == key
+                                ? Icon(
+                                    Icons.check_circle,
+                                    color: theme.colorScheme.primary,
+                                  )
+                                : null,
+                            onTap: () => Navigator.of(ctx).pop(
+                              MusicalKeySelectionResult(key),
+                            ),
                           ),
-                        ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ],
