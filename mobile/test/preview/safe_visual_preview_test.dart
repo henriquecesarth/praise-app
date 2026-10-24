@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/app/providers.dart';
-import 'package:louvaio_mobile/features/auth/presentation/controllers/auth_controller.dart';
-import 'package:louvaio_mobile/features/ministry_context/presentation/controllers/ministry_context_controller.dart';
 import 'package:louvaio_mobile/features/repertoire/presentation/views/song_detail_view.dart';
 import 'package:louvaio_mobile/features/repertoire/presentation/views/song_form_screen.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/views/smart_chord_reader_screen.dart';
