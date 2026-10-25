@@ -40,7 +40,7 @@ class _ScheduleChatViewState extends ConsumerState<ScheduleChatView> {
   }
 
   Future<void> _refresh() async {
-    if (!_active) return;
+    if (!_active || ref.read(scheduleChatProvider(_key)).isPosting) return;
     await ref.read(scheduleChatProvider(_key).notifier)
         .load(widget.ministryId, widget.scheduleId);
     if (mounted && _active) _latest();
@@ -93,7 +93,8 @@ class _ScheduleChatViewState extends ConsumerState<ScheduleChatView> {
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(title: const Text('Chat da Escala'), actions: [
-        IconButton(tooltip: 'Atualizar conversa', onPressed: _refresh,
+        IconButton(tooltip: 'Atualizar conversa',
+          onPressed: state.isPosting || state.isLoading ? null : _refresh,
           icon: const Icon(Icons.refresh)),
       ]),
       body: SafeArea(child: Column(children: [
@@ -132,7 +133,9 @@ class _ScheduleChatViewState extends ConsumerState<ScheduleChatView> {
                           const SizedBox(height: 6),
                           Text(message.content),
                           const SizedBox(height: 6),
-                          Text('${message.formattedDate} • ${message.formattedTime}',
+                          Text(message.formattedDate == message.formattedTime
+                              ? message.formattedTime
+                              : '${message.formattedDate} • ${message.formattedTime}',
                             style: theme.textTheme.labelSmall),
                         ]),
                       )),

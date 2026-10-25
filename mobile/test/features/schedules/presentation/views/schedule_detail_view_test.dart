@@ -28,6 +28,7 @@ class FakeDetailScheduleRepo
   Exception? detailError;
   Exception? confirmError;
   Exception? commentPostError;
+  Exception? commentLoadError;
   Exception? deleteError;
 
   bool? lastConfirmed;
@@ -89,6 +90,7 @@ class FakeDetailScheduleRepo
   Future<List<ScheduleComment>> getComments(
       String ministryId, String scheduleId) async {
     commentReads++;
+    if (commentLoadError != null) throw commentLoadError!;
     return List.of(comments);
   }
 

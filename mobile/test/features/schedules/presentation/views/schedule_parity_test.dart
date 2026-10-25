@@ -23,6 +23,12 @@ class DelayedChatRepo extends FakeDetailScheduleRepo {
   Future<List<ScheduleComment>> getComments(String ministryId, String scheduleId) => pending.future;
 }
 
+class DelayedPostingRepo extends FakeDetailScheduleRepo {
+  final sent = Completer<ScheduleComment>();
+  @override
+  Future<ScheduleComment> postComment(String ministryId, String scheduleId, String content) => sent.future;
+}
+
 void main() {
   late FakeDetailScheduleRepo repo;
   late TestAuthNotifier auth;
@@ -120,6 +126,42 @@ void main() {
     expect(repo.commentReads, greaterThan(readsBefore));
     expect(tester.widget<TextField>(input).controller!.text, isEmpty);
     expect(find.byKey(const ValueKey('chat_message_comment_new')), findsOneWidget);
+  });
+
+  testWidgets('refresh is disabled during send so a successful response is not invalidated', (tester) async {
+    final pending = DelayedPostingRepo(); repo = pending;
+    await tester.pumpWidget(subject(chat));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('schedule_chat_input')), 'Enviando');
+    await tester.pump();
+    await tester.tap(find.byTooltip('Enviar comentário'));
+    await tester.pump();
+    expect(tester.widget<IconButton>(find.byTooltip('Atualizar conversa')).onPressed, isNull);
+    const message = ScheduleComment(id: 'sent', scheduleId: 's', ministryId: 'min_1',
+      userId: 'user_1', userName: 'Eu', content: 'Enviando', createdAt: '2026-01-01T10:00:00Z');
+    pending.comments = [message];
+    pending.sent.complete(message);
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('schedule_chat_input'))).controller!.text, isEmpty);
+    expect(find.byKey(const ValueKey('chat_message_sent')), findsOneWidget);
+    expect(pending.commentReads, 2);
+  });
+
+  testWidgets('chat load failure retries to empty state and whitespace never posts', (tester) async {
+    repo.commentLoadError = const AppFailure(message: 'Falha ao carregar conversa');
+    await tester.pumpWidget(subject(chat));
+    await tester.pumpAndSettle();
+    expect(find.text('Falha ao carregar conversa'), findsOneWidget);
+    repo.commentLoadError = null;
+    await tester.tap(find.text('Tentar novamente'));
+    await tester.pumpAndSettle();
+    expect(find.text('Falha ao carregar conversa'), findsNothing);
+    expect(find.text('Nenhum comentário ainda. Seja o primeiro!'), findsOneWidget);
+    await tester.enterText(find.byKey(const ValueKey('schedule_chat_input')), '   ');
+    await tester.pump();
+    expect(tester.widget<IconButton>(find.byTooltip('Enviar comentário')).onPressed, isNull);
+    expect(repo.commentPosts, 0);
+    expect(repo.commentReads, 2);
   });
 
   for (final changeUser in [true, false]) {
