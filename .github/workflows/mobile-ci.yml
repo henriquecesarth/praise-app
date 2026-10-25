@@ -54,6 +54,9 @@ jobs:
       - name: flutter analyze
         run: flutter analyze
 
+      - name: Availability tests
+        run: flutter test test/features/availability
+
       - name: Schedules tests
         run: flutter test test/features/schedules
 
