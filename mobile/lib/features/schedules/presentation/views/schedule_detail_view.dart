@@ -223,14 +223,16 @@ class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
           ],
         ],
       ),
-      body: SafeArea(child: body),
+      body: SafeArea(bottom: false, child: body),
     );
   }
 }
 
 // ─── Detail Content ───────────────────────────────────────────────────────────
 
-class _DetailContent extends ConsumerWidget {
+enum _DetailTab { detalhes, musicas, participantes, roteiro }
+
+class _DetailContent extends ConsumerStatefulWidget {
   final ScheduleDetail schedule;
   final String ministryId;
   final String scheduleId;
@@ -252,9 +254,95 @@ class _DetailContent extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_DetailContent> createState() => _DetailContentState();
+}
+
+class _DetailContentState extends ConsumerState<_DetailContent> {
+  _DetailTab _tab = _DetailTab.detalhes;
+
+  void _select(_DetailTab tab) {
+    if (tab != _tab) setState(() => _tab = tab);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final schedule = widget.schedule;
     final isWide = MediaQuery.sizeOf(context).width >= 600;
     final maxWidth = isWide ? 680.0 : double.infinity;
+    final hasDress = schedule.clothingPieces.isNotEmpty ||
+        (schedule.colorPalette != null &&
+            schedule.colorPalette!.trim().isNotEmpty);
+
+    final List<Widget> tabChildren;
+    switch (_tab) {
+      case _DetailTab.detalhes:
+        tabChildren = [
+          _ConfirmationSection(
+            schedule: schedule,
+            ministryId: widget.ministryId,
+            scheduleId: widget.scheduleId,
+            isConfirming: widget.isConfirming,
+            error: widget.confirmationError,
+          ),
+          const SizedBox(height: 16),
+          if (hasDress) ...[
+            _ClothingSection(
+              pieces: schedule.clothingPieces,
+              palette: schedule.colorPalette,
+            ),
+            const SizedBox(height: 16),
+          ],
+          if (schedule.notes?.isNotEmpty == true) ...[
+            _NotesSection(notes: schedule.notes!),
+            const SizedBox(height: 16),
+          ],
+          _CommentsSection(
+            ministryId: widget.ministryId,
+            scheduleId: widget.scheduleId,
+            commentsState: widget.commentsState,
+          ),
+        ];
+        break;
+      case _DetailTab.musicas:
+        tabChildren = [
+          if (schedule.songs.isNotEmpty)
+            _SongsSection(
+              songs: schedule.songs,
+              ministryId: widget.ministryId,
+            )
+          else
+            const _TabEmptyState(
+              key: ValueKey('schedule_detail_empty_musicas'),
+              icon: Icons.music_note_outlined,
+              message: 'Nenhuma música nesta escala.',
+            ),
+        ];
+        break;
+      case _DetailTab.participantes:
+        tabChildren = [
+          if (schedule.participants.isNotEmpty)
+            _ParticipantsSection(participants: schedule.participants)
+          else
+            const _TabEmptyState(
+              key: ValueKey('schedule_detail_empty_participantes'),
+              icon: Icons.people_outline,
+              message: 'Nenhum participante nesta escala.',
+            ),
+        ];
+        break;
+      case _DetailTab.roteiro:
+        tabChildren = [
+          if (schedule.timeline.isNotEmpty)
+            _TimelineSection(items: schedule.timeline)
+          else
+            const _TabEmptyState(
+              key: ValueKey('schedule_detail_empty_roteiro'),
+              icon: Icons.view_timeline_outlined,
+              message: 'Nenhum momento no roteiro desta escala.',
+            ),
+        ];
+        break;
+    }
 
     return Center(
       child: ConstrainedBox(
@@ -266,62 +354,122 @@ class _DetailContent extends ConsumerWidget {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
                 children: [
-                  _InfoSection(schedule: schedule),
+                  _InfoSection(schedule: schedule, onSelectTab: _select),
+                  const SizedBox(height: 12),
+                  _DetailTabBar(selected: _tab, onSelect: _select),
                   const SizedBox(height: 16),
-                  if (schedule.participants.isNotEmpty) ...[
-                    _ParticipantsSection(participants: schedule.participants),
-                    const SizedBox(height: 16),
-                  ],
-                  _ConfirmationSection(
-                    schedule: schedule,
-                    ministryId: ministryId,
-                    scheduleId: scheduleId,
-                    isConfirming: isConfirming,
-                    error: confirmationError,
-                  ),
-                  const SizedBox(height: 16),
-                  if (schedule.songs.isNotEmpty) ...[
-                    _SongsSection(
-                      songs: schedule.songs,
-                      ministryId: ministryId,
-                    ),
-                    const SizedBox(height: 16),
-                  ],
-                  if (schedule.timeline.isNotEmpty) ...[
-                    _TimelineSection(items: schedule.timeline),
-                    const SizedBox(height: 16),
-                  ],
-                  if (schedule.clothingPieces.isNotEmpty ||
-                      (schedule.colorPalette != null &&
-                          schedule.colorPalette!.trim().isNotEmpty)) ...[
-                    _ClothingSection(
-                      pieces: schedule.clothingPieces,
-                      palette: schedule.colorPalette,
-                    ),
-                    const SizedBox(height: 16),
-                  ],
-                  if (schedule.notes?.isNotEmpty == true) ...[
-                    _NotesSection(notes: schedule.notes!),
-                    const SizedBox(height: 16),
-                  ],
-                  _CommentsSection(
-                    ministryId: ministryId,
-                    scheduleId: scheduleId,
-                    commentsState: commentsState,
-                  ),
+                  ...tabChildren,
                   const SizedBox(height: 20),
                 ],
               ),
             ),
-            _CommentComposer(
-              ministryId: ministryId,
-              scheduleId: scheduleId,
-              controller: commentController,
-              focusNode: commentFocusNode,
-              commentsState: commentsState,
-            ),
+            if (_tab == _DetailTab.detalhes)
+              _CommentComposer(
+                ministryId: widget.ministryId,
+                scheduleId: widget.scheduleId,
+                controller: widget.commentController,
+                focusNode: widget.commentFocusNode,
+                commentsState: widget.commentsState,
+              ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Section navigation: Detalhes / Músicas / Participantes / Roteiro.
+class _DetailTabBar extends StatelessWidget {
+  final _DetailTab selected;
+  final ValueChanged<_DetailTab> onSelect;
+  const _DetailTabBar({required this.selected, required this.onSelect});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    const tabs = <(_DetailTab, String, String)>[
+      (_DetailTab.detalhes, 'Detalhes', 'schedule_detail_tab_detalhes'),
+      (_DetailTab.musicas, 'Músicas', 'schedule_detail_tab_musicas'),
+      (
+        _DetailTab.participantes,
+        'Participantes',
+        'schedule_detail_tab_participantes'
+      ),
+      (_DetailTab.roteiro, 'Roteiro', 'schedule_detail_tab_roteiro'),
+    ];
+    return Container(
+      key: const ValueKey('schedule_detail_tab_bar'),
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          for (final t in tabs)
+            Expanded(
+              child: Semantics(
+                button: true,
+                selected: selected == t.$1,
+                child: InkWell(
+                  key: ValueKey(t.$3),
+                  borderRadius: BorderRadius.circular(9),
+                  onTap: () => onSelect(t.$1),
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 44),
+                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: selected == t.$1
+                          ? theme.colorScheme.primary
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        t.$2,
+                        maxLines: 1,
+                        style: theme.textTheme.labelLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: selected == t.$1
+                              ? theme.colorScheme.onPrimary
+                              : theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TabEmptyState extends StatelessWidget {
+  final IconData icon;
+  final String message;
+  const _TabEmptyState({super.key, required this.icon, required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return _SectionCard(
+      child: Column(
+        children: [
+          Icon(icon,
+              size: 36,
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.35)),
+          const SizedBox(height: 8),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.6)),
+          ),
+        ],
       ),
     );
   }
@@ -378,7 +526,8 @@ class _InfoRow extends StatelessWidget {
 
 class _InfoSection extends StatelessWidget {
   final ScheduleDetail schedule;
-  const _InfoSection({required this.schedule});
+  final ValueChanged<_DetailTab>? onSelectTab;
+  const _InfoSection({required this.schedule, this.onSelectTab});
 
   @override
   Widget build(BuildContext context) {
@@ -390,13 +539,31 @@ class _InfoSection extends StatelessWidget {
             ? 1
             : 0);
 
-    return _SectionCard(
+    return Card(
+      key: const ValueKey('schedule_detail_hero'),
+      elevation: 0,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4)),
+      ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            key: const ValueKey('schedule_detail_accent_bar'),
+            height: 5,
+            color: theme.colorScheme.secondary,
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(schedule.title,
-              style: theme.textTheme.titleLarge
-                  ?.copyWith(fontWeight: FontWeight.bold)),
+              style: theme.textTheme.headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w800)),
           if (!schedule.isVisible || schedule.requireConfirmation) ...[
             const SizedBox(height: 8),
             Wrap(
@@ -475,28 +642,49 @@ class _InfoSection extends StatelessWidget {
           const SizedBox(height: 12),
           const Divider(height: 1),
           const SizedBox(height: 10),
-          Wrap(
+          Row(
             key: const ValueKey('schedule_detail_stats_row'),
-            spacing: 8,
-            runSpacing: 6,
             children: [
-              _StatChip(
+              _StatCell(
+                keyName: 'schedule_detail_stat_participantes',
                 icon: Icons.people_outline,
-                label: '${schedule.participants.length} int.',
+                count: schedule.participants.length,
+                label: 'Participantes',
+                onTap: onSelectTab == null
+                    ? null
+                    : () => onSelectTab!(_DetailTab.participantes),
               ),
-              _StatChip(
+              _StatCell(
+                keyName: 'schedule_detail_stat_musicas',
                 icon: Icons.music_note_outlined,
-                label: '${schedule.songs.length} mús.',
+                count: schedule.songs.length,
+                label: 'Músicas',
+                onTap: onSelectTab == null
+                    ? null
+                    : () => onSelectTab!(_DetailTab.musicas),
               ),
-              _StatChip(
+              _StatCell(
+                keyName: 'schedule_detail_stat_roteiro',
                 icon: Icons.view_timeline_outlined,
-                label: '${schedule.timeline.length} rot.',
+                count: schedule.timeline.length,
+                label: 'Roteiro',
+                onTap: onSelectTab == null
+                    ? null
+                    : () => onSelectTab!(_DetailTab.roteiro),
               ),
-              _StatChip(
+              _StatCell(
+                keyName: 'schedule_detail_stat_vestimenta',
                 icon: Icons.checkroom_outlined,
-                label: '$dressCount vest.',
+                count: dressCount,
+                label: 'Vestimenta',
+                onTap: onSelectTab == null
+                    ? null
+                    : () => onSelectTab!(_DetailTab.detalhes),
               ),
             ],
+          ),
+        ],
+      ),
           ),
         ],
       ),
@@ -504,38 +692,64 @@ class _InfoSection extends StatelessWidget {
   }
 }
 
-class _StatChip extends StatelessWidget {
+class _StatCell extends StatelessWidget {
+  final String keyName;
   final IconData icon;
+  final int count;
   final String label;
+  final VoidCallback? onTap;
 
-  const _StatChip({required this.icon, required this.label});
+  const _StatCell({
+    required this.keyName,
+    required this.icon,
+    required this.count,
+    required this.label,
+    this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 13, color: theme.colorScheme.primary),
-          const SizedBox(width: 4),
-          Flexible(
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.labelSmall?.copyWith(
-                fontWeight: FontWeight.w600,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 3),
+        child: InkWell(
+          key: ValueKey(keyName),
+          borderRadius: BorderRadius.circular(10),
+          onTap: onTap,
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 44),
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest
+                  .withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 16, color: theme.colorScheme.primary),
+                const SizedBox(height: 2),
+                Text(
+                  '$count',
+                  style: theme.textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w800),
+                ),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -1452,7 +1666,7 @@ class _CommentComposerState extends ConsumerState<_CommentComposer> {
                       theme.colorScheme.outlineVariant.withValues(alpha: 0.4)),
             ),
           ),
-          child: Row(children: [
+          child: SafeArea(top: false, child: Row(children: [
             Expanded(
               child: TextField(
                 controller: widget.controller,
@@ -1496,7 +1710,7 @@ class _CommentComposerState extends ConsumerState<_CommentComposer> {
                       tooltip: 'Enviar comentário',
                     ),
             ),
-          ]),
+          ])),
         ),
       ],
     );

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/app/environment/app_environment.dart';
 import 'package:louvaio_mobile/app/providers.dart';
+import 'package:louvaio_mobile/app/theme/app_theme.dart';
 import 'package:louvaio_mobile/core/storage/preferences_storage.dart';
 import 'package:louvaio_mobile/features/ministry_context/data/ministry_repository.dart';
 import 'package:louvaio_mobile/features/ministry_context/domain/ministry.dart';
@@ -516,6 +517,84 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Tom: A'), findsOneWidget);
+    });
+
+    testWidgets('song picker sheet opens full-height, anchored to the top',
+        (tester) async {
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_musicas')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('add_song_button')));
+      await tester.pumpAndSettle();
+
+      final sheet = find.byKey(const ValueKey('song_picker_sheet'));
+      expect(sheet, findsOneWidget);
+      final rect = tester.getRect(sheet);
+      // Occupies (almost) the whole viewport: header sits near the top and
+      // the sheet reaches the bottom edge.
+      expect(rect.top, lessThan(60));
+      expect(rect.bottom, closeTo(800, 1));
+      expect(find.text('Selecionar Música do Repertório'), findsOneWidget);
+      expect(find.byType(TextField), findsWidgets);
+    });
+
+    testWidgets('member picker sheet opens full-height as well',
+        (tester) async {
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_integrantes')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('add_participant_button')));
+      await tester.pumpAndSettle();
+
+      final sheet = find.byKey(const ValueKey('member_picker_sheet'));
+      expect(sheet, findsOneWidget);
+      expect(tester.getRect(sheet).top, lessThan(60));
+    });
+
+    test('dark theme paints sheets, nav bar and system bars with dark surface',
+        () {
+      final dark = AppTheme.darkTheme;
+      expect(dark.bottomSheetTheme.backgroundColor, AppColors.darkSurface);
+      expect(dark.bottomSheetTheme.modalBackgroundColor, AppColors.darkSurface);
+      expect(dark.bottomSheetTheme.surfaceTintColor, Colors.transparent);
+      expect(AppTheme.darkSystemOverlayStyle.systemNavigationBarColor,
+          AppColors.darkSurface);
+      expect(AppTheme.darkSystemOverlayStyle.systemNavigationBarIconBrightness,
+          Brightness.light);
+      expect(dark.appBarTheme.systemOverlayStyle,
+          AppTheme.darkSystemOverlayStyle);
+    });
+
+    testWidgets(
+        'submit bar paints the surface color under the bottom system inset',
+        (tester) async {
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.padding = const FakeViewPadding(bottom: 34);
+      tester.view.viewPadding = const FakeViewPadding(bottom: 34);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetPadding);
+      addTearDown(tester.view.resetViewPadding);
+
+      await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+
+      final bar = tester.getRect(find.byKey(const ValueKey('schedule_submit_bar')));
+      // The bar reaches the very bottom edge (inset is inside the bar).
+      expect(bar.bottom, closeTo(800, 1));
+      final button =
+          tester.getRect(find.byKey(const ValueKey('schedule_submit_button')));
+      expect(button.bottom, lessThanOrEqualTo(800 - 34));
     });
 
     testWidgets('adding timeline moment via timeline dialog adds item to schedule',

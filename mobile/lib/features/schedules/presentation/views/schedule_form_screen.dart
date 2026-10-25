@@ -2139,6 +2139,7 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen>
           ),
         ),
         body: SafeArea(
+          bottom: false,
           child: Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 700),
@@ -2191,7 +2192,7 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen>
                       ),
                     ),
                     Container(
-                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+                      key: const ValueKey('schedule_submit_bar'),
                       decoration: BoxDecoration(
                         color: theme.colorScheme.surface,
                         border: Border(
@@ -2200,29 +2201,35 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen>
                           ),
                         ),
                       ),
-                      child: SizedBox(
-                        width: double.infinity,
-                        height: 48,
-                        child: FilledButton.icon(
-                          key: const ValueKey('schedule_submit_button'),
-                          onPressed: formState.isSubmitting ? null : _save,
-                          icon: formState.isSubmitting
-                              ? const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : const Icon(Icons.check),
-                          label: Text(
-                            formState.isEditing
-                                ? 'Salvar Alterações'
-                                : 'Criar Escala',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
+                      child: SafeArea(
+                        top: false,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+                          child: SizedBox(
+                            width: double.infinity,
+                            height: 48,
+                            child: FilledButton.icon(
+                              key: const ValueKey('schedule_submit_button'),
+                              onPressed: formState.isSubmitting ? null : _save,
+                              icon: formState.isSubmitting
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Icon(Icons.check),
+                              label: Text(
+                                formState.isEditing
+                                    ? 'Salvar Alterações'
+                                    : 'Criar Escala',
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                             ),
                           ),
                         ),
@@ -2383,12 +2390,28 @@ class _MemberPickerSheetState extends ConsumerState<_MemberPickerSheet> {
 
     return Padding(
       padding: EdgeInsets.only(
-        top: 16,
+        top: 8,
         bottom: MediaQuery.of(context).viewInsets.bottom,
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
+      child: SizedBox(
+        key: const ValueKey('member_picker_sheet'),
+        height: double.infinity,
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.max,
+            children: [
+              Center(
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 4),
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.outlineVariant,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
             child: Row(
@@ -2429,13 +2452,11 @@ class _MemberPickerSheetState extends ConsumerState<_MemberPickerSheet> {
             ),
           ),
           if (formState.isLoadingMembers)
-            const Padding(
-              padding: EdgeInsets.all(32.0),
+            const Expanded(
               child: Center(child: CircularProgressIndicator()),
             )
           else if (filtered.isEmpty)
-            Padding(
-              padding: const EdgeInsets.all(32.0),
+            Expanded(
               child: Center(
                 child: Text(
                   _filter.isEmpty
@@ -2448,9 +2469,8 @@ class _MemberPickerSheetState extends ConsumerState<_MemberPickerSheet> {
               ),
             )
           else
-            Flexible(
+            Expanded(
               child: ListView.separated(
-                shrinkWrap: true,
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 itemCount: filtered.length,
                 separatorBuilder: (_, __) => const Divider(height: 1),
@@ -2532,6 +2552,8 @@ class _MemberPickerSheetState extends ConsumerState<_MemberPickerSheet> {
               ),
             ),
         ],
+          ),
+        ),
       ),
     );
   }
@@ -2599,12 +2621,28 @@ class _SongPickerSheetState extends ConsumerState<_SongPickerSheet> {
 
     return Padding(
       padding: EdgeInsets.only(
-        top: 16,
+        top: 8,
         bottom: MediaQuery.of(context).viewInsets.bottom,
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
+      child: SizedBox(
+        key: const ValueKey('song_picker_sheet'),
+        height: double.infinity,
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.max,
+            children: [
+              Center(
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 4),
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.outlineVariant,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
             child: Row(
@@ -2646,15 +2684,14 @@ class _SongPickerSheetState extends ConsumerState<_SongPickerSheet> {
             ),
           ),
           if (_isLoading)
-            const Padding(
-              padding: EdgeInsets.all(32.0),
+            const Expanded(
               child: Center(child: CircularProgressIndicator()),
             )
           else if (_error != null)
-            Padding(
-              padding: const EdgeInsets.all(32.0),
+            Expanded(
               child: Center(
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
                       _error!,
@@ -2673,8 +2710,7 @@ class _SongPickerSheetState extends ConsumerState<_SongPickerSheet> {
               ),
             )
           else if (_songs.isEmpty)
-            Padding(
-              padding: const EdgeInsets.all(32.0),
+            Expanded(
               child: Center(
                 child: Text(
                   _searchController.text.trim().isEmpty
@@ -2687,9 +2723,8 @@ class _SongPickerSheetState extends ConsumerState<_SongPickerSheet> {
               ),
             )
           else
-            Flexible(
+            Expanded(
               child: ListView.separated(
-                shrinkWrap: true,
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 itemCount: _songs.length,
                 separatorBuilder: (_, __) => const Divider(height: 1),
@@ -2763,6 +2798,8 @@ class _SongPickerSheetState extends ConsumerState<_SongPickerSheet> {
               ),
             ),
         ],
+          ),
+        ),
       ),
     );
   }

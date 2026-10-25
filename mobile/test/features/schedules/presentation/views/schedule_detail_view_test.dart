@@ -290,29 +290,80 @@ void main() {
       expect(find.text('19:30'), findsWidgets);
       expect(find.text('Duração: 2h'), findsOneWidget);
 
-      // Notes
+      // Detalhes tab (default): notes, clothing & palette, comments
       expect(find.text('Chegar com 30min de antecedência para aquecimento.'),
           findsOneWidget);
+      expect(find.text('Camisa Preta e Calça Jeans Escura'), findsOneWidget);
+      expect(find.text('Tons Terrosos'), findsOneWidget);
+      expect(find.text('Qual o tom da primeira música?'), findsOneWidget);
+      expect(find.text('Bondade de Deus'), findsNothing);
 
-      // Participants
+      // Participantes tab
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_participantes')));
+      await tester.pumpAndSettle();
       expect(find.text('Henrique Vocal'), findsOneWidget);
-      expect(find.text('Ana Teclado'),
-          findsWidgets); // Appears in participants and comments
+      expect(find.text('Ana Teclado'), findsOneWidget);
 
-      // Songs
+      // Músicas tab
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_musicas')));
+      await tester.pumpAndSettle();
       expect(find.text('Bondade de Deus'), findsOneWidget);
       expect(find.text('A Casa É Sua'), findsOneWidget);
 
-      // Timeline
+      // Roteiro tab
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_roteiro')));
+      await tester.pumpAndSettle();
       expect(find.text('Abertura e Oração'), findsOneWidget);
       expect(find.text('Louvor Congregacional'), findsOneWidget);
+    });
 
-      // Clothing & Palette
-      expect(find.text('Camisa Preta e Calça Jeans Escura'), findsOneWidget);
-      expect(find.text('Tons Terrosos'), findsOneWidget);
+    testWidgets('shows hero summary and the four section tabs', (tester) async {
+      tester.view.physicalSize = const Size(1024, 2048);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
 
-      // Comments
-      expect(find.text('Qual o tom da primeira música?'), findsOneWidget);
+      await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('schedule_detail_hero')), findsOneWidget);
+      expect(find.byKey(const ValueKey('schedule_detail_accent_bar')), findsOneWidget);
+      for (final k in ['detalhes', 'musicas', 'participantes', 'roteiro']) {
+        expect(find.byKey(ValueKey('schedule_detail_tab_$k')), findsOneWidget);
+      }
+      for (final k in ['participantes', 'musicas', 'roteiro', 'vestimenta']) {
+        expect(find.byKey(ValueKey('schedule_detail_stat_$k')), findsOneWidget);
+      }
+      // Tapping a summary stat switches to the matching tab.
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_stat_musicas')));
+      await tester.pumpAndSettle();
+      expect(find.text('Bondade de Deus'), findsOneWidget);
+      // Composer is only pinned on the Detalhes tab.
+      expect(find.byTooltip('Enviar comentário'), findsNothing);
+    });
+
+    testWidgets('empty tabs show an explicit empty state', (tester) async {
+      tester.view.physicalSize = const Size(1024, 2048);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      fakeRepo.detail = const ScheduleDetail(
+        id: 'sch_1',
+        ministryId: 'min_1',
+        title: 'Escala Vazia',
+        date: '2099-10-01',
+      );
+
+      await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_musicas')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('schedule_detail_empty_musicas')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_participantes')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('schedule_detail_empty_participantes')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_roteiro')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('schedule_detail_empty_roteiro')), findsOneWidget);
     });
 
     testWidgets(
@@ -594,8 +645,12 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('schedule_detail_stats_row')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_musicas')));
+      await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('detail_song_key_s1')), findsOneWidget);
       expect(find.text('Tom: G'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_roteiro')));
+      await tester.pumpAndSettle();
       expect(find.text('Oração'), findsOneWidget);
       expect(find.text('Louvor'), findsOneWidget);
     });
@@ -620,6 +675,12 @@ void main() {
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull,
             reason: 'No overflow on ScheduleDetailView at ${width}px');
+        for (final k in ['musicas', 'participantes', 'roteiro', 'detalhes']) {
+          await tester.tap(find.byKey(ValueKey('schedule_detail_tab_$k')));
+          await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull,
+              reason: 'No overflow on tab $k at ${width}px');
+        }
       }
 
       addTearDown(tester.view.resetPhysicalSize);

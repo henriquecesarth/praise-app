@@ -1,0 +1,77 @@
+name: Mobile CI
+
+on:
+  push:
+    branches:
+      - 'ci/r4-m5-mobile-validation-**'
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/mobile-ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: mobile-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  mobile:
+    name: Analyze, Test & Debug APK (Ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Set up Flutter 3.47.5
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.5'
+          channel: stable
+          cache: true
+
+      - name: Verify toolchain
+        run: |
+          flutter --version
+          dart --version
+          java -version
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: flutter analyze
+        run: flutter analyze
+
+      - name: Schedules tests
+        run: flutter test test/features/schedules
+
+      - name: Full test suite
+        run: flutter test
+
+      - name: Build debug APK
+        run: |
+          flutter build apk --debug \
+            --flavor production \
+            --target lib/main.dart \
+            --dart-define=APP_ENV=staging \
+            --dart-define=API_BASE_URL=https://praise-app-git-wip-repertoire-1978b6-henriquecesarths-projects.vercel.app/api/v1
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: louvaio-mobile-debug-apk
+          path: mobile/build/app/outputs/flutter-apk/*.apk
+          retention-days: 7
+          if-no-files-found: error
