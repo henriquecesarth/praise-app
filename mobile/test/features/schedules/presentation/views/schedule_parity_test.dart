@@ -136,7 +136,7 @@ void main() {
     await tester.pump();
     await tester.tap(find.byTooltip('Enviar comentário'));
     await tester.pump();
-    expect(tester.widget<IconButton>(find.byTooltip('Atualizar conversa')).onPressed, isNull);
+    expect(tester.widget<IconButton>(find.byWidgetPredicate((widget) => widget is IconButton && widget.tooltip == 'Atualizar conversa')).onPressed, isNull);
     const message = ScheduleComment(id: 'sent', scheduleId: 's', ministryId: 'min_1',
       userId: 'user_1', userName: 'Eu', content: 'Enviando', createdAt: '2026-01-01T10:00:00Z');
     pending.comments = [message];
@@ -159,7 +159,7 @@ void main() {
     expect(find.text('Nenhum comentário ainda. Seja o primeiro!'), findsOneWidget);
     await tester.enterText(find.byKey(const ValueKey('schedule_chat_input')), '   ');
     await tester.pump();
-    expect(tester.widget<IconButton>(find.byTooltip('Enviar comentário')).onPressed, isNull);
+    expect(tester.widget<IconButton>(find.byWidgetPredicate((widget) => widget is IconButton && widget.tooltip == 'Enviar comentário')).onPressed, isNull);
     expect(repo.commentPosts, 0);
     expect(repo.commentReads, 2);
   });
