@@ -1,6 +1,12 @@
 name: Android Debug APK
 
 on:
+  # Temporary one-shot R4-M10 approved Android reader retest build; remove after artifact upload.
+  push:
+    branches:
+      - wip/repertoire-versions-smartchords-20261022
+    paths:
+      - '.github/workflows/android-debug-apk.yml'
   workflow_dispatch:
     inputs:
       target_mode:
