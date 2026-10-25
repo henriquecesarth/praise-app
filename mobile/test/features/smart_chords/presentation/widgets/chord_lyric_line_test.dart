@@ -63,7 +63,12 @@ void main() {
         } else {
           final scroll = tester.state<ScrollableState>(find.descendant(
             of: find.byType(SingleChildScrollView).first, matching: find.byType(Scrollable)).first);
-          expect(scroll.position.maxScrollExtent, greaterThan(0));
+          final row = find.descendant(of: find.byKey(const ValueKey('reader-word-0')),
+            matching: find.byType(Row));
+          final overflow = (tester.getSize(row).width - 180).clamp(0.0, double.infinity);
+          expect(scroll.position.maxScrollExtent, closeTo(overflow, 0.1));
+          expect(tester.getTopLeft(find.byKey(const ValueKey('reader-word-1'))).dy,
+            greaterThan(tester.getTopLeft(find.byKey(const ValueKey('reader-word-0'))).dy));
         }
         expect(tester.takeException(), isNull);
       });
@@ -150,6 +155,9 @@ void main() {
             final overflow = scrolls.lastWhere((state) => state.position.maxScrollExtent > 0);
             final lastTier = find.descendant(of: fragments.last, matching: find.byType(Text)).last;
             final before = tester.getRect(lastTier).right;
+            await tester.drag(find.byKey(const ValueKey('reader-word-5')), Offset(-viewport, 0));
+            await tester.pumpAndSettle();
+            expect(overflow.position.pixels, greaterThan(0));
             overflow.position.jumpTo(overflow.position.maxScrollExtent);
             await tester.pumpAndSettle();
             expect(tester.getRect(lastTier).right, lessThan(before));
