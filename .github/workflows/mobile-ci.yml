@@ -69,6 +69,7 @@ jobs:
           echo "::error title=Failing test::$(cat /tmp/fail.txt)"
 
       - name: Build debug APK
+        if: ${{ !cancelled() }}
         run: |
           flutter build apk --debug \
             --flavor production \
@@ -77,6 +78,7 @@ jobs:
             --dart-define=API_BASE_URL=https://praise-app-git-wip-repertoire-1978b6-henriquecesarths-projects.vercel.app/api/v1
 
       - name: Upload debug APK
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: louvaio-mobile-debug-apk
