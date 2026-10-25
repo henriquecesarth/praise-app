@@ -33,6 +33,8 @@ class FakeDetailScheduleRepo
   bool? lastConfirmed;
   String? lastPostedComment;
   int deleteCalls = 0;
+  int commentReads = 0;
+  int commentPosts = 0;
 
   @override
   Future<void> deleteSchedule(String ministryId, String scheduleId) async {
@@ -86,12 +88,14 @@ class FakeDetailScheduleRepo
   @override
   Future<List<ScheduleComment>> getComments(
       String ministryId, String scheduleId) async {
+    commentReads++;
     return List.of(comments);
   }
 
   @override
   Future<ScheduleComment> postComment(
       String ministryId, String scheduleId, String content) async {
+    commentPosts++;
     lastPostedComment = content;
     if (commentPostError != null) throw commentPostError!;
     final comment = ScheduleComment(
@@ -103,7 +107,7 @@ class FakeDetailScheduleRepo
       content: content,
       createdAt: '2026-09-25T14:30:00Z',
     );
-    comments.add(comment);
+    comments = [...comments, comment];
     return comment;
   }
 
@@ -447,6 +451,10 @@ void main() {
 
       expect(fakeRepo.lastPostedComment, equals('Tom de Sol Maior!'));
       expect(find.text('Tom de Sol Maior!'), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.byType(ScheduleDetailView), findsOneWidget);
+      expect(find.byType(TextField), findsNothing);
     });
 
     testWidgets(

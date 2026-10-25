@@ -60,6 +60,29 @@ describe('CreateScheduleModal — Phase 6C Duration & Availability Conflicts', (
     } as ScheduleConflictCheckResponse);
   });
 
+  it('R4-M5 saves resolved legacy song slots and preserves custom event metadata', async () => {
+    const songs = ['Oceanos', 'Ao Teu Rosto Vir', 'Até que Ele Venha'].map((title, i) => ({
+      id: `song-${i}`, title, artist: '', versions: [],
+    }));
+    const timeline = [
+      { id: 'slot1', title: 'Música 1', type: 'Música' },
+      { id: 'offer', title: 'Oferta especial', type: 'Oferta', time: '5min' },
+      { id: 'slot2', title: 'Música 2', type: 'Música' },
+      { id: 'slot3', title: 'Música 3', type: 'Música' },
+    ];
+    const user = userEvent.setup();
+    render(<CreateScheduleModal allSongs={songs} currentUserId="user-1"
+      initialSchedule={{ songs, timeline }} onClose={mockOnClose} onSave={mockOnSave} />);
+    await user.click(screen.getByRole('button', { name: /salvar escala/i }));
+    const saved = mockOnSave.mock.calls[0][0];
+    expect(saved.timeline).toEqual([
+      { ...timeline[0], title: 'Oceanos' }, timeline[1],
+      { ...timeline[2], title: 'Ao Teu Rosto Vir' },
+      { ...timeline[3], title: 'Até que Ele Venha' },
+    ]);
+    expect(timeline[0].title).toBe('Música 1');
+  });
+
   describe('1. Duration Selection & Persistence', () => {
     it('inicia com duração padrão de 120 minutos (2h) e passa no onSave', async () => {
       const user = userEvent.setup();

@@ -111,10 +111,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Falha temporária'), findsOneWidget);
     expect(tester.widget<TextField>(input).controller!.text, 'Mensagem');
+    final readsBefore = repo.commentReads;
     repo.commentPostError = null;
     await tester.tap(find.byTooltip('Enviar comentário'));
     await tester.pumpAndSettle();
     expect(repo.lastPostedComment, 'Mensagem');
+    expect(repo.commentPosts, 2);
+    expect(repo.commentReads, greaterThan(readsBefore));
     expect(tester.widget<TextField>(input).controller!.text, isEmpty);
     expect(find.byKey(const ValueKey('chat_message_comment_new')), findsOneWidget);
   });
