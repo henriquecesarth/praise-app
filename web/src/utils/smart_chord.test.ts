@@ -422,3 +422,22 @@ describe('Web Smart Chord Utility Test Suite', () => {
     });
   });
 });
+
+
+describe('R4-M9 progression token representation', () => {
+  it.each(['[ G | D ]', 'Solo: [ Am | D ]', 'Interlúdio: [ ||: G | D | % :|| ]',
+    'Intro: (riff viol) [ ||: A | A7M | D | % :|| ]', '[||: A | D :||]'])('renders %s as one musical row', (line) => {
+    expect(hasBarProgression(line)).toBe(true);
+    const tokens = parseBarProgressionLine(line);
+    expect(tokens.filter(t => t.type === 'chord').length).toBeGreaterThanOrEqual(2);
+    expect(tokens.filter(t => !t.type.startsWith('bracket_')).map(t => t.value).join(''))
+      .toBe(line.replace(/[\[\]]/g, ''));
+  });
+  it('transposes and edits only musical tokens, retaining labels, annotation and spacing', () => {
+    const line = 'Intro: (riff viol) [ G | D | (tocar A E juntos) Am ]';
+    expect(transposeSmartChord(line, 2)).toBe('Intro: (riff viol) [ A | E | (tocar A E juntos) Bm ]');
+    expect(updateBarProgressionChord(line, 1, 'D/F#')).toBe('Intro: (riff viol) [ G | D/F# | (tocar A E juntos) Am ]');
+    expect(transposeSmartChord('[ A | E | F#m ]', 2)).toBe('[ B | F# | G#m ]');
+    expect(hasBarProgression('[G]Graças Te dou [D]pelo Teu amor')).toBe(false);
+  });
+});

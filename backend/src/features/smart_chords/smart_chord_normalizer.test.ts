@@ -108,7 +108,7 @@ describe('Smart Chord Normalizer & Chord Grammar Test Suite', () => {
       const draft = normalizeChordText(input);
 
       expect(draft.content).toContain('[Intro]');
-      expect(draft.content).toContain('[||: A9 | A7M/9 | D9 | % :||]');
+      expect(draft.content).toContain('[ ||: A9 | A7M/9 | D9 | % :|| ]');
     });
 
     it('preserves parenthetical performance annotations without bracket corruption', () => {
@@ -164,6 +164,68 @@ describe('Smart Chord Normalizer & Chord Grammar Test Suite', () => {
       const draft = normalizeChordText(input);
       expect(draft.content).toContain('[A9]');
       expect(draft.content).toContain('[D9]');
+      expect(draft.content).toBe('[A9]          (cresce marcando)          [D9]\nEu sei que tudo vais fazer');
     });
   });
+});
+
+
+describe('R4-M7 lossless musical lines', () => {
+  it.each([
+    ['G (cresce marcando) D\nEu sei que tudo vais fazer', '[G] (cresce marcando) [D]\nEu sei que tudo vais fazer'],
+    ['G (cresce marcando) (corte) D\nEu canto', '[G] (cresce marcando) (corte) [D]\nEu canto'],
+    ['||: G | D | % :||\nUh uh uh', '[ ||: G | D | % :|| ]\nUh uh uh'],
+    ['G | D\nMinha letra intacta', '[ G | D ]\nMinha letra intacta'],
+    ['G % D\nUh uh uh', '[ G % D ]\nUh uh uh'],
+    ['%\nUh uh uh', '[ % ]\nUh uh uh'],
+    ['D/F#  (violão solo) A7M/9\nMinha letra', '[D/F#]  (violão solo) [A7M/9]\nMinha letra'],
+    ['[G]Eu [D/F#]canto', '[G]Eu [D/F#]canto'],
+    ['G (cresce marcando D\nMinha letra', '[G] (cresce marcando [D]\nMinha letra'],
+    ['G D H7\nMinha letra', '[G] [D] H7\nMinha letra'],
+    ['Eu canto (com alegria) nesta manhã', 'Eu canto (com alegria) nesta manhã'],
+  ])('preserves %s', (input, expected) => {
+    expect(normalizeChordText(input).content).toBe(expected);
+  });
+  it('warns on malformed/unknown tokens and ambiguous preserved alignment', () => {
+    expect(normalizeChordText('G (cresce marcando D\nMinha letra').warnings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'UNSUPPORTED_LAYOUT' })]));
+    expect(normalizeChordText('G D H7\nMinha letra').warnings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'UNKNOWN_CHORD_TOKEN' })]));
+    expect(normalizeChordText('||: G | D | % :||\nUh uh uh').warnings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'REPEAT_STRUCTURE_AMBIGUOUS' })]));
+    expect(transposeChordSafe('(cresce marcando)', 2)).toBe('(cresce marcando)');
+  });
+});
+
+
+describe('R4-M8 existing bracketed progression compatibility', () => {
+  it('canonicalizes individually bracketed chords and barlines without nesting brackets', () => {
+    const input = '[G] | [D]\nUh uh uh';
+    expect(normalizeChordText(input).content).toBe('[ G | D ]\nUh uh uh');
+  });
+});
+
+
+describe('R4-M9 canonical instrumental blocks', () => {
+  it.each([
+    ['[G] | [D]', '[ G | D ]'],
+    ['G | [D] | Em', '[ G | D | Em ]'],
+    ['[ G | D ]', '[ G | D ]'],
+    ['Intro: [G] | [D]', 'Intro: [ G | D ]'],
+    ['Solo: G | Am | D', 'Solo: [ G | Am | D ]'],
+    ['Interlúdio: ||: G | D | % :||', 'Interlúdio: [ ||: G | D | % :|| ]'],
+    ['Intro: (riff viol) [||: A | A7M | D | % :||]', 'Intro: (riff viol) [ ||: A | A7M | D | % :|| ]'],
+    ['Introdução 2: [D/F#] | A7M/9', 'Introdução 2: [ D/F# | A7M/9 ]'],
+    ['[G]Graças Te dou [D]pelo Teu amor', '[G]Graças Te dou [D]pelo Teu amor'],
+    ['[G]A [D]C', '[G]A [D]C'],
+  ])('canonicalizes %s losslessly and idempotently', (input, expected) => {
+    const content = normalizeChordText(input).content;
+    expect(content).toBe(expected);
+    expect(normalizeChordText(content).content).toBe(expected);
+    expect(content).not.toMatch(/\[[^\]]*\[/);
+  });
+});
+
+it('does not transpose note names inside performance annotations', () => {
+  expect(transposeChordSafe('G | (tocar A E juntos) D', 2)).toBe('A | (tocar A E juntos) E');
 });

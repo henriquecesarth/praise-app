@@ -1295,4 +1295,13 @@ describe('SongDetail Web Repertoire <-> Smart Chords Integration', () => {
       expect(screen.queryByTestId('song-detail-chord-sheet')).toBeNull();
     });
   });
+  it('renders an inline instrumental section in the saved song reader as a single musical row', async () => {
+    const content = 'Solo: [ Am | D ]';
+    getMySmartChordsForSong.mockResolvedValue([{ ...mockChord1, content }]);
+    render(<SongDetail song={mockSong} ministryId="min-1" onBack={vi.fn()} />);
+    const row = await screen.findByRole('group', { name: content });
+    expect(row.textContent).toBe(content.replace(/[\[\]]/g, ''));
+    expect(row).toHaveStyle({ flexWrap: 'nowrap', whiteSpace: 'pre', overflowX: 'auto' });
+  });
+
 });

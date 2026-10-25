@@ -55,7 +55,7 @@ final smartChordFormNotifierProvider =
 });
 
 final smartChordImportNotifierProvider =
-    StateNotifierProvider<SmartChordImportNotifier, SmartChordImportState>((ref) {
+    StateNotifierProvider.autoDispose<SmartChordImportNotifier, SmartChordImportState>((ref) {
   final repository = ref.watch(smartChordRepositoryProvider);
   final linkRepository = ref.watch(smartChordRepertoireLinkRepositoryProvider);
   return SmartChordImportNotifier(

@@ -13,6 +13,7 @@ class _FakeSmartChordRepo implements SmartChordRepository {
   SmartChordImportDraft? textDraftToReturn;
   Exception? errorToThrow;
   Completer<void>? pdfCompleter;
+  Completer<void>? createCompleter;
   Map<String, dynamic>? lastCreatedPayload;
   int createCallCount = 0;
 
@@ -28,6 +29,7 @@ class _FakeSmartChordRepo implements SmartChordRepository {
   @override
   Future<SmartChord> createSmartChord(Map<String, dynamic> payload) async {
     createCallCount++;
+    if (createCompleter != null) await createCompleter!.future;
     if (errorToThrow != null) throw errorToThrow!;
     lastCreatedPayload = payload;
     return SmartChord(
@@ -79,6 +81,7 @@ class _FakeSmartChordRepo implements SmartChordRepository {
 }
 
 class _FakeLinkRepo implements SmartChordRepertoireLinkRepository {
+  Completer<void>? linkCompleter;
   Exception? errorToThrow;
   int linkCallCount = 0;
   String? lastMinistryId;
@@ -99,6 +102,7 @@ class _FakeLinkRepo implements SmartChordRepertoireLinkRepository {
     required String songId,
   }) async {
     linkCallCount++;
+    if (linkCompleter != null) await linkCompleter!.future;
     lastMinistryId = ministryId;
     lastChordId = chordId;
     lastSongId = songId;
@@ -227,7 +231,64 @@ void main() {
       expect(success, isFalse);
       expect(notifier.state.savedChord, isNotNull); // Chord is preserved!
       expect(notifier.state.status, equals(ImportStatus.saved));
-      expect(notifier.state.linkError, equals('Falha de rede ao vincular.'));
+      expect(notifier.state.linkError, equals('Não foi possível concluir a operação. Tente novamente.'));
+    });
+
+    test('late remote create after reset is discarded locally and never returned for linking', () async {
+      await notifier.importText('G\nLetra');
+      repo.createCompleter = Completer<void>();
+      final pending = notifier.saveChord();
+      final duplicate = await notifier.saveChord();
+      expect(duplicate, isNull);
+      expect(repo.createCallCount, 1);
+      notifier.reset();
+      repo.createCompleter!.complete();
+      expect(await pending, isNull);
+      expect(repo.lastCreatedPayload, isNotNull); // remote create completed
+      expect(notifier.state.savedChord, isNull);
+      expect(await notifier.linkToRepertoire(ministryId: 'new-ministry', songId: 'song'), isFalse);
+      expect(linkRepo.linkCallCount, 0);
+    });
+
+    test('disposing during extraction discards completion without reading disposed state', () async {
+      repo.pdfCompleter = Completer<void>();
+      final pending = notifier.importPdf([1], 'pending.pdf');
+      notifier.dispose();
+      repo.pdfCompleter!.complete();
+      await pending;
+    });
+
+    test('disposing during create returns no stale chord', () async {
+      await notifier.importText('G\nLetra');
+      repo.createCompleter = Completer<void>();
+      final pending = notifier.saveChord();
+      notifier.dispose();
+      repo.createCompleter!.complete();
+      expect(await pending, isNull);
+    });
+
+    test('failed extraction can retry and clears the error', () async {
+      repo.errorToThrow = const AppFailure(message: 'PDF inválido.', statusCode: 400);
+      await notifier.importPdf([1], 'invalid.pdf');
+      expect(notifier.state.draft, isNull);
+      expect(notifier.state.errorMessage, 'PDF inválido.');
+      repo.errorToThrow = null;
+      await notifier.importPdf([1], 'valid.pdf');
+      expect(notifier.state.status, ImportStatus.preview);
+      expect(notifier.state.errorMessage, isNull);
+    });
+
+    test('reset during link discards local completion without deleting the saved chord remotely', () async {
+      await notifier.importText('G\nLetra');
+      await notifier.saveChord();
+      linkRepo.linkCompleter = Completer<void>();
+      final pending = notifier.linkToRepertoire(ministryId: 'min-a', songId: 'song');
+      notifier.reset();
+      linkRepo.linkCompleter!.complete();
+      expect(await pending, isFalse);
+      expect(notifier.state.savedChord, isNull);
+      expect(notifier.state.status, ImportStatus.initial);
+      expect(repo.createCallCount, 1);
     });
   });
 }

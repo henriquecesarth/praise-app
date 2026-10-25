@@ -1,3 +1,4 @@
+import '../widgets/musical_progression_line.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/providers.dart';
@@ -580,6 +581,10 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
     ThemeData theme,
     ChordFontConfig fontConfig,
   ) {
+    if (SmartChordParser.progressionTokens(lineText) != null) {
+      return MusicalProgressionLine(line: lineText, semitones: semitones, fontSize: _fontSize,
+        fontFamily: fontConfig.fontFamily, fontFamilyFallback: fontConfig.fallback);
+    }
     if (fontConfig.isMonospace) {
       return _buildMonospaceLine(
         lineText,

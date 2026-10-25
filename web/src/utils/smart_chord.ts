@@ -111,12 +111,9 @@ export function transposeChord(chord: string, semitones: number): string {
   if (!chord || semitones === 0) return chord;
 
   if (chord.includes('|') || chord.includes('%')) {
-    return chord.replace(/([A-G][#b]?(?:[^\s|%:]*))/g, (match) => {
-      if (isMusicalChord(match)) {
-        return transposeChord(match, semitones);
-      }
-      return match;
-    });
+    return parseBarProgressionLine(`[${chord}]`)
+      .filter(token => token.type !== 'bracket_open' && token.type !== 'bracket_close')
+      .map(token => token.type === 'chord' ? transposeChord(token.value, semitones) : token.value).join('');
   }
 
   if (!isMusicalChord(chord)) return chord;
@@ -303,7 +300,7 @@ export function parseBarProgressionLine(lineText: string): IBarProgressionToken[
 
     const innerContent = match[1];
     const innerStart = openBracketIdx + 1;
-    const innerRegex = /(\|\|:|:\|\||\|\||\|:|:\||\||%|:+|\s+|[^\s|%:]+)/g;
+    const innerRegex = /(\([^()]*\)|\|\|:|:\|\||\|\||\|:|:\||\||%|:+|\s+|[^\s|%:]+)/g;
     let innerMatch: RegExpExecArray | null;
 
     while ((innerMatch = innerRegex.exec(innerContent)) !== null) {

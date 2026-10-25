@@ -1053,4 +1053,15 @@ describe('SmartChordsWorkspace', () => {
       });
     });
   });
+  it('keeps saved inline label and progression together in the interactive reader', async () => {
+    const content = 'Intro: (riff viol) [ ||: A | A7M | D | % :|| ]';
+    getSmartChords.mockResolvedValue([{ id: 'canonical', title: 'Canonical Saved', originalKey: 'A', content }]);
+    render(<SmartChordsWorkspace ministryId="min-1" />);
+    fireEvent.click(await screen.findByText('Canonical Saved'));
+    const row = await screen.findByRole('group', { name: content });
+    expect(row.textContent).toBe(content.replace(/[\[\]]/g, ''));
+    expect(row).toHaveStyle({ flexWrap: 'nowrap', whiteSpace: 'pre', overflowX: 'auto' });
+    expect(row.querySelectorAll('[data-bar-chord-idx]')).toHaveLength(3);
+  });
+
 });

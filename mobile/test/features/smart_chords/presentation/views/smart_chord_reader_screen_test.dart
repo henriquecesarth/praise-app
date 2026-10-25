@@ -1,3 +1,4 @@
+import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/musical_progression_line.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -819,4 +820,20 @@ void main() {
       expect(find.byType(SnackBar), findsNothing);
     });
   });
+  for (final font in ['monospace', 'Arial']) {
+    testWidgets('saved canonical progression uses inline renderer in $font mode', (tester) async {
+      final chord = sampleChord.copyWith(content: 'Intro: (riff viol) [ ||: A | D | % :|| ]');
+      repo.chord = chord;
+      await tester.pumpWidget(buildApp(chordId: chord.id, initialChord: chord, chordFontOverride: font));
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+      expect(find.byType(MusicalProgressionLine), findsOneWidget);
+      final line = tester.widget<MusicalProgressionLine>(find.byType(MusicalProgressionLine));
+      expect(line.fontFamily, font);
+      final text = tester.widget<Text>(find.descendant(of: find.byType(MusicalProgressionLine), matching: find.byType(Text)));
+      expect(text.textSpan!.toPlainText(), 'Intro: (riff viol)  ||: A | D | % :|| ');
+      expect(tester.takeException(), isNull);
+    });
+  }
+
 }

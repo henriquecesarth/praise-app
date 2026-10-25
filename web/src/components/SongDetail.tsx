@@ -1039,10 +1039,13 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                       <div
                         key={lineIdx}
                         role="group"
+                          data-musical-progression
                         aria-label={lineText || 'Linha de compassos'}
                         style={{
                           display: 'flex',
-                          flexWrap: 'wrap',
+                          flexWrap: 'nowrap',
+                            whiteSpace: 'pre',
+                            overflowX: 'auto',
                           alignItems: 'baseline',
                           rowGap: '20px',
                           fontFamily: activeFontFamilyCss,
@@ -1119,6 +1122,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                     <div
                       key={lineIdx}
                       role="group"
+                          data-musical-progression
                       aria-label={lineText || 'Linha vazia'}
                       style={{
                         display: 'flex',

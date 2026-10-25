@@ -6,6 +6,7 @@ import { parseSmartChord, hasBarProgression, parseBarProgressionLine } from '../
 interface SmartChordImportModalProps {
   isOpen: boolean;
   ministryId?: string;
+  currentUserId?: string;
   repertoireSongs?: Song[];
   onClose: () => void;
   onSuccess: (savedChord: SmartChord) => void;
@@ -19,6 +20,7 @@ const STANDARD_KEYS = [
 export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
   isOpen,
   ministryId,
+  currentUserId,
   repertoireSongs = [],
   onClose,
   onSuccess,
@@ -49,7 +51,36 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const generationRef = useRef(0);
 
-  // Reset state when opening/closing or switching ministry
+  // Include authoritative user identity and the canonical credential in every operation.
+  const [, refreshSession] = useState(0);
+  const authToken = localStorage.getItem('praise_auth_token');
+  const contextRef = useRef({ isOpen, ministryId, currentUserId, authToken });
+  contextRef.current = { isOpen, ministryId, currentUserId, authToken };
+  const mountedRef = useRef(false);
+  const isCurrent = (generation: number) => mountedRef.current &&
+    generation === generationRef.current && contextRef.current.isOpen &&
+    contextRef.current.ministryId === ministryId &&
+    contextRef.current.currentUserId === currentUserId &&
+    contextRef.current.authToken === authToken &&
+    localStorage.getItem('praise_auth_token') === authToken;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === 'praise_auth_token' || event.key === null) {
+        generationRef.current += 1;
+        refreshSession(value => value + 1);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      mountedRef.current = false;
+      generationRef.current += 1;
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
+  // Reset state when opening/closing or switching ministry/session
   useEffect(() => {
     generationRef.current += 1;
     if (isOpen) {
@@ -70,7 +101,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
       setIsLinking(false);
       setLinkError(null);
     }
-  }, [isOpen, ministryId]);
+  }, [isOpen, ministryId, currentUserId, authToken]);
 
   const handleSafeClose = () => {
     generationRef.current += 1;
@@ -123,11 +154,11 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
 
     try {
       const draft = await api.importSmartChordPdf(selectedFile);
-      if (currentGen !== generationRef.current) return;
+      if (!isCurrent(currentGen)) return;
       applyDraft(draft);
       setStep('preview');
     } catch (err: any) {
-      if (currentGen !== generationRef.current) return;
+      if (!isCurrent(currentGen)) return;
       console.error('Erro na extração do PDF:', err);
       setErrorMessage(err?.message || 'Falha ao processar o arquivo PDF. Verifique se é um PDF de texto válido.');
       setStep('input');
@@ -146,11 +177,11 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
 
     try {
       const draft = await api.importSmartChordText(pastedText);
-      if (currentGen !== generationRef.current) return;
+      if (!isCurrent(currentGen)) return;
       applyDraft(draft);
       setStep('preview');
     } catch (err: any) {
-      if (currentGen !== generationRef.current) return;
+      if (!isCurrent(currentGen)) return;
       console.error('Erro na normalização do texto:', err);
       setErrorMessage(err?.message || 'Falha ao normalizar o texto fornecido.');
       setStep('input');
@@ -166,6 +197,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
   };
 
   const handleSaveChord = async () => {
+    if (!isCurrent(generationRef.current) || isSaving || isLinking || savedChord) return;
     if (!title.trim()) {
       setErrorMessage('O título da cifra é obrigatório.');
       return;
@@ -175,6 +207,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
       return;
     }
 
+    const currentGen = ++generationRef.current;
     setIsSaving(true);
     setErrorMessage(null);
 
@@ -185,6 +218,8 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
         originalKey: originalKey || 'C',
         content: content.trim(),
       });
+
+      if (!isCurrent(currentGen)) return;
 
       // If active ministry exists with repertoire songs, offer optional linking
       if (ministryId && repertoireSongs.length > 0) {
@@ -197,34 +232,39 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
         onSuccess(created);
       }
     } catch (err: any) {
+      if (!isCurrent(currentGen)) return;
       console.error('Erro ao salvar cifra:', err);
       setErrorMessage(err?.message || 'Não foi possível salvar a cifra inteligente.');
     } finally {
-      setIsSaving(false);
+      if (isCurrent(currentGen)) setIsSaving(false);
     }
   };
 
   const handleConfirmLink = async () => {
-    if (!savedChord || !ministryId || !selectedSongId) {
+    if (!isCurrent(generationRef.current) || isLinking || !savedChord || !ministryId || !selectedSongId) {
       return;
     }
 
+    const currentGen = ++generationRef.current;
     setIsLinking(true);
     setLinkError(null);
 
     try {
       await api.setSmartChordRepertoireLink(ministryId, savedChord.id, selectedSongId);
+      if (!isCurrent(currentGen)) return;
       onSuccess(savedChord);
     } catch (err: any) {
+      if (!isCurrent(currentGen)) return;
       console.error('Erro ao vincular ao repertório:', err);
       // Partial success safety: chord is already saved!
       setLinkError(err?.message || 'Cifra salva, mas ocorreu uma falha ao vincular ao repertório.');
     } finally {
-      setIsLinking(false);
+      if (isCurrent(currentGen)) setIsLinking(false);
     }
   };
 
   const handleSkipLink = () => {
+    if (!isCurrent(generationRef.current) || isLinking) return;
     if (savedChord) {
       onSuccess(savedChord);
     } else {
@@ -553,7 +593,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                     if (hasBarProgression(lineText)) {
                       const tokens = parseBarProgressionLine(lineText);
                       return (
-                        <div key={idx} style={{ marginBottom: '8px', color: '#e2e8f0', whiteSpace: 'pre-wrap' }}>
+                        <div key={idx} data-musical-progression style={{ marginBottom: '8px', color: '#e2e8f0', whiteSpace: 'pre', overflowX: 'auto' }}>
                           {tokens.map((token, tIdx) => {
                             if (token.type === 'bracket_open' || token.type === 'bracket_close') return null;
                             if (token.type === 'chord') {

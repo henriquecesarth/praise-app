@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { act, render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SmartChordImportModal } from './SmartChordImportModal';
 
@@ -29,6 +29,7 @@ describe('SmartChordImportModal Component', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     importSmartChordPdf.mockResolvedValue({
       title: 'Extracted Song',
       artistName: 'Extracted Artist',
@@ -592,4 +593,113 @@ describe('SmartChordImportModal Component', () => {
       expect(screen.queryByText(']')).toBeNull();
     });
   });
+  describe('R4-M7 save/link context fencing', () => {
+    function pending<T>() {
+      let resolve!: (value: T) => void;
+      let reject!: (error: Error) => void;
+      const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+      return { promise, resolve, reject };
+    }
+    const songs = [{ id: 'song-1', title: 'Song' }] as any;
+    const chord = { id: 'created', title: 'Saved', content: '[G]Letra', originalKey: 'G' } as any;
+    async function preview() {
+      fireEvent.click(screen.getByText('Colar Texto'));
+      fireEvent.change(screen.getByPlaceholderText(/Graças Te dou pelo Teu amor/i), { target: { value: 'G\nLetra' } });
+      fireEvent.click(screen.getByText('Analisar e Pré-visualizar Texto'));
+      await screen.findByText('Salvar Cifra Pessoal');
+    }
+
+    it.each(['close', 'ministry', 'user', 'token', 'unmount'])(
+      'discards late creation after %s without follow-up or callback', async (change) => {
+        localStorage.setItem('praise_auth_token', 'user-a-credential');
+        const deferred = pending<any>();
+        createSmartChord.mockReturnValueOnce(deferred.promise);
+        const props = { isOpen: true, ministryId: 'min-a', currentUserId: 'user-a', repertoireSongs: songs,
+          onClose: mockOnClose, onSuccess: mockOnSuccess };
+        const view = render(<SmartChordImportModal {...props} />);
+        await preview();
+        fireEvent.click(screen.getByText('Salvar Cifra Pessoal'));
+        expect(createSmartChord).toHaveBeenCalledTimes(1);
+        if (change === 'close') view.rerender(<SmartChordImportModal {...props} isOpen={false} />);
+        if (change === 'ministry') view.rerender(<SmartChordImportModal {...props} ministryId="min-b" />);
+        if (change === 'user') {
+          localStorage.setItem('praise_auth_token', 'user-b-credential');
+          view.rerender(<SmartChordImportModal {...props} currentUserId="user-b" />);
+        }
+        if (change === 'token') {
+          localStorage.setItem('praise_auth_token', 'user-b-credential');
+          fireEvent(window, new StorageEvent('storage', { key: 'praise_auth_token' }));
+        }
+        if (change === 'unmount') view.unmount();
+        await act(async () => { deferred.resolve(chord); await deferred.promise; });
+        expect(mockOnSuccess).not.toHaveBeenCalled();
+        expect(setSmartChordRepertoireLink).not.toHaveBeenCalled();
+        expect(screen.queryByText('Vincular ao Repertório')).toBeNull();
+        expect(createSmartChord).toHaveBeenCalledTimes(1);
+      });
+
+    it.each(['ministry', 'user', 'close'])(
+      'discards link completion after %s and does not report success', async (change) => {
+        const deferred = pending<any>();
+        setSmartChordRepertoireLink.mockReturnValueOnce(deferred.promise);
+        const props = { isOpen: true, ministryId: 'min-a', currentUserId: 'user-a', repertoireSongs: songs,
+          onClose: mockOnClose, onSuccess: mockOnSuccess };
+        const view = render(<SmartChordImportModal {...props} />);
+        await preview();
+        fireEvent.click(screen.getByText('Salvar Cifra Pessoal'));
+        fireEvent.click(await screen.findByRole('button', { name: 'Vincular ao Repertório' }));
+        expect(setSmartChordRepertoireLink).toHaveBeenCalledTimes(1);
+        view.rerender(<SmartChordImportModal {...props}
+          ministryId={change === 'ministry' ? 'min-b' : 'min-a'}
+          currentUserId={change === 'user' ? 'user-b' : 'user-a'} isOpen={change !== 'close'} />);
+        await act(async () => { deferred.resolve({}); await deferred.promise; });
+        expect(mockOnSuccess).not.toHaveBeenCalled();
+        expect(createSmartChord).toHaveBeenCalledTimes(1);
+        expect(screen.queryByText('Concluir sem Vincular')).toBeNull();
+      });
+
+    it('suppresses stale creation errors in the new ministry', async () => {
+      const deferred = pending<any>();
+      createSmartChord.mockReturnValueOnce(deferred.promise);
+      const props = { isOpen: true, ministryId: 'min-a', onClose: mockOnClose, onSuccess: mockOnSuccess };
+      const view = render(<SmartChordImportModal {...props} />);
+      await preview();
+      fireEvent.click(screen.getByText('Salvar Cifra Pessoal'));
+      view.rerender(<SmartChordImportModal {...props} ministryId="min-b" />);
+      await act(async () => { deferred.reject(new Error('Old error')); await deferred.promise.catch(() => {}); });
+      expect(screen.queryByText('Old error')).toBeNull();
+      expect(mockOnSuccess).not.toHaveBeenCalled();
+    });
+    it('does not initiate link or skip callbacks after credentials change without a render', async () => {
+      localStorage.setItem('praise_auth_token', 'user-a');
+      render(<SmartChordImportModal isOpen currentUserId="user-a" ministryId="min-a"
+        repertoireSongs={songs} onClose={mockOnClose} onSuccess={mockOnSuccess} />);
+      await preview();
+      fireEvent.click(screen.getByText('Salvar Cifra Pessoal'));
+      await screen.findByRole('button', { name: 'Vincular ao Repertório' });
+      localStorage.setItem('praise_auth_token', 'user-b');
+      fireEvent.click(screen.getByRole('button', { name: 'Vincular ao Repertório' }));
+      fireEvent.click(screen.getByText('Concluir sem Vincular'));
+      expect(setSmartChordRepertoireLink).not.toHaveBeenCalled();
+      expect(mockOnSuccess).not.toHaveBeenCalled();
+    });
+  });
+
+  it.each(['Intro: [ G | D ]', 'Solo: [ Am | D ]', 'Interlúdio: [ ||: G | D | % :|| ]',
+    'Intro: (riff viol) [ ||: A | A7M | D | % :|| ]'])(
+    'previews %s inline with styled chords and horizontal scrolling', async (content) => {
+      importSmartChordText.mockResolvedValueOnce({ title: 'Progressão', content, warnings: [] });
+      render(<SmartChordImportModal isOpen onClose={mockOnClose} onSuccess={mockOnSuccess} />);
+      fireEvent.click(screen.getByText('Colar Texto'));
+      fireEvent.change(screen.getByPlaceholderText(/Graças Te dou pelo Teu amor/i), { target: { value: content } });
+      fireEvent.click(screen.getByText('Analisar e Pré-visualizar Texto'));
+      await screen.findByText('Salvar Cifra Pessoal');
+      fireEvent.click(screen.getByRole('button', { name: /Visualiza.*Alinhada/i }));
+      const row = document.querySelector('[data-musical-progression]') as HTMLElement;
+      expect(row.textContent).toBe(content.replace(/[\[\]]/g, ''));
+      expect(row).toHaveStyle({ whiteSpace: 'pre', overflowX: 'auto' });
+      expect(row.querySelector('span[style*="font-weight: bold"]')).not.toBeNull();
+      expect(createSmartChord).not.toHaveBeenCalled();
+    });
+
 });

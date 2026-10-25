@@ -1,4 +1,5 @@
-﻿import 'dart:typed_data';
+import '../widgets/musical_progression_line.dart';
+import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -33,15 +34,65 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
   final _contentController = TextEditingController();
   String _originalKey = 'C';
   int _previewMode = 0; // 0 = raw/edit, 1 = rendered
+  late SmartChordImportNotifier _notifier;
+  String? _boundUserId;
+  String? _boundMinistryId;
+  bool _ready = false;
+  bool _abandoned = false;
+  int _operation = 0;
+
+  bool _isCurrent(int operation) => mounted && !_abandoned &&
+      operation == _operation &&
+      ref.read(authNotifierProvider).user?.id == _boundUserId &&
+      ref.read(ministryContextNotifierProvider).selectedMinistry?.id == _boundMinistryId;
+
+  void _clearWorkflow() {
+    _operation++;
+    _notifier.reset();
+    _pdfBytes = null;
+    _pdfFileName = null;
+    _pdfSize = null;
+    _fileError = null;
+    _textController.clear();
+    _titleController.clear();
+    _artistController.clear();
+    _contentController.clear();
+    _originalKey = 'C';
+    _previewMode = 0;
+  }
+
+  void _discardContext() {
+    if (_abandoned) return;
+    _abandoned = true;
+    _clearWorkflow();
+    final importRoute = ModalRoute.of(context);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || importRoute?.isActive != true) return;
+      final navigator = Navigator.of(context);
+      navigator.popUntil((route) => route == importRoute);
+      if (navigator.canPop()) navigator.pop();
+    });
+  }
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _notifier = ref.read(smartChordImportNotifierProvider.notifier);
+    _boundUserId = ref.read(authNotifierProvider).user?.id;
+    _boundMinistryId = ref.read(ministryContextNotifierProvider).selectedMinistry?.id;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _abandoned) return;
+      _clearWorkflow();
+      setState(() => _ready = true);
+    });
   }
 
   @override
   void dispose() {
+    _abandoned = true;
+    _operation++;
+    // autoDispose releases the notifier; pending operations also check mounted.
     _tabController.dispose();
     _textController.dispose();
     _titleController.dispose();
@@ -51,6 +102,7 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
   }
 
   Future<void> _pickPdfFile() async {
+    final operation = ++_operation;
     setState(() {
       _fileError = null;
     });
@@ -61,11 +113,23 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
         allowedExtensions: ['pdf'],
       );
 
-      if (result.isEmpty) return;
+      if (!_isCurrent(operation) || result.isEmpty) return;
 
       final file = result.first;
+      final declaredSize = await file.length();
+      if (!_isCurrent(operation)) return;
+      if (declaredSize != null && declaredSize > 3 * 1024 * 1024) {
+        setState(() {
+          _fileError = 'Arquivo PDF excede o limite máximo permitido de 3 MB.';
+          _pdfBytes = null;
+          _pdfFileName = null;
+          _pdfSize = null;
+        });
+        return;
+      }
       final bytes = await file.readAsBytes();
-      final size = await file.length() ?? bytes.length;
+      if (!_isCurrent(operation)) return;
+      final size = bytes.length;
 
       if (size > 3 * 1024 * 1024) {
         setState(() {
@@ -83,9 +147,10 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
         _pdfSize = size;
         _fileError = null;
       });
-    } catch (e) {
+    } catch (_) {
+      if (!_isCurrent(operation)) return;
       setState(() {
-        _fileError = 'Não foi possível selecionar o arquivo: $e';
+        _fileError = 'Não foi possível selecionar o arquivo. Tente novamente.';
       });
     }
   }
@@ -98,8 +163,9 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
       return;
     }
 
-    final notifier = ref.read(smartChordImportNotifierProvider.notifier);
-    await notifier.importPdf(_pdfBytes!, _pdfFileName!);
+    final operation = ++_operation;
+    await _notifier.importPdf(_pdfBytes!, _pdfFileName!);
+    if (!_isCurrent(operation)) return;
     _syncDraftToControllers();
   }
 
@@ -112,8 +178,9 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
       return;
     }
 
-    final notifier = ref.read(smartChordImportNotifierProvider.notifier);
-    await notifier.importText(text);
+    final operation = ++_operation;
+    await _notifier.importText(text);
+    if (!_isCurrent(operation)) return;
     _syncDraftToControllers();
   }
 
@@ -128,7 +195,11 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
   }
 
   Future<void> _saveChord() async {
-    final notifier = ref.read(smartChordImportNotifierProvider.notifier);
+    if (!_isCurrent(_operation)) return;
+    final state = ref.read(smartChordImportNotifierProvider);
+    if (state.status == ImportStatus.saving || state.status == ImportStatus.linking || state.savedChord != null) return;
+    final operation = ++_operation;
+    final notifier = _notifier;
     notifier.updateDraft(
       title: _titleController.text,
       artistName: _artistController.text,
@@ -137,7 +208,7 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
     );
 
     final created = await notifier.saveChord();
-    if (created == null || !mounted) return;
+    if (!mounted || created == null || !_isCurrent(operation)) return;
 
     final ministry = ref.read(ministryContextNotifierProvider).selectedMinistry;
 
@@ -165,7 +236,8 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
         ),
       );
 
-      if (shouldLink == true && mounted) {
+      if (!mounted || !_isCurrent(operation)) return;
+      if (shouldLink == true) {
         await SongLinkPickerModal.show(
           context,
           ministryId: ministry.id,
@@ -175,34 +247,56 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
       }
     }
 
-    if (mounted) {
+    if (mounted && _isCurrent(operation)) {
       Navigator.of(context).pop(created);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(authNotifierProvider, (previous, next) {
+      if (next.user?.id != _boundUserId) _discardContext();
+    });
+    ref.listen(ministryContextNotifierProvider, (previous, next) {
+      if (next.selectedMinistry?.id != _boundMinistryId) _discardContext();
+    });
     final state = ref.watch(smartChordImportNotifierProvider);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Importar Cifra'),
-        bottom: state.draft == null && state.status != ImportStatus.extracting
-            ? TabBar(
-                controller: _tabController,
-                tabs: const [
-                  Tab(icon: Icon(Icons.picture_as_pdf), text: 'Documento PDF'),
-                  Tab(icon: Icon(Icons.text_fields), text: 'Colar Texto'),
-                ],
-              )
-            : null,
-      ),
-      body: SafeArea(
-        child: state.status == ImportStatus.extracting
-            ? _buildExtractingIndicator()
-            : state.draft != null
-                ? _buildPreviewEditor(state)
-                : _buildInputTabs(),
+    return PopScope(
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop && !_abandoned) {
+          _abandoned = true;
+          _operation++;
+          _notifier.reset();
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Importar Cifra'),
+          bottom: state.draft == null && state.status != ImportStatus.extracting
+              ? TabBar(
+                  controller: _tabController,
+                  tabs: const [
+                    Tab(icon: Icon(Icons.picture_as_pdf), text: 'Documento PDF'),
+                    Tab(icon: Icon(Icons.text_fields), text: 'Colar Texto'),
+                  ],
+                )
+              : null,
+        ),
+        body: SafeArea(
+          child: !_ready || _abandoned ? const SizedBox.shrink() : state.status == ImportStatus.extracting
+              ? _buildExtractingIndicator()
+              : state.draft != null
+                  ? _buildPreviewEditor(state)
+                  : Column(children: [
+                      if (state.errorMessage != null)
+                        Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Text(state.errorMessage!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                        ),
+                      Expanded(child: _buildInputTabs()),
+                    ]),
+        ),
       ),
     );
   }
@@ -473,6 +567,9 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: _contentController.text.split('\n').map((rawLine) {
+                    if (SmartChordParser.progressionTokens(rawLine) != null) {
+                      return MusicalProgressionLine(line: rawLine, fontSize: 13);
+                    }
                     final transposed = SmartChordParser.renderLine(rawLine, 0);
                     if (transposed.hasChords) {
                       return Padding(
@@ -514,7 +611,7 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
               Expanded(
                 child: OutlinedButton(
                   onPressed: () {
-                    ref.read(smartChordImportNotifierProvider.notifier).reset();
+                    setState(_clearWorkflow);
                   },
                   child: const Text('Voltar / Novo'),
                 ),

@@ -73,6 +73,7 @@ const getSuggestions = (query: string, originalKey: string): string[] => {
 };
 
 interface SmartChordsWorkspaceProps {
+  currentUserId?: string;
   ministryId: string;
   initialChordId?: string;
   onInitialChordConsumed?: () => void;
@@ -86,6 +87,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
   onInitialChordConsumed,
   chordFontFamily,
   onFontPreferenceChange,
+  currentUserId,
 }) => {
   const [smartChords, setSmartChords] = useState<SmartChord[]>([]);
   const [selectedChord, setSelectedChord] = useState<SmartChord | null>(null);
@@ -1040,10 +1042,13 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                         <div
                           key={lineIdx}
                           role="group"
+                          data-musical-progression
                           aria-label={lineText || 'Linha de compassos'}
                           style={{
                             display: 'flex',
-                            flexWrap: 'wrap',
+                            flexWrap: 'nowrap',
+                            whiteSpace: 'pre',
+                            overflowX: 'auto',
                             alignItems: 'baseline',
                             rowGap: `${printFontSize + 7}px`,
                             fontFamily: activeFontFamilyCss,
@@ -1173,6 +1178,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                       <div 
                         key={lineIdx} 
                         role="group"
+                          data-musical-progression
                         aria-label={lineText || 'Linha vazia'}
                         style={{ 
                           display: 'flex', 
@@ -1452,11 +1458,14 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                         <div
                           key={lineIdx}
                           role="group"
+                          data-musical-progression
                           className="pdf-line-row"
                           aria-label={lineText || 'Linha de compassos'}
                           style={{
                             display: 'flex',
-                            flexWrap: 'wrap',
+                            flexWrap: 'nowrap',
+                            whiteSpace: 'pre',
+                            overflowX: 'auto',
                             alignItems: 'baseline',
                             rowGap: `${printFontSize + 7}px`,
                             fontFamily: activeFontFamilyCss,
@@ -1533,6 +1542,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                       <div 
                         key={lineIdx} 
                         role="group"
+                          data-musical-progression
                         className="pdf-line-row"
                         aria-label={lineText || 'Linha vazia'}
                         style={{ 
@@ -1641,6 +1651,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
 
       {isImportModalOpen && (
         <SmartChordImportModal
+          currentUserId={currentUserId}
           isOpen={isImportModalOpen}
           ministryId={ministryId}
           repertoireSongs={repertoireSongs}

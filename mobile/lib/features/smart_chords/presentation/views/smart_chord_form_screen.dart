@@ -1,3 +1,4 @@
+import '../widgets/musical_progression_line.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/providers.dart';
@@ -465,6 +466,9 @@ class _SmartChordFormScreenState extends ConsumerState<SmartChordFormScreen> {
   }
 
   Widget _buildRenderedPreviewLine(String lineText, ThemeData theme) {
+    if (SmartChordParser.progressionTokens(lineText) != null) {
+      return MusicalProgressionLine(line: lineText);
+    }
     if (lineText.trim().isEmpty) {
       return const SizedBox(height: 12);
     }

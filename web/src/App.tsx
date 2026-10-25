@@ -1397,6 +1397,7 @@ export default function App() {
 
               {mainModule === 'cifrador' && (
                 <SmartChordsWorkspace
+                  currentUserId={currentUser?.id}
                   ministryId={groupId}
                   initialChordId={selectedSmartChordId || undefined}
                   onInitialChordConsumed={() => setSelectedSmartChordId(null)}

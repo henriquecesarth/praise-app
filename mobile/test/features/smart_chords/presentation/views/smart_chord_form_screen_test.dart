@@ -1,3 +1,4 @@
+import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/musical_progression_line.dart';
 import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart' hide AuthProvider;
 import 'package:flutter/material.dart';
@@ -406,4 +407,17 @@ void main() {
     // Assert: no snackbar was shown
     expect(find.byType(SnackBar), findsNothing);
   });
+  testWidgets('editor preview retains inline section and progression in one widget', (tester) async {
+    await tester.pumpWidget(buildApp());
+    await tester.tap(find.text('Abrir Form'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('smart_chord_content_field')), 'Solo: [ Am | D ]');
+    await tester.tap(find.byTooltip('Visualizar Prévia'));
+    await tester.pumpAndSettle();
+    expect(find.byType(MusicalProgressionLine), findsOneWidget);
+    final text = tester.widget<Text>(find.descendant(of: find.byType(MusicalProgressionLine), matching: find.byType(Text)));
+    expect(text.textSpan!.toPlainText(), 'Solo:  Am | D ');
+    expect(tester.takeException(), isNull);
+  });
+
 }

@@ -1,3 +1,11 @@
+/// A token on one instrumental line. Surrounding labels/annotations stay textual.
+class MusicalProgressionToken {
+  final String text;
+  final bool isChord;
+  final bool isDelimiter;
+  const MusicalProgressionToken(this.text, {this.isChord = false, this.isDelimiter = false});
+}
+
 /// A segment of lyrics with an optional chord placed immediately before or above it.
 class SmartChordSegment {
   final String chord;
@@ -315,14 +323,7 @@ class SmartChordParser {
     if (semitones == 0) return chord;
 
     if (chord.contains('|') || chord.contains('%')) {
-      final barPattern = RegExp(r'([A-G][#b]?(?:[^\s|%:]*))');
-      return chord.replaceAllMapped(barPattern, (match) {
-        final t = match.group(1)!;
-        if (isMusicalChord(t)) {
-          return transposeChord(t, semitones);
-        }
-        return t;
-      });
+      return progressionTokens('[$chord]', semitones)!.map((token) => token.text).join();
     }
 
     if (!isMusicalChord(chord)) return chord;
@@ -351,6 +352,34 @@ class SmartChordParser {
     final root = match.group(1)!;
     final suffix = match.group(2) ?? '';
     return transposeNote(root, semitones) + suffix;
+  }
+
+  /// Dedicated representation for a progression: never split its label into a lyric row.
+  static List<MusicalProgressionToken>? progressionTokens(String line, [int semitones = 0]) {
+    final groups = RegExp(r'\[([^\[\]]*)\]').allMatches(line).toList();
+    final tokenPattern = RegExp(r'\([^()]*\)|\|\|:|:\|\||\|:|:\||\|\||[|%]|\s+|[^\s|%:]+|:');
+    bool isBlock(String inner) => inner.contains('|') || inner.contains('%') ||
+        tokenPattern.allMatches(inner).where((m) => isMusicalChord(m.group(0)!)).length >= 2;
+    if (!groups.any((group) => isBlock(group.group(1)!))) return null;
+    final result = <MusicalProgressionToken>[];
+    int end = 0;
+    for (final group in groups) {
+      if (group.start > end) result.add(MusicalProgressionToken(line.substring(end, group.start)));
+      final inner = group.group(1)!;
+      if (!isBlock(inner) && !isMusicalChord(inner.trim())) {
+        result.add(MusicalProgressionToken(group.group(0)!));
+      } else {
+        for (final match in tokenPattern.allMatches(inner)) {
+          final value = match.group(0)!;
+          final chord = isMusicalChord(value);
+          result.add(MusicalProgressionToken(chord ? transposeChord(value, semitones) : value,
+            isChord: chord, isDelimiter: RegExp(r'^(?:\|\|:|:\|\||\|:|:\||\|\||[|%])$').hasMatch(value)));
+        }
+      }
+      end = group.end;
+    }
+    if (end < line.length) result.add(MusicalProgressionToken(line.substring(end)));
+    return result;
   }
 
   /// Transposes an entire bracket-format song text by [semitones].

@@ -1,4 +1,4 @@
-﻿import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/errors/app_failure.dart';
 import '../../data/smart_chord_repository.dart';
 import '../../data/smart_chord_repertoire_link_repository.dart';
@@ -65,6 +65,19 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
         _linkRepository = linkRepository,
         super(const SmartChordImportState());
 
+  bool _isCurrent(int generation) => mounted && state.generation == generation;
+
+  String _message(Object error) {
+    if (error is AppFailure) {
+      if (error.statusCode == 401 || error.code == 'SESSION_CHANGED') {
+        return 'Sessão expirada ou alterada. Faça login novamente.';
+      }
+      if (error.code == 'NETWORK_ERROR') return 'Falha de conexão. Verifique sua internet e tente novamente.';
+      if (error.statusCode == 400 || error.statusCode == 413) return error.message;
+    }
+    return 'Não foi possível concluir a operação. Tente novamente.';
+  }
+
   void reset() {
     state = SmartChordImportState(generation: state.generation + 1);
   }
@@ -79,7 +92,7 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
 
     try {
       final draft = await _repository.importPdfDraft(bytes, filename);
-      if (state.generation != currentGen) return;
+      if (!_isCurrent(currentGen)) return;
 
       state = state.copyWith(
         status: ImportStatus.preview,
@@ -87,10 +100,10 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
         clearError: true,
       );
     } catch (e) {
-      if (state.generation != currentGen) return;
+      if (!_isCurrent(currentGen)) return;
       state = state.copyWith(
         status: ImportStatus.error,
-        errorMessage: e is AppFailure ? e.message : e.toString(),
+        errorMessage: _message(e),
       );
     }
   }
@@ -105,7 +118,7 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
 
     try {
       final draft = await _repository.importTextDraft(text);
-      if (state.generation != currentGen) return;
+      if (!_isCurrent(currentGen)) return;
 
       state = state.copyWith(
         status: ImportStatus.preview,
@@ -113,10 +126,10 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
         clearError: true,
       );
     } catch (e) {
-      if (state.generation != currentGen) return;
+      if (!_isCurrent(currentGen)) return;
       state = state.copyWith(
         status: ImportStatus.error,
-        errorMessage: e is AppFailure ? e.message : e.toString(),
+        errorMessage: _message(e),
       );
     }
   }
@@ -140,7 +153,8 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
 
   Future<SmartChord?> saveChord() async {
     final draft = state.draft;
-    if (draft == null) return null;
+    if (draft == null || state.status == ImportStatus.saving ||
+        state.status == ImportStatus.linking || state.savedChord != null) return null;
 
     final title = draft.title.trim();
     final content = draft.content.trim();
@@ -170,7 +184,8 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
       };
 
       final created = await _repository.createSmartChord(payload);
-      if (state.generation != currentGen) return created;
+      // The remote write may have succeeded. Discard only its local continuation.
+      if (!_isCurrent(currentGen)) return null;
 
       state = state.copyWith(
         status: ImportStatus.saved,
@@ -179,10 +194,10 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
       );
       return created;
     } catch (e) {
-      if (state.generation != currentGen) return null;
+      if (!_isCurrent(currentGen)) return null;
       state = state.copyWith(
         status: ImportStatus.preview,
-        errorMessage: e is AppFailure ? e.message : e.toString(),
+        errorMessage: _message(e),
       );
       return null;
     }
@@ -208,7 +223,7 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
         chordId: chord.id,
         songId: songId,
       );
-      if (state.generation != currentGen) return true;
+      if (!_isCurrent(currentGen)) return false;
 
       state = state.copyWith(
         status: ImportStatus.success,
@@ -216,11 +231,11 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
       );
       return true;
     } catch (e) {
-      if (state.generation != currentGen) return false;
+      if (!_isCurrent(currentGen)) return false;
       // Partial success safety: chord is saved, only relation failed
       state = state.copyWith(
         status: ImportStatus.saved,
-        linkError: e is AppFailure ? e.message : e.toString(),
+        linkError: _message(e),
       );
       return false;
     }

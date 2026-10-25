@@ -1,7 +1,7 @@
 # M20 — Smart Chords Import Hub (Phase 1)
 
 ## Status
-PHASE_1_AUTH_HOTFIX_REMEDIATED_PENDING_REVIEW (M20_P1_R5 = PASS, PREDEPLOY_VISUAL = PASS_WITH_AUTHENTICATION_EXCEPTION, AUTHENTICATION_DEFECT = CONFIRMED_AND_REMEDIATED_PENDING_REVIEW)
+R4_M9_REVISED = PARTIAL — canonical blocks and inline renderers implemented; local checks passing, remote Flutter CI pending. R4-M7 protections preserved; physical acceptance pending.
 
 ## Objective
 Implement Phase 1 of M20: Smart Chords Import Hub across backend, Web, and Flutter mobile, enabling musicians to import digital text-based PDF chord sheets and plain-text (chords-over-lyrics or bracketed) chord sheets into their personal Smart Chords library with interactive preview, manual correction, and optional M19 Repertoire linking.
@@ -96,3 +96,55 @@ Implement Phase 1 of M20: Smart Chords Import Hub across backend, Web, and Flutt
   - Full Mobile Test Suite: `flutter test` — 773 tests passed (100% pass).
 - **Repository Integrity**:
   - `git diff --check` — PASS (clean).
+
+
+## R4-M7 — Blocking findings remediation (2026-10-25)
+
+Scope: fix the four independent R4-M6 blockers without changing public API/Firestore contracts, PDF algorithms, M19 ownership, billing, WhatsApp, or Phase 2 scope.
+
+- [x] Normalizer: preserve annotated/structural/unknown musical lines separately from lyrics, preserving tokens and spacing; warn about ambiguous alignment; add exact regression assertions.
+- [x] Android lifecycle: auto-dispose import notifier, reset fresh entry and explicit discard, bind user/ministry context, discard stale save results rather than returning a created object to UI.
+- [x] Android errors/disposal: input-stage errors, controlled PT-BR messages, checks after asynchronous picker/read/extract/save/dialog operations, route-exit fencing.
+- [x] Web: fence extraction/save/link/skip with generation, mounted state, authoritative user/ministry and canonical credential; propagate current user from App through Workspace.
+- [x] Add deferred-operation, identity-switch, retry, lifecycle and losslessness regression tests using mocks/fakes only.
+- [x] Complete local targeted Backend/Web tests, builds and diff review.
+- [ ] Execute Flutter analyzer and focused tests in supported controlled CI (local macOS 12 cannot run required SDK).
+- [ ] Independent recheck and subsequent physical Android/PWA acceptance.
+
+Remote-write semantics: invalidation suppresses local state/callbacks/navigation/link prompts. It does not cancel a create/link request already sent, roll back a saved chord, or retry an uncertain mutation.
+
+Validation executed locally:
+- Backend: `npm test -- src/features/smart_chords/smart_chord_normalizer.test.ts --testTimeout=10000` — 28/28 PASS.
+- Web: `npm test -- src/components/SmartChordImportModal.test.tsx src/api.test.ts src/components/SmartChordsWorkspace.test.tsx --testTimeout=10000` — 94/94 PASS (24 modal, 39 API, 31 workspace).
+- Backend `npm run build` — PASS (final run bounded to 120 seconds).
+- Web `npm run build` — PASS; existing mixed-import/chunk-size warnings remain. Final `tsc --noEmit` — PASS (bounded to 120 seconds).
+- `git diff --check` — PASS; final diff reviewed. No PDF algorithm or shared classifier changes, so PDF regression suite was not rerun in R4-M7. No full Backend suite executed.
+- Flutter: tests expanded (12 controller cases, 14 widget cases), NOT EXECUTED locally. Required SDK cannot run on local macOS 12. Analyzer, widget runtime, platform file picker and physical Android/PWA behavior: Unknown / Not yet verified.
+
+Controlled CI follow-up (not executed/authorized here), from `mobile/`:
+```
+flutter analyze
+flutter test test/features/smart_chords/presentation/controllers/smart_chord_import_controller_test.dart test/features/smart_chords/presentation/views/smart_chord_import_screen_test.dart --timeout 30s
+```
+Widget tests use fake auth/ministry/repositories; PDF error presentation is injected at the notifier/repository boundary without opening the platform file picker. Actual picker behavior still requires device acceptance. CI must pass before declaring Android validation complete.
+
+No known implementation blocker remains from R4-M6; Flutter verification remains outstanding. Ready for independent code recheck and separately authorized controlled CI. No commit, push, deployment or live Firebase writes performed. This ExecPlan remains active pending CI and acceptance.
+
+
+## R4-M9 revised — Canonical progressions and inline rendering
+
+User contract supersedes the R4-M8 expected output: individually bracketed chords separated by bars normalize to ONE block `[ G | D ]`. The R4-M8 regression is retained with this corrected expectation. Inline section labels/annotations remain on their authored line. Chord-over-lyrics stays unchanged.
+
+- [x] Canonical parser, idempotence and regression matrix.
+- [x] Web readers/previews/editor: inline no-wrap progression and token safety.
+- [x] Mobile shared progression tokens/widget used by reader (both fonts), editor and import preview.
+- [ ] Targeted tests, builds, diff review, scoped WIP commit/push and remote Flutter CI.
+- Remote synchronization: inspected two remote CI commits; their net tree equals the old local HEAD. Fast-forward completed with local changes preserved.
+
+R4-M9 implementation notes:
+- Backend validates entire musical lines (including mixed brackets), flattens only validated chord groups, and emits one canonical `[ ... ]` block. Inline labels and leading performance annotations are retained. Attached syllabic text is never flattened. Normalization is idempotent; existing unsupported-token warnings remain.
+- Web preserves the existing editable token renderer and uses non-wrapping horizontally scrollable progression rows in Import Preview, Workspace (including print preview), and SongDetail. Performance instructions tokenize atomically, so their embedded note names do not transpose.
+- Mobile adds `progressionTokens` plus the reusable `MusicalProgressionLine` widget. Reader modes use the global font and transposition; editor/import previews use the same row. Long progressions scroll horizontally. Existing chord-over-lyrics layouts remain in use for ordinary lyrical lines.
+- Actual component/widget assertions cover rendered row text, styles, editing/transposition, font modes and narrow scroll geometry, beyond normalization-only assertions.
+
+Local R4-M9 validation: 40 normalizer tests + 35 PDF regressions PASS; 180 focused Web tests PASS (utilities, Import Modal, Workspace, SongDetail, API). Backend and Web builds PASS; final Backend rebuild after the annotation-token safety adjustment tracked during checkpoint. `git diff --check` PASS. Flutter is intentionally not run on macOS 12. CI must verify analyzer and tests before a final PASS.
