@@ -388,17 +388,16 @@ class SmartChordParser {
       return smartChordText ?? '';
     }
 
-    final lines = parse(smartChordText);
-    return lines.map((line) {
-      if (line.segments.isEmpty) return '';
-      return line.segments.map((seg) {
-        if (seg.chord.isNotEmpty) {
-          final newChord = transposeChord(seg.chord, semitones);
-          return '[$newChord]${seg.text}';
-        }
-        return seg.text;
-      }).join();
-    }).join('\n');
+    // Parsing for syllabic layout trims chord payloads. Transform the original
+    // bracket spans instead, retaining canonical block padding and authored EOLs.
+    return smartChordText.replaceAllMapped(_chordRegex, (match) {
+      final original = match.group(1)!;
+      final trimmed = original.trim();
+      final transposed = original.contains('|') || original.contains('%')
+          ? transposeChord(original, semitones)
+          : trimmed.isEmpty ? original : original.replaceFirst(trimmed, transposeChord(trimmed, semitones));
+      return '[$transposed]';
+    });
   }
 
   /// Renders a single bracket-format line into an aligned chord line and lyrics line.

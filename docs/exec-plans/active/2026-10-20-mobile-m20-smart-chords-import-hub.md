@@ -151,3 +151,5 @@ Local R4-M9 validation: 40 normalizer tests + 35 PDF regressions PASS; 180 focus
 
 
 CI attempt 1: https://github.com/henriquecesarth/praise-app/actions/runs/40205141963 (commit 162de5867fe11f6d438d6d1b9fa306ddd276fe72). Analyzer reported one `curly_braces_in_flow_control_structures` info in the multiline save guard; tests were not executed. Added the required braces without changing behavior, analyzer configuration or assertions. Follow-up CI pending.
+
+CI attempt 2: https://github.com/henriquecesarth/praise-app/actions/runs/40205343897 (814c8bc92071305bf0a8cd1a8f44d0e6e1257898). Analyzer PASS; 543 tests PASS, 1 FAIL. All new reader/editor/import/narrow-width widgets passed. The exact-output transposition assertion exposed `parse()` trimming canonical block padding in `transposeSmartChord`. Fixed by transforming original bracket spans instead of serializing the syllabic layout model; assertions are unchanged. Follow-up CI pending.
