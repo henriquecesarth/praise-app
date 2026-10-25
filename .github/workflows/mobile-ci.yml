@@ -58,7 +58,15 @@ jobs:
         run: flutter test test/features/schedules
 
       - name: Full test suite
-        run: flutter test --reporter github
+        run: |
+          set -o pipefail
+          flutter test --reporter expanded 2>&1 | tee /tmp/flutter-test.log
+
+      - name: Surface failing tests
+        if: failure()
+        run: |
+          grep -n -A18 "\[E\]" /tmp/flutter-test.log | head -60 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}' > /tmp/fail.txt || true
+          echo "::error title=Failing test::$(cat /tmp/fail.txt)"
 
       - name: Build debug APK
         run: |
