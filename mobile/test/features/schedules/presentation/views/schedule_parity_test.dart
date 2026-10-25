@@ -66,7 +66,7 @@ void main() {
         final decoration = swatch.decoration! as BoxDecoration;
         expect(decoration.color, parseScheduleColor(palette));
         expect(decoration.border, isNotNull);
-        expect(find.text(palette), findsNothing);
+        expect(find.text(palette!), findsNothing);
         expect(find.text('Cor da equipe'), findsOneWidget);
       } else {
         expect(find.byKey(const ValueKey('schedule_palette_swatch')), findsNothing);

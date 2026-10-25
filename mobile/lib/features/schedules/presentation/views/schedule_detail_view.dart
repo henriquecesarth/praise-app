@@ -7,7 +7,6 @@ import '../../domain/schedule.dart';
 import '../../domain/song_timeline.dart';
 import 'schedule_chat_view.dart';
 import '../../domain/schedule_participant.dart';
-import '../controllers/schedule_detail_controller.dart';
 import 'schedule_form_screen.dart';
 
 /// Full schedule detail screen.
@@ -189,7 +188,9 @@ class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
                 builder: (_) => ScheduleChatView(ministryId: widget.ministryId,
                   scheduleId: widget.scheduleId, userId: userId)));
               if (!mounted || ref.read(authNotifierProvider).user?.id != userId ||
-                  ref.read(ministryContextNotifierProvider).selectedMinistry?.id != widget.ministryId) return;
+                  ref.read(ministryContextNotifierProvider).selectedMinistry?.id != widget.ministryId) {
+                return;
+              }
               ref.read(commentsNotifierProvider.notifier).load(widget.ministryId, widget.scheduleId);
             },
           ),
@@ -442,35 +443,18 @@ class _InfoSection extends StatelessWidget {
           const SizedBox(height: 12),
           const Divider(height: 1),
           const SizedBox(height: 10),
-          Row(
-            key: const ValueKey('schedule_detail_stats_row'),
-            children: [
-              _StatCell(
-                keyName: 'schedule_detail_stat_participantes',
-                icon: Icons.people_outline,
-                count: schedule.participants.length,
-                label: 'Participantes',
-              ),
-              _StatCell(
-                keyName: 'schedule_detail_stat_musicas',
-                icon: Icons.music_note_outlined,
-                count: schedule.songs.length,
-                label: 'Músicas',
-              ),
-              _StatCell(
-                keyName: 'schedule_detail_stat_roteiro',
-                icon: Icons.view_timeline_outlined,
-                count: schedule.timeline.length,
-                label: 'Roteiro',
-              ),
-              _StatCell(
-                keyName: 'schedule_detail_stat_vestimenta',
-                icon: Icons.checkroom_outlined,
-                count: dressCount,
-                label: 'Vestimenta',
-              ),
-            ],
-          ),
+          LayoutBuilder(builder: (context, constraints) {
+            final width = (constraints.maxWidth - 8) / 2;
+            return Wrap(key: const ValueKey('schedule_detail_stats_row'), spacing: 8, runSpacing: 8, children: [
+              for (final stat in [
+                ('participantes', Icons.people_outline, schedule.participants.length, 'Participantes'),
+                ('musicas', Icons.music_note_outlined, schedule.songs.length, 'Músicas'),
+                ('roteiro', Icons.view_timeline_outlined, schedule.timeline.length, 'Roteiro'),
+                ('vestimenta', Icons.checkroom_outlined, dressCount, 'Vestimenta'),
+              ]) SizedBox(width: width, child: _StatCell(
+                keyName: 'schedule_detail_stat_${stat.$1}', icon: stat.$2, count: stat.$3, label: stat.$4)),
+            ]);
+          }),
         ],
       ),
           ),
@@ -496,47 +480,17 @@ class _StatCell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Expanded(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 3),
-        child: InkWell(
-          key: ValueKey(keyName),
-          borderRadius: BorderRadius.circular(10),
-
-          child: Container(
-            constraints: const BoxConstraints(minHeight: 44),
-            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest
-                  .withValues(alpha: 0.5),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, size: 16, color: theme.colorScheme.primary),
-                const SizedBox(height: 2),
-                Text(
-                  '$count',
-                  style: theme.textTheme.titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w800),
-                ),
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+    return Container(
+      key: ValueKey(keyName),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(12)),
+      child: Column(children: [
+        Icon(icon, size: 22, color: theme.colorScheme.primary),
+        const SizedBox(height: 6),
+        Text('$count', style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+        Text(label, textAlign: TextAlign.center, style: theme.textTheme.labelMedium),
+      ]),
     );
   }
 }
@@ -563,7 +517,7 @@ class _ParticipantsSection extends StatelessWidget {
             Expanded(
               child: Text(
                 'Participantes ($confirmed/$total confirmados)',
-                style: theme.textTheme.titleSmall
+                style: theme.textTheme.titleLarge
                     ?.copyWith(fontWeight: FontWeight.w600),
               ),
             ),
@@ -855,7 +809,7 @@ class _SongsSection extends StatelessWidget {
             Expanded(
               child: Text(
                 'Músicas Escaladas (${songs.length})',
-                style: theme.textTheme.titleSmall
+                style: theme.textTheme.titleLarge
                     ?.copyWith(fontWeight: FontWeight.w600),
               ),
             ),
@@ -1069,7 +1023,7 @@ class _NotesSection extends StatelessWidget {
             Expanded(
               child: Text(
                 'Observações',
-                style: theme.textTheme.titleSmall
+                style: theme.textTheme.titleLarge
                     ?.copyWith(fontWeight: FontWeight.w600),
               ),
             ),

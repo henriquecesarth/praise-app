@@ -13,12 +13,16 @@ ScheduleSong? resolveTimelineSong(
   if (!isSongSlot(item) || slotIndex >= songs.length) return null;
   final song = songs[slotIndex];
   if (song.id.trim().isEmpty ||
-      songs.where((s) => s.id == song.id).length != 1) return null;
+      songs.where((s) => s.id == song.id).length != 1) {
+    return null;
+  }
   final title = song.title?.trim() ?? '';
   if (title.isEmpty) return null;
   if (_placeholder(item.title, slotIndex)) return song;
   if (item.title.trim() == title &&
-      songs.where((s) => s.title?.trim() == title).length == 1) return song;
+      songs.where((s) => s.title?.trim() == title).length == 1) {
+    return song;
+  }
   return null;
 }
 
