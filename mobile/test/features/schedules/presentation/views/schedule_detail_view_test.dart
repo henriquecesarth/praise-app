@@ -690,7 +690,7 @@ void main() {
         expect(MediaQuery.textScalerOf(tester.element(find.byType(ScheduleDetailView))).scale(10),
           width == 320 ? 13 : 10);
         for (final label in ['Roteiro do Culto', 'Vestimenta', 'Observações']) {
-          await tester.ensureVisible(find.text(label));
+          await tester.ensureVisible(find.text(label).last);
           await tester.pumpAndSettle();
           expect(tester.takeException(), isNull, reason: 'No overflow at $width for $label');
         }

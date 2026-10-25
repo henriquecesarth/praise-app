@@ -953,7 +953,9 @@ void main() {
       expect(find.byKey(const ValueKey('apply_template_confirm_view')), findsOneWidget);
       expect(find.text('Boas-vindas e Oração'), findsOneWidget);
       expect(find.text('5min'), findsOneWidget);
-      expect(find.text('Porque Ele Vive'), findsOneWidget);
+      expect(find.descendant(
+        of: find.byKey(const ValueKey('apply_template_confirm_view')),
+        matching: find.text('Porque Ele Vive')), findsOneWidget);
       expect(find.text('Música 2'), findsOneWidget);
 
       // Apply template onto empty roteiro

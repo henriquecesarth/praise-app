@@ -59,7 +59,7 @@ void main() {
       repo.detail = schedule(palette);
       await tester.pumpWidget(subject(detail));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Vestimenta'));
+      await tester.ensureVisible(find.text('Vestimenta').last);
       await tester.pumpAndSettle();
       if (palette == '#7C3AED' || palette == '#FFFFFF') {
         final swatch = tester.widget<Container>(find.byKey(const ValueKey('schedule_palette_swatch')));
@@ -105,6 +105,7 @@ void main() {
     expect(tester.widget<Align>(find.byKey(const ValueKey('chat_message_mine'))).alignment, Alignment.centerRight);
     final input = find.byKey(const ValueKey('schedule_chat_input'));
     await tester.enterText(input, 'Mensagem');
+    await tester.pump();
     repo.commentPostError = const AppFailure(message: 'Falha temporária');
     await tester.tap(find.byTooltip('Enviar comentário'));
     await tester.pumpAndSettle();

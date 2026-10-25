@@ -635,9 +635,21 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
   void removeSong(int index) {
     if (index < 0 || index >= state.songs.length) return;
     final updated = List<ScheduleSong>.from(state.songs)..removeAt(index);
+    final synced = syncSongTimeline(state.timeline, state.songs, updated);
+    final originalIds = state.initialSnapshot?.timeline.map((item) => item.id).toSet() ?? <String>{};
+    var slot = 0;
+    // Undoing a newly added song also removes its untouched, automatically
+    // created slot. Persisted/template/customized slots are always retained.
+    final timeline = synced.where((item) {
+      if (!isSongSlot(item)) return true;
+      slot++;
+      return slot <= updated.length || originalIds.contains(item.id) ||
+          !item.id.startsWith('song_slot_') || item.time?.isNotEmpty == true ||
+          item.title != 'Música $slot';
+    }).toList();
     state = state.copyWith(
       songs: updated,
-      timeline: syncSongTimeline(state.timeline, state.songs, updated),
+      timeline: timeline,
       isDirty: true,
       clearError: true,
     );

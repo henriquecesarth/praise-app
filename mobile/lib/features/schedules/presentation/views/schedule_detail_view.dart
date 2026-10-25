@@ -937,7 +937,10 @@ class _TimelineSection extends StatelessWidget {
                     style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 8),
                   Wrap(spacing: 8, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
-                    Chip(label: Text(item.type == 'Música' ? 'Louvor' : item.type),
+                    Chip(label: Text(const {
+                      'Música': 'Louvor', 'worship': 'Louvor', 'prayer': 'Oração',
+                      'word': 'Palavra', 'transition': 'Transição', 'other': 'Outro',
+                    }[item.type] ?? item.type),
                       visualDensity: VisualDensity.compact),
                     if (item.time?.isNotEmpty == true) Text(item.time!),
                     if (song != null) const Icon(Icons.chevron_right, size: 20),

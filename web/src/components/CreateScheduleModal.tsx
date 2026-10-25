@@ -505,8 +505,8 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
         return {
           id: `tl_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
           title: realSong ? realSong.title : `Música ${songSlotIndex}`,
-          time: '',
-          type: realSong ? 'Música' : 'Música',
+          time: formatTemplateDuration(item.durationSeconds),
+          type: 'Música',
         };
       } else {
         // event
