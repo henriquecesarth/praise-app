@@ -272,3 +272,8 @@ Itens duráveis e priorizados catalogados em docs/system-status.md:
 ## Current Work
 
 Consulte docs/exec-plans/active/; planos concluídos ficam em docs/exec-plans/completed/.
+
+### R4-M5 schedule timeline and chat contracts
+
+- Timeline items persist only `id`, `title`, optional `time`, and `type` under the current backend Zod schema; do not add client-only `songId` fields expecting persistence. Mobile/PWA map explicitly typed `Música` slots positionally to selected songs. Only numbered placeholders or unique matching positional titles are resolved; custom/ambiguous titles remain intact and unlinked. Detail resolution never writes data.
+- Mobile schedule conversation reuses REST schedule comments through a full-screen chat with a separate notifier keyed by ministry/schedule/authenticated user. It refreshes explicitly and after successful sends; it is not realtime. Existing endpoint loads the newest page (default 50 messages), so badge count is the available page count.
