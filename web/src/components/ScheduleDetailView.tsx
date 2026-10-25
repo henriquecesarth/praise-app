@@ -1,3 +1,4 @@
+import { resolveTimelineSong } from '../utils/song-timeline';
 import React, { useState } from 'react';
 import {
   ArrowLeft,
@@ -453,7 +454,7 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
                   <div className="schedule-detail-timeline-index">{idx + 1}</div>
                   <div className="schedule-detail-timeline-line" />
                   <div className="schedule-detail-timeline-content">
-                    <div className="schedule-detail-timeline-title">{item.title}</div>
+                    <div className="schedule-detail-timeline-title">{resolveTimelineSong(item, schedule.timeline.slice(0, idx).filter(it => it.type === 'Música').length, schedule.songs)?.title ?? item.title}</div>
                     <div className="schedule-detail-timeline-meta">
                       <span className="schedule-detail-timeline-type">{item.type}</span>
                       {item.time && <span><Clock size={12} /> {item.time}</span>}

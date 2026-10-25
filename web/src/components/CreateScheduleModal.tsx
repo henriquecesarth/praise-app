@@ -1,3 +1,4 @@
+import { syncTimelineSongSlots } from '../utils/song-timeline';
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { X, ListOrdered, Plus, Users, Eye, EyeOff, CheckSquare, ArrowLeft, Check, LayoutTemplate, Trash2, ChevronRight, Layers, Music, Clock, AlertTriangle, GripVertical } from 'lucide-react';
 import { Song, ParticipantConflictResult } from '../types';
@@ -434,55 +435,11 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
     }
   };
 
-  /**
-   * Re-synchronizes timeline items of type 'Música' with the current selectedSongs list.
-   * The Nth song slot in the roteiro gets the Nth selected song's title (or "Música N" as fallback).
-   */
-  const syncTimelineSongSlots = (
-    currentTimeline: Array<{ id: string; title: string; time?: string; type: string }>,
-    currentSongs: Song[]
-  ): Array<{ id: string; title: string; time?: string; type: string }> => {
-    let songSlotIndex = 0;
-    return currentTimeline.map((item) => {
-      if (item.type === 'Música') {
-        const realSong = currentSongs[songSlotIndex];
-        songSlotIndex++;
-        return {
-          ...item,
-          title: realSong ? realSong.title : `Música ${songSlotIndex}`,
-        };
-      }
-      return item;
-    });
-  };
-
-  // Auto-sync roteiro song slots whenever selectedSongs changes:
-  // 1. Update titles of existing 'Música' slots with real song names or generic fallback.
-  // 2. If selectedSongs has more songs than available slots, append new slots at the end.
+  const previousSongsRef = useRef(selectedSongs);
   React.useEffect(() => {
-    setTimelineItems((prev) => {
-      const musicSlotCount = prev.filter((it) => it.type === 'Música').length;
-      const songCount = selectedSongs.length;
-
-      // First, sync names on existing slots
-      let updated = prev;
-      if (musicSlotCount > 0) {
-        updated = syncTimelineSongSlots(prev, selectedSongs);
-      }
-
-      // Then, if more songs than slots, append the missing ones
-      if (songCount > musicSlotCount) {
-        const newSlots = selectedSongs.slice(musicSlotCount).map((song, i) => ({
-          id: `song_slot_${Date.now()}_${i}`,
-          title: song.title,
-          time: '',
-          type: 'Música' as const,
-        }));
-        updated = [...updated, ...newSlots];
-      }
-
-      return updated;
-    });
+    const previousSongs = previousSongsRef.current;
+    setTimelineItems(prev => syncTimelineSongSlots(prev, previousSongs, selectedSongs));
+    previousSongsRef.current = selectedSongs;
   }, [selectedSongs]);
 
   // ── Drag handlers: Songs ──
@@ -536,10 +493,10 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
    * Event items become timeline events with type from icon or 'Evento'.
    */
   const convertTemplateToTimeline = (
-    template: ScheduleTemplate
+    template: ScheduleTemplate, offset = 0
   ): Array<{ id: string; title: string; time?: string; type: string }> => {
     const songs = [...selectedSongs];
-    let songSlotIndex = 0;
+    let songSlotIndex = offset;
 
     return template.items.map((item) => {
       if (item.type === 'song') {
@@ -547,7 +504,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
         songSlotIndex++;
         return {
           id: `tl_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-          title: realSong ? realSong.title : item.title,
+          title: realSong ? realSong.title : `Música ${songSlotIndex}`,
           time: '',
           type: realSong ? 'Música' : 'Música',
         };
@@ -564,11 +521,12 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
   };
 
   const handleApplyTemplate = (template: ScheduleTemplate, mode: 'replace' | 'append') => {
-    const newItems = convertTemplateToTimeline(template);
+    const offset = mode === 'append' ? timelineItems.filter(it => it.type === 'Música').length : 0;
+    const newItems = convertTemplateToTimeline(template, offset);
     if (mode === 'replace') {
-      setTimelineItems(newItems);
+      setTimelineItems(syncTimelineSongSlots(newItems, selectedSongs, selectedSongs));
     } else {
-      setTimelineItems((prev) => [...prev, ...newItems]);
+      setTimelineItems((prev) => syncTimelineSongSlots([...prev, ...newItems], selectedSongs, selectedSongs));
     }
     setPendingTemplate(null);
     setShowTemplateModal(false);

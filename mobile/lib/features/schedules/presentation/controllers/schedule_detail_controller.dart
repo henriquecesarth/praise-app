@@ -341,20 +341,20 @@ class CommentsNotifier extends StateNotifier<CommentsState> {
 
     try {
       final list = await _repository.getComments(ministryId, scheduleId);
-      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) return;
+      if (!mounted || seq != _loadSequence || !_isActive(ministryId, scheduleId)) return;
       state = state.copyWith(
         comments: list,
         isLoading: false,
         clearError: true,
       );
     } on AppFailure catch (e) {
-      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) return;
+      if (!mounted || seq != _loadSequence || !_isActive(ministryId, scheduleId)) return;
       state = state.copyWith(
         error: e.message,
         isLoading: false,
       );
     } catch (e) {
-      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) return;
+      if (!mounted || seq != _loadSequence || !_isActive(ministryId, scheduleId)) return;
       state = state.copyWith(
         error: 'Não foi possível carregar os comentários.',
         isLoading: false,
@@ -385,7 +385,7 @@ class CommentsNotifier extends StateNotifier<CommentsState> {
     try {
       final comment =
           await _repository.postComment(ministryId, scheduleId, trimmed);
-      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) {
+      if (!mounted || seq != _loadSequence || !_isActive(ministryId, scheduleId)) {
         return false;
       }
 
@@ -398,7 +398,7 @@ class CommentsNotifier extends StateNotifier<CommentsState> {
       );
       return true; // Signal caller to clear composer
     } on AppFailure catch (e) {
-      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) {
+      if (!mounted || seq != _loadSequence || !_isActive(ministryId, scheduleId)) {
         return false;
       }
 
@@ -413,7 +413,7 @@ class CommentsNotifier extends StateNotifier<CommentsState> {
       );
       return false;
     } catch (e) {
-      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) {
+      if (!mounted || seq != _loadSequence || !_isActive(ministryId, scheduleId)) {
         return false;
       }
       state = state.copyWith(

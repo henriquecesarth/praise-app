@@ -1,3 +1,7 @@
+import 'package:firebase_auth/firebase_auth.dart' as fb;
+import 'package:louvaio_mobile/features/auth/data/auth_repository.dart';
+import 'package:louvaio_mobile/features/auth/domain/auth_user.dart';
+import 'package:louvaio_mobile/features/auth/presentation/controllers/auth_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -90,7 +94,7 @@ class FakeDetailScheduleRepo
       String ministryId, String scheduleId, String content) async {
     lastPostedComment = content;
     if (commentPostError != null) throw commentPostError!;
-    return ScheduleComment(
+    final comment = ScheduleComment(
       id: 'comment_new',
       scheduleId: scheduleId,
       ministryId: ministryId,
@@ -99,6 +103,8 @@ class FakeDetailScheduleRepo
       content: content,
       createdAt: '2026-09-25T14:30:00Z',
     );
+    comments.add(comment);
+    return comment;
   }
 
   @override
@@ -166,6 +172,20 @@ class FakeMinistryContextNotifier extends MinistryContextNotifier {
   }
 }
 
+class TestAuthRepo implements AuthRepository {
+  @override
+  Stream<fb.User?> authStateChanges() => const Stream.empty();
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class TestAuthNotifier extends AuthNotifier {
+  TestAuthNotifier() : super(TestAuthRepo()) {
+    state = const AuthState.authenticated(AuthUser(id: 'user_1', email: 'test@example.com', name: 'Membro Teste'));
+  }
+  void changeUser() { state = const AuthState.unauthenticated(); }
+}
+
 void main() {
   late FakeDetailScheduleRepo fakeRepo;
 
@@ -182,6 +202,7 @@ void main() {
       participants: [
         ScheduleParticipant(
           id: 'p1',
+          userId: 'user_1',
           name: 'Henrique Vocal',
           role: 'Ministro',
           confirmed: null,
@@ -237,6 +258,7 @@ void main() {
   Widget createSubject({String role = 'member'}) {
     return ProviderScope(
       overrides: [
+        authNotifierProvider.overrideWith((ref) => TestAuthNotifier()),
         appEnvironmentProvider.overrideWithValue(
           const AppEnvironment(
             env: AppEnv.development,
@@ -295,29 +317,24 @@ void main() {
           findsOneWidget);
       expect(find.text('Camisa Preta e Calça Jeans Escura'), findsOneWidget);
       expect(find.text('Tons Terrosos'), findsOneWidget);
-      expect(find.text('Qual o tom da primeira música?'), findsOneWidget);
-      expect(find.text('Bondade de Deus'), findsNothing);
+      expect(find.text('Qual o tom da primeira música?'), findsNothing);
+      expect(find.byType(TextField), findsNothing);
+      expect(find.text('Bondade de Deus'), findsOneWidget);
 
       // Participantes tab
-      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_participantes')));
-      await tester.pumpAndSettle();
       expect(find.text('Henrique Vocal'), findsOneWidget);
       expect(find.text('Ana Teclado'), findsOneWidget);
 
       // Músicas tab
-      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_musicas')));
-      await tester.pumpAndSettle();
       expect(find.text('Bondade de Deus'), findsOneWidget);
       expect(find.text('A Casa É Sua'), findsOneWidget);
 
       // Roteiro tab
-      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_roteiro')));
-      await tester.pumpAndSettle();
       expect(find.text('Abertura e Oração'), findsOneWidget);
       expect(find.text('Louvor Congregacional'), findsOneWidget);
     });
 
-    testWidgets('shows hero summary and the four section tabs', (tester) async {
+    testWidgets('shows hero summary and scrolling sections without inline composer', (tester) async {
       tester.view.physicalSize = const Size(1024, 2048);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
@@ -327,21 +344,17 @@ void main() {
 
       expect(find.byKey(const ValueKey('schedule_detail_hero')), findsOneWidget);
       expect(find.byKey(const ValueKey('schedule_detail_accent_bar')), findsOneWidget);
-      for (final k in ['detalhes', 'musicas', 'participantes', 'roteiro']) {
-        expect(find.byKey(ValueKey('schedule_detail_tab_$k')), findsOneWidget);
-      }
+      expect(find.byKey(const ValueKey('schedule_detail_tab_bar')), findsNothing);
       for (final k in ['participantes', 'musicas', 'roteiro', 'vestimenta']) {
         expect(find.byKey(ValueKey('schedule_detail_stat_$k')), findsOneWidget);
       }
       // Tapping a summary stat switches to the matching tab.
-      await tester.tap(find.byKey(const ValueKey('schedule_detail_stat_musicas')));
-      await tester.pumpAndSettle();
       expect(find.text('Bondade de Deus'), findsOneWidget);
       // Composer is only pinned on the Detalhes tab.
       expect(find.byTooltip('Enviar comentário'), findsNothing);
     });
 
-    testWidgets('empty tabs show an explicit empty state', (tester) async {
+    testWidgets('empty sections show an explicit empty state', (tester) async {
       tester.view.physicalSize = const Size(1024, 2048);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
@@ -355,15 +368,9 @@ void main() {
       await tester.pumpWidget(createSubject());
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_musicas')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('schedule_detail_empty_musicas')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_participantes')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('schedule_detail_empty_participantes')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_roteiro')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('schedule_detail_empty_roteiro')), findsOneWidget);
+      expect(find.text('Músicas Escaladas (0)'), findsOneWidget);
+      expect(find.textContaining('Participantes'), findsWidgets);
+      expect(find.text('Nenhum momento no roteiro desta escala.'), findsOneWidget);
     });
 
     testWidgets(
@@ -376,6 +383,7 @@ void main() {
       final confirmButton = find.text('Confirmar');
       expect(confirmButton, findsOneWidget);
 
+      await tester.ensureVisible(confirmButton);
       await tester.tap(confirmButton);
       await tester.pumpAndSettle();
 
@@ -389,6 +397,7 @@ void main() {
       final declineButton = find.text('Não vou');
       expect(declineButton, findsOneWidget);
 
+      await tester.ensureVisible(declineButton);
       await tester.tap(declineButton);
       await tester.pumpAndSettle();
 
@@ -404,6 +413,7 @@ void main() {
       await tester.pumpWidget(createSubject());
       await tester.pumpAndSettle();
 
+      await tester.ensureVisible(find.text('Confirmar'));
       await tester.tap(find.text('Confirmar'));
       await tester.pumpAndSettle();
 
@@ -420,6 +430,9 @@ void main() {
       await tester.pumpWidget(createSubject());
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byKey(const ValueKey('open_schedule_chat')));
+      await tester.pumpAndSettle();
+      expect(find.text('Chat da Escala'), findsOneWidget);
       final input = find.byType(TextField);
       expect(input, findsOneWidget);
 
@@ -452,6 +465,9 @@ void main() {
       await tester.pumpWidget(createSubject());
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byKey(const ValueKey('open_schedule_chat')));
+      await tester.pumpAndSettle();
+      expect(find.text('Chat da Escala'), findsOneWidget);
       final input = find.byType(TextField);
       await tester.enterText(input, 'Comentário bloqueado');
       await tester.pump();
@@ -645,12 +661,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('schedule_detail_stats_row')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_musicas')));
-      await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('detail_song_key_s1')), findsOneWidget);
       expect(find.text('Tom: G'), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_roteiro')));
-      await tester.pumpAndSettle();
       expect(find.text('Oração'), findsOneWidget);
       expect(find.text('Louvor'), findsOneWidget);
     });
@@ -675,11 +687,12 @@ void main() {
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull,
             reason: 'No overflow on ScheduleDetailView at ${width}px');
-        for (final k in ['musicas', 'participantes', 'roteiro', 'detalhes']) {
-          await tester.tap(find.byKey(ValueKey('schedule_detail_tab_$k')));
+        expect(MediaQuery.textScalerOf(tester.element(find.byType(ScheduleDetailView))).scale(10),
+          width == 320 ? 13 : 10);
+        for (final label in ['Roteiro do Culto', 'Vestimenta', 'Observações']) {
+          await tester.ensureVisible(find.text(label));
           await tester.pumpAndSettle();
-          expect(tester.takeException(), isNull,
-              reason: 'No overflow on tab $k at ${width}px');
+          expect(tester.takeException(), isNull, reason: 'No overflow at $width for $label');
         }
       }
 

@@ -723,7 +723,8 @@ void main() {
       expect(data['title'], equals('Culto de Jovens'));
       expect(data['colorPalette'], equals('Preto e Branco'));
       expect((data['songs'] as List).length, equals(1));
-      expect((data['timeline'] as List).length, equals(1));
+      expect((data['timeline'] as List).map((item) => item['title']),
+          equals(['Porque Ele Vive', 'Boas-vindas']));
       expect((data['clothingPieces'] as List).length, equals(1));
     });
 
@@ -785,7 +786,8 @@ void main() {
       expect(updated['colorPalette'], equals('Tons de Azul'));
       expect((updated['participants'] as List).length, equals(1));
       expect((updated['songs'] as List).length, equals(1));
-      expect((updated['timeline'] as List).length, equals(1));
+      expect((updated['timeline'] as List).map((item) => item['title']),
+          equals(['Oração Inicial', 'Porque Ele Vive']));
       expect((updated['clothingPieces'] as List).length, equals(1));
     });
 
