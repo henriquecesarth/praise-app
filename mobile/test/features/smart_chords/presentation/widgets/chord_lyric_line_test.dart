@@ -83,7 +83,7 @@ void main() {
         child: DefaultTextStyle(style: const TextStyle(letterSpacing: 1.8),
           child: SizedBox(width: oldWidth, child: SelectableText(text, style: style)))))));
       final editable = tester.state<EditableTextState>(find.byType(EditableText)).renderEditable;
-      final boxes = editable.getBoxesForSelection(TextSelection(baseOffset: 0, extentOffset: text.length));
+      final boxes = editable.getBoxesForSelection(const TextSelection(baseOffset: 0, extentOffset: text.length));
       expect(boxes.map((box) => box.top).toSet().length, greaterThan(1));
       expect(tester.takeException(), isNull);
     });
