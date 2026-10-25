@@ -870,15 +870,17 @@ void main() {
           expect(bounds.bottom, lessThan(1000 - 24));
           expect(control.hitTestable(), findsOneWidget);
         }
-        // Transposition and font controls occupy separate, non-overlapping rows.
+        // Key/reset occupy the first row; transposition and font controls share the second.
+        expect(tester.getRect(find.byTooltip('Meio tom acima (+1)')).top,
+          greaterThanOrEqualTo(tester.getRect(find.widgetWithText(TextButton, 'Original')).bottom));
         expect(tester.getRect(find.byTooltip('Fonte das cifras')).top,
-          greaterThanOrEqualTo(tester.getRect(find.byTooltip('Meio tom acima (+1)')).bottom));
+          closeTo(tester.getRect(find.byTooltip('Meio tom acima (+1)')).top, 4));
         await tester.tap(find.byTooltip('Aumentar fonte'));
         await tester.pumpAndSettle();
         await tester.tap(find.byTooltip('Fonte das cifras'));
         await tester.pumpAndSettle();
         expect(find.text('Courier New'), findsOneWidget);
-        await tester.tap(find.text('Georgia').last);
+        await tester.tap(find.byWidgetPredicate((widget) => widget is CheckedPopupMenuItem<String> && widget.value == 'Georgia'));
         await tester.pumpAndSettle();
         await tester.tap(find.widgetWithText(TextButton, 'Original'));
         await tester.pumpAndSettle();

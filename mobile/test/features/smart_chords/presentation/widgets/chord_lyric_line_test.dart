@@ -43,7 +43,8 @@ void main() {
           }
           final lyricRect = tester.getRect(tiers.at(1));
           final fragmentRect = tester.getRect(fragments[i]);
-          expect(chordRect.left, closeTo(lyricRect.left, 0.1));
+          // Alignment uses layout anchors; glyph boxes include font-specific side bearings.
+          expect(tester.getRect(tiers.at(0)).left, closeTo(lyricRect.left, 0.1));
           expect(chordRect.right, lessThanOrEqualTo(fragmentRect.right - 5));
           expect(lyricRect.top, greaterThanOrEqualTo(chordRect.bottom));
           chordBounds.add(chordRect);

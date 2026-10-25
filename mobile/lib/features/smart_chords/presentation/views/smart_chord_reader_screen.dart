@@ -442,8 +442,9 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
                         color: theme.colorScheme.primaryContainer,
                         borderRadius: BorderRadius.circular(8),
                       ),
-                      child: Row(
+                      child: Column(
                         mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             'Tom: $currentKey',
@@ -561,9 +562,9 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
                   return Column(
                     key: const ValueKey('reader-adaptive-toolbar'),
                     children: [
-                      Row(children: [Expanded(child: keyControls.first), ...keyControls.skip(1)]),
+                      Row(children: [Expanded(child: keyControls.first), ...originalControls]),
                       const SizedBox(height: 4),
-                      Row(children: [...originalControls, const Spacer(), ...fontControls]),
+                      Row(children: [...keyControls.skip(1), const Spacer(), ...fontControls]),
                     ],
                   );
                 }),
