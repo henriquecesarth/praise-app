@@ -1,5 +1,7 @@
 import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/musical_progression_line.dart';
 import 'dart:async';
+import 'package:flutter/rendering.dart';
+import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/chord_lyric_line.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -508,18 +510,18 @@ void main() {
   });
 
   group('SmartChordReaderScreen font preferences & rendering', () {
-    testWidgets('renders monospace by default with SelectableText space-padded lines', (tester) async {
+    testWidgets('renders monospace by default with selectable non-wrapping text', (tester) async {
       await tester.pumpWidget(buildApp(chordId: 'sc-1', initialChord: sampleChord));
       await tester.pumpAndSettle();
 
       await tester.tap(find.text('Abrir Reader'));
       await tester.pumpAndSettle();
 
-      // In monospace mode, SelectableText widgets are used
-      final selectableTexts = tester.widgetList<SelectableText>(find.byType(SelectableText));
-      expect(selectableTexts, isNotEmpty);
-      final firstSelectable = selectableTexts.first;
-      expect(firstSelectable.style?.fontFamily, 'monospace');
+      expect(find.byType(SelectionArea), findsWidgets);
+      final texts = tester.widgetList<Text>(find.byType(Text))
+        .where((text) => text.style?.fontFamily == 'monospace');
+      expect(texts, isNotEmpty);
+      expect(texts.every((text) => text.softWrap == false), isTrue);
     });
 
     testWidgets('renders proportional font (Georgia) with anchored Column segments and serif fallback', (tester) async {
@@ -617,8 +619,10 @@ void main() {
       await tester.tap(find.text('Abrir Reader'));
       await tester.pumpAndSettle();
 
-      // Initially monospace: SelectableText is used, no Wrap
-      expect(find.byType(Wrap), findsNothing);
+      // Initially monospace: selectable words wrap only at group boundaries.
+      expect(find.byType(SelectionArea), findsWidgets);
+      expect(tester.widgetList<Text>(find.byType(Text))
+        .where((text) => text.style?.fontFamily == 'monospace'), isNotEmpty);
 
       // Update user preference reactively to Georgia
       authNotifier.setUser(const AuthUser(
@@ -751,7 +755,8 @@ void main() {
       // Reader remains in monospace mode and does not switch to Arial
       final arialTexts = tester.widgetList<Text>(find.byType(Text)).where((t) => t.style?.fontFamily == 'Arial');
       expect(arialTexts, isEmpty);
-      final selectables = tester.widgetList<SelectableText>(find.byType(SelectableText));
+      final selectables = tester.widgetList<Text>(find.byType(Text))
+        .where((text) => text.style?.fontFamily == 'monospace');
       expect(selectables, isNotEmpty);
       expect(selectables.first.style?.fontFamily, 'monospace');
       expect(authNotifier.state.chordFontFamily, 'monospace');
@@ -823,6 +828,71 @@ void main() {
       expect(find.byType(SnackBar), findsNothing);
     });
   });
+  for (final font in ['monospace', 'Courier New']) {
+    for (final width in [320.0, 360.0, 393.0]) {
+      for (final scale in [1.0, 1.3]) {
+        testWidgets('$font reader geometry and controls at $width / $scale', (tester) async {
+          tester.view.devicePixelRatio = 1;
+          tester.view.physicalSize = Size(width, 1000);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          addTearDown(tester.view.resetPhysicalSize);
+          const content = '[C]Es[Am]pírito, [F]enche a minha [G]vida.\n'
+            'Intro: [ C | G ]\nInterlúdio: [ ||: C | F | % :|| ]';
+          final chord = sampleChord.copyWith(content: content, originalKey: 'C');
+          repo.chord = chord;
+          await tester.pumpWidget(buildApp(chordId: chord.id, initialChord: chord,
+            chordFontOverride: font, textScale: scale));
+          await tester.tap(find.text('Abrir Reader'));
+          await tester.pumpAndSettle();
+          final line = find.byType(ChordLyricLine);
+          expect(line, findsOneWidget);
+          expect(tester.widget<ChordLyricLine>(line).fontFamily, font);
+          for (final offset in [-1, 2]) {
+            final control = offset == -1 ? 'Meio tom abaixo (-1)' : 'Meio tom acima (+1)';
+            for (var step = 0; step < (offset == -1 ? 1 : 3); step++) {
+              await tester.tap(find.byTooltip(control));
+              await tester.pumpAndSettle();
+            }
+            final first = find.descendant(of: line,
+              matching: find.byKey(const ValueKey('reader-fragment-0')));
+            final second = find.descendant(of: line,
+              matching: find.byKey(const ValueKey('reader-fragment-1')));
+            expect(tester.getTopLeft(first).dy, tester.getTopLeft(second).dy);
+            final tiers = find.descendant(of: first, matching: find.byType(Text));
+            expect(tester.widget<Text>(tiers.first).data, offset == -1 ? 'B' : 'D');
+            expect(tester.widget<Text>(tiers.last).data, 'Es');
+            for (final rich in find.descendant(of: line, matching: find.byType(RichText)).evaluate()) {
+              final paragraph = rich.renderObject! as RenderParagraph;
+              final text = paragraph.text.toPlainText();
+              final boxes = paragraph.getBoxesForSelection(TextSelection(baseOffset: 0, extentOffset: text.length));
+              expect(boxes.map((box) => box.top).toSet(), hasLength(1), reason: text);
+              expect(paragraph.size.height, lessThan(15 * scale * 1.6));
+              final bounds = tester.getRect(find.byWidget(rich.widget));
+              expect(bounds.left, greaterThanOrEqualTo(16));
+              expect(bounds.right, lessThanOrEqualTo(width - 16));
+              expect(bounds.bottom, lessThan(1000));
+            }
+            expect(find.descendant(of: line, matching: find.byType(SelectionArea)), findsOneWidget);
+            for (final progression in find.byType(MusicalProgressionLine).evaluate()) {
+              final textFinder = find.descendant(of: find.byWidget(progression.widget), matching: find.byType(Text));
+              final text = tester.widget<Text>(textFinder);
+              expect(text.softWrap, isFalse);
+              expect(text.textSpan!.toPlainText(), contains(offset == -1 ? 'B' : 'D'));
+              expect(tester.getSize(textFinder).height, lessThan(15 * scale * 1.6));
+            }
+            expect(find.byType(MusicalProgressionLine), findsNWidgets(2));
+            expect(tester.takeException(), isNull);
+          }
+          await tester.tap(find.byTooltip('Aumentar fonte'));
+          await tester.pumpAndSettle();
+          expect(tester.widget<ChordLyricLine>(line).fontSize, 16);
+          expect(tester.takeException(), isNull);
+          expect(repo.chord!.content, content);
+        });
+      }
+    }
+  }
+
   for (final font in ['monospace', 'Arial']) {
     testWidgets('saved canonical progression uses inline renderer in $font mode', (tester) async {
       final chord = sampleChord.copyWith(content: 'Intro: (riff viol) [ ||: A | D | % :|| ]');

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_parser.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/chord_lyric_line.dart';
@@ -20,24 +21,24 @@ void main() {
         final lyrics = ['a', 'mor ', 'e ', 'fé'];
         final chordBounds = <Rect>[];
         for (int i = 0; i < fragments.length; i++) {
-          final tierType = monospace ? SelectableText : Text;
+          const tierType = Text;
           final tiers = find.descendant(of: fragments[i], matching: find.byType(tierType));
           expect(tiers, findsNWidgets(2));
           final expected = SmartChordParser.transposeChord(chords[i], offset);
           if (monospace) {
-            expect(tester.widget<SelectableText>(tiers.at(0)).data, expected);
-            expect(tester.widget<SelectableText>(tiers.at(1)).data, lyrics[i]);
+            expect(tester.widget<Text>(tiers.at(0)).data, expected);
+            expect(tester.widget<Text>(tiers.at(1)).data, lyrics[i]);
           } else {
             expect(tester.widget<Text>(tiers.at(0)).data, expected);
             expect(tester.widget<Text>(tiers.at(1)).data, lyrics[i]);
           }
           Rect chordRect;
           if (monospace) {
-            final editable = tester.state<EditableTextState>(find.descendant(
-              of: tiers.at(0), matching: find.byType(EditableText))).renderEditable;
-            final box = editable.getBoxesForSelection(TextSelection(baseOffset: 0, extentOffset: expected.length)).first;
-            chordRect = Rect.fromLTWH(editable.localToGlobal(Offset(box.left, box.top)).dx,
-              editable.localToGlobal(Offset(box.left, box.top)).dy, box.right - box.left, box.bottom - box.top);
+            final paragraph = tester.renderObject<RenderParagraph>(find.descendant(
+              of: tiers.at(0), matching: find.byType(RichText)));
+            final box = paragraph.getBoxesForSelection(TextSelection(baseOffset: 0, extentOffset: expected.length)).first;
+            chordRect = Rect.fromLTWH(paragraph.localToGlobal(Offset(box.left, box.top)).dx,
+              paragraph.localToGlobal(Offset(box.left, box.top)).dy, box.right - box.left, box.bottom - box.top);
           } else {
             chordRect = tester.getRect(tiers.at(0));
           }
@@ -66,6 +67,104 @@ void main() {
         }
         expect(tester.takeException(), isNull);
       });
+    }
+  }
+
+  for (final font in ['monospace', 'Courier New']) {
+    testWidgets('$font reproduces legacy fixed-width SelectableText wrapping', (tester) async {
+      const text = 'Espírito,';
+      final style = TextStyle(fontFamily: font, fontSize: 18, height: 1.3,
+        fontFamilyFallback: font == 'Courier New' ? ['monospace'] : []);
+      final painter = TextPainter(text: TextSpan(text: text, style: style),
+        textDirection: TextDirection.ltr)..layout();
+      final oldWidth = painter.width.ceilToDouble() + 1;
+      painter.dispose();
+      await tester.pumpWidget(MaterialApp(home: Scaffold(body: Center(
+        child: DefaultTextStyle(style: const TextStyle(letterSpacing: 1.8),
+          child: SizedBox(width: oldWidth, child: SelectableText(text, style: style)))))));
+      final editable = tester.state<EditableTextState>(find.byType(EditableText)).renderEditable;
+      final boxes = editable.getBoxesForSelection(TextSelection(baseOffset: 0, extentOffset: text.length));
+      expect(boxes.map((box) => box.top).toSet().length, greaterThan(1));
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final font in ['monospace', 'Courier New']) {
+    for (final viewport in [320.0, 360.0, 393.0]) {
+      for (final scale in [1.0, 1.3]) {
+        for (final offset in [-1, 2]) {
+          testWidgets('$font words and glyph geometry at $viewport / $scale / $offset', (tester) async {
+            const input = '[C]Es[Am]pírito, [F]enche a minha [G]vida. '
+              '[C][G#m7(b5)/F#]extraordinária[A7M/9]mente'
+              'inconstitucionalissimamenteacentuação';
+            await tester.pumpWidget(MaterialApp(home: Scaffold(body: SizedBox(width: viewport,
+              child: MediaQuery(data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+                // Exercise inherited typography absent from the old standalone painter.
+                child: DefaultTextStyle(style: const TextStyle(letterSpacing: 1.8),
+                  child: ChordLyricLine(line: input, semitones: offset, fontSize: 18,
+                    fontFamily: font, fontFamilyFallback: font == 'Courier New' ? ['monospace'] : [],
+                    monospace: true)))))));
+            final fragments = find.byWidgetPredicate((widget) => widget is Column &&
+              widget.key.toString().contains('reader-fragment-'));
+            final chordBounds = <Rect>[];
+            final lyricTexts = <String>[];
+            for (var i = 0; i < fragments.evaluate().length; i++) {
+              final fragment = find.byKey(ValueKey('reader-fragment-$i'));
+              final tiers = find.descendant(of: fragment, matching: find.byType(Text));
+              final fragmentRect = tester.getRect(fragment);
+              final rects = <Rect>[];
+              for (var tier = 0; tier < 2; tier++) {
+                final text = tester.widget<Text>(tiers.at(tier));
+                final paragraph = tester.renderObject<RenderParagraph>(find.descendant(
+                  of: tiers.at(tier), matching: find.byType(RichText)));
+                final boxes = paragraph.getBoxesForSelection(TextSelection(
+                  baseOffset: 0, extentOffset: text.data!.length));
+                expect(boxes, isNotEmpty);
+                expect(boxes.map((box) => box.top).toSet(), hasLength(1), reason: text.data);
+                final bounds = boxes.map((box) => Rect.fromLTRB(box.left, box.top, box.right, box.bottom))
+                  .reduce((a, b) => a.expandToInclude(b));
+                final global = bounds.shift(paragraph.localToGlobal(Offset.zero));
+                expect(global.left, greaterThanOrEqualTo(fragmentRect.left - 1));
+                expect(global.right, lessThanOrEqualTo(fragmentRect.right + 1));
+                expect(global.bottom, lessThanOrEqualTo(fragmentRect.bottom + 1));
+                expect(paragraph.size.height, lessThan(18 * scale * 1.6));
+                rects.add(global);
+                if (tier == 1) lyricTexts.add(text.data!);
+              }
+              expect(tester.getRect(tiers.first).left, tester.getRect(tiers.last).left);
+              expect(rects.last.top, greaterThanOrEqualTo(rects.first.bottom));
+              chordBounds.add(rects.first);
+            }
+            expect(lyricTexts.where((text) => text != ' ').join(),
+              'Espírito, enche a minha vida. extraordináriamenteinconstitucionalissimamenteacentuação');
+            expect(tester.getTopLeft(find.byKey(const ValueKey('reader-fragment-0'))).dy,
+              tester.getTopLeft(find.byKey(const ValueKey('reader-fragment-1'))).dy);
+            for (var i = 1; i < chordBounds.length; i++) {
+              if ((chordBounds[i].top - chordBounds[i - 1].top).abs() < 1) {
+                expect(chordBounds[i].left - chordBounds[i - 1].right, greaterThanOrEqualTo(6));
+              }
+            }
+            expect(tester.getTopLeft(find.byKey(const ValueKey('reader-word-5'))).dy,
+              greaterThan(tester.getTopLeft(find.byKey(const ValueKey('reader-word-0'))).dy));
+            final scrolls = tester.stateList<ScrollableState>(find.byType(Scrollable)).toList();
+            final overflow = scrolls.lastWhere((state) => state.position.maxScrollExtent > 0);
+            final lastTier = find.descendant(of: fragments.last, matching: find.byType(Text)).last;
+            final before = tester.getRect(lastTier).right;
+            overflow.position.jumpTo(overflow.position.maxScrollExtent);
+            await tester.pumpAndSettle();
+            expect(tester.getRect(lastTier).right, lessThan(before));
+            expect(tester.getRect(lastTier).right, lessThanOrEqualTo(viewport + 1));
+            final region = tester.state<SelectableRegionState>(find.byType(SelectableRegion));
+            region.selectAll(SelectionChangedCause.keyboard);
+            await tester.pump();
+            final paragraph = tester.renderObject<RenderParagraph>(find.descendant(
+              of: lastTier, matching: find.byType(RichText)));
+            expect(paragraph.selections, contains(TextSelection(
+              baseOffset: 0, extentOffset: tester.widget<Text>(lastTier).data!.length)));
+            expect(tester.takeException(), isNull);
+          });
+        }
+      }
     }
   }
 

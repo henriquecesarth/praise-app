@@ -53,6 +53,45 @@ class ChordLyricLine extends StatelessWidget {
     }
     if (word.isNotEmpty) words.add(word);
 
+    if (monospace) {
+      // SelectableText can wrap inside a fixed fragment even in a horizontal
+      // scroller. Its inherited style can also differ from the standalone
+      // TextPainter measurement (for example Material letter spacing).
+      // Let the displayed paragraphs determine their own intrinsic widths,
+      // including inherited style, text scaling, locale and platform fallback.
+      return LayoutBuilder(builder: (context, constraints) {
+        var fragmentIndex = 0;
+        return Padding(padding: const EdgeInsets.only(bottom: 10),
+          child: SelectionArea(child: Wrap(runSpacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.end,
+            children: [
+              for (var wordIndex = 0; wordIndex < words.length; wordIndex++)
+                IntrinsicWidth(child: ConstrainedBox(
+                  key: ValueKey('reader-word-$wordIndex'),
+                  constraints: BoxConstraints(maxWidth: constraints.maxWidth),
+                  child: SingleChildScrollView(scrollDirection: Axis.horizontal,
+                    child: Row(mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        for (final fragment in words[wordIndex])
+                          Column(key: ValueKey('reader-fragment-${fragmentIndex++}'),
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Padding(padding: const EdgeInsets.only(right: 7),
+                                child: Text(fragment.hasChord
+                                  ? SmartChordParser.transposeChord(fragment.chord, semitones) : ' ',
+                                  style: chordStyle.copyWith(color: fragment.hasChord
+                                    ? chordStyle.color : Colors.transparent), softWrap: false)),
+                              Text(fragment.text.isEmpty ? ' ' : fragment.text,
+                                style: lyricStyle, softWrap: false),
+                            ]),
+                      ])),
+                )),
+            ])));
+      });
+    }
+
     return LayoutBuilder(builder: (context, constraints) {
       int fragmentIndex = 0;
       final items = <Widget>[];
