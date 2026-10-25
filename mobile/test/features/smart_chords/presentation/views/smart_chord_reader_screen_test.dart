@@ -243,6 +243,7 @@ void main() {
     required String chordId,
     SmartChord? initialChord,
     String? chordFontOverride,
+    double textScale = 1,
   }) {
     return ProviderScope(
       overrides: [
@@ -254,6 +255,8 @@ void main() {
           chordFontPreferenceProvider.overrideWithValue(chordFontOverride),
       ],
       child: MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(textScale)), child: child!),
         home: Scaffold(
           body: Builder(
             builder: (ctx) => ElevatedButton(
@@ -834,6 +837,60 @@ void main() {
       expect(text.textSpan!.toPlainText(), 'Intro: (riff viol)  ||: A | D | % :|| ');
       expect(tester.takeException(), isNull);
     });
+  }
+
+  for (final width in [320.0, 360.0, 393.0]) {
+    for (final textScale in [1.0, 1.3]) {
+      testWidgets('reader toolbar fits $width at ${textScale}x with Original and all actions', (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = Size(width, 1000);
+        tester.view.padding = const FakeViewPadding(left: 8, right: 8, bottom: 24);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetPadding);
+        final chord = sampleChord.copyWith(originalKey: 'F#m', content: '[G#m7]a[C#m7]mor [A7M/9]e [F#/A#]fé');
+        repo.chord = chord;
+        await tester.pumpWidget(buildApp(chordId: chord.id, initialChord: chord,
+          chordFontOverride: 'Georgia', textScale: textScale));
+        await tester.tap(find.text('Abrir Reader'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('Meio tom acima (+1)'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('Meio tom acima (+1)'));
+        await tester.pumpAndSettle();
+        expect(find.text('Tom: G#m'), findsOneWidget);
+        final controls = [find.byTooltip('Meio tom abaixo (-1)'), find.byTooltip('Meio tom acima (+1)'),
+          find.byTooltip('Fonte das cifras'), find.byTooltip('Diminuir fonte'),
+          find.byTooltip('Aumentar fonte'), find.widgetWithText(TextButton, 'Original')];
+        for (final control in controls) {
+          final bounds = tester.getRect(control);
+          expect(bounds.left, greaterThanOrEqualTo(8));
+          expect(bounds.right, lessThanOrEqualTo(width - 8));
+          expect(bounds.top, greaterThanOrEqualTo(0));
+          expect(bounds.bottom, lessThan(1000 - 24));
+          expect(control.hitTestable(), findsOneWidget);
+        }
+        // Transposition and font controls occupy separate, non-overlapping rows.
+        expect(tester.getRect(find.byTooltip('Fonte das cifras')).top,
+          greaterThanOrEqualTo(tester.getRect(find.byTooltip('Meio tom acima (+1)')).bottom));
+        await tester.tap(find.byTooltip('Aumentar fonte'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('Fonte das cifras'));
+        await tester.pumpAndSettle();
+        expect(find.text('Courier New'), findsOneWidget);
+        await tester.tap(find.text('Georgia').last);
+        await tester.pumpAndSettle();
+        await tester.tap(find.widgetWithText(TextButton, 'Original'));
+        await tester.pumpAndSettle();
+        expect(find.text('Tom: F#m'), findsOneWidget);
+        await tester.tap(find.byTooltip('Meio tom abaixo (-1)'));
+        await tester.pumpAndSettle();
+        expect(find.text('Tom: Fm'), findsOneWidget);
+        expect(find.text('Gm7'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        expect(repo.chord!.content, chord.content);
+      });
+    }
   }
 
 }

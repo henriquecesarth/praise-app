@@ -1,3 +1,4 @@
+import '../widgets/chord_lyric_line.dart';
 import '../widgets/musical_progression_line.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -341,7 +342,9 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
           ],
         ],
       ),
-      body: Builder(
+      body: SafeArea(
+        top: false,
+        child: Builder(
         builder: (context) {
           if (detailState.isLoading && chord == null) {
             return const Center(child: CircularProgressIndicator());
@@ -430,8 +433,8 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
                     ),
                   ),
                 ),
-                child: Row(
-                  children: [
+                child: LayoutBuilder(builder: (context, constraints) {
+                  final keyControls = <Widget>[
                     // Transposed Key Indicator
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -481,6 +484,8 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
                         ref.read(smartChordDetailNotifierProvider.notifier).transposeBy(1);
                       },
                     ),
+                  ];
+                  final originalControls = <Widget>[
                     if (semitones != 0) ...[
                       const SizedBox(width: 4),
                       TextButton(
@@ -490,7 +495,8 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
                         child: const Text('Original'),
                       ),
                     ],
-                    const Spacer(),
+                  ];
+                  final fontControls = <Widget>[
                     // Font Family Selector
                     PopupMenuButton<String>(
                       tooltip: 'Fonte das cifras',
@@ -548,8 +554,19 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
                       icon: const Icon(Icons.text_increase, size: 18),
                       onPressed: _increaseFontSize,
                     ),
-                  ],
-                ),
+                  ];
+                  if (constraints.maxWidth >= 640 * MediaQuery.textScalerOf(context).scale(1)) {
+                    return Row(children: [...keyControls, ...originalControls, const Spacer(), ...fontControls]);
+                  }
+                  return Column(
+                    key: const ValueKey('reader-adaptive-toolbar'),
+                    children: [
+                      Row(children: [Expanded(child: keyControls.first), ...keyControls.skip(1)]),
+                      const SizedBox(height: 4),
+                      Row(children: [...originalControls, const Spacer(), ...fontControls]),
+                    ],
+                  );
+                }),
               ),
 
               // Lyrics & Chords Body
@@ -571,6 +588,7 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
             ],
           );
         },
+        ),
       ),
     );
   }
@@ -610,46 +628,8 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
     ThemeData theme,
     String fontFamily,
     List<String> fontFamilyFallback,
-  ) {
-    if (lineText.trim().isEmpty) {
-      return SizedBox(height: _fontSize * 0.8);
-    }
-
-    final rendered = SmartChordParser.renderLine(lineText, semitones);
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (rendered.hasChords)
-            SelectableText(
-              rendered.chordLine,
-              style: TextStyle(
-                fontFamily: fontFamily,
-                fontFamilyFallback: fontFamilyFallback,
-                fontSize: _fontSize,
-                fontWeight: FontWeight.bold,
-                color: theme.colorScheme.primary,
-                letterSpacing: 0.3,
-                height: 1.2,
-              ),
-            ),
-          SelectableText(
-            rendered.lyricsLine.isEmpty ? ' ' : rendered.lyricsLine,
-            style: TextStyle(
-              fontFamily: fontFamily,
-              fontFamilyFallback: fontFamilyFallback,
-              fontSize: _fontSize,
-              color: theme.colorScheme.onSurface,
-              letterSpacing: 0.3,
-              height: 1.3,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  ) => ChordLyricLine(line: lineText, semitones: semitones, fontSize: _fontSize,
+      fontFamily: fontFamily, fontFamilyFallback: fontFamilyFallback, monospace: true);
 
   Widget _buildProportionalLine(
     String lineText,
@@ -657,124 +637,8 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
     ThemeData theme,
     String fontFamily,
     List<String> fontFamilyFallback,
-  ) {
-    if (lineText.trim().isEmpty) {
-      return SizedBox(height: _fontSize * 0.8);
-    }
-
-    final parsedLines = SmartChordParser.parse(lineText);
-    if (parsedLines.isEmpty) {
-      return SizedBox(height: _fontSize * 0.8);
-    }
-
-    final line = parsedLines.first;
-    final hasChords = line.segments.any((s) => s.chord.trim().isNotEmpty);
-
-    final lyricStyle = TextStyle(
-      fontFamily: fontFamily,
-      fontFamilyFallback: fontFamilyFallback,
-      fontSize: _fontSize,
-      color: theme.colorScheme.onSurface,
-      height: 1.3,
-    );
-
-    if (!hasChords) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 4.0),
-        child: SelectableText(
-          lineText,
-          style: lyricStyle,
-        ),
-      );
-    }
-
-    final chordStyle = TextStyle(
-      fontFamily: fontFamily,
-      fontFamilyFallback: fontFamilyFallback,
-      fontSize: _fontSize,
-      fontWeight: FontWeight.bold,
-      color: theme.colorScheme.primary,
-      height: 1.2,
-    );
-
-    final items = <Widget>[];
-
-    for (final seg in line.segments) {
-      final chord = seg.chord.trim();
-      final text = seg.text;
-      final transposedChord =
-          chord.isNotEmpty ? SmartChordParser.transposeChord(chord, semitones) : '';
-
-      if (text.contains(' ') && text.trim().isNotEmpty) {
-        final firstSpaceIndex = text.indexOf(' ');
-        final firstWord = text.substring(0, firstSpaceIndex + 1);
-        final remainingText = text.substring(firstSpaceIndex + 1);
-
-        items.add(_buildSegmentColumn(
-          chord: transposedChord,
-          text: firstWord,
-          chordStyle: chordStyle,
-          lyricStyle: lyricStyle,
-        ));
-
-        final words = remainingText.split(' ');
-        for (int i = 0; i < words.length; i++) {
-          final word = words[i];
-          final isLast = i == words.length - 1;
-          final wordWithSpace = isLast ? word : '$word ';
-          if (wordWithSpace.isNotEmpty) {
-            items.add(_buildSegmentColumn(
-              chord: '',
-              text: wordWithSpace,
-              chordStyle: chordStyle,
-              lyricStyle: lyricStyle,
-            ));
-          }
-        }
-      } else {
-        items.add(_buildSegmentColumn(
-          chord: transposedChord,
-          text: text.isEmpty ? ' ' : text,
-          chordStyle: chordStyle,
-          lyricStyle: lyricStyle,
-        ));
-      }
-    }
-
-    return SelectionArea(
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: 6.0),
-        child: Wrap(
-          crossAxisAlignment: WrapCrossAlignment.end,
-          children: items,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSegmentColumn({
-    required String chord,
-    required String text,
-    required TextStyle chordStyle,
-    required TextStyle lyricStyle,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          chord.isNotEmpty ? chord : ' ',
-          style: chordStyle.copyWith(
-            color: chord.isNotEmpty ? chordStyle.color : Colors.transparent,
-          ),
-        ),
-        Text(
-          text,
-          style: lyricStyle,
-        ),
-      ],
-    );
-  }
+  ) => ChordLyricLine(line: lineText, semitones: semitones, fontSize: _fontSize,
+      fontFamily: fontFamily, fontFamilyFallback: fontFamilyFallback, monospace: false);
 
   Widget _buildRepertoireLinkBanner(
     BuildContext context,
@@ -799,7 +663,7 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
               child: CircularProgressIndicator(strokeWidth: 2),
             ),
             SizedBox(width: 8),
-            Text('Verificando vínculo com o repertório...'),
+            Expanded(child: Text('Verificando vínculo com o repertório...')),
           ],
         ),
       );
