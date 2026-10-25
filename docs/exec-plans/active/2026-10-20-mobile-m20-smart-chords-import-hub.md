@@ -148,3 +148,6 @@ R4-M9 implementation notes:
 - Actual component/widget assertions cover rendered row text, styles, editing/transposition, font modes and narrow scroll geometry, beyond normalization-only assertions.
 
 Local R4-M9 validation: 40 normalizer tests + 35 PDF regressions PASS; 180 focused Web tests PASS (utilities, Import Modal, Workspace, SongDetail, API). Backend and Web builds PASS; final Backend rebuild after the annotation-token safety adjustment tracked during checkpoint. `git diff --check` PASS. Flutter is intentionally not run on macOS 12. CI must verify analyzer and tests before a final PASS.
+
+
+CI attempt 1: https://github.com/henriquecesarth/praise-app/actions/runs/40205141963 (commit 162de5867fe11f6d438d6d1b9fa306ddd276fe72). Analyzer reported one `curly_braces_in_flow_control_structures` info in the multiline save guard; tests were not executed. Added the required braces without changing behavior, analyzer configuration or assertions. Follow-up CI pending.

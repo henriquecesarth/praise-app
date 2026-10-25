@@ -154,7 +154,9 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
   Future<SmartChord?> saveChord() async {
     final draft = state.draft;
     if (draft == null || state.status == ImportStatus.saving ||
-        state.status == ImportStatus.linking || state.savedChord != null) return null;
+        state.status == ImportStatus.linking || state.savedChord != null) {
+      return null;
+    }
 
     final title = draft.title.trim();
     final content = draft.content.trim();
