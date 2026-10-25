@@ -1,7 +1,7 @@
 # M20 — Smart Chords Import Hub (Phase 1)
 
 ## Status
-R4_M9_REVISED = PARTIAL — canonical blocks and inline renderers implemented; local checks passing, remote Flutter CI pending. R4-M7 protections preserved; physical acceptance pending.
+R4_M9_REVISED = PASS — canonical normalization and actual inline rendering validated locally and in Flutter CI. R4-M7 protections preserved. Ready for M20 physical acceptance; no APK generated or Production deployment performed.
 
 ## Objective
 Implement Phase 1 of M20: Smart Chords Import Hub across backend, Web, and Flutter mobile, enabling musicians to import digital text-based PDF chord sheets and plain-text (chords-over-lyrics or bracketed) chord sheets into their personal Smart Chords library with interactive preview, manual correction, and optional M19 Repertoire linking.
@@ -138,7 +138,7 @@ User contract supersedes the R4-M8 expected output: individually bracketed chord
 - [x] Canonical parser, idempotence and regression matrix.
 - [x] Web readers/previews/editor: inline no-wrap progression and token safety.
 - [x] Mobile shared progression tokens/widget used by reader (both fonts), editor and import preview.
-- [ ] Targeted tests, builds, diff review, scoped WIP commit/push and remote Flutter CI.
+- [x] Targeted tests, builds, diff review, scoped WIP commit/push and remote Flutter CI.
 - Remote synchronization: inspected two remote CI commits; their net tree equals the old local HEAD. Fast-forward completed with local changes preserved.
 
 R4-M9 implementation notes:
@@ -153,3 +153,16 @@ Local R4-M9 validation: 40 normalizer tests + 35 PDF regressions PASS; 180 focus
 CI attempt 1: https://github.com/henriquecesarth/praise-app/actions/runs/40205141963 (commit 162de5867fe11f6d438d6d1b9fa306ddd276fe72). Analyzer reported one `curly_braces_in_flow_control_structures` info in the multiline save guard; tests were not executed. Added the required braces without changing behavior, analyzer configuration or assertions. Follow-up CI pending.
 
 CI attempt 2: https://github.com/henriquecesarth/praise-app/actions/runs/40205343897 (814c8bc92071305bf0a8cd1a8f44d0e6e1257898). Analyzer PASS; 543 tests PASS, 1 FAIL. All new reader/editor/import/narrow-width widgets passed. The exact-output transposition assertion exposed `parse()` trimming canonical block padding in `transposeSmartChord`. Fixed by transforming original bracket spans instead of serializing the syllabic layout model; assertions are unchanged. Follow-up CI pending.
+
+
+### R4-M9 final evidence
+
+- Validated implementation commit: `0122d10c1cf6cbe4d9743c4f479eda41493af878` (preceded by `162de5867fe11f6d438d6d1b9fa306ddd276fe72` and analyzer fix `814c8bc92071305bf0a8cd1a8f44d0e6e1257898`).
+- CI: https://github.com/henriquecesarth/praise-app/actions/runs/40205619142 — SUCCESS; Ubuntu / Flutter 3.47.7 / Dart 3.13.5.
+- `flutter analyze`: No issues found.
+- Existing focused workflow suite: 544/544 tests PASS. No test skip markers. Smart Chords import controller 12/12 and import screen 15/15 PASS, including all original R4-M7 cases plus the new import rendering case.
+- Rendering assertions PASS: saved reader monospace and Arial; editor preview; Import Preview; horizontal scrolling at 120 logical pixels in both font modes; canonical/legacy token representation; exact spacing and annotation-safe transposition.
+- Local final targeted Backend tests: 75/75 PASS (40 normalizer + 35 PDF). Local focused Web tests: 180/180 PASS. Backend/Web builds PASS. Diff integrity PASS. No live Firebase writes; repositories/auth are faked or mocked in automated scenarios.
+- Git WIP synchronized by fast-forward, followed only by normal scoped commits/pushes; no force push, reset or clean. Final evidence documentation may follow the validated source commit; it does not alter runtime files or trigger the mobile path-filtered workflow.
+- Git-triggered Preview deployments for the validated source: `praise-app` and `praise-app-m7tn` SUCCESS; separate Vercel project `backend` ERROR. All inspected deployment targets are Preview (`target: null`). No Production promotion or manual deployment was performed. The separate Preview failure was not remediated outside this scope.
+- Remaining acceptance: physical Android/PWA interactions, native PDF picker and device font availability are Unknown / Not yet verified. No APK generated. This overall M20 ExecPlan remains active until physical acceptance is complete.

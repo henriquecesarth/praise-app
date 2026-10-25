@@ -277,3 +277,10 @@ Consulte docs/exec-plans/active/; planos concluídos ficam em docs/exec-plans/co
 
 - Timeline items persist only `id`, `title`, optional `time`, and `type` under the current backend Zod schema; do not add client-only `songId` fields expecting persistence. Mobile/PWA map explicitly typed `Música` slots positionally to selected songs. Only numbered placeholders or unique matching positional titles are resolved; custom/ambiguous titles remain intact and unlinked. Detail resolution never writes data.
 - Mobile schedule conversation reuses REST schedule comments through a full-screen chat with a separate notifier keyed by ministry/schedule/authenticated user. It refreshes explicitly and after successful sends; it is not realtime. Existing endpoint loads the newest page (default 50 messages), so badge count is the available page count.
+
+
+### Smart Chords canonical instrumental lines (R4-M9)
+
+- Instrumental progressions use ONE bracketed block: `[ G | D ]`; individually bracketed chords separated by bars normalize into that block. Normalization is idempotent and never projects complete progressions onto following lyrics.
+- Inline section labels/annotations stay on their authored line (`Intro: (riff viol) [ G | D ]`). Readers render the whole progression as one musical row with horizontal scrolling; ordinary `[G]lyric` syntax retains syllabic chord-over-lyrics layout.
+- Mobile reader/editor/import share `MusicalProgressionLine` and `SmartChordParser.progressionTokens`; reader fonts remain user-scoped. Transposition preserves block padding and leaves annotations untouched.
