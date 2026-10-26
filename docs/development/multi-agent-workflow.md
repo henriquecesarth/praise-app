@@ -21,13 +21,13 @@ Reduzir o tempo até **código integrado + revisão independente + testes verifi
 | Antigravity CLI (`agy`) | orquestração e implementação principal | `.agents/agents/`, `GEMINI.md` |
 | Gemini CLI nativo (`gemini`) | alternativa opcional com autenticação própria | `.gemini/agents/` |
 | Codex CLI (`codex`) | revisão independente / investigação paralela | `.codex/config.toml`, `.codex/agents/` |
-| GitHub | issues, PRs, logs e CI | `.github/workflows/` |
+| GitHub | versionamento, PRs e CI; Issues opcionais | `.github/workflows/` |
 
-**Piloto disponível:** `scripts/Invoke-LouvAioReadOnlyPilot.ps1` coordena duas análises locais em paralelo e salva evidências. A coordenação automática de escrita/PRs por Issue ainda não existe; os relatórios e diffs de implementação continuam convergindo pelo GitHub. A autenticação do `agy` não configura a do Gemini CLI nativo.
+**Piloto disponível:** `scripts/Invoke-LouvAioReadOnlyPilot.ps1` coordena duas análises locais em paralelo e salva evidências. A coordenação automática de escrita/PRs ainda não existe; os relatórios e diffs de implementação continuam convergindo pelo GitHub. A autenticação do `agy` não configura a do Gemini CLI nativo.
 
 ## Plano de execução por tarefa
 
-1. **Discovery breve:** identificar issue, branch-base real, arquivos afetados, interfaces e contratos.
+1. **Discovery breve:** identificar tarefa em prompt/Markdown, branch-base real, arquivos afetados, interfaces e contratos.
 2. **Decomposição:** explicitar dependências. Primeiro fixar contratos da API se Web e Flutter forem avançar em paralelo.
 3. **Pesquisa paralela (read-only):** delegar mapeamento de código, segurança/tenant, análise de regressão. Esses agentes não escrevem arquivos.
 4. **Implementação:** um escritor por arquivo. Para Web, Backend e Mobile simultâneos, usar branches/worktrees diferentes, escopos de arquivos distintos e base comum declarada.
@@ -61,7 +61,7 @@ Na sessão `agy`, execute `/agents` para conferir os agentes carregados. Se o cl
 
 **Prompt inicial para o Antigravity:**
 
-> Leia AGENTS.md, GEMINI.md, docs/01-CONTEXTO-ATUAL.md e docs/development/multi-agent-workflow.md. Para a Issue #NUMERO, confirme a branch-base do PR e trabalhe em branch isolada. Delegue em paralelo investigação dos contratos, auditoria de segurança e plano de testes com agentes read-only. Congele o contrato compartilhado antes de implementar. Se o escopo permitir backend/web/mobile simultâneos, use worktrees isolados e um escritor por arquivo. Execute validações reais e prepare Draft PR com evidência e riscos. Não faça merge, deploy ou mudanças de produção.
+> Leia AGENTS.md, GEMINI.md, docs/01-CONTEXTO-ATUAL.md e docs/development/multi-agent-workflow.md. Para a tarefa descrita pelo usuário, confirme a branch-base e trabalhe em branch isolada. Delegue em paralelo investigação dos contratos, auditoria de segurança e plano de testes com agentes read-only. Congele o contrato compartilhado antes de implementar. Se o escopo permitir backend/web/mobile simultâneos, use worktrees isolados e um escritor por arquivo. Execute validações reais e prepare Draft PR com evidência e riscos. Não faça merge, deploy ou mudanças de produção.
 
 Em **outro terminal**, para revisão do PR já publicado, escolha checkout read-only/cópia de trabalho distinta:
 
@@ -77,12 +77,12 @@ Observação: `codex` e `agy` requerem instalação/login local; o GitHub deste 
 
 ## Branches e worktrees
 
-Para trabalho dependente da WIP atual, substitua o número da Issue e use a base explicitada no plano:
+Para trabalho dependente da WIP atual, crie worktrees com nomes de tarefa e base explicitada no plano:
 
 ```powershell
 git fetch origin
-git worktree add -b feat/issue-123-web ..\louvaio-issue-123-web origin/wip/repertoire-versions-smartchords-20261022
-git worktree add -b feat/issue-123-mobile ..\louvaio-issue-123-mobile origin/wip/repertoire-versions-smartchords-20261022
+git worktree add -b feat/repertorio-web ..\louvaio-repertorio-web origin/wip/repertoire-versions-smartchords-20261022
+git worktree add -b feat/repertorio-mobile ..\louvaio-repertorio-mobile origin/wip/repertoire-versions-smartchords-20261022
 ```
 
 Criar diretórios separados é apenas o isolamento de Git. Não autoriza iniciar automaticamente dois processos sem conferir contratos, dependências, permissões e limites de cada CLI.
@@ -99,7 +99,7 @@ gh run list --limit 5
 
 | Campo | Obrigatório |
 | --- | --- |
-| Issue / PR / base e HEAD | Sim |
+| Tarefa / base e HEAD (PR se publicado) | Sim |
 | Agente, papel e caminhos sob responsabilidade | Sim |
 | Commits e arquivos modificados | Sim |
 | Testes realmente executados (comandos, exit code, URL) | Sim |
@@ -109,7 +109,7 @@ gh run list --limit 5
 
 ## Como medir se ficou mais rápido
 
-Compare duas tarefas de complexidade semelhante usando: **elapsed time da Issue até PR com CI verde**, retrabalho (número de ciclos de revisão), regressões e dependências bloqueadas. Medir também o custo de orquestração/conflitos. Ganho real = menos tempo para mudança validada, não mais agentes iniciados.
+Compare duas tarefas de complexidade semelhante usando: **tempo entre início da tarefa e PR com CI verde**, retrabalho (número de ciclos de revisão), regressões e dependências bloqueadas. Medir também o custo de orquestração/conflitos. Ganho real = menos tempo para mudança validada, não mais agentes iniciados.
 
 ## Guarda-corpos
 
@@ -141,3 +141,7 @@ Remove-Item Env:\LOUVAIO_E2E_PORT
 ### Piloto automatizado seguro
 
 No checkout **limpo** do branch do piloto, execute `.scriptsInvoke-LouvAioReadOnlyPilot.ps1` para pré-visualizar e, após inspeção das permissões, `.scriptsInvoke-LouvAioReadOnlyPilot.ps1 -Execute` para rodar Antigravity e Codex simultaneamente, ambos em tarefas informativas. Saídas locais em `.logs/multiagent/` (não versionadas). O processo verifica código de saída, estados e integridade do working tree, mas **não garante isolamento de escrita do Antigravity se seu sandbox não estiver disponível**. Não há merge, push ou deploy pelo script.
+
+## Forma preferida de entrada (26/10/2026)
+
+Não exigir GitHub Issues. O usuário envia o trabalho como texto livre no CLI ou como arquivo Markdown em `docs/`. O piloto `scripts/Invoke-LouvAioTask.ps1` recebe `-Task` ou `-TaskFile`, realiza preflight, e com `-Execute` inicia análises paralelas do Antigravity e Codex sem alterar código. Consulte `docs/development/task-first-multiagent.md`. A implementação automatizada em worktrees é uma etapa separada que exige validações adicionais.

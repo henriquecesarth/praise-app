@@ -10,17 +10,17 @@
 - Preserve o fluxo arquitetural, os limites de segurança e o protocolo de mudança definidos em `AGENTS.md`.
 - Atualize `MEMORY.md` apenas para decisões duráveis e documentação específica quando necessário; não registre estados transitórios ou segredos.
 
-## Tarefas recebidas pelo GitHub
+## Entrada padrão: tarefa direta
 
-Quando o usuário solicitar a implementação de uma Issue (por exemplo, #42), inclusive por um fluxo automatizado explicitamente autorizado:
+O usuário normalmente trabalha por **prompt enviado ao Antigravity ou Codex**, sem GitHub Issues. O texto da tarefa ou arquivo Markdown fornecido é a instrução de escopo; não consultar fila de Issues automaticamente. Se uma Issue for explicitamente fornecida, é permitido consultar `gh issue view` como contexto adicional.
 
-1. Leia título, descrição e comentários da Issue usando `gh issue view 42 --json title,body,comments` (substitua o número).
+1. Leia o pedido recebido; se existir TaskFile, leia-o e a documentação pertinente, sem exigir Issue.
 2. Confira a branch atual, o estado do Git e o escopo. Trabalhe em uma branch de feature específica, nunca diretamente na `main`.
 3. Inspecione o código existente e siga os agentes especializados e as instruções de `AGENTS.md` conforme a área.
 4. Implemente o menor conjunto coerente de alterações, execute as validações aplicáveis e revise `git diff --check`.
-5. Quando a tarefa permitir, delegue mapeamento de contratos, análise de riscos e preparação de testes em paralelo. Escrita concorrente somente em worktrees isolados, com responsável claro por path e integração sequencial. Prepare um relatório factual contendo: Issue, resumo, arquivos, decisões, testes realmente executados e resultados, riscos, limitações e eventuais alterações de arquitetura.
-6. Quando **autorizado expressamente pelo usuário**, faça push apenas da branch de trabalho e crie/atualize um **Draft Pull Request** para a branch-base verificada no plano (pode ser WIP, não necessariamente `main`), usando o relatório como descrição. Mencione a Issue no PR.
-7. Retorne a URL do PR para que o ChatGPT possa consultar código, diff e relatório diretamente no GitHub.
+5. Quando a tarefa permitir, delegue mapeamento de contratos, análise de riscos e preparação de testes em paralelo. Escrita concorrente somente em worktrees isolados, com responsável claro por path e integração sequencial. Prepare um relatório factual contendo: tarefa, resumo, arquivos, decisões, testes realmente executados e resultados, riscos, limitações e eventuais alterações de arquitetura.
+6. Quando **autorizado expressamente pelo usuário**, faça push apenas da branch de trabalho e crie/atualize um **Draft Pull Request** para a branch-base verificada no plano (pode ser WIP, não necessariamente `main`), usando o relatório como descrição. Mencione a Issue no PR apenas quando a tarefa estiver ligada a uma Issue real.
+7. Retorne a URL do PR para que o ChatGPT possa consultar código, diff e relatório diretamente no GitHub, caso haja PR autorizado.
 
 ## Limites operacionais
 
