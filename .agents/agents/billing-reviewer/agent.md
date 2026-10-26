@@ -40,7 +40,7 @@ test.
 Before review:
 
 1. Read `AGENTS.md`.
-2. Read `MEMORY.md`.
+2. Consult only task-relevant excerpts of `MEMORY.md` if needed; use scoped `rg -n -m 8 --max-columns 200 --max-columns-preview`, then small excerpts. Never load the whole file by default.
 3. Read the relevant billing design/policy documents.
 4. Inspect the requested commit/diff.
 5. Verify the HARNESS supplied by the task.

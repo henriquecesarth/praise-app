@@ -1,5 +1,11 @@
 # M20 — Smart Chords Import Hub (Phase 1 / Phase 2 continuation)
 
+## Phase 2.1 — Codex V3 and controlled publication
+
+- Preserved validated M20 checkpoint: `a494692402ecd17b85436aaf40c0e31b1d7e2ba6`. No product changes, repeated product tests/reviews, E2E or physical acceptance in this step.
+- Codex Efficiency V3 is consolidated in a separate configuration/documentation-only commit: scoped memory reads, compact instructions, six native roles and previously CLI-validated Sol/medium, Luna/low and Sol/high routing. Existing safety, RBAC, tenancy, persistence and Git invariants remain in AGENTS.md and referenced roles.
+- Normal branch push and Draft PR to `wip/repertoire-versions-smartchords-20261022` explicitly authorized for this step; remote WIP confirmed at `9f4f0bbe77679253f04e0c8ebfbad3066555c916` during preflight. Keep PR as draft; no merge, manual deployment or live database writes. PR/check/automatic-preview observations belong to the PR and delivery report; they do not constitute Android acceptance.
+
 ## Phase 2 continuation — 2026-10-26 (Codex native multiagent)
 
 - Preserved starting branch `feat/m20-phase-2a-android-share`, HEAD `c80b30694ef18ff9434758937b8d0ff32be16ed2`, descending from WIP integration `9f4f0bbe77679253f04e0c8ebfbad3066555c916`. Initial tree: 24 modified files and four untracked URL/image extractor files. Existing Share Intent commit and local implementation remain the starting point; authorship of local changes is Unknown / Not yet verified.

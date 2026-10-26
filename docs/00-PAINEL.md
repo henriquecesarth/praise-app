@@ -21,7 +21,7 @@ status: ativo
 
 - [[01-CONTEXTO-ATUAL|Contexto Operacional Compacto (Estado Verdadeiro)]] — Status verificado de builds, testes, releases e handoffs.
 - [[system-status|Matriz de Status do Sistema]] — Inconsistências catalogadas e histórico de módulos.
-- [[development/multi-agent-workflow|Protocolo Multiagente Permanente V2]] — Hierarquia Argon / Gemini Flash / Codex, políticas de teste e limites.
+- [[development/multi-agent-workflow|Protocolo Multiagente Permanente V2]] — Codex nativo, Sol para orquestração/revisão e Luna para workers; políticas de teste e limites.
 - [[development/github-ai-handoff|Handoff de IA, GitHub e Antigravity]] — Integração operacional entre ferramentas e canais.
 
 ---
