@@ -23,7 +23,7 @@ Reduzir o tempo até **código integrado + revisão independente + testes verifi
 | Codex CLI (`codex`) | revisão independente / investigação paralela | `.codex/config.toml`, `.codex/agents/` |
 | GitHub | issues, PRs, logs e CI | `.github/workflows/` |
 
-**Não existe nesta etapa um processo autônomo que una os processos `agy` e `codex`.** São sessões distintas; seus relatórios e diffs convergem no GitHub. A autenticação do `agy` não configura a do Gemini CLI nativo.
+**Piloto disponível:** `scripts/Invoke-LouvAioReadOnlyPilot.ps1` coordena duas análises locais em paralelo e salva evidências. A coordenação automática de escrita/PRs por Issue ainda não existe; os relatórios e diffs de implementação continuam convergindo pelo GitHub. A autenticação do `agy` não configura a do Gemini CLI nativo.
 
 ## Plano de execução por tarefa
 
@@ -118,3 +118,26 @@ Compare duas tarefas de complexidade semelhante usando: **elapsed time da Issue 
 - Agentes read-only devem ter ferramentas de leitura, não de escrita, quando o runtime permitir política efetiva.
 - Não reutilizar `MEMORY.md` inteiro como prompt automático.
 - Verificar UX/device real apenas onde testes automatizados não podem demonstrar comportamento.
+
+
+## Auditoria de configuração em 26/10/2026
+
+A auditoria independente confirmou Codex CLI 0.164.0, Antigravity CLI 1.4.7 e descoberta dos seis papéis. No Windows há múltiplas instalações do Codex no PATH; o supervisor registra o executável resolvido e a versão. O usuário conseguiu iniciar a sessão interativa do Codex com `codex --no-daemon`; para automação usar `codex exec` e não pressupor que essa opção interativa seja necessária.
+
+**Limites ainda existentes**: regras read-only em Markdown não são uma fronteira de segurança; portas/fixtures/serviços e credenciais não são isolados por Git worktree. GitHub Actions existentes focam Flutter e não substituem gates Web/Backend. Ver `docs/development/multiagent-pilot.md`.
+
+### E2E por worktree
+
+O Playwright lê `LOUVAIO_E2E_PORT` (padrão 4173) e usa `--strictPort`. Reutilização de servidor é desativada por padrão, inclusive fora de CI, para não testar artefatos do HEAD errado. Apenas em uso manual deliberado, `LOUVAIO_E2E_REUSE_SERVER=1` reativa o reuso, e o operador assume a verificação do commit servido.
+
+Exemplo no PowerShell, após build e com a pasta `web/` selecionada:
+
+```powershell
+$env:LOUVAIO_E2E_PORT = "4183"
+npm run test:e2e
+Remove-Item Env:\LOUVAIO_E2E_PORT
+```
+
+### Piloto automatizado seguro
+
+No checkout **limpo** do branch do piloto, execute `.scriptsInvoke-LouvAioReadOnlyPilot.ps1` para pré-visualizar e, após inspeção das permissões, `.scriptsInvoke-LouvAioReadOnlyPilot.ps1 -Execute` para rodar Antigravity e Codex simultaneamente, ambos em tarefas informativas. Saídas locais em `.logs/multiagent/` (não versionadas). O processo verifica código de saída, estados e integridade do working tree, mas **não garante isolamento de escrita do Antigravity se seu sandbox não estiver disponível**. Não há merge, push ou deploy pelo script.

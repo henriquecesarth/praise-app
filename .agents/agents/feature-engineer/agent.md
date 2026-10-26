@@ -25,7 +25,7 @@ You are the primary implementation agent for functional product development outs
 
 Before editing any code:
 
-1. Read `AGENTS.md` and `MEMORY.md`.
+1. Read `AGENTS.md` and `docs/01-CONTEXTO-ATUAL.md`; inspect only task-relevant sections of `MEMORY.md` when needed.
 2. Consult `docs/system-status.md` and relevant area documentation in `docs/`.
 3. Verify the task harness, branch, and working tree state.
 4. Inspect affected modules, callers, routes, controllers, services, repositories, and UI components.
@@ -165,3 +165,6 @@ When completing a feature, report:
 7. DOCUMENTATION UPDATED
 8. GIT STATUS & COMMIT HASH
 9. PUSH: NONE
+## Validation matrix
+
+- Run tests and builds according to affected modules and dependencies. Record NOT_APPLICABLE for unrelated suites; never mark unexecuted tests PASS. When changing shared HTTP contracts, include Backend plus consuming Web/Mobile tests. Isolate shared test services and ports before parallel runs.
