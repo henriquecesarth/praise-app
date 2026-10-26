@@ -401,12 +401,12 @@ export class RepertoireRepository {
           (url(patch.external_links[l.label]) === url(l.url) || url(patch.external_links[l.label.trim()]) === url(l.url)) &&
           url(patch[field]) !== url(l.url);
         const candidates = links.filter((l) => Boolean(l.isCustom) && !claimedByPatchExternal(l));
-        const matchedInBase =
-          (existingAlias.id
-            ? candidates.find((l) => l.id === existingAlias.id && categories[field].includes(l.label.trim().toLowerCase()))
-            : undefined) ||
-          candidates.find((l) => l.label.trim().toLowerCase() === existingAlias.label.trim().toLowerCase() && url(l.url) === existingFlatUrl) ||
-          candidates.find((l) => l.label.trim().toLowerCase() === existingAlias.label.trim().toLowerCase());
+        const aliasLabel = existingAlias.label.trim().toLowerCase();
+        const matchedInBase = existingAlias.id
+          ? (candidates.find((l) => l.id === existingAlias.id && categories[field].includes(l.label.trim().toLowerCase())) ||
+             candidates.find((l) => !l.id && l.label.trim().toLowerCase() === aliasLabel && url(l.url) === existingFlatUrl))
+          : (candidates.find((l) => !l.id && l.label.trim().toLowerCase() === aliasLabel && url(l.url) === existingFlatUrl) ||
+             candidates.find((l) => !l.id && l.label.trim().toLowerCase() === aliasLabel));
         if (matchedInBase) {
           historicalAliasField.set(matchedInBase, field);
         }
@@ -928,7 +928,7 @@ export class RepertoireRepository {
     const primaryChanged = data.versions !== undefined && updateData.versions[0].id !== existing.versions[0].id;
     if (hasLegacyLinks || explicitPrimaryLinks || primaryChanged) {
       const versions = updateData.versions || existing.versions;
-      const synchronized = this.synchronizeLinks(versions[0].links, data, explicitPrimaryLinks, existing);
+      const synchronized = this.synchronizeLinks(versions[0].links, data, explicitPrimaryLinks, primaryChanged ? undefined : existing);
       updateData.versions = versions.map((version: SongVersion, index: number) =>
         index === 0 ? { ...version, links: synchronized.links } : version);
       for (const [field, value] of Object.entries(synchronized.flat)) {

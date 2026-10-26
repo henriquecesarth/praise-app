@@ -518,6 +518,87 @@ describe('R4-M15 Blocker A: Historical custom link aliases (isCustom: true)', ()
       Chord: newUrl,
     });
   });
+
+  it('does not transfer historical alias status when promoting secondary version with distinct custom link or replacing link with distinct custom ID', async () => {
+    // a) Seed primary v1 with historical alias and secondary v2 with distinct custom link
+    seed({
+      youtube_url: oldUrl,
+      external_links: {},
+      versions: [
+        {
+          id: 'v1',
+          name: 'Original',
+          key: 'C',
+          bpm: 72,
+          classificationIds: [],
+          links: [
+            { id: 'historical', label: 'YouTube', url: oldUrl, isCustom: true },
+          ],
+        },
+        {
+          id: 'v2',
+          name: 'Secondary',
+          key: 'D',
+          bpm: 72,
+          classificationIds: [],
+          links: [
+            { id: 'custom', label: 'YouTube', url: newUrl, isCustom: true },
+          ],
+        },
+      ],
+    });
+
+    // Promoting secondary v2 to primary
+    await update({
+      versions: [
+        { id: 'v2', name: 'Secondary', key: 'D', links: [{ id: 'custom', label: 'YouTube', url: newUrl, isCustom: true }] },
+        { id: 'v1', name: 'Original', key: 'C', links: [{ id: 'historical', label: 'YouTube', url: oldUrl, isCustom: true }] },
+      ],
+    });
+
+    let doc = stored();
+    expect(doc.youtube_url).toBeNull();
+    expect(doc.external_links).toEqual({ YouTube: newUrl });
+    const list = await repo.getSongs(ministry, { has_youtube: true });
+    expect(list.data.find((s: { id: string }) => s.id === 'song')).toBeUndefined();
+
+    // b) Replacing v1's historical alias with a distinct custom link ID on v1
+    seed({
+      youtube_url: oldUrl,
+      external_links: {},
+      versions: [
+        {
+          id: 'v1',
+          name: 'Original',
+          key: 'C',
+          bpm: 72,
+          classificationIds: [],
+          links: [
+            { id: 'historical', label: 'YouTube', url: oldUrl, isCustom: true },
+          ],
+        },
+        secondary,
+      ],
+    });
+
+    await update({
+      versions: [
+        {
+          id: 'v1',
+          name: 'Original',
+          key: 'C',
+          links: [
+            { id: 'custom', label: 'YouTube', url: newUrl, isCustom: true },
+          ],
+        },
+        secondary,
+      ],
+    });
+
+    doc = stored();
+    expect(doc.youtube_url).toBeNull();
+    expect(doc.external_links).toEqual({ YouTube: newUrl });
+  });
 });
 
 describe('R4-M15 Blocker B: Orphan classifications preserved on unrelated edits & cleared on explicit clear', () => {
