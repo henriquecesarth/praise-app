@@ -171,6 +171,9 @@ class _RouterRefreshNotifier extends ChangeNotifier {
       try {
         ref.read(pushNotificationNotifierProvider.notifier).initializeEarly();
       } catch (_) {}
+      try {
+        ref.read(shareIntentRouterProvider).initialize();
+      } catch (_) {}
     });
 
     ref.listen<AuthState>(authNotifierProvider, (previous, next) {
@@ -180,6 +183,7 @@ class _RouterRefreshNotifier extends ChangeNotifier {
       } else if (next.isUnauthenticated) {
         resetAuthenticatedFeatures(ref);
         ref.read(notificationRouterProvider).clearPendingPayload();
+        ref.read(shareIntentRouterProvider).clearPendingPayload();
       }
       notifyListeners();
     });
@@ -191,6 +195,7 @@ class _RouterRefreshNotifier extends ChangeNotifier {
           ref.read(pushNotificationNotifierProvider.notifier).initializeAndSync();
           // Dispatch any pending notification intent
           ref.read(notificationRouterProvider).dispatchPendingIfReady();
+          ref.read(shareIntentRouterProvider).dispatchPendingIfReady();
         } catch (_) {}
       }
       notifyListeners();
@@ -208,6 +213,7 @@ class _RouterRefreshNotifier extends ChangeNotifier {
         try {
           ref.read(pushNotificationNotifierProvider.notifier).initializeAndSync();
           ref.read(notificationRouterProvider).dispatchPendingIfReady();
+          ref.read(shareIntentRouterProvider).dispatchPendingIfReady();
         } catch (_) {}
       });
     }

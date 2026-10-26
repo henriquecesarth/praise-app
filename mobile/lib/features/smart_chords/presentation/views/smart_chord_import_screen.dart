@@ -4,12 +4,18 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/providers.dart';
+import '../../domain/shared_import_payload.dart';
 import '../../domain/smart_chord_parser.dart';
 import '../controllers/smart_chord_import_controller.dart';
 import '../widgets/song_link_picker_modal.dart';
 
 class SmartChordImportScreen extends ConsumerStatefulWidget {
-  const SmartChordImportScreen({super.key});
+  final SharedImportPayload? initialPayload;
+
+  const SmartChordImportScreen({
+    super.key,
+    this.initialPayload,
+  });
 
   @override
   ConsumerState<SmartChordImportScreen> createState() => _SmartChordImportScreenState();
@@ -85,7 +91,68 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
       if (!mounted || _abandoned) return;
       _clearWorkflow();
       setState(() => _ready = true);
+      _handleInitialPayload();
     });
+  }
+
+  Future<void> _handleInitialPayload() async {
+    final payload = widget.initialPayload;
+    if (payload == null || !mounted || _abandoned) return;
+
+    if (payload.hasError) {
+      final msg = payload.errorMessage ?? 'Não foi possível processar o item compartilhado.';
+      setState(() {
+        _fileError = msg;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(msg),
+            backgroundColor: Colors.red.shade800,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (payload.isText) {
+      final text = payload.text?.trim() ?? '';
+      if (text.isEmpty) {
+        setState(() {
+          _fileError = 'O texto compartilhado está vazio.';
+        });
+        return;
+      }
+      _tabController.index = 1;
+      _textController.text = text;
+      await _extractText();
+    } else if (payload.isPdf) {
+      final bytes = payload.pdfBytes;
+      if (bytes == null || bytes.isEmpty) {
+        setState(() {
+          _fileError = 'Arquivo PDF vazio ou inválido.';
+        });
+        return;
+      }
+      final size = bytes.length;
+      if (size > 3 * 1024 * 1024) {
+        setState(() {
+          _fileError = 'Arquivo PDF excede o limite máximo permitido de 3 MB.';
+          _pdfBytes = null;
+          _pdfFileName = null;
+          _pdfSize = null;
+        });
+        return;
+      }
+      _tabController.index = 0;
+      setState(() {
+        _pdfBytes = bytes;
+        _pdfFileName = payload.pdfFileName ?? 'cifra_compartilhada.pdf';
+        _pdfSize = size;
+        _fileError = null;
+      });
+      await _extractPdf();
+    }
   }
 
   @override

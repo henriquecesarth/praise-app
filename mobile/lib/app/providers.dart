@@ -156,6 +156,9 @@ void resetAuthenticatedFeatures(dynamic refOrContainer) {
   try {
     refOrContainer.read(notificationRouterProvider).clearPendingPayload();
   } catch (_) {}
+  try {
+    refOrContainer.read(shareIntentRouterProvider).clearPendingPayload();
+  } catch (_) {}
 }
 
 /// Provider for the active runtime environment.
