@@ -300,3 +300,13 @@ Consulte docs/exec-plans/active/; planos concluídos ficam em docs/exec-plans/co
 - Primary links arrays replace their link set; legacy scalar links patch a category and external_links replaces its external map. Mixed explicit representations must agree; unrelated edits preserve fields and secondary links. Custom-marked links retain external-map semantics.
 - Missing classification IDs may remain only in their original reference slots. New/moved missing IDs and all effective foreign-ministry references fail validation. No cleanup/migration.
 - Local implementation is uncommitted pending R4-M14 review; details and operational Preview CORS dependency are in docs/exec-plans/completed/2026-10-25-r4-m13-release-blockers.md. No release or controlled CI approval implied.
+
+
+### Repertoire historical aliases and orphan classification preservation (R4-M15)
+
+- Historical link aliases (`youtube_url`, `audio_url`, `chord_sheet_url`) stored with `isCustom: true` on primary versions are preserved during version updates via scoped matching in `RepertoireRepository`, preventing accidental demotion into `external_links` and preserving YouTube filter flags. Custom links with distinct IDs or from secondary versions remain strictly in `external_links`.
+- Unchanged classifications in Web song editor (`CreateSongModal` / `VersionEditModal`) are omitted from version payload updates unless explicitly touched by user chip interaction (`touchedClassificationVersionIds`). This preserves pre-existing flat orphan classifications (`classification_id: 'deleted'`) across title/artist/version-name edits while honoring explicit user clears (`classificationIds: []` or `classification_id: null`).
+- BPM omission preservation is maintained across Web modal updates and backend version persistence.
+- Distinction between field omission (preserves existing Firestore document values) and explicit clear (payload containing `[]` or `null`).
+- Multi-agent Protocol V2 adopted: Argon High for complex architecture, Gemini Flash (prefer 3.8 High) for implementation, Codex for independent review; Obsidian vault in `docs/` (`docs/00-PAINEL.md`, `docs/01-CONTEXTO-ATUAL.md`).
+- Verified in `fix/r4-m15-release-blockers` (commit `3aa3ed6`): 64 backend integrity tests PASS, 74 Web contract tests PASS, independent Codex review approved.
