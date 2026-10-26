@@ -1,0 +1,120 @@
+---
+tags:
+  - louvaio
+  - agentes
+  - desenvolvimento
+type: runbook
+status: piloto
+---
+
+# LouvAIO — Execução multiagente orientada a tempo de entrega
+
+## Objetivo
+
+Reduzir o tempo até **código integrado + revisão independente + testes verificáveis**. A quantidade de tokens não é métrica principal. Não confundir paralelismo com concorrência de escrita no mesmo arquivo.
+
+## Ferramentas e fronteiras
+
+| Ferramenta | Papel | Fonte de configuração |
+| --- | --- | --- |
+| Obsidian | contexto, decisões e navegação | `docs/` como vault |
+| Antigravity CLI (`agy`) | orquestração e implementação principal | `.agents/agents/`, `GEMINI.md` |
+| Gemini CLI nativo (`gemini`) | alternativa opcional com autenticação própria | `.gemini/agents/` |
+| Codex CLI (`codex`) | revisão independente / investigação paralela | `.codex/config.toml`, `.codex/agents/` |
+| GitHub | issues, PRs, logs e CI | `.github/workflows/` |
+
+**Não existe nesta etapa um processo autônomo que una os processos `agy` e `codex`.** São sessões distintas; seus relatórios e diffs convergem no GitHub. A autenticação do `agy` não configura a do Gemini CLI nativo.
+
+## Plano de execução por tarefa
+
+1. **Discovery breve:** identificar issue, branch-base real, arquivos afetados, interfaces e contratos.
+2. **Decomposição:** explicitar dependências. Primeiro fixar contratos da API se Web e Flutter forem avançar em paralelo.
+3. **Pesquisa paralela (read-only):** delegar mapeamento de código, segurança/tenant, análise de regressão. Esses agentes não escrevem arquivos.
+4. **Implementação:** um escritor por arquivo. Para Web, Backend e Mobile simultâneos, usar branches/worktrees diferentes, escopos de arquivos distintos e base comum declarada.
+5. **Revisão independente:** Codex revisa um diff estável (commit ou PR) e sugere falhas; não aprova mudança sem executar/inspecionar evidências.
+6. **Integração:** combinar mudanças em ordem de dependência, reexecutar builds/testes pós-integração e atualizar a descrição do Draft PR.
+7. **Handoff:** publicar links para PR, workflow, arquivos, resultados e lacunas. Manter decisão de merge/deploy com o responsável humano.
+
+## Exemplos de propriedade de arquivos
+
+- **Backend:** `backend/src/`; contratos e endpoints (primeiro fixar com consumidores).
+- **Web:** `web/src/`; depende de API estabilizada.
+- **Mobile:** `mobile/lib/`, `mobile/test/`; depende da mesma API.
+- **Revisão:** somente leitura de PR, código e testes; não modificar arquivos da feature.
+- **Documentação compartilhada:** um integrador altera `AGENTS.md`, `MEMORY.md`, `docs/` e contratos comuns depois de reunir as entregas.
+
+Se dois agentes precisarem do mesmo arquivo, eles não trabalham simultaneamente nele. O orquestrador sequencia, redefine fronteiras ou usa patch aplicado por único integrador.
+
+## Operação manual no Windows (sem nova API key)
+
+Em um checkout limpo, na raiz do repositório:
+
+```powershell
+git status --short
+gh auth status
+agy --version
+codex --version
+agy
+```
+
+Na sessão `agy`, execute `/agents` para conferir os agentes carregados. Se o cliente/plano oferecer `/teamwork-preview`, experimente em **uma** tarefa isolada; confirme na versão instalada, pois não há teste de execução dessa funcionalidade neste PR.
+
+**Prompt inicial para o Antigravity:**
+
+> Leia AGENTS.md, GEMINI.md, docs/01-CONTEXTO-ATUAL.md e docs/development/multi-agent-workflow.md. Para a Issue #NUMERO, confirme a branch-base do PR e trabalhe em branch isolada. Delegue em paralelo investigação dos contratos, auditoria de segurança e plano de testes com agentes read-only. Congele o contrato compartilhado antes de implementar. Se o escopo permitir backend/web/mobile simultâneos, use worktrees isolados e um escritor por arquivo. Execute validações reais e prepare Draft PR com evidência e riscos. Não faça merge, deploy ou mudanças de produção.
+
+Em **outro terminal**, para revisão do PR já publicado, escolha checkout read-only/cópia de trabalho distinta:
+
+```powershell
+codex
+```
+
+**Prompt inicial para o Codex:**
+
+> Revise de forma independente o PR #NUMERO do LouvAIO, baseando-se no diff e nos contratos do código. Divida, se disponível, entre análise de segurança multi-tenant, contratos API Web/Mobile e regressões/testes. Não altere o código nem faça push; reporte achados priorizados, com paths/linhas e evidências. Se faltar acesso ao PR, informe e não invente resultados.
+
+Observação: `codex` e `agy` requerem instalação/login local; o GitHub deste PR não os executa automaticamente.
+
+## Branches e worktrees
+
+Para trabalho dependente da WIP atual, substitua o número da Issue e use a base explicitada no plano:
+
+```powershell
+git fetch origin
+git worktree add -b feat/issue-123-web ..\louvaio-issue-123-web origin/wip/repertoire-versions-smartchords-20261022
+git worktree add -b feat/issue-123-mobile ..\louvaio-issue-123-mobile origin/wip/repertoire-versions-smartchords-20261022
+```
+
+Criar diretórios separados é apenas o isolamento de Git. Não autoriza iniciar automaticamente dois processos sem conferir contratos, dependências, permissões e limites de cada CLI.
+
+Após integrar, conferir:
+
+```powershell
+git diff --check
+gh pr checks <NUMERO-PR>
+gh run list --limit 5
+```
+
+### Evidência mínima exigida
+
+| Campo | Obrigatório |
+| --- | --- |
+| Issue / PR / base e HEAD | Sim |
+| Agente, papel e caminhos sob responsabilidade | Sim |
+| Commits e arquivos modificados | Sim |
+| Testes realmente executados (comandos, exit code, URL) | Sim |
+| Falhas, riscos e lacunas não verificadas | Sim |
+| Tempo de execução / tempo de espera | Quando medido |
+| Decisão de merge e deploy | Humana, nunca automática |
+
+## Como medir se ficou mais rápido
+
+Compare duas tarefas de complexidade semelhante usando: **elapsed time da Issue até PR com CI verde**, retrabalho (número de ciclos de revisão), regressões e dependências bloqueadas. Medir também o custo de orquestração/conflitos. Ganho real = menos tempo para mudança validada, não mais agentes iniciados.
+
+## Guarda-corpos
+
+- Nada de `git push --force`, merge, deploy, rotação de secrets ou escrita em Firebase real sem autorização explícita.
+- Não misturar changes de branches WIP no `main` antes da validação de integração.
+- Agentes read-only devem ter ferramentas de leitura, não de escrita, quando o runtime permitir política efetiva.
+- Não reutilizar `MEMORY.md` inteiro como prompt automático.
+- Verificar UX/device real apenas onde testes automatizados não podem demonstrar comportamento.

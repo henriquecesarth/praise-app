@@ -43,3 +43,6 @@ Thumbs.db
 # Logs
 *-debug.log
 .aider*
+
+# Obsidian personal workspace settings (vault lives in docs/)
+docs/.obsidian/
