@@ -2,7 +2,7 @@
 
 ## 1. Project Mission
 
-LouvAIO (anteriormente Praise App) é uma aplicação web e PWA para organizar ministérios de louvor. O sistema cobre autenticação, ministérios e integrantes, funções, equipes, escalas, repertório, liturgias, modelos de roteiro, edição de cifras inteligentes, planos, quotas, concessões cortesia e faturamento SaaS recorrente via gateway Asaas. O produto é uma SPA instalável que consome uma API REST Express com dados no Firebase Firestore.
+LouvAIO (anteriormente Praise App) é uma aplicação web e PWA para organizar ministérios de louvor. O sistema cobre autenticação, ministérios e integrantes, funções, equipes, escalas, repertório, liturgias, modelos de roteiro, edição de cifras inteligentes, planos, quotas, concessões cortesia e faturamento SaaS recorrente via gateway Asaas. O produto é uma SPA instalável que consome uma API REST Express com dados no Firebase Firestore, com aplicativo mobile Flutter complementar Android-first.
 
 ## 2. Sources of Truth
 
@@ -10,8 +10,8 @@ Use esta precedência:
 
 1. código e configuração atuais;
 2. testes executáveis;
-3. AGENTS.md e MEMORY.md;
-4. documentos específicos em docs/;
+3. AGENTS.md e documentos específicos da tarefa em docs/ (começando por docs/01-CONTEXTO-ATUAL.md);
+4. trechos relevantes de MEMORY.md (contexto histórico durável, não status operacional transitório);
 5. documentação histórica.
 
 Se o código contradizer um documento, confirme o comportamento no código, atualize a documentação atingida e não preserve a afirmação obsoleta. Use exatamente Unknown / Not yet verified quando não houver evidência suficiente. Nunca registre valores de .env, tokens, senhas, chaves privadas ou credenciais.
@@ -30,11 +30,14 @@ Se o código contradizer um documento, confirme o comportamento no código, atua
 - web/src/api.ts: única camada centralizada de chamadas HTTP e conversão snake_case/camelCase.
 - web/src/components/: telas, modais e componentes visuais (incluindo tela de planos e faturamento).
 - web/src/utils/: transformação de cifras e datas comerciais.
-- docs/: documentação operacional e arquitetural.
+- mobile/: cliente Flutter Android-first; navegação, features, testes e configuração Android/iOS.
+- .github/workflows/: workflows versionados de CI, incluindo validação Flutter e builds Android.
+- .agents/agents/: definições canônicas de papéis Antigravity (.codex/agents/ são adaptadores de ferramenta).
+- docs/: documentação operacional e arquitetural; vault oficial do Obsidian. docs/00-PAINEL.md é o painel de entrada e docs/01-CONTEXTO-ATUAL.md o resumo de contexto operacional.
 - docs/exec-plans/active/: planos vivos de mudanças relevantes.
 - docs/exec-plans/completed/: planos encerrados, preservados como histórico de execução.
 
-Não existem atualmente mobile/, supabase/, Docker, CI/CD ou migrations. O backend possui suíte de testes Vitest em `backend/src/`. O web possui testes co-localizados em `web/src/` e jornadas E2E em `web/e2e/`.
+Existem mobile/ e workflows GitHub Actions versionados; não assuma ausência de CI. Não há pasta supabase/ ativa, nem infraestrutura Docker/migrations no mapa consultado. O backend possui suíte de testes Vitest em `backend/src/`. O web possui testes co-localizados em `web/src/` e jornadas E2E em `web/e2e/`. O mobile possui testes Flutter em `mobile/test/`.
 
 ## 4. Architecture Rules
 
@@ -77,7 +80,7 @@ Mais detalhes: docs/development/conventions.md.
 
 Antes de alteração significativa:
 
-1. Leia AGENTS.md e MEMORY.md.
+1. Leia AGENTS.md e docs/01-CONTEXTO-ATUAL.md; consulte de MEMORY.md apenas seções pertinentes à tarefa (evite ler o arquivo integral por padrão).
 2. Consulte docs/system-status.md e os documentos da área.
 3. Inspecione o código afetado e suas referências com rg.
 4. Identifique contratos frontend/backend e coleções Firestore atingidos.
@@ -124,6 +127,10 @@ Validação disponível:
     npm test
     npm run test:e2e
 
+    cd ../mobile
+    flutter analyze
+    flutter test
+
 Validação de integridade do repositório:
 
     git diff --check
@@ -134,9 +141,11 @@ Estado atual:
 
 - backend usa Vitest para testes unitários e de integração de quotas, billing, concorrência, idempotência, segurança anti-IDOR, RBAC e repositórios.
 - web usa Vitest/Testing Library para unidades/componentes e Playwright para E2E com mocks locais.
+- mobile usa Flutter SDK para testes unitários e de widget em `mobile/test/`.
 - web não tem script de lint configurado.
 - backend declara npm run lint, mas não inclui dependência/configuração ESLint; o comando não é uma validação operacional até isso ser configurado explicitamente.
-- não existem comandos de format, migrations, Docker ou CI.
+- existem workflows de CI em .github/workflows/; não há infraestrutura de migrations ou Docker identificada.
+- Política de execução de testes: antes de rodar suítes amplas, verificar dependências externas (Firebase Emulator, serviços locais, env vars). Aplicar timeouts seguros e nunca realizar polling indefinido. Não repetir testes de código em alterações estritamente documentais. Classificar resultados explicitamente como PASS, FAIL, NOT_EXECUTED ou BLOCKED.
 
 Não crie testes ou configuração de lint apenas para satisfazer o protocolo de outra tarefa. Para novo comportamento web ou backend, estenda a cobertura existente no nível apropriado e mantenha qualquer escrita E2E isolada por mocks/fixtures.
 
@@ -167,3 +176,18 @@ O relatório final deve informar:
 - próximo passo natural, quando houver.
 
 Nunca declare teste, lint, build, integração externa ou comportamento como validado sem executar ou inspecionar a evidência correspondente.
+
+## 11. Multi-agent Execution Protocol V2
+
+- Instruções operacionais completas: `docs/development/multi-agent-workflow.md`.
+- O vault do Obsidian é a pasta `docs/`. Inicie a navegação por `docs/00-PAINEL.md` e `docs/01-CONTEXTO-ATUAL.md`.
+- Hierarquia de Modelos:
+  - **Argon High:** arquiteto e coordenador estratégico para decisões complexas, segurança multi-tenant e contratos compartilhados. Não usar automaticamente para tarefas simples.
+  - **Gemini Flash (preferencialmente Gemini Flash 3.8 High):** implementação ágil de features, componentes, testes, correções e documentação operacional.
+  - **Codex:** revisão independente de segurança, RBAC, integridade de persistência, contratos e regressões.
+- Os 6 papéis canônicos de agentes são mantidos em `.agents/agents/`: `product-architect`, `feature-engineer`, `feature-reviewer`, `billing-engineer`, `billing-reviewer` e `sandbox-auditor`.
+- Delegação eficiente: no máximo 2 workers de implementação concorrentes; 1 único escritor por arquivo; congelar contratos compartilhados antes do paralelismo.
+- Sem revisões duplicadas: não executar revisão Gemini extensa antes de uma revisão Codex equivalente.
+- GitHub Issues são opcionais: tarefas podem vir diretamente do chat ou de outros canais declarados.
+- Ao preparar Draft PR, confirme a branch-base verificada no plano (geralmente branch WIP, como `wip/repertoire-versions-smartchords-20261022`), nunca `main` automaticamente.
+- Guardrails absolutos: sem push, merge, deploy ou escrita em banco de dados real sem autorização expressa humana.

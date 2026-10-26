@@ -47,12 +47,14 @@ const configSchema = z.object({
     environment: z.enum(['sandbox', 'production']).default('sandbox'),
   }),
 }).refine((cfg) => {
-  if (cfg.nodeEnv === 'production' && !isPreviewEnvironment() && cfg.jwtSecret === DEFAULT_DEV_JWT_SECRET) {
+  const deployed = process.env.VERCEL_ENV === 'production' || isPreviewEnvironment();
+  if ((cfg.nodeEnv === 'production' || deployed) &&
+      (!cfg.jwtSecret.trim() || cfg.jwtSecret.trim() === DEFAULT_DEV_JWT_SECRET)) {
     return false;
   }
   return true;
 }, {
-  message: 'JWT_SECRET inseguro detectado em ambiente de produção. Forneça uma chave secreta exclusiva via variável de ambiente.',
+  message: 'JWT_SECRET inseguro em ambiente de produção ou Preview. Configure uma chave secreta exclusiva.',
   path: ['jwtSecret'],
 });
 

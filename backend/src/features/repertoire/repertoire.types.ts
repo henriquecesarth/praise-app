@@ -162,7 +162,7 @@ export const createSongSchema = z
     chord_sheet_url: z.string().url().nullable().optional().or(z.literal('')),
     youtube_url: z.string().url().nullable().optional().or(z.literal('')),
     audio_url: z.string().url().nullable().optional().or(z.literal('')),
-    external_links: z.record(z.string(), z.string()).optional().default({}),
+    external_links: z.record(z.string(), z.string()).optional(),
   })
   .refine(validateFlatVsVersionConflicts, {
     message: 'Conflito de dados entre os campos planos legados e a versão principal (versions[0]).',

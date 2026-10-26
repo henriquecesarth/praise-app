@@ -428,3 +428,18 @@ describe('Production CORS Hardening Suite (R-CORS)', () => {
     });
   });
 });
+
+// The approved Web Preview requires an exact deployed allowlist entry.
+// Never infer trust from a *.vercel.app suffix.
+describe('R4-M13 exact Web Preview origin', () => {
+  const previewOrigin = 'https://praise-app-m7tn-git-wip-repert-c49080-henriquecesarths-projects.vercel.app';
+  it('denies the Preview when absent from production-mode configuration', () => {
+    expect(isAllowedOrigin(previewOrigin, { nodeEnv: 'production', corsOrigin: 'https://app.example.test' })).toBe(false);
+  });
+  it('accepts only the exact explicitly configured Preview origin', () => {
+    const options = { nodeEnv: 'production', corsOrigin: `https://app.example.test,${previewOrigin}` };
+    expect(isAllowedOrigin(previewOrigin, options)).toBe(true);
+    expect(isAllowedOrigin('https://unrelated.vercel.app', options)).toBe(false);
+    expect(isAllowedOrigin(`${previewOrigin}.attacker.test`, options)).toBe(false);
+  });
+});

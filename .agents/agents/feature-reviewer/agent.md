@@ -8,7 +8,7 @@ tools:
   - manage_task
 mainAgent: true
 subagent: true
-model: inherit
+model: flash
 commandExecutionPolicy: sandbox
 ---
 

@@ -2,7 +2,7 @@ import { FieldPath } from 'firebase-admin/firestore';
 import { randomUUID } from 'crypto';
 import { db } from '../lib/firebase';
 import { AppError } from '../middleware/error-handler';
-import { SongSummary, SongVersion, normalizeBpmValue, validateFlatVsVersionConflicts } from '../features/repertoire/repertoire.types';
+import { SongSummary, SongVersion, SongLink, normalizeBpmValue, validateFlatVsVersionConflicts } from '../features/repertoire/repertoire.types';
 
 export interface SongCursorData {
   id: string;
@@ -50,7 +50,7 @@ export function normalizeSongVersions(raw: any): SongVersion[] {
         notes: v.notes || null,
         key,
         original_key: key,
-        bpm: normalizeBpmValue(v.bpm),
+        ...(v.bpm !== undefined ? { bpm: normalizeBpmValue(v.bpm) } : {}),
         duration: v.duration || null,
         links: Array.isArray(v.links) ? v.links : [],
       };
@@ -91,7 +91,7 @@ export function normalizeSongVersions(raw: any): SongVersion[] {
       notes: raw.version_notes || null,
       key: legacyKey,
       original_key: legacyKey,
-      bpm: normalizeBpmValue(raw.bpm),
+      ...(raw.bpm !== undefined ? { bpm: normalizeBpmValue(raw.bpm) } : {}),
       duration: raw.duration || null,
       links: defaultLinks,
     },
@@ -365,26 +365,117 @@ export class RepertoireRepository {
     }
   }
 
-  private updateOrAddLink(links: any[], label: string, url: string | null): any[] {
-    const list = Array.isArray(links) ? [...links] : [];
-    const idx = list.findIndex((l) => l.label && l.label.toLowerCase() === label.toLowerCase());
-    if (url && url.trim() !== '') {
-      if (idx >= 0) {
-        list[idx] = { ...list[idx], url: url.trim() };
-      } else {
-        list.push({ label, url: url.trim() });
+  /** Project/patch the existing link contract; no new persistence representation. */
+  private synchronizeLinks(base: SongLink[], patch: any, explicitLinks: boolean, existing?: any) {
+    const categories = {
+      chord_sheet_url: ['cifra', 'chord', 'chords'],
+      youtube_url: ['vídeo', 'video', 'youtube'],
+      audio_url: ['áudio', 'audio', 'mp3'],
+    };
+    type LinkField = keyof typeof categories;
+    const fields = Object.keys(categories) as LinkField[];
+    const url = (value?: string | null) => value?.trim() ? value : null;
+    const conflict = () => { throw new AppError(400, 'Conflito entre links legados e links da versão principal.'); };
+
+    let links = base.map((link) => ({ ...link }));
+    const historicalAliasField = new WeakMap<SongLink, LinkField>();
+
+    for (const field of fields) {
+      const existingFlatUrl = url(existing?.[field]);
+      if (!existingFlatUrl) continue;
+      const existingPrimaryLinks: SongLink[] = Array.isArray(existing?.versions?.[0]?.links) ? existing.versions[0].links : [];
+      if (existingPrimaryLinks.some((l) => !l.isCustom && Boolean(url(l.url)) && categories[field].includes(l.label.trim().toLowerCase()))) {
+        continue;
       }
-    } else {
-      if (idx >= 0) {
-        list.splice(idx, 1);
+      const existingAlias = existingPrimaryLinks.find((l) => {
+        if (!l.isCustom) return false;
+        if (!categories[field].includes(l.label.trim().toLowerCase())) return false;
+        if (url(l.url) !== existingFlatUrl) return false;
+        const extUrl = url(existing?.external_links?.[l.label]) ?? url(existing?.external_links?.[l.label.trim()]);
+        return extUrl !== existingFlatUrl;
+      });
+      if (existingAlias && !links.some((l) => !l.isCustom && Boolean(url(l.url)) && categories[field].includes(l.label.trim().toLowerCase()))) {
+        const claimedByPatchExternal = (l: SongLink) =>
+          explicitLinks &&
+          patch.external_links !== undefined &&
+          (url(patch.external_links[l.label]) === url(l.url) || url(patch.external_links[l.label.trim()]) === url(l.url)) &&
+          url(patch[field]) !== url(l.url);
+        const candidates = links.filter((l) => Boolean(l.isCustom) && !claimedByPatchExternal(l));
+        const aliasLabel = existingAlias.label.trim().toLowerCase();
+        const matchedInBase = existingAlias.id
+          ? (candidates.find((l) => l.id === existingAlias.id && categories[field].includes(l.label.trim().toLowerCase())) ||
+             candidates.find((l) => !l.id && l.label.trim().toLowerCase() === aliasLabel && url(l.url) === existingFlatUrl))
+          : (candidates.find((l) => !l.id && l.label.trim().toLowerCase() === aliasLabel && url(l.url) === existingFlatUrl) ||
+             candidates.find((l) => !l.id && l.label.trim().toLowerCase() === aliasLabel));
+        if (matchedInBase) {
+          historicalAliasField.set(matchedInBase, field);
+        }
       }
     }
-    return list;
+
+    const kind = (link: SongLink): LinkField | 'external_links' =>
+      historicalAliasField.get(link) ||
+      (!link.isCustom && fields.find((field) => categories[field].includes(link.label.trim().toLowerCase()))) ||
+      'external_links';
+    const externalKey = (link: SongLink) => !link.isCustom && ['letra', 'letras'].includes(link.label.toLowerCase())
+      ? 'letras' : link.label;
+    const project = (links: SongLink[]) => {
+      const result = { chord_sheet_url: null, youtube_url: null, audio_url: null,
+        external_links: Object.create(null) } as { [K in LinkField]: string | null } & { external_links: Record<string, string> };
+      for (const link of links) {
+        const field = kind(link);
+        const value = url(link.url);
+        if (field === 'external_links') {
+          if (value) {
+            const key = externalKey(link);
+            if (result.external_links[key] && result.external_links[key] !== value) conflict();
+            result.external_links[key] = value;
+          }
+        } else if (value) {
+          if (result[field] && result[field] !== value) conflict();
+          result[field] = value;
+        }
+      }
+      return { ...result, external_links: Object.fromEntries(Object.entries(result.external_links)) };
+    };
+    for (const field of fields) {
+      if (patch[field] === undefined) continue;
+      const value = url(patch[field]);
+      if (explicitLinks) {
+        if (project(links)[field] !== value) conflict();
+      } else {
+        const previous = links.find((link) => kind(link) === field);
+        links = links.filter((link) => kind(link) !== field);
+        if (value) {
+          const nextLink = { ...(previous || { label: { chord_sheet_url: 'Cifra', youtube_url: 'Vídeo', audio_url: 'Áudio' }[field] }), url: value };
+          if (previous && historicalAliasField.has(previous)) historicalAliasField.set(nextLink, field);
+          links.push(nextLink);
+        }
+      }
+    }
+    if (patch.external_links !== undefined) {
+      const external = Object.fromEntries(Object.entries(patch.external_links as Record<string, string>)
+        .filter(([, value]) => url(value)));
+      if (explicitLinks) {
+        const current = project(links).external_links;
+        if (Object.keys(current).length !== Object.keys(external).length ||
+            Object.entries(external).some(([label, value]) => current[label] !== value)) conflict();
+      } else {
+        const previous = links.filter((link) => kind(link) === 'external_links');
+        links = links.filter((link) => kind(link) !== 'external_links');
+        for (const [label, value] of Object.entries(external)) {
+          links.push({ ...(previous.find((link) => externalKey(link) === label) ||
+            (label === 'letras' ? { label: 'Letra' } : { label, isCustom: true })), url: value });
+        }
+      }
+    }
+    return { links, flat: project(links) };
   }
 
   private async validateClassificationsForMinistry(
     ministryId: string,
-    classificationIds: string[]
+    classificationIds: string[],
+    allowedMissingIds: Set<string> = new Set()
   ): Promise<Map<string, any>> {
     const uniqueIds = Array.from(new Set(classificationIds.filter((id) => Boolean(id && typeof id === 'string'))));
     const results = new Map<string, any>();
@@ -394,6 +485,7 @@ export class RepertoireRepository {
     for (let i = 0; i < uniqueIds.length; i++) {
       const doc = docs[i];
       const id = uniqueIds[i];
+      if (!doc.exists && allowedMissingIds.has(id)) continue;
       if (!doc.exists || doc.data()?.ministry_id !== ministryId) {
         throw new AppError(404, 'Classificação não encontrada.');
       }
@@ -538,6 +630,9 @@ export class RepertoireRepository {
       versions = normalizeSongVersions(data);
     }
 
+    const createdLinks = this.synchronizeLinks(versions[0].links, data, data.versions?.[0]?.links !== undefined);
+    versions[0] = { ...versions[0], links: createdLinks.links };
+
     // F-R1-02 & R2-05: Validate EVERY classification ID in data.classification_id and all versions
     const allClassIds: string[] = [];
     if (data.classification_id) allClassIds.push(data.classification_id);
@@ -586,10 +681,7 @@ export class RepertoireRepository {
         bpm: bpm,
         duration: duration,
         lyrics: data.lyrics || null,
-        chord_sheet_url: data.chord_sheet_url || null,
-        youtube_url: data.youtube_url || null,
-        audio_url: data.audio_url || null,
-        external_links: data.external_links || {},
+        ...createdLinks.flat,
         versions,
         notes,
       },
@@ -709,7 +801,7 @@ export class RepertoireRepository {
             ? normalizeBpmValue(v.bpm)
             : (idx === 0 && data.bpm !== undefined
                 ? normalizeBpmValue(data.bpm)
-                : normalizeBpmValue(prev.bpm));
+                : prev.bpm);
           const duration = v.duration !== undefined
             ? (v.duration === '' ? null : v.duration)
             : (idx === 0 && data.duration !== undefined
@@ -725,7 +817,7 @@ export class RepertoireRepository {
             notes: notes ?? null,
             key: key ?? null,
             original_key: key ?? null,
-            bpm,
+            ...(bpm !== undefined ? { bpm } : {}),
             duration: duration || null,
             links: Array.isArray(links) ? links : [],
           };
@@ -771,47 +863,19 @@ export class RepertoireRepository {
         updateData.original_key = primary ? (primary.key ?? null) : null;
       }
       if (data.bpm === undefined) {
-        updateData.bpm = primary && primary.bpm !== undefined ? normalizeBpmValue(primary.bpm) : null;
+        if (data.versions[0].bpm !== undefined || primary.id !== existing.versions[0].id) {
+          updateData.bpm = primary.bpm !== undefined ? normalizeBpmValue(primary.bpm) : null;
+        }
       } else {
         updateData.bpm = normalizeBpmValue(data.bpm);
       }
       if (data.duration === undefined) {
         updateData.duration = primary ? primary.duration || null : null;
       }
-      if (data.classification_id === undefined) {
-        updateData.classification_id = (primary && primary.classificationIds && primary.classificationIds.length > 0)
-          ? primary.classificationIds[0]
-          : null;
-      }
-
-      // R2-02: Link synchronization from primary version (explicit links: [] clears stale legacy links)
-      if (primary && Array.isArray(primary.links)) {
-        const chordLink = primary.links.find((l: any) => l.label && ['cifra', 'chord', 'chords'].includes(l.label.trim().toLowerCase()));
-        const videoLink = primary.links.find((l: any) => l.label && ['vídeo', 'video', 'youtube'].includes(l.label.trim().toLowerCase()));
-        const audioLink = primary.links.find((l: any) => l.label && ['áudio', 'audio', 'mp3'].includes(l.label.trim().toLowerCase()));
-
-        if (data.chord_sheet_url === undefined) {
-          updateData.chord_sheet_url = chordLink ? (chordLink.url || null) : null;
-        }
-        if (data.youtube_url === undefined) {
-          updateData.youtube_url = videoLink ? (videoLink.url || null) : null;
-        }
-        if (data.audio_url === undefined) {
-          updateData.audio_url = audioLink ? (audioLink.url || null) : null;
-        }
-        if (data.external_links === undefined) {
-          const ext: Record<string, string> = {};
-          for (const l of primary.links) {
-            if (l && l.label && l.url) {
-              const lbl = l.label.trim();
-              const lower = lbl.toLowerCase();
-              if (!['cifra', 'chord', 'chords', 'vídeo', 'video', 'youtube', 'áudio', 'audio', 'mp3'].includes(lower)) {
-                ext[lbl] = l.url;
-              }
-            }
-          }
-          updateData.external_links = ext;
-        }
+      if (data.classification_id === undefined &&
+          (data.versions[0].classificationIds !== undefined || data.versions[0].classification_ids !== undefined ||
+           primary.id !== existing.versions[0].id)) {
+        updateData.classification_id = primary.classificationIds?.[0] || null;
       }
     } else {
       // F-R1-03 & R2-01: When ONLY legacy flat fields are updated, synchronize the corresponding primary-version properties!
@@ -823,10 +887,7 @@ export class RepertoireRepository {
           data.original_key !== undefined ||
           data.bpm !== undefined ||
           data.duration !== undefined ||
-          data.classification_id !== undefined ||
-          data.chord_sheet_url !== undefined ||
-          data.youtube_url !== undefined ||
-          data.audio_url !== undefined;
+          data.classification_id !== undefined;
 
         if (hasLegacyUpdate) {
           const updatedVersions = existing.versions.map((v: SongVersion, idx: number) => {
@@ -837,33 +898,22 @@ export class RepertoireRepository {
               : v.key;
             const bpm = data.bpm !== undefined
               ? normalizeBpmValue(data.bpm)
-              : normalizeBpmValue(v.bpm);
+              : v.bpm;
             const duration = data.duration !== undefined ? (data.duration || null) : v.duration;
             let classificationIds = v.classificationIds;
             if (data.classification_id !== undefined) {
               classificationIds = data.classification_id ? [data.classification_id] : [];
             }
 
-            let links = [...(v.links || [])];
-            if (data.chord_sheet_url !== undefined) {
-              links = this.updateOrAddLink(links, 'Cifra', data.chord_sheet_url);
-            }
-            if (data.youtube_url !== undefined) {
-              links = this.updateOrAddLink(links, 'Vídeo', data.youtube_url);
-            }
-            if (data.audio_url !== undefined) {
-              links = this.updateOrAddLink(links, 'Áudio', data.audio_url);
-            }
-
             return {
               ...v,
               key: key ?? null,
               original_key: key ?? null,
-              bpm,
+              ...(bpm !== undefined ? { bpm } : {}),
               duration,
               classificationIds,
               classification_ids: classificationIds,
-              links,
+              links: v.links,
             };
           });
 
@@ -872,28 +922,50 @@ export class RepertoireRepository {
       }
     }
 
+    const hasLegacyLinks = ['chord_sheet_url', 'youtube_url', 'audio_url', 'external_links']
+      .some((field) => data[field] !== undefined);
+    const explicitPrimaryLinks = data.versions?.[0]?.links !== undefined;
+    const primaryChanged = data.versions !== undefined && updateData.versions[0].id !== existing.versions[0].id;
+    if (hasLegacyLinks || explicitPrimaryLinks || primaryChanged) {
+      const versions = updateData.versions || existing.versions;
+      const synchronized = this.synchronizeLinks(versions[0].links, data, explicitPrimaryLinks, primaryChanged ? undefined : existing);
+      updateData.versions = versions.map((version: SongVersion, index: number) =>
+        index === 0 ? { ...version, links: synchronized.links } : version);
+      for (const [field, value] of Object.entries(synchronized.flat)) {
+        if (explicitPrimaryLinks || primaryChanged || data[field] !== undefined) updateData[field] = value;
+      }
+    }
+
     if (data.notes !== undefined) {
       updateData.notes = data.notes === '' ? null : data.notes;
     }
 
-    // R2-05: Comprehensive validation of ALL classification IDs across effective merged versions and classification_id
-    const effectiveVersions = updateData.versions || existing.versions || [];
+    // Missing references are grandfathered only in their original reference slot.
+    // Resolve every effective ID so even unchanged cross-tenant references fail.
+    const effectiveVersions: SongVersion[] = updateData.versions || existing.versions || [];
     const allClassIdsToValidate: string[] = [];
+    const newIds = new Set<string>();
     const targetClassId = updateData.classification_id !== undefined ? updateData.classification_id : existing.classification_id;
-    if (targetClassId) allClassIdsToValidate.push(targetClassId);
-
-    for (const v of effectiveVersions) {
-      if (Array.isArray(v.classificationIds)) allClassIdsToValidate.push(...v.classificationIds);
-      if (Array.isArray(v.classification_ids)) allClassIdsToValidate.push(...v.classification_ids);
+    if (targetClassId) {
+      allClassIdsToValidate.push(targetClassId);
+      if (targetClassId !== existing.classification_id) newIds.add(targetClassId);
     }
-
-    const classDocsMap = await this.validateClassificationsForMinistry(ministryId, allClassIdsToValidate);
+    for (const version of effectiveVersions) {
+      const previous = existing.versions.find((item: SongVersion) => item.id === version.id);
+      const previousIds: string[] = previous?.classificationIds || [];
+      for (const id of version.classificationIds || []) {
+        allClassIdsToValidate.push(id);
+        if (!previousIds.includes(id)) newIds.add(id);
+      }
+    }
+    const allowedMissingIds = new Set(allClassIdsToValidate.filter((id) => !newIds.has(id)));
+    const classDocsMap = await this.validateClassificationsForMinistry(ministryId, allClassIdsToValidate, allowedMissingIds);
 
     // Classification object synchronization
     if (updateData.classification_id !== undefined) {
       if (updateData.classification_id) {
         const classObj = classDocsMap.get(updateData.classification_id);
-        updateData.classification = classObj || null;
+        updateData.classification = classObj || existing.classification || null;
       } else {
         updateData.classification = null;
         updateData.classification_id = null;
