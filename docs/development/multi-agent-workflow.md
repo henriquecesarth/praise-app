@@ -23,7 +23,7 @@ Reduzir o tempo até **código integrado + revisão independente + testes verifi
 | Codex CLI (`codex`) | revisão independente / investigação paralela | `.codex/config.toml`, `.codex/agents/` |
 | GitHub | issues, PRs, logs e CI | `.github/workflows/` |
 
-**Não existe nesta etapa um processo autônomo que una os processos `agy` e `codex`.** São sessões distintas; seus relatórios e diffs convergem no GitHub. A autenticação do `agy` não configura a do Gemini CLI nativo.
+**Piloto disponível:** `scripts/Invoke-LouvAioReadOnlyPilot.ps1` coordena duas análises locais em paralelo e salva evidências. A coordenação automática de escrita/PRs por Issue ainda não existe; os relatórios e diffs de implementação continuam convergindo pelo GitHub. A autenticação do `agy` não configura a do Gemini CLI nativo.
 
 ## Plano de execução por tarefa
 

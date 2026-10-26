@@ -94,7 +94,7 @@ $worker = {
             $output = (& $exe @arguments 2> $stderr | Out-String)
         }
         $exitCode = $LASTEXITCODE
-        [IO.File]::WriteAllText($stdoutPath, $output, (New-Object System.Text.UTF8Encoding($false)))
+        [IO.File]::WriteAllText($stdoutPath, $output, ([System.Text.UTF8Encoding]::new($false)))
         if ($tool -eq 'agy') {
             $response = $output | ConvertFrom-Json -ErrorAction Stop
             $success = $exitCode -eq 0 -and $response.status -eq 'SUCCESS'
