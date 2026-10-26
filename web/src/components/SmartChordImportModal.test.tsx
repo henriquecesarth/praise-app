@@ -5,11 +5,15 @@ import { SmartChordImportModal } from './SmartChordImportModal';
 const {
   importSmartChordPdf,
   importSmartChordText,
+  importSmartChordUrl,
+  importSmartChordImage,
   createSmartChord,
   setSmartChordRepertoireLink,
 } = vi.hoisted(() => ({
   importSmartChordPdf: vi.fn(),
   importSmartChordText: vi.fn(),
+  importSmartChordUrl: vi.fn(),
+  importSmartChordImage: vi.fn(),
   createSmartChord: vi.fn(),
   setSmartChordRepertoireLink: vi.fn(),
 }));
@@ -18,6 +22,8 @@ vi.mock('../api', () => ({
   api: {
     importSmartChordPdf,
     importSmartChordText,
+    importSmartChordUrl,
+    importSmartChordImage,
     createSmartChord,
     setSmartChordRepertoireLink,
   },
@@ -45,6 +51,25 @@ describe('SmartChordImportModal Component', () => {
       content: '[A]Santo [E]Deus',
       warnings: [{ code: 'CHORD_ALIGNMENT_UNCERTAIN', message: 'Alinhamento pode requerer ajuste.' }],
       sourceType: 'text',
+    });
+    importSmartChordUrl.mockResolvedValue({
+      title: 'Lugar Secreto',
+      artistName: 'Gabriela Rocha',
+      originalKey: 'F#m',
+      content: '[F#m]Tu és tudo o que eu [D]preciso',
+      warnings: [],
+      sourceType: 'url',
+      requiresManualPaste: false,
+      sourceUrl: 'https://www.cifraclub.com.br/gabriela-rocha/lugar-secreto/',
+    });
+    importSmartChordImage.mockResolvedValue({
+      title: 'Foto da Cifra',
+      artistName: null,
+      originalKey: 'C',
+      content: '[C]Aleluia [G]Amém',
+      warnings: [{ code: 'OCR_CONFIDENCE_LOW', message: 'Extração OCR pode requerer revisão de acordes.' }],
+      sourceType: 'image',
+      requiresManualPaste: false,
     });
     createSmartChord.mockResolvedValue({
       id: 'sc-imported-1',
@@ -702,4 +727,202 @@ describe('SmartChordImportModal Component', () => {
       expect(createSmartChord).not.toHaveBeenCalled();
     });
 
+
+  it('renders URL and Image tabs and extracts URL draft', async () => {
+    render(<SmartChordImportModal isOpen onClose={mockOnClose} onSuccess={mockOnSuccess} />);
+
+    expect(screen.getByText('Link / URL')).toBeInTheDocument();
+    expect(screen.getByText('Imagem / transcrição')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Link / URL'));
+    const urlInput = screen.getByPlaceholderText(/cifraclub\.com\.br/i);
+    expect(urlInput).toBeInTheDocument();
+
+    fireEvent.change(urlInput, { target: { value: 'https://www.cifraclub.com.br/gabriela-rocha/lugar-secreto/' } });
+    fireEvent.click(screen.getByText('Analisar e Pré-visualizar URL'));
+
+    await waitFor(() => {
+      expect(importSmartChordUrl).toHaveBeenCalledWith('https://www.cifraclub.com.br/gabriela-rocha/lugar-secreto/');
+      expect(screen.getByDisplayValue('Lugar Secreto')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('Gabriela Rocha')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('F#m')).toBeInTheDocument();
+    });
+  });
+
+  it('displays assisted extraction warning when URL requires manual paste', async () => {
+    importSmartChordUrl.mockResolvedValueOnce({
+      title: 'Restricted Song',
+      artistName: 'Famous Artist',
+      originalKey: 'C',
+      content: '',
+      warnings: [{ code: 'SOURCE_ACCESS_RESTRICTED', message: 'Acesso restrito pelo servidor.' }],
+      sourceType: 'url',
+      requiresManualPaste: true,
+      sourceUrl: 'https://www.cifraclub.com.br/famous/restricted/',
+    });
+
+    render(<SmartChordImportModal isOpen onClose={mockOnClose} onSuccess={mockOnSuccess} />);
+    fireEvent.click(screen.getByText('Link / URL'));
+    fireEvent.change(screen.getByPlaceholderText(/cifraclub\.com\.br/i), { target: { value: 'https://www.cifraclub.com.br/famous/restricted/' } });
+    fireEvent.click(screen.getByText('Analisar e Pré-visualizar URL'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Extração assistida:/i)).toBeInTheDocument();
+      expect(screen.getByDisplayValue('Restricted Song')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('Famous Artist')).toBeInTheDocument();
+    });
+  });
+
+  it('validates image size and prepares a manual transcription draft', async () => {
+    importSmartChordImage.mockResolvedValueOnce({
+      title: 'Foto da Cifra', artistName: null, originalKey: null, content: '',
+      warnings: [{ code: 'IMAGE_MANUAL_TRANSCRIPTION_REQUIRED', message: 'Transcreva o conteúdo da imagem.' }],
+      sourceType: 'image', requiresManualPaste: true,
+    });
+    render(<SmartChordImportModal isOpen onClose={mockOnClose} onSuccess={mockOnSuccess} />);
+    fireEvent.click(screen.getByText('Imagem / transcrição'));
+
+    const oversizeFile = new File([new Uint8Array(6 * 1024 * 1024)], 'huge.png', { type: 'image/png' });
+    const imageInput = document.querySelector('input[accept*="image"]') as HTMLInputElement;
+
+    fireEvent.change(imageInput, { target: { files: [oversizeFile] } });
+    expect(screen.getByText(/Arquivo de imagem excede o limite máximo permitido de 5 MB/i)).toBeInTheDocument();
+
+    const validFile = new File([new Uint8Array(100 * 1024)], 'chord.png', { type: 'image/png' });
+    fireEvent.change(imageInput, { target: { files: [validFile] } });
+    expect(screen.getByText('chord.png')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Continuar com transcrição manual'));
+    await waitFor(() => {
+      expect(importSmartChordImage).toHaveBeenCalledWith(validFile);
+      expect(screen.getByDisplayValue('Foto da Cifra')).toBeInTheDocument();
+      expect(screen.getByText('Transcreva o conteúdo da imagem.')).toBeInTheDocument();
+      expect(screen.getByText('Salvar Cifra Pessoal')).toBeDisabled();
+      expect(createSmartChord).not.toHaveBeenCalled();
+    });
+  });
+
+  it('supports clipboard paste assistant for Text and URL tabs', async () => {
+    const mockClipboardText = 'G C D';
+    Object.assign(navigator, {
+      clipboard: {
+        readText: vi.fn().mockResolvedValue(mockClipboardText),
+      },
+    });
+
+    render(<SmartChordImportModal isOpen onClose={mockOnClose} onSuccess={mockOnSuccess} />);
+    fireEvent.click(screen.getByText('Colar Texto'));
+    fireEvent.click(screen.getByText('📋 Colar da Área de Transferência'));
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue(mockClipboardText)).toBeInTheDocument();
+    });
+
+    (navigator.clipboard.readText as any).mockResolvedValueOnce('https://www.cifraclub.com.br/teste/');
+    fireEvent.click(screen.getByText('Link / URL'));
+    fireEvent.click(screen.getByText('📋 Colar Link'));
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('https://www.cifraclub.com.br/teste/')).toBeInTheDocument();
+    });
+  });
+
+  it('normalizes guided paste without replacing reviewed metadata or saving automatically', async () => {
+    importSmartChordUrl.mockResolvedValueOnce({
+      title: 'Lugar Secreto', artistName: 'Gabriela Rocha', originalKey: null,
+      content: '', warnings: [], sourceType: 'url', requiresManualPaste: true,
+      sourceUrl: 'https://www.cifraclub.com.br/gabriela-rocha/lugar-secreto/',
+    });
+    render(<SmartChordImportModal isOpen onClose={mockOnClose} onSuccess={mockOnSuccess} />);
+    fireEvent.click(screen.getByText('Link / URL'));
+    fireEvent.change(screen.getByPlaceholderText(/cifraclub\.com\.br/i), { target: { value: 'https://www.cifraclub.com.br/gabriela-rocha/lugar-secreto/' } });
+    fireEvent.click(screen.getByText('Analisar e Pré-visualizar URL'));
+    await screen.findByText('Normalizar texto colado');
+    expect(screen.getByText('Salvar Cifra Pessoal')).toBeDisabled();
+    fireEvent.change(screen.getByDisplayValue('Lugar Secreto'), { target: { value: 'Meu arranjo' } });
+    fireEvent.change(screen.getByLabelText('Conteúdo da cifra'), { target: { value: 'A E\nSanto Deus' } });
+    fireEvent.click(screen.getByText('Normalizar texto colado'));
+    await waitFor(() => expect(screen.getByLabelText('Conteúdo da cifra')).toHaveValue('[A]Santo [E]Deus'));
+    expect(importSmartChordText).toHaveBeenCalledWith('A E\nSanto Deus');
+    expect(screen.getByDisplayValue('Meu arranjo')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Gabriela Rocha')).toBeInTheDocument();
+    expect(createSmartChord).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText('Salvar Cifra Pessoal'));
+    await waitFor(() => expect(createSmartChord).toHaveBeenCalledWith({
+      title: 'Meu arranjo', artistName: 'Gabriela Rocha', originalKey: 'C', content: '[A]Santo [E]Deus',
+    }));
+  });
+
+  it.each(['session', 'close', 'tab', 'edit'])('discards a pending clipboard read after %s changes', async (change) => {
+    let resolve!: (value: string) => void;
+    const pending = new Promise<string>(done => { resolve = done; });
+    Object.assign(navigator, { clipboard: { readText: vi.fn().mockReturnValue(pending) } });
+    const props = { isOpen: true, currentUserId: 'user-a', onClose: mockOnClose, onSuccess: mockOnSuccess };
+    const view = render(<SmartChordImportModal {...props} />);
+    fireEvent.click(screen.getByText('Link / URL'));
+    fireEvent.click(screen.getByText('📋 Colar Link'));
+    if (change === 'session') view.rerender(<SmartChordImportModal {...props} currentUserId="user-b" />);
+    if (change === 'close') {
+      view.rerender(<SmartChordImportModal {...props} isOpen={false} />);
+      view.rerender(<SmartChordImportModal {...props} />);
+    }
+    if (change === 'tab') fireEvent.click(screen.getByText('Colar Texto'));
+    if (change === 'edit') fireEvent.change(screen.getByPlaceholderText(/cifraclub\.com\.br/i), { target: { value: 'https://www.cifraclub.com.br/manual/song/' } });
+    await act(async () => { resolve('https://www.cifraclub.com.br/private/song/'); await pending; });
+    if (change !== 'edit') fireEvent.click(screen.getByText('Link / URL'));
+    expect(screen.getByPlaceholderText(/cifraclub\.com\.br/i)).toHaveValue(change === 'edit' ? 'https://www.cifraclub.com.br/manual/song/' : '');
+    expect(createSmartChord).not.toHaveBeenCalled();
+  });
+
+  it('discards normalization completed after switching user', async () => {
+    importSmartChordUrl.mockResolvedValueOnce({ title: 'Personal', content: '', warnings: [], requiresManualPaste: true, sourceType: 'url' });
+    let resolve!: (value: unknown) => void;
+    const pending = new Promise(done => { resolve = done; });
+    importSmartChordText.mockReturnValueOnce(pending);
+    const props = { isOpen: true, currentUserId: 'user-a', onClose: mockOnClose, onSuccess: mockOnSuccess };
+    const view = render(<SmartChordImportModal {...props} />);
+    fireEvent.click(screen.getByText('Link / URL'));
+    fireEvent.change(screen.getByPlaceholderText(/cifraclub\.com\.br/i), { target: { value: 'https://www.cifraclub.com.br/artist/song/' } });
+    fireEvent.click(screen.getByText('Analisar e Pré-visualizar URL'));
+    await screen.findByText('Normalizar texto colado');
+    fireEvent.change(screen.getByLabelText('Conteúdo da cifra'), { target: { value: 'Private lyrics' } });
+    fireEvent.click(screen.getByText('Normalizar texto colado'));
+    view.rerender(<SmartChordImportModal {...props} currentUserId="user-b" />);
+    await act(async () => { resolve({ content: '[G]Private lyrics', warnings: [] }); await pending; });
+    expect(screen.queryByDisplayValue('[G]Private lyrics')).not.toBeInTheDocument();
+    expect(screen.getByText('Documento PDF')).toBeInTheDocument();
+    expect(createSmartChord).not.toHaveBeenCalled();
+  });
+
+  it('keeps a pending save current by blocking edits until its result is handled', async () => {
+    let resolve!: (value: unknown) => void;
+    const pending = new Promise(done => { resolve = done; });
+    createSmartChord.mockReturnValueOnce(pending);
+    render(<SmartChordImportModal isOpen onClose={mockOnClose} onSuccess={mockOnSuccess} />);
+    fireEvent.click(screen.getByText('Colar Texto'));
+    fireEvent.change(screen.getByPlaceholderText(/Graças Te dou pelo Teu amor/i), { target: { value: 'A E\nSanto Deus' } });
+    fireEvent.click(screen.getByText('Analisar e Pré-visualizar Texto'));
+    await screen.findByText('Salvar Cifra Pessoal');
+    fireEvent.click(screen.getByText('Salvar Cifra Pessoal'));
+    const editor = screen.getByLabelText('Conteúdo da cifra');
+    expect(editor).toBeDisabled();
+    fireEvent.change(editor, { target: { value: 'Late edit' } });
+    expect(editor).toHaveValue('[A]Santo [E]Deus');
+    await act(async () => { resolve({ id: 'saved-once', title: 'Text Song' }); await pending; });
+    expect(mockOnSuccess).toHaveBeenCalledOnce();
+    expect(createSmartChord).toHaveBeenCalledOnce();
+    expect(screen.queryByText('Salvando...')).not.toBeInTheDocument();
+  });
+
+  it.each(['Enter', ' '])('opens the image chooser using the %s key', (key) => {
+    render(<SmartChordImportModal isOpen onClose={mockOnClose} onSuccess={mockOnSuccess} />);
+    fireEvent.click(screen.getByText('Imagem / transcrição'));
+    const input = document.querySelector('input[accept*="image"]') as HTMLInputElement;
+    const click = vi.spyOn(input, 'click');
+    const chooser = screen.getByRole('button', { name: 'Selecionar imagem da cifra' });
+    expect(chooser).toHaveAttribute('tabindex', '0');
+    fireEvent.keyDown(chooser, { key });
+    expect(click).toHaveBeenCalledOnce();
+    expect(importSmartChordImage).not.toHaveBeenCalled();
+  });
 });

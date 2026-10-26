@@ -466,6 +466,37 @@ describe('API Client & Structured Error Handling', () => {
         localStorage.clear();
       });
 
+      it.each(['url', 'image'] as const)('maps assisted %s drafts and sends only canonical authentication', async (sourceType) => {
+        localStorage.setItem('praise_auth_token', 'canonical-test-token');
+        localStorage.setItem('token', 'unused-legacy-test-token');
+        const sourceUrl = 'https://www.cifraclub.com.br/artist/song/';
+        const fetchSpy = vi.fn().mockResolvedValue({
+          ok: true, status: 200,
+          text: vi.fn().mockResolvedValue(JSON.stringify({
+            title: 'Song', artist_name: 'Artist', original_key: null, content: '',
+            warnings: [{ code: sourceType === 'url' ? 'URL_MANUAL_PASTE_REQUIRED' : 'IMAGE_MANUAL_TRANSCRIPTION_REQUIRED', message: 'Cole o texto.' }],
+            source_type: sourceType, requires_manual_paste: true,
+            ...(sourceType === 'url' ? { source_url: sourceUrl } : {}),
+          })),
+        });
+        global.fetch = fetchSpy;
+        const image = new File(['fixture'], 'cifra.png', { type: 'image/png' });
+        const draft = sourceType === 'url' ? await api.importSmartChordUrl(sourceUrl) : await api.importSmartChordImage(image);
+        const [url, init] = fetchSpy.mock.calls[0];
+        expect(url).toMatch(new RegExp(`/smart-chords/import/${sourceType}$`));
+        expect(init.method).toBe('POST');
+        expect(init.headers.Authorization).toBe('Bearer canonical-test-token');
+        if (sourceType === 'url') {
+          expect(init.headers['Content-Type']).toBe('application/json');
+          expect(JSON.parse(init.body)).toEqual({ url: sourceUrl });
+          expect(draft.sourceUrl).toBe(sourceUrl);
+        } else {
+          expect(init.headers['Content-Type']).toBeUndefined();
+          expect(init.body.get('file')).toBe(image);
+        }
+        expect(draft).toMatchObject({ title: 'Song', artistName: 'Artist', sourceType, content: '', requiresManualPaste: true });
+      });
+
       it('importSmartChordPdf envia FormData com autenticação canônica praise_auth_token e sem token legado', async () => {
         localStorage.setItem('praise_auth_token', 'canonical-user-token-xyz');
         localStorage.removeItem('token');

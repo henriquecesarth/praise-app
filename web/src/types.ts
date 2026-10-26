@@ -276,7 +276,9 @@ export interface SmartChordImportDraft {
   originalKey: string | null;
   content: string;
   warnings: ImportWarning[];
-  sourceType: 'pdf' | 'text';
+  sourceType: 'pdf' | 'text' | 'url' | 'image';
+  requiresManualPaste?: boolean;
+  sourceUrl?: string;
 }
 
 export interface Artist {

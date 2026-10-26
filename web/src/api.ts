@@ -1534,6 +1534,46 @@ export const api = {
     };
   },
 
+  importSmartChordUrl: async (url: string): Promise<SmartChordImportDraft> => {
+    const response = await fetch(`${API_URL}/smart-chords/import/url`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ url }),
+    });
+    const result = await handleResponse<any>(response);
+    return {
+      title: result.title || '',
+      artistName: result.artist_name || null,
+      originalKey: result.original_key || null,
+      content: result.content || '',
+      warnings: result.warnings || [],
+      sourceType: result.source_type || 'url',
+      requiresManualPaste: result.requires_manual_paste || false,
+      sourceUrl: result.source_url || url,
+    };
+  },
+
+  importSmartChordImage: async (file: File): Promise<SmartChordImportDraft> => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${API_URL}/smart-chords/import/image`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: formData,
+    });
+    const result = await handleResponse<any>(response);
+    return {
+      title: result.title || '',
+      artistName: result.artist_name || null,
+      originalKey: result.original_key || null,
+      content: result.content || '',
+      warnings: result.warnings || [],
+      sourceType: result.source_type || 'image',
+      requiresManualPaste: result.requires_manual_paste || false,
+    };
+  },
+
   // Comentários da Escala
   getScheduleComments: async (ministryId: string, scheduleId: string): Promise<any[]> => {
     const response = await fetch(`${API_URL}/ministries/${ministryId}/schedules/${scheduleId}/comments`, {

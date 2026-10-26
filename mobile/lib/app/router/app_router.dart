@@ -9,6 +9,12 @@ import '../../features/ministry_context/presentation/ministry_selector_screen.da
 import '../providers.dart';
 import '../shell/app_shell.dart';
 
+bool shouldPreservePendingShareOnAuthentication(
+  AuthState? previous, {
+  required bool hasAuthenticatedSession,
+}) =>
+    !hasAuthenticatedSession && previous?.user == null;
+
 GoRouter createRouter(Ref ref) {
   final refreshNotifier = _RouterRefreshNotifier(ref);
   final rootNavKey = ref.watch(rootNavigatorKeyProvider);
@@ -165,6 +171,8 @@ GoRouter createRouter(Ref ref) {
 }
 
 class _RouterRefreshNotifier extends ChangeNotifier {
+  bool _hasAuthenticatedSession = false;
+
   _RouterRefreshNotifier(Ref ref) {
     // Early initialize push listeners so pre-auth notification taps and foreground handlers are active
     Future.microtask(() {
@@ -178,21 +186,38 @@ class _RouterRefreshNotifier extends ChangeNotifier {
 
     ref.listen<AuthState>(authNotifierProvider, (previous, next) {
       if (next.isAuthenticated && previous?.user?.id != next.user?.id) {
-        resetAuthenticatedFeatures(ref);
+        final isInitialAuthentication =
+            shouldPreservePendingShareOnAuthentication(
+          previous,
+          hasAuthenticatedSession: _hasAuthenticatedSession,
+        );
+        resetAuthenticatedFeatures(
+          ref,
+          preservePendingShareIntent: isInitialAuthentication,
+        );
+        _hasAuthenticatedSession = true;
         ref.read(ministryContextNotifierProvider.notifier).bootstrap();
       } else if (next.isUnauthenticated) {
-        resetAuthenticatedFeatures(ref);
+        final isInitialUnauthenticated =
+            previous == null || previous.isInitializing;
+        resetAuthenticatedFeatures(
+          ref,
+          preservePendingShareIntent: isInitialUnauthenticated,
+        );
+        _hasAuthenticatedSession = false;
         ref.read(notificationRouterProvider).clearPendingPayload();
-        ref.read(shareIntentRouterProvider).clearPendingPayload();
       }
       notifyListeners();
     });
 
-    ref.listen<MinistryContextState>(ministryContextNotifierProvider, (previous, next) {
+    ref.listen<MinistryContextState>(ministryContextNotifierProvider,
+        (previous, next) {
       if (next.isReady) {
         // Trigger push notification sync upon authenticated bootstrap
         try {
-          ref.read(pushNotificationNotifierProvider.notifier).initializeAndSync();
+          ref
+              .read(pushNotificationNotifierProvider.notifier)
+              .initializeAndSync();
           // Dispatch any pending notification intent
           ref.read(notificationRouterProvider).dispatchPendingIfReady();
           ref.read(shareIntentRouterProvider).dispatchPendingIfReady();
@@ -211,7 +236,9 @@ class _RouterRefreshNotifier extends ChangeNotifier {
     } else if (auth.isAuthenticated && ministry.isReady) {
       Future.microtask(() {
         try {
-          ref.read(pushNotificationNotifierProvider.notifier).initializeAndSync();
+          ref
+              .read(pushNotificationNotifierProvider.notifier)
+              .initializeAndSync();
           ref.read(notificationRouterProvider).dispatchPendingIfReady();
           ref.read(shareIntentRouterProvider).dispatchPendingIfReady();
         } catch (_) {}

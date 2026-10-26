@@ -39,7 +39,10 @@ export '../features/teams/presentation/controllers/teams_providers.dart';
 
 /// Clears all authenticated feature caches from memory upon logout or user change.
 /// Accepts either [Ref] or [ProviderContainer].
-void resetAuthenticatedFeatures(dynamic refOrContainer) {
+void resetAuthenticatedFeatures(
+  dynamic refOrContainer, {
+  bool preservePendingShareIntent = false,
+}) {
   try {
     refOrContainer.read(teamFormNotifierProvider.notifier).invalidateTenant();
   } catch (_) {}
@@ -68,13 +71,17 @@ void resetAuthenticatedFeatures(dynamic refOrContainer) {
     refOrContainer.read(scheduleListNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer.read(scheduleFormNotifierProvider.notifier).invalidateTenant();
+    refOrContainer
+        .read(scheduleFormNotifierProvider.notifier)
+        .invalidateTenant();
   } catch (_) {}
   try {
     refOrContainer.read(membersDirectoryNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer.read(memberDetailNotifierProvider.notifier).invalidateTenant();
+    refOrContainer
+        .read(memberDetailNotifierProvider.notifier)
+        .invalidateTenant();
   } catch (_) {}
   try {
     refOrContainer.read(memberDetailNotifierProvider.notifier).reset();
@@ -89,19 +96,25 @@ void resetAuthenticatedFeatures(dynamic refOrContainer) {
     refOrContainer.read(adminAvailabilityNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer.read(manualMemberAvailabilityNotifierProvider.notifier).reset();
+    refOrContainer
+        .read(manualMemberAvailabilityNotifierProvider.notifier)
+        .reset();
   } catch (_) {}
   try {
     refOrContainer.read(liturgyListNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer.read(liturgyDetailNotifierProvider.notifier).invalidateTenant();
+    refOrContainer
+        .read(liturgyDetailNotifierProvider.notifier)
+        .invalidateTenant();
   } catch (_) {}
   try {
     refOrContainer.read(liturgyDetailNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer.read(liturgyFormNotifierProvider.notifier).invalidateTenant();
+    refOrContainer
+        .read(liturgyFormNotifierProvider.notifier)
+        .invalidateTenant();
   } catch (_) {}
   try {
     refOrContainer.read(liturgyFormNotifierProvider.notifier).reset();
@@ -113,7 +126,9 @@ void resetAuthenticatedFeatures(dynamic refOrContainer) {
     refOrContainer.read(songSmartChordsNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer.read(smartChordRepertoireLinkNotifierProvider.notifier).reset();
+    refOrContainer
+        .read(smartChordRepertoireLinkNotifierProvider.notifier)
+        .reset();
   } catch (_) {}
   try {
     refOrContainer.read(smartChordDetailNotifierProvider.notifier).reset();
@@ -156,9 +171,11 @@ void resetAuthenticatedFeatures(dynamic refOrContainer) {
   try {
     refOrContainer.read(notificationRouterProvider).clearPendingPayload();
   } catch (_) {}
-  try {
-    refOrContainer.read(shareIntentRouterProvider).clearPendingPayload();
-  } catch (_) {}
+  if (!preservePendingShareIntent) {
+    try {
+      refOrContainer.read(shareIntentRouterProvider).clearPendingPayload();
+    } catch (_) {}
+  }
 }
 
 /// Provider for the active runtime environment.
@@ -291,14 +308,16 @@ class _NoopAuthRepository
   Future<UserCredential> signInWithEmailAndPassword({
     required String email,
     required String password,
-  }) => throw UnimplementedError();
+  }) =>
+      throw UnimplementedError();
 
   @override
   Future<AuthUser> signUp({
     required String name,
     required String email,
     required String password,
-  }) => throw UnimplementedError();
+  }) =>
+      throw UnimplementedError();
 
   @override
   Future<AuthUser> getMe() => throw UnimplementedError();
@@ -306,7 +325,8 @@ class _NoopAuthRepository
   @override
   Future<String> updateChordFontPreference({
     required String chordFontFamily,
-  }) => throw UnimplementedError();
+  }) =>
+      throw UnimplementedError();
 
   @override
   Future<void> signOut() async {}
@@ -319,7 +339,9 @@ final authNotifierProvider =
     ref.watch(authRepositoryProvider),
     onBeforeSignOut: () async {
       try {
-        await ref.read(pushNotificationNotifierProvider.notifier).unregisterOnLogout();
+        await ref
+            .read(pushNotificationNotifierProvider.notifier)
+            .unregisterOnLogout();
       } catch (_) {}
     },
   );

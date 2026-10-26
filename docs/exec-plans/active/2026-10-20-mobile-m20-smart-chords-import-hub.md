@@ -1,4 +1,40 @@
-# M20 — Smart Chords Import Hub (Phase 1)
+# M20 — Smart Chords Import Hub (Phase 1 / Phase 2 continuation)
+
+## Phase 2 continuation — 2026-10-26 (Codex native multiagent)
+
+- Preserved starting branch `feat/m20-phase-2a-android-share`, HEAD `c80b30694ef18ff9434758937b8d0ff32be16ed2`, descending from WIP integration `9f4f0bbe77679253f04e0c8ebfbad3066555c916`. Initial tree: 24 modified files and four untracked URL/image extractor files. Existing Share Intent commit and local implementation remain the starting point; authorship of local changes is Unknown / Not yet verified.
+- Native read-only investigations completed concurrently: `/root/android_investigation`, `/root/url_clipboard_investigation`, `/root/ocr_investigation` (spawn model requested: `gpt-6-luna`; resolved model not exposed by tool response). No external orchestration framework/worktree added.
+- Frozen contract: authenticated draft-only `/import/url` and `/import/image`, additive `source_type`, `requires_manual_paste`, `source_url`. No extraction writes to Firestore. Save and optional M19 linking remain explicit actions.
+- Decision: Cifra Club URL metadata assistant uses strict supported hosts and local URL parsing, with guided paste through the existing text normalizer. Remove arbitrary server-side fetching from the local draft to eliminate SSRF and unbounded remote reads. No scraping introduced.
+- Decision: image import remains a bounded PNG/JPEG/WebP manual transcription assistant (5 MiB); OCR is deferred. Embedded PNG metadata is not optical recognition. PDF bounds remain 3 MiB / 10 pages; text 100,000 characters. UI must state these limits accurately.
+- Exclusive writers: URL investigation worker owns backend Smart Chords; Android investigation worker owns mobile; root owns Web/config/docs. Workers run concurrently after contract freeze; final separate-context Sol reviewer is read-only.
+- [x] Preserve and inspect existing implementation; complete three native investigations.
+- [x] Configure six existing native roles (Sol coordinator/reviewers, Luna bounded engineers). Runtime tool metadata reloaded the six roles with the configured model and reasoning values; existing root session model is not exposed by that metadata.
+- [x] Complete backend safety/contracts and route regression tests: 7 files / 160 tests PASS (15s per-test/hook timeout), covering feature privacy, M19 links, PDF, normalizer, URL, image and HTTP routes; backend build PASS.
+- [x] Complete Flutter shared URL/manual normalization/session fencing and targeted tests: final focused suite 59 tests PASS, exit 0 (~28s, 30s per-test timeout), including unauthenticated → authenticating → authenticated, stale A → B completion, fresh post-logout share with residual ministry, clipboard editing and pending-save continuity. `flutter analyze` PASS, exit 0, "No issues found!" (14.7s), after correcting ten info-level items in affected files and rerunning the focused suite.
+- [x] Complete Web guided paste/session fencing and targeted validation: final 82 tests PASS (modal 41, HTTP client 41; 10s per-test/hook timeout, 6.21s overall); Web build PASS after review fixes (Vite 7.76s plus TypeScript/PWA), with bundle-size/mixed-import warnings.
+- [x] Independent review, remediate relevant findings, revalidate and record outcomes. Final reviewer verdict PASS, zero open P1/P2; all relevant targeted tests/builds/static analysis and final diff check PASS. No E2E or physical homologation performed.
+- Physical Android cold/warm share acceptance and OCR: Unknown / Not yet verified. This overall plan remains active until outstanding acceptance is resolved.
+- Validation environment: sandbox blocked esbuild subprocesses with `EPERM`; Web and backend tests/builds were rerun with the tool's explicit escalation mechanism. Flutter SDK/cache also required escalation; initial widget compilation errors and test harness failures were corrected before the final passing suite. No dependency updates, external site requests, production writes, new commits, push, PR, merge or deployment.
+- Separate-context review completed: `/root/m20_independent_review`, native `feature-reviewer` role with `gpt-6.1-sol` / `high` exposed in the role metadata. Final verdict PASS, no open P1/P2 after targeted rechecks and all final execution evidence. Reviewer made zero edits. Resolved inference model itself is not separately exposed.
+- Review remediation completed: Web save-generation invalidation and keyboard image selection; mobile pending share preservation across authenticating and post-logout login, manual-normalization enforcement, reviewed metadata retention, clipboard edit races, pending-save continuity and session fencing around asynchronous share decoding. Android UI-thread file I/O escalated to `/root/android_io_remediation` (explicit Sol/high spawn), with exclusive ownership of `mobile/android/**` transferred from the Dart worker. All relevant findings corrected, revalidated and accepted in independent delta review.
+- Android remediation contract: native `onShareStarted { requestId }` precedes warm-share I/O; the result carries the same request ID. Kotlin uses one bounded I/O worker, queue of eight, a 15-second deadline and cancellation/cleanup outside the UI thread. Cold/warm results retain arrival order. Independent delta inspection accepted the I/O correction; real slow-provider/pipe acceptance remains Unknown / Not yet verified.
+- Native validation PASS: `:app:compilePreviewDebugKotlin --offline --no-daemon` included Flutter compilation (2m20s / 87 tasks), followed by final Kotlin compile with Flutter task excluded (1m32s / 86 tasks), both exit 0. Process-only JDK17 override used because the preconfigured JAVA_HOME path was invalid. No build/environment configuration was persisted. Providers that ignore cancellation may occupy the one I/O worker until they return; UI and queue remain bounded, but this behavior needs physical acceptance.
+
+### Files and ownership for this continuation
+
+- Configuration/documentation: `.codex/config.toml`, six existing `.codex/agents/*.toml`, `AGENTS.md`, panel/context/workflow and this existing plan. Canonical roles and Obsidian structure preserved.
+- Backend: Smart Chords controller/routes/import types; existing local URL/image extractors and their tests completed; added `backend/src/features/smart_chords/smart_chord_import.routes.test.ts` for HTTP authentication, limits and draft-only behavior. No repository/Firestore schema change.
+- Web: `web/src/api.ts`, `types.ts`, `api.test.ts`, `components/SmartChordImportModal.tsx` and its test. Session/normalization/save regression coverage extended.
+- Mobile: existing Smart Chords repository, payload/draft models, import screen/controller, Share Intent service/router and co-located tests; app providers/router session reset; existing preview/fake repository compatibility changes retained. Android Manifest and two existing Kotlin files complete the native flow. No new orchestration framework or dependency introduced.
+
+### Handoff and remaining acceptance
+
+- All five native agent threads completed: the three Luna-requested investigations (Android and URL threads reused as Dart/backend workers), Sol-requested Android I/O escalation, and separate configured Sol reviewer. Actual spawn IDs are recorded above. Parallel phases: three read-only investigations; then two independent implementation workers with root integrating Web; then Dart and Kotlin workers with read-only review. The runtime enforced four total active slots, so no external supervisor/worktree was needed.
+- Main session: Codex; resolved root model, per-agent resolved inference identity, tokens and monetary usage are **Unknown / Not yet verified**. Root preference for subsequent sessions is `gpt-6.1-sol`; do not infer that editing configuration changed this running session. Observable bottlenecks were sandbox subprocess/SDK permissions, JDK path and review-driven session regressions.
+- Session closure: local M20-only checkpoint authorized on `feat/m20-phase-2a-android-share`, based on preserved HEAD `c80b30694ef18ff9434758937b8d0ff32be16ed2`. Include validated M20 code/tests, this plan and the M20 context update; leave agent/configuration optimization and unrelated/no-content-diff documents outside the commit, preserving them locally. Validated product diff is unchanged; no tests or reviews repeated for checkpoint creation. No push, PR, merge, deployment, production writes or new dependencies.
+- Final Git integrity: `git diff --check` exit 0; WIP base ancestry exit 0; no deleted files or staged changes. Ten unrelated documents under architecture/decisions/operations plus system-status appear modified in `git status` but have empty `git diff` and `--numstat`; they were left untouched. Cause is Unknown / Not yet verified; do not revert or include them as substantive M20 changes.
+- Local implementation/validation for this continuation is complete. Overall M20 plan stays active for physical cold/warm Android acceptance, native slow-provider/deadline/cancellation checks and any separately scoped OCR work. E2E, physical device behavior and production integration remain **Unknown / Not yet verified**.
 
 ## Status
 R4_M9_REVISED = PASS — canonical normalization and actual inline rendering validated locally and in Flutter CI. R4-M7 protections preserved. Ready for M20 physical acceptance; no APK generated or Production deployment performed.
@@ -24,10 +60,10 @@ Implement Phase 1 of M20: Smart Chords Import Hub across backend, Web, and Flutt
 7. Partial success safety: if save succeeds and optional repertoire link fails, SmartChord remains saved.
 8. Comprehensive test suites (Backend, Web, Flutter) and PDF layout diversity testing.
 
-### Deferred to Phase 2 / Future
-- Android Share Intent (`ACTION_SEND` for `text/plain` and `application/pdf`).
-- Cifra Club shared URL metadata assistant / guided clipboard assistant.
-- Scanned PDF OCR / photo import.
+### Phase 2 / Future (updated 2026-10-26)
+- Android Share Intent (`ACTION_SEND` for text, PDF and supported images): existing commit/local implementation continued; validation recorded in the continuation above.
+- Cifra Club shared URL metadata assistant / guided clipboard assistant: local integration in progress, no remote scraping.
+- Scanned PDF OCR / automatic photo recognition: deferred. Manual image transcription assistant is separate and does not perform OCR.
 
 ## Implementation Stages
 - [x] Stage 1: Shared format specification, import draft types, and synthetic golden fixtures.

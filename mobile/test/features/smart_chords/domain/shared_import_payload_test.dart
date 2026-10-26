@@ -75,6 +75,16 @@ void main() {
       expect(payload.error, 'EMPTY_TEXT');
     });
 
+    test('fromMap rejects shared text over 100,000 characters', () async {
+      final payload = await SharedImportPayload.fromMap({
+        'type': 'text',
+        'text': List.filled(SharedImportPayload.maxSharedTextLength + 1, 'x')
+            .join(),
+      });
+      expect(payload?.error, 'TEXT_TOO_LARGE');
+      expect(payload?.hasError, isTrue);
+    });
+
     test('fromMap parses pdf bytes map correctly', () async {
       final bytes = [0x25, 0x50, 0x44, 0x46, 0x2D];
       final map = {
@@ -89,10 +99,12 @@ void main() {
       expect(payload.pdfBytes, Uint8List.fromList(bytes));
     });
 
-    test('fromMap parses pdf filePath, reads bytes and cleans up file', () async {
+    test('fromMap parses pdf filePath, reads bytes and cleans up file',
+        () async {
       final tempDir = await Directory.systemTemp.createTemp('payload_test');
       final tempFile = File('${tempDir.path}/test_chord.pdf');
-      final sampleBytes = Uint8List.fromList([0x25, 0x50, 0x44, 0x46, 0x2D, 0x31]);
+      final sampleBytes =
+          Uint8List.fromList([0x25, 0x50, 0x44, 0x46, 0x2D, 0x31]);
       await tempFile.writeAsBytes(sampleBytes);
 
       final map = {
@@ -134,6 +146,79 @@ void main() {
       expect(payload!.hasError, isTrue);
       expect(payload.error, 'UNSUPPORTED_TYPE');
       expect(payload.errorMessage, 'Audio não suportado');
+    });
+
+    test('image payload factory creates valid image payload', () {
+      final bytes = Uint8List.fromList([0x89, 0x50, 0x4E, 0x47]);
+      final payload = SharedImportPayload.image(
+        imageBytes: bytes,
+        imageFileName: 'foto.png',
+      );
+      expect(payload.type, SharedImportType.image);
+      expect(payload.isImage, isTrue);
+      expect(payload.isPdf, isFalse);
+      expect(payload.isText, isFalse);
+      expect(payload.hasError, isFalse);
+      expect(payload.imageBytes, bytes);
+      expect(payload.imageFileName, 'foto.png');
+    });
+
+    test('fromMap parses image filePath, reads bytes and cleans up file',
+        () async {
+      final tempDir =
+          await Directory.systemTemp.createTemp('image_payload_test');
+      final tempFile = File('${tempDir.path}/test_chord.png');
+      final sampleBytes =
+          Uint8List.fromList([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+      await tempFile.writeAsBytes(sampleBytes);
+
+      final map = {
+        'type': 'image',
+        'filePath': tempFile.path,
+        'fileName': 'test_chord.png',
+      };
+      final payload = await SharedImportPayload.fromMap(map);
+      expect(payload, isNotNull);
+      expect(payload!.isImage, isTrue);
+      expect(payload.imageBytes, sampleBytes);
+      expect(payload.imageFileName, 'test_chord.png');
+
+      // Check temporary file cleanup
+      expect(await tempFile.exists(), isFalse);
+      await tempDir.delete(recursive: true);
+    });
+
+    test('image format validation accepts PNG, JPEG and WebP signatures only',
+        () {
+      expect(
+          SharedImportPayload.isSupportedImageBytes(
+            [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+          ),
+          isTrue);
+      expect(SharedImportPayload.isSupportedImageBytes([0xFF, 0xD8, 0xFF]),
+          isTrue);
+      expect(
+          SharedImportPayload.isSupportedImageBytes(
+            [0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50],
+          ),
+          isTrue);
+      expect(SharedImportPayload.isSupportedImageBytes([1, 2, 3, 4]), isFalse);
+    });
+
+    test('fromMap rejects unsupported image bytes and removes temporary file',
+        () async {
+      final tempDir =
+          await Directory.systemTemp.createTemp('invalid_image_payload_test');
+      final tempFile = File('${tempDir.path}/not-image.png');
+      await tempFile.writeAsBytes([1, 2, 3, 4]);
+      final payload = await SharedImportPayload.fromMap({
+        'type': 'image',
+        'filePath': tempFile.path,
+        'fileName': 'not-image.png',
+      });
+      expect(payload?.error, 'UNSUPPORTED_IMAGE_FORMAT');
+      expect(await tempFile.exists(), isFalse);
+      await tempDir.delete(recursive: true);
     });
 
     test('fromMap returns null on null map', () async {

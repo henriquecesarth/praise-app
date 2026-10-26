@@ -24,6 +24,7 @@ status: ativo
 | :--- | :--- | :--- |
 | **R4-M11 Android (Monospace Rendering)** | `VALIDATED` | Homologado em build Android e suíte Flutter (`cd mobile && flutter test`, 596 testes PASS). Hotfix de renderização monospace intrinsicamente dimensionada com rolagem horizontal e quebra de palavras validado. |
 | **M20 Phase 1 (Smart Chords Import Hub)** | `VALIDATED` | Fase 1 do Import Hub mobile homologada. |
+| **M20 Phase 2 (continuação local)** | `LOCAL_VERIFIED` | Branch `feat/m20-phase-2a-android-share`, checkpoint local M20 sobre `c80b306`, com trabalho herdado preservado. Share Intent Android, assistente de metadados Cifra Club com colagem/normalização e transcrição manual de imagem integrados localmente. Backend 160 / Web 82 / Flutter 59 testes direcionados PASS; builds Backend/Web, compilação Kotlin e Flutter analyzer PASS; revisão independente PASS, zero P1/P2 abertos. Sem fetch remoto de cifras ou OCR implementado. Evidências/IDs reais no ExecPlan M20. Aceitação física Phase 2 e E2E: Unknown / Not yet verified. |
 | **R4-M13 (Release Blockers Checkpoint)** | `VALIDATED` | Preservado no checkpoint Windows (`backup/r4-m14-windows-handoff-20261025`, SHA `8038bf5b1ec8acf0c6ee9e900ed7f3e64d8d3322`). Implementou rejeição de segredo JWT padrão em produção/preview e preservação de omissão de BPM. |
 | **R4-M14 (Revisão Independente)** | `VALIDATED` | Identificou 2 bloqueios de regressão na persistência de repertório (Blocker A: aliases históricos de links; Blocker B: limpeza indevida de classificações órfãs em edições não relacionadas). |
 | **R4-M15 (Remediação de Bloqueios)** | `VALIDATED` | Integrado à WIP no commit `9f4f0bb` via PR #20 (inclui commit `3aa3ed6`). Cobertura: 64 testes backend de integridade (`repertoire.integrity.test.ts`), 74 testes Web de contrato (`api.bpm-contract.test.tsx`), suíte Web completa (643 PASS), builds Backend/Web PASS. Revisão independente Codex aprovada. |
@@ -81,6 +82,7 @@ A ordem de precedência obrigatória para qualquer agente ou desenvolvedor é:
 ## 4. Regras de Integração e Git
 
 - **Base de desenvolvimento:** `wip/repertoire-versions-smartchords-20261022` é a branch ativa de desenvolvimento.
+- **Continuação M20 Phase 2:** a árvore de trabalho está em `feat/m20-phase-2a-android-share`, derivada da integração WIP `9f4f0bb`; não trocar a branch nem descartar alterações locais para voltar à base.
 - **Não usar `main` automaticamente:** Qualquer PR derivado do trabalho de repertório/Smart Chords deve ter como alvo a branch WIP, a menos que haja autorização explícita em contrário.
 - **Sem ações destrutivas:** Proibidos `git push --force`, reescrita de histórico em branches compartilhadas, merge automático, deploys manuais e escritas em bancos de dados de produção.
 - **Isolamento de PRs:** PR #17 (Obsidian / fluxo multiagente) e PR #18 (supervisor experimental) são propostas separadas que não devem ser integradas de forma indiscriminada.

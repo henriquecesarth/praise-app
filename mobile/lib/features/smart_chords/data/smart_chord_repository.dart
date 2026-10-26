@@ -13,6 +13,8 @@ abstract class SmartChordRepository {
   Future<void> deleteSmartChord(String id);
   Future<SmartChordImportDraft> importPdfDraft(List<int> bytes, String filename);
   Future<SmartChordImportDraft> importTextDraft(String text);
+  Future<SmartChordImportDraft> importUrlDraft(String url);
+  Future<SmartChordImportDraft> importImageDraft(List<int> bytes, String filename);
 }
 
 class HttpSmartChordRepository implements SmartChordRepository {
@@ -182,6 +184,51 @@ class HttpSmartChordRepository implements SmartChordRepository {
 
       if (response.data == null) {
         throw const AppFailure(message: 'Resposta vazia ao importar texto.');
+      }
+      return SmartChordImportDraft.fromMap(response.data!);
+    } on DioException catch (e) {
+      throw _apiClient.mapDioException(e);
+    } catch (e) {
+      throw AppFailure(message: e.toString());
+    }
+  }
+
+  @override
+  Future<SmartChordImportDraft> importUrlDraft(String url) async {
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '/smart-chords/import/url',
+        data: {'url': url},
+      );
+
+      if (response.data == null) {
+        throw const AppFailure(message: 'Resposta vazia ao importar URL.');
+      }
+      return SmartChordImportDraft.fromMap(response.data!);
+    } on DioException catch (e) {
+      throw _apiClient.mapDioException(e);
+    } catch (e) {
+      throw AppFailure(message: e.toString());
+    }
+  }
+
+  @override
+  Future<SmartChordImportDraft> importImageDraft(List<int> bytes, String filename) async {
+    try {
+      final formData = FormData.fromMap({
+        'file': MultipartFile.fromBytes(
+          bytes,
+          filename: filename,
+        ),
+      });
+
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '/smart-chords/import/image',
+        data: formData,
+      );
+
+      if (response.data == null) {
+        throw const AppFailure(message: 'Resposta vazia ao importar imagem.');
       }
       return SmartChordImportDraft.fromMap(response.data!);
     } on DioException catch (e) {
