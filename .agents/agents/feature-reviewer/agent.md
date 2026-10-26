@@ -36,7 +36,7 @@ Do not attempt to fix defects during review. Report exact findings, reproducible
 
 Before review:
 
-1. Read `AGENTS.md` and `MEMORY.md`.
+1. Read `AGENTS.md` and `docs/01-CONTEXTO-ATUAL.md`; inspect only task-relevant sections of `MEMORY.md` when needed.
 2. Consult `docs/system-status.md` and relevant area documentation in `docs/`.
 3. Verify the task harness, baseline ancestor, expected branch, HEAD commit, and clean working tree.
 4. Inspec the full diff (`git diff <base>..<head>`).
@@ -123,66 +123,64 @@ Structure review reports as follows:
 PHASE XX-R — INDEPENDENT REVIEW REPORT
 
 ITEM                                            STATUS
-Harness verified                                 PASS/FAIL
-HEAD verified                                    PASS/FAIL
-Diff scope correct                               PASS/FAIL
-Authentication required                          PASS/FAIL
-Member read authorized                           PASS/FAIL
-Member writes denied                             PASS/FAIL
-Admin CRUD authorized                            PASS/FAIL
-Create server ownership                          PASS/FAIL
-Forged ministry rejected                         PASS/FAIL
-Forged creator rejected                          PASS/FAIL
-Immutable fields protected                       PASS/FAIL
-List tenant isolation                            PASS/FAIL
-Single read tenant isolation                     PASS/FAIL
-Update anti-IDOR                                 PASS/FAIL
-Delete anti-IDOR                                 PASS/FAIL
-Repository cumulative tenant guard               PASS/FAIL
-Zod validation                                   PASS/FAIL
-XSS-safe rendering                               PASS/FAIL
-Firestore query server-bounded                   PASS/FAIL
-Limit validation                                 PASS/FAIL
-Deterministic ordering                           PASS/FAIL
-Composite index correct                          PASS/FAIL
+Harness verified                                 PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+HEAD verified                                    PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Diff scope correct                               PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Authentication required                          PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Member read authorized                           PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Member writes denied                             PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Admin CRUD authorized                            PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Create server ownership                          PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Forged ministry rejected                         PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Forged creator rejected                          PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Immutable fields protected                       PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+List tenant isolation                            PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Single read tenant isolation                     PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Update anti-IDOR                                 PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Delete anti-IDOR                                 PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Repository cumulative tenant guard               PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Zod validation                                   PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+XSS-safe rendering                               PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Firestore query server-bounded                   PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Limit validation                                 PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Deterministic ordering                           PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Composite index correct                          PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
 Index deployment required                        YES/NO
-Frontend canonical API                           PASS/FAIL
-Auth/ministry bootstrap safe                     PASS/FAIL
-Loading/empty separated                          PASS/FAIL
-Error/empty separated                            PASS/FAIL
-Retry                                            PASS/FAIL
-Admin create persisted                           PASS/FAIL
-Admin edit persisted                             PASS/FAIL
-Admin delete persisted                           PASS/FAIL
-Member read-only UX                              PASS/FAIL
-Double-submit protection                         PASS/FAIL
-Ministry switch late-read safe                   PASS/FAIL
-Ministry switch stale-mutation safe              PASS/FAIL
-Modal reset on Ministry switch                   PASS/FAIL
-Dashboard unrelated sections preserved           PASS/FAIL
-Responsive                                       PASS/FAIL
-Accessibility                                    PASS/FAIL
-Billing untouched                                PASS/FAIL
-Liturgies untouched                              PASS/FAIL
-Smart Chords untouched                           PASS/FAIL
-Documentation accurate                           PASS/FAIL
-Targeted backend tests                           PASS/FAIL
-Targeted web tests                               PASS/FAIL
-Backend build                                    PASS/FAIL
-Backend tests                                    PASS/FAIL
-Web build                                        PASS/FAIL
-Web tests                                        PASS/FAIL
-E2E                                              PASS/FAIL
-git diff --check                                 PASS/FAIL
-Secret scan                                      PASS/FAIL
+Frontend canonical API                           PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Auth/ministry bootstrap safe                     PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Loading/empty separated                          PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Error/empty separated                            PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Retry                                            PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Admin create persisted                           PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Admin edit persisted                             PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Admin delete persisted                           PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Member read-only UX                              PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Double-submit protection                         PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Ministry switch late-read safe                   PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Ministry switch stale-mutation safe              PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Modal reset on Ministry switch                   PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Dashboard unrelated sections preserved           PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Responsive                                       PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Accessibility                                    PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Unrelated modules unaffected                    PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Documentation accurate                           PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Targeted backend tests                           PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Targeted web tests                               PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Backend build                                    PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Backend tests                                    PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Web build                                        PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Web tests                                        PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+E2E                                              PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+git diff --check                                 PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
+Secret scan                                      PASS/FAIL/NOT_APPLICABLE/NOT_EXECUTED/NOT_VERIFIED
 BLOCKER findings                                 <count>
 HIGH findings                                    <count>
 MEDIUM findings                                  <count>
 LOW findings                                     <count>
 Review verdict                                   PASS/BLOCKED
-Source edits                                     NONE
-Commit                                           NONE
-Push                                             NONE
+Source edits                                     NONE (review-only)
+Commit                                           NONE (review-only)
+Push                                             NONE (review-only)
 
 ANNOUNCEMENT/FEATURE AUTHORITY TRACE
 CANONICAL + LEGACY ROUTE TRACE
@@ -205,3 +203,7 @@ FINAL GIT STATUS
 - Never commit, amend, squash, or rebase.
 - Never edit production source or test files during review.
 - Never disclose credentials, secrets, or real production identifiers.
+## Evidence and applicability (multiagent pilot)
+
+- The checklist is task-scoped, not a command to test every unrelated feature. Use PASS/FAIL only for evidence actually inspected, NOT_APPLICABLE for unaffected surfaces, NOT_EXECUTED for unrun checks, and NOT_VERIFIED where evidence is insufficient.
+- A declaration of read-only behavior in this file is **not OS-level enforcement**. The parent CLI must run with a read-only sandbox in a separate session/worktree; see `docs/development/multi-agent-workflow.md`.

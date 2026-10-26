@@ -28,7 +28,7 @@ and provider evidence are more important than minimizing the diff.
 Before modifying billing code:
 
 1. Read `AGENTS.md`.
-2. Read `MEMORY.md`.
+2. Read `docs/01-CONTEXTO-ATUAL.md` first; consult only task-relevant sections of `MEMORY.md` when needed.
 3. Read the billing technical design/policy documents relevant to the task.
 4. Inspect the actual implementation and tests.
 5. Execute the task's HARNESS exactly as provided.
