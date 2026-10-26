@@ -31,7 +31,9 @@ export const VersionEditModal: React.FC<VersionEditModalProps> = ({
   );
   const [notes, setNotes] = useState(version.notes || '');
   const [key, setKey] = useState(version.key || 'C');
-  const [bpm, setBpm] = useState(version.bpm !== undefined ? String(version.bpm) : '');
+  const [bpm, setBpm] = useState(version.bpm == null ? '' : String(version.bpm));
+  const [bpmTouched, setBpmTouched] = useState(false);
+  const [bpmError, setBpmError] = useState<string>();
 
   // Parse duration into Hours, Minutes, Seconds
   const parseDurationParts = (durString?: string) => {
@@ -69,6 +71,7 @@ export const VersionEditModal: React.FC<VersionEditModalProps> = ({
     ) || [];
 
   const [customLinks, setCustomLinks] = useState<SongLink[]>(initialCustomLinks);
+  const [linksTouched, setLinksTouched] = useState(false);
 
   const toggleClassification = (id: string) => {
     setSelectedClassificationIds((prev) =>
@@ -77,6 +80,7 @@ export const VersionEditModal: React.FC<VersionEditModalProps> = ({
   };
 
   const handleAddCustomLink = () => {
+    setLinksTouched(true);
     setCustomLinks((prev) => [
       ...prev,
       { id: `custom_${Date.now()}`, label: '', url: '', isCustom: true },
@@ -84,6 +88,7 @@ export const VersionEditModal: React.FC<VersionEditModalProps> = ({
   };
 
   const handleUpdateCustomLink = (index: number, field: 'label' | 'url', value: string) => {
+    setLinksTouched(true);
     setCustomLinks((prev) => {
       const updated = [...prev];
       updated[index] = { ...updated[index], [field]: value };
@@ -92,11 +97,16 @@ export const VersionEditModal: React.FC<VersionEditModalProps> = ({
   };
 
   const handleRemoveCustomLink = (index: number) => {
+    setLinksTouched(true);
     setCustomLinks((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (bpmTouched && bpm !== '' && (!bpm.trim() || bpm.length > 10)) {
+      setBpmError('Informe um BPM com até 10 caracteres ou deixe vazio para limpar.');
+      return;
+    }
 
     // Format duration to HH:MM:SS
     let formattedDuration: string | undefined = undefined;
@@ -116,7 +126,7 @@ export const VersionEditModal: React.FC<VersionEditModalProps> = ({
       { label: 'Vídeo', url: videoUrl.trim() },
       ...customLinks
         .filter((l) => l.label.trim() && l.url.trim())
-        .map((l) => ({ ...l, label: l.label.trim(), url: l.url.trim(), isCustom: true })),
+        .map((l) => ({ ...l, label: l.label.trim(), url: l.url.trim() })),
     ];
 
     const updatedVersion: SongVersion = {
@@ -125,9 +135,9 @@ export const VersionEditModal: React.FC<VersionEditModalProps> = ({
       classificationIds: selectedClassificationIds,
       notes: notes.trim() || undefined,
       key: key.trim() || 'C',
-      bpm: bpm ? bpm.trim() : undefined,
+      bpm: bpmTouched ? (bpm === '' ? null : bpm) : version.bpm,
       duration: formattedDuration || undefined,
-      links: allLinks,
+      links: linksTouched ? allLinks : version.links,
     };
 
     onSave(updatedVersion);
@@ -288,9 +298,14 @@ export const VersionEditModal: React.FC<VersionEditModalProps> = ({
 
             <FloatingInput
               label="BPM (ex: 120)"
-              type="number"
+              type="text"
               value={bpm}
-              onChange={(e) => setBpm(e.target.value)}
+              error={bpmError}
+              onChange={(e) => {
+                setBpm(e.target.value);
+                setBpmTouched(true);
+                setBpmError(undefined);
+              }}
             />
           </div>
 
@@ -340,25 +355,25 @@ export const VersionEditModal: React.FC<VersionEditModalProps> = ({
               <FloatingInput
                 label="Letra (ex: https://...)"
                 value={letraUrl}
-                onChange={(e) => setLetraUrl(e.target.value)}
+                onChange={(e) => { setLetraUrl(e.target.value); setLinksTouched(true); }}
               />
 
               <FloatingInput
                 label="Cifra (ex: CifraClub, Drive)"
                 value={cifraUrl}
-                onChange={(e) => setCifraUrl(e.target.value)}
+                onChange={(e) => { setCifraUrl(e.target.value); setLinksTouched(true); }}
               />
 
               <FloatingInput
                 label="Áudio (ex: Spotify, Drive)"
                 value={audioUrl}
-                onChange={(e) => setAudioUrl(e.target.value)}
+                onChange={(e) => { setAudioUrl(e.target.value); setLinksTouched(true); }}
               />
 
               <FloatingInput
                 label="Vídeo (ex: YouTube)"
                 value={videoUrl}
-                onChange={(e) => setVideoUrl(e.target.value)}
+                onChange={(e) => { setVideoUrl(e.target.value); setLinksTouched(true); }}
               />
             </div>
 

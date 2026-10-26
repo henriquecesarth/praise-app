@@ -438,7 +438,7 @@ const mapSongFromApi = (apiSong: any): Song => {
     classificationIds: apiSong.classification_id ? [apiSong.classification_id] : (apiSong.classification_ids || []),
     notes: apiSong.version_notes || undefined,
     key: defaultKey,
-    bpm: apiSong.bpm || undefined,
+    bpm: apiSong.bpm,
     duration: apiSong.duration || undefined,
     links: defaultLinks,
   };
@@ -455,7 +455,7 @@ const mapSongFromApi = (apiSong: any): Song => {
             : (Array.isArray(v.classification_ids) ? v.classification_ids : (v.classificationId ? [v.classificationId] : [])),
           notes: v.notes || undefined,
           key: resolvedKey,
-          bpm: v.bpm || undefined,
+          bpm: v.bpm,
           duration: v.duration || undefined,
           links: Array.isArray(v.links) ? v.links : [],
         };
@@ -482,7 +482,7 @@ const mapSongFromApi = (apiSong: any): Song => {
     classificationName: apiSong.classification?.name || undefined,
     classificationColor: apiSong.classification?.color || undefined,
     originalKey: versions[0]?.key !== undefined ? versions[0].key : (defaultKey ?? null),
-    bpm: versions[0]?.bpm ? Number(versions[0].bpm) : (apiSong.bpm || undefined),
+    bpm: versions[0]?.bpm !== undefined ? versions[0].bpm : apiSong.bpm,
     duration: versions[0]?.duration || apiSong.duration || undefined,
     lyrics: apiSong.lyrics || undefined,
     chordSheetUrl: apiSong.chord_sheet_url || undefined,
@@ -495,6 +495,14 @@ const mapSongFromApi = (apiSong: any): Song => {
       content: apiSong.smart_chord.content,
     } : undefined,
   };
+};
+
+const mapBpmToApi = (value: SongVersion['bpm']) => {
+  // JSON.stringify turns nonfinite numbers into null; never turn invalid input into a clear.
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    throw new ApiError('BPM numérico inválido.', 400);
+  }
+  return value === '' ? null : value;
 };
 
 const mapSongToApi = (song: Partial<Song>): any => {
@@ -524,7 +532,7 @@ const mapSongToApi = (song: Partial<Song>): any => {
         versionObj.key = v.key === '' ? null : v.key;
       }
       if (v.bpm !== undefined) {
-        versionObj.bpm = v.bpm === '' || v.bpm === null ? null : (isNaN(Number(v.bpm)) ? v.bpm : Number(v.bpm));
+        versionObj.bpm = mapBpmToApi(v.bpm);
       }
       if (v.duration !== undefined) {
         versionObj.duration = v.duration === '' ? null : v.duration;
@@ -542,7 +550,7 @@ const mapSongToApi = (song: Partial<Song>): any => {
     apiSong.original_key = song.originalKey === '' ? null : song.originalKey;
   }
   if (song.bpm !== undefined) {
-    apiSong.bpm = song.bpm === null || (song.bpm as any) === '' ? null : Number(song.bpm);
+    apiSong.bpm = mapBpmToApi(song.bpm);
   }
   if (song.duration !== undefined) {
     apiSong.duration = song.duration === '' ? null : song.duration;

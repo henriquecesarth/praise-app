@@ -121,8 +121,9 @@ describe('SongDetail Web Repertoire <-> Smart Chords Integration', () => {
     expect(await screen.findByText(/Graça Admirável \(Violão\)/)).toBeInTheDocument();
     expect(screen.getByText(/Graça Admirável \(Tom Baixo\)/)).toBeInTheDocument();
 
-    // Default active is chord 1 (key G)
-    expect(screen.getByText('Tom Original:')).toBeInTheDocument();
+    // The linked tabs render before the effect activates the chord reader.
+    // Default active is chord 1 (key G); wait for that rendered state.
+    expect(await screen.findByText('Tom Original:')).toBeInTheDocument();
 
     // Switch to chord 2
     fireEvent.click(screen.getByText(/Graça Admirável \(Tom Baixo\)/));

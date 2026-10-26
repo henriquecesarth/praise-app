@@ -4,6 +4,7 @@ import { requireMinistryRole } from './rbac';
 import { AppError } from './error-handler';
 import { UserRepository } from '../repositories/UserRepository';
 import { MinistryRepository } from '../repositories/MinistryRepository';
+import { AccountDeletionRepository } from '../repositories/AccountDeletionRepository';
 import jwt from 'jsonwebtoken';
 import { config } from '../config/unifiedConfig';
 
@@ -13,6 +14,8 @@ describe('Security Hardening: Auth & RBAC Middlewares', () => {
   let mockNext: any;
 
   beforeEach(() => {
+    // Authentication fixtures must never consult an unavailable/live Firestore.
+    vi.spyOn(AccountDeletionRepository.prototype, 'isDeletionPending').mockResolvedValue(false);
     mockReq = {
       headers: {},
       params: {},
@@ -70,6 +73,16 @@ describe('Security Hardening: Auth & RBAC Middlewares', () => {
         id: 'usr-123',
         email: 'tester@louvaio.com',
       });
+    });
+
+    it('rejects valid authentication when account deletion is pending', async () => {
+      mockReq.headers.authorization = 'Bearer isolated-auth-fixture';
+      vi.spyOn(UserRepository.prototype, 'verifyToken').mockResolvedValue({ uid: 'pending-user' });
+      vi.mocked(AccountDeletionRepository.prototype.isDeletionPending).mockResolvedValue(true);
+      await authenticate(mockReq, mockRes, mockNext);
+      expect(mockNext).toHaveBeenCalledWith(expect.objectContaining({
+        statusCode: 403, details: { code: 'ACCOUNT_DELETION_IN_PROGRESS' },
+      }));
     });
 
     it('deve autenticar com sucesso quando o token é um Firebase ID Token válido', async () => {

@@ -133,7 +133,16 @@ export const CreateSongModal: React.FC<CreateSongModalProps> = ({
       title: title.trim(),
       artist: artist.trim(),
       notes: notes.trim() || undefined,
-      versions,
+      // Unchanged BPMs (including invalid legacy values) are omitted from updates.
+      // Match by stable version ID so reordering never changes this decision.
+      versions: versions.map((version) => {
+        const previous = song?.versions.find((item) => item.id === version.id);
+        if (previous && Object.is(previous.bpm, version.bpm)) {
+          const { bpm: _unchangedBpm, ...patch } = version;
+          return patch;
+        }
+        return version;
+      }),
     };
 
     try {
