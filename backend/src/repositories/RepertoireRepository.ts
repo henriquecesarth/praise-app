@@ -366,7 +366,7 @@ export class RepertoireRepository {
   }
 
   /** Project/patch the existing link contract; no new persistence representation. */
-  private synchronizeLinks(base: SongLink[], patch: any, explicitLinks: boolean) {
+  private synchronizeLinks(base: SongLink[], patch: any, explicitLinks: boolean, existing?: any) {
     const categories = {
       chord_sheet_url: ['cifra', 'chord', 'chords'],
       youtube_url: ['vídeo', 'video', 'youtube'],
@@ -374,12 +374,51 @@ export class RepertoireRepository {
     };
     type LinkField = keyof typeof categories;
     const fields = Object.keys(categories) as LinkField[];
-    const kind = (link: SongLink): LinkField | 'external_links' =>
-      (!link.isCustom && fields.find((field) => categories[field].includes(link.label.trim().toLowerCase()))) || 'external_links';
-    const externalKey = (link: SongLink) => !link.isCustom && ['letra', 'letras'].includes(link.label.toLowerCase())
-      ? 'letras' : link.label;
     const url = (value?: string | null) => value?.trim() ? value : null;
     const conflict = () => { throw new AppError(400, 'Conflito entre links legados e links da versão principal.'); };
+
+    let links = base.map((link) => ({ ...link }));
+    const historicalAliasField = new WeakMap<SongLink, LinkField>();
+
+    for (const field of fields) {
+      const existingFlatUrl = url(existing?.[field]);
+      if (!existingFlatUrl) continue;
+      const existingPrimaryLinks: SongLink[] = Array.isArray(existing?.versions?.[0]?.links) ? existing.versions[0].links : [];
+      if (existingPrimaryLinks.some((l) => !l.isCustom && Boolean(url(l.url)) && categories[field].includes(l.label.trim().toLowerCase()))) {
+        continue;
+      }
+      const existingAlias = existingPrimaryLinks.find((l) => {
+        if (!l.isCustom) return false;
+        if (!categories[field].includes(l.label.trim().toLowerCase())) return false;
+        if (url(l.url) !== existingFlatUrl) return false;
+        const extUrl = url(existing?.external_links?.[l.label]) ?? url(existing?.external_links?.[l.label.trim()]);
+        return extUrl !== existingFlatUrl;
+      });
+      if (existingAlias && !links.some((l) => !l.isCustom && Boolean(url(l.url)) && categories[field].includes(l.label.trim().toLowerCase()))) {
+        const claimedByPatchExternal = (l: SongLink) =>
+          explicitLinks &&
+          patch.external_links !== undefined &&
+          (url(patch.external_links[l.label]) === url(l.url) || url(patch.external_links[l.label.trim()]) === url(l.url)) &&
+          url(patch[field]) !== url(l.url);
+        const candidates = links.filter((l) => Boolean(l.isCustom) && !claimedByPatchExternal(l));
+        const matchedInBase =
+          (existingAlias.id
+            ? candidates.find((l) => l.id === existingAlias.id && categories[field].includes(l.label.trim().toLowerCase()))
+            : undefined) ||
+          candidates.find((l) => l.label.trim().toLowerCase() === existingAlias.label.trim().toLowerCase() && url(l.url) === existingFlatUrl) ||
+          candidates.find((l) => l.label.trim().toLowerCase() === existingAlias.label.trim().toLowerCase());
+        if (matchedInBase) {
+          historicalAliasField.set(matchedInBase, field);
+        }
+      }
+    }
+
+    const kind = (link: SongLink): LinkField | 'external_links' =>
+      historicalAliasField.get(link) ||
+      (!link.isCustom && fields.find((field) => categories[field].includes(link.label.trim().toLowerCase()))) ||
+      'external_links';
+    const externalKey = (link: SongLink) => !link.isCustom && ['letra', 'letras'].includes(link.label.toLowerCase())
+      ? 'letras' : link.label;
     const project = (links: SongLink[]) => {
       const result = { chord_sheet_url: null, youtube_url: null, audio_url: null,
         external_links: Object.create(null) } as { [K in LinkField]: string | null } & { external_links: Record<string, string> };
@@ -399,7 +438,6 @@ export class RepertoireRepository {
       }
       return { ...result, external_links: Object.fromEntries(Object.entries(result.external_links)) };
     };
-    let links = base.map((link) => ({ ...link }));
     for (const field of fields) {
       if (patch[field] === undefined) continue;
       const value = url(patch[field]);
@@ -408,7 +446,11 @@ export class RepertoireRepository {
       } else {
         const previous = links.find((link) => kind(link) === field);
         links = links.filter((link) => kind(link) !== field);
-        if (value) links.push({ ...(previous || { label: { chord_sheet_url: 'Cifra', youtube_url: 'Vídeo', audio_url: 'Áudio' }[field] }), url: value });
+        if (value) {
+          const nextLink = { ...(previous || { label: { chord_sheet_url: 'Cifra', youtube_url: 'Vídeo', audio_url: 'Áudio' }[field] }), url: value };
+          if (previous && historicalAliasField.has(previous)) historicalAliasField.set(nextLink, field);
+          links.push(nextLink);
+        }
       }
     }
     if (patch.external_links !== undefined) {
@@ -886,7 +928,7 @@ export class RepertoireRepository {
     const primaryChanged = data.versions !== undefined && updateData.versions[0].id !== existing.versions[0].id;
     if (hasLegacyLinks || explicitPrimaryLinks || primaryChanged) {
       const versions = updateData.versions || existing.versions;
-      const synchronized = this.synchronizeLinks(versions[0].links, data, explicitPrimaryLinks);
+      const synchronized = this.synchronizeLinks(versions[0].links, data, explicitPrimaryLinks, existing);
       updateData.versions = versions.map((version: SongVersion, index: number) =>
         index === 0 ? { ...version, links: synchronized.links } : version);
       for (const [field, value] of Object.entries(synchronized.flat)) {

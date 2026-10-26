@@ -278,3 +278,431 @@ for (const bpm of [72, '72.50', 'Infinity', '0', 0, '1000', null, undefined, 'Le
     expect(stored().versions[0].id).toBe('v1'); expect(stored().versions[1].bpm).toBe('72.50');
   });
 }
+
+describe('R4-M15 Blocker A: Historical custom link aliases (isCustom: true)', () => {
+  const aliases: [string, string][] = [
+    ['chord_sheet_url', 'Chord'],
+    ['youtube_url', 'YouTube'],
+    ['audio_url', 'MP3'],
+  ];
+
+  for (const [field, label] of aliases) {
+    describe(`${field} alias "${label}"`, () => {
+      const customId = `custom-alias-${field}`;
+      const seedHistoricalAlias = () => {
+        seed();
+        const song = stored();
+        const categoryIndex = field === 'chord_sheet_url' ? 0 : field === 'youtube_url' ? 1 : 2;
+        song.versions[0].links[categoryIndex] = {
+          id: customId,
+          label,
+          url: oldUrl,
+          isCustom: true,
+        };
+        // Ensure oldUrl is in the matching flat field while label is NOT in external_links
+        song[field] = oldUrl;
+        delete song.external_links[label];
+        delete song.external_links[label.toLowerCase()];
+        rows().set('song', song);
+      };
+
+      beforeEach(() => {
+        seedHistoricalAlias();
+      });
+
+      it('reproduces R4-M14 exact seed without custom id: flat field + primary link { label, url: oldUrl, isCustom: true } survives version rename', async () => {
+        seed({
+          chord_sheet_url: field === 'chord_sheet_url' ? oldUrl : null,
+          youtube_url: field === 'youtube_url' ? oldUrl : null,
+          audio_url: field === 'audio_url' ? oldUrl : null,
+          external_links: {},
+          versions: [
+            { id: 'v1', name: 'Original', key: 'C', bpm: 72, classificationIds: [], links: [{ label, url: oldUrl, isCustom: true }] },
+            secondary,
+          ],
+        });
+        await update({
+          versions: [
+            { id: 'v1', name: 'Renamed', links: [{ label, url: oldUrl, isCustom: true }] },
+            secondary,
+          ],
+        });
+        const doc = stored();
+        expect(doc[field]).toBe(oldUrl);
+        expect(doc.external_links).toEqual({});
+        expect(doc.versions[0].links).toEqual([{ label, url: oldUrl, isCustom: true }]);
+        expect(doc.versions[1].links).toEqual(secondary.links);
+      });
+
+      it('preserves flat URL, does not move to external_links, preserves custom ID and versions[1].links on version rename with unchanged links; preserves YouTube filtering', async () => {
+        const primaryLinks = stored().versions[0].links;
+        await update({
+          versions: [
+            { id: 'v1', name: 'Renamed Primary', links: primaryLinks },
+            secondary,
+          ],
+        });
+
+        const doc = stored();
+        expect(doc[field]).toBe(oldUrl);
+        expect(doc.external_links[label]).toBeUndefined();
+        expect(doc.versions[0].links).toContainEqual({
+          id: customId,
+          label,
+          url: oldUrl,
+          isCustom: true,
+        });
+        expect(doc.versions[1].links).toEqual(secondary.links);
+
+        if (field === 'youtube_url') {
+          for (const filters of [{ has_youtube: true }, { has_youtube: true, search: 'Song' }]) {
+            const list = await repo.getSongs(ministry, filters);
+            expect(list.data.find((s: { id: string }) => s.id === 'song')).toMatchObject({
+              has_youtube: true,
+              youtube_url: oldUrl,
+            });
+          }
+        }
+      });
+
+      it('updates the flat field to newUrl without adding to external_links when updated via versions[0].links', async () => {
+        const updatedLinks = stored().versions[0].links.map((l: any) =>
+          l.id === customId ? { ...l, url: newUrl } : l
+        );
+        await update({
+          versions: [
+            { id: 'v1', name: 'Renamed Primary', links: updatedLinks },
+            secondary,
+          ],
+        });
+
+        const doc = stored();
+        expect(doc[field]).toBe(newUrl);
+        expect(doc.external_links[label]).toBeUndefined();
+        expect(doc.versions[0].links).toContainEqual({
+          id: customId,
+          label,
+          url: newUrl,
+          isCustom: true,
+        });
+        expect(doc.versions[1].links).toEqual(secondary.links);
+      });
+
+      it('updates both flat field and primary link URL via legacy flat field, and clears via { [field]: null } without resurrecting oldUrl', async () => {
+        await update({ [field]: newUrl });
+        let doc = stored();
+        expect(doc[field]).toBe(newUrl);
+        expect(doc.versions[0].links.find((l: any) => l.label === label)?.url).toBe(newUrl);
+        expect(doc.external_links[label]).toBeUndefined();
+
+        // Clear via { [field]: null }
+        await update({ [field]: null });
+        doc = stored();
+        expect(doc[field]).toBeNull();
+        expect(doc.versions[0].links.filter((l: any) => l.label === label)).toHaveLength(0);
+
+        // Subsequent version rename must not resurrect oldUrl
+        await update({
+          versions: [
+            { id: 'v1', name: 'Renamed Again' },
+            { id: 'v2', name: 'Secondary' },
+          ],
+        });
+        doc = stored();
+        expect(doc[field]).toBeNull();
+        expect(doc.versions[0].links.filter((l: any) => l.label === label)).toHaveLength(0);
+      });
+
+      it('clears via versions[0].links: [] and never resurrects oldUrl on subsequent version rename', async () => {
+        await update({
+          versions: [
+            { id: 'v1', name: 'Original', links: [] },
+            secondary,
+          ],
+        });
+        let doc = stored();
+        expect(doc[field]).toBeNull();
+        expect(doc.versions[0].links).toEqual([]);
+
+        // Subsequent version rename must not resurrect oldUrl
+        await update({
+          versions: [
+            { id: 'v1', name: 'Renamed Again' },
+            { id: 'v2', name: 'Secondary' },
+          ],
+        });
+        doc = stored();
+        expect(doc[field]).toBeNull();
+        expect(doc.versions[0].links).toEqual([]);
+      });
+    });
+  }
+
+  it('intentionally custom links (isCustom: true) created when flat field is null remain in external_links and do not populate legacy flat fields', async () => {
+    for (const [field, label] of aliases) {
+      seed({
+        [field]: null,
+        versions: [
+          {
+            id: 'v1',
+            name: 'Original',
+            key: 'C',
+            bpm: 72,
+            classificationIds: [],
+            links: [
+              { id: `custom-ext-${field}`, label, url: newUrl, isCustom: true },
+            ],
+          },
+          secondary,
+        ],
+        external_links: { [label]: newUrl },
+      });
+
+      await update({
+        versions: [
+          { id: 'v1', name: 'Renamed', links: stored().versions[0].links },
+          secondary,
+        ],
+      });
+
+      const doc = stored();
+      expect(doc[field]).toBeNull();
+      expect(doc.external_links[label]).toBe(newUrl);
+    }
+  });
+
+  it('intentionally custom links created via external_links remain in external_links and do not populate legacy flat fields', async () => {
+    seed({
+      chord_sheet_url: null,
+      youtube_url: null,
+      audio_url: null,
+      versions: [
+        { id: 'v1', name: 'Original', key: 'C', bpm: 72, classificationIds: [], links: [] },
+        secondary,
+      ],
+      external_links: {},
+    });
+
+    await update({
+      external_links: {
+        YouTube: newUrl,
+        MP3: newUrl,
+        Chord: newUrl,
+      },
+    });
+
+    let doc = stored();
+    expect(doc.youtube_url).toBeNull();
+    expect(doc.audio_url).toBeNull();
+    expect(doc.chord_sheet_url).toBeNull();
+    expect(doc.external_links).toMatchObject({
+      YouTube: newUrl,
+      MP3: newUrl,
+      Chord: newUrl,
+    });
+
+    await update({
+      versions: [
+        { id: 'v1', name: 'Renamed' },
+        secondary,
+      ],
+    });
+
+    doc = stored();
+    expect(doc.youtube_url).toBeNull();
+    expect(doc.audio_url).toBeNull();
+    expect(doc.chord_sheet_url).toBeNull();
+    expect(doc.external_links).toMatchObject({
+      YouTube: newUrl,
+      MP3: newUrl,
+      Chord: newUrl,
+    });
+  });
+});
+
+describe('R4-M15 Blocker B: Orphan classifications preserved on unrelated edits & cleared on explicit clear', () => {
+  const seedR4M14Fixture = () => {
+    rows().set('song', structuredClone({
+      id: 'song',
+      ministry_id: ministry,
+      title: 'Song',
+      artist: 'Artist',
+      artist_name: 'Artist',
+      original_key: 'C',
+      bpm: 72,
+      classification_id: 'deleted',
+      chord_sheet_url: null,
+      youtube_url: null,
+      audio_url: null,
+      external_links: {},
+      versions: [
+        { id: 'v1', name: 'Original', key: 'C', bpm: 72, links: [], classificationIds: [] },
+        { id: 'v2', name: 'Secondary', key: 'D', bpm: 72, links: [{ label: 'Vídeo', url: oldUrl }], classificationIds: ['deleted-secondary'] },
+      ],
+    }));
+  };
+
+  beforeEach(() => {
+    seedR4M14Fixture();
+  });
+
+  it('reproduces R4-M14 single-version fixture with actual Web title-only serialized wire payload', async () => {
+    rows().set('song', structuredClone({
+      id: 'song',
+      ministry_id: ministry,
+      title: 'Song',
+      artist: 'Artist',
+      artist_name: 'Artist',
+      original_key: 'C',
+      bpm: 72,
+      classification_id: 'deleted',
+      chord_sheet_url: null,
+      youtube_url: null,
+      audio_url: null,
+      external_links: {},
+      versions: [
+        { id: 'v1', name: 'Original', key: 'C', bpm: 72, links: [], classificationIds: [] },
+      ],
+    }));
+
+    const webWirePayload = JSON.parse(
+      '{"title":"Renamed","artist":"Artist","artist_name":"Artist","versions":[{"id":"v1","name":"Original","key":"C","links":[]}]}'
+    );
+    await repo.updateSong('song', ministry, updateSongSchema.parse(webWirePayload));
+    const doc = stored();
+    expect(doc.title).toBe('Renamed');
+    expect(doc.classification_id).toBe('deleted');
+    expect(doc.bpm).toBe(72);
+    expect(doc.versions[0]).toMatchObject({
+      id: 'v1',
+      name: 'Original',
+      key: 'C',
+      bpm: 72,
+      classificationIds: [],
+      links: [],
+    });
+  });
+
+  it('preserves classification_id: deleted, bpm: 72, versions[0].classificationIds: [], and versions[1].classificationIds: [deleted-secondary] on title-only, artist-only, and version-name-only Web wire payloads', async () => {
+    // 1. Title-only Web wire payload
+    const titlePayload = {
+      title: 'Renamed Title',
+      artist: 'Artist',
+      artist_name: 'Artist',
+      versions: [
+        { id: 'v1', name: 'Original', key: 'C', links: [] },
+        { id: 'v2', name: 'Secondary', key: 'D', links: [{ label: 'Vídeo', url: oldUrl }] },
+      ],
+    };
+    await repo.updateSong('song', ministry, updateSongSchema.parse(titlePayload));
+    let doc = stored();
+    expect(doc.title).toBe('Renamed Title');
+    expect(doc.classification_id).toBe('deleted');
+    expect(doc.bpm).toBe(72);
+    expect(doc.versions[0].classificationIds).toEqual([]);
+    expect(doc.versions[1].classificationIds).toEqual(['deleted-secondary']);
+
+    // 2. Artist-only Web wire payload
+    const artistPayload = {
+      title: 'Renamed Title',
+      artist: 'New Artist',
+      artist_name: 'New Artist',
+      versions: [
+        { id: 'v1', name: 'Original', key: 'C', links: [] },
+        { id: 'v2', name: 'Secondary', key: 'D', links: [{ label: 'Vídeo', url: oldUrl }] },
+      ],
+    };
+    await repo.updateSong('song', ministry, updateSongSchema.parse(artistPayload));
+    doc = stored();
+    expect(doc.artist_name).toBe('New Artist');
+    expect(doc.classification_id).toBe('deleted');
+    expect(doc.bpm).toBe(72);
+    expect(doc.versions[0].classificationIds).toEqual([]);
+    expect(doc.versions[1].classificationIds).toEqual(['deleted-secondary']);
+
+    // 3. Version-name-only Web wire payload
+    const versionNamePayload = {
+      title: 'Renamed Title',
+      artist: 'New Artist',
+      artist_name: 'New Artist',
+      versions: [
+        { id: 'v1', name: 'Renamed Original Version', key: 'C', links: [] },
+        { id: 'v2', name: 'Secondary', key: 'D', links: [{ label: 'Vídeo', url: oldUrl }] },
+      ],
+    };
+    await repo.updateSong('song', ministry, updateSongSchema.parse(versionNamePayload));
+    doc = stored();
+    expect(doc.versions[0].name).toBe('Renamed Original Version');
+    expect(doc.classification_id).toBe('deleted');
+    expect(doc.bpm).toBe(72);
+    expect(doc.versions[0].classificationIds).toEqual([]);
+    expect(doc.versions[1].classificationIds).toEqual(['deleted-secondary']);
+  });
+
+  it('explicit version clear clears classification_id to null while preserving versions[1].classificationIds: [deleted-secondary]', async () => {
+    const clearVersionPayload = {
+      versions: [
+        { id: 'v1', name: 'Original', classificationIds: [], classification_ids: [] },
+        { id: 'v2', name: 'Secondary' },
+      ],
+    };
+    await repo.updateSong('song', ministry, updateSongSchema.parse(clearVersionPayload));
+    const doc = stored();
+    expect(doc.classification_id).toBeNull();
+    expect(doc.versions[0].classificationIds).toEqual([]);
+    expect(doc.versions[1].classificationIds).toEqual(['deleted-secondary']);
+  });
+
+  it('explicit flat clear clears classification_id to null while preserving versions[1].classificationIds: [deleted-secondary]', async () => {
+    const clearFlatPayload = {
+      classification_id: null,
+    };
+    await repo.updateSong('song', ministry, updateSongSchema.parse(clearFlatPayload));
+    const doc = stored();
+    expect(doc.classification_id).toBeNull();
+    expect(doc.versions[0].classificationIds).toEqual([]);
+    expect(doc.versions[1].classificationIds).toEqual(['deleted-secondary']);
+  });
+
+  it('valid replacement (versions[0].classificationIds: [valid]) updates classification_id to valid', async () => {
+    const validPayload = {
+      versions: [
+        { id: 'v1', name: 'Original', classificationIds: ['valid'] },
+        { id: 'v2', name: 'Secondary' },
+      ],
+    };
+    await repo.updateSong('song', ministry, updateSongSchema.parse(validPayload));
+    const doc = stored();
+    expect(doc.classification_id).toBe('valid');
+    expect(doc.versions[0].classificationIds).toEqual(['valid']);
+    expect(doc.versions[1].classificationIds).toEqual(['deleted-secondary']);
+  });
+
+  it('moving flat orphan deleted into versions[0].classificationIds when previously [] is rejected with 404', async () => {
+    const before = stored();
+    const movePayload = {
+      versions: [
+        { id: 'v1', name: 'Original', classificationIds: ['deleted'] },
+        { id: 'v2', name: 'Secondary' },
+      ],
+    };
+    await expect(repo.updateSong('song', ministry, updateSongSchema.parse(movePayload)))
+      .rejects.toMatchObject({ statusCode: 404 });
+    expect(stored()).toEqual(before);
+    expect(memory.writes).toHaveLength(0);
+  });
+
+  it('cross-tenant foreign classification is rejected with 404', async () => {
+    const before = stored();
+    const foreignPayload = {
+      versions: [
+        { id: 'v1', name: 'Original', classificationIds: ['foreign'] },
+        { id: 'v2', name: 'Secondary' },
+      ],
+    };
+    await expect(repo.updateSong('song', ministry, updateSongSchema.parse(foreignPayload)))
+      .rejects.toMatchObject({ statusCode: 404 });
+    expect(stored()).toEqual(before);
+    expect(memory.writes).toHaveLength(0);
+  });
+});

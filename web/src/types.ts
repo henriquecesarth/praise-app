@@ -179,7 +179,7 @@ export interface SongLink {
 export interface SongVersion {
   id: string;
   name: string; // Padrão da primeira versão: "Original"
-  classificationIds: string[]; // Classificações da versão
+  classificationIds?: string[]; // Classificações da versão
   notes?: string; // Observações específicas desta versão
   key: string | null; // Tom (ex: "G", "C#m" ou null se não informado)
   bpm?: string | number | null; // BPM (ex: 120)
@@ -201,7 +201,7 @@ export interface Song {
   // Propriedades retrocompatíveis opcionais
   artistId?: string;
   artistName?: string;
-  classificationId?: string;
+  classificationId?: string | null;
   classificationName?: string;
   classificationColor?: string;
   originalKey?: string | null;

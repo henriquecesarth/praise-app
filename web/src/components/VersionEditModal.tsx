@@ -26,9 +26,11 @@ export const VersionEditModal: React.FC<VersionEditModalProps> = ({
   onClose,
 }) => {
   const [name, setName] = useState(version.name || 'Original');
+  const validClassificationIds = new Set(classifications.map((c) => c.id));
   const [selectedClassificationIds, setSelectedClassificationIds] = useState<string[]>(
-    version.classificationIds || []
+    (version.classificationIds || []).filter((id) => validClassificationIds.has(id))
   );
+  const [classificationsTouched, setClassificationsTouched] = useState(false);
   const [notes, setNotes] = useState(version.notes || '');
   const [key, setKey] = useState(version.key || 'C');
   const [bpm, setBpm] = useState(version.bpm == null ? '' : String(version.bpm));
@@ -74,6 +76,7 @@ export const VersionEditModal: React.FC<VersionEditModalProps> = ({
   const [linksTouched, setLinksTouched] = useState(false);
 
   const toggleClassification = (id: string) => {
+    setClassificationsTouched(true);
     setSelectedClassificationIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     );
@@ -132,7 +135,7 @@ export const VersionEditModal: React.FC<VersionEditModalProps> = ({
     const updatedVersion: SongVersion = {
       ...version,
       name: name.trim() || 'Original',
-      classificationIds: selectedClassificationIds,
+      classificationIds: classificationsTouched ? [...selectedClassificationIds] : version.classificationIds,
       notes: notes.trim() || undefined,
       key: key.trim() || 'C',
       bpm: bpmTouched ? (bpm === '' ? null : bpm) : version.bpm,

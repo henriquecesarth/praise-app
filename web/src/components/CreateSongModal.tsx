@@ -12,6 +12,12 @@ interface CreateSongModalProps {
   onClose: () => void;
 }
 
+const sameClassificationIds = (a?: string[], b?: string[]) => {
+  const left = a ?? [];
+  const right = b ?? [];
+  return left.length === right.length && left.every((id, index) => id === right[index]);
+};
+
 export const CreateSongModal: React.FC<CreateSongModalProps> = ({
   song,
   classifications,
@@ -45,8 +51,10 @@ export const CreateSongModal: React.FC<CreateSongModalProps> = ({
 
   const [versions, setVersions] = useState<SongVersion[]>([createDefaultVersion()]);
   const [editingVersionIndex, setEditingVersionIndex] = useState<number | null>(null);
+  const [touchedClassificationVersionIds, setTouchedClassificationVersionIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
+    setTouchedClassificationVersionIds(new Set());
     if (song) {
       setTitle(song.title || '');
       setArtist(song.artist || song.artistName || '');
@@ -105,6 +113,9 @@ export const CreateSongModal: React.FC<CreateSongModalProps> = ({
 
   const handleSaveVersion = (updatedVersion: SongVersion) => {
     if (editingVersionIndex !== null) {
+      if (versions[editingVersionIndex]?.classificationIds !== updatedVersion.classificationIds) {
+        setTouchedClassificationVersionIds((prev) => new Set(prev).add(updatedVersion.id));
+      }
       setVersions((prev) => {
         const next = [...prev];
         next[editingVersionIndex] = updatedVersion;
@@ -137,11 +148,18 @@ export const CreateSongModal: React.FC<CreateSongModalProps> = ({
       // Match by stable version ID so reordering never changes this decision.
       versions: versions.map((version) => {
         const previous = song?.versions.find((item) => item.id === version.id);
-        if (previous && Object.is(previous.bpm, version.bpm)) {
-          const { bpm: _unchangedBpm, ...patch } = version;
-          return patch;
+        if (!previous) return version;
+        const patch: SongVersion = { ...version };
+        if (Object.is(previous.bpm, version.bpm)) {
+          delete patch.bpm;
         }
-        return version;
+        if (
+          !touchedClassificationVersionIds.has(version.id) &&
+          sameClassificationIds(previous.classificationIds, version.classificationIds)
+        ) {
+          delete (patch as Partial<SongVersion>).classificationIds;
+        }
+        return patch;
       }),
     };
 
@@ -154,7 +172,7 @@ export const CreateSongModal: React.FC<CreateSongModalProps> = ({
     }
   };
 
-  const getClassificationNames = (ids: string[]) => {
+  const getClassificationNames = (ids?: string[]) => {
     if (!ids || ids.length === 0) return [];
     return ids
       .map((id) => classifications.find((c) => c.id === id))
