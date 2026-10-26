@@ -10,8 +10,8 @@ Use esta precedência:
 
 1. código e configuração atuais;
 2. testes executáveis;
-3. AGENTS.md e MEMORY.md;
-4. documentos específicos em docs/;
+3. AGENTS.md e documentos específicos da tarefa em docs/;
+4. trechos relevantes de MEMORY.md (contexto histórico, não status operacional);
 5. documentação histórica.
 
 Se o código contradizer um documento, confirme o comportamento no código, atualize a documentação atingida e não preserve a afirmação obsoleta. Use exatamente Unknown / Not yet verified quando não houver evidência suficiente. Nunca registre valores de .env, tokens, senhas, chaves privadas ou credenciais.
@@ -30,11 +30,15 @@ Se o código contradizer um documento, confirme o comportamento no código, atua
 - web/src/api.ts: única camada centralizada de chamadas HTTP e conversão snake_case/camelCase.
 - web/src/components/: telas, modais e componentes visuais (incluindo tela de planos e faturamento).
 - web/src/utils/: transformação de cifras e datas comerciais.
+- mobile/: cliente Flutter Android-first; navegação, features, testes e configuração Android/iOS. Verificar o código para contratos e paridade com Web.
+- .github/workflows/: workflows versionados de CI, incluindo validação Flutter e builds Android.
+- .agents/agents/: definições canônicas de papéis Antigravity; .codex/agents/ e .gemini/agents/ são adaptadores específicos de ferramenta.
+- docs/00-PAINEL.md: entrada do vault Obsidian; docs/01-CONTEXTO-ATUAL.md: resumo de contexto com referências.
 - docs/: documentação operacional e arquitetural.
 - docs/exec-plans/active/: planos vivos de mudanças relevantes.
 - docs/exec-plans/completed/: planos encerrados, preservados como histórico de execução.
 
-Não existem atualmente mobile/, supabase/, Docker, CI/CD ou migrations. O backend possui suíte de testes Vitest em `backend/src/`. O web possui testes co-localizados em `web/src/` e jornadas E2E em `web/e2e/`.
+Há mobile/ e workflows GitHub Actions versionados; não assuma ausência de CI. Não foi identificada uma pasta supabase/ ativa, nem infraestrutura Docker/migrations no mapa consultado; confirme no checkout antes de afirmar ausências. O backend possui suíte de testes Vitest em `backend/src/`. O web possui testes co-localizados em `web/src/` e jornadas E2E em `web/e2e/`. O mobile possui testes Flutter em `mobile/test/`.
 
 ## 4. Architecture Rules
 
@@ -77,7 +81,7 @@ Mais detalhes: docs/development/conventions.md.
 
 Antes de alteração significativa:
 
-1. Leia AGENTS.md e MEMORY.md.
+1. Leia AGENTS.md e docs/01-CONTEXTO-ATUAL.md; consulte de MEMORY.md apenas seções relacionadas à tarefa (não carregue os 128 KB por padrão).
 2. Consulte docs/system-status.md e os documentos da área.
 3. Inspecione o código afetado e suas referências com rg.
 4. Identifique contratos frontend/backend e coleções Firestore atingidos.
@@ -136,7 +140,8 @@ Estado atual:
 - web usa Vitest/Testing Library para unidades/componentes e Playwright para E2E com mocks locais.
 - web não tem script de lint configurado.
 - backend declara npm run lint, mas não inclui dependência/configuração ESLint; o comando não é uma validação operacional até isso ser configurado explicitamente.
-- não existem comandos de format, migrations, Docker ou CI.
+- não foi identificado comando geral de format nem estrutura de migrations ou Docker nesta verificação; existem workflows de CI em .github/workflows/.
+- Flutter: executar, conforme escopo e toolchain local, `cd mobile && flutter analyze` e `flutter test`; consulte os workflows para parâmetros de build/flavors.
 
 Não crie testes ou configuração de lint apenas para satisfazer o protocolo de outra tarefa. Para novo comportamento web ou backend, estenda a cobertura existente no nível apropriado e mantenha qualquer escrita E2E isolada por mocks/fixtures.
 
@@ -167,3 +172,12 @@ O relatório final deve informar:
 - próximo passo natural, quando houver.
 
 Nunca declare teste, lint, build, integração externa ou comportamento como validado sem executar ou inspecionar a evidência correspondente.
+
+## 11. Multi-agent Execution (LouvAIO)
+
+- Instruções operacionais: `docs/development/multi-agent-workflow.md`. O vault Obsidian é a pasta `docs/`, não uma cópia isolada.
+- Identifique o contrato compartilhado e as dependências antes da execução paralela. Delegue investigação, planejamento de testes e revisão de segurança em paralelo sempre que independentes.
+- Um único escritor por arquivo/contrato compartilhado. Para múltiplos escritores use worktrees/branches isolados, propriedade de paths explícita e etapa de integração posterior.
+- Não permita que o implementador declare sua própria revisão como independente. Use reviewer read-only e CI quando aplicável.
+- O orquestrador não deve fazer merge, deploy, alterações em produção ou expor secrets. Confirme explicitamente a base do PR; não assuma `main` para trabalho ainda dependente de uma branch WIP.
+- Registre no relatório: agentes acionados, atribuição/paths, resultados verificáveis, duração por etapa (quando medida), comandos de testes e bloqueios. Não trate ausência de erro reportado pelo modelo como sucesso de validação.
