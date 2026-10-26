@@ -60,3 +60,20 @@ Saída: `.logs/multiagent/<RUN_ID>/` contendo `manifest.json`, logs separados de
 3. Revisão independente por SHA e integração sequencial, sem aceitar relatório de commit anterior.
 4. CI de PR com jobs Web/Backend/Mobile e validação de isolamento de E2E/emulador.
 5. Atualização do Obsidian apenas com decisões duráveis e links aos relatórios verificados.
+
+## Resultado do primeiro piloto local (evidência relatada em 26/10/2026)
+
+Execução no worktree `local/multiagent-pilot`, HEAD `193bff7b349aebd868e3a3d1fddb8505013bb58f`, `RUN_ID=20261026-102504-395fe087`. Saída terminal fornecida pelo operador:
+
+| Executor | Versão | Exit code | Resultado terminal | Duração |
+| --- | --- | ---: | --- | ---: |
+| Antigravity | 1.4.7 | 0 | `SUCCESS` | 729,79 s |
+| Codex | 0.164.0 | 0 | `turn.completed` | 156,32 s |
+
+- Os dois executores produziram arquivos stdout e o supervisor gerou `summary.json`.
+- Comparação ilustrativa: soma sequencial de durações = **886,11 s**; trabalho paralelo dominado pela execução mais longa = **729,79 s** (~17,6% de economia em relação à soma; exclui overhead). Não inferir produtividade de produto a partir de um teste de pesquisa.
+- O `git status --short` foi informado vazio durante a execução. O script também exige working tree e HEAD inalterados antes do encerramento normal; o valor explícito `unchanged` do `summary.json` não foi colado na conversa.
+- O log stderr do Codex **contém erros não fatais para o turno principal**: `failed to refresh available models: request timed out` e `collab spawn failed: ... no rollout found for thread id`. Portanto, **execução principal = PASS**, **subagentes internos do Codex = NOT_VERIFIED/DEGRADED**. Nunca converter `turn.completed` automaticamente em sucesso de todas as subtarefas.
+- O sucesso final do Antigravity veio perto do limite de `--print-timeout 12m`; inspecionar se todas as tarefas esperadas foram concluídas ou somente finalizadas por orçamento de tempo.
+
+**Veredito atual:** piloto de coordenação concorrente concluído com resultados terminais positivos; delegação interna e isolamento efetivo ainda não homologados. Antes de habilitar implementação automática, aprimorar o supervisor para separar `PROCESS_OK`, `TASK_OK`, `DELEGATION_OK`, `GIT_CLEAN` e `EVIDENCE_COMPLETE`. Não executar novamente apenas para repetir o mesmo teste; verificar evidências existentes e passar a um piloto de Issue isolada.
