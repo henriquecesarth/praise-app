@@ -18,13 +18,18 @@ class _FakeSmartChordRepo implements SmartChordRepository {
   int createCallCount = 0;
 
   @override
-  Future<List<SmartChord>> getSmartChords({String? search, int? page, int? limit}) async => [];
+  Future<List<SmartChord>> getSmartChords({
+    String? search,
+    int? page,
+    int? limit,
+  }) async => [];
 
   @override
   Future<List<SmartChord>> getSmartChordsBySong(String songId) async => [];
 
   @override
-  Future<SmartChord> getSmartChordById(String id) async => throw UnimplementedError();
+  Future<SmartChord> getSmartChordById(String id) async =>
+      throw UnimplementedError();
 
   @override
   Future<SmartChord> createSmartChord(Map<String, dynamic> payload) async {
@@ -45,13 +50,19 @@ class _FakeSmartChordRepo implements SmartChordRepository {
   }
 
   @override
-  Future<SmartChord> updateSmartChord(String id, Map<String, dynamic> payload) async => throw UnimplementedError();
+  Future<SmartChord> updateSmartChord(
+    String id,
+    Map<String, dynamic> payload,
+  ) async => throw UnimplementedError();
 
   @override
   Future<void> deleteSmartChord(String id) async {}
 
   @override
-  Future<SmartChordImportDraft> importPdfDraft(List<int> bytes, String filename) async {
+  Future<SmartChordImportDraft> importPdfDraft(
+    List<int> bytes,
+    String filename,
+  ) async {
     if (pdfCompleter != null) await pdfCompleter!.future;
     if (errorToThrow != null) throw errorToThrow!;
     return pdfDraftToReturn ??
@@ -74,9 +85,37 @@ class _FakeSmartChordRepo implements SmartChordRepository {
           artistName: 'Text Artist',
           originalKey: 'A',
           content: '[A]Santo [E]Deus',
-          warnings: [ImportWarning(code: 'CHORD_ALIGNMENT_UNCERTAIN', message: 'Alinhamento incerto')],
+          warnings: [
+            ImportWarning(
+              code: 'CHORD_ALIGNMENT_UNCERTAIN',
+              message: 'Alinhamento incerto',
+            ),
+          ],
           sourceType: 'text',
         );
+  }
+
+  @override
+  Future<SmartChordImportDraft> importUrlDraft(String url) async {
+    return const SmartChordImportDraft(
+      title: 'Cifra URL',
+      content: '',
+      warnings: [],
+      sourceType: 'url',
+    );
+  }
+
+  @override
+  Future<SmartChordImportDraft> importImageDraft(
+    List<int> bytes,
+    String filename,
+  ) async {
+    return const SmartChordImportDraft(
+      title: 'Cifra Imagem',
+      content: '',
+      warnings: [],
+      sourceType: 'image',
+    );
   }
 }
 
@@ -92,8 +131,7 @@ class _FakeLinkRepo implements SmartChordRepertoireLinkRepository {
   Future<SmartChordRepertoireLink> getRepertoireLink({
     required String ministryId,
     required String chordId,
-  }) async =>
-      const SmartChordRepertoireLink.unlinked();
+  }) async => const SmartChordRepertoireLink.unlinked();
 
   @override
   Future<SmartChordRepertoireLink> setRepertoireLink({
@@ -115,10 +153,7 @@ class _FakeLinkRepo implements SmartChordRepertoireLinkRepository {
         songId: songId,
         ministryId: ministryId,
       ),
-      song: SmartChordSongSummary(
-        id: songId,
-        title: 'Song Title',
-      ),
+      song: SmartChordSongSummary(id: songId, title: 'Song Title'),
     );
   }
 
@@ -144,7 +179,10 @@ void main() {
     setUp(() {
       repo = _FakeSmartChordRepo();
       linkRepo = _FakeLinkRepo();
-      notifier = SmartChordImportNotifier(repository: repo, linkRepository: linkRepo);
+      notifier = SmartChordImportNotifier(
+        repository: repo,
+        linkRepository: linkRepo,
+      );
     });
 
     test('initial state is pristine', () {
@@ -153,6 +191,24 @@ void main() {
       expect(notifier.state.savedChord, isNull);
       expect(notifier.state.errorMessage, isNull);
     });
+
+    test(
+      'HTTP status failures remain actionable instead of connection errors',
+      () async {
+        for (final status in [403, 404]) {
+          repo.errorToThrow = AppFailure(
+            message: 'Servidor respondeu HTTP $status',
+            statusCode: status,
+          );
+          await notifier.importText('G\nMinha cifra');
+          expect(notifier.state.status, ImportStatus.error);
+          expect(
+            notifier.state.errorMessage,
+            'Servidor respondeu HTTP $status',
+          );
+        }
+      },
+    );
 
     test('importPdf extracts draft and transitions to preview state', () async {
       await notifier.importPdf([1, 2, 3], 'test.pdf');
@@ -164,54 +220,75 @@ void main() {
       expect(notifier.state.draft!.sourceType, equals('pdf'));
     });
 
-    test('importText extracts draft with warnings and transitions to preview', () async {
-      await notifier.importText('A       E\nSanto Deus');
+    test(
+      'importText extracts draft with warnings and transitions to preview',
+      () async {
+        await notifier.importText('A       E\nSanto Deus');
 
-      expect(notifier.state.status, equals(ImportStatus.preview));
-      expect(notifier.state.draft, isNotNull);
-      expect(notifier.state.draft!.title, equals('Text Song'));
-      expect(notifier.state.draft!.warnings.length, equals(1));
-      expect(notifier.state.draft!.warnings.first.code, equals('CHORD_ALIGNMENT_UNCERTAIN'));
-    });
+        expect(notifier.state.status, equals(ImportStatus.preview));
+        expect(notifier.state.draft, isNotNull);
+        expect(notifier.state.draft!.title, equals('Text Song'));
+        expect(notifier.state.draft!.warnings.length, equals(1));
+        expect(
+          notifier.state.draft!.warnings.first.code,
+          equals('CHORD_ALIGNMENT_UNCERTAIN'),
+        );
+      },
+    );
 
-    test('stale extraction response from older generation is discarded', () async {
-      final completer = Completer<void>();
-      repo.pdfCompleter = completer;
+    test(
+      'stale extraction response from older generation is discarded',
+      () async {
+        final completer = Completer<void>();
+        repo.pdfCompleter = completer;
 
-      // Start import in gen 1
-      final future = notifier.importPdf([1, 2, 3], 'stale.pdf');
+        // Start import in gen 1
+        final future = notifier.importPdf([1, 2, 3], 'stale.pdf');
 
-      // Reset notifier to increment generation
-      notifier.reset();
-      expect(notifier.state.status, equals(ImportStatus.initial));
+        // Reset notifier to increment generation
+        notifier.reset();
+        expect(notifier.state.status, equals(ImportStatus.initial));
 
-      // Resolve background extraction
-      completer.complete();
-      await future;
+        // Resolve background extraction
+        completer.complete();
+        await future;
 
-      // State should remain initial because gen 1 was discarded
-      expect(notifier.state.status, equals(ImportStatus.initial));
-      expect(notifier.state.draft, isNull);
-    });
+        // State should remain initial because gen 1 was discarded
+        expect(notifier.state.status, equals(ImportStatus.initial));
+        expect(notifier.state.draft, isNull);
+      },
+    );
 
-    test('saveChord persists personal SmartChord and transitions to saved state', () async {
-      await notifier.importText('A       E\nSanto Deus');
-      notifier.updateDraft(title: 'Custom Title', artistName: 'Custom Artist');
+    test(
+      'saveChord persists personal SmartChord and transitions to saved state',
+      () async {
+        await notifier.importText('A       E\nSanto Deus');
+        notifier.updateDraft(
+          title: 'Custom Title',
+          artistName: 'Custom Artist',
+        );
 
-      final created = await notifier.saveChord();
+        final created = await notifier.saveChord();
 
-      expect(created, isNotNull);
-      expect(created!.title, equals('Custom Title'));
-      expect(repo.lastCreatedPayload!['artist_name'], equals('Custom Artist'));
-      expect(notifier.state.status, equals(ImportStatus.saved));
-      expect(notifier.state.savedChord, isNotNull);
-    });
+        expect(created, isNotNull);
+        expect(created!.title, equals('Custom Title'));
+        expect(
+          repo.lastCreatedPayload!['artist_name'],
+          equals('Custom Artist'),
+        );
+        expect(notifier.state.status, equals(ImportStatus.saved));
+        expect(notifier.state.savedChord, isNotNull);
+      },
+    );
 
     test('linkToRepertoire links saved chord to ministry song', () async {
       await notifier.importText('A       E\nSanto Deus');
       await notifier.saveChord();
 
-      final success = await notifier.linkToRepertoire(ministryId: 'min-1', songId: 'song-42');
+      final success = await notifier.linkToRepertoire(
+        ministryId: 'min-1',
+        songId: 'song-42',
+      );
 
       expect(success, isTrue);
       expect(linkRepo.linkCallCount, equals(1));
@@ -220,43 +297,66 @@ void main() {
       expect(notifier.state.status, equals(ImportStatus.success));
     });
 
-    test('linkToRepertoire partial success safety: preserved savedChord if linking fails', () async {
-      await notifier.importText('A       E\nSanto Deus');
-      await notifier.saveChord();
+    test(
+      'linkToRepertoire partial success safety: preserved savedChord if linking fails',
+      () async {
+        await notifier.importText('A       E\nSanto Deus');
+        await notifier.saveChord();
 
-      linkRepo.errorToThrow = const AppFailure(message: 'Falha de rede ao vincular.');
+        linkRepo.errorToThrow = const AppFailure(
+          message: 'Falha de rede ao vincular.',
+        );
 
-      final success = await notifier.linkToRepertoire(ministryId: 'min-1', songId: 'song-42');
+        final success = await notifier.linkToRepertoire(
+          ministryId: 'min-1',
+          songId: 'song-42',
+        );
 
-      expect(success, isFalse);
-      expect(notifier.state.savedChord, isNotNull); // Chord is preserved!
-      expect(notifier.state.status, equals(ImportStatus.saved));
-      expect(notifier.state.linkError, equals('Não foi possível concluir a operação. Tente novamente.'));
-    });
+        expect(success, isFalse);
+        expect(notifier.state.savedChord, isNotNull); // Chord is preserved!
+        expect(notifier.state.status, equals(ImportStatus.saved));
+        expect(
+          notifier.state.linkError,
+          equals('Não foi possível concluir a operação. Tente novamente.'),
+        );
+      },
+    );
 
-    test('late remote create after reset is discarded locally and never returned for linking', () async {
-      await notifier.importText('G\nLetra');
-      repo.createCompleter = Completer<void>();
-      final pending = notifier.saveChord();
-      final duplicate = await notifier.saveChord();
-      expect(duplicate, isNull);
-      expect(repo.createCallCount, 1);
-      notifier.reset();
-      repo.createCompleter!.complete();
-      expect(await pending, isNull);
-      expect(repo.lastCreatedPayload, isNotNull); // remote create completed
-      expect(notifier.state.savedChord, isNull);
-      expect(await notifier.linkToRepertoire(ministryId: 'new-ministry', songId: 'song'), isFalse);
-      expect(linkRepo.linkCallCount, 0);
-    });
+    test(
+      'late remote create after reset is discarded locally and never returned for linking',
+      () async {
+        await notifier.importText('G\nLetra');
+        repo.createCompleter = Completer<void>();
+        final pending = notifier.saveChord();
+        final duplicate = await notifier.saveChord();
+        expect(duplicate, isNull);
+        expect(repo.createCallCount, 1);
+        notifier.reset();
+        repo.createCompleter!.complete();
+        expect(await pending, isNull);
+        expect(repo.lastCreatedPayload, isNotNull); // remote create completed
+        expect(notifier.state.savedChord, isNull);
+        expect(
+          await notifier.linkToRepertoire(
+            ministryId: 'new-ministry',
+            songId: 'song',
+          ),
+          isFalse,
+        );
+        expect(linkRepo.linkCallCount, 0);
+      },
+    );
 
-    test('disposing during extraction discards completion without reading disposed state', () async {
-      repo.pdfCompleter = Completer<void>();
-      final pending = notifier.importPdf([1], 'pending.pdf');
-      notifier.dispose();
-      repo.pdfCompleter!.complete();
-      await pending;
-    });
+    test(
+      'disposing during extraction discards completion without reading disposed state',
+      () async {
+        repo.pdfCompleter = Completer<void>();
+        final pending = notifier.importPdf([1], 'pending.pdf');
+        notifier.dispose();
+        repo.pdfCompleter!.complete();
+        await pending;
+      },
+    );
 
     test('disposing during create returns no stale chord', () async {
       await notifier.importText('G\nLetra');
@@ -268,7 +368,10 @@ void main() {
     });
 
     test('failed extraction can retry and clears the error', () async {
-      repo.errorToThrow = const AppFailure(message: 'PDF inválido.', statusCode: 400);
+      repo.errorToThrow = const AppFailure(
+        message: 'PDF inválido.',
+        statusCode: 400,
+      );
       await notifier.importPdf([1], 'invalid.pdf');
       expect(notifier.state.draft, isNull);
       expect(notifier.state.errorMessage, 'PDF inválido.');
@@ -278,17 +381,88 @@ void main() {
       expect(notifier.state.errorMessage, isNull);
     });
 
-    test('reset during link discards local completion without deleting the saved chord remotely', () async {
-      await notifier.importText('G\nLetra');
-      await notifier.saveChord();
-      linkRepo.linkCompleter = Completer<void>();
-      final pending = notifier.linkToRepertoire(ministryId: 'min-a', songId: 'song');
-      notifier.reset();
-      linkRepo.linkCompleter!.complete();
-      expect(await pending, isFalse);
-      expect(notifier.state.savedChord, isNull);
-      expect(notifier.state.status, ImportStatus.initial);
-      expect(repo.createCallCount, 1);
+    test(
+      'reset during link discards local completion without deleting the saved chord remotely',
+      () async {
+        await notifier.importText('G\nLetra');
+        await notifier.saveChord();
+        linkRepo.linkCompleter = Completer<void>();
+        final pending = notifier.linkToRepertoire(
+          ministryId: 'min-a',
+          songId: 'song',
+        );
+        notifier.reset();
+        linkRepo.linkCompleter!.complete();
+        expect(await pending, isFalse);
+        expect(notifier.state.savedChord, isNull);
+        expect(notifier.state.status, ImportStatus.initial);
+        expect(repo.createCallCount, 1);
+      },
+    );
+
+    test('importUrl fetches draft and transitions to preview', () async {
+      await notifier.importUrl('https://cifraclub.com.br/test/');
+      expect(notifier.state.status, ImportStatus.preview);
+      expect(notifier.state.draft?.sourceType, 'url');
     });
+
+    test('importImage fetches draft and transitions to preview', () async {
+      await notifier.importImage([1, 2, 3], 'foto.png');
+      expect(notifier.state.status, ImportStatus.preview);
+      expect(notifier.state.draft?.sourceType, 'image');
+    });
+
+    test('manual-paste drafts cannot be saved before normalization', () async {
+      notifier.replaceDraft(
+        const SmartChordImportDraft(
+          title: 'From URL',
+          content: '[C] Already typed below',
+          warnings: [],
+          sourceType: 'url',
+          requiresManualPaste: true,
+        ),
+      );
+
+      final saved = await notifier.saveChord();
+
+      expect(saved, isNull);
+      expect(repo.createCallCount, 0);
+      expect(
+        notifier.state.errorMessage,
+        'Cole e normalize o conteúdo da cifra antes de salvar.',
+      );
+    });
+
+    test(
+      'OCR preview never saves automatically and unknown key blocks saving',
+      () async {
+        notifier.replaceDraft(
+          const SmartChordImportDraft(
+            title: 'OCR review',
+            content: '[Bb] [Eb/G]\nUma palavra inteira',
+            sourceType: 'image',
+            displayedKey: 'G',
+            capo: 3,
+            sourceUrl: 'https://www.cifraclub.com.br/a/b/',
+            warnings: [],
+          ),
+        );
+        expect(repo.createCallCount, 0);
+        expect(await notifier.saveChord(), isNull);
+        expect(repo.createCallCount, 0);
+        expect(notifier.state.errorMessage, contains('Tom não identificado'));
+        notifier.updateDraft(originalKey: 'Bb');
+        expect(repo.createCallCount, 0);
+        expect(await notifier.saveChord(), isNotNull);
+        expect(repo.createCallCount, 1);
+        expect(repo.lastCreatedPayload?['original_key'], 'Bb');
+        expect(repo.lastCreatedPayload?['displayed_key'], 'G');
+        expect(repo.lastCreatedPayload?['capo'], 3);
+        expect(
+          repo.lastCreatedPayload?['source_url'],
+          'https://www.cifraclub.com.br/a/b/',
+        );
+      },
+    );
   });
 }

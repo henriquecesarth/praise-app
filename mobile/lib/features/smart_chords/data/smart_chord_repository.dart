@@ -2,26 +2,39 @@ import 'package:dio/dio.dart';
 import '../../../../core/errors/app_failure.dart';
 import '../../../../core/http/api_client.dart';
 import '../domain/smart_chord.dart';
+import 'manual_import_drafts.dart';
+import 'image_import_draft.dart';
+import '../services/image_ocr_service.dart';
 import '../domain/smart_chord_import.dart';
 
 abstract class SmartChordRepository {
-  Future<List<SmartChord>> getSmartChords({String? search, int? page, int? limit});
+  Future<List<SmartChord>> getSmartChords(
+      {String? search, int? page, int? limit});
   Future<List<SmartChord>> getSmartChordsBySong(String songId);
   Future<SmartChord> getSmartChordById(String id);
   Future<SmartChord> createSmartChord(Map<String, dynamic> payload);
   Future<SmartChord> updateSmartChord(String id, Map<String, dynamic> payload);
   Future<void> deleteSmartChord(String id);
-  Future<SmartChordImportDraft> importPdfDraft(List<int> bytes, String filename);
+  Future<SmartChordImportDraft> importPdfDraft(
+      List<int> bytes, String filename);
   Future<SmartChordImportDraft> importTextDraft(String text);
+  Future<SmartChordImportDraft> importUrlDraft(String url);
+  Future<SmartChordImportDraft> importImageDraft(
+      List<int> bytes, String filename);
 }
 
 class HttpSmartChordRepository implements SmartChordRepository {
   final ApiClient _apiClient;
+  final ImageOcrService _imageOcrService;
 
-  HttpSmartChordRepository({required ApiClient apiClient}) : _apiClient = apiClient;
+  HttpSmartChordRepository(
+      {required ApiClient apiClient, ImageOcrService? imageOcrService})
+      : _apiClient = apiClient,
+        _imageOcrService = imageOcrService ?? ImageOcrService();
 
   @override
-  Future<List<SmartChord>> getSmartChords({String? search, int? page, int? limit}) async {
+  Future<List<SmartChord>> getSmartChords(
+      {String? search, int? page, int? limit}) async {
     try {
       final queryParams = <String, dynamic>{};
       if (search != null && search.trim().isNotEmpty) {
@@ -89,7 +102,8 @@ class HttpSmartChordRepository implements SmartChordRepository {
         '/smart-chords/$id',
       );
       if (response.data == null) {
-        throw const AppFailure(message: 'Cifra não encontrada.', statusCode: 404);
+        throw const AppFailure(
+            message: 'Cifra não encontrada.', statusCode: 404);
       }
       return SmartChord.fromJson(response.data!);
     } on DioException catch (e) {
@@ -118,7 +132,8 @@ class HttpSmartChordRepository implements SmartChordRepository {
   }
 
   @override
-  Future<SmartChord> updateSmartChord(String id, Map<String, dynamic> payload) async {
+  Future<SmartChord> updateSmartChord(
+      String id, Map<String, dynamic> payload) async {
     try {
       final response = await _apiClient.dio.put<Map<String, dynamic>>(
         '/smart-chords/$id',
@@ -147,7 +162,8 @@ class HttpSmartChordRepository implements SmartChordRepository {
   }
 
   @override
-  Future<SmartChordImportDraft> importPdfDraft(List<int> bytes, String filename) async {
+  Future<SmartChordImportDraft> importPdfDraft(
+      List<int> bytes, String filename) async {
     try {
       final formData = FormData.fromMap({
         'file': MultipartFile.fromBytes(
@@ -188,6 +204,30 @@ class HttpSmartChordRepository implements SmartChordRepository {
       throw _apiClient.mapDioException(e);
     } catch (e) {
       throw AppFailure(message: e.toString());
+    }
+  }
+
+  @override
+  Future<SmartChordImportDraft> importUrlDraft(String url) async =>
+      manualUrlDraft(url);
+
+  @override
+  Future<SmartChordImportDraft> importImageDraft(
+      List<int> bytes, String filename) async {
+    try {
+      final result = await _imageOcrService.recognize(bytes, filename);
+      return imageDraftFromRecognizedText(result.text, filename,
+          originalText: result.originalText, warnings: result.warnings);
+    } on FormatException catch (error) {
+      throw AppFailure(
+          message: error.message.toString(), code: 'OCR_INVALID_IMAGE');
+    } on AppFailure {
+      rethrow;
+    } catch (_) {
+      throw const AppFailure(
+          message:
+              'Não foi possível reconhecer a imagem. Use uma captura mais nítida ou cole o texto da cifra.',
+          code: 'OCR_FAILED');
     }
   }
 }

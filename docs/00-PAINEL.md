@@ -21,7 +21,7 @@ status: ativo
 
 - [[01-CONTEXTO-ATUAL|Contexto Operacional Compacto (Estado Verdadeiro)]] — Status verificado de builds, testes, releases e handoffs.
 - [[system-status|Matriz de Status do Sistema]] — Inconsistências catalogadas e histórico de módulos.
-- [[development/multi-agent-workflow|Protocolo Multiagente Permanente V2]] — Hierarquia Argon / Gemini Flash / Codex, políticas de teste e limites.
+- [[development/multi-agent-workflow|Protocolo Multiagente Permanente V2]] — Codex nativo, Sol para orquestração/revisão e Luna para workers; políticas de teste e limites.
 - [[development/github-ai-handoff|Handoff de IA, GitHub e Antigravity]] — Integração operacional entre ferramentas e canais.
 
 ---
@@ -94,9 +94,9 @@ status: ativo
 
 | Item | Status | Observações |
 | --- | --- | --- |
-| **Blocker A (Historical Aliases)** | VALIDATED (Local) | Resolvido no commit `3aa3ed6` (`fix/r4-m15-release-blockers`), aguardando integração à WIP. |
-| **Blocker B (Orphan Classifications)** | VALIDATED (Local) | Resolvido no commit `3aa3ed6` (`fix/r4-m15-release-blockers`), aguardando integração à WIP. |
-| **R4-M15 Integração na WIP** | PENDING | Preparado na branch local, aguardando aprovação para PR contra `wip/repertoire-versions-smartchords-20261022`. |
+| **Blocker A (Historical Aliases)** | VALIDATED | Resolvido e integrado na WIP via PR #20 (commit `9f4f0bb`). |
+| **Blocker B (Orphan Classifications)** | VALIDATED | Resolvido e integrado na WIP via PR #20 (commit `9f4f0bb`). |
+| **R4-M15 Integração na WIP** | INTEGRATED | Integrado à WIP `wip/repertoire-versions-smartchords-20261022` via PR #20 (`9f4f0bb`). |
 | **Preview CORS** | PENDING | Allowlist exata da origem Web Preview pendente de configuração operacional (não usar wildcard). |
 | **JWT Operational Check** | UNKNOWN / PENDING | Chave JWT em preview/produção deve ser confirmada operacionalmente sem expor segredos. |
 | **Vercel Backend Build** | PENDING | Falha de infraestrutura do adaptador `fsPath` no deploy da Vercel. |

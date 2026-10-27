@@ -189,6 +189,9 @@ export function mapSmartChordFromApi(item: any): SmartChord {
     artistName: item?.artist_name ?? item?.artistName ?? null,
     songId: item?.song_id ?? item?.songId ?? null,
     originalKey: item?.original_key ?? item?.originalKey ?? 'C',
+    ...(item?.source_url != null ? { sourceUrl: item.source_url } : {}),
+    ...(item?.displayed_key != null ? { displayedKey: item.displayed_key } : {}),
+    ...(item?.capo != null ? { capo: item.capo } : {}),
     content: item?.content ?? '',
     createdAt: item?.created_at ?? item?.createdAt ?? '',
     updatedAt: item?.updated_at ?? item?.updatedAt ?? '',
@@ -1370,12 +1373,15 @@ export const api = {
   createSmartChord: async (payload: Partial<SmartChord>): Promise<SmartChord> => {
     const body: Record<string, any> = {
       title: payload.title,
-      original_key: payload.originalKey || 'C',
+      original_key: payload.originalKey,
       content: payload.content || '',
     };
     if (payload.artistName !== undefined) {
       body.artist_name = payload.artistName || null;
     }
+    if (payload.sourceUrl !== undefined) body.source_url = payload.sourceUrl;
+    if (payload.displayedKey !== undefined) body.displayed_key = payload.displayedKey;
+    if (payload.capo !== undefined) body.capo = payload.capo;
     if (payload.artistId !== undefined) {
       body.artist_id = payload.artistId || null;
     }
@@ -1397,6 +1403,9 @@ export const api = {
     if (payload.title !== undefined) body.title = payload.title;
     if (payload.artistName !== undefined) body.artist_name = payload.artistName || null;
     if (payload.originalKey !== undefined) body.original_key = payload.originalKey;
+    if (payload.sourceUrl !== undefined) body.source_url = payload.sourceUrl;
+    if (payload.displayedKey !== undefined) body.displayed_key = payload.displayedKey;
+    if (payload.capo !== undefined) body.capo = payload.capo;
     if (payload.content !== undefined) body.content = payload.content;
     if (payload.artistId !== undefined) body.artist_id = payload.artistId || null;
     if (payload.songId !== undefined) body.song_id = payload.songId || null;
@@ -1508,6 +1517,9 @@ export const api = {
       title: result.title || '',
       artistName: result.artist_name || null,
       originalKey: result.original_key || null,
+      ...(result.displayed_key != null ? { displayedKey: result.displayed_key } : {}),
+      ...(result.capo != null ? { capo: result.capo } : {}),
+      ...(result.original_text != null ? { originalText: result.original_text } : {}),
       content: result.content || '',
       warnings: result.warnings || [],
       sourceType: result.source_type || 'text',
@@ -1528,9 +1540,58 @@ export const api = {
       title: result.title || '',
       artistName: result.artist_name || null,
       originalKey: result.original_key || null,
+      ...(result.displayed_key != null ? { displayedKey: result.displayed_key } : {}),
+      ...(result.capo != null ? { capo: result.capo } : {}),
+      ...(result.original_text != null ? { originalText: result.original_text } : {}),
       content: result.content || '',
       warnings: result.warnings || [],
       sourceType: result.source_type || 'pdf',
+    };
+  },
+
+  importSmartChordUrl: async (url: string): Promise<SmartChordImportDraft> => {
+    const response = await fetch(`${API_URL}/smart-chords/import/url`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ url }),
+    });
+    const result = await handleResponse<any>(response);
+    return {
+      title: result.title || '',
+      artistName: result.artist_name || null,
+      originalKey: result.original_key || null,
+      ...(result.displayed_key != null ? { displayedKey: result.displayed_key } : {}),
+      ...(result.capo != null ? { capo: result.capo } : {}),
+      ...(result.original_text != null ? { originalText: result.original_text } : {}),
+      content: result.content || '',
+      warnings: result.warnings || [],
+      sourceType: result.source_type || 'url',
+      requiresManualPaste: result.requires_manual_paste || false,
+      sourceUrl: result.source_url || url,
+    };
+  },
+
+  importSmartChordImage: async (file: File): Promise<SmartChordImportDraft> => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${API_URL}/smart-chords/import/image`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: formData,
+    });
+    const result = await handleResponse<any>(response);
+    return {
+      title: result.title || '',
+      artistName: result.artist_name || null,
+      originalKey: result.original_key || null,
+      ...(result.displayed_key != null ? { displayedKey: result.displayed_key } : {}),
+      ...(result.capo != null ? { capo: result.capo } : {}),
+      ...(result.original_text != null ? { originalText: result.original_text } : {}),
+      content: result.content || '',
+      warnings: result.warnings || [],
+      sourceType: result.source_type || 'image',
+      requiresManualPaste: result.requires_manual_paste || false,
     };
   },
 

@@ -20,6 +20,12 @@ abstract class UserChordFontPreferencesStorage {
   String? getUserChordFontFamily(String userId);
 }
 
+/// Optional capability for keeping ministry context preferences per account.
+abstract class UserMinistrySelectionStorage {
+  Future<void> setSelectedMinistryIdForUser(String userId, String? ministryId);
+  String? getSelectedMinistryIdForUser(String userId);
+}
+
 /// Safe extension providing default non-throwing access to chord font preferences
 /// on any [PreferencesStorage] instance.
 extension UserChordFontPreferencesStorageExtension on PreferencesStorage {
@@ -43,13 +49,18 @@ extension UserChordFontPreferencesStorageExtension on PreferencesStorage {
 
 /// SharedPreferences implementation of [PreferencesStorage].
 class SharedPreferencesStorage
-    implements PreferencesStorage, UserChordFontPreferencesStorage {
+    implements
+        PreferencesStorage,
+        UserChordFontPreferencesStorage,
+        UserMinistrySelectionStorage {
   final SharedPreferences _prefs;
 
   static const _keySelectedMinistryId = 'louvaio_selected_ministry_id';
   static const _keyThemeMode = 'louvaio_theme_mode';
   static String _keyUserChordFont(String userId) =>
       'louvaio_chord_font_user_$userId';
+  static String _keyUserSelectedMinistry(String userId) =>
+      'louvaio_selected_ministry_user_$userId';
 
   SharedPreferencesStorage(this._prefs);
 
@@ -66,6 +77,21 @@ class SharedPreferencesStorage
   String? getSelectedMinistryId() {
     return _prefs.getString(_keySelectedMinistryId);
   }
+
+  @override
+  Future<void> setSelectedMinistryIdForUser(
+      String userId, String? ministryId) async {
+    final key = _keyUserSelectedMinistry(userId);
+    if (ministryId == null) {
+      await _prefs.remove(key);
+    } else {
+      await _prefs.setString(key, ministryId);
+    }
+  }
+
+  @override
+  String? getSelectedMinistryIdForUser(String userId) =>
+      _prefs.getString(_keyUserSelectedMinistry(userId));
 
   @override
   Future<void> setThemeMode(String? themeMode) async {

@@ -61,9 +61,9 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
   SmartChordImportNotifier({
     required SmartChordRepository repository,
     required SmartChordRepertoireLinkRepository linkRepository,
-  })  : _repository = repository,
-        _linkRepository = linkRepository,
-        super(const SmartChordImportState());
+  }) : _repository = repository,
+       _linkRepository = linkRepository,
+       super(const SmartChordImportState());
 
   bool _isCurrent(int generation) => mounted && state.generation == generation;
 
@@ -72,8 +72,13 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
       if (error.statusCode == 401 || error.code == 'SESSION_CHANGED') {
         return 'Sessão expirada ou alterada. Faça login novamente.';
       }
-      if (error.code == 'NETWORK_ERROR') return 'Falha de conexão. Verifique sua internet e tente novamente.';
-      if (error.statusCode == 400 || error.statusCode == 413) return error.message;
+      if (error.code == 'NETWORK_ERROR') {
+        return 'Falha de conexão. Verifique sua internet e tente novamente.';
+      }
+      if (error.code?.startsWith('OCR_') == true) return error.message;
+      if (error.statusCode != null) {
+        return error.message;
+      }
     }
     return 'Não foi possível concluir a operação. Tente novamente.';
   }
@@ -134,6 +139,58 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
     }
   }
 
+  Future<void> importUrl(String url) async {
+    final currentGen = state.generation + 1;
+    state = state.copyWith(
+      status: ImportStatus.extracting,
+      clearError: true,
+      generation: currentGen,
+    );
+
+    try {
+      final draft = await _repository.importUrlDraft(url);
+      if (!_isCurrent(currentGen)) return;
+
+      state = state.copyWith(
+        status: ImportStatus.preview,
+        draft: draft,
+        clearError: true,
+      );
+    } catch (e) {
+      if (!_isCurrent(currentGen)) return;
+      state = state.copyWith(
+        status: ImportStatus.error,
+        errorMessage: _message(e),
+      );
+    }
+  }
+
+  Future<void> importImage(List<int> bytes, String filename) async {
+    final currentGen = state.generation + 1;
+    state = state.copyWith(
+      status: ImportStatus.extracting,
+      clearError: true,
+      generation: currentGen,
+    );
+
+    try {
+      final draft = await _repository.importImageDraft(bytes, filename);
+      if (!_isCurrent(currentGen)) return;
+
+      state = state.copyWith(
+        status: ImportStatus.preview,
+        draft: draft,
+        clearError: true,
+      );
+    } catch (e) {
+      if (!_isCurrent(currentGen)) return;
+      state = state.copyWith(
+        status: ImportStatus.error,
+        errorMessage: _message(e),
+      );
+    }
+  }
+
   void updateDraft({
     String? title,
     String? artistName,
@@ -151,10 +208,28 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
     );
   }
 
+  void replaceDraft(SmartChordImportDraft draft) {
+    if (!mounted) return;
+    state = state.copyWith(
+      status: ImportStatus.preview,
+      draft: draft,
+      clearError: true,
+    );
+  }
+
   Future<SmartChord?> saveChord() async {
     final draft = state.draft;
-    if (draft == null || state.status == ImportStatus.saving ||
-        state.status == ImportStatus.linking || state.savedChord != null) {
+    if (draft == null ||
+        state.status == ImportStatus.saving ||
+        state.status == ImportStatus.linking ||
+        state.savedChord != null) {
+      return null;
+    }
+
+    if (draft.requiresManualPaste) {
+      state = state.copyWith(
+        errorMessage: 'Cole e normalize o conteúdo da cifra antes de salvar.',
+      );
       return null;
     }
 
@@ -166,7 +241,17 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
       return null;
     }
     if (content.isEmpty) {
-      state = state.copyWith(errorMessage: 'O conteúdo da cifra não pode ser vazio.');
+      state = state.copyWith(
+        errorMessage: 'O conteúdo da cifra não pode ser vazio.',
+      );
+      return null;
+    }
+    final originalKey = draft.originalKey?.trim();
+    if (originalKey == null || originalKey.isEmpty) {
+      state = state.copyWith(
+        errorMessage:
+            'Tom não identificado. Informe o tom original após revisar a fonte.',
+      );
       return null;
     }
 
@@ -180,9 +265,14 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
     try {
       final payload = {
         'title': title,
-        'artist_name': draft.artistName?.trim().isNotEmpty == true ? draft.artistName!.trim() : null,
-        'original_key': draft.originalKey?.trim().isNotEmpty == true ? draft.originalKey!.trim() : 'C',
+        'artist_name': draft.artistName?.trim().isNotEmpty == true
+            ? draft.artistName!.trim()
+            : null,
+        'original_key': originalKey,
         'content': content,
+        if (draft.sourceUrl != null) 'source_url': draft.sourceUrl,
+        if (draft.displayedKey != null) 'displayed_key': draft.displayedKey,
+        if (draft.capo != null) 'capo': draft.capo,
       };
 
       final created = await _repository.createSmartChord(payload);

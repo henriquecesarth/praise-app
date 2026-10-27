@@ -61,7 +61,7 @@ class FakeMinistryContextNotifier extends StateNotifier<MinistryContextState>
   }
 
   @override
-  Future<void> bootstrap() async {}
+  Future<void> bootstrap({String? userId}) async {}
 
   @override
   Future<void> refresh() async {}
@@ -70,7 +70,7 @@ class FakeMinistryContextNotifier extends StateNotifier<MinistryContextState>
   Future<void> selectMinistry(Ministry ministry) async {}
 
   @override
-  Future<void> reset() async {}
+  Future<void> reset({bool preserveSavedSelection = false}) async {}
 }
 
 void main() {

@@ -1,10 +1,20 @@
-﻿import 'package:dio/dio.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/app/environment/app_environment.dart';
 import 'package:louvaio_mobile/core/errors/app_failure.dart';
 import 'package:louvaio_mobile/core/http/api_client.dart';
 import 'package:louvaio_mobile/core/logging/app_logger.dart';
 import 'package:louvaio_mobile/features/smart_chords/data/smart_chord_repository.dart';
+import 'package:louvaio_mobile/features/smart_chords/services/image_ocr_service.dart';
+
+class FakeImageOcrService implements ImageOcrService {
+  int calls = 0;
+  @override
+  Future<ImageOcrResult> recognize(List<int> bytes, String filename) async {
+    calls++;
+    return const ImageOcrResult(text: 'Tom: Bb\nBb Eb/G\nUma canção inteira');
+  }
+}
 
 class MockAdapter implements HttpClientAdapter {
   final Future<ResponseBody> Function(RequestOptions options) _handler;
@@ -52,6 +62,31 @@ void main() {
   });
 
   group('HttpSmartChordRepository', () {
+    test(
+        'URL guidance and real OCR result prepare drafts without HTTP even when offline',
+        () async {
+      final ocr = FakeImageOcrService();
+      repository =
+          HttpSmartChordRepository(apiClient: apiClient, imageOcrService: ocr);
+      var requests = 0;
+      apiClient.dio.httpClientAdapter = MockAdapter((opts) async {
+        requests++;
+        throw DioException(
+            requestOptions: opts, type: DioExceptionType.connectionError);
+      });
+      final url = await repository
+          .importUrlDraft('https://cifraclub.com.br/artista/minha-cifra/');
+      final image =
+          await repository.importImageDraft([0xff, 0xd8, 0xff], 'cifra.jpg');
+      expect(url.title, 'Minha Cifra');
+      expect(url.requiresManualPaste, isTrue);
+      expect(image.requiresManualPaste, isFalse);
+      expect(url.content, isEmpty);
+      expect(image.content, contains('[Bb] [Eb/G]'));
+      expect(image.originalKey, 'Bb');
+      expect(ocr.calls, 1);
+      expect(requests, 0);
+    });
     test('getSmartChords calls GET /smart-chords with query params', () async {
       apiClient.dio.httpClientAdapter = MockAdapter((opts) async {
         expect(opts.path, equals('/smart-chords'));
@@ -205,18 +240,21 @@ void main() {
 
       expect(
         () => repository.getSmartChordById('missing'),
-        throwsA(isA<AppFailure>().having((f) => f.statusCode, 'statusCode', 404)),
+        throwsA(
+            isA<AppFailure>().having((f) => f.statusCode, 'statusCode', 404)),
       );
     });
 
     test('maps 400 validation error to AppFailure', () async {
       apiClient.dio.httpClientAdapter = MockAdapter((opts) async {
-        return jsonError(400, '{"error":{"message":"Música e Artista devem pertencer ao mesmo ministério."}}');
+        return jsonError(400,
+            '{"error":{"message":"Música e Artista devem pertencer ao mesmo ministério."}}');
       });
 
       expect(
         () => repository.createSmartChord({'title': ''}),
-        throwsA(isA<AppFailure>().having((f) => f.statusCode, 'statusCode', 400)),
+        throwsA(
+            isA<AppFailure>().having((f) => f.statusCode, 'statusCode', 400)),
       );
     });
   });

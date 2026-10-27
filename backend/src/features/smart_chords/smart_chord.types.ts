@@ -1,5 +1,16 @@
 import { z } from 'zod';
 
+const smartChordSourceUrlSchema = z.string().url().max(2048).refine((value) => {
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'https:' || url.protocol === 'http:') &&
+      !url.username && !url.password && !url.port &&
+      ['cifraclub.com.br', 'www.cifraclub.com.br'].includes(url.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}, 'URL de origem não suportada.');
+
 export const singleDocumentIdSchema = z
   .string()
   .regex(/^[A-Za-z0-9_-]{1,100}$/, 'ID deve conter apenas caracteres alfanuméricos, hífen ou sublinhado (máx 100 caracteres).');
@@ -11,6 +22,9 @@ export const createSmartChordSchema = z.object({
   song_id: singleDocumentIdSchema.nullable().optional(), // @deprecated: compatibilidade com clientes legados
   original_key: z.string().trim().min(1, 'Tom original é obrigatório.').max(10),
   content: z.string().min(1, 'O conteúdo da cifra é obrigatório.'),
+  source_url: smartChordSourceUrlSchema.nullable().optional(),
+  displayed_key: z.string().trim().min(1).max(10).nullable().optional(),
+  capo: z.number().int().min(0).max(24).nullable().optional(),
 });
 
 export const updateSmartChordSchema = z.object({
@@ -20,6 +34,9 @@ export const updateSmartChordSchema = z.object({
   song_id: singleDocumentIdSchema.nullable().optional(), // @deprecated: compatibilidade com clientes legados
   original_key: z.string().trim().min(1, 'Tom original não pode ser vazio.').max(10).optional(),
   content: z.string().min(1, 'Conteúdo não pode ser vazio.').optional(),
+  source_url: smartChordSourceUrlSchema.nullable().optional(),
+  displayed_key: z.string().trim().min(1).max(10).nullable().optional(),
+  capo: z.number().int().min(0).max(24).nullable().optional(),
 });
 
 export const setSmartChordRepertoireLinkSchema = z.object({
@@ -41,6 +58,9 @@ export interface SmartChord {
   song_id: string | null;
   original_key: string;
   content: string;
+  source_url?: string | null;
+  displayed_key?: string | null;
+  capo?: number | null;
   created_at: string;
   updated_at: string;
   artist?: {
