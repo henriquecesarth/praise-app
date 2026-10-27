@@ -96,6 +96,30 @@ describe('SmartChordImportModal Component', () => {
     expect(container.firstChild).toBeNull();
   });
 
+  it('never substitutes C for unknown imported key and requires explicit confirmation', async () => {
+    importSmartChordText.mockResolvedValueOnce({
+      title: 'Unknown key', artistName: null, originalKey: null,
+      content: '[Bb]Uma palavra inteira', warnings: [], sourceType: 'text',
+      displayedKey: 'G', capo: 3,
+    });
+    render(<SmartChordImportModal isOpen={true} onClose={mockOnClose} onSuccess={mockOnSuccess} />);
+    fireEvent.click(screen.getByText('Colar Texto'));
+    fireEvent.change(screen.getByPlaceholderText(/Graças Te dou pelo Teu amor/i), {
+      target: { value: '[Bb]Uma palavra inteira' },
+    });
+    fireEvent.click(screen.getByText('Analisar e Pré-visualizar Texto'));
+    await screen.findByText('Tom não identificado. Selecione o tom original após conferir a fonte.');
+    const save = screen.getByRole('button', { name: 'Salvar Cifra Pessoal' });
+    expect(save).toBeDisabled();
+    expect(createSmartChord).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Tom Original' }), { target: { value: 'Bb' } });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    await waitFor(() => expect(createSmartChord).toHaveBeenCalledWith(expect.objectContaining({
+      originalKey: 'Bb', displayedKey: 'G', capo: 3,
+    })));
+  });
+
   it('renders input tabs and switches between PDF and Text modes', () => {
     render(
       <SmartChordImportModal
@@ -828,6 +852,10 @@ describe('SmartChordImportModal Component', () => {
   });
 
   it('normalizes guided paste without replacing reviewed metadata or saving automatically', async () => {
+    importSmartChordText.mockResolvedValueOnce({
+      title: 'Texto colado', artistName: null, originalKey: null,
+      content: '[A]Santo [E]Deus', warnings: [], sourceType: 'text',
+    });
     importSmartChordUrl.mockResolvedValueOnce({
       title: 'Lugar Secreto', artistName: 'Gabriela Rocha', originalKey: null,
       content: '', warnings: [], sourceType: 'url', requiresManualPaste: true,
@@ -847,9 +875,12 @@ describe('SmartChordImportModal Component', () => {
     expect(screen.getByDisplayValue('Meu arranjo')).toBeInTheDocument();
     expect(screen.getByDisplayValue('Gabriela Rocha')).toBeInTheDocument();
     expect(createSmartChord).not.toHaveBeenCalled();
+    expect(screen.getByText('Salvar Cifra Pessoal')).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Tom Original'), { target: { value: 'C' } });
     fireEvent.click(screen.getByText('Salvar Cifra Pessoal'));
     await waitFor(() => expect(createSmartChord).toHaveBeenCalledWith({
       title: 'Meu arranjo', artistName: 'Gabriela Rocha', originalKey: 'C', content: '[A]Santo [E]Deus',
+      sourceUrl: 'https://www.cifraclub.com.br/gabriela-rocha/lugar-secreto/',
     }));
   });
 

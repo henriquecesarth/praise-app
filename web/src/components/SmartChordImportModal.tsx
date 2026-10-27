@@ -33,13 +33,15 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
   const [inputUrl, setInputUrl] = useState('');
   const [requiresManualPaste, setRequiresManualPaste] = useState(false);
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
+  const [displayedKey, setDisplayedKey] = useState<string | null>(null);
+  const [capo, setCapo] = useState<number | null>(null);
   const [previewTab, setPreviewTab] = useState<'edit' | 'rendered'>('edit');
   const imageInputRef = useRef<HTMLInputElement>(null);
 
   // Draft fields
   const [title, setTitle] = useState('');
   const [artistName, setArtistName] = useState('');
-  const [originalKey, setOriginalKey] = useState('C');
+  const [originalKey, setOriginalKey] = useState('');
   const [content, setContent] = useState('');
   const [warnings, setWarnings] = useState<ImportWarning[]>([]);
 
@@ -98,10 +100,12 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
       setInputUrl('');
       setRequiresManualPaste(false);
       setSourceUrl(null);
+      setDisplayedKey(null);
+      setCapo(null);
       setPreviewTab('edit');
       setTitle('');
       setArtistName('');
-      setOriginalKey('C');
+      setOriginalKey('');
       setContent('');
       setWarnings([]);
       setErrorMessage(null);
@@ -202,7 +206,9 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
   const applyDraft = (draft: SmartChordImportDraft) => {
     setTitle(draft.title || 'Nova Cifra');
     setArtistName(draft.artistName || '');
-    setOriginalKey(draft.originalKey || 'C');
+    setOriginalKey(draft.originalKey || '');
+    setDisplayedKey(draft.displayedKey ?? null);
+    setCapo(draft.capo ?? null);
     setContent(draft.content || '');
     setWarnings(draft.warnings || []);
     setRequiresManualPaste(Boolean(draft.requiresManualPaste));
@@ -303,6 +309,9 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
       if (!isCurrent(currentGen)) return;
       // Keep the reviewed URL/image metadata and normalize only the pasted body.
       setContent(draft.content);
+      setOriginalKey(current => current || draft.originalKey || '');
+      setDisplayedKey(draft.displayedKey ?? null);
+      setCapo(draft.capo ?? null);
       setWarnings(draft.warnings || []);
       setRequiresManualPaste(false);
     } catch (err: any) {
@@ -327,6 +336,10 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
       setErrorMessage('O conteúdo da cifra não pode ser vazio.');
       return;
     }
+    if (!originalKey.trim()) {
+      setErrorMessage('Tom não identificado. Selecione o tom original após revisar a fonte.');
+      return;
+    }
 
     const currentGen = ++generationRef.current;
     setIsSaving(true);
@@ -336,8 +349,11 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
       const created = await api.createSmartChord({
         title: title.trim(),
         artistName: artistName.trim() || null,
-        originalKey: originalKey || 'C',
+        originalKey: originalKey.trim(),
         content: content.trim(),
+        ...(sourceUrl ? { sourceUrl } : {}),
+        ...(displayedKey ? { displayedKey } : {}),
+        ...(capo != null ? { capo } : {}),
       });
 
       if (!isCurrent(currentGen)) return;
@@ -792,10 +808,12 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                   <select
                     className="form-control"
                     value={originalKey}
+                    aria-label="Tom Original"
                     disabled={isSaving || isLinking}
                     onChange={(e) => setOriginalKey(e.target.value)}
                     style={{ minHeight: '40px' }}
                   >
+                    <option value="">Tom não identificado</option>
                     {STANDARD_KEYS.map((k) => (
                       <option key={k} value={k}>{k}</option>
                     ))}
@@ -804,6 +822,11 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
               </div>
 
               {/* View/Edit Mode Tabs */}
+              {!originalKey && <p>Tom não identificado. Selecione o tom original após conferir a fonte.</p>}
+              {(displayedKey || capo != null) && <p>
+                {displayedKey && `Tom exibido na fonte: ${displayedKey}. `}
+                {capo != null && `Capotraste: casa ${capo}.`}
+              </p>}
               <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.1)', gap: '8px' }}>
                 <button
                   type="button"
@@ -995,7 +1018,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                 type="button"
                 className="btn btn-primary"
                 onClick={handleSaveChord}
-                disabled={isSaving || isNormalizing || requiresManualPaste}
+                disabled={isSaving || isNormalizing || requiresManualPaste || !originalKey.trim()}
                 style={{ minHeight: '40px' }}
               >
                 {isSaving ? 'Salvando...' : 'Salvar Cifra Pessoal'}

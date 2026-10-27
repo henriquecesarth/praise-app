@@ -61,9 +61,9 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
   SmartChordImportNotifier({
     required SmartChordRepository repository,
     required SmartChordRepertoireLinkRepository linkRepository,
-  })  : _repository = repository,
-        _linkRepository = linkRepository,
-        super(const SmartChordImportState());
+  }) : _repository = repository,
+       _linkRepository = linkRepository,
+       super(const SmartChordImportState());
 
   bool _isCurrent(int generation) => mounted && state.generation == generation;
 
@@ -75,6 +75,7 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
       if (error.code == 'NETWORK_ERROR') {
         return 'Falha de conexão. Verifique sua internet e tente novamente.';
       }
+      if (error.code?.startsWith('OCR_') == true) return error.message;
       if (error.statusCode != null) {
         return error.message;
       }
@@ -241,7 +242,16 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
     }
     if (content.isEmpty) {
       state = state.copyWith(
-          errorMessage: 'O conteúdo da cifra não pode ser vazio.');
+        errorMessage: 'O conteúdo da cifra não pode ser vazio.',
+      );
+      return null;
+    }
+    final originalKey = draft.originalKey?.trim();
+    if (originalKey == null || originalKey.isEmpty) {
+      state = state.copyWith(
+        errorMessage:
+            'Tom não identificado. Informe o tom original após revisar a fonte.',
+      );
       return null;
     }
 
@@ -258,10 +268,11 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
         'artist_name': draft.artistName?.trim().isNotEmpty == true
             ? draft.artistName!.trim()
             : null,
-        'original_key': draft.originalKey?.trim().isNotEmpty == true
-            ? draft.originalKey!.trim()
-            : 'C',
+        'original_key': originalKey,
         'content': content,
+        if (draft.sourceUrl != null) 'source_url': draft.sourceUrl,
+        if (draft.displayedKey != null) 'displayed_key': draft.displayedKey,
+        if (draft.capo != null) 'capo': draft.capo,
       };
 
       final created = await _repository.createSmartChord(payload);

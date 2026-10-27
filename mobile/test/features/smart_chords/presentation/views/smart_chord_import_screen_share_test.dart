@@ -180,20 +180,24 @@ class FakeSmartChordRepository implements SmartChordRepository {
 
   @override
   Future<SmartChordImportDraft> importImageDraft(
-      List<int> bytes, String filename) async {
+    List<int> bytes,
+    String filename,
+  ) async {
     lastImageBytes = bytes;
     return imageDraftResult ??
         const SmartChordImportDraft(
           title: 'Cifra da Foto',
           artistName: 'Artista da Foto',
-          content: '',
+          originalKey: 'Bb',
+          content: '[Bb] [Eb/G]\nUma palavra inteira',
+          originalText: 'Bb Eb/G\nUma palavra inteira',
           warnings: [
             ImportWarning(
-                code: 'IMAGE_MANUAL_TRANSCRIPTION_REQUIRED',
-                message: 'Transcreva manualmente.')
+              code: 'OCR_REVIEW_REQUIRED',
+              message: 'Revise o texto reconhecido.',
+            ),
           ],
           sourceType: 'image',
-          requiresManualPaste: true,
         );
   }
 
@@ -445,39 +449,48 @@ void main() {
     });
 
     testWidgets(
-        'shared Image auto-detects and triggers Image extraction preview',
-        (tester) async {
-      final imageBytes =
-          Uint8List.fromList([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
-      await tester.pumpWidget(
-        buildTestScreen(
-          initialPayload: SharedImportPayload.image(
-            imageBytes: imageBytes,
-            imageFileName: 'foto_partitura.png',
+      'shared Image auto-detects and triggers Image extraction preview',
+      (tester) async {
+        final imageBytes = Uint8List.fromList([
+          0x89,
+          0x50,
+          0x4E,
+          0x47,
+          0x0D,
+          0x0A,
+          0x1A,
+          0x0A,
+        ]);
+        await tester.pumpWidget(
+          buildTestScreen(
+            initialPayload: SharedImportPayload.image(
+              imageBytes: imageBytes,
+              imageFileName: 'foto_partitura.png',
+            ),
           ),
-        ),
-      );
-      await tester.pump();
-      await tester.pumpAndSettle();
+        );
+        await tester.pump();
+        await tester.pumpAndSettle();
 
-      expect(fakeRepo.lastImageBytes, imageBytes);
-      expect(find.text('Cifra da Foto'), findsOneWidget);
-      expect(find.textContaining('Transcreva manualmente'), findsOneWidget);
-      expect(
-          find.text(
-              'A imagem foi validada. O conteúdo precisa ser transcrito manualmente; nenhum OCR é executado.'),
-          findsOneWidget);
-      expect(find.text('Normalizar texto e continuar'), findsOneWidget);
-      expect(
-        tester
-            .widget<ElevatedButton>(
-              find.widgetWithText(ElevatedButton, 'Salvar Cifra Pessoal'),
-            )
-            .onPressed,
-        isNull,
-      );
-      expect(fakeRepo.createCalls, 0);
-    });
+        expect(fakeRepo.lastImageBytes, imageBytes);
+        expect(find.text('Cifra da Foto'), findsOneWidget);
+        expect(
+          find.textContaining('Revise o texto reconhecido'),
+          findsOneWidget,
+        );
+        expect(find.text('Texto original para conferência'), findsOneWidget);
+        expect(find.text('[Bb] [Eb/G]\nUma palavra inteira'), findsOneWidget);
+        expect(
+          tester
+              .widget<ElevatedButton>(
+                find.widgetWithText(ElevatedButton, 'Salvar Cifra Pessoal'),
+              )
+              .onPressed,
+          isNotNull,
+        );
+        expect(fakeRepo.createCalls, 0);
+      },
+    );
 
     testWidgets(
         'URL import requiring manual paste displays assisted extraction banner',
@@ -512,7 +525,7 @@ void main() {
         isNull,
       );
       expect(fakeRepo.createCalls, 0);
-      expect(find.textContaining('Identificamos título e artista pela URL'),
+      expect(find.textContaining('Abra a origem e copie a cifra'),
           findsOneWidget);
       expect(find.text('Normalizar texto e continuar'), findsOneWidget);
     });
@@ -585,6 +598,7 @@ void main() {
       expect(fakeRepo.lastCreatedPayload?['artist_name'], 'Edited artist');
       expect(fakeRepo.lastCreatedPayload?['original_key'], 'A');
       expect(fakeRepo.lastCreatedPayload?['content'], '[G] Acorde e [D] letra');
+      expect(fakeRepo.lastCreatedPayload?['source_url'], 'https://www.cifraclub.com.br/artist/song/');
     });
 
     testWidgets('late clipboard response does not replace newer URL input',

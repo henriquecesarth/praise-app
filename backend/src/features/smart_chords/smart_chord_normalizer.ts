@@ -252,7 +252,7 @@ export function normalizeInstrumentalProgression(line: string): string | null {
     if (/\S$/.test(flattened) && /^\S/.test(inner)) flattened += ' ';
     flattened += inner;
   }
-  if (!structural && !(chordCount >= 2 && (bracketed || label))) return null;
+  if (!structural && !(chordCount >= 1 && label) && !(chordCount >= 2 && bracketed)) return null;
   if (!chordCount && !structural) return null;
   return prefix + '[ ' + flattened.trim() + ' ]';
 }
@@ -271,6 +271,7 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
       content: '',
       warnings: [{ code: 'UNSUPPORTED_LAYOUT', message: 'Conteúdo vazio fornecido para importação.' }],
       source_type: 'text',
+      original_text: rawText,
     };
   }
 
@@ -280,6 +281,11 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
   let title = '';
   let artistName: string | null = null;
   let originalKey: string | null = null;
+  const explicitTomOriginal: string[] = [];
+  const explicitTom: string[] = [];
+  const explicitKey: string[] = [];
+  const explicitDisplayedKey: string[] = [];
+  let capo: number | null = null;
 
   const contentLines: string[] = [];
   let i = 0;
@@ -306,9 +312,37 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
       continue;
     }
 
-    const keyMatch = trimmed.match(/^(?:Tom|Key|Tom\s+Original):\s*([A-G][#b]?(?:m|maj|min)?)\s*$/i);
+    const displayedKeyMatch = trimmed.match(/^(?:Tom\s+(?:atual|cifrado|transposto)|Displayed\s+Key|Current\s+Key):\s*([A-G][#b]?(?:m|maj|min)?)\s*$/i);
+    if (displayedKeyMatch) {
+      explicitDisplayedKey.push(displayedKeyMatch[1].trim());
+      i++;
+      continue;
+    }
+
+    const originalTomMatch = trimmed.match(/^(?:Tom\s+Original|Original\s+Key):\s*([A-G][#b]?(?:m|maj|min)?)\s*$/i);
+    if (originalTomMatch) {
+      explicitTomOriginal.push(originalTomMatch[1].trim());
+      i++;
+      continue;
+    }
+
+    const tomMatch = trimmed.match(/^Tom:\s*([A-G][#b]?(?:m|maj|min)?)\s*$/i);
+    if (tomMatch) {
+      explicitTom.push(tomMatch[1].trim());
+      i++;
+      continue;
+    }
+
+    const keyMatch = trimmed.match(/^Key:\s*([A-G][#b]?(?:m|maj|min)?)\s*$/i);
     if (keyMatch) {
-      originalKey = keyMatch[1].trim();
+      explicitKey.push(keyMatch[1].trim());
+      i++;
+      continue;
+    }
+
+    const capoMatch = trimmed.match(/^(?:Capo|Capotraste):\s*(\d{1,2})\s*$/i);
+    if (capoMatch && Number(capoMatch[1]) <= 24) {
+      capo = Number(capoMatch[1]);
       i++;
       continue;
     }
@@ -316,9 +350,28 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
     break;
   }
 
+  const selectedKeyValues = explicitTomOriginal.length ? explicitTomOriginal :
+    explicitTom.length ? explicitTom : explicitKey;
+  const normalizedSelectedKeys = new Set(selectedKeyValues.map((key) => key.toLocaleLowerCase('en-US')));
+  const originalKeyAmbiguous = normalizedSelectedKeys.size > 1;
+  originalKey = originalKeyAmbiguous ? null : selectedKeyValues[0] ?? null;
+  const displayedKeyValues = explicitDisplayedKey.length ? explicitDisplayedKey :
+    explicitTomOriginal.length ? explicitTom : [];
+  const normalizedDisplayedKeys = new Set(displayedKeyValues.map((key) => key.toLocaleLowerCase('en-US')));
+  const displayedKeyAmbiguous = normalizedDisplayedKeys.size > 1;
+  const displayedKey = displayedKeyAmbiguous ? null : displayedKeyValues[0] ?? null;
+  if (originalKeyAmbiguous || displayedKeyAmbiguous) {
+    warnings.push({
+      code: 'METADATA_AMBIGUOUS',
+      message: 'Metadados de tom conflitantes; revise a cifra antes de salvar.',
+    });
+  }
+
   // Canonicalize each independently authored musical line before the inline-chord fast path.
   for (let lineIdx = i; lineIdx < rawLines.length; lineIdx++) {
-    const progression = normalizeInstrumentalProgression(rawLines[lineIdx]);
+    // Share/import sources may prefix every visual line with an invisible
+    // marker; it must not hide section labels from progression recognition.
+    const progression = normalizeInstrumentalProgression(rawLines[lineIdx].replace(/^\u200B+/, ''));
     if (progression !== null) {
       rawLines[lineIdx] = progression;
       if (/\|\|:|:\|\||%/.test(progression) && rawLines[lineIdx + 1]?.trim()) {
@@ -497,17 +550,13 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
     title = 'Cifra Importada';
   }
 
-  // If original key was not extracted, try to deduce from the first valid chord
+  // Chord presence does not establish the original key. Only explicit source
+  // metadata is authoritative; otherwise leave the key unknown.
   if (!originalKey) {
-    const firstChordMatch = finalContent.match(/\[[|:\s]*([A-G][#b]?(?:m|maj|min)?)[^\]]*\]/);
-    if (firstChordMatch) {
-      originalKey = firstChordMatch[1];
-    } else {
-      warnings.push({
-        code: 'MISSING_ORIGINAL_KEY',
-        message: 'Tom original não identificado automaticamente no texto.',
-      });
-    }
+    warnings.push({
+      code: 'MISSING_ORIGINAL_KEY',
+      message: 'Tom original não identificado automaticamente no texto.',
+    });
   }
 
   return {
@@ -517,5 +566,8 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
     content: finalContent,
     warnings,
     source_type: 'text',
+    original_text: rawText,
+    ...(displayedKey ? { displayed_key: displayedKey } : {}),
+    ...(capo !== null ? { capo } : {}),
   };
 }

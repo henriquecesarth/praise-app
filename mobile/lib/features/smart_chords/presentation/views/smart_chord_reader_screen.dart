@@ -316,6 +316,28 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
         ),
         actions: [
           if (chord != null) ...[
+            if (chord.sourceUrl != null || chord.displayedKey != null || chord.capo != null)
+              IconButton(
+                tooltip: 'Origem da cifra',
+                icon: const Icon(Icons.link),
+                onPressed: () => showDialog<void>(
+                    context: context,
+                    builder: (dialogContext) => AlertDialog(
+                          title: const Text('Origem da cifra'),
+                    content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      if (chord.sourceUrl != null) SelectableText(chord.sourceUrl!),
+                      if (chord.displayedKey != null) Text('Tom exibido na fonte: ${chord.displayedKey}'),
+                      if (chord.capo != null) Text('Capotraste: casa ${chord.capo}'),
+                    ])),
+                          actions: [
+                            TextButton(
+                                onPressed: () =>
+                                    Navigator.of(dialogContext).pop(),
+                                child: const Text('Fechar'))
+                          ],
+                        )),
+              ),
             IconButton(
               tooltip: 'Editar Cifra',
               icon: const Icon(Icons.edit_outlined),

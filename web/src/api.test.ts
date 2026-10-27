@@ -312,6 +312,25 @@ describe('API Client & Structured Error Handling', () => {
       expect(result.id).toBe('sc-created');
     });
 
+    it('preserves original/displayed keys, capo and source without inventing a default key', async () => {
+      const fetchSpy = vi.fn().mockImplementation(async () => new Response(
+        JSON.stringify({ id: 'created', original_key: 'Bb', displayed_key: 'G',
+          capo: 3, source_url: 'https://www.cifraclub.com.br/a/b/' }), { status: 201 },
+      ));
+      global.fetch = fetchSpy;
+      const result = await api.createSmartChord({ title: 'Test', originalKey: 'Bb',
+        content: '[Bb]Uma palavra', displayedKey: 'G', capo: 3,
+        sourceUrl: 'https://www.cifraclub.com.br/a/b/' });
+      expect(JSON.parse(fetchSpy.mock.calls[0][1].body)).toMatchObject({
+        original_key: 'Bb', displayed_key: 'G', capo: 3,
+        source_url: 'https://www.cifraclub.com.br/a/b/',
+      });
+      expect(result).toMatchObject({ originalKey: 'Bb', displayedKey: 'G', capo: 3,
+        sourceUrl: 'https://www.cifraclub.com.br/a/b/' });
+      await api.createSmartChord({ title: 'Missing key', content: '[Bb]Uma palavra' });
+      expect(JSON.parse(fetchSpy.mock.calls[1][1].body)).not.toHaveProperty('original_key');
+    });
+
     it('updateSmartChord envia PUT para /smart-chords/:id', async () => {
       const mockUpdated = {
         id: 'sc-123',

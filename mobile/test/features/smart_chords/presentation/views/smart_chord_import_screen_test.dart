@@ -255,6 +255,38 @@ void main() {
       );
     }
 
+    testWidgets(
+      'unknown source key is visible and requires explicit selection',
+      (tester) async {
+        repo.draftToReturn = const SmartChordImportDraft(
+          title: 'Unknown key',
+          content: '[Bb] [Eb/G]\nUma palavra inteira',
+          sourceType: 'text',
+          warnings: [],
+        );
+        await tester.pumpWidget(createTestWidget());
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Colar Texto'));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byType(TextField),
+          'Bb Eb/G\nUma palavra inteira',
+        );
+        await tester.tap(find.text('Analisar e Pré-visualizar Texto'));
+        await tester.pumpAndSettle();
+        final save = find.widgetWithText(
+          ElevatedButton,
+          'Salvar Cifra Pessoal',
+        );
+        expect(tester.widget<ElevatedButton>(save).onPressed, isNull);
+        expect(find.textContaining('Tom não identificado.'), findsOneWidget);
+        final key = find.byType(DropdownButton<String>);
+        tester.widget<DropdownButton<String>>(key).onChanged?.call('Bb');
+        await tester.pumpAndSettle();
+        expect(tester.widget<ElevatedButton>(save).onPressed, isNotNull);
+      },
+    );
+
     testWidgets('renders input mode with PDF and Text tabs', (tester) async {
       await tester.pumpWidget(createTestWidget());
       await tester.pumpAndSettle();

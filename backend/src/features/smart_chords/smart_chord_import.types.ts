@@ -28,6 +28,9 @@ export interface SmartChordImportDraft {
   content: string;
   warnings: ImportWarning[];
   source_type: 'pdf' | 'text' | 'url' | 'image';
+  original_text?: string | null;
+  displayed_key?: string | null;
+  capo?: number | null;
   requires_manual_paste?: boolean;
   source_url?: string;
 }

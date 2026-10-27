@@ -227,6 +227,9 @@ export interface SmartChord {
   artistName?: string | null;
   songId: string | null;
   originalKey: string;
+  sourceUrl?: string | null;
+  displayedKey?: string | null;
+  capo?: number | null;
   content: string;
   createdAt: string;
   updatedAt: string;
@@ -279,6 +282,9 @@ export interface SmartChordImportDraft {
   sourceType: 'pdf' | 'text' | 'url' | 'image';
   requiresManualPaste?: boolean;
   sourceUrl?: string;
+  displayedKey?: string | null;
+  capo?: number | null;
+  originalText?: string;
 }
 
 export interface Artist {

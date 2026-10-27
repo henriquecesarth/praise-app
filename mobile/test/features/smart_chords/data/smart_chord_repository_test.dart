@@ -5,6 +5,16 @@ import 'package:louvaio_mobile/core/errors/app_failure.dart';
 import 'package:louvaio_mobile/core/http/api_client.dart';
 import 'package:louvaio_mobile/core/logging/app_logger.dart';
 import 'package:louvaio_mobile/features/smart_chords/data/smart_chord_repository.dart';
+import 'package:louvaio_mobile/features/smart_chords/services/image_ocr_service.dart';
+
+class FakeImageOcrService implements ImageOcrService {
+  int calls = 0;
+  @override
+  Future<ImageOcrResult> recognize(List<int> bytes, String filename) async {
+    calls++;
+    return const ImageOcrResult(text: 'Tom: Bb\nBb Eb/G\nUma canção inteira');
+  }
+}
 
 class MockAdapter implements HttpClientAdapter {
   final Future<ResponseBody> Function(RequestOptions options) _handler;
@@ -52,8 +62,12 @@ void main() {
   });
 
   group('HttpSmartChordRepository', () {
-    test('URL and image prepare manual drafts without HTTP even when offline',
+    test(
+        'URL guidance and real OCR result prepare drafts without HTTP even when offline',
         () async {
+      final ocr = FakeImageOcrService();
+      repository =
+          HttpSmartChordRepository(apiClient: apiClient, imageOcrService: ocr);
       var requests = 0;
       apiClient.dio.httpClientAdapter = MockAdapter((opts) async {
         requests++;
@@ -66,9 +80,11 @@ void main() {
           await repository.importImageDraft([0xff, 0xd8, 0xff], 'cifra.jpg');
       expect(url.title, 'Minha Cifra');
       expect(url.requiresManualPaste, isTrue);
-      expect(image.requiresManualPaste, isTrue);
+      expect(image.requiresManualPaste, isFalse);
       expect(url.content, isEmpty);
-      expect(image.content, isEmpty);
+      expect(image.content, contains('[Bb] [Eb/G]'));
+      expect(image.originalKey, 'Bb');
+      expect(ocr.calls, 1);
       expect(requests, 0);
     });
     test('getSmartChords calls GET /smart-chords with query params', () async {

@@ -1,8 +1,10 @@
 import '../widgets/musical_progression_line.dart';
+import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../../app/providers.dart';
 import '../../domain/shared_import_payload.dart';
 import '../../domain/smart_chord_import.dart';
@@ -13,10 +15,7 @@ import '../widgets/song_link_picker_modal.dart';
 class SmartChordImportScreen extends ConsumerStatefulWidget {
   final SharedImportPayload? initialPayload;
 
-  const SmartChordImportScreen({
-    super.key,
-    this.initialPayload,
-  });
+  const SmartChordImportScreen({super.key, this.initialPayload});
 
   @override
   ConsumerState<SmartChordImportScreen> createState() =>
@@ -49,7 +48,7 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
   final _titleController = TextEditingController();
   final _artistController = TextEditingController();
   final _contentController = TextEditingController();
-  String _originalKey = 'C';
+  String _originalKey = '';
   int _previewMode = 0; // 0 = raw/edit, 1 = rendered
   late SmartChordImportNotifier _notifier;
   String? _boundUserId;
@@ -82,7 +81,7 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
     _titleController.clear();
     _artistController.clear();
     _contentController.clear();
-    _originalKey = 'C';
+    _originalKey = '';
     _previewMode = 0;
   }
 
@@ -105,8 +104,10 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
     _tabController = TabController(length: 4, vsync: this);
     _notifier = ref.read(smartChordImportNotifierProvider.notifier);
     _boundUserId = ref.read(authNotifierProvider).user?.id;
-    _boundMinistryId =
-        ref.read(ministryContextNotifierProvider).selectedMinistry?.id;
+    _boundMinistryId = ref
+        .read(ministryContextNotifierProvider)
+        .selectedMinistry
+        ?.id;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _abandoned) return;
       _clearWorkflow();
@@ -120,17 +121,15 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
     if (payload == null || !mounted || _abandoned) return;
 
     if (payload.hasError) {
-      final msg = payload.errorMessage ??
+      final msg =
+          payload.errorMessage ??
           'Não foi possível processar o item compartilhado.';
       setState(() {
         _fileError = msg;
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(msg),
-            backgroundColor: Colors.red.shade800,
-          ),
+          SnackBar(content: Text(msg), backgroundColor: Colors.red.shade800),
         );
       }
       return;
@@ -311,14 +310,16 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
     if (text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('Cole o texto da cifra antes de continuar.')),
+          content: Text('Cole o texto da cifra antes de continuar.'),
+        ),
       );
       return;
     }
     if (text.length > SharedImportPayload.maxSharedTextLength) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('O texto excede o limite de 100.000 caracteres.')),
+          content: Text('O texto excede o limite de 100.000 caracteres.'),
+        ),
       );
       return;
     }
@@ -334,7 +335,8 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
     if (url.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('Informe a URL da cifra antes de continuar.')),
+          content: Text('Informe a URL da cifra antes de continuar.'),
+        ),
       );
       return;
     }
@@ -449,7 +451,8 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
           SharedImportPayload.maxSharedTextLength) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-              content: Text('O texto excede o limite de 100.000 caracteres.')),
+            content: Text('O texto excede o limite de 100.000 caracteres.'),
+          ),
         );
       }
     } catch (_) {
@@ -483,14 +486,16 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
     if (text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('Cole o conteúdo da cifra antes de continuar.')),
+          content: Text('Cole o conteúdo da cifra antes de continuar.'),
+        ),
       );
       return;
     }
     if (text.length > SharedImportPayload.maxSharedTextLength) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('O texto excede o limite de 100.000 caracteres.')),
+          content: Text('O texto excede o limite de 100.000 caracteres.'),
+        ),
       );
       return;
     }
@@ -508,21 +513,28 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
     if (resultState.status != ImportStatus.preview) return;
     final normalized = resultState.draft;
     if (normalized == null) return;
-    final remainingWarnings = sourceDraft.warnings.where((warning) =>
-        warning.code != 'URL_MANUAL_PASTE_REQUIRED' &&
-        warning.code != 'IMAGE_MANUAL_TRANSCRIPTION_REQUIRED');
-    _notifier.replaceDraft(SmartChordImportDraft(
-      title: editedTitle,
-      artistName: editedArtist.isEmpty ? null : editedArtist,
-      originalKey: editedOriginalKey.isNotEmpty
-          ? editedOriginalKey
-          : normalized.originalKey ?? sourceDraft.originalKey,
-      content: normalized.content,
-      warnings: [...remainingWarnings, ...normalized.warnings],
-      sourceType: sourceDraft.sourceType,
-      requiresManualPaste: false,
-      sourceUrl: sourceDraft.sourceUrl,
-    ));
+    final remainingWarnings = sourceDraft.warnings.where(
+      (warning) =>
+          warning.code != 'URL_MANUAL_PASTE_REQUIRED' &&
+          warning.code != 'IMAGE_MANUAL_TRANSCRIPTION_REQUIRED',
+    );
+    _notifier.replaceDraft(
+      SmartChordImportDraft(
+        title: editedTitle,
+        artistName: editedArtist.isEmpty ? null : editedArtist,
+        originalKey: editedOriginalKey.isNotEmpty
+            ? editedOriginalKey
+            : normalized.originalKey ?? sourceDraft.originalKey,
+        content: normalized.content,
+        warnings: [...remainingWarnings, ...normalized.warnings],
+        sourceType: sourceDraft.sourceType,
+        requiresManualPaste: false,
+        sourceUrl: sourceDraft.sourceUrl,
+        originalText: normalized.originalText ?? text,
+        displayedKey: normalized.displayedKey,
+        capo: normalized.capo,
+      ),
+    );
     _syncDraftToControllers();
   }
 
@@ -531,9 +543,117 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
     if (draft != null) {
       _titleController.text = draft.title;
       _artistController.text = draft.artistName ?? '';
-      _originalKey = draft.originalKey ?? 'C';
+      _originalKey = draft.originalKey ?? '';
       _contentController.text = draft.content;
     }
+  }
+
+  Future<void> _openSource() async {
+    final source = ref.read(smartChordImportNotifierProvider).draft?.sourceUrl;
+    final uri = source == null ? null : Uri.tryParse(source);
+    if (uri == null || !['http', 'https'].contains(uri.scheme)) return;
+    try {
+      if (await launchUrl(uri, mode: LaunchMode.externalApplication)) return;
+    } catch (_) {}
+    if (!mounted || _abandoned) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Não foi possível abrir a origem. Copie o link exibido.'),
+      ),
+    );
+  }
+
+  Future<void> _pasteAndReviewSource() async {
+    final operation = ++_operation;
+    try {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      if (!mounted || !_isCurrent(operation)) return;
+      final text = data?.text ?? '';
+      if (text.isEmpty ||
+          text.length > SharedImportPayload.maxSharedTextLength) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Copie o conteúdo da cifra (até 100.000 caracteres) e tente novamente.',
+            ),
+          ),
+        );
+        return;
+      }
+      _textController.text = text;
+      await _normalizeManualPaste();
+    } catch (_) {
+      if (!mounted || !_isCurrent(operation)) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Não foi possível ler o clipboard. Cole o texto no campo abaixo.',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _readSourceTextFile() async {
+    final operation = ++_operation;
+    try {
+      final files = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['txt', 'pro', 'chordpro'],
+      );
+      if (!_isCurrent(operation) || files.isEmpty) return;
+      final file = files.first;
+      final size = await file.length();
+      if (!_isCurrent(operation)) return;
+      if (size == null || size > 400000) throw const FormatException();
+      final bytes = await file.readAsBytes();
+      if (!_isCurrent(operation)) return;
+      if (bytes.length > 400000) throw const FormatException();
+      final text = utf8.decode(bytes);
+      if (text.length > SharedImportPayload.maxSharedTextLength) {
+        throw const FormatException();
+      }
+      _textController.text = text;
+      await _normalizeManualPaste();
+    } catch (_) {
+      if (!mounted || !_isCurrent(operation)) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Use um arquivo de texto UTF-8 de até 100.000 caracteres.',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _readSourceImage() async {
+    final source = ref.read(smartChordImportNotifierProvider).draft;
+    if (source == null) return;
+    final title = _titleController.text;
+    final artist = _artistController.text;
+    _imageBytes = null;
+    _imageFileName = null;
+    final pickerOperation = _operation + 1;
+    await _pickImageFile();
+    if (!_isCurrent(pickerOperation) ||
+        _imageBytes == null ||
+        _imageFileName == null) {
+      return;
+    }
+    final operation = ++_operation;
+    await _notifier.importImage(_imageBytes!, _imageFileName!);
+    if (!_isCurrent(operation)) return;
+    final result = ref.read(smartChordImportNotifierProvider);
+    if (result.status != ImportStatus.preview || result.draft == null) return;
+    _notifier.replaceDraft(
+      result.draft!.copyWith(
+        title: title,
+        artistName: artist,
+        sourceUrl: source.sourceUrl,
+      ),
+    );
+    _syncDraftToControllers();
   }
 
   Future<void> _saveChord() async {
@@ -607,7 +727,8 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
       if (next.selectedMinistry?.id != _boundMinistryId) _discardContext();
     });
     final state = ref.watch(smartChordImportNotifierProvider);
-    final isMutationPending = state.status == ImportStatus.saving ||
+    final isMutationPending =
+        state.status == ImportStatus.saving ||
         state.status == ImportStatus.linking;
 
     return PopScope(
@@ -629,8 +750,9 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
                   tabAlignment: TabAlignment.start,
                   tabs: const [
                     Tab(
-                        icon: Icon(Icons.picture_as_pdf),
-                        text: 'Documento PDF'),
+                      icon: Icon(Icons.picture_as_pdf),
+                      text: 'Documento PDF',
+                    ),
                     Tab(icon: Icon(Icons.text_fields), text: 'Colar Texto'),
                     Tab(icon: Icon(Icons.link), text: 'Link / URL'),
                     Tab(icon: Icon(Icons.image), text: 'Imagem'),
@@ -642,20 +764,24 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
           child: !_ready || _abandoned
               ? const SizedBox.shrink()
               : state.status == ImportStatus.extracting
-                  ? _buildExtractingIndicator()
-                  : state.draft != null
-                      ? _buildPreviewEditor(state)
-                      : Column(children: [
-                          if (state.errorMessage != null)
-                            Padding(
-                              padding: const EdgeInsets.all(16),
-                              child: Text(state.errorMessage!,
-                                  style: TextStyle(
-                                      color:
-                                          Theme.of(context).colorScheme.error)),
-                            ),
-                          Expanded(child: _buildInputTabs()),
-                        ]),
+              ? _buildExtractingIndicator()
+              : state.draft != null
+              ? _buildPreviewEditor(state)
+              : Column(
+                  children: [
+                    if (state.errorMessage != null)
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(
+                          state.errorMessage!,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ),
+                    Expanded(child: _buildInputTabs()),
+                  ],
+                ),
         ),
       ),
     );
@@ -712,34 +838,45 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
               ),
               child: Column(
                 children: [
-                  const Icon(Icons.upload_file,
-                      size: 54, color: Colors.blueAccent),
+                  const Icon(
+                    Icons.upload_file,
+                    size: 54,
+                    color: Colors.blueAccent,
+                  ),
                   const SizedBox(height: 12),
                   if (_pdfFileName != null) ...[
                     Text(
                       _pdfFileName!,
                       style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 16),
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 4),
                     Text(
                       '${((_pdfSize ?? 0) / 1024).toStringAsFixed(1)} KB (Máximo 3 MB)',
-                      style:
-                          TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                        fontSize: 12,
+                      ),
                     ),
                   ] else ...[
                     const Text(
                       'Toque para selecionar um arquivo PDF',
-                      style:
-                          TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                      ),
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 4),
                     Text(
                       'PDF de texto digital de até 3 MB (máx. 10 páginas)',
-                      style:
-                          TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                        fontSize: 12,
+                      ),
                       textAlign: TextAlign.center,
                     ),
                   ],
@@ -828,7 +965,7 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
             children: [
               const Expanded(
                 child: Text(
-                  'Link da cifra (Cifra Club ou web):',
+                  'Link da cifra no Cifra Club:',
                   style: TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
                 ),
               ),
@@ -851,7 +988,7 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
           ),
           const SizedBox(height: 8),
           Text(
-            'A URL serve apenas para buscar metadados permitidos. O conteúdo da cifra não é buscado; copie-o na página e cole no próximo passo.',
+            'O link mantém a referência da origem e sugere título/artista. Para importar a cifra completa, forneça o texto ou uma imagem no próximo passo.',
             style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
           ),
           const SizedBox(height: 20),
@@ -860,7 +997,7 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
             child: ElevatedButton.icon(
               onPressed: _extractUrl,
               icon: const Icon(Icons.travel_explore),
-              label: const Text('Buscar metadados da URL'),
+              label: const Text('Continuar com o link'),
             ),
           ),
         ],
@@ -891,34 +1028,45 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
               ),
               child: Column(
                 children: [
-                  const Icon(Icons.image_outlined,
-                      size: 54, color: Colors.blueAccent),
+                  const Icon(
+                    Icons.image_outlined,
+                    size: 54,
+                    color: Colors.blueAccent,
+                  ),
                   const SizedBox(height: 12),
                   if (_imageFileName != null) ...[
                     Text(
                       _imageFileName!,
                       style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 16),
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 4),
                     Text(
                       '${((_imageSize ?? 0) / 1024).toStringAsFixed(1)} KB (Máximo 5 MB)',
-                      style:
-                          TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                        fontSize: 12,
+                      ),
                     ),
                   ] else ...[
                     const Text(
                       'Toque para selecionar imagem da cifra',
-                      style:
-                          TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                      ),
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 4),
                     Text(
                       'Formatos PNG, JPEG ou WEBP de até 5 MB',
-                      style:
-                          TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                        fontSize: 12,
+                      ),
                       textAlign: TextAlign.center,
                     ),
                   ],
@@ -940,7 +1088,7 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
             child: ElevatedButton.icon(
               onPressed: _imageBytes != null ? _extractImage : null,
               icon: const Icon(Icons.document_scanner),
-              label: const Text('Preparar imagem para transcrição manual'),
+              label: const Text('Reconhecer cifra da imagem'),
             ),
           ),
         ],
@@ -950,10 +1098,13 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
 
   Widget _buildPreviewEditor(SmartChordImportState state) {
     final draft = state.draft!;
-    final isMutationPending = state.status == ImportStatus.saving ||
+    final isMutationPending =
+        state.status == ImportStatus.saving ||
         state.status == ImportStatus.linking;
-    final canSave = _titleController.text.trim().isNotEmpty &&
+    final canSave =
+        _titleController.text.trim().isNotEmpty &&
         _contentController.text.trim().isNotEmpty &&
+        _originalKey.isNotEmpty &&
         !draft.requiresManualPaste &&
         state.status != ImportStatus.saving &&
         state.status != ImportStatus.linking &&
@@ -972,30 +1123,62 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
                 border: Border.all(color: Colors.blue.shade700),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Row(
+              child: const Row(
                 children: [
-                  const Icon(Icons.info_outline,
-                      color: Colors.blueAccent, size: 20),
-                  const SizedBox(width: 8),
+                  Icon(
+                    Icons.info_outline,
+                    color: Colors.blueAccent,
+                    size: 20,
+                  ),
+                  SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      draft.sourceType == 'image'
-                          ? 'A imagem foi validada. O conteúdo precisa ser transcrito manualmente; nenhum OCR é executado.'
-                          : 'Identificamos título e artista pela URL. Cole o conteúdo da cifra para normalizar e manter esses dados.',
-                      style: const TextStyle(
-                          fontSize: 12, color: Colors.blueAccent),
+                      'Abra a origem e copie a cifra. Depois use Colar e revisar, um arquivo de texto ou uma imagem. Título e artista sugeridos pelo link podem ser corrigidos.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.blueAccent,
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (draft.sourceUrl != null)
+                  OutlinedButton.icon(
+                    onPressed: _openSource,
+                    icon: const Icon(Icons.open_in_browser),
+                    label: const Text('Abrir origem no navegador'),
+                  ),
+                FilledButton.icon(
+                  onPressed: _pasteAndReviewSource,
+                  icon: const Icon(Icons.paste),
+                  label: const Text('Colar e revisar'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _readSourceTextFile,
+                  icon: const Icon(Icons.text_snippet_outlined),
+                  label: const Text('Arquivo de texto'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _readSourceImage,
+                  icon: const Icon(Icons.image_outlined),
+                  label: const Text('Usar imagem'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Expanded(
                   child: Text(
-                      'Conteúdo copiado da página ou transcrito da imagem:'),
+                    'Conteúdo copiado da página ou transcrito da imagem:',
+                  ),
                 ),
                 TextButton.icon(
                   onPressed: _pasteClipboardToText,
@@ -1050,8 +1233,11 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.warning_amber_rounded,
-                          color: Colors.amber.shade800, size: 20),
+                      Icon(
+                        Icons.warning_amber_rounded,
+                        color: Colors.amber.shade800,
+                        size: 20,
+                      ),
                       const SizedBox(width: 8),
                       Text(
                         'Avisos da Importação (${draft.warnings.length}):',
@@ -1066,8 +1252,10 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
                   ...draft.warnings.map(
                     (w) => Padding(
                       padding: const EdgeInsets.only(left: 28, top: 2),
-                      child: Text('• ${w.message}',
-                          style: const TextStyle(fontSize: 12)),
+                      child: Text(
+                        '• ${w.message}',
+                        style: const TextStyle(fontSize: 12),
+                      ),
                     ),
                   ),
                 ],
@@ -1086,7 +1274,9 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
               child: Text(
                 state.errorMessage!,
                 style: const TextStyle(
-                    color: Colors.red, fontWeight: FontWeight.w500),
+                  color: Colors.red,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ),
             const SizedBox(height: 16),
@@ -1122,6 +1312,8 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
               const SizedBox(width: 12),
               Expanded(
                 child: DropdownButtonFormField<String>(
+                  key: ValueKey('original-key-$_originalKey'),
+                  isExpanded: true,
                   onChanged: isMutationPending
                       ? null
                       : (val) {
@@ -1130,10 +1322,14 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
                         },
                   initialValue:
                       SmartChordParser.standardKeys.contains(_originalKey)
-                          ? _originalKey
-                          : 'C',
+                      ? _originalKey
+                      : null,
+                  hint: const Text(
+                    'Tom não identificado',
+                    overflow: TextOverflow.ellipsis,
+                  ),
                   decoration: const InputDecoration(
-                    labelText: 'Tom',
+                    labelText: 'Tom original',
                     border: OutlineInputBorder(),
                   ),
                   items: SmartChordParser.standardKeys.map((k) {
@@ -1144,6 +1340,52 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
             ],
           ),
           const SizedBox(height: 16),
+          if (_originalKey.isEmpty) ...[
+            const Text(
+              'Tom não identificado. Selecione o tom original após conferir a fonte.',
+            ),
+            const SizedBox(height: 8),
+          ],
+          if (draft.displayedKey != null || draft.capo != null) ...[
+            Text(
+              [
+                if (draft.displayedKey != null)
+                  'Tom exibido na fonte: ${draft.displayedKey}',
+                if (draft.capo != null) 'Capotraste: casa ${draft.capo}',
+              ].join(' · '),
+            ),
+            const SizedBox(height: 12),
+          ],
+          if (draft.originalText != null) ...[
+            ExpansionTile(
+              title: const Text('Texto original para conferência'),
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: SelectableText(
+                    draft.originalText!,
+                    style: const TextStyle(fontFamily: 'monospace'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+          ],
+          if (draft.sourceType == 'image' && _imageBytes != null) ...[
+            ExpansionTile(
+              title: const Text('Imagem de origem para conferência'),
+              children: [
+                Image.memory(
+                  _imageBytes!,
+                  cacheWidth: 1000,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) =>
+                      const Text('Pré-visualização da imagem indisponível.'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+          ],
           SegmentedButton<int>(
             segments: const [
               ButtonSegment(value: 0, label: Text('Editar (Colchetes)')),
@@ -1187,7 +1429,9 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
                   children: _contentController.text.split('\n').map((rawLine) {
                     if (SmartChordParser.progressionTokens(rawLine) != null) {
                       return MusicalProgressionLine(
-                          line: rawLine, fontSize: 13);
+                        line: rawLine,
+                        fontSize: 13,
+                      );
                     }
                     final transposed = SmartChordParser.renderLine(rawLine, 0);
                     if (transposed.hasChords) {
@@ -1219,7 +1463,9 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
                     return Text(
                       rawLine,
                       style: const TextStyle(
-                          fontFamily: 'monospace', fontSize: 13),
+                        fontFamily: 'monospace',
+                        fontSize: 13,
+                      ),
                     );
                   }).toList(),
                 ),

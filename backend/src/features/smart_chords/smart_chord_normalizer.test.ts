@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   isMusicalChord,
   transposeChordSafe,
@@ -92,7 +94,10 @@ describe('Smart Chord Normalizer & Chord Grammar Test Suite', () => {
 
       expect(draft.source_type).toBe('text');
       expect(draft.content).toBe('[G]Graças Te dou [D/F#]pelo Teu [Em]amor');
-      expect(draft.original_key).toBe('G');
+      expect(draft.original_key).toBeNull();
+      expect(draft.warnings).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: 'MISSING_ORIGINAL_KEY' }),
+      ]));
     });
 
     it('preserves already bracketed chord sheets', () => {
@@ -100,7 +105,10 @@ describe('Smart Chord Normalizer & Chord Grammar Test Suite', () => {
       const draft = normalizeChordText(input);
 
       expect(draft.content).toContain('[G]Graças Te dou [D/F#]pelo Teu amor');
-      expect(draft.original_key).toBe('G');
+      expect(draft.original_key).toBeNull();
+      expect(draft.warnings).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: 'MISSING_ORIGINAL_KEY' }),
+      ]));
     });
 
     it('preserves instrumental progressions and repeat markers', () => {
@@ -231,6 +239,87 @@ it('does not transpose note names inside performance annotations', () => {
 });
 
 describe('M20 P2.3 conservative chord-over-lyrics projection', () => {
+  it('preserves the supplied Bb source lyrics, chord inventory, and section progressions', () => {
+    const input = readFileSync(resolve(__dirname, '../../../../fixtures/smart-chords/m20-user-bb.txt'), 'utf8');
+    const draft = normalizeChordText(input);
+    const decoded = draft.content.replace(/\u200B/g, '');
+    const lyrics = decoded.replace(/\[[^\]]*\]/g, '');
+    expect(draft.original_key).toBe('Bb');
+    expect(decoded).toContain('Intro: [ Bb ]');
+    expect(decoded).toContain('[ Bb  Eb  Gm  Eb ]');
+    expect(lyrics).toContain('Mas é Cristo, a luz, Senhor e Rei');
+    expect(lyrics).toContain('Glo__ri__fi____car');
+    expect(decoded).toContain('[Db9]');
+    expect(decoded).toContain('[Eb/G]');
+    expect(decoded).toContain('[Ab/Bb]');
+    expect(decoded).toContain('[Eb/Bb]');
+    expect(decoded).toContain('[F/A]');
+    const chordInventory = ['Bb', 'Eb', 'F', 'Eb/G', 'Ab', 'Db9', 'F/A', 'Ab/Bb', 'Eb/Bb'];
+    const count = (text: string, chord: string) => [...text.matchAll(new RegExp(
+      `(?<![A-Za-z0-9#b])${chord}(?![A-Za-z0-9#b])`, 'g',
+    ))].length;
+    const sourceWithoutMetadata = input.split(/\r?\n/).filter((line) => !/^Tom:\s*/i.test(line)).join('\n');
+    for (const chord of chordInventory) expect(count(decoded, chord)).toBe(count(sourceWithoutMetadata, chord));
+    expect(draft.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'CHORD_ALIGNMENT_UNCERTAIN' }),
+    ]));
+  });
+
+  it.each(['Tom: Bb', 'Tom original: Bb', 'Key: Bb'])('uses only explicit key metadata (%s)', (metadata) => {
+    const input = `${metadata}\nBb  Eb  F  Eb/G  Ab  Db9  F/A  Ab/Bb\nGlorificar`;
+    const draft = normalizeChordText(input);
+    expect(draft.original_key).toBe('Bb');
+    expect(draft.original_text).toBe(input);
+    expect(draft.content).toBe('[Bb]  [Eb]  [F]  [Eb/G]  [Ab]  [Db9]  [F/A]  [Ab/Bb]\nGlorificar');
+    expect(normalizeChordText(draft.content).content).toBe(draft.content);
+  });
+
+  it('keeps explicit original and displayed keys and capo distinct', () => {
+    const draft = normalizeChordText('Tom original: Bb\nTom: C\nCapo: 2\n[Bb]Glorificar');
+    expect(draft.original_key).toBe('Bb');
+    expect(draft.displayed_key).toBe('C');
+    expect(draft.capo).toBe(2);
+  });
+
+  it('treats Original Key as original metadata alongside Tom Original', () => {
+    const withDisplayedTom = normalizeChordText('Tom: G\nOriginal Key: Bb\nBb Eb F\nUma palavra inteira');
+    expect(withDisplayedTom.original_key).toBe('Bb');
+    expect(withDisplayedTom.displayed_key).toBe('G');
+
+    const conflictingOriginalLabels = normalizeChordText(
+      'Tom Original: Bb\nOriginal Key: G\nBb Eb F\nUma palavra inteira',
+    );
+    expect(conflictingOriginalLabels.original_key).toBeNull();
+    expect(conflictingOriginalLabels.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'METADATA_AMBIGUOUS' }),
+      expect.objectContaining({ code: 'MISSING_ORIGINAL_KEY' }),
+    ]));
+  });
+
+  it('leaves conflicting keys at the selected priority unknown and warns', () => {
+    const draft = normalizeChordText('Tom original: Bb\nTom original: C\nTom: D\n[Bb]Glorificar');
+    expect(draft.original_key).toBeNull();
+    expect(draft.displayed_key).toBe('D');
+    expect(draft.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'METADATA_AMBIGUOUS' }),
+      expect.objectContaining({ code: 'MISSING_ORIGINAL_KEY' }),
+    ]));
+
+    const tomConflict = normalizeChordText('Tom: Bb\nTom: C\n[Bb]Glorificar');
+    expect(tomConflict.original_key).toBeNull();
+    expect(tomConflict.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'METADATA_AMBIGUOUS' }),
+    ]));
+  });
+
+  it('does not infer original key from the first chord when metadata is absent', () => {
+    const draft = normalizeChordText('Bb  Eb  F\nGlorificar');
+    expect(draft.original_key).toBeNull();
+    expect(draft.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'MISSING_ORIGINAL_KEY' }),
+    ]));
+  });
+
   it('preserves spaced inline lyric words that also look like note names', () => {
     const inline = '[C] A [G] igreja [Am] e [F] a [D] fe';
     const draft = normalizeChordText(`${inline}\n\nF     Gm   Ab F/A\nGlorificar`);

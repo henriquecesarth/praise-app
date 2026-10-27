@@ -45,6 +45,9 @@ class SmartChordImportDraft {
   final String sourceType;
   final bool requiresManualPaste;
   final String? sourceUrl;
+  final String? originalText;
+  final String? displayedKey;
+  final int? capo;
 
   const SmartChordImportDraft({
     required this.title,
@@ -55,6 +58,9 @@ class SmartChordImportDraft {
     required this.sourceType,
     this.requiresManualPaste = false,
     this.sourceUrl,
+    this.originalText,
+    this.displayedKey,
+    this.capo,
   });
 
   factory SmartChordImportDraft.fromMap(Map<String, dynamic> map) {
@@ -74,6 +80,9 @@ class SmartChordImportDraft {
               map['requiresManualPaste']) as bool? ??
           false,
       sourceUrl: (map['source_url'] ?? map['sourceUrl']) as String?,
+      originalText: (map['original_text'] ?? map['originalText']) as String?,
+      displayedKey: (map['displayed_key'] ?? map['displayedKey']) as String?,
+      capo: map['capo'] as int?,
     );
   }
 
@@ -87,6 +96,9 @@ class SmartChordImportDraft {
       'source_type': sourceType,
       'requires_manual_paste': requiresManualPaste,
       'source_url': sourceUrl,
+      if (originalText != null) 'original_text': originalText,
+      if (displayedKey != null) 'displayed_key': displayedKey,
+      if (capo != null) 'capo': capo,
     };
   }
 
@@ -99,6 +111,9 @@ class SmartChordImportDraft {
     String? sourceType,
     bool? requiresManualPaste,
     String? sourceUrl,
+    String? originalText,
+    String? displayedKey,
+    int? capo,
   }) {
     return SmartChordImportDraft(
       title: title ?? this.title,
@@ -109,6 +124,9 @@ class SmartChordImportDraft {
       sourceType: sourceType ?? this.sourceType,
       requiresManualPaste: requiresManualPaste ?? this.requiresManualPaste,
       sourceUrl: sourceUrl ?? this.sourceUrl,
+      originalText: originalText ?? this.originalText,
+      displayedKey: displayedKey ?? this.displayedKey,
+      capo: capo ?? this.capo,
     );
   }
 
@@ -124,6 +142,9 @@ class SmartChordImportDraft {
           sourceType == other.sourceType &&
           requiresManualPaste == other.requiresManualPaste &&
           sourceUrl == other.sourceUrl &&
+          originalText == other.originalText &&
+          displayedKey == other.displayedKey &&
+          capo == other.capo &&
           _warningsEqual(warnings, other.warnings);
 
   @override
@@ -135,6 +156,9 @@ class SmartChordImportDraft {
         sourceType,
         requiresManualPaste,
         sourceUrl,
+        originalText,
+        displayedKey,
+        capo,
         Object.hashAll(warnings),
       );
 
