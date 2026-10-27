@@ -42,6 +42,7 @@ export '../features/teams/presentation/controllers/teams_providers.dart';
 void resetAuthenticatedFeatures(
   dynamic refOrContainer, {
   bool preservePendingShareIntent = false,
+  bool preserveSavedMinistrySelection = false,
 }) {
   try {
     refOrContainer.read(teamFormNotifierProvider.notifier).invalidateTenant();
@@ -62,7 +63,9 @@ void resetAuthenticatedFeatures(
     refOrContainer.read(inviteCodeNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer.read(ministryContextNotifierProvider.notifier).reset();
+    refOrContainer.read(ministryContextNotifierProvider.notifier).reset(
+          preserveSavedSelection: preserveSavedMinistrySelection,
+        );
   } catch (_) {}
   try {
     refOrContainer.read(dashboardNotifierProvider.notifier).reset();
@@ -196,7 +199,10 @@ final preferencesStorageProvider = Provider<PreferencesStorage>((ref) {
 });
 
 class InMemoryPreferencesStorage
-    implements PreferencesStorage, UserChordFontPreferencesStorage {
+    implements
+        PreferencesStorage,
+        UserChordFontPreferencesStorage,
+        UserMinistrySelectionStorage {
   final Map<String, String> _data = {};
 
   @override
@@ -210,6 +216,21 @@ class InMemoryPreferencesStorage
 
   @override
   String? getSelectedMinistryId() => _data['selectedMinistryId'];
+
+  @override
+  Future<void> setSelectedMinistryIdForUser(
+      String userId, String? ministryId) async {
+    final key = 'selectedMinistryId:$userId';
+    if (ministryId == null) {
+      _data.remove(key);
+    } else {
+      _data[key] = ministryId;
+    }
+  }
+
+  @override
+  String? getSelectedMinistryIdForUser(String userId) =>
+      _data['selectedMinistryId:$userId'];
 
   @override
   Future<void> setThemeMode(String? themeMode) async {

@@ -299,6 +299,87 @@ void main() {
       expect(router.pendingPayload, isNull);
     });
 
+    testWidgets(
+        'pending share retries after Navigator mounts and deduplicates request id',
+        (tester) async {
+      fakeAuth.setUser(testUser);
+      fakeMinistry.setMinistry(testMinistry);
+      final container = ProviderContainer(
+        overrides: [
+          authNotifierProvider.overrideWith((ref) => fakeAuth),
+          ministryContextNotifierProvider.overrideWith((ref) => fakeMinistry),
+          rootNavigatorKeyProvider.overrideWithValue(navigatorKey),
+        ],
+      );
+      final router = ShareIntentRouter(
+        ref: container,
+        navigatorKey: navigatorKey,
+        service: fakeService,
+        logger: logger,
+      );
+
+      const payload = SharedImportPayload.text('G D Em C', requestId: 'cold-9');
+      await router.handlePayload(payload);
+      expect(router.pendingPayload?.requestId, 'cold-9');
+      expect(navigatorKey.currentState, isNull);
+
+      await tester.pumpWidget(buildTestApp(
+        tester: tester,
+        container: container,
+        child: const Text('Home'),
+      ));
+      await tester.pumpAndSettle();
+      await router.dispatchPendingIfReady();
+      await tester.pumpAndSettle();
+      await router.handlePayload(payload);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SmartChordImportScreen), findsOneWidget);
+      expect(router.pendingPayload, isNull);
+    });
+
+    testWidgets('cold share is discarded after ministry switches while reading',
+        (tester) async {
+      fakeAuth.setUser(testUser);
+      fakeMinistry.setMinistry(testMinistry);
+      fakeService.initialCompleter = Completer<SharedImportPayload?>();
+      final container = ProviderContainer(
+        overrides: [
+          authNotifierProvider.overrideWith((ref) => fakeAuth),
+          ministryContextNotifierProvider.overrideWith((ref) => fakeMinistry),
+          rootNavigatorKeyProvider.overrideWithValue(navigatorKey),
+        ],
+      );
+      final router = ShareIntentRouter(
+        ref: container,
+        navigatorKey: navigatorKey,
+        service: fakeService,
+        logger: logger,
+      );
+      await tester.pumpWidget(buildTestApp(
+        tester: tester,
+        container: container,
+        child: const Text('Home'),
+      ));
+      await tester.pumpAndSettle();
+
+      final coldRead = router.checkInitialShare();
+      fakeMinistry.setMinistry(const Ministry(
+        id: 'min-other',
+        name: 'Other Ministry',
+        slug: 'other-ministry',
+        role: 'leader',
+      ));
+      fakeService.initialCompleter!.complete(
+        const SharedImportPayload.text('Private share from old ministry'),
+      );
+      await coldRead;
+      await tester.pumpAndSettle();
+
+      expect(router.pendingPayload, isNull);
+      expect(find.byType(SmartChordImportScreen), findsNothing);
+    });
+
     testWidgets('warm start: handles onShareReceived while app is running',
         (tester) async {
       fakeAuth.setUser(testUser);

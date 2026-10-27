@@ -91,7 +91,7 @@ describe('Smart Chord Normalizer & Chord Grammar Test Suite', () => {
       const draft = normalizeChordText(input);
 
       expect(draft.source_type).toBe('text');
-      expect(draft.content).toBe('[G]Graças Te dou[D/F#] pelo Teu am[Em]or');
+      expect(draft.content).toBe('[G]Graças Te dou [D/F#]pelo Teu [Em]amor');
       expect(draft.original_key).toBe('G');
     });
 
@@ -228,4 +228,117 @@ describe('R4-M9 canonical instrumental blocks', () => {
 
 it('does not transpose note names inside performance annotations', () => {
   expect(transposeChordSafe('G | (tocar A E juntos) D', 2)).toBe('A | (tocar A E juntos) E');
+});
+
+describe('M20 P2.3 conservative chord-over-lyrics projection', () => {
+  it('preserves spaced inline lyric words that also look like note names', () => {
+    const inline = '[C] A [G] igreja [Am] e [F] a [D] fe';
+    const draft = normalizeChordText(`${inline}\n\nF     Gm   Ab F/A\nGlorificar`);
+    expect(draft.content.split('\n')[0]).toBe(inline);
+    expect(draft.content).toContain('[F]     [Gm]   [Ab] [F/A]\nGlorificar');
+    expect(normalizeChordText(draft.content).content).toBe(draft.content);
+  });
+  it('normalizes raw verses even when other blocks already contain bracketed chords', () => {
+    const input = 'Tom: Bb\n[G]Canto [D]outra [Em]vez\n\nF     Gm   Ab F/A\nGlorificar\n\n[Interlúdio] Bb Eb Gm Eb\n[Final]';
+    const draft = normalizeChordText(input);
+    expect(draft.original_key).toBe('Bb');
+    expect(draft.content).toContain('[G]Canto [D]outra [Em]vez');
+    expect(draft.content).toContain('[F]     [Gm]   [Ab] [F/A]\nGlorificar');
+    expect(draft.content).toContain('[Interlúdio] [ Bb Eb Gm Eb ]\n[Final]');
+    expect(normalizeChordText(draft.content).content).toBe(draft.content);
+  });
+  it.each([
+    [
+      'Eb  F Eb/G   Ab\nMas é Cristo, a luz, Senhor e Rei',
+      '[Eb]Mas [F]é [Eb/G]Cristo, [Ab]a luz, Senhor e Rei',
+    ],
+    [
+      'Eb     F  Gm Ab\nGraça que é apesar de nós',
+      '[Eb]Graça [F]que [Gm]é [Ab]apesar de nós',
+    ],
+    [
+      'Bb        Gm\nServir e amar a Igreja',
+      '[Bb]Servir e [Gm]amar a Igreja',
+    ],
+  ])('preserves lyric text and chord order for %s', (input, expected) => {
+    const draft = normalizeChordText(input);
+    expect(draft.content).toBe(expected);
+    expect(normalizeChordText(draft.content).content).toBe(expected);
+  });
+
+  it('preserves invisible lyric markers without assuming musical syllables', () => {
+    const input = 'Eb  F  Ab F/A\nGlo\u200Bri\u200Bfi\u200Bcar';
+    const expected = '[Eb]  [F]  [Ab] [F/A]\nGlo\u200Bri\u200Bfi\u200Bcar';
+    expect(normalizeChordText(input).content).toBe(expected);
+    expect(normalizeChordText(expected).content).toBe(expected);
+  });
+
+  it('keeps chords on a separate review row when syllable alignment is ambiguous', () => {
+    const draft = normalizeChordText('Eb  F  Ab F/A\nGlorificar');
+    expect(draft.content).toBe('[Eb]  [F]  [Ab] [F/A]\nGlorificar');
+    expect(draft.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'CHORD_ALIGNMENT_UNCERTAIN' }),
+    ]));
+    expect(normalizeChordText(draft.content).content).toBe(draft.content);
+  });
+
+  it('retains metadata, section headings, and instrumental progression syntax', () => {
+    const input = 'Tom: Bb\nInterlúdio: Bb Eb Gm Eb\n[Final]';
+    const draft = normalizeChordText(input);
+    expect(draft.original_key).toBe('Bb');
+    expect(draft.content).toBe('Interlúdio: [ Bb Eb Gm Eb ]\n[Final]');
+    expect(normalizeChordText(draft.content).content).toBe(draft.content);
+  });
+
+  it.each([
+    ['Eb        F     Eb/G     Ab', 'Mas é Cristo, a luz, Senhor e Rei', ['Eb', 'F', 'Eb/G', 'Ab']],
+    ['Eb   F   Eb/G  Ab', 'Graça que é apesar de nós', ['Eb', 'F', 'Eb/G', 'Ab']],
+    ['Bb            Gm', 'Servir e amar a Igreja', ['Bb', 'Gm']],
+    ['F     Gm   Ab F/A', 'Glorificar', ['F', 'Gm', 'Ab', 'F/A']],
+    ['Eb/Bb  Eb  Dm Cm  Bb', 'Glo__ri__fi____car', ['Eb/Bb', 'Eb', 'Dm', 'Cm', 'Bb']],
+  ])('retains every supplied chord and exact lyric for %s', (chordRow, lyric, chords) => {
+    for (const row of [chordRow, chordRow.replace(/ /g, '\u200B')]) {
+      const draft = normalizeChordText(`${row}\n${lyric}`);
+      const lyricLine = draft.content.split('\n').find(line => line.replace(/\[[^\]]+\]/g, '') === lyric);
+      expect(lyricLine).toBeDefined();
+      expect(lyricLine!.replace(/\[[^\]]+\]/g, '')).toBe(lyric);
+      const positions = chords.map(chord => draft.content.indexOf(`[${chord}]`));
+      expect(positions.every(position => position >= 0)).toBe(true);
+      expect(positions).toEqual([...positions].sort((a, b) => a - b));
+
+      const cleanLyric = lyricLine!.replace(/\[[^\]]+\]/g, '');
+      for (const match of lyricLine!.matchAll(/\[([^\]]+)\]/g)) {
+        const precedingTags = [...lyricLine!.slice(0, match.index).matchAll(/\[[^\]]+\]/g)];
+        const offset = match.index! - precedingTags.reduce((sum, tag) => sum + tag[0].length, 0);
+        const previous = cleanLyric[offset - 1] || '';
+        const next = cleanLyric[offset] || '';
+        expect(Boolean(previous && next && /[^\s\u200B]/.test(previous) && /[^\s\u200B]/.test(next))).toBe(false);
+      }
+      if (draft.warnings.some(warning => warning.code === 'CHORD_ALIGNMENT_UNCERTAIN')) {
+        expect(draft.content.split('\n').some(line => chords.every(chord => line.includes(`[${chord}]`)))).toBe(true);
+      }
+    }
+  });
+
+  it('recognizes a bracketed section label before a progression', () => {
+    const draft = normalizeChordText('Tom: Bb\n[Interlúdio] Bb Eb Gm Eb\n[Final]');
+    expect(draft.original_key).toBe('Bb');
+    expect(draft.content).toBe('[Interlúdio] [ Bb Eb Gm Eb ]\n[Final]');
+    expect(normalizeChordText(draft.content).content).toBe(draft.content);
+  });
+
+  it.each(['Bb', 'Eb'])('recognizes parenthesized single chord rows: (%s)', chord => {
+    const draft = normalizeChordText(`(${chord})`);
+    expect(draft.content).toBe(`[${chord}]`);
+    expect(transposeChordSafe(`(${chord})`, 2)).toBe(`(${transposeChordSafe(chord, 2)})`);
+  });
+
+  it('does not trust a zero-width marker between every lyric character as syllable alignment', () => {
+    const lyric = 'G\u200Bl\u200Bo\u200Br\u200Bi\u200Bf\u200Bi\u200Bc\u200Ba\u200Br';
+    const draft = normalizeChordText(`F     Gm   Ab F/A\n${lyric}`);
+    expect(draft.content).toContain(lyric);
+    expect(draft.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'CHORD_ALIGNMENT_UNCERTAIN' }),
+    ]));
+  });
 });

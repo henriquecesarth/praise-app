@@ -48,7 +48,8 @@ class ApiClient {
               ),
             ) {
     if (authInterceptor != null) {
-      if (authInterceptor is AuthInterceptor && sessionContextProvider != null) {
+      if (authInterceptor is AuthInterceptor &&
+          sessionContextProvider != null) {
         authInterceptor.sessionContextProvider = sessionContextProvider;
       }
       dio.interceptors.add(authInterceptor);
@@ -104,6 +105,18 @@ class ApiClient {
       );
     }
 
+    final status = error.response?.statusCode;
+    if (status != null) {
+      return AppFailure(
+        message: status == 404
+            ? 'O servidor configurado não oferece esta operação (HTTP 404).'
+            : status == 401 || status == 403
+                ? 'Acesso recusado pelo servidor (HTTP $status). Verifique a sessão ou a proteção do ambiente.'
+                : 'Resposta inesperada do servidor (HTTP $status).',
+        statusCode: status,
+        code: 'HTTP_ERROR',
+      );
+    }
     return AppFailure.network(
       message: error.message ?? 'Falha de comunicação com o servidor.',
       statusCode: error.response?.statusCode,

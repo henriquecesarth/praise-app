@@ -2,28 +2,34 @@ import 'package:dio/dio.dart';
 import '../../../../core/errors/app_failure.dart';
 import '../../../../core/http/api_client.dart';
 import '../domain/smart_chord.dart';
+import 'manual_import_drafts.dart';
 import '../domain/smart_chord_import.dart';
 
 abstract class SmartChordRepository {
-  Future<List<SmartChord>> getSmartChords({String? search, int? page, int? limit});
+  Future<List<SmartChord>> getSmartChords(
+      {String? search, int? page, int? limit});
   Future<List<SmartChord>> getSmartChordsBySong(String songId);
   Future<SmartChord> getSmartChordById(String id);
   Future<SmartChord> createSmartChord(Map<String, dynamic> payload);
   Future<SmartChord> updateSmartChord(String id, Map<String, dynamic> payload);
   Future<void> deleteSmartChord(String id);
-  Future<SmartChordImportDraft> importPdfDraft(List<int> bytes, String filename);
+  Future<SmartChordImportDraft> importPdfDraft(
+      List<int> bytes, String filename);
   Future<SmartChordImportDraft> importTextDraft(String text);
   Future<SmartChordImportDraft> importUrlDraft(String url);
-  Future<SmartChordImportDraft> importImageDraft(List<int> bytes, String filename);
+  Future<SmartChordImportDraft> importImageDraft(
+      List<int> bytes, String filename);
 }
 
 class HttpSmartChordRepository implements SmartChordRepository {
   final ApiClient _apiClient;
 
-  HttpSmartChordRepository({required ApiClient apiClient}) : _apiClient = apiClient;
+  HttpSmartChordRepository({required ApiClient apiClient})
+      : _apiClient = apiClient;
 
   @override
-  Future<List<SmartChord>> getSmartChords({String? search, int? page, int? limit}) async {
+  Future<List<SmartChord>> getSmartChords(
+      {String? search, int? page, int? limit}) async {
     try {
       final queryParams = <String, dynamic>{};
       if (search != null && search.trim().isNotEmpty) {
@@ -91,7 +97,8 @@ class HttpSmartChordRepository implements SmartChordRepository {
         '/smart-chords/$id',
       );
       if (response.data == null) {
-        throw const AppFailure(message: 'Cifra não encontrada.', statusCode: 404);
+        throw const AppFailure(
+            message: 'Cifra não encontrada.', statusCode: 404);
       }
       return SmartChord.fromJson(response.data!);
     } on DioException catch (e) {
@@ -120,7 +127,8 @@ class HttpSmartChordRepository implements SmartChordRepository {
   }
 
   @override
-  Future<SmartChord> updateSmartChord(String id, Map<String, dynamic> payload) async {
+  Future<SmartChord> updateSmartChord(
+      String id, Map<String, dynamic> payload) async {
     try {
       final response = await _apiClient.dio.put<Map<String, dynamic>>(
         '/smart-chords/$id',
@@ -149,7 +157,8 @@ class HttpSmartChordRepository implements SmartChordRepository {
   }
 
   @override
-  Future<SmartChordImportDraft> importPdfDraft(List<int> bytes, String filename) async {
+  Future<SmartChordImportDraft> importPdfDraft(
+      List<int> bytes, String filename) async {
     try {
       final formData = FormData.fromMap({
         'file': MultipartFile.fromBytes(
@@ -194,47 +203,11 @@ class HttpSmartChordRepository implements SmartChordRepository {
   }
 
   @override
-  Future<SmartChordImportDraft> importUrlDraft(String url) async {
-    try {
-      final response = await _apiClient.dio.post<Map<String, dynamic>>(
-        '/smart-chords/import/url',
-        data: {'url': url},
-      );
-
-      if (response.data == null) {
-        throw const AppFailure(message: 'Resposta vazia ao importar URL.');
-      }
-      return SmartChordImportDraft.fromMap(response.data!);
-    } on DioException catch (e) {
-      throw _apiClient.mapDioException(e);
-    } catch (e) {
-      throw AppFailure(message: e.toString());
-    }
-  }
+  Future<SmartChordImportDraft> importUrlDraft(String url) async =>
+      manualUrlDraft(url);
 
   @override
-  Future<SmartChordImportDraft> importImageDraft(List<int> bytes, String filename) async {
-    try {
-      final formData = FormData.fromMap({
-        'file': MultipartFile.fromBytes(
-          bytes,
-          filename: filename,
-        ),
-      });
-
-      final response = await _apiClient.dio.post<Map<String, dynamic>>(
-        '/smart-chords/import/image',
-        data: formData,
-      );
-
-      if (response.data == null) {
-        throw const AppFailure(message: 'Resposta vazia ao importar imagem.');
-      }
-      return SmartChordImportDraft.fromMap(response.data!);
-    } on DioException catch (e) {
-      throw _apiClient.mapDioException(e);
-    } catch (e) {
-      throw AppFailure(message: e.toString());
-    }
-  }
+  Future<SmartChordImportDraft> importImageDraft(
+          List<int> bytes, String filename) async =>
+      manualImageDraft(bytes, filename);
 }

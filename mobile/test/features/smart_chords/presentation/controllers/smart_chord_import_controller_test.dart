@@ -187,6 +187,15 @@ void main() {
       expect(notifier.state.errorMessage, isNull);
     });
 
+    test('HTTP status failures remain actionable instead of connection errors', () async {
+      for (final status in [403, 404]) {
+        repo.errorToThrow = AppFailure(message: 'Servidor respondeu HTTP $status', statusCode: status);
+        await notifier.importText('G\nMinha cifra');
+        expect(notifier.state.status, ImportStatus.error);
+        expect(notifier.state.errorMessage, 'Servidor respondeu HTTP $status');
+      }
+    });
+
     test('importPdf extracts draft and transitions to preview state', () async {
       await notifier.importPdf([1, 2, 3], 'test.pdf');
 

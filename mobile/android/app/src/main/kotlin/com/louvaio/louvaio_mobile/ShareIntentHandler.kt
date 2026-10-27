@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.CancellationSignal
 import android.os.OperationCanceledException
 import android.provider.OpenableColumns
+import android.text.Html
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -83,7 +84,9 @@ class ShareIntentHandler(private val context: Context) {
             )
         }
 
-        if (mimeType == "text/plain") {
+        // Share providers may label copied note text as text/html or text/uri-list.
+        // Keep this allowlist narrow: arbitrary application/* payloads still fail closed.
+        if (mimeType == "text/plain" || mimeType == "text/html" || mimeType == "text/uri-list") {
             return processTextIntent(intent)
         }
 
@@ -104,11 +107,24 @@ class ShareIntentHandler(private val context: Context) {
     }
 
     private fun processTextIntent(intent: Intent): Map<String, Any?> {
-        val text = intent.getStringExtra(Intent.EXTRA_TEXT)
-            ?: intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
-            ?: (if (intent.clipData != null && intent.clipData!!.itemCount > 0) {
-                intent.clipData!!.getItemAt(0).text?.toString()
-            } else null)
+        val clipText = if (intent.clipData != null && intent.clipData!!.itemCount > 0) {
+            intent.clipData!!.getItemAt(0).text?.toString()
+        } else {
+            null
+        }
+        val htmlText = intent.getStringExtra(Intent.EXTRA_HTML_TEXT)?.let { html ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                Html.fromHtml(html, Html.FROM_HTML_MODE_LEGACY).toString()
+            } else {
+                @Suppress("DEPRECATION")
+                Html.fromHtml(html).toString()
+            }
+        }
+        // Providers such as Keep may put Spannable content in EXTRA_TEXT. Reading it
+        // as a String first can throw ClassCastException, so preserve CharSequence.
+        val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
+            ?: htmlText
+            ?: clipText
 
         if (text.isNullOrBlank()) {
             return mapOf(

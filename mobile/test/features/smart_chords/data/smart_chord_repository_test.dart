@@ -1,4 +1,4 @@
-﻿import 'package:dio/dio.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/app/environment/app_environment.dart';
 import 'package:louvaio_mobile/core/errors/app_failure.dart';
@@ -52,6 +52,25 @@ void main() {
   });
 
   group('HttpSmartChordRepository', () {
+    test('URL and image prepare manual drafts without HTTP even when offline',
+        () async {
+      var requests = 0;
+      apiClient.dio.httpClientAdapter = MockAdapter((opts) async {
+        requests++;
+        throw DioException(
+            requestOptions: opts, type: DioExceptionType.connectionError);
+      });
+      final url = await repository
+          .importUrlDraft('https://cifraclub.com.br/artista/minha-cifra/');
+      final image =
+          await repository.importImageDraft([0xff, 0xd8, 0xff], 'cifra.jpg');
+      expect(url.title, 'Minha Cifra');
+      expect(url.requiresManualPaste, isTrue);
+      expect(image.requiresManualPaste, isTrue);
+      expect(url.content, isEmpty);
+      expect(image.content, isEmpty);
+      expect(requests, 0);
+    });
     test('getSmartChords calls GET /smart-chords with query params', () async {
       apiClient.dio.httpClientAdapter = MockAdapter((opts) async {
         expect(opts.path, equals('/smart-chords'));
@@ -205,18 +224,21 @@ void main() {
 
       expect(
         () => repository.getSmartChordById('missing'),
-        throwsA(isA<AppFailure>().having((f) => f.statusCode, 'statusCode', 404)),
+        throwsA(
+            isA<AppFailure>().having((f) => f.statusCode, 'statusCode', 404)),
       );
     });
 
     test('maps 400 validation error to AppFailure', () async {
       apiClient.dio.httpClientAdapter = MockAdapter((opts) async {
-        return jsonError(400, '{"error":{"message":"Música e Artista devem pertencer ao mesmo ministério."}}');
+        return jsonError(400,
+            '{"error":{"message":"Música e Artista devem pertencer ao mesmo ministério."}}');
       });
 
       expect(
         () => repository.createSmartChord({'title': ''}),
-        throwsA(isA<AppFailure>().having((f) => f.statusCode, 'statusCode', 400)),
+        throwsA(
+            isA<AppFailure>().having((f) => f.statusCode, 'statusCode', 400)),
       );
     });
   });

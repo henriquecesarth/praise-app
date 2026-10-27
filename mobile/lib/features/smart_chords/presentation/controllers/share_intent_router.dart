@@ -27,6 +27,7 @@ class ShareIntentRouter {
   SharedImportPayload? _pendingPayload;
   _ShareRequestContext? _pendingRequestContext;
   final Map<String, _ShareRequestContext> _startedRequests = {};
+  final Set<String> _dispatchedRequestIds = {};
   StreamSubscription<SharedImportPayload>? _receivedSubscription;
   StreamSubscription<String>? _startedSubscription;
   bool _isInitialized = false;
@@ -51,6 +52,7 @@ class ShareIntentRouter {
     _pendingPayload = null;
     _pendingRequestContext = null;
     _startedRequests.clear();
+    _dispatchedRequestIds.clear();
   }
 
   void initialize() {
@@ -139,6 +141,11 @@ class ShareIntentRouter {
     BuildContext? context,
     required _ShareRequestContext requestContext,
   }) async {
+    final requestId = payload.requestId;
+    if (requestId != null && _dispatchedRequestIds.contains(requestId)) {
+      _logger.debug('Discarded duplicate share request: $requestId');
+      return;
+    }
     if (!_isRequestContextCurrent(requestContext)) {
       _logger
           .debug('Discarded share intent after its session context changed.');
@@ -203,6 +210,13 @@ class ShareIntentRouter {
           ),
         ),
       );
+      final requestId = payload.requestId;
+      if (requestId != null) {
+        _dispatchedRequestIds.add(requestId);
+        if (_dispatchedRequestIds.length > 64) {
+          _dispatchedRequestIds.remove(_dispatchedRequestIds.first);
+        }
+      }
     } catch (e) {
       _logger.error('Failed to navigate to SmartChordImportScreen: $e');
     } finally {

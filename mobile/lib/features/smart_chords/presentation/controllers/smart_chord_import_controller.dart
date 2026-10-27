@@ -75,7 +75,7 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
       if (error.code == 'NETWORK_ERROR') {
         return 'Falha de conexão. Verifique sua internet e tente novamente.';
       }
-      if (error.statusCode == 400 || error.statusCode == 413) {
+      if (error.statusCode != null) {
         return error.message;
       }
     }
