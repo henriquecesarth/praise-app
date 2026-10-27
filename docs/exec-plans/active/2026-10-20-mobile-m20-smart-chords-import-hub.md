@@ -1,5 +1,12 @@
 # M20 — Smart Chords Import Hub (Phase 1 / Phase 2 continuation)
 
+## Phase 2.5 ? Login diagnosis and GitHub APK delivery (2026-10-27)
+
+- Confirmed public GET `/api/v1/auth/me` on canonical `praise-5k1fvze7u` Preview returns HTTP 302 to Vercel SSO; authenticated Vercel CLI reaches application JSON 401. Native mobile has no Vercel session/bypass, so backend profile bootstrap is blocked independently of Firebase sign-in. Actual device Firebase exception/token success is **Unknown / Not yet verified**.
+- Android Firebase options and google-services project/package agree (`praise-app-7a362`, `com.louvaio.app`). Preview Admin project, successful Firebase token verification and database isolation are **Unknown / Not yet verified**; no authenticated persistence or live database writes performed.
+- Android workflow validates the supplied immutable Preview URL instead of hardcoded WIP; rejects production/custom aliases, credentials, query/fragment and non-HTTPS. SSO is reported as BLOCKED while producing a diagnostic full APK, without embedded bypass credentials. Full artifact checks Firebase provider, share MIME filters, compiled API URL and SHA-256. Successful compilation does not establish login readiness.
+- Configuration regressions: public JSON and protected SSO probes plus six unsafe URL cases PASS. Product code unchanged; prior product tests preserved.
+
 ## Phase 2.3 — Android acceptance corrections (2026-10-27)
 
 - Starting local/remote head `b92a27ca31791a925282607f35be5c168a2d3813`; PR #21 remains Draft/open. Existing unrelated documentation changes preserved. Local commit only; controlled push requires separate authorization.

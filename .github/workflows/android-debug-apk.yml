@@ -14,7 +14,7 @@ on:
       api_base_url:
         description: 'LouvAIO API Base URL (for full build)'
         required: false
-        default: 'https://praise-app-git-wip-repertoire-1978b6-henriquecesarths-projects.vercel.app/api/v1'
+        default: ''
 
 concurrency:
   group: android-debug-apk-${{ github.ref }}
@@ -35,23 +35,55 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Preflight approved LouvAIO Preview API
+      - name: Preflight supplied Preview API
+        if: inputs.target_mode == 'full'
+        env:
+          API_URL: ${{ inputs.api_base_url }}
         run: |
           set -euo pipefail
-          URL="https://praise-app-git-wip-repertoire-1978b6-henriquecesarths-projects.vercel.app"
-          echo "Checking public Preview API health..."
-          STATUS=$(curl --silent --show-error --max-time 25 --output /tmp/louvaio-health.json --write-out '%{http_code}' "$URL/api/health")
-          echo "Health HTTP: $STATUS"
-          if [ "$STATUS" != "200" ]; then
-            echo "ERROR: Preview API must respond HTTP 200 without Vercel SSO redirection."
-            exit 1
-          fi
-          AUTH_STATUS=$(curl --silent --show-error --max-time 25 --output /dev/null --write-out '%{http_code}' "$URL/api/v1/auth/me")
-          echo "Unauthorized /auth/me HTTP: $AUTH_STATUS"
-          if [ "$AUTH_STATUS" != "401" ]; then
-            echo "ERROR: Preview API must return application-level HTTP 401, not Vercel SSO."
-            exit 1
-          fi
+          python3 - <<'PY'
+          import json, os, re, urllib.error, urllib.parse, urllib.request
+          url = os.environ['API_URL']
+          parsed = urllib.parse.urlsplit(url)
+          if (parsed.scheme != 'https' or parsed.username or parsed.password
+              or parsed.port or parsed.query or parsed.fragment
+              or parsed.path != '/api/v1'
+              or not re.fullmatch(r'praise-[a-z0-9]{9}-henriquecesarths-projects\.vercel\.app', parsed.hostname or '')):
+              raise SystemExit('Expected immutable praise-app Preview URL ending in /api/v1; production/custom aliases are forbidden.')
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write(f'API_URL={url}\n')
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, *args, **kwargs):
+                  return None
+          opener = urllib.request.build_opener(NoRedirect)
+          blocked = False
+          for path, expected in [('/api/health', 200), ('/api/v1/auth/me', 401)]:
+              try:
+                  response = opener.open(f'{parsed.scheme}://{parsed.netloc}{path}', timeout=25)
+              except urllib.error.HTTPError as error:
+                  response = error
+              with response:
+                  status = response.code
+                  location = response.headers.get('Location', '')
+                  content_type = response.headers.get('Content-Type', '')
+                  body = response.read(65536)
+              print(f'{path}: HTTP {status}; content-type={content_type}')
+              if status in (301, 302, 303, 307, 308) and urllib.parse.urlsplit(location).hostname == 'vercel.com':
+                  blocked = True
+                  continue
+              if 'application/json' not in content_type or status != expected:
+                  raise SystemExit('Unexpected Preview response; refusing build.')
+              data = json.loads(body)
+              if path == '/api/health' and (data.get('service') != 'praise-backend' or data.get('preview') is not True):
+                  raise SystemExit('Health must identify praise-backend Preview.')
+              if path.endswith('/auth/me') and not isinstance(data.get('error'), dict):
+                  raise SystemExit('Expected application authentication error.')
+          readiness = 'BLOCKED: Vercel SSO intercepts mobile API access. APK is diagnostic only.' if blocked else 'Public API preflight passed; authenticated login and data isolation remain unverified.'
+          if blocked:
+              print('::warning::' + readiness)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(f'API: `{url}`\n\n{readiness}\n')
+          PY
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -74,37 +106,15 @@ jobs:
         run: flutter pub get
 
       - name: Build Android Debug APK
+        env:
+          MODE: ${{ inputs.target_mode }}
         run: |
-          MODE="${{ github.event.inputs.target_mode }}"
+          set -euo pipefail
           if [ -z "$MODE" ]; then
             MODE="full"
           fi
 
           if [ "$MODE" = "full" ]; then
-            API_URL="${{ github.event.inputs.api_base_url }}"
-            if [ -z "$API_URL" ]; then
-              API_URL="https://praise-app-git-wip-repertoire-1978b6-henriquecesarths-projects.vercel.app/api/v1"
-            fi
-
-            echo "=== Validating API_BASE_URL ==="
-            echo "API_BASE_URL: $API_URL"
-            if [ -z "$API_URL" ]; then
-              echo "ERROR: API_BASE_URL must not be empty for full app build."
-              exit 1
-            fi
-            if [[ "$API_URL" != https://* ]]; then
-              echo "ERROR: API_BASE_URL must use HTTPS protocol: $API_URL"
-              exit 1
-            fi
-            if [[ "$API_URL" == *"localhost"* ]] || [[ "$API_URL" == *"127.0.0.1"* ]] || [[ "$API_URL" == *"10.0.2.2"* ]]; then
-              echo "ERROR: API_BASE_URL must not be a local address in full app build: $API_URL"
-              exit 1
-            fi
-            if [[ "$API_URL" == *"praise-app-gray.vercel.app"* ]]; then
-              echo "ERROR: API_BASE_URL must NOT point to the Production Backend alias: $API_URL"
-              exit 1
-            fi
-
             echo "=== Building Real Full Android Debug APK ==="
             flutter build apk --debug \
               --flavor production \
@@ -124,7 +134,11 @@ jobs:
           echo "=== 1. Check generated APK outputs ==="
           ls -la build/app/outputs/flutter-apk/
 
-          APK_FILE=$(find build/app/outputs/flutter-apk -name "*.apk" | head -n 1)
+          if [ "${{ inputs.target_mode }}" = "preview" ]; then
+            APK_FILE=build/app/outputs/flutter-apk/app-preview-debug.apk
+          else
+            APK_FILE=build/app/outputs/flutter-apk/app-production-debug.apk
+          fi
           if [ -z "$APK_FILE" ] || [ ! -f "$APK_FILE" ]; then
             echo "ERROR: No APK generated!"
             exit 1
@@ -214,10 +228,36 @@ jobs:
             fi
           fi
 
+      - name: Verify full APK configuration and checksum
+        if: inputs.target_mode == 'full'
+        run: |
+          set -euo pipefail
+          APK=build/app/outputs/flutter-apk/app-production-debug.apk
+          AAPT_BIN=$(find "$ANDROID_HOME/build-tools" -name aapt | sort -V | tail -n 1)
+          "$AAPT_BIN" dump xmltree "$APK" AndroidManifest.xml > /tmp/louvaio-manifest.txt
+          for expected in FirebaseInitProvider android.intent.action.SEND text/plain application/pdf 'image/*'; do
+            grep -F "$expected" /tmp/louvaio-manifest.txt > /dev/null
+          done
+          python3 - <<'PY'
+          import os, zipfile
+          with zipfile.ZipFile('build/app/outputs/flutter-apk/app-production-debug.apk') as apk:
+              kernel = apk.read('assets/flutter_assets/kernel_blob.bin')
+              assert os.environ['API_URL'].encode() in kernel, 'API URL missing from APK'
+              assert b'praise-app-7a362' in kernel, 'Firebase project missing from APK'
+          PY
+          sha256sum "$APK" | tee build/app/outputs/flutter-apk/apk-sha256.txt
+          {
+            echo "Commit: $GITHUB_SHA"
+            echo "Target: lib/main.dart; flavor: production; APP_ENV: staging"
+            cat build/app/outputs/flutter-apk/apk-sha256.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ (github.event.inputs.target_mode == 'preview') && 'louvaio-android-debug-apk-r3b' || 'louvaio-android-debug-full-app' }}
-          path: mobile/build/app/outputs/flutter-apk/*.apk
+          path: |
+            mobile/build/app/outputs/flutter-apk/*.apk
+            mobile/build/app/outputs/flutter-apk/apk-sha256.txt
           retention-days: 7
           if-no-files-found: error
