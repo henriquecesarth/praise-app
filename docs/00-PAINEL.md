@@ -20,6 +20,7 @@ status: ativo
 ## 📌 Ponto de Partida e Status Vivo
 
 - [[01-CONTEXTO-ATUAL|Contexto Operacional Compacto (Estado Verdadeiro)]] — Status verificado de builds, testes, releases e handoffs.
+- [[exec-plans/evidence/2026-10-30-m20-c9b-checkpoint|M20-C9B — Checkpoint e migração entre computadores]] — Homologação staging, recuperação da WIP e pendência PDF ainda aberta.
 - [[system-status|Matriz de Status do Sistema]] — Inconsistências catalogadas e histórico de módulos.
 - [[development/multi-agent-workflow|Protocolo Multiagente Permanente V2]] — Codex nativo, Sol para orquestração/revisão e Luna para workers; políticas de teste e limites.
 - [[development/github-ai-handoff|Handoff de IA, GitHub e Antigravity]] — Integração operacional entre ferramentas e canais.

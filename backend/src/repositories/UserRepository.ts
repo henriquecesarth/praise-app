@@ -1,5 +1,5 @@
 import { db, authAdmin } from '../lib/firebase';
-import { config } from '../config/unifiedConfig';
+import { assertPreviewUidAllowed, config, isPreviewEnvironment } from '../config/unifiedConfig';
 import { AppError } from '../middleware/error-handler';
 import jwt from 'jsonwebtoken';
 
@@ -23,6 +23,9 @@ export class UserRepository {
    * Cria um novo usuário no Firebase Auth e salva o perfil no Firestore
    */
   async createUser(input: { email: string; password: string; name: string }): Promise<UserRecordData> {
+    if (isPreviewEnvironment()) {
+      throw new AppError(403, 'Cadastro desabilitado no ambiente de Preview.', { code: 'PREVIEW_MODE_BLOCKED' });
+    }
     try {
       // 1. Criar usuário no Firebase Auth
       const userRecord = await authAdmin.createUser({
@@ -56,7 +59,7 @@ export class UserRepository {
    */
   async verifyPassword(email: string, password: string): Promise<{ uid: string; email: string; name: string } | null> {
     try {
-      const apiKey = config.firebaseWebApiKey || process.env.FIREBASE_WEB_API_KEY;
+      const apiKey = config.firebaseWebApiKey || (!isPreviewEnvironment() ? process.env.FIREBASE_WEB_API_KEY : undefined);
       if (!apiKey) {
         throw new AppError(500, 'Configuração de autenticação incompleta no servidor (FIREBASE_WEB_API_KEY necessária para login por senha).');
       }
@@ -73,17 +76,49 @@ export class UserRepository {
         if (message === 'EMAIL_NOT_FOUND' || message === 'INVALID_PASSWORD' || message === 'INVALID_LOGIN_CREDENTIALS') {
           throw new AppError(401, 'E-mail ou senha incorretos.');
         }
+        if (isPreviewEnvironment()) {
+          // Never forward provider messages/details: they may contain credentials or personal data.
+          const safeCodes = new Set([
+            'OPERATION_NOT_ALLOWED', 'USER_DISABLED', 'TOO_MANY_ATTEMPTS_TRY_LATER',
+            'API_KEY_INVALID', 'API_KEY_HTTP_REFERRER_BLOCKED', 'API_KEY_SERVICE_BLOCKED',
+            'CONFIGURATION_NOT_FOUND', 'PROJECT_NOT_FOUND', 'SERVICE_DISABLED',
+          ]);
+          const reason = Array.isArray(errorData?.error?.details)
+            ? errorData.error.details.find((detail: unknown) =>
+              typeof detail === 'object' && detail !== null && 'reason' in detail &&
+              typeof detail.reason === 'string' && safeCodes.has(detail.reason))?.reason
+            : undefined;
+          const providerCode = typeof message === 'string' && safeCodes.has(message)
+            ? message
+            : reason || 'UNKNOWN';
+          throw new AppError(400, 'Falha ao autenticar no Firebase.', {
+            code: 'FIREBASE_AUTH_UPSTREAM_REJECTED', providerCode, providerStatus: response.status,
+          });
+        }
         throw new AppError(400, 'Falha ao autenticar no Firebase.');
       }
 
       const data = (await response.json()) as any;
-      const doc = await this.usersCollection.doc(data.localId).get();
+      if (!data?.idToken || !data?.localId) {
+        throw new AppError(401, 'Falha ao autenticar no Firebase.');
+      }
+      let verified: Awaited<ReturnType<typeof authAdmin.verifyIdToken>>;
+      try {
+        verified = await authAdmin.verifyIdToken(data.idToken);
+      } catch {
+        throw new AppError(401, 'Falha ao autenticar no Firebase.');
+      }
+      if (!verified?.uid || verified.uid !== data.localId) {
+        throw new AppError(401, 'Falha ao autenticar no Firebase.');
+      }
+      assertPreviewUidAllowed(verified.uid);
+      const doc = await this.usersCollection.doc(verified.uid).get();
       const userData = doc.exists ? (doc.data() as UserRecordData) : null;
 
       return {
-        uid: data.localId,
-        email: data.email,
-        name: userData?.name || data.displayName || data.email.split('@')[0],
+        uid: verified.uid,
+        email: verified.email || '',
+        name: userData?.name || (typeof verified.name === 'string' && verified.name) || (verified.email ? verified.email.split('@')[0] : 'Usuário'),
       };
     } catch (error: any) {
       if (error instanceof AppError) throw error;
@@ -192,6 +227,7 @@ export class UserRepository {
   verifyAuthToken(token: string): { uid: string; email?: string } {
     try {
       const decoded = jwt.verify(token, config.jwtSecret) as { uid: string; email?: string };
+      assertPreviewUidAllowed(decoded.uid);
       return decoded;
     } catch {
       throw new AppError(401, 'Sessão inválida ou expirada. Faça login novamente.');
@@ -203,13 +239,15 @@ export class UserRepository {
    */
   async verifyToken(token: string): Promise<{ uid: string; email?: string }> {
     // 1. Tentar verificar como JWT próprio da aplicação
+    let decodedJwt: { uid: string; email?: string } | undefined;
     try {
-      const decoded = jwt.verify(token, config.jwtSecret) as { uid: string; email?: string };
-      if (decoded && decoded.uid) {
-        return decoded;
-      }
+      decodedJwt = jwt.verify(token, config.jwtSecret) as { uid: string; email?: string };
     } catch {
       // Falha no JWT próprio, tentar verificar como Firebase ID Token
+    }
+    if (decodedJwt?.uid) {
+      assertPreviewUidAllowed(decodedJwt.uid);
+      return decodedJwt;
     }
 
     // 2. Tentar verificar como Firebase ID Token se o Admin SDK estiver inicializado
@@ -217,6 +255,7 @@ export class UserRepository {
       if (authAdmin && typeof authAdmin.verifyIdToken === 'function') {
         const decodedFb = await authAdmin.verifyIdToken(token);
         if (decodedFb && decodedFb.uid) {
+          assertPreviewUidAllowed(decodedFb.uid);
           return {
             uid: decodedFb.uid,
             email: decodedFb.email,

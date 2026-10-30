@@ -19,6 +19,7 @@ import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord.dart';
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_import.dart';
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_repertoire_link.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/views/smart_chord_import_screen.dart';
+import 'package:louvaio_mobile/features/smart_chords/presentation/views/cifraclub_capture_screen.dart';
 
 class _FakeAuthRepo implements AuthRepository {
   @override
@@ -179,6 +180,9 @@ class _FakeSmartChordRepo implements SmartChordRepository {
   }
 
   @override
+  Future<SmartChordImportDraft> importCapturedUrlDraft(String url, String musicalHtml) => importUrlDraft(url);
+
+  @override
   Future<SmartChordImportDraft> importImageDraft(List<int> bytes, String filename) async {
     return const SmartChordImportDraft(
       title: 'Cifra Imagem',
@@ -240,6 +244,8 @@ void main() {
     Widget createTestWidget({bool navigation = false}) {
       return ProviderScope(
         overrides: [
+          cifraClubDirectImportEnabledProvider.overrideWithValue(true),
+          cifraClubCaptureLauncherProvider.overrideWithValue((_, __) async => '<pre>test capture</pre>'),
           authNotifierProvider.overrideWith((ref) => auth),
           ministryContextNotifierProvider.overrideWith((ref) => ministry),
           smartChordRepositoryProvider.overrideWithValue(repo),

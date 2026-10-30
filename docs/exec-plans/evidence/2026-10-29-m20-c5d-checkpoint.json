@@ -1,0 +1,73 @@
+{
+  "milestone": "M20-C5D",
+  "date": "2026-10-29",
+  "branch": "feat/m20-phase-2a-android-share",
+  "head": "e3c4902e0d8786e164ea0686486c564f9dea1578",
+  "device": {
+    "model": "Lenovo TB-J616F",
+    "serial": "REDACTED_DEVICE_IDENTIFIER",
+    "android_version": "12 (API 31)",
+    "duraspeed_initial": null,
+    "duraspeed_temporary": 0,
+    "duraspeed_final": null,
+    "duraspeed_restored": true
+  },
+  "verdict": "PASS - Complete physical Android homologation verified across both flows (Android Share and URL Paste) with real isolated persistence, zero production writes, and confirmed device restoration",
+  "results": {
+    "url_e2e": "PASS - Direct URL input in modal -> real hybrid WebView DOM capture -> preview verification -> title edited to 'Glorificar (C5A url_paste)' -> explicit save in Firestore emulator -> reopened via repository and reader screen",
+    "share_e2e": "PASS - ACTION_SEND delivered while unauthenticated -> held pending -> authenticated UI login -> /auth/me resolved -> empty-ministry routed to /no-ministry -> automatic dispatch to SmartChordImportScreen -> real hybrid WebView DOM capture -> preview verification -> title edited to 'Glorificar (C5A android_share)' -> explicit save in Firestore emulator -> reopened via repository and reader screen",
+    "auth": "PASS - Real UI login against Auth Emulator with stable session generation, empty ministry bootstrap, clean /auth/me without cancellation",
+    "capture": "PASS - Real public CifraClub URL captured natively in ~4.5s; exact musical DOM extracted without HTML injection or timeout",
+    "preview_edit": "PASS - Full chord, section, lyrics and tab preview rendered with draft synchronization and keyboard unfocus; title editable in actual UI",
+    "save_reopen": "PASS - Explicit save via 'Salvar Cifra Pessoal' -> document created in isolated Firestore -> reopened via getSmartChordById -> rendered in SmartChordReaderScreen",
+    "tablature": "PASS - Exact 24 tablature lines ([eBGDAE]|...) matched byte-for-byte on both flows without formatting loss or spacing distortion",
+    "persistence": "PASS - Documents confirmed present in isolated Firestore emulator (demo-m20-c1) with unique user ID and matching payload; zero production writes",
+    "device_restored": "PASS - global setting.duraspeed.enabled deleted in guaranteed finally block; verified via ADB as null; system duraspeed null; global duraspeed null"
+  },
+  "evidence": {
+    "persisted_documents": [
+      {
+        "flow": "android_share",
+        "title": "Glorificar (C5A android_share)",
+        "artist": "Projeto Sola",
+        "key": "Bb",
+        "tab_rows": 24,
+        "exact_content_match": true
+      },
+      {
+        "flow": "url_paste",
+        "title": "Glorificar (C5A url_paste)",
+        "artist": "Projeto Sola",
+        "key": "Bb",
+        "tab_rows": 24,
+        "exact_content_match": true
+      }
+    ],
+    "markers": [
+      "M20_C5A_MINIMAL_WEBVIEW=PASS",
+      "M20_C5A_LOGIN_PENDING_READY",
+      "M20_C5A_SEND_ACTION=android.intent.action.SEND",
+      "M20_C5A_SHARE_PENDING_LOGIN=PASS",
+      "M20_C5A_NO_MINISTRY=PASS",
+      "M20_C5A_ANDROID_SHARE_PREVIEW=READY",
+      "CIFRACLUB_RENDERER_VIEWPORT=1333.3333333333333x784.0",
+      "CIFRACLUB_PAGE_STARTED=local",
+      "CIFRACLUB_RENDERER_READY=true",
+      "CIFRACLUB_PAGE_STARTED=source",
+      "CIFRACLUB_NATIVE_VIEW_RELEASED=true",
+      "M20_EXTRACT_URL_DONE: isCurrent=true",
+      "M20_C5D_SAVE_BUTTON_ENABLED: true",
+      "M20_SAVE_CHORD_CALLED: isCurrent=true",
+      "M20_C5D_ANDROID_SHARE_SAVE_REOPEN={\"exact\":true,\"key\":\"Bb\",\"tab_rows\":24}",
+      "M20_C5A_URL_CAPTURE_STARTED",
+      "M20_C5D_URL_PASTE_SAVE_REOPEN={\"exact\":true,\"key\":\"Bb\",\"tab_rows\":24}",
+      "M20_C5D_E2E=PASS"
+    ],
+    "flutter_test_output": "All tests passed! (exit code 0)"
+  },
+  "tests": [
+    "mobile/integration_test/m20_c5a_android_flow_test.dart (Lenovo TB-J616F REDACTED_DEVICE_IDENTIFIER, flavor cifraProbe): 2/2 PASS in 00:34"
+  ],
+  "android_release_readiness": "TECHNICAL_READY_FOR_EXPERIMENTAL_FLAG - Native capture logic, DOM parser, preview/edit, Firestore persistence, and share-routing are fully functional on physical Android hardware. MediaTek devices with active DuraSpeed require DuraSpeed suppression disabling (setting.duraspeed.enabled=0) or fallback to Backend URL Acquisition (M20-C3/C4C). Capture remains disabled by default (cifraClubDirectImportEnabledProvider: false).",
+  "next_gate": "M20 Consolidação Final / Submissão ao Codex principal para revisão e alinhamento de release"
+}

@@ -106,4 +106,38 @@ describe('compliance.config', () => {
       expect(config.controllerDisplayName).toBe('Custom Dev');
     });
   });
+
+  describe('Vercel Preview Configuration', () => {
+    const previewMetadata = {
+      VITE_PUBLIC_SUPPORT_EMAIL: 'preview-support@example.test',
+      VITE_PRIVACY_CONTACT_EMAIL: 'preview-privacy@example.test',
+      VITE_CONTROLLER_DISPLAY_NAME: 'Preview Controller',
+      VITE_FIREBASE_API_KEY: 'preview-key',
+      VITE_ACCOUNT_DELETION_WEB_URL: 'https://production.example/exclusao-conta',
+      NODE_ENV: 'production',
+    };
+
+    it('requires public compliance metadata even when NODE_ENV is not production', () => {
+      expect(() =>
+        resolveComplianceConfig({
+          env: { NODE_ENV: 'development' },
+          vercelEnv: 'preview',
+        })
+      ).toThrowError(/Missing mandatory preview compliance configuration/i);
+    });
+
+    it('disables Firebase reauthentication and uses a relative deletion URL in preview', () => {
+      const config = resolveComplianceConfig({
+        env: previewMetadata,
+        mode: 'development',
+        isProd: false,
+        vercelEnv: 'preview',
+      });
+
+      expect(config.firebaseWebApiKey).toBe('');
+      expect(config.accountDeletionWebUrl).toBe('/exclusao-conta');
+      expect(config.publicSupportEmail).toBe(previewMetadata.VITE_PUBLIC_SUPPORT_EMAIL);
+      expect(config.controllerDisplayName).toBe(previewMetadata.VITE_CONTROLLER_DISPLAY_NAME);
+    });
+  });
 });

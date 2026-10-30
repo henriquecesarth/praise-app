@@ -19,6 +19,8 @@ abstract class SmartChordRepository {
       List<int> bytes, String filename);
   Future<SmartChordImportDraft> importTextDraft(String text);
   Future<SmartChordImportDraft> importUrlDraft(String url);
+  Future<SmartChordImportDraft> importCapturedUrlDraft(
+      String url, String musicalHtml);
   Future<SmartChordImportDraft> importImageDraft(
       List<int> bytes, String filename);
 }
@@ -210,6 +212,26 @@ class HttpSmartChordRepository implements SmartChordRepository {
   @override
   Future<SmartChordImportDraft> importUrlDraft(String url) async =>
       manualUrlDraft(url);
+
+  @override
+  Future<SmartChordImportDraft> importCapturedUrlDraft(
+      String url, String musicalHtml) async {
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '/smart-chords/import/url',
+        data: {'url': url, 'musical_html': musicalHtml},
+      );
+
+      if (response.data == null) {
+        throw const AppFailure(message: 'Resposta vazia ao importar cifra.');
+      }
+      return SmartChordImportDraft.fromMap(response.data!);
+    } on DioException catch (e) {
+      throw _apiClient.mapDioException(e);
+    } catch (e) {
+      throw AppFailure(message: e.toString());
+    }
+  }
 
   @override
   Future<SmartChordImportDraft> importImageDraft(

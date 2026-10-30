@@ -1,0 +1,43 @@
+{
+  "milestone": "M20-C5",
+  "date": "2026-10-29",
+  "branch": "feat/m20-phase-2a-android-share",
+  "head": "e3c4902e0d8786e164ea0686486c564f9dea1578",
+  "M20_C5_VERDICT": "BLOCKED - complete Android acceptance needs compatible hardware",
+  "ANDROID_URL_IMPORT": "Historical C1 PASS: one real paste/preview/edit/save/exact-reopen run; repeatability Unknown / Not yet verified",
+  "ANDROID_SHARE_IMPORT": "PASS targeted real-app cold-share router integration with ready/empty ministry; full physical flow BLOCKED",
+  "CAPTURE": "Historical C2E real capture/native release PASS under temporary authorized setting subsequently restored; compatible-device repeatability Unknown / Not yet verified",
+  "PARSER_INTEGRATION": "Historical C1/C3 PASS; existing authenticated endpoint and TypeScript parser preserved",
+  "PREVIEW_EDIT": "Historical C1 real editable preview PASS",
+  "SAVE_REOPEN": "Historical C1 explicit local-emulator save/exact reopen PASS; shared-link physical save/reopen BLOCKED",
+  "TABLATURE_INTEGRITY": "Historical C1: 24 tab rows, exact preview/reopened text. C3: exact tab/chord columns. New Android visual/font/transposition acceptance Unknown / Not yet verified",
+  "DEVICE_COMPATIBILITY": "BLOCKED - adb devices -l reports only Lenovo TB-J616F. SDK emulator.exe, system-images and user .android/avd directory absent",
+  "FAILURE_HANDLING": "PASS new widget regression: renderer error retains shared URL, ends loading, skips captured-import/save; explicit retry reaches preview without autosave",
+  "TESTS": {
+    "new_recovery_widget": "PASS - 1; flutter test --no-pub test/features/smart_chords/presentation/views/smart_chord_import_screen_share_test.dart --plain-name renderer failure retains shared URL and explicit retry opens preview without saving --timeout 45s",
+    "affected_real_app_router": "PASS - 2; flutter test --no-pub test/features/smart_chords/presentation/controllers/share_intent_app_router_test.dart --plain-name cold share waits for auth and ministry --timeout 45s",
+    "scoped_flutter_analyze": "PASS - three changed Dart files, no issues",
+    "physical_e2e": "BLOCKED - incompatible Lenovo only; DuraSpeed investigation not repeated",
+    "prior_approved_suites_and_build": "NOT_EXECUTED - prior evidence reused; no APK generated",
+    "independent_review": "PASS - /root/capture_review, read-only. Empty-ministry dispatch finding corrected; no material finding pending. Fake platform does not certify native release",
+    "git_diff_check": "PASS"
+  },
+  "fix": "Real app router dispatches pending personal shares on ready OR empty ministry bootstrap, including already authenticated initialization. Push/notification work retains ready requirement. Regression mounts real LouvAioApp after cold pending share without manual dispatch",
+  "FILES_CHANGED": [
+    "mobile/lib/app/router/app_router.dart",
+    "mobile/test/features/smart_chords/presentation/controllers/share_intent_app_router_test.dart",
+    "mobile/test/features/smart_chords/presentation/views/smart_chord_import_screen_share_test.dart",
+    "docs/exec-plans/active/2026-10-28-m20-direct-html-import-proof.md",
+    "docs/exec-plans/evidence/2026-10-29-m20-c5-checkpoint.json"
+  ],
+  "EVIDENCE": [
+    "2026-10-28-m20-c1-android-flow.json",
+    "2026-10-28-m20-c2d-renderer-isolation.json",
+    "2026-10-28-m20-c2e-duraspeed-validation.json",
+    "2026-10-28-m20-c3-backend-acquisition.json",
+    "2026-10-29-m20-c4c-checkpoint.json"
+  ],
+  "RELEASE_READINESS": "BLOCKED - experimental capture stays false pending complete Android functional approval",
+  "NEXT_GATE": "Compatible Android with operational WebView: reuse C1 local Auth/Firestore/API harness; real URL and Android Share -> capture -> edit -> explicit save -> exact reopen. Verify alignment/techniques, transposition and font preferences. Do not alter Lenovo settings",
+  "preservation": "WIP retained. No Web/iOS/parser changes, new infrastructure/dependencies, production or credential access, device setting changes, commit, push, merge, deploy or publication APK"
+}

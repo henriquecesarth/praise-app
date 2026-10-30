@@ -85,6 +85,46 @@ describe('SmartChordImportModal Component', () => {
     });
   });
 
+  it.each(['manual edit', 'plain paste'])('C4B clears stale HTML after %s', async mode => {
+    render(<SmartChordImportModal isOpen onClose={mockOnClose} onSuccess={mockOnSuccess} />);
+    fireEvent.click(screen.getByText('Colar Texto'));
+    const textarea = screen.getByPlaceholderText(/Graças Te dou pelo Teu amor/i);
+    fireEvent.paste(textarea, { clipboardData: { getData: (type: string) => type === 'text/html' ? '<h1>Old title</h1>' : 'Original body' } });
+    fireEvent.change(textarea, { target: { value: 'Original body' } });
+    if (mode === 'plain paste') fireEvent.paste(textarea, { clipboardData: { getData: (type: string) => type === 'text/plain' ? 'New body' : '' } });
+    fireEvent.change(textarea, { target: { value: 'New body' } });
+    fireEvent.click(screen.getByText('Analisar e Pré-visualizar Texto'));
+    await waitFor(() => expect(importSmartChordText).toHaveBeenCalledWith('New body'));
+  });
+
+  it('C4B accepts an HTML-only metadata paste accompanying existing plain text', async () => {
+    render(<SmartChordImportModal isOpen onClose={mockOnClose} onSuccess={mockOnSuccess} />);
+    fireEvent.click(screen.getByText('Colar Texto'));
+    const textarea = screen.getByPlaceholderText(/Graças Te dou pelo Teu amor/i);
+    fireEvent.change(textarea, { target: { value: 'Existing body' } });
+    const html = '<h1>Current title</h1>';
+    fireEvent.paste(textarea, { clipboardData: { getData: (type: string) => type === 'text/html' ? html : '' } });
+    fireEvent.click(screen.getByText('Analisar e Pré-visualizar Texto'));
+    await waitFor(() => expect(importSmartChordText).toHaveBeenCalledWith('Existing body', html));
+  });
+
+  it('C4B retains same-event rich HTML and saves exact reviewed whitespace', async () => {
+    const content = '  e|--0h2--[7]--|\n\n';
+    importSmartChordText.mockResolvedValue({ title: 'Test', originalKey: 'C', content, warnings: [], sourceType: 'text' });
+    createSmartChord.mockResolvedValue({ id: 'c4b', title: 'Test', originalKey: 'C', content });
+    render(<SmartChordImportModal isOpen onClose={mockOnClose} onSuccess={mockOnSuccess} />);
+    fireEvent.click(screen.getByText('Colar Texto'));
+    const textarea = screen.getByPlaceholderText(/Graças Te dou pelo Teu amor/i);
+    const html = '<h1>Test</h1>';
+    fireEvent.paste(textarea, { clipboardData: { getData: (type: string) => type === 'text/html' ? html : 'Body' } });
+    fireEvent.change(textarea, { target: { value: 'Body' } });
+    fireEvent.click(screen.getByText('Analisar e Pré-visualizar Texto'));
+    await screen.findByText('Salvar Cifra Pessoal');
+    expect(importSmartChordText).toHaveBeenCalledWith('Body', html);
+    fireEvent.click(screen.getByText('Salvar Cifra Pessoal'));
+    await waitFor(() => expect(createSmartChord).toHaveBeenCalledWith(expect.objectContaining({ content })));
+  });
+
   it('renders nothing when isOpen is false', () => {
     const { container } = render(
       <SmartChordImportModal
@@ -955,5 +995,69 @@ describe('SmartChordImportModal Component', () => {
     fireEvent.keyDown(chooser, { key });
     expect(click).toHaveBeenCalledOnce();
     expect(importSmartChordImage).not.toHaveBeenCalled();
+  });
+
+  describe('M20-C4 web text pasting, HTML support, and rendered preview alignment', () => {
+    it('captures HTML from clipboard paste event and passes to importSmartChordText', async () => {
+      importSmartChordText.mockResolvedValueOnce({
+        title: 'Lugar Secreto',
+        artistName: 'Gabriela Rocha',
+        originalKey: 'F#m',
+        content: '[F#m]Tu és [D]tudo o [A]que [E]eu mais quero',
+        warnings: [],
+        sourceType: 'text',
+      });
+
+      render(<SmartChordImportModal isOpen onClose={mockOnClose} onSuccess={mockOnSuccess} />);
+      fireEvent.click(screen.getByText('Colar Texto'));
+      const textarea = screen.getByPlaceholderText(/Graças Te dou pelo Teu amor/i);
+
+      const htmlData = '<main class="cifra"><h1 class="t1">Lugar Secreto</h1><h2 class="t3"><a>Gabriela Rocha</a></h2><div id="cifra_tom">Tom: <a>F#m</a></div></main>';
+      fireEvent.paste(textarea, {
+        clipboardData: {
+          getData: (format: string) => format === 'text/html' ? htmlData : 'F#m D A E\nTu és tudo o que eu mais quero',
+        },
+      });
+      fireEvent.change(textarea, { target: { value: 'F#m D A E\nTu és tudo o que eu mais quero' } });
+
+      fireEvent.click(screen.getByText('Analisar e Pré-visualizar Texto'));
+
+      await waitFor(() => {
+        expect(importSmartChordText).toHaveBeenCalledWith(
+          'F#m D A E\nTu és tudo o que eu mais quero',
+          htmlData
+        );
+      });
+      expect(await screen.findByDisplayValue('Lugar Secreto')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('Gabriela Rocha')).toBeInTheDocument();
+    });
+
+    it('renders aligned preview with preserved tablature and monospace tiers', async () => {
+      const tab = 'e|--0h2--2p0--[7]--12/14--|\nB|--3----3----[7]---------|';
+      importSmartChordText.mockResolvedValueOnce({
+        title: 'Glorificar',
+        artistName: 'Projeto Sola',
+        originalKey: 'Bb',
+        content: `${tab}\n[Bb]Graças Te [Eb]dou`,
+        warnings: [],
+        sourceType: 'text',
+      });
+
+      render(<SmartChordImportModal isOpen onClose={mockOnClose} onSuccess={mockOnSuccess} />);
+      fireEvent.click(screen.getByText('Colar Texto'));
+      const textarea = screen.getByPlaceholderText(/Graças Te dou pelo Teu amor/i);
+      fireEvent.change(textarea, { target: { value: 'test' } });
+      fireEvent.click(screen.getByText('Analisar e Pré-visualizar Texto'));
+
+      await screen.findByText('Visualização Alinhada');
+      fireEvent.click(screen.getByText('Visualização Alinhada'));
+
+      // Tablature line must appear intact without splitting
+      expect(screen.getByText('e|--0h2--2p0--[7]--12/14--|')).toBeInTheDocument();
+      expect(screen.getByText('B|--3----3----[7]---------|')).toBeInTheDocument();
+
+      // Lyrics line appears
+      expect(screen.getByText('Graças Te dou')).toBeInTheDocument();
+    });
   });
 });

@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/foundation.dart';
 import '../../../../core/errors/app_failure.dart';
 import '../../data/smart_chord_repository.dart';
 import '../../data/smart_chord_repertoire_link_repository.dart';
@@ -76,6 +77,7 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
         return 'Falha de conexão. Verifique sua internet e tente novamente.';
       }
       if (error.code?.startsWith('OCR_') == true) return error.message;
+      if (error.code?.startsWith('CIFRACLUB_') == true) return error.message;
       if (error.statusCode != null) {
         return error.message;
       }
@@ -139,7 +141,7 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
     }
   }
 
-  Future<void> importUrl(String url) async {
+  Future<void> importUrl(String url, {Future<String?> Function()? capture}) async {
     final currentGen = state.generation + 1;
     state = state.copyWith(
       status: ImportStatus.extracting,
@@ -148,7 +150,24 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
     );
 
     try {
-      final draft = await _repository.importUrlDraft(url);
+      final String? musicalHtml;
+      if (capture != null) {
+        musicalHtml = await capture();
+        if (!_isCurrent(currentGen)) return;
+        if (musicalHtml == null) {
+          state = state.copyWith(
+            status: ImportStatus.initial,
+            clearError: true,
+          );
+          return;
+        }
+      } else {
+        musicalHtml = null;
+      }
+
+      final draft = capture == null
+          ? await _repository.importUrlDraft(url)
+          : await _repository.importCapturedUrlDraft(url, musicalHtml!);
       if (!_isCurrent(currentGen)) return;
 
       state = state.copyWith(
@@ -157,6 +176,7 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
         clearError: true,
       );
     } catch (e) {
+      if (kDebugMode) debugPrint('CIFRACLUB_PIPELINE_ERROR=${e.runtimeType}${e is AppFailure ? ":${e.code}" : ""}');
       if (!_isCurrent(currentGen)) return;
       state = state.copyWith(
         status: ImportStatus.error,
@@ -234,13 +254,13 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
     }
 
     final title = draft.title.trim();
-    final content = draft.content.trim();
+    final content = draft.content;
 
     if (title.isEmpty) {
       state = state.copyWith(errorMessage: 'O título da cifra é obrigatório.');
       return null;
     }
-    if (content.isEmpty) {
+    if (content.trim().isEmpty) {
       state = state.copyWith(
         errorMessage: 'O conteúdo da cifra não pode ser vazio.',
       );

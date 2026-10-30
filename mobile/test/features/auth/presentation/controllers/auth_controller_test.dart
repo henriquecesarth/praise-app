@@ -446,5 +446,124 @@ void main() {
 
       notifier.dispose();
     });
+
+    test('SESSION_CHANGED during _fetchAuthoritativeUser recovers automatically when Firebase user is present', () async {
+      const userA = AuthUser(
+        id: 'usr_recov',
+        email: 'recov@louvaio.com',
+        name: 'Recovered User',
+      );
+
+      final mockUser = MockUser();
+      when(() => mockUser.uid).thenReturn('usr_recov');
+      when(() => mockRepository.currentFirebaseUser).thenReturn(mockUser);
+
+      var callCount = 0;
+      when(() => mockRepository.getMe()).thenAnswer((_) async {
+        callCount++;
+        if (callCount == 1) {
+          throw const AppFailure(
+            message: 'Sessão expirada ou alternada durante a requisição.',
+            statusCode: 401,
+            code: 'SESSION_CHANGED',
+          );
+        }
+        return userA;
+      });
+
+      final notifier = AuthNotifier(mockRepository);
+      authStateStreamController.add(mockUser);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(callCount, 2);
+      expect(notifier.state.status, AuthStatus.authenticated);
+      expect(notifier.state.user?.id, 'usr_recov');
+
+      notifier.dispose();
+    });
+
+    test('SESSION_CHANGED during _fetchAuthoritativeUser is discarded cleanly if Firebase user signed out', () async {
+      when(() => mockRepository.currentFirebaseUser).thenReturn(null);
+      when(() => mockRepository.getMe()).thenAnswer((_) async {
+        throw const AppFailure(
+          message: 'Sessão expirada ou alternada durante a requisição.',
+          statusCode: 401,
+          code: 'SESSION_CHANGED',
+        );
+      });
+
+      final notifier = AuthNotifier(mockRepository);
+      final mockUser = MockUser();
+      when(() => mockUser.uid).thenReturn('usr_out');
+
+      authStateStreamController.add(mockUser);
+      await Future<void>.delayed(Duration.zero);
+
+      // Must NOT transition to bootstrap error; discarded cleanly
+      expect(notifier.state.hasBootstrapError, isFalse);
+
+      notifier.dispose();
+    });
+
+    test(
+      'repeated SESSION_CHANGED cancellation is bounded without bootstrapError',
+      () async {
+        final user = MockUser();
+        when(() => mockRepository.currentFirebaseUser).thenReturn(user);
+        var calls = 0;
+        when(() => mockRepository.getMe()).thenAnswer((_) async {
+          ++calls;
+          throw const AppFailure(
+            message: 'Session changed',
+            statusCode: 401,
+            code: 'SESSION_CHANGED',
+          );
+        });
+        final notifier = AuthNotifier(mockRepository);
+        authStateStreamController.add(user);
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+        expect(calls, 2);
+        expect(notifier.state.isUnauthenticated, isTrue);
+        expect(notifier.state.hasBootstrapError, isFalse);
+        notifier.dispose();
+      },
+    );
+
+    test('login succeeds when authStateChanges emits before signIn completion (real Firebase flow)', () async {
+      final mockCred = MockUserCredential();
+      final mockUser = MockUser();
+      when(() => mockUser.uid).thenReturn('usr_real');
+      when(() => mockRepository.currentFirebaseUser).thenReturn(mockUser);
+
+      const user = AuthUser(
+        id: 'usr_real',
+        email: 'real@louvaio.com',
+        name: 'Real User',
+      );
+
+      when(() => mockRepository.signInWithEmailAndPassword(
+        email: 'real@louvaio.com',
+        password: 'password123',
+      )).thenAnswer((_) async {
+        // Real Firebase Auth emits user to authStateChanges during or before sign-in resolves
+        authStateStreamController.add(mockUser);
+        return mockCred;
+      });
+      when(() => mockRepository.getMe()).thenAnswer((_) async => user);
+
+      final notifier = AuthNotifier(mockRepository);
+
+      await notifier.login(
+        email: 'real@louvaio.com',
+        password: 'password123',
+      );
+
+      expect(notifier.state.status, AuthStatus.authenticated);
+      expect(notifier.state.user?.id, 'usr_real');
+
+      notifier.dispose();
+    });
   });
 }

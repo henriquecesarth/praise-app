@@ -215,7 +215,9 @@ class SmartChordParser {
       }
 
       final segments = <SmartChordSegment>[];
-      final matches = _chordRegex.allMatches(lineText).toList();
+      final matches = isTablatureLine(lineText)
+          ? <RegExpMatch>[]
+          : _chordRegex.allMatches(lineText).where((m) => isMusicalChord(m.group(1)!)).toList();
 
       if (matches.isEmpty) {
         segments.add(SmartChordSegment(chord: '', text: lineText));
@@ -356,6 +358,36 @@ class SmartChordParser {
 
   /// Dedicated representation for a progression: never split its label into a lyric row.
   static List<MusicalProgressionToken>? progressionTokens(String line, [int semitones = 0]) {
+    if (isTablatureLine(line)) return null;
+    // Own-line chords occupy their printed width. Brackets are syntax only;
+    // removing the chord width would collapse every subsequent column.
+    final row = line.replaceAllMapped(_chordRegex, (m) =>
+        isMusicalChord(m.group(1)!) ? m.group(1)! : m.group(0)!);
+    final label = RegExp(
+      r'^\s*(?:\[[^\]]+\]|(?:Intro|Interlúdio|Interludio|Refrão|Refrao|Final)\s*:)\s*',
+      caseSensitive: false,
+    ).firstMatch(row);
+    final labelText = label?.group(0)?.trim() ?? '';
+    final start = labelText.startsWith('[') &&
+        isMusicalChord(labelText.substring(1, labelText.length - 1))
+        ? 0 : label?.end ?? 0;
+    final tail = row.substring(start);
+    final rowTokens = RegExp(r'\s+|[|:%]+|[^\s|:%]+').allMatches(tail).toList();
+    String chordOf(String value) => value.replaceAll(RegExp(r'^\(|\)$'), '');
+    if (rowTokens.any((m) => isMusicalChord(chordOf(m.group(0)!))) &&
+        rowTokens.every((m) => isMusicalChord(chordOf(m.group(0)!)) ||
+          RegExp(r'^(?:\s+|[|:%]+|\(?\d+[xX]\)?)$').hasMatch(m.group(0)!))) {
+      return [
+        if (start > 0) MusicalProgressionToken(row.substring(0, start)),
+        for (final match in rowTokens)
+          MusicalProgressionToken(
+            isMusicalChord(chordOf(match.group(0)!))
+              ? match.group(0)!.replaceFirst(chordOf(match.group(0)!), transposeChord(chordOf(match.group(0)!), semitones))
+              : match.group(0)!,
+            isChord: isMusicalChord(chordOf(match.group(0)!)),
+          ),
+      ];
+    }
     final groups = RegExp(r'\[([^\[\]]*)\]').allMatches(line).toList();
     final tokenPattern = RegExp(r'\([^()]*\)|\|\|:|:\|\||\|:|:\||\|\||[|%]|\s+|[^\s|%:]+|:');
     bool isBlock(String inner) => inner.contains('|') || inner.contains('%') ||
@@ -390,15 +422,28 @@ class SmartChordParser {
 
     // Parsing for syllabic layout trims chord payloads. Transform the original
     // bracket spans instead, retaining canonical block padding and authored EOLs.
-    return smartChordText.replaceAllMapped(_chordRegex, (match) {
+    return smartChordText.splitMapJoin(RegExp(r'[^\r\n]+'), onMatch: (line) {
+      if (isTablatureLine(line.group(0)!)) return line.group(0)!;
+      if (!_chordRegex.allMatches(line.group(0)!).any((m) =>
+          isMusicalChord(m.group(1)!) ||
+          m.group(1)!.contains('|') || m.group(1)!.contains('%') ||
+          m.group(1)!.split(RegExp(r'\s+')).where(isMusicalChord).length >= 2)) {
+        final row = progressionTokens(line.group(0)!, semitones);
+        if (row != null) return row.map((t) => t.text).join();
+      }
+      return line.group(0)!.replaceAllMapped(_chordRegex, (match) {
       final original = match.group(1)!;
       final trimmed = original.trim();
       final transposed = original.contains('|') || original.contains('%')
           ? transposeChord(original, semitones)
           : trimmed.isEmpty ? original : original.replaceFirst(trimmed, transposeChord(trimmed, semitones));
       return '[$transposed]';
+      });
     });
   }
+
+  static bool isTablatureLine(String line) =>
+      RegExp(r'^\s*(?:[eEBGDA]\s*)?[|:].*[-─]').hasMatch(line);
 
   /// Renders a single bracket-format line into an aligned chord line and lyrics line.
   static TransposedLine renderLine(String? lineText, int semitones) {
@@ -406,12 +451,20 @@ class SmartChordParser {
       return const TransposedLine(chordLine: '', lyricsLine: '');
     }
 
+    if (isTablatureLine(lineText)) {
+      return TransposedLine(chordLine: '', lyricsLine: lineText);
+    }
+    final row = progressionTokens(lineText, semitones);
+    if (row != null) {
+      return TransposedLine(chordLine: '', lyricsLine: row.map((t) => t.text).join());
+    }
+
     final chordChars = <String>[];
     final cleanTextBuffer = StringBuffer();
     int cleanIndex = 0;
     int lastIndex = 0;
 
-    for (final match in _chordRegex.allMatches(lineText)) {
+    for (final match in _chordRegex.allMatches(lineText).where((m) => isMusicalChord(m.group(1)!))) {
       final textBetween = lineText.substring(lastIndex, match.start);
       cleanTextBuffer.write(textBetween);
       cleanIndex += textBetween.length;

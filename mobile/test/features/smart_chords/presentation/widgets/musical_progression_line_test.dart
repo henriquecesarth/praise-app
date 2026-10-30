@@ -13,7 +13,7 @@ void main() {
       final text = tester.widget<Text>(textFinder);
       expect(text.textSpan!.toPlainText(), 'Intro: (riff viol)  ||: B | B7M | E | % :|| ');
       expect(text.softWrap, isFalse);
-      expect(text.style!.fontFamily, font);
+      expect(text.style!.fontFamily, 'monospace');
       final spans = (text.textSpan! as TextSpan).children!.cast<TextSpan>();
       expect(spans.where((span) => span.style!.fontWeight == FontWeight.bold).map((s) => s.text), contains('B'));
       final scroll = tester.state<ScrollableState>(find.descendant(

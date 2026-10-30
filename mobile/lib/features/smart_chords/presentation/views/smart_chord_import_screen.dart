@@ -1,6 +1,7 @@
 import '../widgets/musical_progression_line.dart';
 import 'dart:convert';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,6 +12,9 @@ import '../../domain/smart_chord_import.dart';
 import '../../domain/smart_chord_parser.dart';
 import '../controllers/smart_chord_import_controller.dart';
 import '../widgets/song_link_picker_modal.dart';
+import '../widgets/chord_lyric_line.dart';
+import 'cifraclub_capture_screen.dart';
+import '../../../../core/errors/app_failure.dart';
 
 class SmartChordImportScreen extends ConsumerStatefulWidget {
   final SharedImportPayload? initialPayload;
@@ -301,6 +305,7 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
 
     final operation = ++_operation;
     await _notifier.importPdf(_pdfBytes!, _pdfFileName!);
+    debugPrint('M20_EXTRACT_URL_DONE: isCurrent=${_isCurrent(operation)}');
     if (!_isCurrent(operation)) return;
     _syncDraftToControllers();
   }
@@ -326,6 +331,7 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
 
     final operation = ++_operation;
     await _notifier.importText(text);
+    debugPrint('M20_EXTRACT_URL_DONE: isCurrent=${_isCurrent(operation)}');
     if (!_isCurrent(operation)) return;
     _syncDraftToControllers();
   }
@@ -341,8 +347,23 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
       return;
     }
 
+    FocusScope.of(context).unfocus();
     final operation = ++_operation;
-    await _notifier.importUrl(url);
+    final nativeCapture = !kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.android &&
+        ref.read(cifraClubDirectImportEnabledProvider);
+    await _notifier.importUrl(url, capture: nativeCapture ? () async {
+      if (!_isCurrent(operation)) return null;
+      final sessionProvider = ref.read(apiClientProvider).sessionContextProvider;
+      final session = sessionProvider?.call();
+      final html = await ref.read(cifraClubCaptureLauncherProvider)(context, url);
+      if (!_isCurrent(operation)) return null;
+      if (sessionProvider != null && sessionProvider() != session) {
+        throw const AppFailure(message: 'Sessão alterada durante a importação.', statusCode: 401, code: 'SESSION_CHANGED');
+      }
+      return html;
+    } : null);
+    debugPrint('M20_EXTRACT_URL_DONE: isCurrent=${_isCurrent(operation)}');
     if (!_isCurrent(operation)) return;
     _syncDraftToControllers();
   }
@@ -432,6 +453,7 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
 
     final operation = ++_operation;
     await _notifier.importImage(_imageBytes!, _imageFileName!);
+    debugPrint('M20_EXTRACT_URL_DONE: isCurrent=${_isCurrent(operation)}');
     if (!_isCurrent(operation)) return;
     _syncDraftToControllers();
   }
@@ -545,6 +567,7 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
       _artistController.text = draft.artistName ?? '';
       _originalKey = draft.originalKey ?? '';
       _contentController.text = draft.content;
+      if (mounted) setState(() {});
     }
   }
 
@@ -657,6 +680,7 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
   }
 
   Future<void> _saveChord() async {
+    debugPrint('M20_SAVE_CHORD_CALLED: isCurrent=${_isCurrent(_operation)}');
     if (!_isCurrent(_operation)) return;
     final state = ref.read(smartChordImportNotifierProvider);
     if (state.status == ImportStatus.saving ||
@@ -795,7 +819,7 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
           CircularProgressIndicator(),
           SizedBox(height: 16),
           Text(
-            'Preparando rascunho de importação...',
+            'Importando cifra...',
             style: TextStyle(fontWeight: FontWeight.w500),
           ),
         ],
@@ -988,7 +1012,9 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
           ),
           const SizedBox(height: 8),
           Text(
-            'O link mantém a referência da origem e sugere título/artista. Para importar a cifra completa, forneça o texto ou uma imagem no próximo passo.',
+            !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+                ? 'A cifra será preparada para revisão. Você confirma antes de salvar.'
+                : 'O link mantém a referência da origem e sugere título/artista. Para importar a cifra completa, forneça o texto ou uma imagem no próximo passo.',
             style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
           ),
           const SizedBox(height: 20),
@@ -1433,40 +1459,9 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
                         fontSize: 13,
                       );
                     }
-                    final transposed = SmartChordParser.renderLine(rawLine, 0);
-                    if (transposed.hasChords) {
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 6),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              transposed.chordLine,
-                              style: const TextStyle(
-                                fontFamily: 'monospace',
-                                color: Colors.blueAccent,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
-                              ),
-                            ),
-                            Text(
-                              transposed.lyricsLine,
-                              style: const TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }
-                    return Text(
-                      rawLine,
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 13,
-                      ),
-                    );
+                    return ChordLyricLine(line: rawLine, semitones: 0,
+                      fontSize: 13, fontFamily: 'monospace',
+                      fontFamilyFallback: const [], monospace: true);
                   }).toList(),
                 ),
               ),

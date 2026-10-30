@@ -13,6 +13,8 @@ class ApiClient {
   final AppLogger logger;
 
   SessionContextProvider? _sessionContextProvider;
+  TokenProvider? _tokenProvider;
+  AuthFailureCallback? _onAuthenticationFailed;
 
   SessionContextProvider? get sessionContextProvider => _sessionContextProvider;
 
@@ -21,6 +23,41 @@ class ApiClient {
     for (final interceptor in dio.interceptors) {
       if (interceptor is AuthInterceptor) {
         interceptor.sessionContextProvider = provider;
+      }
+    }
+  }
+
+  TokenProvider? get tokenProvider => _tokenProvider;
+
+  set tokenProvider(TokenProvider? provider) {
+    _tokenProvider = provider;
+    var found = false;
+    for (final interceptor in dio.interceptors) {
+      if (interceptor is AuthInterceptor) {
+        interceptor.tokenProvider = provider;
+        found = true;
+      }
+    }
+    if (!found && provider != null) {
+      dio.interceptors.insert(
+        0,
+        AuthInterceptor(
+          tokenProvider: provider,
+          onAuthenticationFailed: _onAuthenticationFailed,
+          dio: dio,
+          sessionContextProvider: _sessionContextProvider,
+        ),
+      );
+    }
+  }
+
+  AuthFailureCallback? get onAuthenticationFailed => _onAuthenticationFailed;
+
+  set onAuthenticationFailed(AuthFailureCallback? callback) {
+    _onAuthenticationFailed = callback;
+    for (final interceptor in dio.interceptors) {
+      if (interceptor is AuthInterceptor) {
+        interceptor.onAuthenticationFailed = callback;
       }
     }
   }
@@ -34,6 +71,8 @@ class ApiClient {
     SessionContextProvider? sessionContextProvider,
     AuthFailureCallback? onAuthenticationFailed,
   })  : _sessionContextProvider = sessionContextProvider,
+        _tokenProvider = tokenProvider,
+        _onAuthenticationFailed = onAuthenticationFailed,
         dio = customDio ??
             Dio(
               BaseOptions(
@@ -48,16 +87,23 @@ class ApiClient {
               ),
             ) {
     if (authInterceptor != null) {
-      if (authInterceptor is AuthInterceptor &&
-          sessionContextProvider != null) {
-        authInterceptor.sessionContextProvider = sessionContextProvider;
+      if (authInterceptor is AuthInterceptor) {
+        if (sessionContextProvider != null) {
+          authInterceptor.sessionContextProvider = sessionContextProvider;
+        }
+        if (tokenProvider != null) {
+          authInterceptor.tokenProvider = tokenProvider;
+        }
+        if (onAuthenticationFailed != null) {
+          authInterceptor.onAuthenticationFailed = onAuthenticationFailed;
+        }
       }
       dio.interceptors.add(authInterceptor);
     } else if (tokenProvider != null) {
       dio.interceptors.add(
         AuthInterceptor(
           tokenProvider: tokenProvider,
-          onAuthenticationFailed: onAuthenticationFailed ?? () async {},
+          onAuthenticationFailed: onAuthenticationFailed,
           dio: dio,
           sessionContextProvider: sessionContextProvider,
         ),
@@ -98,6 +144,10 @@ class ApiClient {
 
   /// Maps [DioException] to standard LouvAIO [AppFailure].
   AppFailure mapDioException(DioException error) {
+    if (error.error is AppFailure) {
+      return error.error as AppFailure;
+    }
+
     if (error.response?.data is Map<String, dynamic>) {
       return AppFailure.fromBackendJson(
         error.response!.data as Map<String, dynamic>,

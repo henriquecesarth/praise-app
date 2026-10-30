@@ -1,0 +1,104 @@
+{
+  "milestone": "M20-C4B",
+  "date": "2026-10-29",
+  "verdict": "REVIEW_COMPLETE_WITH_LIMITATIONS",
+  "branch": "feat/m20-phase-2a-android-share",
+  "head": "e3c4902e0d8786e164ea0686486c564f9dea1578",
+  "commit_push_merge_deploy": false,
+  "android_changed": false,
+  "prior_evidence": "2026-10-28-m20-c4a-web-validation.json (189 reported tests preserved, not replayed as a full suite)",
+  "independent_review": {
+    "agent": "/root/capture_review",
+    "mode": "read-only",
+    "findings": "Stale clipboard HTML; musical prefix consumed as header; content.trim at save boundaries; PDF long-tab clipping; C4A claims exceed mocked harness",
+    "corrections": "Root implemented/finished localized fixes and targeted verification. Root also confirmed PDF font override and scroll-offset capture defects through real downloads.",
+    "worker_handoff": "mobile_contract left partial clipboard edits before quota error; dom_backend also reported quota error. Root completed the work, preserving WIP. No worker success is claimed for those failed turns."
+  },
+  "env_review": {
+    "file": "web/.env",
+    "exists": true,
+    "tracked_or_staged": false,
+    "ignore_rule": ".gitignore:12 .env",
+    "public_vite_entries": 4,
+    "names": ["VITE_API_URL", "VITE_PUBLIC_SUPPORT_EMAIL", "VITE_PRIVACY_CONTACT_EMAIL", "VITE_CONTROLLER_DISPLAY_NAME"],
+    "local_api_url_present": true,
+    "secret_named_entries_or_credential_shapes_detected": false,
+    "values_logged": false,
+    "modified_in_c4b": false,
+    "limits": "Ignored file has no tracked baseline for a historical diff. This is a current-content classification and index/ignore audit, not proof of all historical values. VITE values are client-public; retain local API configuration outside commits and verify release build environment separately."
+  },
+  "persistence_type": {
+    "c4a": "MOCK / in-memory array, not durable test storage",
+    "proof": "web/e2e/smart-chord-import.spec.ts imports installMockApi and intercepts /smart-chords with page.route/route.fulfill. setupSmartChordRoutes stores created objects in savedChords[]. Import itself synthesizes draft content instead of calling the backend.",
+    "c4b_pdf": "Mock API supplies synthetic source; actual product html2pdf download is real",
+    "real_backend_firestore_save_reopen_in_c4b": "NOT_EXECUTED",
+    "correction_to_prior_claim": "C4A SAVE_REOPEN validates UI flow against mocks, not durable persistence. Earlier mobile C1 emulator evidence must not be substituted for Web persistence proof."
+  },
+  "html_security": {
+    "effective_path": "onPaste text/html -> api.importSmartChordText(text, html) -> authenticated importTextDraft -> schema -> normalizeChordText(text, html)",
+    "actual_processing": "Cheerio extracts metadata using text(); it is not an HTML sanitizer. Literal raw HTML in rawText can remain in draft.content as text.",
+    "rendering": "Inspected modal/workspace/SongDetail use React text children, not injected HTML for the imported text. PDF captures that rendered DOM. No executable XSS or tenancy bypass was verified in inspected paths.",
+    "new_real_normalizer_test": "PASS: HTML metadata parsed, script marker not executed, raw script tag retained as text; explicitly does not assert sanitization",
+    "prior_xss_test_limit": "C4A checks an inert ClipboardEvent payload flag before sending the request, and its request is intercepted by a mock. It does not prove backend sanitization or a complete stored-XSS boundary.",
+    "not_covered": "Comprehensive malformed HTML/SVG/event-handler/URL/CSS payload matrix and durable stored/reopened payload flow. Do not label this a generic XSS security PASS. Future HTML rendering requires a dedicated security boundary."
+  },
+  "proven_fixes": [
+    "Clipboard HTML invalidated on manual edit/plain paste/clipboard text replacement and workflow reset; same-event rich paste and HTML-only metadata event remain supported",
+    "Header inference limited to short nonmusical prefixes; leading chord/verse/section/tab content is normalized instead of discarded when explicit metadata occurs later",
+    "Modal and workspace send exact reviewed content at save, while trim remains only in empty-field validation",
+    "Normalizer removes boundary blank lines without trimming the first horizontal musical column; six-string indentation regression added",
+    "PDF-specific CSS keeps tablature monospaced despite selected proportional body font; fixed A4 content width and temporary uniform tab font fitting prevent clipping of long rows",
+    "html2canvas scroll origin fixed at 0,0 after actual PDF showed large initial blank space and lost tail content; final PDF includes the last verse/final line",
+    "PDF fitting restored in finally and concurrent export calls guarded"
+  ],
+  "real_pdf": {
+    "status": "VERIFIED_ON_SYNTHETIC_CONTENT_USING_REAL_EXPORT",
+    "engine": "Actual existing html2pdf.js0.10.1 through Exportar PDF -> Baixar PDF in Chrome/Playwright",
+    "viewport": "390x844 dark, local Vite development server",
+    "directory": "m20-c4b-pdf/",
+    "fonts": ["Arial", "Times New Roman", "Georgia", "Verdana", "Courier New", "monospace"],
+    "downloaded_pdfs": 6,
+    "pages_each": 3,
+    "pages_total": 18,
+    "page_size": "A4 portrait, 10mm margins",
+    "blank_page_images": 0,
+    "tab_fixture": "Six strings, bracketed harmonic7, 0h2, 12/14 and a deliberately long row ending19p17; original string retained in DOM and endpoint visible in exported raster",
+    "alignment_review": "Actual page images inspected: chord anchors above lyrics, six aligned tab starts, complete long-tab endpoint, final line Fim present. Arial three-page montage and six-font first-page montage retained.",
+    "inspection": "pdf-lib reads actual page content Do operators and extracts only each page's referenced JPEG; PIL nonwhite pixel detection checks all18 images. Visual review supplements that detector, not OCR/extracted-text proof.",
+    "artifacts": ["c4b-arial.pdf", "c4b-courier-new.pdf", "c4b-georgia.pdf", "c4b-monospace.pdf", "c4b-times-new-roman.pdf", "c4b-verdana.pdf", "pdf-manifest.json", "pdf-structure.json", "raster-review.json", "arial-contact.png", "six-fonts-contact.png", "tab-detail.png"],
+    "limitations": "PDF is raster-based: no embedded/searchable font/text proof. Very long tab rows fit by reducing font size and can require zoom. The final short third page contains Fim and is not blank. No universal pagination/print-engine guarantee is inferred from this fixture."
+  },
+  "validation": {
+    "backend_normalizer_affected_module": "PASS - 74 tests; replay justified by changing central whitespace normalization, not full backend suite",
+    "web_modal_targeted_c4b": "PASS - 4 tests, other44 skipped",
+    "existing_c4a_browser_cases": "PASS - 2 affected clipboard/save/font/transposition UI cases; API mocks remain in place",
+    "new_real_pdf_browser_case": "PASS - 1 case, six actual downloads",
+    "unique_cases_in_final_scope": 81,
+    "web_typescript_no_emit": "PASS",
+    "backend_typescript_build": "PASS",
+    "git_diff_check": "PASS",
+    "full_189_or_product_suites_repeated": false
+  },
+  "files_changed_c4b": [
+    "backend/src/features/smart_chords/smart_chord_normalizer.ts",
+    "backend/src/features/smart_chords/smart_chord_normalizer.test.ts",
+    "web/src/components/SmartChordImportModal.tsx",
+    "web/src/components/SmartChordImportModal.test.tsx",
+    "web/src/components/SmartChordsWorkspace.tsx",
+    "web/e2e/smart-chord-pdf-review.spec.ts",
+    "web/scripts/review-smart-chord-pdf.mjs",
+    "docs/exec-plans/evidence/2026-10-29-m20-c4b-web-checkpoint.json",
+    "docs/exec-plans/evidence/m20-c4b-pdf/ (synthetic PDF/raster review artifacts)",
+    "docs/exec-plans/active/2026-10-28-m20-direct-html-import-proof.md"
+  ],
+  "pending_for_next_session": {
+    "all_changes_uncommitted": true,
+    "preserve_c4_related_wip": ["web/src/api.ts", "web/src/components/SongDetail.tsx", "web/src/utils/smart_chord.ts", "web/src/utils/smart_chord.test.ts", "web/e2e/smart-chord-import.spec.ts", "backend/src/features/smart_chords/smart_chord.controller.ts", "backend/src/features/smart_chords/smart_chord_import.types.ts"],
+    "preserve_other_wip": "All existing M20C1/C2/C2D/C2E/C3, Android, workflow, billing and documentation changes remain outside C4B edits; do not reset/clean or stage repository wholesale.",
+    "do_not_stage": ["web/.env", "web/dist", "web/test-results", "web/playwright-report"],
+    "agent_ownership": "Root owns final corrective diff/checkpoint; independent review completed. Prior workers failed quota and must not be assumed to have unfinished authorized edits running."
+  },
+  "ready_for_web_release_review": true,
+  "web_release_approved": false,
+  "next_gate": "Before an actual Web release: durable test-backend save/reload/reopen proof, explicit XSS coverage boundary and release environment config review. Android may resume from preserved C2D/E DuraSpeed evidence under its own scope; no Android action is part of this checkpoint. Review ends here."
+}

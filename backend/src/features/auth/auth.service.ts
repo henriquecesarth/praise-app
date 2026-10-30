@@ -7,6 +7,7 @@ import {
   DEFAULT_CHORD_FONT,
 } from './auth.types';
 import { AppError } from '../../middleware/error-handler';
+import { config, isPreviewEnvironment } from '../../config/unifiedConfig';
 
 export class AuthService {
   constructor(private readonly userRepository: UserRepository = new UserRepository()) {}
@@ -15,6 +16,9 @@ export class AuthService {
    * Realiza cadastro de novo usuário no Firebase Auth + Firestore
    */
   async signUp(input: SignupInput) {
+    if (isPreviewEnvironment()) {
+      throw new AppError(403, 'Cadastro desabilitado no ambiente de Preview.', { code: 'PREVIEW_MODE_BLOCKED' });
+    }
     const user = await this.userRepository.createUser({
       email: input.email,
       password: input.password,
@@ -37,6 +41,9 @@ export class AuthService {
    * Realiza login de usuário
    */
   async login(input: LoginInput) {
+    if (isPreviewEnvironment() && !(config.previewAllowedUids || '').trim()) {
+      throw new AppError(403, 'Acesso restrito no ambiente de Preview.', { code: 'PREVIEW_UID_NOT_ALLOWED' });
+    }
     const user = await this.userRepository.verifyPassword(input.email, input.password);
 
     if (!user) {

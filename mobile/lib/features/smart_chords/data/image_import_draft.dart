@@ -155,6 +155,7 @@ ImportWarning? _mergedChordWarning(String line, int lineNumber) {
 }
 
 String _bracketChordRow(String line) {
+  if (SmartChordParser.isTablatureLine(line)) return line;
   final prefix = RegExp(
     r'^\s*(?:\[[^\]]+\]|(?:Intro|Interlúdio|Interludio|Refrão|Refrao|Final)\s*:)\s*',
     caseSensitive: false,

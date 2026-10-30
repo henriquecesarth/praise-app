@@ -226,6 +226,13 @@ class FakeSmartChordRepo implements SmartChordRepository {
   }
 
   @override
+  Future<SmartChordImportDraft> importCapturedUrlDraft(
+    String url,
+    String musicalHtml,
+  ) async => throw UnimplementedError(
+    'Captured URL import is unsupported by this fake.',
+  );
+  @override
   Future<SmartChordImportDraft> importImageDraft(List<int> bytes, String filename) async {
     return const SmartChordImportDraft(
       title: 'Cifra Imagem',
@@ -913,6 +920,55 @@ void main() {
     }
   }
 
+  testWidgets(
+    'OCR own-line chords retain columns above monospace lyrics in Arial mode',
+    (tester) async {
+      final chord = sampleChord.copyWith(
+        content:
+            '[Bb]       [Eb]      [F]\nA luz me guia pelo caminho\ne|--1---[5]--|',
+      );
+      repo.chord = chord;
+      await tester.pumpWidget(
+        buildApp(
+          chordId: chord.id,
+          initialChord: chord,
+          chordFontOverride: 'Arial',
+        ),
+      );
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+      expect(find.byType(MusicalProgressionLine), findsOneWidget);
+      final row = tester.widget<Text>(
+        find.descendant(
+          of: find.byType(MusicalProgressionLine),
+          matching: find.byType(Text),
+        ),
+      );
+      expect(row.textSpan!.toPlainText(), 'Bb       Eb      F');
+      final lyrics = tester.widget<SelectableText>(
+        find.byWidgetPredicate(
+          (w) => w is SelectableText && w.data == 'A luz me guia pelo caminho',
+        ),
+      );
+      expect(lyrics.style!.fontFamily, 'monospace');
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is SelectableText && w.data == 'e|--1---[5]--|',
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.byTooltip('Meio tom acima (+1)'));
+      await tester.pumpAndSettle();
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is SelectableText && w.data == 'e|--1---[5]--|',
+        ),
+        findsOneWidget,
+      );
+      expect(repo.chord!.content, chord.content);
+      expect(tester.takeException(), isNull);
+    },
+  );
   for (final font in ['monospace', 'Arial']) {
     testWidgets('saved canonical progression uses inline renderer in $font mode', (tester) async {
       final chord = sampleChord.copyWith(content: 'Intro: (riff viol) [ ||: A | D | % :|| ]');

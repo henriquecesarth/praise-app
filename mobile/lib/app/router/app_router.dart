@@ -227,6 +227,8 @@ class _RouterRefreshNotifier extends ChangeNotifier {
           // Dispatch any pending notification intent
           ref.read(notificationRouterProvider).dispatchPendingIfReady();
         } catch (_) {}
+      }
+      if (next.isReady || next.isEmpty) {
         _dispatchPendingShareAfterNavigationReady(ref, _rootNavKey);
       }
       notifyListeners();
@@ -241,16 +243,18 @@ class _RouterRefreshNotifier extends ChangeNotifier {
             .read(ministryContextNotifierProvider.notifier)
             .bootstrap(userId: auth.user?.id);
       });
-    } else if (auth.isAuthenticated && ministry.isReady) {
+    } else if (auth.isAuthenticated && (ministry.isReady || ministry.isEmpty)) {
       Future.microtask(() {
-        try {
-          ref
-              .read(pushNotificationNotifierProvider.notifier)
-              .initializeAndSync();
-        } catch (_) {}
-        try {
-          ref.read(notificationRouterProvider).dispatchPendingIfReady();
-        } catch (_) {}
+        if (ministry.isReady) {
+          try {
+            ref
+                .read(pushNotificationNotifierProvider.notifier)
+                .initializeAndSync();
+          } catch (_) {}
+          try {
+            ref.read(notificationRouterProvider).dispatchPendingIfReady();
+          } catch (_) {}
+        }
         _dispatchPendingShareAfterNavigationReady(ref, _rootNavKey);
       });
     }

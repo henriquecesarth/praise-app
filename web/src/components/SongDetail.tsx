@@ -6,6 +6,7 @@ import {
   rawToVisual,
   hasBarProgression,
   parseBarProgressionLine,
+  isTablatureLine,
   getFontFamilyCss,
   CHORD_FONT_FAMILIES,
 } from '../utils/smart_chord';
@@ -1033,6 +1034,29 @@ export const SongDetail: React.FC<SongDetailProps> = ({
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {rawLines.map((lineText, lineIdx) => {
+                  if (isTablatureLine(lineText)) {
+                    return (
+                      <div
+                        key={lineIdx}
+                        role="group"
+                        data-musical-tablature
+                        aria-label={lineText}
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'nowrap',
+                          whiteSpace: 'pre',
+                          overflowX: 'auto',
+                          fontFamily: 'monospace, "Courier New", Courier',
+                          fontSize: '14px',
+                          lineHeight: '1.4',
+                          color: 'var(--text-primary)',
+                          minHeight: '1.4em',
+                        }}
+                      >
+                        {lineText}
+                      </div>
+                    );
+                  }
                   if (hasBarProgression(lineText)) {
                     const tokens = parseBarProgressionLine(lineText);
                     return (

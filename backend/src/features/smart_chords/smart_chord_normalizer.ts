@@ -1,3 +1,4 @@
+import { load } from 'cheerio';
 import { SmartChordImportDraft, ImportWarning } from './smart_chord_import.types';
 
 export const ROOT_REGEX = /^([A-G][#b]?)(.*)$/i;
@@ -5,6 +6,12 @@ export const EXT_REGEX = /^(m|min|maj|M|dim|aug|sus[24]?|add[249]?|[0-9]+|\+|\-|
 
 export const SECTION_HEADER_REGEX = /^(Intro|Introdução|Introducao|Verso|Pré-refrão|Pre-refrao|Refrão|Refrao|Coro|Ponte|Solo|Interlúdio|Interludio|Instrumental|Final|Coda|Tag)(\s+\d+)?[:\s]*$/i;
 export const BRACKETED_SECTION_REGEX = /^\[(Intro|Introdução|Introducao|Verso|Pré-refrão|Pre-refrao|Refrão|Refrao|Coro|Ponte|Solo|Interlúdio|Interludio|Instrumental|Final|Coda|Tag)(\s+\d+)?\]$/i;
+export const TABLATURE_LINE_REGEX = /^\s*(?:[A-Ga-g][#b]?\s*)?[|:].*[-─]/;
+
+export function isTablatureLine(line: string): boolean {
+  if (!line || typeof line !== 'string') return false;
+  return TABLATURE_LINE_REGEX.test(line);
+}
 
 export const CHROMATIC_SCALE = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
@@ -172,6 +179,7 @@ function projectChordLine(chordLine: string, lyricLine: string): string | null {
 }
 
 export function isChordLine(line: string): boolean {
+  if (isTablatureLine(line)) return false;
   if (!line || !line.trim()) return false;
   // If line contains section header, it's not a pure chord line
   if (SECTION_HEADER_REGEX.test(line.trim()) || BRACKETED_SECTION_REGEX.test(line.trim())) {
@@ -204,6 +212,7 @@ export function isChordLine(line: string): boolean {
 
 /** Recognize a whole musical line, never chord-bearing lyrics. No tokens are discarded. */
 export function normalizeInstrumentalProgression(line: string): string | null {
+  if (isTablatureLine(line)) return null;
   // Keep the separate chord row emitted by an uncertain projection stable.
   const chordTags = [...line.matchAll(/\[([^\]]+)\]/g)];
   if (chordTags.length >= 2 && chordTags.every(tag => isMusicalChord(tag[1])) &&
@@ -261,7 +270,7 @@ export function normalizeInstrumentalProgression(line: string): string | null {
  * Normalizes plain-text chord sheets (including chord-over-lyric layout) into
  * standard LouvAIO bracketed notation [Chord]lyric.
  */
-export function normalizeChordText(rawText: string): SmartChordImportDraft {
+export function normalizeChordText(rawText: string, htmlText?: string): SmartChordImportDraft {
   const warnings: ImportWarning[] = [];
   if (!rawText || !rawText.trim()) {
     return {
@@ -289,6 +298,61 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
 
   const contentLines: string[] = [];
   let i = 0;
+
+  // HTML metadata pass if htmlText or rawText is HTML
+  const effectiveHtml = htmlText || (/^\s*<(!doctype|html|main|div|h1|pre)/i.test(rawText) ? rawText : null);
+  if (effectiveHtml) {
+    try {
+      const $ = load(effectiveHtml);
+      const htmlTitle = $('h1.t1, .cifra h1, h1').first().text().trim();
+      const htmlArtist = $('h2.t3, .cifra .t3, h2').first().text().trim();
+      const htmlTom = $('#cifra_tom').first().text().trim().match(/^(?:Tom(?:\s+atual)?\s*:\s*)?([A-G][#b]?(?:m|maj|min)?)$/i)?.[1];
+      const htmlTomOriginal = $('#cifra_tom_original').first().text().trim().match(/^(?:Tom\s+original\s*:\s*)?([A-G][#b]?(?:m|maj|min)?)$/i)?.[1];
+      const htmlCapoText = $('#cifra_capo, .capotraste').first().text().trim();
+      const htmlCapoMatch = htmlCapoText.match(/^(?:(?:Capotraste|Capo)\s*:\s*)?(\d{1,2})/i);
+      if (htmlTitle && !title) title = htmlTitle;
+      if (htmlArtist && !artistName) artistName = htmlArtist;
+      if (htmlTomOriginal && !explicitTomOriginal.length) explicitTomOriginal.push(htmlTomOriginal);
+      if (htmlTom && !explicitTom.length) explicitTom.push(htmlTom);
+      if (htmlCapoMatch && capo === null) capo = Number(htmlCapoMatch[1]);
+    } catch {
+      // Ignored if invalid HTML
+    }
+  }
+
+  // Check if explicit metadata (Tom:, Key:, Capo:, Artista:, etc.) is present within the first 8 lines
+  let explicitMetaIndex = -1;
+  for (let idx = 0; idx < Math.min(rawLines.length, 8); idx++) {
+    const t = rawLines[idx].trim();
+    if (/^(?:Tom(?:\s+Original|\s+atual|\s+cifrado|\s+transposto)?|Original\s+Key|Displayed\s+Key|Current\s+Key|Key|Capo|Capotraste|Artista|Artist|Banda|Título|Titulo|Title):\s*/i.test(t)) {
+      explicitMetaIndex = idx;
+      break;
+    }
+  }
+
+  // Only a short, nonmusical prefix can be an unlabeled title/artist header.
+  let preserveLeadingMusic = false;
+  if (explicitMetaIndex > 0) {
+    const preMetaLines = rawLines.slice(0, explicitMetaIndex).map(l => l.trim()).filter(Boolean);
+    const headerShape = preMetaLines.length <= 2 && !preMetaLines.some(line =>
+      isChordLine(line) || isTablatureLine(line) || SECTION_HEADER_REGEX.test(line) ||
+      BRACKETED_SECTION_REGEX.test(line) || normalizeInstrumentalProgression(line) !== null ||
+      [...line.matchAll(/\[([^\]]+)\]/g)].some(match => isMusicalChord(match[1])));
+    preserveLeadingMusic = !headerShape;
+    if (headerShape && preMetaLines.length === 1) {
+      const hyphenMatch = preMetaLines[0].match(/^([^\n–—-]+?)\s+[-–—]\s+([^\n–—-]+)$/);
+      if (hyphenMatch && !isMusicalChord(hyphenMatch[1]) && !isMusicalChord(hyphenMatch[2])) {
+        if (!title) title = hyphenMatch[1].trim();
+        if (!artistName) artistName = hyphenMatch[2].trim();
+      } else if (!title) {
+        title = preMetaLines[0];
+      }
+    } else if (headerShape && preMetaLines.length === 2) {
+      if (!title) title = preMetaLines[0];
+      if (!artistName) artistName = preMetaLines[1];
+    }
+    i = explicitMetaIndex;
+  }
 
   // Metadata extraction pass on leading lines
   while (i < rawLines.length && i < 15) {
@@ -350,6 +414,12 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
     break;
   }
 
+  if (preserveLeadingMusic) {
+    // Remove only the metadata just parsed; normalize the preserved music too.
+    rawLines.splice(explicitMetaIndex, i - explicitMetaIndex);
+    i = 0;
+  }
+
   const selectedKeyValues = explicitTomOriginal.length ? explicitTomOriginal :
     explicitTom.length ? explicitTom : explicitKey;
   const normalizedSelectedKeys = new Set(selectedKeyValues.map((key) => key.toLocaleLowerCase('en-US')));
@@ -395,6 +465,13 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
     // An attached syllable belongs to existing chord-over-lyrics syntax.
     if ([...currentLine.matchAll(/\[([^\]]+)\]/g)].some(tag => isMusicalChord(tag[1])) ||
         /\[[^\]]+\][^\s|%:\[\]]/.test(currentLine)) {
+      contentLines.push(currentLine);
+      i++;
+      continue;
+    }
+
+    // Check for tablature lines
+    if (isTablatureLine(currentLine)) {
       contentLines.push(currentLine);
       i++;
       continue;
@@ -534,13 +611,14 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
     i++;
   }
 
-  const finalContent = contentLines.join('\n').trim();
+  // Normalize boundary blank lines without shifting the first musical column.
+  const finalContent = contentLines.join('\n').replace(/^\n+|\n+$/g, '');
 
   // If title was not extracted from metadata, attempt derivation from first non-empty line
   if (!title) {
     for (const line of contentLines) {
       const clean = line.replace(/\[.*?\]/g, '').trim();
-      if (clean && !SECTION_HEADER_REGEX.test(clean) && !/^\(.*?\)$/.test(clean)) {
+      if (clean && !SECTION_HEADER_REGEX.test(clean) && !BRACKETED_SECTION_REGEX.test(clean) && !/^\(.*?\)$/.test(clean) && !isTablatureLine(clean)) {
         title = clean.slice(0, 80);
         break;
       }

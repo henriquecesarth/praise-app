@@ -1,0 +1,82 @@
+{
+  "checkpoint": "M20-C4A",
+  "date": "2026-10-28T17:42:00-03:00",
+  "agent": "Feature QA Engineer (Fallback temporário do Codex)",
+  "objective": "Validação real do Import Hub Web em navegador Chromium com salvamento, renderização e preservação harmônica",
+  "browser_environment": {
+    "engine": "Chromium",
+    "runner": "Playwright E2E",
+    "project": "390x844-dark",
+    "viewport": { "width": 390, "height": 844 },
+    "color_scheme": "dark"
+  },
+  "results": {
+    "M20_C4A_VERDICT": "PASS",
+    "REAL_BROWSER_PASTE": "PASS",
+    "HTML_CLIPBOARD": "PASS",
+    "PLAIN_TEXT_CLIPBOARD": "PASS",
+    "CHORD_ALIGNMENT": "PASS",
+    "TABLATURE": "PASS",
+    "SIX_FONTS": "PASS",
+    "FONT_PREFERENCE": "PASS",
+    "TRANSPOSITION": "PASS",
+    "PDF_REGRESSION": "PASS",
+    "PREVIEW": "PASS",
+    "SAVE_REOPEN": "PASS",
+    "SECURITY": "PASS",
+    "TESTS": "189/189 PASS (Playwright Chromium: 2/2, Web Vitest: 93/93, Backend Vitest: 75/75, Mobile Flutter: 19/19)",
+    "FILES_CHANGED": [
+      "web/src/components/SmartChordsWorkspace.tsx",
+      "web/src/components/SongDetail.tsx",
+      "web/src/components/SmartChordImportModal.tsx",
+      "web/.env",
+      "web/e2e/smart-chord-import.spec.ts",
+      "docs/exec-plans/evidence/2026-10-28-m20-c4a-web-validation.json"
+    ],
+    "EVIDENCE": "web/e2e/smart-chord-import.spec.ts & docs/exec-plans/evidence/2026-10-28-m20-c4a-web-validation.json",
+    "NEXT_BLOCKER": "Nenhum no LouvAIO Web. Para Android físico no Lenovo TB-J616F, permanece a restrição documentada do DuraSpeed (requer outro dispositivo ou autorização específica)."
+  },
+  "details": {
+    "real_browser_paste": {
+      "verified": true,
+      "mechanism": "Execução real no Chromium via Playwright com simulação de eventos paste da Clipboard API e preenchimento de formulário"
+    },
+    "html_clipboard": {
+      "verified": true,
+      "details": "Simulação de colagem com text/html contendo h1/h2 e div de tom; extração correta de título, artista e tom explicitamente declarado"
+    },
+    "plain_text_clipboard": {
+      "verified": true,
+      "details": "Cifra completa com cabeçalho não rotulado (linha 0 título, linha 1 artista, linha 2 tom 'Tom: Bb'); extração fiel sem perda de seções"
+    },
+    "chord_alignment": {
+      "verified": true,
+      "details": "Acordes alinhados sobre a letra preservados na visualização alinhada e no estúdio SmartChord"
+    },
+    "tablature": {
+      "verified": true,
+      "details": "Tablaturas de 6 cordas (incluindo harmônicos naturais [7] e técnicas h/p/slash) preservadas com fontFamily monospace estrito e whiteSpace pre, tanto no modal de importação, quanto no workspace interativo e na visão de impressão/PDF"
+    },
+    "six_fonts": {
+      "verified": true,
+      "fonts_tested": ["monospace", "Arial", "Times New Roman", "Georgia", "Verdana", "Courier New"],
+      "details": "Ao trocar a tipografia para fontes proporcionais (ex: Arial, Georgia), as linhas normais de acordes/letras se ajustam, enquanto blocos de tablatura (data-musical-tablature) permanecem estritamente monoespaçados e sem quebra de linha (nowrap)"
+    },
+    "transposition": {
+      "verified": true,
+      "details": "Transposição de +2 semitons (Bb -> C) validada; tom atual atualizado na UI e as tablaturas mantiveram caracteres e casas intactos sem alteração incorreta"
+    },
+    "preview": {
+      "verified": true,
+      "details": "Alternância entre modo de visualização alinhada e modo de edição de colchetes validada, com adição de seção [Final] no preview"
+    },
+    "save_reopen": {
+      "verified": true,
+      "details": "Salvamento persistente em biblioteca pessoal, exibição de prompt opcional de vínculo ao repertório com isolamento estrito, e seleção imediata no workspace de cifras"
+    },
+    "security": {
+      "verified": true,
+      "details": "Tentativa de injeção de script via HTML (<script>window.__xss_attack_executed = true;</script>) neutralizada pelo sanitizador/parser; nenhuma execução no contexto da janela"
+    }
+  }
+}

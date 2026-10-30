@@ -15,6 +15,9 @@ class _FakeSmartChordRepo implements SmartChordRepository {
   Completer<void>? pdfCompleter;
   Completer<void>? createCompleter;
   Map<String, dynamic>? lastCreatedPayload;
+  String? capturedUrl;
+  String? capturedHtml;
+  int capturedUrlCallCount = 0;
   int createCallCount = 0;
 
   @override
@@ -100,6 +103,22 @@ class _FakeSmartChordRepo implements SmartChordRepository {
     return const SmartChordImportDraft(
       title: 'Cifra URL',
       content: '',
+      warnings: [],
+      sourceType: 'url',
+    );
+  }
+
+  @override
+  Future<SmartChordImportDraft> importCapturedUrlDraft(
+    String url,
+    String musicalHtml,
+  ) async {
+    capturedUrlCallCount++;
+    capturedUrl = url;
+    capturedHtml = musicalHtml;
+    return const SmartChordImportDraft(
+      title: 'Captured Cifra',
+      content: '[G]Captured',
       warnings: [],
       sourceType: 'url',
     );
@@ -281,6 +300,25 @@ void main() {
       },
     );
 
+    test('saveChord preserves tabs and six indented rows exactly', () async {
+      const chordContent =
+          '\tG       C\n\t<12>\n\tFirst lyric\n\tSecond lyric\n\tThird lyric\n\tFourth lyric';
+      notifier.replaceDraft(
+        const SmartChordImportDraft(
+          title: 'Indented Cifra',
+          originalKey: 'G',
+          content: chordContent,
+          warnings: [],
+          sourceType: 'url',
+        ),
+      );
+
+      final saved = await notifier.saveChord();
+
+      expect(saved, isNotNull);
+      expect(repo.lastCreatedPayload?['content'], chordContent);
+    });
+
     test('linkToRepertoire links saved chord to ministry song', () async {
       await notifier.importText('A       E\nSanto Deus');
       await notifier.saveChord();
@@ -404,6 +442,54 @@ void main() {
       await notifier.importUrl('https://cifraclub.com.br/test/');
       expect(notifier.state.status, ImportStatus.preview);
       expect(notifier.state.draft?.sourceType, 'url');
+    });
+
+    test('captured URL cancellation returns to initial without importing', () async {
+      await notifier.importUrl(
+        'https://cifraclub.com.br/test/',
+        capture: () async => null,
+      );
+
+      expect(notifier.state.status, ImportStatus.initial);
+      expect(notifier.state.errorMessage, isNull);
+      expect(repo.capturedUrlCallCount, 0);
+    });
+
+    test('capture failure exposes the precise safe message without saving', () async {
+      await notifier.importUrl('https://www.cifraclub.com.br/band/song/', capture: () async {
+        throw const AppFailure(message: 'O componente de importação não respondeu. Tente novamente.', code: 'CIFRACLUB_RENDERER_UNAVAILABLE');
+      });
+      expect(notifier.state.status, ImportStatus.error);
+      expect(notifier.state.errorMessage, 'O componente de importação não respondeu. Tente novamente.');
+      expect(repo.createCallCount, 0);
+    });
+
+    test('stale capture completion does not call the repository', () async {
+      final capture = Completer<String?>();
+      final pending = notifier.importUrl(
+        'https://cifraclub.com.br/test/',
+        capture: () => capture.future,
+      );
+      expect(notifier.state.status, ImportStatus.extracting);
+      notifier.reset();
+      capture.complete('<div>stale</div>');
+
+      await pending;
+
+      expect(notifier.state.status, ImportStatus.initial);
+      expect(repo.capturedUrlCallCount, 0);
+    });
+
+    test('captured URL draft sends captured HTML for preview only', () async {
+      await notifier.importUrl(
+        'https://cifraclub.com.br/test/',
+        capture: () async => '<div class="cifra">[G]Captured</div>',
+      );
+
+      expect(repo.capturedUrl, 'https://cifraclub.com.br/test/');
+      expect(repo.capturedHtml, '<div class="cifra">[G]Captured</div>');
+      expect(notifier.state.status, ImportStatus.preview);
+      expect(repo.createCallCount, 0);
     });
 
     test('importImage fetches draft and transitions to preview', () async {

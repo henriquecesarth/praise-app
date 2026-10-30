@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/app/providers.dart';
+import 'package:louvaio_mobile/core/errors/app_failure.dart';
 import 'package:louvaio_mobile/core/storage/preferences_storage.dart';
 import 'package:louvaio_mobile/features/auth/data/auth_repository.dart';
 import 'package:louvaio_mobile/features/auth/domain/auth_user.dart';
@@ -18,6 +19,7 @@ import 'package:louvaio_mobile/features/smart_chords/domain/shared_import_payloa
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord.dart';
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_import.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/views/smart_chord_import_screen.dart';
+import 'package:louvaio_mobile/features/smart_chords/presentation/views/cifraclub_capture_screen.dart';
 
 class _FakeAuthRepo implements AuthRepository {
   @override
@@ -124,6 +126,7 @@ class FakeSmartChordRepository implements SmartChordRepository {
   List<int>? lastPdfBytes;
   String? lastText;
   String? lastUrl;
+  String? lastMusicalHtml;
   List<int>? lastImageBytes;
   SmartChordImportDraft? urlDraftResult;
   SmartChordImportDraft? imageDraftResult;
@@ -176,6 +179,12 @@ class FakeSmartChordRepository implements SmartChordRepository {
           requiresManualPaste: true,
           sourceUrl: url,
         );
+  }
+
+  @override
+  Future<SmartChordImportDraft> importCapturedUrlDraft(String url, String musicalHtml) {
+    lastMusicalHtml = musicalHtml;
+    return importUrlDraft(url);
   }
 
   @override
@@ -233,17 +242,22 @@ void main() {
   late FakeMinistryContextNotifier fakeMinistry;
   late FakeSmartChordRepository fakeRepo;
   late FakeRepertoireLinkRepository fakeLinkRepo;
+  late CifraClubCaptureLauncher captureLauncher;
 
   setUp(() {
     fakeAuth = FakeAuthNotifier();
     fakeMinistry = FakeMinistryContextNotifier();
     fakeRepo = FakeSmartChordRepository();
     fakeLinkRepo = FakeRepertoireLinkRepository();
+    captureLauncher = (_, __) async => '<pre>test capture</pre>';
   });
 
-  Widget buildTestScreen({SharedImportPayload? initialPayload}) {
+  Widget buildTestScreen({SharedImportPayload? initialPayload, bool enableDirectImport = true}) {
     return ProviderScope(
       overrides: [
+        if (enableDirectImport)
+          cifraClubDirectImportEnabledProvider.overrideWithValue(true),
+        cifraClubCaptureLauncherProvider.overrideWithValue(captureLauncher),
         authNotifierProvider.overrideWith((ref) => fakeAuth),
         ministryContextNotifierProvider.overrideWith((ref) => fakeMinistry),
         smartChordRepositoryProvider.overrideWithValue(fakeRepo),
@@ -257,6 +271,86 @@ void main() {
   }
 
   group('SmartChordImportScreen Share Intent Tests', () {
+    testWidgets('experimental capture remains disabled by default', (tester) async {
+      captureLauncher = (_, __) async => throw StateError('Unexpected native capture');
+      const url = 'https://www.cifraclub.com.br/band/song/';
+      await tester.pumpWidget(buildTestScreen(
+        initialPayload: const SharedImportPayload.text(url),
+        enableDirectImport: false,
+      ));
+      await tester.pumpAndSettle();
+      expect(fakeRepo.lastUrl, url);
+      expect(fakeRepo.lastMusicalHtml, isNull);
+      expect(fakeRepo.createCalls, 0);
+    });
+    for (final mode in ['url entry', 'shared URL']) {
+      testWidgets('$mode uses captured HTML and opens editable preview without auto-save', (tester) async {
+        const url = 'https://www.cifraclub.com.br/band/song/';
+        const html = '<h1 class="t1">Capture fixture</h1><div class="cifra_cnt"><pre>C\nFixture</pre></div>';
+        String? launchedUrl;
+        captureLauncher = (_, value) async { launchedUrl = value; return html; };
+        fakeRepo.urlDraftResult = const SmartChordImportDraft(title: 'Captured title', originalKey: 'C',
+          content: '[C]Fixture', warnings: [], sourceType: 'url');
+        await tester.pumpWidget(buildTestScreen(initialPayload: mode == 'shared URL' ? const SharedImportPayload.text(url) : null));
+        await tester.pumpAndSettle();
+        if (mode == 'url entry') {
+          await tester.tap(find.text('Link / URL')); await tester.pumpAndSettle();
+          final field = find.byWidgetPredicate((w) => w is TextField && w.decoration?.labelText == 'URL da Cifra');
+          await tester.enterText(field, url);
+          await tester.tap(find.text('Continuar com o link')); await tester.pumpAndSettle();
+        }
+        expect(launchedUrl, url); expect(fakeRepo.lastUrl, url); expect(fakeRepo.lastMusicalHtml, html);
+        expect(find.text('Captured title'), findsOneWidget);
+        expect(find.text('Salvar Cifra Pessoal'), findsOneWidget);
+        expect(fakeRepo.createCalls, 0);
+        expect(find.text('Normalizar texto e continuar'), findsNothing);
+      });
+    }
+    testWidgets('renderer failure retains shared URL and explicit retry opens preview without saving', (tester) async {
+      const url = 'https://www.cifraclub.com.br/band/song/';
+      var attempts = 0;
+      captureLauncher = (_, value) async {
+        expect(value, url);
+        attempts++;
+        if (attempts == 1) {
+          throw const AppFailure(
+            message: 'O componente de importação não respondeu. Tente novamente.',
+            code: 'CIFRACLUB_RENDERER_UNAVAILABLE',
+          );
+        }
+        return '<pre>recovered capture</pre>';
+      };
+      await tester.pumpWidget(buildTestScreen(
+        initialPayload: const SharedImportPayload.text(url),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.text('O componente de importação não respondeu. Tente novamente.'), findsOneWidget);
+      final urlField = find.byWidgetPredicate((w) =>
+          w is TextField && w.decoration?.labelText == 'URL da Cifra');
+      expect(tester.widget<TextField>(urlField).controller!.text, url);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(fakeRepo.lastMusicalHtml, isNull);
+      expect(fakeRepo.createCalls, 0);
+      expect(attempts, 1);
+
+      await tester.tap(find.text('Continuar com o link'));
+      await tester.pumpAndSettle();
+
+      expect(attempts, 2);
+      expect(fakeRepo.lastMusicalHtml, '<pre>recovered capture</pre>');
+      expect(find.text('Salvar Cifra Pessoal'), findsOneWidget);
+      expect(find.text('O componente de importação não respondeu. Tente novamente.'), findsNothing);
+      expect(fakeRepo.createCalls, 0);
+    });
+    testWidgets('capture cancellation keeps hub and skips API/save', (tester) async {
+      captureLauncher = (_, __) async => null;
+      await tester.pumpWidget(buildTestScreen(initialPayload: const SharedImportPayload.text('https://www.cifraclub.com.br/band/song/')));
+      await tester.pumpAndSettle();
+      expect(find.byType(SmartChordImportScreen), findsOneWidget);
+      expect(fakeRepo.lastMusicalHtml, isNull); expect(fakeRepo.createCalls, 0);
+      expect(find.text('Salvar Cifra Pessoal'), findsNothing);
+    });
     testWidgets(
         'shared plain text preloads text and auto-extracts preview draft',
         (tester) async {

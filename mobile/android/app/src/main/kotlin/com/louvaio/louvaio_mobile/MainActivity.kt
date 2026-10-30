@@ -3,9 +3,11 @@ package com.louvaio.louvaio_mobile
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.view.ViewGroup
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugins.webviewflutter.WebViewFlutterAndroidExternalApi
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Future
 import java.util.concurrent.RejectedExecutionException
@@ -59,6 +61,25 @@ class MainActivity : FlutterActivity() {
 
         methodChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
+                "releaseCapturedWebView" -> {
+                    val identifier = call.argument<Number>("identifier")?.toLong()
+                    if (identifier == null || identifier < 0) {
+                        result.error("INVALID_WEBVIEW", "Invalid captured WebView", null)
+                    } else {
+                        // Supported plugin external API; never change its client,
+                        // sandbox, provider, cookies or security configuration.
+                        @Suppress("DEPRECATION")
+                        val view = WebViewFlutterAndroidExternalApi.getWebView(flutterEngine, identifier)
+                        if (view == null) {
+                            result.success(false)
+                        } else {
+                            (view.parent as? ViewGroup)?.removeView(view)
+                            view.stopLoading()
+                            view.destroy()
+                            result.success(true)
+                        }
+                    }
+                }
                 "getInitialShare" -> {
                     if (initialConsumed || initialResult != null) {
                         result.success(null)

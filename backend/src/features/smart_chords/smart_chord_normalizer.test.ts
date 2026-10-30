@@ -430,4 +430,85 @@ describe('M20 P2.3 conservative chord-over-lyrics projection', () => {
       expect.objectContaining({ code: 'CHORD_ALIGNMENT_UNCERTAIN' }),
     ]));
   });
+
+  describe('M20-C4 web text pasting and tablature preservation', () => {
+    it('recognizes unlabeled title and artist when followed by explicit Tom', () => {
+      const input = 'Glorificar\nProjeto Sola\nTom: Bb\n\nBb    Eb\nLetra da canção';
+      const draft = normalizeChordText(input);
+      expect(draft.title).toBe('Glorificar');
+      expect(draft.artist_name).toBe('Projeto Sola');
+      expect(draft.original_key).toBe('Bb');
+      expect(draft.content).toBe('[Bb]Letra [Eb]da canção');
+      expect(draft.warnings.some(w => w.code === 'MISSING_ORIGINAL_KEY')).toBe(false);
+    });
+
+    it('recognizes hyphenated title - artist when followed by explicit Tom', () => {
+      const input = 'Glorificar - Projeto Sola\nTom: Bb\nCapo: 2\n\nBb    Eb\nLetra da canção';
+      const draft = normalizeChordText(input);
+      expect(draft.title).toBe('Glorificar');
+      expect(draft.artist_name).toBe('Projeto Sola');
+      expect(draft.original_key).toBe('Bb');
+      expect(draft.capo).toBe(2);
+      expect(draft.content).toBe('[Bb]Letra [Eb]da canção');
+    });
+
+    it('preserves guitar tablatures intact without converting string names into chords or stripping harmonics', () => {
+      const input = 'Tom: Bb\n\ne | -- 0h2 -- 2p0 -- [7] -- |\nB | -- 3 ---- 3 ---- [7] -- |\nG | -- 2 ---- 2 ---- [7] -- |\nD | -- 0 ---- 0 ----------- |\nA | ----------------------- |\nE | ----------------------- |\n\nBb    Eb\nLetra';
+      const draft = normalizeChordText(input);
+      expect(draft.original_key).toBe('Bb');
+      expect(draft.content).toContain('e | -- 0h2 -- 2p0 -- [7] -- |');
+      expect(draft.content).toContain('B | -- 3 ---- 3 ---- [7] -- |');
+      expect(draft.content).toContain('G | -- 2 ---- 2 ---- [7] -- |');
+      expect(draft.content).toContain('D | -- 0 ---- 0 ----------- |');
+      expect(draft.content).toContain('A | ----------------------- |');
+      expect(draft.content).toContain('E | ----------------------- |');
+      expect(draft.content).not.toContain('[A] |');
+      expect(draft.content).not.toContain('[E] |');
+    });
+
+    it('does not select a tablature line as derived title when title is omitted', () => {
+      const input = 'e|--0h2--2p0--[7]--12/14--|\nB|--3----3----[7]---------|\n';
+      const draft = normalizeChordText(input);
+      expect(draft.title).toBe('Cifra Importada');
+    });
+
+    it('extracts metadata from pasted HTML and merges with plain text body', () => {
+      const html = '<main class="cifra"><h1 class="t1">Lugar Secreto</h1><h2 class="t3"><a>Gabriela Rocha</a></h2><div id="cifra_tom">Tom: <a>F#m</a></div><div id="cifra_capo">Capo: 1</div></main>';
+      const text = 'F#m    D    A    E\nTu és tudo o que eu mais quero';
+      const draft = normalizeChordText(text, html);
+      expect(draft.title).toBe('Lugar Secreto');
+      expect(draft.artist_name).toBe('Gabriela Rocha');
+      expect(draft.original_key).toBe('F#m');
+      expect(draft.capo).toBe(1);
+      expect(draft.content).toBe('[F#m]Tu és [D]tudo o [A]que [E]eu mais quero');
+    });
+  });
+});
+
+describe('M20-C4B leading musical content', () => {
+  it('C4B preserves horizontal indentation across all six tab strings', () => {
+    const tabs = ['e', 'B', 'G', 'D', 'A', 'E'].map(string => `  ${string}|--0h2--[7]--|`).join('\n');
+    expect(normalizeChordText(`Tom: C\n${tabs}`).content).toBe(tabs);
+  });
+  it('C4B inspects real HTML parsing without claiming sanitization', () => {
+    const html = '<h1>Nome seguro</h1><h2>Artista</h2><div id="cifra_tom">Tom: C</div><script>globalThis.__c4b_xss=true</script>';
+    const draft = normalizeChordText('C\nTexto seguro', html);
+    expect(draft.title).toBe('Nome seguro');
+    expect(Reflect.has(globalThis, '__c4b_xss')).toBe(false);
+    const raw = normalizeChordText('<div><script>globalThis.__c4b_xss=true</script><pre>C\nTexto seguro</pre></div>');
+    expect(raw.content).toContain('<script>');
+    expect(Reflect.has(globalThis, '__c4b_xss')).toBe(false);
+  });
+  it('C4B preserves chords and the first verse before explicit key metadata', () => {
+    const draft = normalizeChordText('C G\nPrimeiro verso\nTom: C\n[G]Segundo verso');
+    expect(draft.original_key).toBe('C');
+    expect(draft.title).not.toBe('C G');
+    expect(draft.content.replace(/\[[^\]]+\]/g, '')).toContain('Primeiro verso');
+    expect(draft.content).toContain('[G]Segundo verso');
+  });
+  it('C4B still recognizes a genuine title and artist header', () => {
+    const draft = normalizeChordText('Glorificar\nProjeto Sola\nTom: Bb\nBb  Eb/G\nLuz no mar');
+    expect(draft).toMatchObject({ title: 'Glorificar', artist_name: 'Projeto Sola', original_key: 'Bb' });
+    expect(draft.content).toContain('[Bb]');
+  });
 });

@@ -87,6 +87,28 @@ void main() {
       expect(ocr.calls, 1);
       expect(requests, 0);
     });
+    test('captured URL import posts URL and musical HTML to the API', () async {
+      const url = 'https://cifraclub.com.br/artista/minha-cifra/';
+      const musicalHtml = '<div class="cifra">[G]Uma cifra</div>';
+      apiClient.dio.httpClientAdapter = MockAdapter((opts) async {
+        expect(opts.path, equals('/smart-chords/import/url'));
+        expect(opts.method, equals('POST'));
+        expect(opts.data, equals({'url': url, 'musical_html': musicalHtml}));
+        return jsonOk('''{
+          "title": "Minha Cifra",
+          "content": "[G]Uma cifra",
+          "warnings": [],
+          "source_type": "url",
+          "requires_manual_paste": false
+        }''');
+      });
+
+      final draft = await repository.importCapturedUrlDraft(url, musicalHtml);
+
+      expect(draft.title, 'Minha Cifra');
+      expect(draft.content, '[G]Uma cifra');
+      expect(draft.requiresManualPaste, isFalse);
+    });
     test('getSmartChords calls GET /smart-chords with query params', () async {
       apiClient.dio.httpClientAdapter = MockAdapter((opts) async {
         expect(opts.path, equals('/smart-chords'));

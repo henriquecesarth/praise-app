@@ -165,7 +165,7 @@ class ShareIntentRouter {
     final ministryState = _ref.read(ministryContextNotifierProvider);
 
     // 2. Ministry context verification: If ministry context is not yet ready, hold payload.
-    if (!ministryState.isReady) {
+    if (!ministryState.isReady && !ministryState.isEmpty) {
       _logger
           .debug('Ministry context not ready; holding share intent payload.');
       _pendingPayload = payload;
@@ -236,7 +236,8 @@ class ShareIntentRouter {
     final authState = _ref.read(authNotifierProvider);
     final ministryState = _ref.read(ministryContextNotifierProvider);
 
-    if (authState.isAuthenticated && ministryState.isReady) {
+    if (authState.isAuthenticated &&
+        (ministryState.isReady || ministryState.isEmpty)) {
       _logger.debug(
           'Dispatching pending share intent payload after authentication: $_pendingPayload');
       final payload = _pendingPayload!;

@@ -17,6 +17,18 @@ export function errorHandler(
   res: Response,
   _next: NextFunction
 ): void {
+  const parserError = err as Error & { type?: unknown };
+  if (parserError.type === 'entity.too.large' || parserError.type === 'entity.parse.failed') {
+    const tooLarge = parserError.type === 'entity.too.large';
+    // Body-parser errors may carry the original body. Never log that payload.
+    res.status(tooLarge ? 413 : 400).json({
+      error: {
+        message: tooLarge ? 'O corpo da requisição excede o limite permitido.' : 'JSON inválido na requisição.',
+        details: { code: tooLarge ? 'PAYLOAD_TOO_LARGE' : 'INVALID_JSON' },
+      },
+    });
+    return;
+  }
   console.error('API Error:', err.message);
   if (err instanceof AppError) {
     if (err.details) {

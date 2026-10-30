@@ -1,0 +1,72 @@
+{
+  "milestone": "M20-C2D",
+  "date": "2026-10-28",
+  "verdict": "BLOCKED",
+  "branch": "feat/m20-phase-2a-android-share",
+  "head": "e3c4902e0d8786e164ea0686486c564f9dea1578",
+  "committed": false,
+  "prior_evidence": [
+    "2026-10-28-m20-c1-android-flow.json",
+    "2026-10-28-m20-c2-renderer-universal.json"
+  ],
+  "device": {
+    "model": "Lenovo TB-J616F (Lenovo Tab P11 Plus)",
+    "android_version": "12",
+    "api_level": 31,
+    "soc_manufacturer": "Mediatek",
+    "soc_platform": "MT6785",
+    "webview_provider": "com.google.android.webview 155.0.8059.43",
+    "webview_version_code": 805904303,
+    "multiprocess_enabled": true,
+    "duraspeed_properties": {
+      "persist.vendor.duraspeed.app.on": "1",
+      "persist.vendor.duraspeed.support": "1",
+      "persist.vendor.duraspeed.lowmemory.enable": "1"
+    }
+  },
+  "test_a_system_state": {
+    "dumpsys_webviewupdate": "PASS; valid package com.google.android.webview installed/enabled for all users; multiprocess enabled",
+    "active_services": "SandboxedProcessService1:0 is created in ServiceRecord but placed in 'Pending services' with app=null, binder=null, hasBound=false, requested=false, received=false",
+    "native_binding_logs": [
+      "10-28 15:04:29.370  1159  3860 D ActivityManager: bringUpServiceLocked, suppress to start service!",
+      "10-28 15:04:29.373  1159  1782 D ActivityManager: bringUpServiceLocked, suppress to start service!",
+      "10-28 15:04:39.386  1159  3860 D ActivityManager: bringUpServiceLocked, suppress to start service!",
+      "10-28 15:04:39.393  1159  1692 D ActivityManager: bringUpServiceLocked, suppress to start service!"
+    ],
+    "isolated_renderer_process": "NON-EXISTENT; Zygote never spawns sandboxed_process1 for UID 10415",
+    "crashes_or_tombstones": "None for cifraprobe or webview. The process does not crash; it is outright suppressed by ActivityManagerService before process creation."
+  },
+  "test_b_minimal_webview": {
+    "entrypoint": "mobile/tool/m20_c2d_minimal_webview.dart",
+    "scope": "Isolated minimal Flutter app; single WebViewController with unrestricted JS; zero LouvAIO components (no Import Hub, parser, auth, backend or navigation overlays)",
+    "step_1_local_html": "FAIL - STEP 1 TIMEOUT after 10s. onPageStarted, onPageFinished and onNavigationRequest never invoked; JS evaluation fails",
+    "step_2_example_com": "SKIPPED due to Step 1 failure",
+    "step_3_reference_page": "SKIPPED due to Step 1 failure",
+    "native_observation": "Exact same suppression observed: 'D ActivityManager: bringUpServiceLocked, suppress to start service!' and Pending ServiceRecord with app=null"
+  },
+  "test_c_comparison": {
+    "second_environment": "NOT_AVAILABLE (No emulator or secondary physical Android device configured on host)",
+    "minimal_vs_louvaio": "Minimal WebView and LouvAIO capture fail identically on the same device with the exact same native suppression signature.",
+    "isolation_conclusion": "The failure belongs to the Android OEM environment / MediaTek framework (DuraSpeed), NOT to LouvAIO application code, Flutter route lifecycle, or widget composition."
+  },
+  "test_d_fix_evaluation": {
+    "app_code_defect": false,
+    "system_defect": true,
+    "fix_applied": "NONE",
+    "rationale": "MediaTek DuraSpeed intercepts ActivityManagerService.bringUpServiceLocked at the Android system framework level and drops the isolated service startup for non-whitelisted packages. Application-level user-space code cannot override or unsuppress kernel/framework AMS bringUpServiceLocked checks. Provider alterations, OS updates, device reboots, and app data wipes are explicitly unauthorized."
+  },
+  "verdict_summary": {
+    "M20_C2D_VERDICT": "BLOCKED",
+    "WEBVIEW_PROVIDER": "com.google.android.webview 155.0.8059.43",
+    "MINIMAL_WEBVIEW": "FAIL (STEP 1 TIMEOUT on local HTML; onPageStarted/onPageFinished never fired; SandboxedProcessService suppressed)",
+    "LOUVAIO_WEBVIEW": "FAIL (CIFRACLUB_RENDERER_UNAVAILABLE; identical symptom and native suppression)",
+    "SECOND_ENVIRONMENT": "NOT_AVAILABLE (No emulator or second physical Android device configured/connected in environment)",
+    "ROOT_CAUSE": "MediaTek DuraSpeed (MT6785) actively intercepts ActivityManagerService.bringUpServiceLocked and suppresses the WebView renderer's isolated process (SandboxedProcessService1:0), logging 'D ActivityManager: bringUpServiceLocked, suppress to start service!' and leaving the service pending with app=null, binder=null, hasBound=false.",
+    "APP_CODE_DEFECT": "false",
+    "SYSTEM_DEFECT": "true",
+    "FIX_APPLIED": "NONE (Unbypassable by application code without unauthorized system reconfiguration / data wipe / reboot)",
+    "TESTS": "Test A: dumpsys webviewupdate, services, processes, dropbox, logcat; Test B: mobile/tool/m20_c2d_minimal_webview.dart on Lenovo TB-J616F (REDACTED_DEVICE_IDENTIFIER); Test C: second environment check (none available); Test D: evaluation of fix feasibility within authorized boundaries",
+    "EVIDENCE": "docs/exec-plans/evidence/2026-10-28-m20-c2d-renderer-isolation.json",
+    "NEXT_ACTION": "Preserve experimental capture disabled by default. Escalate root cause evidence to product architecture: MediaTek/Lenovo DuraSpeed suppresses isolated child processes (SandboxedProcessService) in third-party debug/unwhitelisted apps, rendering in-process isolated WebView startup non-viable on this device without system-level whitelisting or alternative headless acquisition."
+  }
+}

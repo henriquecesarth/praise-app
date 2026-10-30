@@ -37,8 +37,13 @@ export interface SmartChordImportDraft {
 
 export const importTextPayloadSchema = z.object({
   text: z.string().min(1, 'Texto não pode ser vazio').max(100000, 'Texto excede o limite máximo permitido'),
+  html: z.string().max(200000, 'HTML excede o limite máximo permitido').optional(),
 });
 
 export const importUrlPayloadSchema = z.object({
   url: z.string().url('URL inválida').max(1000, 'URL excede o limite máximo permitido'),
 });
+
+export const importUrlWithMusicalHtmlPayloadSchema = importUrlPayloadSchema
+  .extend({ musical_html: z.string().max(100000).optional() })
+  .strict();

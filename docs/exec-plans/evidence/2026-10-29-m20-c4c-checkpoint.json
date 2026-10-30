@@ -1,0 +1,85 @@
+{
+  "milestone": "M20-C4C",
+  "verdict": "PASS_TECHNICAL_LOCAL",
+  "branch": "feat/m20-phase-2a-android-share",
+  "head": "e3c4902e0d8786e164ea0686486c564f9dea1578",
+  "previous_checkpoint": "2026-10-29-m20-c4b-web-checkpoint.json",
+  "real_run": "2026-10-29-m20-c4c-integration-run.json",
+  "independent_db_snapshot": "2026-10-29-m20-c4c-db-snapshot.json",
+  "environment": {
+    "project": "demo-m20-c4c",
+    "api": "127.0.0.1:3108 (real Express middleware/controllers/services/repositories)",
+    "auth": "127.0.0.1:9099 (real Firebase Auth emulator)",
+    "firestore": "127.0.0.1:18080 (real Firestore emulator)",
+    "firestore_transport": "127.0.0.1:8080 transparent HTTP/2 proxy forwarding normal RPCs unchanged",
+    "web": "127.0.0.1:4175, actual Import Hub/Smart Chords in Chrome",
+    "persistence_mocks": false,
+    "isolation": "Exact demo project/loopback guards, inherited cloud credentials removed, empty temporary cwd before app import prevents active .env loading",
+    "rules_scope": "Emulator defaults allow all; server uses Admin SDK. This validates application authorization, not deployed Firestore rules.",
+    "hosted_persistence": "NOT_EXECUTED; no remote write or production data used"
+  },
+  "persistence_and_auth": {
+    "initial_identity": "Actual API signup creates Auth emulator user/profile and returns signed application JWT; actual /auth/me/bootstrap accepts it",
+    "fresh_identity": "New Auth-emulator password sign-in yields Firebase ID token, accepted by real backend auth in a fresh browser context",
+    "login_scope": "Browser password-login form and /auth/login were not tested. Auth emulator REST sign-in is explicitly local; no live Identity Toolkit request.",
+    "flow": "Clipboard event -> Import Hub -> real import API -> editable preview -> explicit save -> real Firestore Commit -> real query/GET -> Smart Chords",
+    "before_confirmation": "No personal chord stored for the test user",
+    "after_confirmation": "Exactly one personal chord; Firestore REST content and owner match the real API/draft",
+    "save_reopen": "Exact musical content after fresh authenticated browser session and reload",
+    "metadata": "Title/artist including literal tag text, explicit original/displayed Bb and capo0 persisted; independent emulator snapshot confirms",
+    "music": "Six indented tab strings, fret numbers/techniques/harmonics, intro/interlude, Eb/G and Ab/Bb preserved",
+    "write_failure": "After a separate real app/database baseline, test-only transport injects nonretryable gRPC7 for Commit/Write while reads still reach actual emulator. UI retains reviewed title/draft, shows no success, creates no partial record and re-enables save. Explicit retry after restoring transport persists once.",
+    "fault_limit": "Controlled transport error injection is not a genuine emulator-rules/cloud-permission denial and does not simulate successful persistence."
+  },
+  "isolation_results": {
+    "unauthenticated": 401,
+    "other_user_personal_get_put_delete": [404, 404, 404],
+    "same_ministry_membership_does_not_share_personal_chord": 404,
+    "foreign_ministry_member_access": 403,
+    "forged_body_user_id": "Ignored; server derives owner from actual session, verified stored ownerB and ownerA cannot read it",
+    "ministry_links": "Own chord linked in ministry1; ministry2 remains unlinked and rejects ministry1 song reference with404",
+    "semantics": "Personal chords are isolated by user; ministry-specific repertoire links are partitioned separately."
+  },
+  "html_security": {
+    "matrix": ["script", "onclick/onerror/onload", "SVG", "iframe srcdoc", "javascript/data links", "malformed HTML", "encoded markup in title/artist", "literal markup in lyrics"],
+    "path": "Actual clipboard payload and API -> Cheerio metadata extraction/normalizer -> real Firestore -> React preview/workspace -> PDF source DOM",
+    "result": "No execution marker, no malicious HTML elements/active links and no injected-host request observed; persisted literal text remains escaped after new session and reload",
+    "sanitizer_installed": false,
+    "meaning": "Safe text rendering for tested vectors, not general HTML sanitization. Raw tags can intentionally remain as literal stored text.",
+    "pdf_scope": "Only the actual PDF source DOM was checked for security; no PDF binary, fonts or alignment tests were repeated",
+    "limits": "Scoped tested matrix; no exhaustive XSS proof or hosted-browser/security-policy certification. Future rich HTML rendering needs a dedicated boundary."
+  },
+  "proven_product_fix": {
+    "before": "Authenticated schema-valid110041-byte import returned500 because global JSON budget was100KiB",
+    "after": "Personal Smart Chords JSON import/save budget2MiB; all other global JSON routes remain at100KiB",
+    "schema": "Text100000 and optional HTML200000 character limits retained",
+    "verified_responses": { "valid_large_html": 200, "unicode_import_save_read_exact": true, "text_over_schema": 400, "html_over_schema": 400, "body_over2MiB": 413, "invalid_json": 400, "dangerous_source_url": 400 },
+    "error_logging": "Body-parser size/syntax failures handled before logging body-bearing errors; no parser payload echoed to logs/client"
+  },
+  "release_config": {
+    "active_env_files": "backend/.env and web/.env ignored/untracked, values not read or changed in C4C",
+    "templates": "Tracked backend/.env.example preserved",
+    "ignore_fix": ".env.* now ignored, with explicit template exceptions; production/staging/preview variants checked via git check-ignore",
+    "scoped_secret_review": "No private-key/provider-secret shapes in changed C4C source or tracked sensitive key-file extensions. This is not an exhaustive historical repository credential audit.",
+    "preview_requirements": ["Explicit build-time VITE_API_URL to canonical HTTPS backend /api/v1; current code otherwise falls back to localhost", "Backend CORS_ORIGIN includes exact Web origin, no credential wildcard", "Preview staging Firebase/JWT server variables configured per existing fail-closed contracts, never placed in VITE values"],
+    "hosted_config_values": "Unknown / Not yet verified; no Vercel settings accessed/changed",
+    "local_override": "Only dedicated Playwright webServer env points at loopback API; web/.env untouched"
+  },
+  "validation": {
+    "final_opt_in_integrated_case": "PASS - actual application services/database, no route.fulfill or repository persistence mocks",
+    "last_recorded_run": "9.4s scenario,17.4s including runner startup",
+    "backend_build": "PASS",
+    "new_playwright_files_typescript_check": "PASS",
+    "independent_review": "capture_review verified product fix; harness shutdown and exact404 assertions subsequently corrected",
+    "shutdown_test": "Updated runner handled real Auth/Firestore traffic then SIGINT exited in under1s, own API/proxy/control ports closed",
+    "historical_harness_failures": "First attempt assumed an optional link prompt for empty repertoire; second assumed a flat repertoire-create envelope. Fixed test assumptions only; no application-contract change or false product fix.",
+    "full_product_pdf_font_alignment_suites": "NOT_REPEATED",
+    "git_diff_check": "PASS"
+  },
+  "files_for_handoff": [".gitignore", "backend/src/app.ts", "backend/src/middleware/error-handler.ts", "backend/src/scripts/m20-c4c-local-server.ts", "web/playwright.integration.config.ts", "web/e2e/smart-chord-real-integration.spec.ts", "docs/exec-plans/evidence/2026-10-29-m20-c4c-*.json", "docs/exec-plans/active/2026-10-28-m20-direct-html-import-proof.md"],
+  "agents": { "root": "integration test/product fix/checkpoint", "dom_backend": "test-only local server/fault transport/shutdown proof", "capture_review": "independent read-only security/config review" },
+  "resume_command": "Start demo-m20-c4c Auth9099/Firestore18080 emulators (FirebaseCLI13.15/Java17 used here). From backend: node --import tsx src/scripts/m20-c4c-local-server.ts. From web set M20_C4C_REAL=1 then npx playwright test --config=playwright.integration.config.ts. Default E2E skips this case without opt-in.",
+  "preservation": "All earlier WIP retained. No Android/iOS/parser/renderer changes, dependencies, APK, commit, push, merge, deploy or production configuration/write.",
+  "cleanup": "Owned API/proxy/control, Auth/Firestore emulators and test Web server stopped; ports3108/8080/18081/9099/18080/4175 verified closed. No other services or device settings changed.",
+  "next_gate": "Local technical persistence/security gate complete. Hosted Preview/Firestore validation remains separate; obtain explicit authorization before any remote database write and verify release URL/CORS/server-only configuration."
+}

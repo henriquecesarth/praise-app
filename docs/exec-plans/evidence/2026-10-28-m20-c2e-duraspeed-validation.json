@@ -1,0 +1,87 @@
+{
+  "milestone": "M20-C2E",
+  "date": "2026-10-28",
+  "verdict": "PROVEN_CAUSAL_DEFECT",
+  "branch": "feat/m20-phase-2a-android-share",
+  "head": "e3c4902e0d8786e164ea0686486c564f9dea1578",
+  "committed": false,
+  "prior_evidence": [
+    "2026-10-28-m20-c1-android-flow.json",
+    "2026-10-28-m20-c2-renderer-universal.json",
+    "2026-10-28-m20-c2d-renderer-isolation.json"
+  ],
+  "device": {
+    "model": "Lenovo TB-J616F (Lenovo Tab P11 Plus)",
+    "serial": "REDACTED_DEVICE_IDENTIFIER",
+    "android_version": "12",
+    "api_level": 31,
+    "soc_manufacturer": "Mediatek",
+    "soc_platform": "MT6785 (Helio G90T)",
+    "webview_provider": "com.google.android.webview 155.0.8059.43"
+  },
+  "duraspeed_initial_state": {
+    "setting_global_duraspeed_enabled": null,
+    "setting_system_duraspeed_enabled": null,
+    "setting_secure_duraspeed_enabled": null,
+    "persist_vendor_duraspeed_app_on": "1",
+    "persist_vendor_duraspeed_support": "1",
+    "user_accessible_ui": false,
+    "explanation": "com.mediatek.duraspeed.DuraSpeedMainActivity is not exported (permission protected) and has no launcher category. Lenovo firmware does not expose DuraSpeed controls in Settings UI."
+  },
+  "control_before": {
+    "entrypoint": "mobile/tool/m20_c2d_minimal_webview.dart",
+    "result": "FAIL",
+    "detail": "STEP 1 TIMEOUT on local HTML after 10s. onPageStarted/onPageFinished never fired. AMS logcat logged: 'bringUpServiceLocked, suppress to start service!'. ServiceRecord was in Pending services with app=null, binder=null, hasBound=false."
+  },
+  "temporary_change_authorized": {
+    "command": "adb -s REDACTED_DEVICE_IDENTIFIER shell settings put global setting.duraspeed.enabled 0",
+    "verified_value": "0",
+    "scope": "Authorized strictly for temporary validation of M20-C2E without reboot, data wipe, or commit."
+  },
+  "control_after": {
+    "minimal_webview": {
+      "step_1_local_html": "PASS",
+      "step_2_example_com": "PASS",
+      "step_3_reference_page": "PASS (HAS_PRE detected)",
+      "summary": "STEP1=PASS;STEP2=PASS;STEP3=PASS"
+    },
+    "native_renderer_and_binder": {
+      "renderer_created": true,
+      "isolated_proc_pid": 29301,
+      "isolated_proc_record": "ProcessRecord{8493f31 29301:com.google.android.webview:sandboxed_process0:org.chromium.content.app.SandboxedProcessService0:0/u0a415i12}",
+      "binder_available": true,
+      "binder_record": "android.os.BinderProxy@96e9484",
+      "hasBound": true,
+      "ams_suppression_errors": 0
+    },
+    "louvaio_capture_probe": {
+      "entrypoint": "mobile/tool/m20_c2_capture_probe.dart",
+      "production_launcher": "cifraClubCaptureLauncherProvider",
+      "events": [
+        "CIFRACLUB_RENDERER_READY=true",
+        "CIFRACLUB_PAGE_STARTED=source",
+        "M20_C2_CAPTURE=CAPTURED;elapsed_ms=4488;characters=3268",
+        "CIFRACLUB_NATIVE_VIEW_RELEASED=true"
+      ],
+      "result": "PASS (Exact musical DOM acquired in 4488ms without timeout or retry)"
+    }
+  },
+  "original_setting_restored": {
+    "command": "adb -s REDACTED_DEVICE_IDENTIFIER shell settings delete global setting.duraspeed.enabled",
+    "result": "Deleted 1 rows",
+    "confirmed_value": null
+  },
+  "root_cause_confidence": "PROVEN_CAUSE (Hypothesis definitively verified by controlled experimental before/after proof. MediaTek DuraSpeed suppression was the sole blocker of the isolated renderer service.)",
+  "verdict_summary": {
+    "DURASPEED_INITIAL_STATE": "null (default active via persist.vendor.duraspeed.app.on=1)",
+    "CONTROL_BEFORE": "FAIL (10s local HTML timeout; AMS bringUpServiceLocked suppression; SandboxedProcessService app=null, binder=null)",
+    "TEMPORARY_CHANGE_AUTHORIZED": "settings put global setting.duraspeed.enabled 0 (verified: 0)",
+    "CONTROL_AFTER": "PASS (Minimal WebView: Step 1 PASS, Step 2 PASS, Step 3 PASS)",
+    "RENDERER_CREATED": "true (ProcessRecord PID 29301 created via webview_zygote)",
+    "BINDER_AVAILABLE": "true (BinderProxy@96e9484, hasBound=true)",
+    "LOUVAIO_E2E": "PASS (cifraClubCaptureLauncherProvider captured 3268 chars in 4488ms; CIFRACLUB_RENDERER_READY=true, CIFRACLUB_NATIVE_VIEW_RELEASED=true)",
+    "ORIGINAL_SETTING_RESTORED": "true (settings delete global setting.duraspeed.enabled confirmed null)",
+    "ROOT_CAUSE_CONFIDENCE": "PROVEN_CAUSE",
+    "NEXT_ACTION": "Preserve experimental capture disabled by default. Formalize finding that on MediaTek OEM ROMs with active DuraSpeed, in-process isolated WebViews are suppressed by the OS for non-whitelisted apps unless global setting.duraspeed.enabled is set to 0. Recommend proceeding with backend direct acquisition for general device compatibility."
+  }
+}

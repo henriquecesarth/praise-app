@@ -1506,11 +1506,11 @@ export const api = {
     return api.createSmartChord({ title: 'Cifra Inteligente', originalKey, content, songId });
   },
 
-  importSmartChordText: async (text: string): Promise<SmartChordImportDraft> => {
+  importSmartChordText: async (text: string, html?: string): Promise<SmartChordImportDraft> => {
     const response = await fetch(`${API_URL}/smart-chords/import/text`, {
       method: 'POST',
       headers: getHeaders(),
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, ...(html ? { html } : {}) }),
     });
     const result = await handleResponse<any>(response);
     return {

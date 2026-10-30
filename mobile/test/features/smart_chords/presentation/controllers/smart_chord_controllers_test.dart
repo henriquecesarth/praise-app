@@ -126,6 +126,12 @@ class FakeSmartChordRepository implements SmartChordRepository {
   }
 
   @override
+  Future<SmartChordImportDraft> importCapturedUrlDraft(
+    String url,
+    String musicalHtml,
+  ) async => throw UnimplementedError('Captured URL import is unsupported by this fake.');
+
+  @override
   Future<SmartChordImportDraft> importImageDraft(List<int> bytes, String filename) async {
     return const SmartChordImportDraft(
       title: 'Cifra Imagem',

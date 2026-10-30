@@ -47,6 +47,18 @@ android {
             dimension = "environment"
             applicationId = "com.louvaio.app.preview"
         }
+        create("staging") {
+            dimension = "environment"
+            applicationId = "com.louvaio.app.staging"
+        }
+        create("qa") {
+            dimension = "environment"
+            applicationId = "com.louvaio.app.qa"
+        }
+        create("cifraProbe") {
+            dimension = "environment"
+            applicationId = "com.louvaio.app.cifraprobe"
+        }
     }
 
 
@@ -73,6 +85,13 @@ android {
                 signingConfig = releaseSigning
             }
         }
+    }
+}
+
+// Local WebView investigation has no Firebase configuration or initialization.
+tasks.configureEach {
+    if (name.startsWith("processCifraProbe") && name.endsWith("GoogleServices")) {
+        enabled = false
     }
 }
 

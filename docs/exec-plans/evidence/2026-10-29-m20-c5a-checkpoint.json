@@ -1,0 +1,46 @@
+{
+  "milestone": "M20-C5A",
+  "date": "2026-10-29",
+  "branch": "feat/m20-phase-2a-android-share",
+  "head": "e3c4902e0d8786e164ea0686486c564f9dea1578",
+  "verdict": "INCOMPLETE - device restored; full Android URL and Share E2E blocked at login API bootstrap",
+  "device": "Lenovo TB-J616F REDACTED_DEVICE_IDENTIFIER, Android 12 API 31",
+  "duraspeed": {
+    "preflight_original_value": null,
+    "preflight_key_existed": false,
+    "temporary_value": 0,
+    "restoration": "PASS - finally restored original absent key; settings list confirmed key absent; ADB settings get returned null after each run and at final checkpoint",
+    "last_restore_utc": "2026-10-29T12:06:54.9233354Z"
+  },
+  "results": {
+    "minimal_local_webview_and_javascript": "PASS - physical device, HTML/JS control under 10 seconds, repeated on three attempts",
+    "android_share_delivery_and_pending_unauthenticated": "PASS - actual ACTION_SEND URL retained by app before login on all three attempts",
+    "login_pending": "PASS - pending URL observed while user remained unauthenticated and import route absent",
+    "login_and_empty_ministry_flow": "FAIL - real UI Firebase Auth login established Firebase user, but /auth/me was canceled by SESSION_CHANGED; auth state ended bootstrapError/NETWORK_ERROR before empty-ministry dispatch",
+    "session_race_evidence": "Attempt 3 redacted Dio diagnostic: type=cancel, AppFailure code=SESSION_CHANGED, path=/auth/me, no HTTP status; authState=bootstrapError, firebaseUserPresent=true. This confirms an auth session generation race on the tested login path; no product fix was made.",
+    "no_ministry_flow": "NOT_EXECUTED - bootstrap did not reach empty ministry",
+    "url_paste_e2e": "NOT_EXECUTED - test order stopped at Share login; no capture/source navigation occurred",
+    "capture_and_preview_edit": "NOT_EXECUTED - capture was enabled only by the test container override; product default remains false",
+    "save_reopen_and_tab_integrity": "NOT_EXECUTED - zero smart_chords documents in isolated Firestore emulator after failed runs",
+    "production_writes": "NONE - guarded local API NODE_ENV=test, demo-m20-c1 Auth/Firestore emulators on loopback; API and emulator processes stopped after failure",
+    "device_compatibility": "This Lenovo observation does not establish universal compatibility; devices blocking WebView remain Unknown / Not yet verified"
+  },
+  "tests": {
+    "scoped_flutter_analyze": "PASS - mobile/integration_test/m20_c5a_android_flow_test.dart, no issues",
+    "cifraProbe_debug_build_and_install": "PASS - test-only flavor; no release APK",
+    "physical_attempts": [
+      "Attempt 1: local WebView PASS; actual Share pending login PASS; login timed out without auth state diagnostics; zero saves; setting restored.",
+      "Attempt 2: local WebView PASS; Share pending login PASS; login FAIL NETWORK_ERROR; zero saves; setting restored.",
+      "Attempt 3: local WebView PASS; Share pending login PASS; login FAIL with confirmed SESSION_CHANGED on /auth/me; zero saves; setting restored."
+    ],
+    "full_flow": "FAIL/BLOCKED at login bootstrap; URL and share-preview-save-reopen gates were not reached",
+    "default_capture_flag": "PASS - cifraClubDirectImportEnabledProvider defaults false; true only in isolated test override"
+  },
+  "files_changed": [
+    "mobile/integration_test/m20_c5a_android_flow_test.dart",
+    "mobile/test/features/auth/data/auth_repository_test.dart",
+    "docs/exec-plans/evidence/2026-10-29-m20-c5a-checkpoint.json"
+  ],
+  "preservation": "Existing WIP preserved. The auth repository test file has unverified in-progress edits from a deterministic regression investigation interrupted at the user's quota-priority instruction; inspect its diff before resuming. No production/device data writes, root, reboot, data clear, commit, push, merge, or deploy. Local Auth/Firestore/API stopped; ADB reverse mappings for their test ports removed. Existing gnirehtet reverse mapping preserved.",
+  "next_gate": "Review the interrupted auth repository test diff, then fix and deterministically test duplicate auth-session generation invalidation during stream-first sign-in while preserving same-user re-login and user-switch cancellation. Resume this physical harness from login/empty-ministry, complete Share save/reopen, and run URL paste save/reopen. Do not repeat the passed local WebView control or DuraSpeed diagnosis."
+}

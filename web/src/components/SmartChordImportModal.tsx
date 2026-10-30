@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api, SmartChord, SmartChordImportDraft, ImportWarning } from '../api';
 import { Song } from '../types';
-import { parseSmartChord, hasBarProgression, parseBarProgressionLine } from '../utils/smart_chord';
+import { hasBarProgression, parseBarProgressionLine, isTablatureLine, renderSmartChordLine } from '../utils/smart_chord';
 
 interface SmartChordImportModalProps {
   isOpen: boolean;
@@ -30,6 +30,8 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
   const [pastedText, setPastedText] = useState('');
+  const [pastedHtml, setPastedHtml] = useState<string | null>(null);
+  const pendingRichPasteRef = useRef<{ expectedText: string; html: string } | null>(null);
   const [inputUrl, setInputUrl] = useState('');
   const [requiresManualPaste, setRequiresManualPaste] = useState(false);
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
@@ -97,6 +99,8 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
       setSelectedFile(null);
       setSelectedImageFile(null);
       setPastedText('');
+      setPastedHtml(null);
+      pendingRichPasteRef.current = null;
       setInputUrl('');
       setRequiresManualPaste(false);
       setSourceUrl(null);
@@ -191,7 +195,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
     setStep('extracting');
 
     try {
-      const draft = await api.importSmartChordText(pastedText);
+      const draft = pastedHtml ? await api.importSmartChordText(pastedText, pastedHtml) : await api.importSmartChordText(pastedText);
       if (!isCurrent(currentGen)) return;
       applyDraft(draft);
       setStep('preview');
@@ -290,8 +294,15 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
         return;
       }
       if (target === 'url') setInputUrl(text.trim());
-      else if (target === 'content') setContent(text);
-      else setPastedText(text);
+      else if (target === 'content') {
+        setContent(text);
+        pendingRichPasteRef.current = null;
+        setPastedHtml(null);
+      } else {
+        setPastedText(text);
+        pendingRichPasteRef.current = null;
+        setPastedHtml(null);
+      }
       setErrorMessage(null);
     } catch (err) {
       if (!isCurrent(currentGen)) return;
@@ -305,7 +316,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
     setIsNormalizing(true);
     setErrorMessage(null);
     try {
-      const draft = await api.importSmartChordText(content);
+      const draft = pastedHtml ? await api.importSmartChordText(content, pastedHtml) : await api.importSmartChordText(content);
       if (!isCurrent(currentGen)) return;
       // Keep the reviewed URL/image metadata and normalize only the pasted body.
       setContent(draft.content);
@@ -350,7 +361,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
         title: title.trim(),
         artistName: artistName.trim() || null,
         originalKey: originalKey.trim(),
-        content: content.trim(),
+        content,
         ...(sourceUrl ? { sourceUrl } : {}),
         ...(displayedKey ? { displayedKey } : {}),
         ...(capo != null ? { capo } : {}),
@@ -613,8 +624,38 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                     placeholder={"G            D/F#        Em\nGraças Te dou pelo Teu amor\n\nIntro:\n||: A9 | A7M/9 | D9 | % :||"}
                     value={pastedText}
                     maxLength={100000}
-                    onChange={(e) => { generationRef.current += 1; setPastedText(e.target.value); }}
-                    style={{ fontFamily: 'monospace', fontSize: '0.9rem', minHeight: '180px' }}
+                    onChange={(e) => {
+                      generationRef.current += 1;
+                      const value = e.target.value;
+                      setPastedText(value);
+                      const pendingRichPaste = pendingRichPasteRef.current;
+                      pendingRichPasteRef.current = null;
+                      if (pendingRichPaste?.expectedText === value) {
+                        setPastedHtml(pendingRichPaste.html);
+                      } else {
+                        setPastedHtml(null);
+                      }
+                    }}
+                    onPaste={(e) => {
+                      const html = e.clipboardData?.getData("text/html");
+                      const plainText = e.clipboardData?.getData('text/plain');
+                      if (html) {
+                        const target = e.currentTarget;
+                        const normalizedText = (plainText || '').replace(/\r\n?/g, '\n');
+                        pendingRichPasteRef.current = {
+                          expectedText:
+                            target.value.slice(0, target.selectionStart) +
+                            normalizedText +
+                            target.value.slice(target.selectionEnd),
+                          html,
+                        };
+                        setPastedHtml(html);
+                      } else {
+                        pendingRichPasteRef.current = null;
+                        setPastedHtml(null);
+                      }
+                    }}
+                    style={{ fontFamily: 'monospace', fontSize: '0.9rem', minHeight: '180px', whiteSpace: 'pre' }}
                   />
                   <button
                     type="button"
@@ -781,9 +822,11 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
               {/* Editable Metadata Fields */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
                 <div>
-                  <label style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Título da Cifra *</label>
+                  <label htmlFor="import-chord-title" style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Título da Cifra *</label>
                   <input
+                    id="import-chord-title"
                     type="text"
+                    aria-label="Título da Cifra"
                     className="form-control"
                     value={title}
                     disabled={isSaving || isLinking}
@@ -792,9 +835,11 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                   />
                 </div>
                 <div>
-                  <label style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Artista / Banda</label>
+                  <label htmlFor="import-chord-artist" style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Artista / Banda</label>
                   <input
+                    id="import-chord-artist"
                     type="text"
+                    aria-label="Artista / Banda"
                     className="form-control"
                     value={artistName}
                     disabled={isSaving || isLinking}
@@ -884,6 +929,8 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                   onChange={(e) => {
                     if (isNormalizing || isSaving || isLinking) return;
                     generationRef.current += 1;
+                    pendingRichPasteRef.current = null;
+                    setPastedHtml(null);
                     setContent(e.target.value);
                   }}
                   style={{ fontFamily: 'monospace', fontSize: '0.9rem', minHeight: '220px', lineHeight: 1.4 }}
@@ -906,6 +953,13 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                   }}
                 >
                   {content.split('\n').map((lineText, idx) => {
+                    if (isTablatureLine(lineText)) {
+                      return (
+                        <div key={idx} style={{ color: '#e2e8f0', whiteSpace: 'pre', overflowX: 'auto', fontFamily: 'monospace', minHeight: '1.2em' }}>
+                          {lineText}
+                        </div>
+                      );
+                    }
                     if (hasBarProgression(lineText)) {
                       const tokens = parseBarProgressionLine(lineText);
                       return (
@@ -926,23 +980,17 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                         </div>
                       );
                     }
-                    const parsedLines = parseSmartChord(lineText);
-                    const line = parsedLines[0] || { segments: [] };
-                    const hasChords = line.segments.some((s) => s.chord);
-                    if (!hasChords) {
-                      return <div key={idx} style={{ color: '#94a3b8', minHeight: '1.2em' }}>{line.segments.map(s => s.text).join('')}</div>;
+                    const rendered = renderSmartChordLine(lineText, 0);
+                    if (!rendered.chordLine.trim()) {
+                      return <div key={idx} style={{ color: '#94a3b8', minHeight: '1.2em', whiteSpace: 'pre', overflowX: 'auto', fontFamily: 'monospace' }}>{rendered.lyricsLine}</div>;
                     }
                     return (
-                      <div key={idx} style={{ marginBottom: '8px' }}>
+                      <div key={idx} style={{ marginBottom: '8px', whiteSpace: 'pre', overflowX: 'auto', fontFamily: 'monospace' }}>
                         <div style={{ color: '#38bdf8', fontWeight: 'bold' }}>
-                          {line.segments.map((seg, sIdx) => (
-                            <span key={sIdx} style={{ display: 'inline-block', marginRight: seg.text.length > 0 ? `${seg.text.length}ch` : '1ch' }}>
-                              {seg.chord}
-                            </span>
-                          ))}
+                          {rendered.chordLine}
                         </div>
                         <div style={{ color: '#e2e8f0' }}>
-                          {line.segments.map(s => s.text).join('')}
+                          {rendered.lyricsLine}
                         </div>
                       </div>
                     );

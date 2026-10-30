@@ -44,139 +44,144 @@ void resetAuthenticatedFeatures(
   bool preservePendingShareIntent = false,
   bool preserveSavedMinistrySelection = false,
 }) {
+  final dynamic container =
+      refOrContainer is Ref ? refOrContainer.container : refOrContainer;
   try {
-    refOrContainer.read(teamFormNotifierProvider.notifier).invalidateTenant();
+    container.read(teamFormNotifierProvider.notifier).invalidateTenant();
   } catch (_) {}
   try {
-    refOrContainer.read(teamFormNotifierProvider.notifier).reset();
+    container.read(teamFormNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer.read(teamsListNotifierProvider.notifier).reset();
+    container.read(teamsListNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer.read(createMinistryNotifierProvider.notifier).reset();
+    container.read(createMinistryNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer.read(joinMinistryNotifierProvider.notifier).reset();
+    container.read(joinMinistryNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer.read(inviteCodeNotifierProvider.notifier).reset();
+    container.read(inviteCodeNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer.read(ministryContextNotifierProvider.notifier).reset(
+    container.read(ministryContextNotifierProvider.notifier).reset(
           preserveSavedSelection: preserveSavedMinistrySelection,
         );
   } catch (_) {}
   try {
-    refOrContainer.read(dashboardNotifierProvider.notifier).reset();
+    container.read(dashboardNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer.read(scheduleListNotifierProvider.notifier).reset();
+    container.read(scheduleListNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer
+    container
         .read(scheduleFormNotifierProvider.notifier)
         .invalidateTenant();
   } catch (_) {}
   try {
-    refOrContainer.read(membersDirectoryNotifierProvider.notifier).reset();
+    container.read(membersDirectoryNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer
+    container
         .read(memberDetailNotifierProvider.notifier)
         .invalidateTenant();
   } catch (_) {}
   try {
-    refOrContainer.read(memberDetailNotifierProvider.notifier).reset();
+    container.read(memberDetailNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer.read(memberFormNotifierProvider.notifier).invalidateTenant();
+    container.read(memberFormNotifierProvider.notifier).invalidateTenant();
   } catch (_) {}
   try {
-    refOrContainer.read(memberFormNotifierProvider.notifier).reset();
+    container.read(memberFormNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer.read(adminAvailabilityNotifierProvider.notifier).reset();
+    container.read(adminAvailabilityNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer
+    container
         .read(manualMemberAvailabilityNotifierProvider.notifier)
         .reset();
   } catch (_) {}
   try {
-    refOrContainer.read(liturgyListNotifierProvider.notifier).reset();
+    container.read(liturgyListNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer
+    container
         .read(liturgyDetailNotifierProvider.notifier)
         .invalidateTenant();
   } catch (_) {}
   try {
-    refOrContainer.read(liturgyDetailNotifierProvider.notifier).reset();
+    container.read(liturgyDetailNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer
+    container
         .read(liturgyFormNotifierProvider.notifier)
         .invalidateTenant();
   } catch (_) {}
   try {
-    refOrContainer.read(liturgyFormNotifierProvider.notifier).reset();
+    container.read(liturgyFormNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer.read(smartChordListNotifierProvider.notifier).reset();
+    container.read(smartChordListNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer.read(songSmartChordsNotifierProvider.notifier).reset();
+    container.read(songSmartChordsNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer
+    container
         .read(smartChordRepertoireLinkNotifierProvider.notifier)
         .reset();
   } catch (_) {}
   try {
-    refOrContainer.read(smartChordDetailNotifierProvider.notifier).reset();
+    container.read(smartChordDetailNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer.read(smartChordFormNotifierProvider.notifier).reset();
+    container.read(smartChordFormNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer.read(smartChordImportNotifierProvider.notifier).reset();
+    container.read(smartChordImportNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
-    refOrContainer.read(songFormNotifierProvider.notifier).reset();
+    container.read(songFormNotifierProvider.notifier).reset();
   } catch (_) {}
 
-  refOrContainer.invalidate(dashboardNotifierProvider);
-  refOrContainer.invalidate(scheduleListNotifierProvider);
-  refOrContainer.invalidate(scheduleDetailNotifierProvider);
-  refOrContainer.invalidate(scheduleFormNotifierProvider);
-  refOrContainer.invalidate(commentsNotifierProvider);
-  refOrContainer.invalidate(membersDirectoryNotifierProvider);
-  refOrContainer.invalidate(memberDetailNotifierProvider);
-  refOrContainer.invalidate(memberFormNotifierProvider);
-  refOrContainer.invalidate(availabilityListNotifierProvider);
-  refOrContainer.invalidate(adminAvailabilityNotifierProvider);
-  refOrContainer.invalidate(manualMemberAvailabilityNotifierProvider);
-  refOrContainer.invalidate(repertoireListNotifierProvider);
-  refOrContainer.invalidate(songDetailNotifierProvider);
-  refOrContainer.invalidate(songFormNotifierProvider);
-  refOrContainer.invalidate(liturgyListNotifierProvider);
-  refOrContainer.invalidate(liturgyDetailNotifierProvider);
-  refOrContainer.invalidate(liturgyFormNotifierProvider);
-  refOrContainer.invalidate(smartChordListNotifierProvider);
-  refOrContainer.invalidate(songSmartChordsNotifierProvider);
-  refOrContainer.invalidate(smartChordRepertoireLinkNotifierProvider);
-  refOrContainer.invalidate(smartChordDetailNotifierProvider);
-  refOrContainer.invalidate(smartChordFormNotifierProvider);
+  container.invalidate(createMinistryNotifierProvider);
+  container.invalidate(joinMinistryNotifierProvider);
+  container.invalidate(inviteCodeNotifierProvider);
+  container.invalidate(dashboardNotifierProvider);
+  container.invalidate(scheduleListNotifierProvider);
+  container.invalidate(scheduleDetailNotifierProvider);
+  container.invalidate(scheduleFormNotifierProvider);
+  container.invalidate(commentsNotifierProvider);
+  container.invalidate(membersDirectoryNotifierProvider);
+  container.invalidate(memberDetailNotifierProvider);
+  container.invalidate(memberFormNotifierProvider);
+  container.invalidate(availabilityListNotifierProvider);
+  container.invalidate(adminAvailabilityNotifierProvider);
+  container.invalidate(manualMemberAvailabilityNotifierProvider);
+  container.invalidate(repertoireListNotifierProvider);
+  container.invalidate(songDetailNotifierProvider);
+  container.invalidate(songFormNotifierProvider);
+  container.invalidate(liturgyListNotifierProvider);
+  container.invalidate(liturgyDetailNotifierProvider);
+  container.invalidate(liturgyFormNotifierProvider);
+  container.invalidate(smartChordListNotifierProvider);
+  container.invalidate(songSmartChordsNotifierProvider);
+  container.invalidate(smartChordRepertoireLinkNotifierProvider);
+  container.invalidate(smartChordDetailNotifierProvider);
+  container.invalidate(smartChordFormNotifierProvider);
 
-  refOrContainer.invalidate(unreadNotificationCountProvider);
-  refOrContainer.invalidate(notificationListProvider);
+  container.invalidate(unreadNotificationCountProvider);
+  container.invalidate(notificationListProvider);
   try {
-    refOrContainer.read(notificationRouterProvider).clearPendingPayload();
+    container.read(notificationRouterProvider).clearPendingPayload();
   } catch (_) {}
   if (!preservePendingShareIntent) {
     try {
-      refOrContainer.read(shareIntentRouterProvider).clearPendingPayload();
+      container.read(shareIntentRouterProvider).clearPendingPayload();
     } catch (_) {}
   }
 }
@@ -274,28 +279,12 @@ final firebaseAuthProvider = Provider<FirebaseAuth?>((ref) {
 });
 
 /// Provider for the central HTTP API client.
-final apiClientProvider = Provider<ApiClient>((ref) {
+final Provider<ApiClient> apiClientProvider = Provider<ApiClient>((ref) {
   final environment = ref.watch(appEnvironmentProvider);
   final logger = ref.watch(appLoggerProvider);
-  final auth = ref.watch(firebaseAuthProvider);
-
   return ApiClient(
     environment: environment,
     logger: logger,
-    tokenProvider: ({bool forceRefresh = false}) async {
-      if (auth == null) return null;
-      final user = auth.currentUser;
-      if (user == null) return null;
-      return user.getIdToken(forceRefresh);
-    },
-    onAuthenticationFailed: () async {
-      if (auth != null) {
-        await auth.signOut();
-      }
-      final preferences = ref.read(preferencesStorageProvider);
-      await preferences.clear();
-      resetAuthenticatedFeatures(ref);
-    },
   );
 });
 
@@ -305,11 +294,35 @@ final authRepositoryProvider = Provider<AuthRepository>((ref) {
   if (auth == null) {
     return const _NoopAuthRepository();
   }
-  return FirebaseAuthRepository(
+  final apiClient = ref.watch(apiClientProvider);
+  final repository = FirebaseAuthRepository(
     firebaseAuth: auth,
-    apiClient: ref.watch(apiClientProvider),
+    apiClient: apiClient,
     preferencesStorage: ref.watch(preferencesStorageProvider),
   );
+  Future<String?> tokenProvider({bool forceRefresh = false}) =>
+      repository.getIdToken(forceRefresh: forceRefresh);
+  Future<void> onAuthenticationFailed() async {
+    // The interceptor checks the initiating session immediately before this
+    // callback. Fence native mutations and clear features before yielding,
+    // so a newer login cannot be cleared by an old 401 callback.
+    final signOut = repository.signOut();
+    resetAuthenticatedFeatures(ref.container);
+    await signOut;
+  }
+
+  apiClient.tokenProvider = tokenProvider;
+  apiClient.onAuthenticationFailed = onAuthenticationFailed;
+  ref.onDispose(() {
+    if (identical(apiClient.tokenProvider, tokenProvider)) {
+      apiClient.tokenProvider = null;
+    }
+    if (identical(apiClient.onAuthenticationFailed, onAuthenticationFailed)) {
+      apiClient.onAuthenticationFailed = null;
+    }
+    repository.dispose();
+  });
+  return repository;
 });
 
 class _NoopAuthRepository

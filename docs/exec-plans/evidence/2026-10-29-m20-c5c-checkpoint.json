@@ -1,0 +1,45 @@
+{
+  "milestone": "M20-C5C",
+  "date": "2026-10-29",
+  "branch": "feat/m20-phase-2a-android-share",
+  "head": "e3c4902e0d8786e164ea0686486c564f9dea1578",
+  "device": {
+    "model": "Lenovo TB-J616F",
+    "serial": "REDACTED_DEVICE_IDENTIFIER",
+    "android_version": "12 (API 31)",
+    "duraspeed_system": null,
+    "duraspeed_global": null,
+    "duraspeed_unmodified": true
+  },
+  "verdict": "PASS - Physical device authentication verified following Android Share with no SESSION_CHANGED cancellation",
+  "results": {
+    "android_share": "PASS - URL shared via ACTION_SEND while unauthenticated held securely in pending state",
+    "login_physical": "PASS - Authentication completed against local test environment (Auth emulator 9099, Firestore emulator 8080)",
+    "auth_me": "PASS - /auth/me resolved successfully with stable session generation without being cancelled or aborted",
+    "session_generation": "PASS - No SESSION_CHANGED race condition; generation incremented cleanly once upon UID establishment",
+    "no_ministry_flow": "PASS - Empty ministry context correctly detected and routed to /no-ministry",
+    "pending_url": "PASS - Pending shared URL automatically dispatched router to SmartChordImportScreen without duplicate triggers or data loss",
+    "session_isolation": "PASS - User credentials and session state cleanly isolated without cross-user leakage or auth loops",
+    "webview_capture_executed": false
+  },
+  "tests": [
+    "mobile/integration_test/m20_c5a_android_flow_test.dart (REDACTED_DEVICE_IDENTIFIER, flavor cifraProbe, VALIDATE_AUTH_ONLY=true): ALL TESTS PASSED"
+  ],
+  "evidence": {
+    "markers": [
+      "M20_C5A_MINIMAL_WEBVIEW=PASS",
+      "M20_C5A_LOGIN_PENDING_READY",
+      "M20_C5A_SEND_ACTION=android.intent.action.SEND",
+      "M20_C5A_SHARE_PENDING_LOGIN=PASS",
+      "M20_C5A_NO_MINISTRY=PASS",
+      "M20_C5A_ANDROID_SHARE_PREVIEW=READY",
+      "M20_C5C_AUTH_ME=PASS",
+      "M20_C5C_SESSION_GENERATION=PASS",
+      "M20_C5C_PENDING_URL_DISPATCHED=PASS",
+      "M20_C5C_E2E=PASS"
+    ],
+    "duration": "01:13"
+  },
+  "ready_for_full_e2e": true,
+  "next_gate": "M20-C5D / Retomada do E2E físico completo M20-C5A (captura WebView real, salvamento e reabertura de cifra) mediante autorização prévia"
+}

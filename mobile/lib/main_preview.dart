@@ -439,6 +439,12 @@ class PreviewSmartChordRepository implements SmartChordRepository {
   }
 
   @override
+  Future<SmartChordImportDraft> importCapturedUrlDraft(
+      String url, String musicalHtml) async {
+    return importUrlDraft(url);
+  }
+
+  @override
   Future<SmartChordImportDraft> importImageDraft(List<int> bytes, String filename) async {
     return const SmartChordImportDraft(
       title: 'Cifra Imagem',
