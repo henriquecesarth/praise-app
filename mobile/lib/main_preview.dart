@@ -427,6 +427,32 @@ class PreviewSmartChordRepository implements SmartChordRepository {
       sourceType: 'text',
     );
   }
+
+  @override
+  Future<SmartChordImportDraft> importUrlDraft(String url) async {
+    return const SmartChordImportDraft(
+      title: 'Cifra URL',
+      content: '',
+      warnings: [],
+      sourceType: 'url',
+    );
+  }
+
+  @override
+  Future<SmartChordImportDraft> importCapturedUrlDraft(
+      String url, String musicalHtml) async {
+    return importUrlDraft(url);
+  }
+
+  @override
+  Future<SmartChordImportDraft> importImageDraft(List<int> bytes, String filename) async {
+    return const SmartChordImportDraft(
+      title: 'Cifra Imagem',
+      content: '',
+      warnings: [],
+      sourceType: 'image',
+    );
+  }
 }
 
 class PreviewSmartChordLinkRepository implements SmartChordRepertoireLinkRepository {

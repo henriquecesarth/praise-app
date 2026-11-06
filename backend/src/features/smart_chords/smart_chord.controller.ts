@@ -9,9 +9,13 @@ import {
   singleDocumentIdSchema,
   setSmartChordRepertoireLinkSchema,
 } from './smart_chord.types';
-import { importTextPayloadSchema } from './smart_chord_import.types';
+import { importTextPayloadSchema, importUrlWithMusicalHtmlPayloadSchema } from './smart_chord_import.types';
 import { normalizeChordText } from './smart_chord_normalizer';
 import { extractSmartChordDraftFromPdf, MAX_PDF_FILE_SIZE } from './smart_chord_pdf_extractor';
+import { extractSmartChordFromUrl } from './smart_chord_url_extractor';
+import { extractSmartChordFromImage } from './smart_chord_image_extractor';
+import { parseCifraClubHtml } from './cifraclub_html_parser';
+import { validateCifraClubHttpUrl } from './cifraclub_http';
 
 import { AppError } from '../../middleware/error-handler';
 
@@ -207,7 +211,45 @@ export class SmartChordController extends BaseController {
     try {
       getUserId(req);
       const parsed = importTextPayloadSchema.parse(req.body);
-      const draft = normalizeChordText(parsed.text);
+      const draft = normalizeChordText(parsed.text, parsed.html);
+      this.handleSuccess(res, draft);
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  importUrlDraft = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      getUserId(req);
+      const parsed = importUrlWithMusicalHtmlPayloadSchema.parse(req.body);
+      const draft = parsed.musical_html === undefined
+        ? await extractSmartChordFromUrl(parsed.url)
+        : parseCifraClubHtml(parsed.musical_html, validateCifraClubHttpUrl(parsed.url).toString()).draft;
+      this.handleSuccess(res, draft);
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  importImageDraft = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      getUserId(req);
+      const anyReq = req as any;
+      let buffer: Buffer | null = null;
+      let filename = 'imagem_cifra.png';
+
+      if (anyReq.file && anyReq.file.buffer) {
+        buffer = anyReq.file.buffer;
+        filename = anyReq.file.originalname || filename;
+      } else if (Buffer.isBuffer(req.body) && req.body.length > 0) {
+        buffer = req.body;
+      }
+
+      if (!buffer) {
+        throw new AppError(400, 'Nenhum arquivo de imagem foi enviado na requisição.');
+      }
+
+      const draft = await extractSmartChordFromImage(buffer, filename);
       this.handleSuccess(res, draft);
     } catch (error) {
       this.handleError(error, res, next);
@@ -228,3 +270,5 @@ export const removeRepertoireLink = scInstance.removeRepertoireLink;
 export const getMySmartChordsForSong = scInstance.getMySmartChordsForSong;
 export const importPdfDraft = scInstance.importPdfDraft;
 export const importTextDraft = scInstance.importTextDraft;
+export const importUrlDraft = scInstance.importUrlDraft;
+export const importImageDraft = scInstance.importImageDraft;

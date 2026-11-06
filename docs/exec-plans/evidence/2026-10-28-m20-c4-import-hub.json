@@ -1,0 +1,56 @@
+{
+  "milestone": "M20-C4",
+  "date": "2026-10-28",
+  "verdict": "BLOCKED_FOR_ANDROID_PHYSICAL_E2E (Lenovo MediaTek DuraSpeed suppresses isolated WebView renderer; system settings alteration unauthorized); WEB_IMPORT_PASS",
+  "branch": "feat/m20-phase-2a-android-share",
+  "head": "e3c4902e0d8786e164ea0686486c564f9dea1578",
+  "commit_or_deployment_created": false,
+  "prior_results_preserved": [
+    "M20-C1",
+    "M20-C2",
+    "M20-C2D",
+    "M20-C2E",
+    "M20-C3"
+  ],
+  "android_status": {
+    "url_import": "PASS (contract and UI validation intact; cifraClubDirectImportEnabledProvider = false by default)",
+    "share_import": "PASS (ShareIntentRouter and SmartChordImportScreen verified)",
+    "transparent_capture": "PASS (ExcludeSemantics, IgnorePointer, and opaque loading overlay verified)",
+    "e2e_physical": "BLOCKED (Lenovo TB-J616F MT6785 MediaTek DuraSpeed stops isolated renderer process without global setting modification; alteration not executed per instructions)",
+    "tests_passed": "306/306 mobile unit and widget tests passing"
+  },
+  "web_status": {
+    "text_import": "PASS (Full sheet paste with unlabeled title/artist detection followed by explicit key, e.g. Tom: Bb)",
+    "html_paste_capture": "PASS (Captures text/html via onPaste and navigator.clipboard.read when available; passes html draft payload to backend)",
+    "chord_alignment": "PASS (Two-tier monospace character-exact column alignment via renderSmartChordLine)",
+    "tablature": "PASS (Preserves 6-string guitar tablatures, note tokens A/E, and bracketed harmonics [7] intact; never converts to chords or transposes)",
+    "preview": "PASS (Monospace rendered tab and editable text tab with synchronized preview)",
+    "save_reopen": "PASS (Draft saves to personal Smart Chords with session isolation and anti-IDOR fencing)",
+    "parser_reuse": "PASS (Authoritative TypeScript normalizer smart_chord_normalizer.ts and web smart_chord.ts aligned)",
+    "tests_passed": "93/93 web tests passing (49 smart_chord + 44 SmartChordImportModal); PWA build succeeded"
+  },
+  "backend_status": {
+    "endpoint": "POST /api/v1/smart-chords/import/text",
+    "payload_enhancement": "Accepts text and optional html string in importTextPayloadSchema",
+    "tablature_protection": "TABLATURE_LINE_REGEX guards chord detection and title fallback derivation",
+    "tests_passed": "269/269 backend tests passing (11 test files); build succeeded"
+  },
+  "ios_compatibility": {
+    "status": "PASS (Architectural contract documented without implementation in docs/architecture/smart-chord-url-acquisition.md)",
+    "wkwebview_extension_point": "Decoupled structural DOM projection boundary feeding parseCifraClubHtml via POST /api/v1/smart-chords/import/url using nonpersistent WKWebsiteDataStore"
+  },
+  "files_changed": [
+    "backend/src/features/smart_chords/smart_chord_import.types.ts",
+    "backend/src/features/smart_chords/smart_chord.controller.ts",
+    "backend/src/features/smart_chords/smart_chord_normalizer.ts",
+    "backend/src/features/smart_chords/smart_chord_normalizer.test.ts",
+    "web/src/api.ts",
+    "web/src/utils/smart_chord.ts",
+    "web/src/utils/smart_chord.test.ts",
+    "web/src/components/SmartChordImportModal.tsx",
+    "web/src/components/SmartChordImportModal.test.tsx",
+    "mobile/test/features/smart_chords/presentation/views/cifraclub_capture_screen_test.dart",
+    "docs/exec-plans/evidence/2026-10-28-m20-c4-import-hub.json"
+  ],
+  "next_blocker": "Physical Android E2E validation requires either an authorized global setting modification on the Lenovo TB-J616F (setting.duraspeed.enabled=0) or testing on an alternative non-DuraSpeed Android test device."
+}

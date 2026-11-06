@@ -32,6 +32,10 @@ export function parseSmartChord(smartChordText: string): ISmartChordLine[] {
       result.push({ line: index + 1, segments: [] });
       return;
     }
+    if (isTablatureLine(lineText)) {
+      result.push({ line: index + 1, segments: [{ chord: '', text: lineText }] });
+      return;
+    }
     const segments: ISegment[] = [];
     const parts = lineText.split(chordRegex);
 
@@ -43,7 +47,15 @@ export function parseSmartChord(smartChordText: string): ISmartChordLine[] {
       const rawChord = parts[i];
       const nextText = parts[i + 1] || '';
       const chordClean = rawChord ? rawChord.slice(1, -1) : '';
-      segments.push({ chord: chordClean, text: nextText });
+      if (isMusicalChord(chordClean) || isBarProgression(chordClean)) {
+        segments.push({ chord: chordClean, text: nextText });
+      } else {
+        if (segments.length > 0) {
+          segments[segments.length - 1].text += rawChord + nextText;
+        } else {
+          segments.push({ chord: '', text: rawChord + nextText });
+        }
+      }
     }
     result.push({ line: index + 1, segments });
   });
@@ -63,6 +75,13 @@ export function transposeNote(note: string, semitones: number): string {
   let newIndex = (index + semitones) % 12;
   if (newIndex < 0) newIndex += 12;
   return scale[newIndex];
+}
+
+export const TABLATURE_LINE_REGEX = /^\s*(?:[A-Ga-g][#b]?\s*)?[|:].*[-─]/;
+
+export function isTablatureLine(line: string): boolean {
+  if (!line || typeof line !== 'string') return false;
+  return TABLATURE_LINE_REGEX.test(line);
 }
 
 export const ROOT_REGEX = /^([A-G][#b]?)(.*)$/i;
@@ -157,6 +176,9 @@ export function renderSmartChordLine(lineText: string, semitones: number): ITran
   if (!lineText) {
     return { chordLine: '', lyricsLine: '' };
   }
+  if (isTablatureLine(lineText)) {
+    return { chordLine: '', lyricsLine: lineText };
+  }
 
   let cleanText = '';
   let cleanIndex = 0;
@@ -166,11 +188,14 @@ export function renderSmartChordLine(lineText: string, semitones: number): ITran
   const chordChars: string[] = [];
 
   while ((match = chordRegex.exec(lineText)) !== null) {
+    const originalChord = match[1];
+    if (!isMusicalChord(originalChord) && !isBarProgression(originalChord)) {
+      continue;
+    }
     const textBetween = lineText.substring(lastIndex, match.index);
     cleanText += textBetween;
     cleanIndex += textBetween.length;
 
-    const originalChord = match[1];
     const transposedChord = transposeChord(originalChord, semitones);
 
     // Find first available index to avoid overlapping
@@ -200,7 +225,7 @@ export function renderSmartChordLine(lineText: string, semitones: number): ITran
   }
 
   return {
-    chordLine: chordChars.join(''),
+    chordLine: chordChars.join('').trim() ? chordChars.join('') : '',
     lyricsLine: cleanText,
   };
 }
@@ -211,6 +236,10 @@ export interface IVisualLine {
 }
 
 export function rawToVisual(rawLine: string): IVisualLine {
+  if (!rawLine) return { cleanText: '', chords: {} };
+  if (isTablatureLine(rawLine)) {
+    return { cleanText: rawLine, chords: {} };
+  }
   let cleanText = '';
   const chords: Record<number, string> = {};
   const chordRegex = /\[(.*?)\]/g;
@@ -219,12 +248,15 @@ export function rawToVisual(rawLine: string): IVisualLine {
   let currentPos = 0;
 
   while ((match = chordRegex.exec(rawLine)) !== null) {
+    const chord = match[1];
+    if (!isMusicalChord(chord) && !isBarProgression(chord)) {
+      continue;
+    }
     if (match.index > lastPos) {
       const textSegment = rawLine.substring(lastPos, match.index);
       cleanText += textSegment;
       currentPos += textSegment.length;
     }
-    const chord = match[1];
     chords[currentPos] = chord;
     lastPos = chordRegex.lastIndex;
   }

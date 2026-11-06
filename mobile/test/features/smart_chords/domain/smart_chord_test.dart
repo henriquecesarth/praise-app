@@ -2,6 +2,26 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord.dart';
 
 void main() {
+  test('source key, displayed key and capo survive persistence round trip', () {
+    final chord = SmartChord.fromJson({
+      'id': 'test',
+      'user_id': 'user',
+      'title': 'Test',
+      'original_key': 'Bb',
+      'displayed_key': 'G',
+      'capo': 3,
+      'content': '[Bb] Letra',
+      'source_url': 'https://www.cifraclub.com.br/a/b/',
+    });
+    expect(chord.originalKey, 'Bb');
+    expect(chord.displayedKey, 'G');
+    expect(chord.capo, 3);
+    final payload = chord.copyWith(title: 'Edited').toRequestPayload();
+    expect(payload['original_key'], 'Bb');
+    expect(payload['displayed_key'], 'G');
+    expect(payload['capo'], 3);
+    expect(payload['source_url'], 'https://www.cifraclub.com.br/a/b/');
+  });
   group('SmartChord Domain Entity', () {
     test('parses from JSON correctly with nested maps', () {
       final json = {
@@ -57,29 +77,32 @@ void main() {
       expect(chord.hasLinkedArtist, isFalse);
     });
 
-    test('toRequestPayload trims fields, handles artist_name and omits blank references', () {
-      const chord = SmartChord(
-        id: 'sc-1',
-        userId: 'u-1',
-        title: '  Oceanos  ',
-        originalKey: '  D  ',
-        content: '[D]Tua graça...',
-        artistName: '  Hillsong  ',
-        artistId: '   ',
-        songId: ' s-1 ',
-        createdAt: '2026-10-13T00:00:00Z',
-        updatedAt: '2026-10-13T00:00:00Z',
-      );
+    test(
+      'toRequestPayload trims fields, handles artist_name and omits blank references',
+      () {
+        const chord = SmartChord(
+          id: 'sc-1',
+          userId: 'u-1',
+          title: '  Oceanos  ',
+          originalKey: '  D  ',
+          content: '[D]Tua graça...',
+          artistName: '  Hillsong  ',
+          artistId: '   ',
+          songId: ' s-1 ',
+          createdAt: '2026-10-13T00:00:00Z',
+          updatedAt: '2026-10-13T00:00:00Z',
+        );
 
-      final payload = chord.toRequestPayload();
+        final payload = chord.toRequestPayload();
 
-      expect(payload['title'], 'Oceanos');
-      expect(payload['original_key'], 'D');
-      expect(payload['content'], '[D]Tua graça...');
-      expect(payload['artist_name'], 'Hillsong');
-      expect(payload['artist_id'], isNull);
-      expect(payload['song_id'], 's-1');
-    });
+        expect(payload['title'], 'Oceanos');
+        expect(payload['original_key'], 'D');
+        expect(payload['content'], '[D]Tua graça...');
+        expect(payload['artist_name'], 'Hillsong');
+        expect(payload['artist_id'], isNull);
+        expect(payload['song_id'], 's-1');
+      },
+    );
 
     test('copyWith updates fields and supports clearing', () {
       const original = SmartChord(

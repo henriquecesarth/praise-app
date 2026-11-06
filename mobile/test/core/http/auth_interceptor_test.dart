@@ -605,5 +605,43 @@ void main() {
       // Genuine failure of active session MUST trigger onAuthenticationFailed!
       expect(authFailedCalled, true);
     });
+
+    test('Scenario I: In-flight session-bound response is rejected if sessionContextProvider is detached on disposal', () async {
+      AuthSessionContext? activeSession = const AuthSessionContext(
+        userId: 'usr_a',
+        sessionGeneration: 1,
+      );
+
+      late final AuthInterceptor interceptor;
+      interceptor = AuthInterceptor(
+        tokenProvider: ({bool forceRefresh = false}) async => 'token_usr_a',
+        sessionContextProvider: () => activeSession,
+        onAuthenticationFailed: () async => authFailedCalled = true,
+        dio: dio,
+      );
+
+      dio.httpClientAdapter = MockAdapter([
+        (options) {
+          // Simulate provider disposal detaching sessionContextProvider while request is in flight
+          interceptor.sessionContextProvider = null;
+          return ResponseBody.fromString('{"id": "usr_a"}', 200, headers: {
+            Headers.contentTypeHeader: [Headers.jsonContentType],
+          });
+        },
+      ]);
+      dio.interceptors.add(interceptor);
+
+      await expectLater(
+        dio.get<dynamic>('/auth/me'),
+        throwsA(
+          isA<DioException>().having(
+            (e) => e.type,
+            'type',
+            DioExceptionType.cancel,
+          ),
+        ),
+      );
+      expect(authFailedCalled, false);
+    });
   });
 }

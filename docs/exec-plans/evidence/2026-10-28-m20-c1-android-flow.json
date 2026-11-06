@@ -1,0 +1,110 @@
+{
+  "milestone": "M20-C1",
+  "date": "2026-10-28",
+  "verdict": "BLOCKED",
+  "branch": "feat/m20-phase-2a-android-share",
+  "head": "e3c4902e0d8786e164ea0686486c564f9dea1578",
+  "changes_committed": false,
+  "reference_url": "https://www.cifraclub.com.br/projeto-sola/glorificar/",
+  "prior_access_evidence": "2026-10-28-m20-cifraclub-android-access.json",
+  "environment": {
+    "device": "Lenovo TB J616F, Android API 31",
+    "execution": "Existing cifraProbe flavor, debug entrypoint mobile/tool/m20_c1_local_app.dart",
+    "backend": "127.0.0.1:3107",
+    "auth_emulator": "127.0.0.1:9099",
+    "firestore_emulator": "127.0.0.1:8080",
+    "firebase_project": "demo-m20-c1",
+    "production_writes": false,
+    "device_reboot_in_c1": false,
+    "access_control_bypass": false
+  },
+  "implementation": {
+    "shared_pipeline": "Import Hub _extractUrl -> mounted Android capture -> existing authenticated /smart-chords/import/url with minimal musical_html -> unchanged TypeScript parser -> existing editable draft/explicit save",
+    "native_composition": "Full-size hybrid composition; own opaque progress surface installed before source navigation",
+    "renderer_readiness": "Bounded local blank-document readiness before remote navigation; timeout and cancellation return to Import Hub",
+    "share_fix": "Personal import accepts authenticated empty-ministry context; pending shares retain session guards",
+    "harness_fix": "Use rootNavigatorKeyProvider and provider-owned shareIntentRouterProvider instead of a duplicate MethodChannel service",
+    "isolation": "cifraClubDirectImportEnabledProvider defaults false. Only explicit debug/test overrides enable capture. Existing normal import remains available."
+  },
+  "real_paste_attempt": {
+    "status": "PASS - one successful real execution, not a reliability verdict",
+    "app_pid": 22462,
+    "input": "Android system clipboard, Colar Link; no manual musical transcription",
+    "capture": "Automatic real URL capture through production components, hybrid composition",
+    "preview": {
+      "title": "Glorificar",
+      "artist": "Projeto Sola",
+      "explicit_key": "Bb",
+      "content_characters": 2885,
+      "tab_rows": 24,
+      "requires_manual_paste": false,
+      "editable_title": "Edited in actual UI and restored to Glorificar before save",
+      "site_browser_visible": false
+    },
+    "persistence": {
+      "local_documents_before_confirmation": 0,
+      "confirmation": "Actual Salvar Cifra Pessoal button",
+      "local_documents_after_confirmation": 1,
+      "reopen": "Actual repository GET followed by existing reader",
+      "preview_and_reopened_text_exact": true,
+      "redacted_events": [
+        "M20_C1_PREVIEW={title:Glorificar,artist:Projeto Sola,key:Bb,tab_rows:24,manual_paste:false,content_characters:2885}",
+        "M20_C1_EXPLICIT_SAVE=PASS",
+        "M20_C1_REOPEN={exact:true,title:Glorificar,key:Bb,tab_rows:24}"
+      ]
+    }
+  },
+  "real_share_attempt_after_harness_fix": {
+    "status": "BLOCKED",
+    "app_pid": 24146,
+    "input": "Real Android ACTION_SEND text/plain with reference URL, delivered to existing MainActivity",
+    "native_dispatch": "PASS - Import Hub opened, URL matched exactly, capture started automatically",
+    "capture": "FAIL - local renderer readiness timeout before source navigation",
+    "ui_error": "O componente de importação não respondeu. Tente novamente.",
+    "redacted_events": [
+      "14:02:21.971 M20_C1_LOCAL_APP_READY",
+      "14:02:37.174 CIFRACLUB_CAPTURE_ERROR=CIFRACLUB_RENDERER_UNAVAILABLE",
+      "14:02:37.194 CIFRACLUB_PIPELINE_ERROR=AppFailure:CIFRACLUB_RENDERER_UNAVAILABLE"
+    ],
+    "native_observation": {
+      "webview_provider": "com.google.android.webview 155.0.8059.43",
+      "sandbox_service": "SandboxedProcessService1:0 associated with own debug application",
+      "app": null,
+      "binder": null,
+      "hasBound": false,
+      "root_cause": "Unknown / Not yet verified",
+      "interpretation": "Observed native renderer readiness failure. This attempt did not reach the source and does not establish any source HTTP status."
+    },
+    "new_save": false
+  },
+  "independent_saved_data_recheck": {
+    "method": "Read only local demo Firestore emulator REST API after final share failure",
+    "document_count": 1,
+    "title": "Glorificar",
+    "key": "Bb",
+    "intro": true,
+    "interlude": true,
+    "Eb_G": true,
+    "Ab_Bb": true,
+    "tab_rows": 24
+  },
+  "validation": {
+    "latest_capture_lifecycle_and_share_router_unit_tests": "PASS - 9",
+    "latest_import_screen_unit_tests": "PASS - 34",
+    "default_disabled_regression": "PASS - 1, legacy URL pipeline without native capture or save",
+    "latest_scoped_flutter_analyze": "PASS - 6 files, no issues",
+    "earlier_checkpoint_controller_tests": "PASS - 22",
+    "earlier_checkpoint_repository_and_controller_tests": "PASS - 30 at that checkpoint",
+    "earlier_checkpoint_projection_and_ts_parser_checks": "PASS - 7 synthetic checks, not real-source E2E",
+    "earlier_checkpoint_backend_import_route_tests": "PASS - 5; backend build PASS",
+    "automated_android_integration": "FAIL at prior renderer readiness before hybrid; harness updated, not rerun after final native failure",
+    "independent_review": "capture_review: no new verified material findings; read-only review, no device execution",
+    "git_diff_check": "PASS"
+  },
+  "agents": ["/root/dom_backend", "/root/mobile_contract", "/root/capture_review"],
+  "privacy": "No full lyrics, cookies, session tokens, credentials or personal device content in this evidence. Logs contain summary events only.",
+  "cleanup": "Owned local API/Auth/Firestore services stopped; ports 3107/9099/8080 verified closed. Only test ADB reverses removed, existing gnirehtet preserved. Own debug application stopped without deleting data.",
+  "access_authorization": "Unknown / Not yet verified. User instructed proceeding without documentation; technical HTTP 200 is not asserted as source permission.",
+  "android_e2e": "BLOCKED - paste/save/reopen succeeded once, shared capture failed on renderer readiness; no complete reliable paste-and-share verdict",
+  "next_blocker": "Establish repeatable native WebView renderer startup without device reboot or security/provider bypass, then rerun only affected real shared capture through preview, explicit save and exact reopen. Keep experimental capture disabled by default until proven."
+}

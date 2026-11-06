@@ -1,0 +1,120 @@
+name: Android OCR Preview APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_authorized_build:
+        description: Confirm authorization to build and upload an offline preview APK artifact.
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-ocr-preview-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-preview-apk:
+    if: inputs.confirm_authorized_build == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.7'
+          cache: true
+
+      - name: Verify checked-in preview Firebase metadata
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          config = json.loads(Path('android/app/src/preview/google-services.json').read_text())
+          project_id = config.get('project_info', {}).get('project_id')
+          packages = [
+              client.get('client_info', {}).get('android_client_info', {}).get('package_name')
+              for client in config.get('client', [])
+          ]
+          if project_id != 'louvaio-preview-offline':
+              raise SystemExit('Preview google-services project metadata does not match the checked-in offline project.')
+          if packages != ['com.louvaio.app.preview']:
+              raise SystemExit('Preview google-services package metadata does not match the preview flavor.')
+
+          gradle = Path('android/app/build.gradle.kts').read_text()
+          preview = re.search(r'create\("preview"\)\s*\{(.*?)\n\s*\}', gradle, re.S)
+          if not preview or not re.search(r'applicationId\s*=\s*"com\.louvaio\.app\.preview"', preview.group(1)):
+              raise SystemExit('Android preview flavor applicationId does not match its Firebase client metadata.')
+
+          options = Path('lib/firebase_options.dart').read_text()
+          android = re.search(r'static const FirebaseOptions android = FirebaseOptions\((.*?)\);', options, re.S)
+          if not android or not re.search(r"projectId:\s*'praise-app-7a362'", android.group(1)):
+              raise SystemExit('Default Dart Firebase options do not identify the existing praise-app-7a362 project.')
+
+          print('Preview package and offline google-services metadata verified; default Dart Firebase project ID verified.')
+          PY
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Build complete preview flavor from the app entry point
+        run: |
+          set -euo pipefail
+          flutter build apk --debug \
+            --flavor preview \
+            --target lib/main.dart \
+            --dart-define=APP_ENV=development
+          test -s build/app/outputs/flutter-apk/app-preview-debug.apk
+          sha256sum build/app/outputs/flutter-apk/app-preview-debug.apk > build/app/outputs/flutter-apk/apk-sha256.txt
+
+      - name: Verify preview APK package and offline manifest
+        run: |
+          set -euo pipefail
+          APK=build/app/outputs/flutter-apk/app-preview-debug.apk
+          AAPT_BIN=$(find "$ANDROID_HOME/build-tools" -name aapt | sort -V | tail -n 1)
+          test -x "$AAPT_BIN"
+          "$AAPT_BIN" dump badging "$APK" | grep -F "package: name='com.louvaio.app.preview'" > /dev/null
+          PERMISSIONS_FILE=$(mktemp)
+          MANIFEST_FILE=$(mktemp)
+          "$AAPT_BIN" dump permissions "$APK" > "$PERMISSIONS_FILE"
+          "$AAPT_BIN" dump xmltree "$APK" AndroidManifest.xml > "$MANIFEST_FILE"
+          if grep -F 'android.permission.INTERNET' "$PERMISSIONS_FILE"; then
+            echo 'Preview APK unexpectedly includes network permission.' >&2
+            exit 1
+          fi
+          if grep -F 'FirebaseInitProvider' "$MANIFEST_FILE"; then
+            echo 'Preview APK unexpectedly includes Firebase automatic initialization.' >&2
+            exit 1
+          fi
+          rm -f "$PERMISSIONS_FILE" "$MANIFEST_FILE"
+          {
+            echo "Commit: $GITHUB_SHA"
+            echo 'Target: lib/main.dart; flavor: preview; APP_ENV: development'
+            echo 'Firebase metadata: checked-in offline Android config and existing Dart project ID verified; no credentials were requested.'
+            echo 'Artifact build only. Offline preview manifest; no install, deployment, SSO bypass, or authenticated login evidence.'
+            cat build/app/outputs/flutter-apk/apk-sha256.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: louvaio-android-ocr-preview-debug
+          path: |
+            mobile/build/app/outputs/flutter-apk/app-preview-debug.apk
+            mobile/build/app/outputs/flutter-apk/apk-sha256.txt
+          retention-days: 7
+          if-no-files-found: error

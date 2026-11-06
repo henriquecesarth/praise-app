@@ -15,6 +15,8 @@ import 'package:flutter/foundation.dart'
 /// );
 /// ```
 class DefaultFirebaseOptions {
+  static const _firebaseEnvironment = String.fromEnvironment('FIREBASE_ENV');
+
   static FirebaseOptions get currentPlatform {
     if (kIsWeb) {
       throw UnsupportedError(
@@ -24,7 +26,11 @@ class DefaultFirebaseOptions {
     }
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
-        return android;
+        return switch (_firebaseEnvironment) {
+          'staging' => stagingAndroid,
+          'qa' => qaAndroid,
+          _ => android,
+        };
       case TargetPlatform.iOS:
         throw UnsupportedError(
           'DefaultFirebaseOptions have not been configured for ios - '
@@ -58,5 +64,29 @@ class DefaultFirebaseOptions {
     messagingSenderId: '561790102847',
     projectId: 'praise-app-7a362',
     storageBucket: 'praise-app-7a362.firebasestorage.app',
+  );
+
+  /// Staging options must be injected by CI/local build configuration. There
+  /// are deliberately no production defaults for a staging build.
+  static const FirebaseOptions stagingAndroid = FirebaseOptions(
+    apiKey: String.fromEnvironment('FIREBASE_STAGING_API_KEY'),
+    appId: String.fromEnvironment('FIREBASE_STAGING_APP_ID'),
+    messagingSenderId: String.fromEnvironment(
+      'FIREBASE_STAGING_MESSAGING_SENDER_ID',
+    ),
+    projectId: String.fromEnvironment('FIREBASE_STAGING_PROJECT_ID'),
+    storageBucket: String.fromEnvironment('FIREBASE_STAGING_STORAGE_BUCKET'),
+  );
+
+  /// QA values come from the registered QA Android app in the existing project.
+  /// No production defaults are used if a QA build is missing its configuration.
+  static const FirebaseOptions qaAndroid = FirebaseOptions(
+    apiKey: String.fromEnvironment('FIREBASE_QA_API_KEY'),
+    appId: String.fromEnvironment('FIREBASE_QA_APP_ID'),
+    messagingSenderId: String.fromEnvironment(
+      'FIREBASE_QA_MESSAGING_SENDER_ID',
+    ),
+    projectId: String.fromEnvironment('FIREBASE_QA_PROJECT_ID'),
+    storageBucket: String.fromEnvironment('FIREBASE_QA_STORAGE_BUCKET'),
   );
 }

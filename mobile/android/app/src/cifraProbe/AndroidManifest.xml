@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application android:label="LouvAIO Cifra Probe" tools:replace="android:label">
+        <provider android:name="com.google.firebase.provider.FirebaseInitProvider" tools:node="remove" />
+        <service android:name="com.google.firebase.messaging.FirebaseMessagingService" tools:node="remove" />
+    </application>
+</manifest>

@@ -3,6 +3,7 @@ import * as controller from './auth.controller';
 import { validate } from '../../middleware/validate';
 import { signupSchema, loginSchema, updatePreferencesSchema } from './auth.types';
 import { authenticate } from '../../middleware/auth';
+import { blockInPreview } from '../../middleware/preview-guard';
 
 import accountDeletionRoutes from '../account_deletion/account-deletion.routes';
 import pushDeviceRoutes from '../push_notifications/push-device.routes';
@@ -10,7 +11,7 @@ import notificationRoutes from '../notifications/notification.routes';
 
 const router = Router();
 
-router.post('/signup', validate(signupSchema), controller.signUp);
+router.post('/signup', blockInPreview('Cadastro'), validate(signupSchema), controller.signUp);
 router.post('/login', validate(loginSchema), controller.login);
 router.get('/me', authenticate, controller.getMe);
 router.patch('/me/preferences', authenticate, validate(updatePreferencesSchema), controller.updatePreferences);

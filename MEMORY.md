@@ -1,5 +1,7 @@
 # Project Memory
 
+> Consulta seletiva: localize o tema com `rg -n -m 8 --max-columns 200 --max-columns-preview` e leia somente o trecho pertinente. Não carregue este arquivo integralmente por padrão. Regras operacionais vigentes estão em AGENTS.md; mantenha aqui apenas conhecimento durável.
+
 
 ## Project Identity
 

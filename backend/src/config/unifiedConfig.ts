@@ -17,6 +17,7 @@ const configSchema = z.object({
   nodeEnv: z.enum(['development', 'production', 'test']).default('development'),
   jwtSecret: z.string().default(DEFAULT_DEV_JWT_SECRET),
   firebaseWebApiKey: z.string().optional(),
+  previewAllowedUids: z.string().optional(),
   corsOrigin: z.string().optional(),
   firebase: z.object({
     projectId: z.string().optional(),
@@ -47,7 +48,14 @@ const configSchema = z.object({
     environment: z.enum(['sandbox', 'production']).default('sandbox'),
   }),
 }).refine((cfg) => {
-  const deployed = process.env.VERCEL_ENV === 'production' || isPreviewEnvironment();
+  const isVercel = process.env.VERCEL === '1' || process.env.VERCEL === 'true';
+  let isPreview = false;
+  try {
+    isPreview = isPreviewEnvironment();
+  } catch {
+    return false;
+  }
+  const deployed = process.env.VERCEL_ENV === 'production' || isPreview || isVercel;
   if ((cfg.nodeEnv === 'production' || deployed) &&
       (!cfg.jwtSecret.trim() || cfg.jwtSecret.trim() === DEFAULT_DEV_JWT_SECRET)) {
     return false;
@@ -59,35 +67,56 @@ const configSchema = z.object({
 });
 
 export function isPreviewEnvironment(): boolean {
-  if (process.env.VERCEL_ENV === 'production') {
+  const vercelEnv = process.env.VERCEL_ENV;
+  const isPreviewModeExplicit = process.env.PREVIEW_MODE === 'true' || process.env.PREVIEW_MODE === '1';
+
+  if (vercelEnv === 'production' && isPreviewModeExplicit) {
+    throw new AppError(
+      500,
+      'CONFIG_CONFLICT: VERCEL_ENV=production cannot be combined with PREVIEW_MODE=true.',
+      { code: 'CONFIG_CONFLICT' }
+    );
+  }
+
+  if (vercelEnv === 'production') {
     return false;
   }
-  if (process.env.VERCEL_ENV === 'preview') {
+
+  if (vercelEnv === 'preview') {
     return true;
   }
-  if (process.env.VERCEL === '1' || process.env.VERCEL === 'true') {
+
+  if (isPreviewModeExplicit) {
     return true;
   }
-  return process.env.PREVIEW_MODE === 'true';
+
+  // VERCEL=1 or VERCEL=true alone indicates platform execution, not Preview.
+  // When VERCEL_ENV is absent, do not assume Preview.
+  return false;
 }
+
+const previewEnvironment = isPreviewEnvironment();
 
 const rawConfig = {
   port: process.env.PORT,
   nodeEnv: process.env.NODE_ENV,
   jwtSecret: process.env.JWT_SECRET,
-  firebaseWebApiKey: process.env.FIREBASE_WEB_API_KEY,
+  firebaseWebApiKey: previewEnvironment
+    ? process.env.FIREBASE_STAGING_WEB_API_KEY
+    : process.env.FIREBASE_WEB_API_KEY,
+  previewAllowedUids: process.env.PREVIEW_ALLOWED_UIDS,
   corsOrigin: process.env.CORS_ORIGIN,
   firebase: {
-    projectId: process.env.FIREBASE_PROJECT_ID,
-    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-    privateKey: sanitizePrivateKey(process.env.FIREBASE_PRIVATE_KEY),
-    databaseURL: process.env.FIREBASE_DATABASE_URL,
+    projectId: previewEnvironment ? process.env.FIREBASE_STAGING_PROJECT_ID : process.env.FIREBASE_PROJECT_ID,
+    clientEmail: previewEnvironment ? process.env.FIREBASE_STAGING_CLIENT_EMAIL : process.env.FIREBASE_CLIENT_EMAIL,
+    privateKey: sanitizePrivateKey(previewEnvironment ? process.env.FIREBASE_STAGING_PRIVATE_KEY : process.env.FIREBASE_PRIVATE_KEY),
+    databaseURL: previewEnvironment ? process.env.FIREBASE_STAGING_DATABASE_URL : process.env.FIREBASE_DATABASE_URL,
   },
   defaultMinistryId: process.env.DEFAULT_MINISTRY_ID,
   platformAdminSecret: process.env.PLATFORM_ADMIN_SECRET,
   billingTimezone: process.env.BILLING_TIMEZONE || 'America/Sao_Paulo',
   billingReconciliationEnabled:
-    !isPreviewEnvironment() &&
+    !previewEnvironment &&
     process.env.BILLING_RECONCILIATION_ENABLED !== 'false' &&
     process.env.NODE_ENV !== 'test',
   billingReconciliationIntervalMinutes: process.env.BILLING_RECONCILIATION_INTERVAL_MINUTES || 15,
@@ -112,6 +141,23 @@ const rawConfig = {
 
 export const config = configSchema.parse(rawConfig);
 
+if (previewEnvironment &&
+    (!rawConfig.firebase.projectId || !rawConfig.firebase.clientEmail ||
+      !rawConfig.firebase.privateKey || !rawConfig.firebaseWebApiKey ||
+      rawConfig.firebase.projectId !== 'louvaio-staging')) {
+  throw new Error(
+    'Preview requires dedicated Firebase staging Admin credentials; production project credentials are forbidden.',
+  );
+}
+
+export function assertPreviewUidAllowed(uid: string): void {
+  if (!previewEnvironment) return;
+  const allowed = (config.previewAllowedUids || '').split(',').map((value) => value.trim()).filter(Boolean);
+  if (!allowed.length || !allowed.includes(uid)) {
+    throw new AppError(403, 'Acesso restrito no ambiente de Preview.', { code: 'PREVIEW_UID_NOT_ALLOWED' });
+  }
+}
+
 export const ZERNIO_DEFAULT_BASE_URL = 'https://zernio.com/api/v1';
 
 export function requireZernioApiKey(override?: string): string {
@@ -133,5 +179,3 @@ export function requireZernioWebhookSecret(override?: string): string {
   }
   return secret;
 }
-
-

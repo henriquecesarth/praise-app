@@ -28,7 +28,7 @@ and provider evidence are more important than minimizing the diff.
 Before modifying billing code:
 
 1. Read `AGENTS.md`.
-2. Read `MEMORY.md`.
+2. Consult only task-relevant excerpts of `MEMORY.md` if needed; use scoped `rg -n -m 8 --max-columns 200 --max-columns-preview`, then small excerpts. Never load the whole file by default.
 3. Read the billing technical design/policy documents relevant to the task.
 4. Inspect the actual implementation and tests.
 5. Execute the task's HARNESS exactly as provided.

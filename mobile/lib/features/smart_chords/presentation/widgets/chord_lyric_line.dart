@@ -18,6 +18,11 @@ class ChordLyricLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (line.trim().isEmpty) return SizedBox(height: fontSize * 0.8);
+    if (SmartChordParser.isTablatureLine(line)) {
+      return SingleChildScrollView(scrollDirection: Axis.horizontal,
+        child: SelectableText(line, style: TextStyle(fontFamily: 'monospace',
+          fontSize: fontSize, height: 1.3)));
+    }
     final theme = Theme.of(context);
     final lyricStyle = TextStyle(fontFamily: fontFamily, fontFamilyFallback: fontFamilyFallback,
       fontSize: fontSize, color: theme.colorScheme.onSurface, height: 1.3);

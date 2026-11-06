@@ -49,6 +49,26 @@ class AppEnvironment {
     final env = AppEnv.fromString(rawEnv);
 
     final rawApiBaseUrl = const String.fromEnvironment('API_BASE_URL').trim();
+    if (env == AppEnv.staging) {
+      if (rawApiBaseUrl.isEmpty || !rawApiBaseUrl.startsWith('https://')) {
+        throw ArgumentError(
+          'Staging requires an explicit HTTPS Preview API_BASE_URL.',
+        );
+      }
+      final uri = Uri.tryParse(rawApiBaseUrl);
+      final host = uri?.host ?? '';
+      if (uri == null ||
+          !host.endsWith('-henriquecesarths-projects.vercel.app') ||
+          uri.userInfo.isNotEmpty ||
+          uri.hasPort ||
+          uri.hasQuery ||
+          uri.hasFragment ||
+          uri.path != '/api/v1') {
+        throw ArgumentError(
+          'Staging API must be a canonical HTTPS Vercel Preview /api/v1 URL.',
+        );
+      }
+    }
 
     final String apiBaseUrl;
     if (rawApiBaseUrl.isNotEmpty) {

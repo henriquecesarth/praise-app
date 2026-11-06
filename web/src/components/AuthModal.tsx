@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, LogIn, UserPlus, Mail, Lock, User, Eye, EyeOff, AlertCircle, Sparkles } from 'lucide-react';
 import { api } from '../api';
+import { isVercelPreview } from '../config/preview.config';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -9,6 +10,7 @@ interface AuthModalProps {
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess }) => {
+  const isPreview = isVercelPreview();
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -21,6 +23,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isPreview && mode === 'signup') return;
     setError(null);
     setLoading(true);
 
@@ -79,7 +82,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
         </div>
 
         {/* Auth Mode Toggle */}
-        <div className="grid grid-cols-2 p-1 bg-black/40 border border-gray-800 rounded-2xl mb-6">
+        <div className={`grid ${isPreview ? 'grid-cols-1' : 'grid-cols-2'} p-1 bg-black/40 border border-gray-800 rounded-2xl mb-6`}>
           <button
             type="button"
             onClick={() => {
@@ -95,7 +98,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
             <LogIn className="w-4 h-4" />
             Entrar
           </button>
-          <button
+          {!isPreview && <button
             type="button"
             onClick={() => {
               setMode('signup');
@@ -109,7 +112,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
           >
             <UserPlus className="w-4 h-4" />
             Criar Conta
-          </button>
+          </button>}
         </div>
 
         {error && (

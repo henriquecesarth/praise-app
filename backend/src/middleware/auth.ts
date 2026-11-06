@@ -3,6 +3,7 @@ import { AppError } from './error-handler';
 import { UserRepository } from '../repositories/UserRepository';
 import { AccountDeletionRepository } from '../repositories/AccountDeletionRepository';
 import { authAdmin } from '../lib/firebase';
+import { assertPreviewUidAllowed } from '../config/unifiedConfig';
 
 export interface AuthenticatedRequest extends Request {
   user?: {
@@ -39,6 +40,7 @@ export async function authenticate(
     if (!decoded || !decoded.uid) {
       throw new AppError(401, 'Sessão inválida ou expirada. Faça login novamente.');
     }
+    assertPreviewUidAllowed(decoded.uid);
 
     req.user = {
       id: decoded.uid,
@@ -111,6 +113,7 @@ export async function requireRecentFirebaseAuth(
     if (!decoded || !decoded.uid) {
       throw new AppError(401, 'Sessão inválida ou expirada. Faça login novamente.');
     }
+    assertPreviewUidAllowed(decoded.uid);
 
     const nowSeconds = Math.floor(Date.now() / 1000);
     const authTime = decoded.auth_time;

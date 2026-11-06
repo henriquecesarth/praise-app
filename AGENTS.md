@@ -1,193 +1,39 @@
-# Agent Operating Manual
+# LouvAIO — regras dos agentes
 
-## 1. Project Mission
+## Escopo e contexto
+- LouvAIO: API Express/Firestore em `backend/`, SPA/PWA React/Vite em `web/`, cliente Flutter em `mobile/`; CI em `.github/workflows/`.
+- Precedência: código/configuração → testes executáveis → estas regras e documentos da tarefa → trechos pertinentes de MEMORY.md → histórico.
+- Leia estas regras uma vez por sessão. Consulte `docs/01-CONTEXTO-ATUAL.md`, `docs/system-status.md` e documentos da área somente quando pertinentes; o painel é `docs/00-PAINEL.md`.
+- Nunca carregue MEMORY.md, o repositório ou diretórios inteiros por padrão. Localize com `rg --files <diretório>` e busque com `rg -n -m 8 --max-columns 200 --max-columns-preview '<tema>' <arquivos>`; depois leia apenas o trecho necessário (ex.: 40–80 linhas). Amplie a busca somente se faltar evidência.
+- Não releia conteúdo já disponível nem imprima arquivos/linhas extensos sem necessidade. MEMORY.md contém decisões duráveis, não o status da execução.
+- Evidência insuficiente: use exatamente **Unknown / Not yet verified**. Não registre valores de .env, tokens, senhas, chaves ou credenciais.
 
-LouvAIO (anteriormente Praise App) é uma aplicação web e PWA para organizar ministérios de louvor. O sistema cobre autenticação, ministérios e integrantes, funções, equipes, escalas, repertório, liturgias, modelos de roteiro, edição de cifras inteligentes, planos, quotas, concessões cortesia e faturamento SaaS recorrente via gateway Asaas. O produto é uma SPA instalável que consome uma API REST Express com dados no Firebase Firestore, com aplicativo mobile Flutter complementar Android-first.
+## Arquitetura e segurança
+- Web chama a API por `web/src/api.ts`; componentes não acessam Firebase. API: route → middleware → controller → service → repository → Firestore; repositories acessam o cliente Firebase.
+- Backend aplica autenticação, RBAC, anti-IDOR, quotas e isolamento por usuário/ministério; autorização visual não concede acesso. Derive ownership da sessão, nunca de autoridade enviada pelo cliente.
+- `ministryId` é canônico; preserve aliases `groupId` observados. Preserve contratos HTTP locais (não há envelope único) e avalie consumidores antes de alterá-los.
+- Preserve TypeScript estrito, Zod junto à feature, AppError e `{ error: { message, details } }`, convenções snake_case/camelCase e estilo dos arquivos. Não amplie any nem refatore incidentalmente.
+- Smart Chords são pessoais por user_id; vínculo ao repertório não compartilha a cifra. Importação gera preview sem escrita; persistência e vínculo exigem confirmação. Descarte respostas de sessões/ministérios obsoletos.
+- Asaas é autoridade financeira; SubscriptionService governa direito de uso/quotas. Transições usam `billing_plan_changes` sem substituir assinatura vigente antes da confirmação financeira.
+- Preserve idempotência, concorrência, datas efetivas e evidências financeiras; fatos incertos de provedor exigem fail-closed. Downgrade, inadimplência e cancelamento nunca apagam dados: aplicar grace/restrição.
+- Não introduza arquitetura idealizada, dependências, infraestrutura, migrações ou abstrações sem necessidade autorizada. Não corrija itens de system-status fora do escopo.
 
-## 2. Sources of Truth
+## Git e execução
+- Antes de editar: confira status, branch e HEAD; preserve commits, arquivos modificados e não rastreados. Base WIP: `wip/repertoire-versions-smartchords-20261022`; não troque a branch atual nem assuma main.
+- Não faça reset, clean, checkout destrutivo, reescrita de histórico ou force push. Commit somente quando autorizado; push, PR, merge, deploy e escritas externas/produção exigem autorização explícita separada.
+- Inspecione referências/contratos afetados e faça a menor mudança verificável. Um escritor por arquivo; worktree somente se necessário. Atualize/crie ExecPlan apenas para mudanças relevantes, sem planejamento extenso em ajustes pontuais; arquive quando realmente concluído.
+- Não acesse credenciais ativas, fabrique evidência de provedor ou escreva em Firestore de produção.
 
-Use esta precedência:
+## Validação e entrega
+- Documentação/configuração apenas: valide configuração e diff; **não execute testes/builds de produto**.
+- Código: testes direcionados primeiro, com timeout e dependências externas verificadas; mocks/fixtures isolam escritas E2E. Execute builds/testes pertinentes e amplie somente se risco/falha justificar. Após correção de código revisado, revalide o trecho afetado.
+- Comandos disponíveis: backend `npm run build` / `npm test`; web idem e `npm run test:e2e`; mobile `flutter analyze` / `flutter test`. Confirme scripts atuais antes de usar. Web não tem lint; lint backend não é operacional sem configuração/dependência. Não crie lint/testes só para cumprir protocolo.
+- Sem polling indefinido. Resultados: PASS, FAIL, NOT_EXECUTED ou BLOCKED, com evidência real; nunca declare execução externa, build ou homologação sem comprovação.
+- Ao terminar: `git diff --check`, status e diff/stat; confira escopo/secrets e relate mudanças, arquivos, validações, limitações e próximo passo, quando houver. Atualize documentação atingida; MEMORY.md somente para nova decisão durável.
 
-1. código e configuração atuais;
-2. testes executáveis;
-3. AGENTS.md e documentos específicos da tarefa em docs/ (começando por docs/01-CONTEXTO-ATUAL.md);
-4. trechos relevantes de MEMORY.md (contexto histórico durável, não status operacional transitório);
-5. documentação histórica.
-
-Se o código contradizer um documento, confirme o comportamento no código, atualize a documentação atingida e não preserve a afirmação obsoleta. Use exatamente Unknown / Not yet verified quando não houver evidência suficiente. Nunca registre valores de .env, tokens, senhas, chaves privadas ou credenciais.
-
-## 3. Repository Map
-
-- backend/: API Express. Contém configuração, middleware, features e repositories. Regras HTTP, persistência e faturamento pertencem aqui; UI não pertence.
-- backend/src/features/: módulos por capacidade:
-  - auth/, ministries/, repertoire/, schedules/, liturgies/, smart_chords/, teams/, roles/, classifications/, templates/
-  - subscriptions/: gestão de quotas, ciclos de vida de assinaturas, planos de cortesia e accessMode.
-  - billing/: integração de pagamentos com provedores (Asaas), checkouts hospedados, webhooks idempotentes, histórico e BillingReconcilerWorker.
-- backend/src/repositories/: acesso direto ao Firestore e mapeamento de documentos. Consultas e comandos de persistência pertencem aqui.
-- backend/src/middleware/: autenticação, RBAC, validação Zod, enforcement de quotas e tratamento global de erro.
-- backend/src/lib/: inicialização de integrações. firebase.ts é a integração ativa; supabase.ts é um stub obsoleto.
-- web/: SPA React/Vite e PWA. UI, estado de tela e adaptação do contrato HTTP pertencem aqui.
-- web/src/api.ts: única camada centralizada de chamadas HTTP e conversão snake_case/camelCase.
-- web/src/components/: telas, modais e componentes visuais (incluindo tela de planos e faturamento).
-- web/src/utils/: transformação de cifras e datas comerciais.
-- mobile/: cliente Flutter Android-first; navegação, features, testes e configuração Android/iOS.
-- .github/workflows/: workflows versionados de CI, incluindo validação Flutter e builds Android.
-- .agents/agents/: definições canônicas de papéis Antigravity (.codex/agents/ são adaptadores de ferramenta).
-- docs/: documentação operacional e arquitetural; vault oficial do Obsidian. docs/00-PAINEL.md é o painel de entrada e docs/01-CONTEXTO-ATUAL.md o resumo de contexto operacional.
-- docs/exec-plans/active/: planos vivos de mudanças relevantes.
-- docs/exec-plans/completed/: planos encerrados, preservados como histórico de execução.
-
-Existem mobile/ e workflows GitHub Actions versionados; não assuma ausência de CI. Não há pasta supabase/ ativa, nem infraestrutura Docker/migrations no mapa consultado. O backend possui suíte de testes Vitest em `backend/src/`. O web possui testes co-localizados em `web/src/` e jornadas E2E em `web/e2e/`. O mobile possui testes Flutter em `mobile/test/`.
-
-## 4. Architecture Rules
-
-Regras observadas, não aspiracionais:
-
-- O frontend chama a API por web/src/api.ts; componentes não usam Firebase diretamente.
-- A API é organizada principalmente como route → middleware → controller → service → repository → Firestore.
-- Controllers traduzem Request/Response e propagam erros ao middleware global.
-- Services orquestram repositories e entidades de domínio; repositories acessam o Firestore diretamente.
-- Repositories importam o cliente Firebase diretamente e conhecem nomes de coleções.
-- Entradas de várias rotas usam schemas Zod antes do controller.
-- Recursos de ministério são identificados por ministryId; aliases groupId permanecem em vários pontos por compatibilidade.
-- Autorização de tela no frontend é apenas apresentação. A API continua sendo a fronteira efetiva de autorização e aplicação de quotas.
-- Separação de autoridade no faturamento: o gateway de pagamento (Asaas) é a autoridade sobre o estado financeiro; o LouvAIO (SubscriptionService) é a autoridade sobre o direito de uso e quotas de produto.
-- Transições de plano usam a coleção `billing_plan_changes` para isolamento de intenção sem sobrescrever a assinatura ativa vigente até a confirmação financeira.
-- Preservação estrita de dados: downgrades, inadimplência e cancelamentos nunca apagam dados de ministérios, membros, músicas ou escalas. O sistema aplica carência (`grace`) e modo restrito (`restricted_over_limit`).
-- A resposta HTTP não possui envelope único: repertório frequentemente usa { data: ... }, enquanto outros módulos retornam o objeto/array diretamente. Preserve o contrato observado em mudanças localizadas.
-- Não trate Clean Architecture, DDD ou outra arquitetura idealizada como padrão adotado.
-
-Consulte docs/system-status.md antes de trabalhar em autenticação, RBAC, liturgias, Smart Chords, faturamento ou aliases groups: há inconsistências catalogadas.
-
-## 5. Coding Conventions
-
-- TypeScript estrito em backend e web.
-- Backend usa nomes de arquivo feature.controller.ts, feature.service.ts, feature.routes.ts e feature.types.ts.
-- Classes são PascalCase; funções, variáveis e métodos são camelCase.
-- Dados persistidos usam majoritariamente snake_case; a UI usa camelCase.
-- Código assíncrono usa async/await e captura erros nos controllers.
-- Erros esperados da API usam AppError; o errorHandler produz { error: { message, details } }.
-- Dependências de service/repository usam parâmetros de construtor com instância padrão.
-- Schemas Zod ficam junto da feature.
-- O frontend usa componentes funcionais e hooks; não há biblioteca de estado global. React Router sincroniza módulos e detalhes com URLs estáveis.
-- Estilos são centralizados principalmente em web/src/index.css, com tokens em web/src/styles/louvaio-brand.css e estilos inline.
-- Não há formatter configurado. Preserve o estilo do arquivo tocado.
-- Há uso de any em contratos flexíveis. Não amplie isso sem necessidade, mas não refatore incidentalmente.
-
-Mais detalhes: docs/development/conventions.md.
-
-## 6. Change Protocol
-
-Antes de alteração significativa:
-
-1. Leia AGENTS.md e docs/01-CONTEXTO-ATUAL.md; consulte de MEMORY.md apenas seções pertinentes à tarefa (evite ler o arquivo integral por padrão).
-2. Consulte docs/system-status.md e os documentos da área.
-3. Inspecione o código afetado e suas referências com rg.
-4. Identifique contratos frontend/backend e coleções Firestore atingidos.
-5. Verifique scripts e validações existentes.
-6. Crie ou atualize um ExecPlan em docs/exec-plans/active/ quando a tarefa não for trivial.
-7. Implemente a menor mudança necessária.
-8. Execute as validações aplicáveis.
-9. Revise git diff e confirme ausência de mudanças acidentais.
-10. Atualize documentação e MEMORY.md apenas quando surgir conhecimento durável.
-11. Ao concluir um ExecPlan, finalize seu resultado e mova-o para completed/.
-
-## 7. Scope Discipline
-
-- Não refatore código fora da tarefa.
-- Não troque ou atualize bibliotecas sem necessidade explícita.
-- Não altere arquitetura incidentalmente.
-- Não introduza abstrações especulativas.
-- Prefira mudanças pequenas, reversíveis e verificáveis.
-- Preserve comportamento salvo quando a tarefa pedir mudança de comportamento.
-- Não remova código aparentemente não usado sem verificar referências e rotas.
-- Não altere contratos públicos sem avaliar consumidores.
-- Não corrija automaticamente itens de docs/system-status.md; inclua-os no escopo e plano de uma tarefa própria.
-- Não trate conteúdo antigo de README/GEMINI como verdade quando contradito pelo código.
-- Não invente infraestrutura, testes ou comandos ausentes.
-
-## 8. Testing and Validation Requirements
-
-Instalação reproduzível, quando necessária:
-
-    cd backend
-    npm ci
-
-    cd ../web
-    npm ci
-
-Validação disponível:
-
-    cd backend
-    npm run build
-    npm test
-
-    cd ../web
-    npm run build
-    npm test
-    npm run test:e2e
-
-    cd ../mobile
-    flutter analyze
-    flutter test
-
-Validação de integridade do repositório:
-
-    git diff --check
-    git status
-    git diff --stat
-
-Estado atual:
-
-- backend usa Vitest para testes unitários e de integração de quotas, billing, concorrência, idempotência, segurança anti-IDOR, RBAC e repositórios.
-- web usa Vitest/Testing Library para unidades/componentes e Playwright para E2E com mocks locais.
-- mobile usa Flutter SDK para testes unitários e de widget em `mobile/test/`.
-- web não tem script de lint configurado.
-- backend declara npm run lint, mas não inclui dependência/configuração ESLint; o comando não é uma validação operacional até isso ser configurado explicitamente.
-- existem workflows de CI em .github/workflows/; não há infraestrutura de migrations ou Docker identificada.
-- Política de execução de testes: antes de rodar suítes amplas, verificar dependências externas (Firebase Emulator, serviços locais, env vars). Aplicar timeouts seguros e nunca realizar polling indefinido. Não repetir testes de código em alterações estritamente documentais. Classificar resultados explicitamente como PASS, FAIL, NOT_EXECUTED ou BLOCKED.
-
-Não crie testes ou configuração de lint apenas para satisfazer o protocolo de outra tarefa. Para novo comportamento web ou backend, estenda a cobertura existente no nível apropriado e mantenha qualquer escrita E2E isolada por mocks/fixtures.
-
-## 9. Definition of Done
-
-Uma tarefa termina somente quando, conforme aplicável:
-
-- o escopo solicitado está implementado;
-- ambos os builds relevantes passam, ou falhas preexistentes estão reproduzidas e claramente registradas;
-- testes novos e existentes passam, quando houver infraestrutura de testes;
-- lint/format passam, quando a ferramenta estiver configurada;
-- contratos e riscos afetados foram avaliados;
-- documentação relevante foi atualizada;
-- ExecPlan foi atualizado e arquivado se concluído;
-- MEMORY.md contém apenas novas decisões duráveis;
-- git diff não mostra mudanças acidentais nem secrets.
-
-## 10. Agent Communication
-
-O relatório final deve informar:
-
-- o que foi feito;
-- arquivos criados e modificados;
-- decisões tomadas;
-- validações executadas e resultados reais;
-- limitações e Unknown / Not yet verified;
-- riscos restantes;
-- próximo passo natural, quando houver.
-
-Nunca declare teste, lint, build, integração externa ou comportamento como validado sem executar ou inspecionar a evidência correspondente.
-
-## 11. Multi-agent Execution Protocol V2
-
-- Instruções operacionais completas: `docs/development/multi-agent-workflow.md`.
-- O vault do Obsidian é a pasta `docs/`. Inicie a navegação por `docs/00-PAINEL.md` e `docs/01-CONTEXTO-ATUAL.md`.
-- Hierarquia de Modelos:
-  - **Argon High:** arquiteto e coordenador estratégico para decisões complexas, segurança multi-tenant e contratos compartilhados. Não usar automaticamente para tarefas simples.
-  - **Gemini Flash (preferencialmente Gemini Flash 3.8 High):** implementação ágil de features, componentes, testes, correções e documentação operacional.
-  - **Codex:** revisão independente de segurança, RBAC, integridade de persistência, contratos e regressões.
-- Os 6 papéis canônicos de agentes são mantidos em `.agents/agents/`: `product-architect`, `feature-engineer`, `feature-reviewer`, `billing-engineer`, `billing-reviewer` e `sandbox-auditor`.
-- Delegação eficiente: no máximo 2 workers de implementação concorrentes; 1 único escritor por arquivo; congelar contratos compartilhados antes do paralelismo.
-- Sem revisões duplicadas: não executar revisão Gemini extensa antes de uma revisão Codex equivalente.
-- GitHub Issues são opcionais: tarefas podem vir diretamente do chat ou de outros canais declarados.
-- Ao preparar Draft PR, confirme a branch-base verificada no plano (geralmente branch WIP, como `wip/repertoire-versions-smartchords-20261022`), nunca `main` automaticamente.
-- Guardrails absolutos: sem push, merge, deploy ou escrita em banco de dados real sem autorização expressa humana.
+## Agentes e sessões
+- Codex é o principal; Gemini/Claude são ferramentas opcionais, nunca pré-requisito. Configuração nativa em `.codex/`; seis papéis canônicos preservados em `.agents/agents/`.
+- Papéis: product-architect, feature-engineer, feature-reviewer, billing-engineer, billing-reviewer, sandbox-auditor. Consulte somente as seções do papel pertinentes à tarefa; revisores são separados e somente leitura.
+- Workers rotineiros: modelo menor/esforço baixo suportados pelo CLI; escale contratos complexos, segurança e faturamento para Sol com esforço adequado. Política detalhada: `docs/development/multi-agent-workflow.md`.
+- Delegue somente trabalho independente útil, com escopo/contrato mínimo, escritor definido e ID/resultado reais. Use contexto separado para tarefas delimitadas; não copie todo o histórico. Respeite o menor limite entre configuração e runtime; não simule agentes nem crie supervisor externo.
+- Mantenha sessão para a mesma tarefa/contexto estável; abra nova sessão para trabalho independente. Compacte só quando necessário para continuar, preservando objetivo, decisões, arquivos, evidências e pendências. Não reinicie nem releia tudo após compactação.

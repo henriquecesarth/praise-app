@@ -1,0 +1,34 @@
+{
+  "milestone": "M20-C5B",
+  "date": "2026-10-29",
+  "branch": "feat/m20-phase-2a-android-share",
+  "head": "e3c4902e0d8786e164ea0686486c564f9dea1578",
+  "verdict": "PASS - session generation race resolved, automatic recovery verified, static analysis and all targeted unit tests green",
+  "root_cause": {
+    "mechanism": "Durante o login, o listener interno authStateChanges da FirebaseAuthRepository atualizava o sessionGeneration (ex: de 1 para 2) ao detectar a publicação síncrona do usuário pelo SDK Firebase. Enquanto isso, o AuthNotifier iniciava a consulta /auth/me vinculando-se à geração 2. Ao completar a Future do SDK signInWithEmailAndPassword, a FirebaseAuthRepository executava um incremento incondicional repetido de sessionGeneration (de 2 para 3). Esse segundo incremento cancelava a requisição /auth/me legítima em trânsito com SESSION_CHANGED.",
+    "masking": "O método ApiClient.mapDioException não preservava error.error quando este era AppFailure (sem response.statusCode em requisições canceladas), convertendo o cancelamento em erro genérico de rede. Como o erro não apresentava código 401, o AuthNotifier entrava em bootstrapError permanente.",
+    "controller_race": "No AuthNotifier.login, opId era faturado antes da autenticação e invalidado pelo listener authStateChanges que incrementava _authOpId, além de enviar uma segunda chamada concorrente a getMe()."
+  },
+  "fixes": {
+    "auth_repository": "FirebaseAuthRepository agora detecta se o stream authStateChanges já realizou a transição de UID e incrementou a geração durante a execução de signInWithEmailAndPassword. Apenas incrementa se a transição ainda não ocorreu ou se for reautenticação do mesmo UID. O logout só incrementa geração se havia usuário ativo. signUp consolida o fluxo chamando signInWithEmailAndPassword.",
+    "api_client": "ApiClient.mapDioException agora preserva instâncias de AppFailure em error.error (mantendo statusCode 401 e código SESSION_CHANGED).",
+    "auth_controller": "AuthNotifier ignora cancelamentos legítimos por SESSION_CHANGED sem registrar bootstrapError; se o usuário Firebase estiver ativo e o estado ainda não autenticado, aciona recuperação automática na sessão estabilizada. O método login evita chamadas redundantes e atualiza para autenticado se o stream já não o tiver feito."
+  },
+  "tests": {
+    "auth_repository_test": "13 PASS (inclui estabilidade de geração em auth event antes do término de sign-in, invalidação em reautenticação de mesmo UID e cancelamento ao trocar de usuário)",
+    "auth_controller_test": "18 PASS (inclui recuperação de SESSION_CHANGED com usuário Firebase ativo, descarte limpo em logout e login com emissão antecipada no fluxo real)",
+    "share_intent_app_router_test": "4 PASS (compartilhamento pendente antes do login, disparo após autenticação com ministério vazio e cold share)",
+    "share_intent_router_test": "10 PASS (retenção antes do login, isolamento e limpeza de payload pendente no logout/troca de usuário)",
+    "flutter_analyze": "PASS - 0 issues found across all modified and related files"
+  },
+  "files_changed": [
+    "mobile/lib/core/http/api_client.dart",
+    "mobile/lib/features/auth/data/auth_repository.dart",
+    "mobile/lib/features/auth/presentation/controllers/auth_controller.dart",
+    "mobile/test/features/auth/data/auth_repository_test.dart",
+    "mobile/test/features/auth/presentation/controllers/auth_controller_test.dart",
+    "docs/exec-plans/evidence/2026-10-29-m20-c5b-checkpoint.json"
+  ],
+  "ready_for_physical_e2e": true,
+  "next_gate": "Retomar diretamente o E2E físico M20-C5A a partir do login com compartilhamento pendente (mobile/integration_test/m20_c5a_android_flow_test.dart), verificando a transição fluida para /no-ministry e abertura do modal de importação com a URL preservada."
+}

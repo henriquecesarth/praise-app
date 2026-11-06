@@ -51,10 +51,10 @@ describe('Preview Mode Fail-Closed Isolation (R3-C5 & R3-C7)', () => {
   });
 
   describe('1. Environment Detection and Precedence (Finding P2 & Step 1)', () => {
-    it('VERCEL_ENV=production strictly takes precedence over PREVIEW_MODE=true', () => {
+    it('VERCEL_ENV=production combined with PREVIEW_MODE=true fails closed with configuration error', () => {
       process.env.VERCEL_ENV = 'production';
       process.env.PREVIEW_MODE = 'true';
-      expect(isPreviewEnvironment()).toBe(false);
+      expect(() => isPreviewEnvironment()).toThrow(/CONFIG_CONFLICT/);
     });
 
     it('VERCEL_ENV=production returns false when PREVIEW_MODE is false or unset', () => {
@@ -77,9 +77,9 @@ describe('Preview Mode Fail-Closed Isolation (R3-C5 & R3-C7)', () => {
       expect(isPreviewEnvironment()).toBe(true);
     });
 
-    it('VERCEL=1 fails closed to preview mode when VERCEL_ENV is missing (prevents unverified execution as production)', () => {
+    it('VERCEL=1 without VERCEL_ENV does not assume preview mode', () => {
       process.env.VERCEL = '1';
-      expect(isPreviewEnvironment()).toBe(true);
+      expect(isPreviewEnvironment()).toBe(false);
     });
 
     it('VERCEL=1 with explicit VERCEL_ENV=production strictly runs as production', () => {
@@ -635,9 +635,9 @@ describe('Preview Mode Fail-Closed Isolation (R3-C5 & R3-C7)', () => {
       fetchSpy.mockRestore();
     });
 
-    it('Production mode (VERCEL_ENV=production, PREVIEW_MODE=true): updateJob is allowed and performs update', async () => {
+    it('Production mode (VERCEL_ENV=production, PREVIEW_MODE=false): updateJob is allowed and performs update', async () => {
       process.env.VERCEL_ENV = 'production';
-      process.env.PREVIEW_MODE = 'true';
+      process.env.PREVIEW_MODE = 'false';
 
       const updateSpy = vi.fn().mockResolvedValue(undefined);
       const cleanupRepo = new WhatsAppProviderCleanupJobRepository();

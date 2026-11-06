@@ -44,7 +44,9 @@ void main() {
       expect(storage.getThemeMode(), isNull);
     });
 
-    test('gets and sets chord font family scoped by user ID with account isolation', () async {
+    test(
+        'gets and sets chord font family scoped by user ID with account isolation',
+        () async {
       expect(storage.getUserChordFontFamily('usr_a'), isNull);
       expect(storage.getUserChordFontFamily('usr_b'), isNull);
 
@@ -61,7 +63,23 @@ void main() {
       expect(storage.getUserChordFontFamily('usr_b'), 'Arial');
     });
 
-    test('clear does not wipe cached user chord font preferences across session clear', () async {
+    test('selected ministry is scoped by account', () async {
+      await storage.setSelectedMinistryIdForUser('usr_a', 'min_shared');
+      expect(storage.getSelectedMinistryIdForUser('usr_a'), 'min_shared');
+      expect(storage.getSelectedMinistryIdForUser('usr_b'), isNull);
+
+      await storage.setSelectedMinistryIdForUser('usr_b', 'min_shared');
+      expect(storage.getSelectedMinistryIdForUser('usr_a'), 'min_shared');
+      expect(storage.getSelectedMinistryIdForUser('usr_b'), 'min_shared');
+
+      await storage.setSelectedMinistryIdForUser('usr_a', null);
+      expect(storage.getSelectedMinistryIdForUser('usr_a'), isNull);
+      expect(storage.getSelectedMinistryIdForUser('usr_b'), 'min_shared');
+    });
+
+    test(
+        'clear does not wipe cached user chord font preferences across session clear',
+        () async {
       await storage.setSelectedMinistryId('min_xyz');
       await storage.setUserChordFontFamily('usr_a', 'Georgia');
 

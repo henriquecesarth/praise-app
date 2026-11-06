@@ -34,7 +34,7 @@ class MusicalProgressionLine extends StatelessWidget {
           ),
         )).toList()),
         softWrap: false,
-        style: TextStyle(fontFamily: fontFamily, fontFamilyFallback: fontFamilyFallback,
+        style: TextStyle(fontFamily: 'monospace', fontFamilyFallback: fontFamilyFallback,
           fontSize: fontSize, height: 1.4),
       ),
     );

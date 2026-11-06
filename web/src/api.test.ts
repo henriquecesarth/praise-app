@@ -312,6 +312,25 @@ describe('API Client & Structured Error Handling', () => {
       expect(result.id).toBe('sc-created');
     });
 
+    it('preserves original/displayed keys, capo and source without inventing a default key', async () => {
+      const fetchSpy = vi.fn().mockImplementation(async () => new Response(
+        JSON.stringify({ id: 'created', original_key: 'Bb', displayed_key: 'G',
+          capo: 3, source_url: 'https://www.cifraclub.com.br/a/b/' }), { status: 201 },
+      ));
+      global.fetch = fetchSpy;
+      const result = await api.createSmartChord({ title: 'Test', originalKey: 'Bb',
+        content: '[Bb]Uma palavra', displayedKey: 'G', capo: 3,
+        sourceUrl: 'https://www.cifraclub.com.br/a/b/' });
+      expect(JSON.parse(fetchSpy.mock.calls[0][1].body)).toMatchObject({
+        original_key: 'Bb', displayed_key: 'G', capo: 3,
+        source_url: 'https://www.cifraclub.com.br/a/b/',
+      });
+      expect(result).toMatchObject({ originalKey: 'Bb', displayedKey: 'G', capo: 3,
+        sourceUrl: 'https://www.cifraclub.com.br/a/b/' });
+      await api.createSmartChord({ title: 'Missing key', content: '[Bb]Uma palavra' });
+      expect(JSON.parse(fetchSpy.mock.calls[1][1].body)).not.toHaveProperty('original_key');
+    });
+
     it('updateSmartChord envia PUT para /smart-chords/:id', async () => {
       const mockUpdated = {
         id: 'sc-123',
@@ -464,6 +483,37 @@ describe('API Client & Structured Error Handling', () => {
     describe('SmartChord Import Hub API Client', () => {
       beforeEach(() => {
         localStorage.clear();
+      });
+
+      it.each(['url', 'image'] as const)('maps assisted %s drafts and sends only canonical authentication', async (sourceType) => {
+        localStorage.setItem('praise_auth_token', 'canonical-test-token');
+        localStorage.setItem('token', 'unused-legacy-test-token');
+        const sourceUrl = 'https://www.cifraclub.com.br/artist/song/';
+        const fetchSpy = vi.fn().mockResolvedValue({
+          ok: true, status: 200,
+          text: vi.fn().mockResolvedValue(JSON.stringify({
+            title: 'Song', artist_name: 'Artist', original_key: null, content: '',
+            warnings: [{ code: sourceType === 'url' ? 'URL_MANUAL_PASTE_REQUIRED' : 'IMAGE_MANUAL_TRANSCRIPTION_REQUIRED', message: 'Cole o texto.' }],
+            source_type: sourceType, requires_manual_paste: true,
+            ...(sourceType === 'url' ? { source_url: sourceUrl } : {}),
+          })),
+        });
+        global.fetch = fetchSpy;
+        const image = new File(['fixture'], 'cifra.png', { type: 'image/png' });
+        const draft = sourceType === 'url' ? await api.importSmartChordUrl(sourceUrl) : await api.importSmartChordImage(image);
+        const [url, init] = fetchSpy.mock.calls[0];
+        expect(url).toMatch(new RegExp(`/smart-chords/import/${sourceType}$`));
+        expect(init.method).toBe('POST');
+        expect(init.headers.Authorization).toBe('Bearer canonical-test-token');
+        if (sourceType === 'url') {
+          expect(init.headers['Content-Type']).toBe('application/json');
+          expect(JSON.parse(init.body)).toEqual({ url: sourceUrl });
+          expect(draft.sourceUrl).toBe(sourceUrl);
+        } else {
+          expect(init.headers['Content-Type']).toBeUndefined();
+          expect(init.body.get('file')).toBe(image);
+        }
+        expect(draft).toMatchObject({ title: 'Song', artistName: 'Artist', sourceType, content: '', requiresManualPaste: true });
       });
 
       it('importSmartChordPdf envia FormData com autenticação canônica praise_auth_token e sem token legado', async () => {

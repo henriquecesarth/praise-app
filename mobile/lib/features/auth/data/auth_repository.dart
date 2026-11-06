@@ -26,11 +26,14 @@ abstract class AuthRepository {
   Future<void> signOut();
 }
 
+/// Invalidates credential work synchronously, before optional logout cleanup.
+abstract class AuthAttemptInvalidator {
+  void cancelPendingAuthentication();
+}
+
 /// Capability interface for updating authenticated chord font preference.
 abstract class ChordFontPreferenceUpdater {
-  Future<String> updateChordFontPreference({
-    required String chordFontFamily,
-  });
+  Future<String> updateChordFontPreference({required String chordFontFamily});
 }
 
 /// Safe extension providing updateChordFontPreference on any [AuthRepository].
@@ -41,7 +44,9 @@ extension AuthRepositoryChordFontExtension on AuthRepository {
     final self = this;
     if (self is ChordFontPreferenceUpdater) {
       final updater = self as ChordFontPreferenceUpdater;
-      return updater.updateChordFontPreference(chordFontFamily: chordFontFamily);
+      return updater.updateChordFontPreference(
+        chordFontFamily: chordFontFamily,
+      );
     }
     return chordFontFamily;
   }
@@ -49,7 +54,10 @@ extension AuthRepositoryChordFontExtension on AuthRepository {
 
 /// Firebase-backed implementation of [AuthRepository].
 class FirebaseAuthRepository
-    implements AuthRepository, ChordFontPreferenceUpdater {
+    implements
+        AuthRepository,
+        ChordFontPreferenceUpdater,
+        AuthAttemptInvalidator {
   final FirebaseAuth _firebaseAuth;
   final ApiClient _apiClient;
   final PreferencesStorage _preferencesStorage;
@@ -58,14 +66,30 @@ class FirebaseAuthRepository
   int _sessionGeneration = 0;
   String? _activeSessionUid;
   StreamSubscription<User?>? _authStateSub;
+  final _authEvents = StreamController<User?>.broadcast(sync: true);
+  Future<void> _authMutationTail = Future<void>.value();
+  int _authIntent = 0;
+  int? _runningCredentialIntent;
+  int _pendingMutations = 0;
+  bool _acceptExternalAuthEvents = true;
+  bool _disposed = false;
+  late final SessionContextProvider _sessionContextProvider;
+
+  AuthSessionContext? _provideSessionContext() => currentSessionContext;
+
+  static const _sessionChanged = AppFailure(
+    message: 'Sessão expirada ou alternada durante a requisição.',
+    statusCode: 401,
+    code: 'SESSION_CHANGED',
+  );
 
   FirebaseAuthRepository({
     required FirebaseAuth firebaseAuth,
     required ApiClient apiClient,
     required PreferencesStorage preferencesStorage,
-  })  : _firebaseAuth = firebaseAuth,
-        _apiClient = apiClient,
-        _preferencesStorage = preferencesStorage {
+  }) : _firebaseAuth = firebaseAuth,
+       _apiClient = apiClient,
+       _preferencesStorage = preferencesStorage {
     _initSessionTracking();
   }
 
@@ -78,24 +102,66 @@ class FirebaseAuthRepository
 
     try {
       _authStateSub = _firebaseAuth.authStateChanges().listen((user) {
-        if (user == null) {
-          _activeSessionUid = null;
-          _sessionGeneration++;
-        } else if (user.uid != _activeSessionUid) {
-          _activeSessionUid = user.uid;
-          _sessionGeneration++;
+        if (_disposed) return;
+        // Stream delivery can lag the mutation Future. A previous identity's
+        // event must never replace the native identity of the latest intent.
+        if (user?.uid != _firebaseAuth.currentUser?.uid) return;
+        // A native sign-in cannot be cancelled and may publish before its
+        // Future completes. Never expose an obsolete mutation to the app.
+        if (_pendingMutations > 0) {
+          if (_runningCredentialIntent == _authIntent) {
+            _adoptUser(user, advanceGeneration: false);
+          }
+          return;
         }
+        if (!_acceptExternalAuthEvents) return;
+        _adoptUser(user);
+        _authEvents.add(user);
       });
     } catch (_) {
       // In test environments where authStateChanges is not stubbed or unavailable.
     }
 
-    _apiClient.sessionContextProvider = () => currentSessionContext;
+    _sessionContextProvider = _provideSessionContext;
+    _apiClient.sessionContextProvider = _sessionContextProvider;
+  }
+
+  void _adoptUser(User? user, {bool advanceGeneration = true}) {
+    if (_activeSessionUid != user?.uid) {
+      _activeSessionUid = user?.uid;
+      if (advanceGeneration) _sessionGeneration++;
+    }
+  }
+
+  int _beginAuthIntent() {
+    ++_authIntent;
+    _acceptExternalAuthEvents = false;
+    _activeSessionUid = null;
+    ++_sessionGeneration;
+    return _authIntent;
+  }
+
+  @override
+  void cancelPendingAuthentication() {
+    _beginAuthIntent();
+  }
+
+  /// Native mutations must finish in order: a stale SDK completion can assign
+  /// currentUser even after signOut. Clean it before allowing the next login.
+  Future<T> _serializeAuth<T>(Future<T> Function() action) {
+    ++_pendingMutations;
+    final result = _authMutationTail.then((_) => action());
+    _authMutationTail = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    return result.whenComplete(() => --_pendingMutations);
   }
 
   AuthSessionContext? get currentSessionContext {
+    if (_disposed) return null;
     final uid = _firebaseAuth.currentUser?.uid;
-    if (uid == null || uid.isEmpty) return null;
+    if (uid == null || uid.isEmpty || uid != _activeSessionUid) return null;
     return AuthSessionContext(
       userId: uid,
       sessionGeneration: _sessionGeneration,
@@ -103,16 +169,24 @@ class FirebaseAuthRepository
   }
 
   @override
-  Stream<User?> authStateChanges() => _firebaseAuth.authStateChanges();
+  Stream<User?> authStateChanges() => Stream<User?>.multi((controller) {
+    final subscription = _authEvents.stream.listen(controller.addSync);
+    controller.addSync(currentFirebaseUser);
+    controller.onCancel = subscription.cancel;
+  });
 
   @override
-  User? get currentFirebaseUser => _firebaseAuth.currentUser;
+  User? get currentFirebaseUser =>
+      currentSessionContext == null ? null : _firebaseAuth.currentUser;
 
   @override
   Future<String?> getIdToken({bool forceRefresh = false}) async {
-    final user = _firebaseAuth.currentUser;
+    final user = currentFirebaseUser;
     if (user == null) return null;
-    return user.getIdToken(forceRefresh);
+    final session = currentSessionContext;
+    final token = await user.getIdToken(forceRefresh);
+    if (session != currentSessionContext) throw _sessionChanged;
+    return token;
   }
 
   @override
@@ -120,16 +194,43 @@ class FirebaseAuthRepository
     required String email,
     required String password,
   }) async {
+    final intent = _beginAuthIntent();
     try {
-      final cred = await _firebaseAuth.signInWithEmailAndPassword(
+      return await _serializeAuth(() => _signIn(intent, email, password));
+    } catch (e) {
+      throw AuthFailureNormalizer.normalize(e);
+    }
+  }
+
+  Future<UserCredential> _signIn(
+    int intent,
+    String email,
+    String password,
+  ) async {
+    if (intent != _authIntent) throw _sessionChanged;
+    _runningCredentialIntent = intent;
+    try {
+      final credential = await _firebaseAuth.signInWithEmailAndPassword(
         email: email.trim(),
         password: password,
       );
-      _activeSessionUid = cred.user?.uid;
-      _sessionGeneration++;
-      return cred;
-    } catch (e) {
-      throw AuthFailureNormalizer.normalize(e);
+      if (intent != _authIntent) {
+        throw _sessionChanged;
+      }
+      _adoptUser(credential.user, advanceGeneration: false);
+      _acceptExternalAuthEvents = true;
+      _authEvents.add(credential.user);
+      return credential;
+    } catch (_) {
+      // No newer SDK operation can run until this cleanup finishes.
+      await _firebaseAuth.signOut();
+      if (intent == _authIntent) {
+        _activeSessionUid = null;
+        _authEvents.add(null);
+      }
+      rethrow;
+    } finally {
+      _runningCredentialIntent = null;
     }
   }
 
@@ -139,32 +240,32 @@ class FirebaseAuthRepository
     required String email,
     required String password,
   }) async {
+    final intent = _beginAuthIntent();
     try {
-      // 1. Backend provisioning creates Firebase user + LouvAIO profile
-      await _apiClient.dio.post<Map<String, dynamic>>(
-        '/auth/signup',
-        data: {
-          'name': name.trim(),
-          'email': email.trim(),
-          'password': password,
-        },
-        options: Options(
-          extra: {AuthInterceptor.requiresAuthKey: false},
-        ),
-      );
+      await _serializeAuth(() async {
+        if (intent != _authIntent) throw _sessionChanged;
+        // 1. Backend provisioning creates Firebase user + LouvAIO profile
+        await _apiClient.dio.post<Map<String, dynamic>>(
+          '/auth/signup',
+          data: {
+            'name': name.trim(),
+            'email': email.trim(),
+            'password': password,
+          },
+          options: Options(extra: {AuthInterceptor.requiresAuthKey: false}),
+        );
 
-      // Mobile intentionally discards any legacy token in backend response.
+        // Mobile intentionally discards any legacy token in backend response.
 
-      // 2. Perform native Firebase sign-in
-      final cred = await _firebaseAuth.signInWithEmailAndPassword(
-        email: email.trim(),
-        password: password,
-      );
-      _activeSessionUid = cred.user?.uid;
-      _sessionGeneration++;
-
-      // 3. Confirm identity via authoritative /auth/me
-      return await getMe();
+        // 2. Perform native Firebase sign-in
+        await _signIn(intent, email, password);
+      });
+      // Profile HTTP work must not hold the native mutation queue: its 401
+      // callback can itself need to sign out through that queue.
+      if (intent != _authIntent) throw _sessionChanged;
+      final user = await getMe();
+      if (intent != _authIntent) throw _sessionChanged;
+      return user;
     } on DioException catch (e) {
       throw _apiClient.mapDioException(e);
     } catch (e) {
@@ -175,9 +276,25 @@ class FirebaseAuthRepository
   @override
   Future<AuthUser> getMe() async {
     final genAtStart = _preferenceMutationGeneration;
+    final sessionAtStart = currentSessionContext;
+    final authIntentAtStart = _authIntent;
     try {
-      final response =
-          await _apiClient.dio.get<Map<String, dynamic>>('/auth/me');
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '/auth/me',
+        options: sessionAtStart == null
+            ? null
+            : Options(
+                extra: {
+                  AuthInterceptor.sessionUserIdKey: sessionAtStart.userId,
+                  AuthInterceptor.sessionGenerationKey:
+                      sessionAtStart.sessionGeneration,
+                },
+              ),
+      );
+      if (sessionAtStart != currentSessionContext ||
+          authIntentAtStart != _authIntent) {
+        throw _sessionChanged;
+      }
       final data = response.data;
       if (data == null) {
         throw const AppFailure(
@@ -211,7 +328,8 @@ class FirebaseAuthRepository
     // Capture the initiating authenticated session context before starting the PATCH
     final session = currentSessionContext;
     final initiatingUid = session?.userId ?? _firebaseAuth.currentUser?.uid;
-    final initiatingSessionGen = session?.sessionGeneration ?? _sessionGeneration;
+    final initiatingSessionGen =
+        session?.sessionGeneration ?? _sessionGeneration;
     ++_preferenceMutationGeneration;
 
     try {
@@ -220,7 +338,8 @@ class FirebaseAuthRepository
         data: {'chord_font_family': effectiveFont},
         options: Options(
           extra: {
-            if (initiatingUid != null) AuthInterceptor.sessionUserIdKey: initiatingUid,
+            if (initiatingUid != null)
+              AuthInterceptor.sessionUserIdKey: initiatingUid,
             if (initiatingSessionGen > 0)
               AuthInterceptor.sessionGenerationKey: initiatingSessionGen,
           },
@@ -254,17 +373,30 @@ class FirebaseAuthRepository
 
   @override
   Future<void> signOut() async {
+    final intent = _beginAuthIntent();
     try {
-      _activeSessionUid = null;
-      _sessionGeneration++;
-      await _firebaseAuth.signOut();
-      await _preferencesStorage.clear();
+      await _serializeAuth(() async {
+        if (intent != _authIntent) return;
+        await _firebaseAuth.signOut();
+        await _preferencesStorage.clear();
+        if (intent == _authIntent) {
+          _acceptExternalAuthEvents = true;
+          _authEvents.add(null);
+        }
+      });
     } catch (e) {
       throw AuthFailureNormalizer.normalize(e);
     }
   }
 
   void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _beginAuthIntent();
+    if (identical(_apiClient.sessionContextProvider, _sessionContextProvider)) {
+      _apiClient.sessionContextProvider = null;
+    }
     _authStateSub?.cancel();
+    _authEvents.close();
   }
 }

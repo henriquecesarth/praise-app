@@ -19,6 +19,7 @@ import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord.dart';
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_import.dart';
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_repertoire_link.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/views/smart_chord_import_screen.dart';
+import 'package:louvaio_mobile/features/smart_chords/presentation/views/cifraclub_capture_screen.dart';
 
 class _FakeAuthRepo implements AuthRepository {
   @override
@@ -167,6 +168,29 @@ class _FakeSmartChordRepo implements SmartChordRepository {
           sourceType: 'text',
         );
   }
+
+  @override
+  Future<SmartChordImportDraft> importUrlDraft(String url) async {
+    return const SmartChordImportDraft(
+      title: 'Cifra URL',
+      content: '',
+      warnings: [],
+      sourceType: 'url',
+    );
+  }
+
+  @override
+  Future<SmartChordImportDraft> importCapturedUrlDraft(String url, String musicalHtml) => importUrlDraft(url);
+
+  @override
+  Future<SmartChordImportDraft> importImageDraft(List<int> bytes, String filename) async {
+    return const SmartChordImportDraft(
+      title: 'Cifra Imagem',
+      content: '',
+      warnings: [],
+      sourceType: 'image',
+    );
+  }
 }
 
 class _FakeLinkRepo implements SmartChordRepertoireLinkRepository {
@@ -220,6 +244,8 @@ void main() {
     Widget createTestWidget({bool navigation = false}) {
       return ProviderScope(
         overrides: [
+          cifraClubDirectImportEnabledProvider.overrideWithValue(true),
+          cifraClubCaptureLauncherProvider.overrideWithValue((_, __) async => '<pre>test capture</pre>'),
           authNotifierProvider.overrideWith((ref) => auth),
           ministryContextNotifierProvider.overrideWith((ref) => ministry),
           smartChordRepositoryProvider.overrideWithValue(repo),
@@ -234,6 +260,38 @@ void main() {
         ),
       );
     }
+
+    testWidgets(
+      'unknown source key is visible and requires explicit selection',
+      (tester) async {
+        repo.draftToReturn = const SmartChordImportDraft(
+          title: 'Unknown key',
+          content: '[Bb] [Eb/G]\nUma palavra inteira',
+          sourceType: 'text',
+          warnings: [],
+        );
+        await tester.pumpWidget(createTestWidget());
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Colar Texto'));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byType(TextField),
+          'Bb Eb/G\nUma palavra inteira',
+        );
+        await tester.tap(find.text('Analisar e Pré-visualizar Texto'));
+        await tester.pumpAndSettle();
+        final save = find.widgetWithText(
+          ElevatedButton,
+          'Salvar Cifra Pessoal',
+        );
+        expect(tester.widget<ElevatedButton>(save).onPressed, isNull);
+        expect(find.textContaining('Tom não identificado.'), findsOneWidget);
+        final key = find.byType(DropdownButton<String>);
+        tester.widget<DropdownButton<String>>(key).onChanged?.call('Bb');
+        await tester.pumpAndSettle();
+        expect(tester.widget<ElevatedButton>(save).onPressed, isNotNull);
+      },
+    );
 
     testWidgets('renders input mode with PDF and Text tabs', (tester) async {
       await tester.pumpWidget(createTestWidget());

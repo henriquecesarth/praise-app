@@ -82,6 +82,7 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
   final MinistryRepository _repository;
   final PreferencesStorage _preferencesStorage;
   int _contextGeneration = 0;
+  String? _boundUserId;
 
   MinistryContextNotifier({
     required MinistryRepository repository,
@@ -99,8 +100,9 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
   /// 4. If >1 ministries: check if stored preference exists in fresh list.
   ///    - If found: select it, transition to [MinistryBootstrapStatus.ready].
   ///    - If not found or stale: discard preference, transition to [MinistryBootstrapStatus.needsSelection].
-  Future<void> bootstrap() async {
+  Future<void> bootstrap({String? userId}) async {
     final requestGen = ++_contextGeneration;
+    if (userId != null) _boundUserId = userId;
     state = state.copyWith(
       status: MinistryBootstrapStatus.loading,
       clearFailure: true,
@@ -109,7 +111,7 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
     try {
       final ministries = await _repository.getMyMinistries();
       if (requestGen != _contextGeneration) return;
-      _resolveMinistries(ministries);
+      await _resolveMinistries(ministries, requestGen);
     } on AppFailure catch (e) {
       if (requestGen != _contextGeneration) return;
       state = state.copyWith(
@@ -138,7 +140,7 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
       if (requestGen != _contextGeneration) return;
 
       if (ministries.isEmpty) {
-        await _preferencesStorage.setSelectedMinistryId(null);
+        await _setSavedMinistryId(null);
         if (requestGen != _contextGeneration) return;
         state = const MinistryContextState(
           status: MinistryBootstrapStatus.empty,
@@ -161,7 +163,7 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
 
       if (stillSelected != null) {
         // Retain selection with updated data
-        await _preferencesStorage.setSelectedMinistryId(stillSelected.id);
+        await _setSavedMinistryId(stillSelected.id);
         if (requestGen != _contextGeneration) return;
         state = MinistryContextState(
           status: MinistryBootstrapStatus.ready,
@@ -170,9 +172,9 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
         );
       } else {
         // Selection was removed or invalid; re-resolve
-        await _preferencesStorage.setSelectedMinistryId(null);
+        await _setSavedMinistryId(null);
         if (requestGen != _contextGeneration) return;
-        _resolveMinistries(ministries);
+        await _resolveMinistries(ministries, requestGen);
       }
     } on AppFailure catch (e) {
       if (requestGen != _contextGeneration) return;
@@ -231,7 +233,7 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
         );
       }
 
-      await _preferencesStorage.setSelectedMinistryId(matched.id);
+      await _setSavedMinistryId(matched.id);
 
       // Re-verify fencing after preferences await
       if (requestGen != _contextGeneration) {
@@ -276,7 +278,9 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
       return;
     }
 
-    await _preferencesStorage.setSelectedMinistryId(ministry.id);
+    final requestGen = ++_contextGeneration;
+    await _setSavedMinistryId(ministry.id);
+    if (!mounted || requestGen != _contextGeneration) return;
     state = state.copyWith(
       status: MinistryBootstrapStatus.ready,
       selectedMinistry: ministry,
@@ -285,16 +289,24 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
   }
 
   /// Resets state and clears stored preference (called on logout or user switch).
-  Future<void> reset() async {
-    _contextGeneration++;
-    await _preferencesStorage.setSelectedMinistryId(null);
-    if (!mounted) return;
+  Future<void> reset({bool preserveSavedSelection = false}) async {
+    final resetGen = ++_contextGeneration;
+    final userId = _boundUserId;
+    if (!preserveSavedSelection && mounted) {
+      state = const MinistryContextState.initial();
+    }
+    if (!preserveSavedSelection) {
+      await _setSavedMinistryId(null, userId: userId);
+    }
+    if (!mounted || resetGen != _contextGeneration) return;
     state = const MinistryContextState.initial();
   }
 
-  void _resolveMinistries(List<Ministry> ministries) {
+  Future<void> _resolveMinistries(
+      List<Ministry> ministries, int requestGen) async {
     if (ministries.isEmpty) {
-      _preferencesStorage.setSelectedMinistryId(null);
+      await _setSavedMinistryId(null);
+      if (requestGen != _contextGeneration) return;
       state = const MinistryContextState(
         status: MinistryBootstrapStatus.empty,
         availableMinistries: [],
@@ -305,7 +317,8 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
 
     if (ministries.length == 1) {
       final single = ministries.first;
-      _preferencesStorage.setSelectedMinistryId(single.id);
+      await _setSavedMinistryId(single.id);
+      if (requestGen != _contextGeneration) return;
       state = MinistryContextState(
         status: MinistryBootstrapStatus.ready,
         availableMinistries: ministries,
@@ -315,7 +328,7 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
     }
 
     // Multiple ministries: check saved preference
-    final savedId = _preferencesStorage.getSelectedMinistryId();
+    final savedId = _getSavedMinistryId();
     Ministry? matched;
     if (savedId != null) {
       for (final m in ministries) {
@@ -334,12 +347,34 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
       );
     } else {
       // Discard stale or missing preference
-      _preferencesStorage.setSelectedMinistryId(null);
+      await _setSavedMinistryId(null);
+      if (requestGen != _contextGeneration) return;
       state = MinistryContextState(
         status: MinistryBootstrapStatus.needsSelection,
         availableMinistries: ministries,
         selectedMinistry: null,
       );
     }
+  }
+
+  String? _getSavedMinistryId() {
+    final userId = _boundUserId;
+    final storage = _preferencesStorage;
+    if (userId != null && storage is UserMinistrySelectionStorage) {
+      return (storage as UserMinistrySelectionStorage)
+          .getSelectedMinistryIdForUser(userId);
+    }
+    return storage.getSelectedMinistryId();
+  }
+
+  Future<void> _setSavedMinistryId(String? ministryId, {String? userId}) async {
+    final effectiveUserId = userId ?? _boundUserId;
+    final storage = _preferencesStorage;
+    if (effectiveUserId != null && storage is UserMinistrySelectionStorage) {
+      await (storage as UserMinistrySelectionStorage)
+          .setSelectedMinistryIdForUser(effectiveUserId, ministryId);
+      return;
+    }
+    await storage.setSelectedMinistryId(ministryId);
   }
 }

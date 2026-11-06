@@ -25,7 +25,7 @@ You are the primary implementation agent for functional product development outs
 
 Before editing any code:
 
-1. Read `AGENTS.md` and `MEMORY.md`.
+1. Read `AGENTS.md` once; consult `MEMORY.md` only if needed, using scoped `rg -n -m 8 --max-columns 200 --max-columns-preview` and small excerpts. Never load the whole file by default.
 2. Consult `docs/system-status.md` and relevant area documentation in `docs/`.
 3. Verify the task harness, branch, and working tree state.
 4. Inspect affected modules, callers, routes, controllers, services, repositories, and UI components.

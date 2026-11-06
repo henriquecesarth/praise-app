@@ -9,6 +9,7 @@ import {
   parseBarProgressionLine,
   updateBarProgressionChord,
   isMusicalChord,
+  isTablatureLine,
   CHORD_FONT_FAMILIES,
   getFontFamilyCss,
 } from '../utils/smart_chord';
@@ -130,6 +131,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
   });
   const activeFontFamilyCss = getFontFamilyCss(sheetFontFamily);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const exportingPdfRef = useRef(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   // User Font Preference Request Context Ref for asynchronous stale response fencing
@@ -429,7 +431,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
         artistId: artistId || undefined,
         songId: finalSongId && finalSongId !== 'new' ? finalSongId : undefined,
         originalKey,
-        content: content.trim(),
+        content,
       };
 
       let activeChord: SmartChord;
@@ -494,7 +496,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
     setIsPrintModalOpen(true);
   };
 
-  const generatePDF = () => {
+  const generatePDF = async () => {
     const element = document.getElementById('printable-sheet-pdf');
     if (!element) return;
 
@@ -507,12 +509,31 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
       margin: 10,
       filename: filename,
       image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true },
+      html2canvas: { scale: 2, useCORS: true, scrollX: 0, scrollY: 0 },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
       pagebreak: { mode: ['css', 'legacy'] }
     };
 
-    (window as any).html2pdf().set(opt).from(element).save();
+    await document.fonts.ready;
+    if (exportingPdfRef.current) return;
+    const tabs = Array.from(element.querySelectorAll<HTMLElement>('[data-musical-tablature]'));
+    const originalSizes = tabs.map(tab => tab.style.fontSize);
+    exportingPdfRef.current = true;
+    try {
+      const styles = getComputedStyle(element);
+      const available = element.clientWidth - parseFloat(styles.paddingLeft) - parseFloat(styles.paddingRight);
+      const measure = document.createElement('canvas').getContext('2d');
+      if (measure && tabs.length && available > 0) {
+        measure.font = `${printFontSize}px ${getComputedStyle(tabs[0]).fontFamily}`;
+        const widest = Math.max(...tabs.map(tab => measure.measureText(tab.textContent || '').width));
+        const fittedSize = printFontSize * Math.min(1, (available - 1) / Math.max(1, widest));
+        tabs.forEach(tab => { tab.style.fontSize = `${fittedSize}px`; });
+      }
+      await (window as any).html2pdf().set(opt).from(element).save();
+    } finally {
+      tabs.forEach((tab, index) => { tab.style.fontSize = originalSizes[index]; });
+      exportingPdfRef.current = false;
+    }
   };
 
   // State for inline chord editor
@@ -1036,6 +1057,30 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                 {/* Sheet segments */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {rawLines.map((lineText, lineIdx) => {
+                    if (isTablatureLine(lineText)) {
+                      return (
+                        <div
+                          key={lineIdx}
+                          role="group"
+                          data-musical-tablature
+                          aria-label={lineText}
+                          style={{
+                            display: 'flex',
+                            flexWrap: 'nowrap',
+                            whiteSpace: 'pre',
+                            overflowX: 'auto',
+                            fontFamily: 'monospace, "Courier New", Courier',
+                            fontSize: `${printFontSize}px`,
+                            lineHeight: '1.4',
+                            color: 'var(--text-primary)',
+                            minHeight: '1.4em',
+                            userSelect: 'text',
+                          }}
+                        >
+                          {lineText}
+                        </div>
+                      );
+                    }
                     if (hasBarProgression(lineText)) {
                       const tokens = parseBarProgressionLine(lineText);
                       return (
@@ -1410,6 +1455,9 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                   font-weight: bold !important;
                   font-family: ${activeFontFamilyCss} !important;
                 }
+                #printable-sheet-pdf [data-musical-tablature] {
+                  font-family: monospace, "Courier New", Courier !important;
+                }
                 #printable-sheet-pdf .has-chord {
                   text-decoration: underline 1px solid black !important;
                   text-decoration-color: black !important;
@@ -1424,7 +1472,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                 }
               `}</style>
 
-              <div style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.5)', borderRadius: '4px', overflow: 'hidden' }}>
+              <div style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.5)', borderRadius: '4px', width: '190mm', overflow: 'hidden' }}>
                 {/* This is the box that is sent to html2pdf generator */}
                 <div
                   id="printable-sheet-pdf"
@@ -1452,6 +1500,27 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                   {/* Sheet lines */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {printLines.map((lineText, lineIdx) => {
+                    if (isTablatureLine(lineText)) {
+                      return (
+                        <div
+                          key={lineIdx}
+                          data-musical-tablature
+                          className="pdf-line-row"
+                          style={{
+                            whiteSpace: 'pre',
+                            overflowX: 'hidden',
+                            fontFamily: 'monospace, "Courier New", Courier',
+                            fontSize: `${printFontSize}px`,
+                            lineHeight: '1.4',
+                            color: 'black',
+                            breakInside: 'avoid',
+                            pageBreakInside: 'avoid',
+                          }}
+                        >
+                          {lineText}
+                        </div>
+                      );
+                    }
                     if (hasBarProgression(lineText)) {
                       const tokens = parseBarProgressionLine(lineText);
                       return (

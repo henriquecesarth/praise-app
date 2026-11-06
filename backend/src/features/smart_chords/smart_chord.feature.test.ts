@@ -103,7 +103,10 @@ describe('Smart Chords Feature Test Suite', () => {
         get: vi.fn().mockResolvedValue({
           exists: true,
           id: 'chord-owner',
-          data: () => ({ user_id: 'usr-owner', title: 'Minha Cifra', original_key: 'A', content: '[A]' }),
+          data: () => ({
+            user_id: 'usr-owner', title: 'Minha Cifra', original_key: 'A', content: '[A]',
+            displayed_key: 'B', capo: 3,
+          }),
         }),
       });
 
@@ -111,6 +114,8 @@ describe('Smart Chords Feature Test Suite', () => {
       expect(chord).toBeDefined();
       expect(chord.id).toBe('chord-owner');
       expect(chord.title).toBe('Minha Cifra');
+      expect(chord.displayed_key).toBe('B');
+      expect(chord.capo).toBe(3);
     });
   });
 
@@ -567,6 +572,25 @@ describe('Smart Chords Feature Test Suite', () => {
   });
 
   describe('12. DTO Allowlist and Mass Assignment Protection', () => {
+    it('persists source_url while keeping owner fields server-derived', async () => {
+      const setFn = vi.fn().mockResolvedValue(undefined);
+      vi.spyOn((smartChordRepo as any).smartChordsCol, 'doc').mockReturnValue({ id: 'chord-source', set: setFn });
+      const sourceUrl = 'https://www.cifraclub.com.br/gabriela-rocha/lugar-secreto/';
+      const created = await smartChordRepo.createSmartChord('user-a', {
+        title: 'Lugar Secreto', original_key: 'Bb', content: '[Bb]Cifra', source_url: sourceUrl,
+        displayed_key: 'C', capo: 2,
+        user_id: 'attacker', id: 'attacker-id',
+      });
+      expect(setFn).toHaveBeenCalledWith(expect.objectContaining({
+        user_id: 'user-a', source_url: sourceUrl, displayed_key: 'C', capo: 2,
+      }));
+      expect(created.source_url).toBe(sourceUrl);
+      expect(created.displayed_key).toBe('C');
+      expect(created.capo).toBe(2);
+      expect(created.user_id).toBe('user-a');
+      expect(created.id).toBe('chord-source');
+    });
+
     it('ignora campos não-permitidos como id, user_id, created_at ou campos arbitrários no update', async () => {
       const updateDocMock = vi.fn();
       vi.spyOn((smartChordRepo as any).smartChordsCol, 'doc').mockReturnValue({
@@ -580,6 +604,9 @@ describe('Smart Chords Feature Test Suite', () => {
 
       await smartChordRepo.updateSmartChord('chord-123', 'user-a', {
         title: 'Novo Título',
+        source_url: 'https://cifraclub.com.br/artist/song/',
+        displayed_key: 'D',
+        capo: 0,
         id: 'hacked-id',
         user_id: 'hacked-user',
         created_at: '2020-01-01T00:00:00.000Z',
@@ -589,11 +616,61 @@ describe('Smart Chords Feature Test Suite', () => {
       expect(updateDocMock).toHaveBeenCalledTimes(1);
       const passedUpdate = updateDocMock.mock.calls[0][0];
       expect(passedUpdate.title).toBe('Novo Título');
+      expect(passedUpdate.source_url).toBe('https://cifraclub.com.br/artist/song/');
+      expect(passedUpdate.displayed_key).toBe('D');
+      expect(passedUpdate.capo).toBe(0);
       expect(passedUpdate.updated_at).toBeDefined();
       expect(passedUpdate.id).toBeUndefined();
       expect(passedUpdate.user_id).toBeUndefined();
       expect(passedUpdate.created_at).toBeUndefined();
       expect(passedUpdate.injected_field).toBeUndefined();
+    });
+  });
+
+  describe('Smart Chord source URL validation', () => {
+    it('accepts supported source URLs and rejects credentials or unsupported hosts', () => {
+      const base = { title: 'Cifra', original_key: 'Bb', content: '[Bb]Cifra' };
+      expect(createSmartChordSchema.parse({
+        ...base, source_url: 'https://www.cifraclub.com.br/artist/song/?instrument=guitar',
+      }).source_url).toBe('https://www.cifraclub.com.br/artist/song/?instrument=guitar');
+      for (const source_url of [
+        'javascript:alert(1)',
+        'https://user@www.cifraclub.com.br/artist/song/',
+        'https://cifraclub.com.br.evil.test/artist/song/',
+        'https://cifraclub.com.br:8443/artist/song/',
+      ]) {
+        expect(() => createSmartChordSchema.parse({ ...base, source_url })).toThrow();
+        expect(() => updateSmartChordSchema.parse({ source_url })).toThrow();
+      }
+      expect(updateSmartChordSchema.parse({ source_url: null }).source_url).toBeNull();
+    });
+
+    it('accepts 2048 character source URLs and rejects 2049 characters', () => {
+      const prefix = 'https://cifraclub.com.br/';
+      const maxLengthUrl = prefix + 'a'.repeat(2048 - prefix.length);
+      const tooLongUrl = `${maxLengthUrl}a`;
+      const base = { title: 'Cifra', original_key: 'Bb', content: '[Bb]Cifra' };
+      expect(maxLengthUrl).toHaveLength(2048);
+      expect(createSmartChordSchema.parse({ ...base, source_url: maxLengthUrl }).source_url).toBe(maxLengthUrl);
+      expect(() => createSmartChordSchema.parse({ ...base, source_url: tooLongUrl })).toThrow();
+      expect(() => updateSmartChordSchema.parse({ source_url: tooLongUrl })).toThrow();
+    });
+  });
+
+  describe('Smart Chord displayed key and capo validation', () => {
+    it('accepts nullable additive fields within bounds and rejects invalid values', () => {
+      const base = { title: 'Cifra', original_key: 'Bb', content: '[Bb]Cifra' };
+      expect(createSmartChordSchema.parse({ ...base, displayed_key: 'C', capo: 0 })).toMatchObject({
+        displayed_key: 'C', capo: 0,
+      });
+      expect(updateSmartChordSchema.parse({ displayed_key: null, capo: 24 })).toMatchObject({
+        displayed_key: null, capo: 24,
+      });
+      for (const capo of [-1, 25, 1.5]) {
+        expect(() => createSmartChordSchema.parse({ ...base, capo })).toThrow();
+        expect(() => updateSmartChordSchema.parse({ capo })).toThrow();
+      }
+      expect(() => createSmartChordSchema.parse({ title: 'Cifra', content: '[C]' })).toThrow();
     });
   });
 
@@ -753,8 +830,9 @@ describe('Smart Chords Feature Test Suite', () => {
       expect(createSpy).not.toHaveBeenCalled();
       expect(jsonFn).toHaveBeenCalledWith(expect.objectContaining({
         source_type: 'text',
-        original_key: 'G',
-        content: '[G]Graças Te dou[D/F#] pelo Teu am[Em]or',
+        original_key: null,
+        original_text: expect.any(String),
+        content: '[G]Graças Te dou [D/F#]pelo Teu [Em]amor',
       }));
     });
 

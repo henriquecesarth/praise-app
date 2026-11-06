@@ -1,3 +1,4 @@
+import { load } from 'cheerio';
 import { SmartChordImportDraft, ImportWarning } from './smart_chord_import.types';
 
 export const ROOT_REGEX = /^([A-G][#b]?)(.*)$/i;
@@ -5,6 +6,12 @@ export const EXT_REGEX = /^(m|min|maj|M|dim|aug|sus[24]?|add[249]?|[0-9]+|\+|\-|
 
 export const SECTION_HEADER_REGEX = /^(Intro|Introdução|Introducao|Verso|Pré-refrão|Pre-refrao|Refrão|Refrao|Coro|Ponte|Solo|Interlúdio|Interludio|Instrumental|Final|Coda|Tag)(\s+\d+)?[:\s]*$/i;
 export const BRACKETED_SECTION_REGEX = /^\[(Intro|Introdução|Introducao|Verso|Pré-refrão|Pre-refrao|Refrão|Refrao|Coro|Ponte|Solo|Interlúdio|Interludio|Instrumental|Final|Coda|Tag)(\s+\d+)?\]$/i;
+export const TABLATURE_LINE_REGEX = /^\s*(?:[A-Ga-g][#b]?\s*)?[|:].*[-─]/;
+
+export function isTablatureLine(line: string): boolean {
+  if (!line || typeof line !== 'string') return false;
+  return TABLATURE_LINE_REGEX.test(line);
+}
 
 export const CHROMATIC_SCALE = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
@@ -22,7 +29,9 @@ export const FLAT_MAP: Record<string, string> = {
  */
 export function isMusicalChord(token: string): boolean {
   if (!token || typeof token !== 'string') return false;
-  const trimmed = token.trim();
+  const rawTrimmed = token.trim();
+  const wrapped = rawTrimmed.match(/^\(([^()]*)\)$/);
+  const trimmed = wrapped ? wrapped[1].trim() : rawTrimmed;
   if (!trimmed) return false;
 
   const slashParts = trimmed.split('/');
@@ -80,6 +89,11 @@ function transposeSingleChordRoot(part: string, semitones: number): string {
 export function transposeChordSafe(chord: string, semitones: number): string {
   if (!chord || semitones === 0) return chord;
 
+  const wrappedChord = chord.match(/^\(([^()]*)\)$/);
+  if (wrappedChord && isMusicalChord(wrappedChord[1])) {
+    return '(' + transposeChordSafe(wrappedChord[1], semitones) + ')';
+  }
+
   if (chord.includes('|') || chord.includes('%')) {
     return chord.replace(/\([^()]*\)|([A-G][#b]?(?:[^\s|%:]*))/g, (match) => {
       if (isMusicalChord(match)) {
@@ -111,26 +125,69 @@ export interface TokenWithPosition {
 
 export function tokenizeLine(line: string): TokenWithPosition[] {
   const tokens: TokenWithPosition[] = [];
+  // Zero-width spaces are emitted by some PDF/text exporters as visual chord
+  // separators. Treat them as whitespace without changing their column width.
+  const tokenizableLine = line.replace(/\u200B/g, ' ');
   const regex = /\([^()]*\)|\[[^[\]]*\]|\S+/g;
   let match: RegExpExecArray | null;
-  while ((match = regex.exec(line)) !== null) {
+  while ((match = regex.exec(tokenizableLine)) !== null) {
+    const parenthetical = match[0].match(/^\(([^()]*)\)$/);
+    const text = parenthetical && isMusicalChord(parenthetical[1]) ? parenthetical[1] : match[0];
     tokens.push({
-      text: match[0],
-      index: match.index,
-      isChord: isMusicalChord(match[0]),
+      text,
+      index: match.index + (parenthetical && text !== match[0] ? 1 : 0),
+      isChord: isMusicalChord(text),
     });
   }
   return tokens;
 }
 
+/**
+ * Maps chord columns to lyric word boundaries. A chord inside a word
+ * is conservatively moved to that word's beginning. Multiple chords mapping
+ * to the same boundary are ambiguous and should remain on their own row.
+ */
+function projectChordLine(chordLine: string, lyricLine: string): string | null {
+  const chordTokens = tokenizeLine(chordLine.replace(/\u200B/g, ' ')).filter(t => t.isChord);
+  if (chordTokens.length === 0) return null;
+
+  const boundaries: Array<{ start: number; end: number }> = [];
+  const wordPattern = /[^\s]+/g;
+  let word: RegExpExecArray | null;
+  while ((word = wordPattern.exec(lyricLine)) !== null) {
+    // Invisible website formatting is not evidence of a musical syllable boundary.
+    boundaries.push({ start: word.index, end: word.index + word[0].length });
+  }
+
+  const mapped = chordTokens.map(token => {
+    if (token.index > lyricLine.length) return null;
+    if (token.index === lyricLine.length) return lyricLine.length;
+    const containingWord = boundaries.find(boundary => token.index >= boundary.start && token.index < boundary.end);
+    if (containingWord) return containingWord.start;
+    return boundaries.find(boundary => token.index < boundary.start)?.start ?? null;
+  });
+
+  if (mapped.some(index => index === null)) return null;
+  if (new Set(mapped).size !== mapped.length) return null;
+
+  let projected = lyricLine;
+  for (let index = chordTokens.length - 1; index >= 0; index--) {
+    const position = mapped[index]!;
+    projected = projected.slice(0, position) + `[${chordTokens[index].text}]` + projected.slice(position);
+  }
+  return projected;
+}
+
 export function isChordLine(line: string): boolean {
+  if (isTablatureLine(line)) return false;
   if (!line || !line.trim()) return false;
   // If line contains section header, it's not a pure chord line
   if (SECTION_HEADER_REGEX.test(line.trim()) || BRACKETED_SECTION_REGEX.test(line.trim())) {
     return false;
   }
   // If line is a single parenthesized annotation, it's an annotation line, not a chord line
-  if (/^\s*\([^()]*\)\s*$/.test(line.trim())) {
+  if (/^\s*\([^()]*\)\s*$/.test(line.trim()) &&
+      !isMusicalChord(line.trim().slice(1, -1))) {
     return false;
   }
 
@@ -155,7 +212,13 @@ export function isChordLine(line: string): boolean {
 
 /** Recognize a whole musical line, never chord-bearing lyrics. No tokens are discarded. */
 export function normalizeInstrumentalProgression(line: string): string | null {
-  const label = line.match(/^(\s*(?:Intro|Introdução|Introducao|Verso|Pré-refrão|Pre-refrao|Refrão|Refrao|Coro|Ponte|Solo|Interlúdio|Interludio|Instrumental|Final|Coda|Tag)(?:\s+\d+)?\s*:\s*)/i);
+  if (isTablatureLine(line)) return null;
+  // Keep the separate chord row emitted by an uncertain projection stable.
+  const chordTags = [...line.matchAll(/\[([^\]]+)\]/g)];
+  if (chordTags.length >= 2 && chordTags.every(tag => isMusicalChord(tag[1])) &&
+      !line.replace(/\[[^\]]+\]/g, '').trim()) return line;
+  const label = line.match(/^(\s*(?:Intro|Introdução|Introducao|Verso|Pré-refrão|Pre-refrao|Refrão|Refrao|Coro|Ponte|Solo|Interlúdio|Interludio|Instrumental|Final|Coda|Tag)(?:\s+\d+)?\s*:\s*)/i) ||
+    line.match(/^(\s*\[(?:Intro|Introdução|Introducao|Verso|Pré-refrão|Pre-refrao|Refrão|Refrao|Coro|Ponte|Solo|Interlúdio|Interludio|Instrumental|Final|Coda|Tag)(?:\s+\d+)?\]\s*)/i);
   let prefix = label?.[1] || '';
   let body = line.slice(prefix.length).trim();
   // Leading performance instructions belong with the label, outside the block.
@@ -168,10 +231,13 @@ export function normalizeInstrumentalProgression(line: string): string | null {
   let structural = false;
   let bracketed = false;
   const validate = (value: string): boolean => {
-    const tokens = value.match(/\([^()]*\)|\|\|:|:\|\||\|:|:\||\|\||[|%/]|[^\s|%]+/g) || [];
+    const tokens = value.match(/\([^()]*\)|\|\|:|:\|\||\|:|:\||\|\||[|%]|[^\s|%]+/g) || [];
     return tokens.length > 0 && tokens.every(token => {
       if (/^\([^()]*\)$/.test(token)) return true;
-      if (/^(?:\|\|:|:\|\||\|:|:\||\|\||[|%/])$/.test(token)) { structural = true; return true; }
+      if (/^(?:\|\|:|:\|\||\|:|:\||\|\||[|%])$/.test(token)) { structural = true; return true; }
+      // A slash by itself separates chords; an embedded slash remains part of
+      // a validated slash chord such as F/A or D/F#.
+      if (token === '/') { structural = true; return true; }
       if (isMusicalChord(token)) { chordCount++; return true; }
       return false;
     });
@@ -195,7 +261,7 @@ export function normalizeInstrumentalProgression(line: string): string | null {
     if (/\S$/.test(flattened) && /^\S/.test(inner)) flattened += ' ';
     flattened += inner;
   }
-  if (!structural && !(chordCount >= 2 && (bracketed || label))) return null;
+  if (!structural && !(chordCount >= 1 && label) && !(chordCount >= 2 && bracketed)) return null;
   if (!chordCount && !structural) return null;
   return prefix + '[ ' + flattened.trim() + ' ]';
 }
@@ -204,7 +270,7 @@ export function normalizeInstrumentalProgression(line: string): string | null {
  * Normalizes plain-text chord sheets (including chord-over-lyric layout) into
  * standard LouvAIO bracketed notation [Chord]lyric.
  */
-export function normalizeChordText(rawText: string): SmartChordImportDraft {
+export function normalizeChordText(rawText: string, htmlText?: string): SmartChordImportDraft {
   const warnings: ImportWarning[] = [];
   if (!rawText || !rawText.trim()) {
     return {
@@ -214,6 +280,7 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
       content: '',
       warnings: [{ code: 'UNSUPPORTED_LAYOUT', message: 'Conteúdo vazio fornecido para importação.' }],
       source_type: 'text',
+      original_text: rawText,
     };
   }
 
@@ -223,9 +290,69 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
   let title = '';
   let artistName: string | null = null;
   let originalKey: string | null = null;
+  const explicitTomOriginal: string[] = [];
+  const explicitTom: string[] = [];
+  const explicitKey: string[] = [];
+  const explicitDisplayedKey: string[] = [];
+  let capo: number | null = null;
 
   const contentLines: string[] = [];
   let i = 0;
+
+  // HTML metadata pass if htmlText or rawText is HTML
+  const effectiveHtml = htmlText || (/^\s*<(!doctype|html|main|div|h1|pre)/i.test(rawText) ? rawText : null);
+  if (effectiveHtml) {
+    try {
+      const $ = load(effectiveHtml);
+      const htmlTitle = $('h1.t1, .cifra h1, h1').first().text().trim();
+      const htmlArtist = $('h2.t3, .cifra .t3, h2').first().text().trim();
+      const htmlTom = $('#cifra_tom').first().text().trim().match(/^(?:Tom(?:\s+atual)?\s*:\s*)?([A-G][#b]?(?:m|maj|min)?)$/i)?.[1];
+      const htmlTomOriginal = $('#cifra_tom_original').first().text().trim().match(/^(?:Tom\s+original\s*:\s*)?([A-G][#b]?(?:m|maj|min)?)$/i)?.[1];
+      const htmlCapoText = $('#cifra_capo, .capotraste').first().text().trim();
+      const htmlCapoMatch = htmlCapoText.match(/^(?:(?:Capotraste|Capo)\s*:\s*)?(\d{1,2})/i);
+      if (htmlTitle && !title) title = htmlTitle;
+      if (htmlArtist && !artistName) artistName = htmlArtist;
+      if (htmlTomOriginal && !explicitTomOriginal.length) explicitTomOriginal.push(htmlTomOriginal);
+      if (htmlTom && !explicitTom.length) explicitTom.push(htmlTom);
+      if (htmlCapoMatch && capo === null) capo = Number(htmlCapoMatch[1]);
+    } catch {
+      // Ignored if invalid HTML
+    }
+  }
+
+  // Check if explicit metadata (Tom:, Key:, Capo:, Artista:, etc.) is present within the first 8 lines
+  let explicitMetaIndex = -1;
+  for (let idx = 0; idx < Math.min(rawLines.length, 8); idx++) {
+    const t = rawLines[idx].trim();
+    if (/^(?:Tom(?:\s+Original|\s+atual|\s+cifrado|\s+transposto)?|Original\s+Key|Displayed\s+Key|Current\s+Key|Key|Capo|Capotraste|Artista|Artist|Banda|Título|Titulo|Title):\s*/i.test(t)) {
+      explicitMetaIndex = idx;
+      break;
+    }
+  }
+
+  // Only a short, nonmusical prefix can be an unlabeled title/artist header.
+  let preserveLeadingMusic = false;
+  if (explicitMetaIndex > 0) {
+    const preMetaLines = rawLines.slice(0, explicitMetaIndex).map(l => l.trim()).filter(Boolean);
+    const headerShape = preMetaLines.length <= 2 && !preMetaLines.some(line =>
+      isChordLine(line) || isTablatureLine(line) || SECTION_HEADER_REGEX.test(line) ||
+      BRACKETED_SECTION_REGEX.test(line) || normalizeInstrumentalProgression(line) !== null ||
+      [...line.matchAll(/\[([^\]]+)\]/g)].some(match => isMusicalChord(match[1])));
+    preserveLeadingMusic = !headerShape;
+    if (headerShape && preMetaLines.length === 1) {
+      const hyphenMatch = preMetaLines[0].match(/^([^\n–—-]+?)\s+[-–—]\s+([^\n–—-]+)$/);
+      if (hyphenMatch && !isMusicalChord(hyphenMatch[1]) && !isMusicalChord(hyphenMatch[2])) {
+        if (!title) title = hyphenMatch[1].trim();
+        if (!artistName) artistName = hyphenMatch[2].trim();
+      } else if (!title) {
+        title = preMetaLines[0];
+      }
+    } else if (headerShape && preMetaLines.length === 2) {
+      if (!title) title = preMetaLines[0];
+      if (!artistName) artistName = preMetaLines[1];
+    }
+    i = explicitMetaIndex;
+  }
 
   // Metadata extraction pass on leading lines
   while (i < rawLines.length && i < 15) {
@@ -249,9 +376,37 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
       continue;
     }
 
-    const keyMatch = trimmed.match(/^(?:Tom|Key|Tom\s+Original):\s*([A-G][#b]?(?:m|maj|min)?)\s*$/i);
+    const displayedKeyMatch = trimmed.match(/^(?:Tom\s+(?:atual|cifrado|transposto)|Displayed\s+Key|Current\s+Key):\s*([A-G][#b]?(?:m|maj|min)?)\s*$/i);
+    if (displayedKeyMatch) {
+      explicitDisplayedKey.push(displayedKeyMatch[1].trim());
+      i++;
+      continue;
+    }
+
+    const originalTomMatch = trimmed.match(/^(?:Tom\s+Original|Original\s+Key):\s*([A-G][#b]?(?:m|maj|min)?)\s*$/i);
+    if (originalTomMatch) {
+      explicitTomOriginal.push(originalTomMatch[1].trim());
+      i++;
+      continue;
+    }
+
+    const tomMatch = trimmed.match(/^Tom:\s*([A-G][#b]?(?:m|maj|min)?)\s*$/i);
+    if (tomMatch) {
+      explicitTom.push(tomMatch[1].trim());
+      i++;
+      continue;
+    }
+
+    const keyMatch = trimmed.match(/^Key:\s*([A-G][#b]?(?:m|maj|min)?)\s*$/i);
     if (keyMatch) {
-      originalKey = keyMatch[1].trim();
+      explicitKey.push(keyMatch[1].trim());
+      i++;
+      continue;
+    }
+
+    const capoMatch = trimmed.match(/^(?:Capo|Capotraste):\s*(\d{1,2})\s*$/i);
+    if (capoMatch && Number(capoMatch[1]) <= 24) {
+      capo = Number(capoMatch[1]);
       i++;
       continue;
     }
@@ -259,9 +414,34 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
     break;
   }
 
+  if (preserveLeadingMusic) {
+    // Remove only the metadata just parsed; normalize the preserved music too.
+    rawLines.splice(explicitMetaIndex, i - explicitMetaIndex);
+    i = 0;
+  }
+
+  const selectedKeyValues = explicitTomOriginal.length ? explicitTomOriginal :
+    explicitTom.length ? explicitTom : explicitKey;
+  const normalizedSelectedKeys = new Set(selectedKeyValues.map((key) => key.toLocaleLowerCase('en-US')));
+  const originalKeyAmbiguous = normalizedSelectedKeys.size > 1;
+  originalKey = originalKeyAmbiguous ? null : selectedKeyValues[0] ?? null;
+  const displayedKeyValues = explicitDisplayedKey.length ? explicitDisplayedKey :
+    explicitTomOriginal.length ? explicitTom : [];
+  const normalizedDisplayedKeys = new Set(displayedKeyValues.map((key) => key.toLocaleLowerCase('en-US')));
+  const displayedKeyAmbiguous = normalizedDisplayedKeys.size > 1;
+  const displayedKey = displayedKeyAmbiguous ? null : displayedKeyValues[0] ?? null;
+  if (originalKeyAmbiguous || displayedKeyAmbiguous) {
+    warnings.push({
+      code: 'METADATA_AMBIGUOUS',
+      message: 'Metadados de tom conflitantes; revise a cifra antes de salvar.',
+    });
+  }
+
   // Canonicalize each independently authored musical line before the inline-chord fast path.
   for (let lineIdx = i; lineIdx < rawLines.length; lineIdx++) {
-    const progression = normalizeInstrumentalProgression(rawLines[lineIdx]);
+    // Share/import sources may prefix every visual line with an invisible
+    // marker; it must not hide section labels from progression recognition.
+    const progression = normalizeInstrumentalProgression(rawLines[lineIdx].replace(/^\u200B+/, ''));
     if (progression !== null) {
       rawLines[lineIdx] = progression;
       if (/\|\|:|:\|\||%/.test(progression) && rawLines[lineIdx + 1]?.trim()) {
@@ -271,177 +451,174 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
     }
   }
 
-  // Check if text already has widespread inline brackets [Chord]
-  const remainingText = rawLines.slice(i).join('\n');
-  const bracketMatches = remainingText.match(/\[(?:[|:\s]*[A-G][#b]?[^\]]*|[A-G][#b]?[^\]]*)\]/g);
-  const isAlreadyBracketed = (bracketMatches && bracketMatches.length >= 3);
+  // Process two-line chord-over-lyric and progression layout
+  while (i < rawLines.length) {
+    const currentLine = rawLines[i];
+    const trimmed = currentLine.trim();
 
-  if (isAlreadyBracketed) {
-    // Already in bracket format, preserve and validate
-    for (let lineIdx = i; lineIdx < rawLines.length; lineIdx++) {
-      contentLines.push(rawLines[lineIdx]);
+    if (!trimmed) {
+      contentLines.push('');
+      i++;
+      continue;
     }
-  } else {
-    // Process two-line chord-over-lyric and progression layout
-    while (i < rawLines.length) {
-      const currentLine = rawLines[i];
-      const trimmed = currentLine.trim();
 
-      if (!trimmed) {
-        contentLines.push('');
-        i++;
-        continue;
-      }
-
-      // An attached syllable belongs to existing chord-over-lyrics syntax.
-      if (/\[[^\]]+\][^\s|%:\[\]]/.test(currentLine)) {
-        contentLines.push(currentLine);
-        i++;
-        continue;
-      }
-
-      // Check for section header
-      if (SECTION_HEADER_REGEX.test(trimmed)) {
-        contentLines.push('[' + trimmed.replace(/[:\s]+$/, '') + ']');
-        i++;
-        continue;
-      }
-      if (BRACKETED_SECTION_REGEX.test(trimmed)) {
-        contentLines.push(trimmed);
-        i++;
-        continue;
-      }
-
-      // Check for parenthetical performance annotation e.g. (violão/pad)
-      if (/^\s*\(.*?\)\s*$/.test(trimmed)) {
-        contentLines.push(trimmed);
-        i++;
-        continue;
-      }
-
-      // Ambiguous annotated/structural lines stay separate from the following lyrics.
-      // Only wrap known chords; preserve every other token and its original spacing.
-      const lineTokens = tokenizeLine(currentLine);
-      const hasKnownChord = lineTokens.some(t => t.isChord);
-      const hasStructure = lineTokens.some(t => ['|', '||', '||:', ':||', '|:', '%', '/'].includes(t.text));
-      const hasAnnotation = lineTokens.some(t => /^\([^()]*\)$/.test(t.text));
-      const hasMalformedAnnotation = /[()]/.test(currentLine) &&
-        lineTokens.some(t => !t.isChord && !/^\([^()]*\)$/.test(t.text) && /[()]/.test(t.text));
-      if ((hasKnownChord || hasStructure) && (isChordLine(currentLine) || hasMalformedAnnotation) &&
-          (hasStructure || hasAnnotation || hasMalformedAnnotation || lineTokens.some(t => !t.isChord))) {
-        const unknown = lineTokens.filter(t => !t.isChord &&
-          !['|', '||', '||:', ':||', '|:', '%', '/'].includes(t.text) &&
-          !/^\([^()]*\)$/.test(t.text) && !/^\[[^[\]]*\]$/.test(t.text));
-        const code = hasMalformedAnnotation ? 'UNSUPPORTED_LAYOUT' :
-          unknown.length ? 'UNKNOWN_CHORD_TOKEN' :
-          hasStructure ? 'REPEAT_STRUCTURE_AMBIGUOUS' : 'CHORD_ALIGNMENT_UNCERTAIN';
-        warnings.push({ code, line: i + 1,
-          message: 'Linha musical preservada separadamente da letra. Revise o alinhamento e as marcações.' });
-        let preserved = currentLine;
-        for (const token of [...lineTokens].reverse()) {
-          if (token.isChord) {
-            preserved = preserved.slice(0, token.index) + '[' + token.text + ']' +
-              preserved.slice(token.index + token.text.length);
-          }
-        }
-        // A complete bar run uses the existing bracketed progression format.
-        if (hasStructure && !hasAnnotation && !unknown.length) preserved = '[' + currentLine + ']';
-        contentLines.push(preserved);
-        i++;
-        continue;
-      }
-
-      // Check if current line is a chord line
-      if (isChordLine(currentLine)) {
-        const nextLine = (i + 1 < rawLines.length) ? rawLines[i + 1] : null;
-        const nextTrimmed = nextLine ? nextLine.trim() : '';
-
-        // If next line exists, is non-empty, and is NOT another chord line, section header, or annotation:
-        if (
-          nextLine !== null &&
-          nextTrimmed !== '' &&
-          !isChordLine(nextLine) &&
-          !SECTION_HEADER_REGEX.test(nextTrimmed) &&
-          !BRACKETED_SECTION_REGEX.test(nextTrimmed) &&
-          !/^\s*\(.*?\)\s*$/.test(nextTrimmed)
-        ) {
-          // Project chords into the lyric line below
-          const tokens = tokenizeLine(currentLine).filter(t => t.isChord);
-          // Insert in descending order of column index
-          tokens.sort((a, b) => b.index - a.index);
-
-          let combined = nextLine;
-          for (const t of tokens) {
-            const chordBracket = '[' + t.text + ']';
-            if (t.index >= combined.length) {
-              const padding = ' '.repeat(t.index - combined.length);
-              combined = combined + padding + chordBracket;
-            } else {
-              combined = combined.slice(0, t.index) + chordBracket + combined.slice(t.index);
-            }
-          }
-          contentLines.push(combined);
-          i += 2; // Consumed both chord line and lyric line
-          continue;
-        } else {
-          // Instrumental progression line without lyrics (e.g. Intro progression or solo)
-          const tokens = tokenizeLine(currentLine);
-          const hasBarlines = tokens.some(t => ['|', '||', '||:', ':||', '%'].includes(t.text));
-
-          if (!hasBarlines) {
-            const formattedParts = tokens.map(t => {
-              if (t.isChord) return '[' + t.text + ']';
-              return t.text;
-            });
-            contentLines.push(formattedParts.join(' '));
-          } else {
-            // Group bar structure into bracketed bar markup [| ... |]
-            const resultParts: string[] = [];
-            let currentBarRun: string[] = [];
-
-            const flushBarRun = () => {
-              if (currentBarRun.length > 0) {
-                resultParts.push('[' + currentBarRun.join(' ') + ']');
-                currentBarRun = [];
-              }
-            };
-
-            for (const t of tokens) {
-              const isBar = ['|', '||', '||:', ':||', '%'].includes(t.text);
-              const isAnnot = /^\(.*?\)$/.test(t.text) || /^\[.*?\]$/.test(t.text);
-              const isSec = SECTION_HEADER_REGEX.test(t.text) || /^(Intro|Solo|Verso|Refrão|Refrao|Coro|Ponte|Pausa|Interlúdio|Interludio|Final)[:\s]*$/i.test(t.text);
-
-              if (isAnnot || isSec) {
-                flushBarRun();
-                resultParts.push(t.text);
-              } else if (isBar || t.isChord) {
-                currentBarRun.push(t.text);
-              } else {
-                currentBarRun.push(t.text);
-              }
-            }
-
-            flushBarRun();
-            contentLines.push(resultParts.join(' '));
-          }
-          i++;
-          continue;
-        }
-      }
-
-      // Ordinary lyric line without chords
+    // An attached syllable belongs to existing chord-over-lyrics syntax.
+    if ([...currentLine.matchAll(/\[([^\]]+)\]/g)].some(tag => isMusicalChord(tag[1])) ||
+        /\[[^\]]+\][^\s|%:\[\]]/.test(currentLine)) {
       contentLines.push(currentLine);
       i++;
+      continue;
     }
+
+    // Check for tablature lines
+    if (isTablatureLine(currentLine)) {
+      contentLines.push(currentLine);
+      i++;
+      continue;
+    }
+
+    // Check for section header
+    if (SECTION_HEADER_REGEX.test(trimmed)) {
+      contentLines.push('[' + trimmed.replace(/[:\s]+$/, '') + ']');
+      i++;
+      continue;
+    }
+    if (BRACKETED_SECTION_REGEX.test(trimmed)) {
+      contentLines.push(trimmed);
+      i++;
+      continue;
+    }
+
+    // Check for parenthetical performance annotation e.g. (violão/pad)
+    if (/^\s*\(.*?\)\s*$/.test(trimmed) &&
+        !isMusicalChord(trimmed.slice(1, -1))) {
+      contentLines.push(trimmed);
+      i++;
+      continue;
+    }
+
+    // Ambiguous annotated/structural lines stay separate from the following lyrics.
+    // Only wrap known chords; preserve every other token and its original spacing.
+    const lineTokens = tokenizeLine(currentLine);
+    const hasKnownChord = lineTokens.some(t => t.isChord);
+    const hasStructure = lineTokens.some(t => ['|', '||', '||:', ':||', '|:', '%', '/'].includes(t.text));
+    const hasAnnotation = lineTokens.some(t => /^\([^()]*\)$/.test(t.text));
+    const hasMalformedAnnotation = /[()]/.test(currentLine) &&
+      lineTokens.some(t => !t.isChord && !/^\([^()]*\)$/.test(t.text) && /[()]/.test(t.text));
+    if ((hasKnownChord || hasStructure) && (isChordLine(currentLine) || hasMalformedAnnotation) &&
+        (hasStructure || hasAnnotation || hasMalformedAnnotation || lineTokens.some(t => !t.isChord))) {
+      const unknown = lineTokens.filter(t => !t.isChord &&
+        !['|', '||', '||:', ':||', '|:', '%', '/'].includes(t.text) &&
+        !/^\([^()]*\)$/.test(t.text) && !/^\[[^[\]]*\]$/.test(t.text));
+      const code = hasMalformedAnnotation ? 'UNSUPPORTED_LAYOUT' :
+        unknown.length ? 'UNKNOWN_CHORD_TOKEN' :
+        hasStructure ? 'REPEAT_STRUCTURE_AMBIGUOUS' : 'CHORD_ALIGNMENT_UNCERTAIN';
+      warnings.push({ code, line: i + 1,
+        message: 'Linha musical preservada separadamente da letra. Revise o alinhamento e as marcações.' });
+      let preserved = currentLine;
+      for (const token of [...lineTokens].reverse()) {
+        if (token.isChord) {
+          preserved = preserved.slice(0, token.index) + '[' + token.text + ']' +
+            preserved.slice(token.index + token.text.length);
+        }
+      }
+      // A complete bar run uses the existing bracketed progression format.
+      if (hasStructure && !hasAnnotation && !unknown.length) preserved = '[' + currentLine + ']';
+      contentLines.push(preserved);
+      i++;
+      continue;
+    }
+
+    // Check if current line is a chord line
+    if (isChordLine(currentLine)) {
+      const nextLine = (i + 1 < rawLines.length) ? rawLines[i + 1] : null;
+      const nextTrimmed = nextLine ? nextLine.trim() : '';
+
+      // If next line exists, is non-empty, and is NOT another chord line, section header, or annotation:
+      if (
+        nextLine !== null &&
+        nextTrimmed !== '' &&
+        !isChordLine(nextLine) &&
+        !SECTION_HEADER_REGEX.test(nextTrimmed) &&
+        !BRACKETED_SECTION_REGEX.test(nextTrimmed) &&
+        !/^\s*\(.*?\)\s*$/.test(nextTrimmed)
+      ) {
+        // Keep chords at word/syllable boundaries; never inject one in the
+        // middle of a lyric word just because the source columns drifted.
+        const projected = projectChordLine(currentLine, nextLine);
+        if (projected === null) {
+          warnings.push({ code: 'CHORD_ALIGNMENT_UNCERTAIN', line: i + 1,
+            message: 'Acordes mantidos em linha separada porque o alinhamento com as palavras ficou ambíguo. Revise a cifra.' });
+          let preserved = currentLine.replace(/\u200B/g, ' ');
+          for (const token of tokenizeLine(preserved).filter(t => t.isChord).reverse()) {
+            preserved = preserved.slice(0, token.index) + `[${token.text}]` + preserved.slice(token.index + token.text.length);
+          }
+          contentLines.push(preserved);
+          i++;
+        } else {
+          contentLines.push(projected);
+          i += 2; // Consumed both chord and lyric lines
+        }
+        continue;
+      } else {
+        // Instrumental progression line without lyrics (e.g. Intro progression or solo)
+        const tokens = tokenizeLine(currentLine);
+        const hasBarlines = tokens.some(t => ['|', '||', '||:', ':||', '%'].includes(t.text));
+
+        if (!hasBarlines) {
+          const formattedParts = tokens.map(t => {
+            if (t.isChord) return '[' + t.text + ']';
+            return t.text;
+          });
+          contentLines.push(formattedParts.join(' '));
+        } else {
+          // Group bar structure into bracketed bar markup [| ... |]
+          const resultParts: string[] = [];
+          let currentBarRun: string[] = [];
+
+          const flushBarRun = () => {
+            if (currentBarRun.length > 0) {
+              resultParts.push('[' + currentBarRun.join(' ') + ']');
+              currentBarRun = [];
+            }
+          };
+
+          for (const t of tokens) {
+            const isBar = ['|', '||', '||:', ':||', '%'].includes(t.text);
+            const isAnnot = /^\(.*?\)$/.test(t.text) || /^\[.*?\]$/.test(t.text);
+            const isSec = SECTION_HEADER_REGEX.test(t.text) || /^(Intro|Solo|Verso|Refrão|Refrao|Coro|Ponte|Pausa|Interlúdio|Interludio|Final)[:\s]*$/i.test(t.text);
+
+            if (isAnnot || isSec) {
+              flushBarRun();
+              resultParts.push(t.text);
+            } else if (isBar || t.isChord) {
+              currentBarRun.push(t.text);
+            } else {
+              currentBarRun.push(t.text);
+            }
+          }
+
+          flushBarRun();
+          contentLines.push(resultParts.join(' '));
+        }
+        i++;
+        continue;
+      }
+    }
+
+    // Ordinary lyric line without chords
+    contentLines.push(currentLine);
+    i++;
   }
 
-  const finalContent = contentLines.join('\n').trim();
+  // Normalize boundary blank lines without shifting the first musical column.
+  const finalContent = contentLines.join('\n').replace(/^\n+|\n+$/g, '');
 
   // If title was not extracted from metadata, attempt derivation from first non-empty line
   if (!title) {
     for (const line of contentLines) {
       const clean = line.replace(/\[.*?\]/g, '').trim();
-      if (clean && !SECTION_HEADER_REGEX.test(clean) && !/^\(.*?\)$/.test(clean)) {
+      if (clean && !SECTION_HEADER_REGEX.test(clean) && !BRACKETED_SECTION_REGEX.test(clean) && !/^\(.*?\)$/.test(clean) && !isTablatureLine(clean)) {
         title = clean.slice(0, 80);
         break;
       }
@@ -451,17 +628,13 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
     title = 'Cifra Importada';
   }
 
-  // If original key was not extracted, try to deduce from the first valid chord
+  // Chord presence does not establish the original key. Only explicit source
+  // metadata is authoritative; otherwise leave the key unknown.
   if (!originalKey) {
-    const firstChordMatch = finalContent.match(/\[[|:\s]*([A-G][#b]?(?:m|maj|min)?)[^\]]*\]/);
-    if (firstChordMatch) {
-      originalKey = firstChordMatch[1];
-    } else {
-      warnings.push({
-        code: 'MISSING_ORIGINAL_KEY',
-        message: 'Tom original não identificado automaticamente no texto.',
-      });
-    }
+    warnings.push({
+      code: 'MISSING_ORIGINAL_KEY',
+      message: 'Tom original não identificado automaticamente no texto.',
+    });
   }
 
   return {
@@ -471,5 +644,8 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
     content: finalContent,
     warnings,
     source_type: 'text',
+    original_text: rawText,
+    ...(displayedKey ? { displayed_key: displayedKey } : {}),
+    ...(capo !== null ? { capo } : {}),
   };
 }

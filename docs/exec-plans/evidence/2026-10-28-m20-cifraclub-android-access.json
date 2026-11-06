@@ -1,0 +1,284 @@
+{
+  "date": "2026-10-28",
+  "device_model": "Lenovo TB-J616F",
+  "android_api": 31,
+  "system_webview": "com.google.android.webview 155.0.8059.43",
+  "source_url": "https://www.cifraclub.com.br/projeto-sola/glorificar/",
+  "implementation": "mobile/tool/cifraclub_access_probe.dart",
+  "static_analysis": "PASS",
+  "debug_build_and_install": "PASS",
+  "runs": [
+    {
+      "renderer": "Impeller OpenGLES",
+      "url": "https://www.cifraclub.com.br/projeto-sola/glorificar/",
+      "page_started": false,
+      "page_finished": false,
+      "main_http_status": "Unknown / Not yet verified",
+      "direct_import": "NOT_EXECUTED",
+      "access_result": "TIMEOUT"
+    },
+    {
+      "renderer": "Skia (same debug binary, local CLI flag)",
+      "url": "https://www.cifraclub.com.br/projeto-sola/glorificar/",
+      "page_started": false,
+      "page_finished": false,
+      "main_http_status": "Unknown / Not yet verified",
+      "direct_import": "NOT_EXECUTED",
+      "access_result": "TIMEOUT"
+    }
+  ],
+  "navigation_deadline_seconds": 45,
+  "real_musical_dom": "PASS - real public page, HTTP 200, verified minimal DOM projection into existing TypeScript parser",
+  "visual_observation": "WebView area empty/black; no musical page visible",
+  "timeout_cause": "Pre-network sandbox renderer services were pending without process/binder. Authorized reboot restored renderer binding and local HTML execution. Underlying reason for OS/provider stall: Unknown / Not yet verified.",
+  "android_403_observed": false,
+  "direct_import": "BLOCKED",
+  "navigation_diagnosis": {
+    "runs": {
+      "baseline_abc": [],
+      "probe_process_restart": [
+        {
+          "scenario": "A_LOCAL_HTML",
+          "initialized": true,
+          "widget_mounted": true,
+          "requested_url": "about:blank",
+          "navigation_requests": [],
+          "progress": [
+            10
+          ],
+          "page_started": null,
+          "page_finished": null,
+          "http_status": "Unknown / Not yet verified",
+          "load_called": true,
+          "load_returned": true,
+          "timeout": true,
+          "elapsed_ms": 45108,
+          "final_url": "about:blank",
+          "state_error_type": "TimeoutException"
+        },
+        {
+          "scenario": "B_CONTROL_URL",
+          "initialized": true,
+          "widget_mounted": true,
+          "requested_url": "https://example.com/",
+          "navigation_requests": [],
+          "progress": [
+            10
+          ],
+          "page_started": null,
+          "page_finished": null,
+          "http_status": "Unknown / Not yet verified",
+          "load_called": true,
+          "load_returned": true,
+          "timeout": true,
+          "elapsed_ms": 45058,
+          "final_url": "https://example.com/",
+          "state_error_type": "TimeoutException"
+        }
+      ]
+    },
+    "internet_permission": "granted=true",
+    "native_activity": "mResumed=true mStopped=false mFinished=false",
+    "native_webview_size": "2000x1056, attached under PlatformViewWrapper",
+    "renderer_services": {
+      "app": null,
+      "binder": null,
+      "requested": false,
+      "received": false,
+      "hasBound": false,
+      "pending_services": true
+    },
+    "renderer_process_observed": false,
+    "provider": "com.google.android.webview 155.0.8059.43 valid/enabled",
+    "reboot_authorization": "explicitly granted by user",
+    "root_cause": "Pre-network sandbox renderer services were pending without process/binder. Authorized reboot restored renderer binding and local HTML execution. Underlying reason for OS/provider stall: Unknown / Not yet verified.",
+    "post_reboot_abc": [],
+    "post_reboot_renderer_services": {
+      "process_present": true,
+      "binder_present": true,
+      "requested": true,
+      "received": true,
+      "hasBound": true
+    },
+    "post_reboot_provider": "same version, multiprocess enabled",
+    "visual_error": "net::ERR_INTERNET_DISCONNECTED",
+    "active_default_network_present_at_followup": false,
+    "user_network_confirmation": "authorized network connected",
+    "http_note": "Local HTML responseStatus=200 is Navigation Timing data, not an HTTP origin response.",
+    "final_c_only_retry": [],
+    "real_dom_inspection": {
+      "url": "https://www.cifraclub.com.br/projeto-sola/glorificar/",
+      "title": "Glorificar - Projeto Sola - Cifra Club",
+      "labels": [
+        {
+          "label": "Tom",
+          "parent": {
+            "tag": "SPAN",
+            "id": "",
+            "class": "_5QAC rVxuZ"
+          },
+          "text": "Tom",
+          "outer_text": "Tom"
+        },
+        {
+          "label": "Tom",
+          "parent": {
+            "tag": "P",
+            "id": "",
+            "class": "_5QAC UKBJ7 _SYZN x47OM NGYFl"
+          },
+          "text": "Tom",
+          "outer_text": "Tom"
+        },
+        {
+          "label": "Tom",
+          "parent": {
+            "tag": "SPAN",
+            "id": "",
+            "class": "_5QAC k9WZl I4Cc"
+          },
+          "text": "Tom",
+          "outer_text": "Tom"
+        },
+        {
+          "label": "Capotraste",
+          "parent": {
+            "tag": "P",
+            "id": "",
+            "class": "_5QAC UKBJ7 _SYZN x47OM NGYFl"
+          },
+          "text": "Capotraste",
+          "outer_text": "Capotraste"
+        },
+        {
+          "label": "Capotraste",
+          "parent": {
+            "tag": "SPAN",
+            "id": "",
+            "class": "_5QAC k9WZl I4Cc"
+          },
+          "text": "Capotraste",
+          "outer_text": "Capotraste"
+        },
+        {
+          "label": "Tom",
+          "parent": {
+            "tag": "SPAN",
+            "id": "",
+            "class": ""
+          },
+          "text": "Tom:",
+          "outer_text": "Tom:  Bb"
+        }
+      ],
+      "headings": [
+        {
+          "tag": "H2",
+          "id": "header-title",
+          "class": "u-srOnly",
+          "text": "Menu principal"
+        },
+        {
+          "tag": "H1",
+          "id": "",
+          "class": "_5QAC sKA9",
+          "text": "Glorificar"
+        },
+        {
+          "tag": "H2",
+          "id": "",
+          "class": "_5QAC avtl1 zljom",
+          "text": "Projeto Sola"
+        },
+        {
+          "tag": "H2",
+          "id": "chips-title",
+          "class": "u-srOnly",
+          "text": "Menu de versões da cifra"
+        },
+        {
+          "tag": "H2",
+          "id": "footer-title-todos-artistas",
+          "class": "_5QAC bGd00",
+          "text": "Todos artistas"
+        },
+        {
+          "tag": "H2",
+          "id": "footer-title-músicas",
+          "class": "_5QAC bGd00",
+          "text": "Músicas"
+        }
+      ],
+      "artist_links": [
+        {
+          "tag": "A",
+          "id": "",
+          "class": "",
+          "text": "Projeto Sola"
+        }
+      ],
+      "pre": [
+        {
+          "node": {
+            "tag": "PRE",
+            "id": "",
+            "class": "_crVx"
+          },
+          "parent": {
+            "tag": "ARTICLE",
+            "id": "",
+            "class": "XjgwI"
+          },
+          "grandparent": {
+            "tag": "DIV",
+            "id": "",
+            "class": "jwkty"
+          },
+          "characters": 3133,
+          "lines": 145,
+          "child_tags": [
+            "DIV",
+            "B",
+            "SPAN"
+          ],
+          "chord_nodes": 68,
+          "tab_rows": 24
+        }
+      ]
+    },
+    "real_parser_conversion": {
+      "source_url": "https://www.cifraclub.com.br/projeto-sola/glorificar/",
+      "parser": "existing TypeScript parseCifraClubHtml, unchanged",
+      "projection": "musical text + explicit metadata only, in memory; no library write",
+      "title": "Glorificar",
+      "artist": "Projeto Sola",
+      "key": "Bb",
+      "content_characters": 2885,
+      "source_lines": 145,
+      "warnings": [],
+      "requires_manual_paste": false,
+      "checks": {
+        "intro": true,
+        "interlude": true,
+        "Eb_G": true,
+        "Ab_Bb": true,
+        "original_text_preserved": true,
+        "lyric_lines": 53,
+        "chord_or_progression_lines": 46,
+        "source_tab_rows": 24,
+        "parsed_tab_rows": 24,
+        "complete_six_string_groups": true,
+        "tabs_preserved": true
+      }
+    },
+    "final_status": {
+      "initialization": "PASS",
+      "local_html": "PASS",
+      "control_navigation": "PASS",
+      "cifraclub_navigation": "PASS",
+      "real_musical_content_conversion": "PASS",
+      "product_direct_import": "BLOCKED - normal paste/share flow is not connected to this diagnostic capture"
+    }
+  },
+  "next_blocker": "Connect the validated capture and parser to the normal Android import workflow without DevTools; not implemented in this navigation investigation"
+}

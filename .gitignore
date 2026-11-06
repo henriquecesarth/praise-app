@@ -11,6 +11,9 @@ web/test-results/
 # Environment
 .env
 .env.local
+.env.*
+!.env.example
+!.env.*.example
 
 # Flutter
 mobile/.dart_tool/

@@ -30,6 +30,9 @@ app.use(createCorsMiddleware());
 // ─── Route-Scoped Raw Body Routes (Must precede global express.json) ─────────
 app.use('/api/v1/whatsapp', publicWhatsAppRoutes);
 
+// Text (100k chars) plus HTML (200k chars), JSON escapes and the resulting
+// editable draft must fit the same bounded import/save transport budget.
+app.use('/api/v1/smart-chords', express.json({ limit: '2mb' }));
 app.use(express.json());
 
 // Cabeçalhos HTTP de segurança (Defense in depth)

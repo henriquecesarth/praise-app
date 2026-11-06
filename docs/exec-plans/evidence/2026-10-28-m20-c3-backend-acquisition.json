@@ -1,0 +1,125 @@
+{
+  "milestone": "M20-C3",
+  "date": "2026-10-28",
+  "verdict": "BLOCKED_FOR_HOSTED_PROOF; real local acquisition verified",
+  "branch": "feat/m20-phase-2a-android-share",
+  "head": "e3c4902e0d8786e164ea0686486c564f9dea1578",
+  "commit_or_deployment_created": false,
+  "prior_results_preserved": ["M20-C1", "M20-C2", "M20-C2D", "M20-C2E"],
+  "source_url": "https://www.cifraclub.com.br/projeto-sola/glorificar/",
+  "historical_403": {
+    "original_record": "active/2026-10-28-m20-direct-html-import-proof.md, Acesso real e limites",
+    "original_environment": "Web research tool; native HTTP adapter explicitly NOT_EXECUTED in that original record",
+    "reproduced_with_native_node": false,
+    "important_distinction": "Do not reclassify the old web-tool 403 as a proven Node/Vercel 403. Fresh native HTTP obtained HTML; no identity changes, retries after access denial, proxies or challenge handling were used."
+  },
+  "controlled_requests": {
+    "initial": "Existing direct helper failed UNSUPPORTED_LAYOUT after HTTP acquisition because its unchanged parser expected .cifra_cnt pre. Initial probe did not preserve the response status separately; successful transport implies HTTP200 under the adapter's guard, but this is not a standalone status observation.",
+    "first_projected_sample": "2026-10-28-m20-c3-local-http-sample.json",
+    "final_code_sample": "2026-10-28-m20-c3-final-local-http-sample.json",
+    "count": 3,
+    "reason_for_followups": "One request after structural layout correction; one after independent-review correction of hidden-node omission. No access-denial retry.",
+    "headless_requests": 0,
+    "final_http_status": 200,
+    "final_http_ms": 496,
+    "final_total_ms": 741,
+    "response_bytes": 502887,
+    "projected_characters": 3268,
+    "draft_characters": 2885,
+    "process_cpu_ms": 374,
+    "rss_before_bytes": 92672000,
+    "rss_after_bytes": 122966016,
+    "resource_limitations": "Local Windows Node24 sample; module startup excluded; RSS after is not a peak or billed memory allocation. No Vercel/browser/Android CPU benchmark performed."
+  },
+  "real_draft_integrity": {
+    "scope": "REAL PUBLIC URL, LOCAL NODE ONLY; no hosted E2E PASS",
+    "title": "Glorificar",
+    "artist": "Projeto Sola",
+    "explicit_key": "Bb",
+    "source_lines": 145,
+    "intro": true,
+    "interlude": true,
+    "Eb_G": true,
+    "Ab_Bb": true,
+    "tab_rows": 24,
+    "tablature_text_exact": true,
+    "chord_lyric_pairs_column_and_text_exact": 44,
+    "duplicated_paired_lines": false,
+    "warning_count": 0,
+    "manual_paste": false,
+    "normalization": "Existing TypeScript parser unchanged; inline positions decoded and compared against source chord columns/lyrics. Pixel rendering not exercised.",
+    "save_or_firestore_writes": false
+  },
+  "implementation": {
+    "http_transport": "Unchanged existing adapter: exact canonical HTTPS hosts/path, public IPv4 DNS checked and pinned to TLS; no redirects/retries/cookies/credentials; 8s including DNS/body; 2MiB streaming limit",
+    "structural_projection": "New Cheerio acquisition adapter accepts current article/pre DOM and supported legacy DOM, validates explicit metadata, escapes only necessary text into the existing canonical musical_html shape. No musical interpretation or script execution.",
+    "review_corrections": "Reject script/style nodes; omit hidden/aria-hidden descendants as the authoritative parser does; size tests reach actual bounds instead of failing on an unsupported bare pre",
+    "parser_reused": "parseCifraClubHtml unchanged",
+    "experimental_entrypoint": "importCifraClubDirect(url).draft",
+    "production_routes_or_ui_changed": false,
+    "new_dependencies": false,
+    "webview_preserved": true
+  },
+  "hosted_environment": {
+    "local_repo_config": "backend/vercel.json -> src/app.ts Node/Express, maxDuration60; all API routes share this function configuration",
+    "read_only_connector": "Vercel project backend, latest three deployments only",
+    "latest_states": ["ERROR", "ERROR", "ERROR"],
+    "latest_commit": "e3c4902e0d8786e164ea0686486c564f9dea1578",
+    "existing_documented_blocker": "docs/01-CONTEXTO-ATUAL.md: backend build adapter fsPath PENDING",
+    "limitation": "This limited metadata view does not establish the state of all older deployments or other projects. WIP C3 adapter is not deployed, and no hosted acquisition execution occurred.",
+    "actual_region_plan_memory_node_version": "Unknown / Not yet verified",
+    "backend_http_access_from_vercel": "Unknown / Not yet verified",
+    "deploy_forbidden_this_task": true
+  },
+  "headless_feasibility": {
+    "assessment": "Conditional Node runtime capability, not implemented or proven for LouvAIO; currently unnecessary for the verified local HTML acquisition",
+    "packaging": "Vercel official Puppeteer guide recommends puppeteer-core with @sparticuz/chromium-min for the standard250MB unpacked function limit. Linux binary/runtime compatibility and actual bundle must be tested, not inferred from Windows execution.",
+    "execution": "Respect current repository maxDuration60, budget cold start/navigation/DOM/cleanup inside it. Official platform memory defaults and account-specific settings need confirmation; no memory/region/plan changes made.",
+    "isolation": "Use an ephemeral context/profile without user cookies, tokens or session storage, close page/context/browser in finally and cap concurrency/resource budgets. A context alone is not an OS sandbox. Do not silently disable Chromium sandbox to make it launch.",
+    "ssrf": "Existing Node HTTPS DNS pinning does not protect a browser automatically. All navigations, redirects, subresources, protocols, frames and DNS resolutions need enforceable egress restrictions including private IPv4/IPv6. Route interception alone is not assumed to pin DNS or isolate the network.",
+    "shared_api_risk": "Adding a browser to the single existing src/app.ts function affects API bundle/cold starts/memory/concurrency; no architecture migration was made."
+  },
+  "estimated_cost": {
+    "status": "ILLUSTRATIVE, NOT MEASURED OR ACCOUNT-SPECIFIC",
+    "region_assumption": "gru1; not confirmed project region",
+    "rates_usd": { "active_cpu_hour": 0.221, "provisioned_gb_hour": 0.0183, "invocation": 0.0000006 },
+    "headless_scenario_1000_imports": [
+      { "active_cpu_seconds_per_import": 2, "wall_seconds_per_import": 15, "allocated_gb": 2, "variable_usd_approx": 0.28 },
+      { "active_cpu_seconds_per_import": 5, "wall_seconds_per_import": 30, "allocated_gb": 2, "variable_usd_approx": 0.61 }
+    ],
+    "formula": "1000 * ((CPU_s/3600)*CPU_rate + (allocated_GB*wall_s/3600)*memory_rate + invocation_rate)",
+    "exclusions": "Traffic, browser binary downloads, platform base price, included credits, cold-start uncertainty and contention. Scenarios are not a guaranteed lower/upper bound. No bill inferred from local RSS or CPU."
+  },
+  "android_comparison": {
+    "reference": "2026-10-28-m20-c2e-duraspeed-validation.json",
+    "android_sample_ms": 4488,
+    "android_projected_characters": 3268,
+    "backend_final_sample_ms": 741,
+    "backend_projected_characters": 3268,
+    "interpretation": "Different hosts/networks/stages; descriptive samples, not an A/B performance ratio. Android sample required an authorized temporary DuraSpeed setting subsequently restored; C3 made no Android changes. Backend avoids the client renderer but cloud egress and reliability remain untested.",
+    "android_resource_consumption": "Unknown / Not yet verified",
+    "reliability_sla_or_p95": "Unknown / Not yet verified; insufficient trials and no hosted execution"
+  },
+  "validation": {
+    "projection_and_http_tests": "PASS - 51 targeted tests after final review fixes",
+    "backend_typescript_build": "PASS",
+    "real_local_final_probe": "All integrity checks true, process exit0; not hosted PASS",
+    "independent_read_only_review": "capture_review: two findings corrected, no verified material finding pending",
+    "git_diff_check": "PASS"
+  },
+  "official_sources": [
+    "https://vercel.com/kb/guide/deploying-puppeteer-with-nextjs-on-vercel",
+    "https://vercel.com/docs/functions/limitations",
+    "https://vercel.com/docs/functions/configuring-functions/duration",
+    "https://vercel.com/docs/functions/configuring-functions/memory",
+    "https://vercel.com/docs/functions/usage-and-pricing",
+    "https://vercel.com/changelog/function-invocations-now-billed-per-unit",
+    "https://pptr.dev/troubleshooting",
+    "https://playwright.dev/docs/network"
+  ],
+  "agents": ["/root/dom_backend", "/root/capture_review"],
+  "privacy": "No source HTML/lyrics persisted, no user cookies/tokens/credentials sent upstream, no DB bootstrap or external writes. Only musical/status/resource summaries saved.",
+  "source_authorization": "Unknown / Not yet verified; public HTTP200 is technical access, not documentary permission. Prior instruction to continue technically is preserved; no restrictions bypassed.",
+  "recommendation": "Prefer the existing bounded HTTP/Cheerio acquisition path over adding headless dependencies. Keep it isolated until the same real draft is verified from the authorized hosted runtime. Preserve Android and universal contracts unchanged.",
+  "next_blocker": "Hosted execution proof: C3 code is WIP, project has a known deployment/build blocker, and deployment is explicitly forbidden in this task. Do not claim Vercel access, source403 resolution there, universal readiness or production migration based on the local success."
+}

@@ -30,10 +30,11 @@ android {
 
     defaultConfig {
         applicationId = "com.louvaio.app"
-        minSdk = flutter.minSdkVersion
+        minSdk = maxOf(flutter.minSdkVersion, 23)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     flavorDimensions += "environment"
@@ -45,6 +46,18 @@ android {
         create("preview") {
             dimension = "environment"
             applicationId = "com.louvaio.app.preview"
+        }
+        create("staging") {
+            dimension = "environment"
+            applicationId = "com.louvaio.app.staging"
+        }
+        create("qa") {
+            dimension = "environment"
+            applicationId = "com.louvaio.app.qa"
+        }
+        create("cifraProbe") {
+            dimension = "environment"
+            applicationId = "com.louvaio.app.cifraprobe"
         }
     }
 
@@ -72,6 +85,13 @@ android {
                 signingConfig = releaseSigning
             }
         }
+    }
+}
+
+// Local WebView investigation has no Firebase configuration or initialization.
+tasks.configureEach {
+    if (name.startsWith("processCifraProbe") && name.endsWith("GoogleServices")) {
+        enabled = false
     }
 }
 
@@ -104,4 +124,7 @@ flutter {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    // Match integration_test's runtime versions (AGP consistent resolution).
+    androidTestImplementation("androidx.test:runner:1.3.0")
+    androidTestImplementation("androidx.test:rules:1.2.0")
 }

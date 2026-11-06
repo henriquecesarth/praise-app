@@ -2,12 +2,14 @@ import React, { useState } from 'react';
 import { LogIn, UserPlus, Mail, Lock, User, Eye, EyeOff, AlertCircle, Sparkles, Music, BookOpen, Layers } from 'lucide-react';
 import { api } from '../api';
 import { louvaioTheme } from '../theme/louvaioTheme';
+import { isVercelPreview } from '../config/preview.config';
 
 interface LoginPageProps {
   onLoginSuccess: (user: { id: string; email: string; name: string }) => void;
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
+  const isPreview = isVercelPreview();
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -18,6 +20,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isPreview && mode === 'signup') return;
     setError(null);
     setLoading(true);
 
@@ -145,7 +148,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                   <LogIn size={18} />
                   <span>Entrar</span>
                 </button>
-                <button
+                {!isPreview && <button
                   type="button"
                   role="tab"
                   aria-selected={mode === 'signup'}
@@ -158,7 +161,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 >
                   <UserPlus size={18} />
                   <span>Criar Conta</span>
-                </button>
+                </button>}
               </div>
 
               {error && (

@@ -11,174 +11,87 @@ type: runbook
 status: ativo
 ---
 
-# LouvAIO — Protocolo Multiagente Permanente V2
+# LouvAIO — protocolo nativo de agentes
 
-## 1. Princípio Fundamental e Objetivo
+AGENTS.md contém os invariantes de arquitetura, segurança, Git e validação. Codex é o principal; Gemini e Claude são ferramentas opcionais, sem chamada ou revisão duplicada obrigatória. Não criar scripts, frameworks ou supervisores adicionais.
 
-O objetivo deste protocolo é entregar **software funcional, correto e validado no menor tempo total possível**, com máxima economia de esforço e sem retrabalho.
+## Contexto e sessões
+- Comece pelo status/branch/HEAD; preserve a árvore local, inclusive M20. Consulte documentos/código somente no escopo autorizado.
+- Use `rg --files <diretório>` para localizar e `rg -n -m 8 --max-columns 200 --max-columns-preview '<tema>' <arquivos>` para buscar; leia depois trechos de 40–80 linhas. Amplie só se faltar evidência.
+- MEMORY.md é referência histórica opcional: buscar e extrair trechos pertinentes, nunca carregar integralmente por padrão. Não repetir leituras já disponíveis; decisões duráveis somente, sem segredos/status transitório.
+- Mantenha contexto estável durante a mesma tarefa. Abra nova sessão para trabalho independente. Compacte apenas quando necessário para continuidade, preservando objetivo, decisões, contratos, arquivos, evidências e pendências; não reinicie a investigação após compactação.
+- Preserve modelo, reasoning effort e conjunto de ferramentas/MCPs durante a sessão. `.codex/config.toml` define defaults, não comprova o modelo efetivo; confira `/status` ou o diagnóstico equivalente antes de registrar o efetivo. Evite trocar configuração no meio de trabalho longo sem necessidade concreta e autorização.
+- Prefira os comandos nativos de Codex/Gemini e ferramentas locais como `rg`/`git` quando forem suficientes. Use MCP/integrações externas só quando a tarefa depender de dados ou operações que o CLI local não oferece; não adicione servidores para otimização hipotética.
+- Para workers delimitados, use contexto separado (`fork_turns="none"` quando disponível) e forneça apenas tarefa, limites, contratos e arquivos necessários.
 
-> [!IMPORTANT]
-> **Não criar frameworks, supervisores, scripts de automação ou configurações experimentais adicionais.**
-> O paralelismo deve ser aplicado exclusivamente onde houver ganhos práticos reais. Tarefas simples devem ser executadas diretamente pelo agente ativo sem coordenação desnecessária.
+### Retomada após pausa ou cota
+- Continue a sessão existente com `codex resume` ou `gemini --resume latest` quando disponível. Se for necessária uma sessão nova, comece pelo `git status`, branch e HEAD; leia apenas o ExecPlan/checkpoint ativo e os trechos necessários para distinguir trabalho concluído do pendente.
+- Não refaça investigações, testes ou builds já registrados como concluídos. Revalide somente se arquivos, dependências, configuração ou ambiente relevantes mudaram. Não suponha que ações externas pendentes tenham ocorrido.
+- Em tarefas longas, atualize o ExecPlan/checkpoint em limites naturais com objetivo, branch/HEAD, arquivos alterados e respectivos escritores, decisões, evidências (comando, exit code e log), pendências e ações externas não executadas. Commit Git é checkpoint apenas quando estiver autorizado.
 
----
+## Modelos e seis papéis preservados
+Configuração nativa: `.codex/config.toml` e `.codex/agents/*.toml`; responsabilidades canônicas em `.agents/agents/`.
 
-## 2. Hierarquia de Modelos
+| Papel | Modelo configurado | Esforço |
+| --- | --- | --- |
+| Principal / product-architect | gpt-6.1-sol | medium |
+| feature-engineer / billing-engineer (trabalho rotineiro delimitado) | gpt-6-luna | low |
+| feature-reviewer / billing-reviewer (separados, somente leitura) | gpt-6.1-sol | high |
+| sandbox-auditor (guardrails de provedor preservados) | gpt-6.1-sol | high |
 
-A colaboração entre modelos segue uma divisão estrita de papéis:
+- Modelos/esforços foram encontrados em `codex debug models --bundled` do CLI 0.164.0. O catálogo comprova compatibilidade declarada; disponibilidade da conta/identidade efetiva de inferência não deve ser inventada.
+- Escale para Sol com esforço adequado quando houver contratos complexos, concorrência, segurança, regras monetárias ou dependências não resolvidas. O default low não autoriza mudanças financeiras complexas sem essa avaliação e revisão especializada.
+- Papéis com modelo/esforço fixos não aceitam override no spawn deste runtime: use o papel de arquitetura/revisão ou agente Sol explicitamente delimitado para a escalação, mantendo a especialidade e a responsabilidade.
+- Alterar configuração não comprova troca do modelo de uma sessão já iniciada. Registre modelo solicitado/configurado separadamente do efetivo; quando não exposto: **Unknown / Not yet verified**.
 
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                      Argon High (Estratégia)                           │
-│  - Decisões arquiteturais complexas e contratos compartilhados         │
-│  - Segurança multi-tenant crítica e integridade de persistência        │
-│  - Resolução de bloqueios profundos e desambiguação técnica            │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │ (Delegação e contratos congelados)
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                 Gemini Flash (Implementação e Execução)                │
-│  - Exploração do código, endpoints, componentes Web e Mobile           │
-│  - Implementação de testes automatizados e correções de bugs           │
-│  - Documentação operacional e execução direta de validações            │
-│  - Preferir Gemini Flash 3.8 High quando disponível no ambiente        │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │ (Diff estável / Commit local)
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                     Codex (Revisão Independente)                       │
-│  - Auditoria de segurança, autenticação e isolamento multi-tenant      │
-│  - Compatibilidade de contratos de API e integridade de persistência   │
-│  - Detecção de regressões, confiabilidade dos testes e concorrência    │
-└────────────────────────────────────────────────────────────────────────┘
-```
+## Delegação verificável
+- `agents.enabled=true`, limite configurado de quatro threads. O runtime atual oferece quatro slots totais, incluindo o principal; respeite sempre o menor limite efetivo.
+- Em tarefa simples, trabalhe sem subagente. Delegue apenas quando isolamento de contexto ou paralelismo independente compensar o custo de instruir, acompanhar e integrar o resultado. Investigações são somente leitura; no máximo dois workers de implementação simultâneos por padrão.
+- Antes de implementar em paralelo, congele contratos compartilhados e atribua um único escritor por arquivo; transfira posse explicitamente. Worktree só quando necessário.
+- Cada delegação registra ID real, escopo, modelo/esforço solicitado e resultado observado. Uma lista textual não comprova spawn. Não duplique revisão equivalente.
+- Fluxo proporcional: investigar → delimitar → implementar → validar → revisar separadamente quando pertinente → documentar/entregar. ExecPlan só para mudança relevante; nenhum plano extenso em ajuste pontual.
 
-### Argon High — Arquiteto e Coordenador Estratégico
-- **Atribuições:** Arquitetura de sistemas, decisões técnicas difíceis, definição de contratos compartilhados entre Backend, Web e Mobile, segurança multi-tenant crítica e resolução de bloqueios que superem a capacidade dos workers.
-- **Disciplina:** O Argon não deve realizar trabalho braçal ou operacional rotineiro quando puder delegar com segurança; tampouco deve ser acionado para tarefas triviais.
+## Validação e Git
+- Documentação/configuração: validar no CLI e com `git diff --check`, status e diff/stat; **não rodar testes/builds de produto**.
+- Código: conferir dependências/Emulator, testar primeiro o escopo afetado com timeout, capturar exit code e resultados; sem polling indefinido. Revalidar correções de código após revisão.
+- Para comandos verbosos, grave stdout e stderr completos em log de tarefa dentro do diretório de build ignorado ou em temporário; capture o exit code imediatamente. Retorne somente o exit code e trechos limitados encontrados com `rg`/`Select-String`, mantendo o log integral disponível para diagnóstico. Não filtre a saída no caminho de execução de modo que esconda um exit code ou falha.
+- Classificar PASS, FAIL, NOT_EXECUTED ou BLOCKED com evidência real. Revisores não editam nem homologam por suposição.
+- Preservar WIP e não assumir main. Commit só quando autorizado; nenhum push, PR, merge, deploy, escrita em produção/provedor ou exposição de credenciais sem autorização separada.
 
-### Gemini Flash — Implementação e Execução Rápida
-- **Atribuições:** Modelo preferencial para investigar código, implementar endpoints e componentes delimitados, escrever testes unitários e de integração, corrigir bugs, atualizar documentação e rodar validações.
-- **Variante:** Quando disponível no runtime, preferir a variante `Gemini Flash 3.8 High`. Nunca afirmar uma variante ou nível de raciocínio (thinking level) não explicitamente exposto pelo runtime.
+## Métricas de uso e cache
+- Quando suportado pela versão/autenticação, Codex TUI documenta `/status` para modelo e uso de tokens da sessão e `/usage` para atividade de tokens da conta. Gemini CLI documenta `/stats` para estatísticas da sessão; tokens em cache só aparecem quando o provedor/autenticação os fornece (por exemplo, API key/Vertex, não OAuth Code Assist). Confira o escopo antes de comparar.
+- Os comandos de sessão não devem ser tratados como medidor de cache se não exibirem campos de leitura/escrita/cache. `cached_tokens` da API OpenAI é uma métrica de resposta da API, não evidência automática do Codex CLI. Não calcule taxa de acerto ou economia a partir de contadores que não existem na saída observada.
+- Para uma comparação, registre contadores reais antes/depois, CLI e versão, modelo/esforço, autenticação quando relevante, intervalo e escopo equivalentes. Sem baseline comparável, reporte **TOKEN_SAVINGS_MEASURED = NOT MEASURED**; estabilidade de configuração é uma prática, não uma economia quantificada.
+- Não altere statusline, telemetry/exporters, hooks, MCPs ou comandos para colher métricas sem tarefa autorizada, avaliação de privacidade/fidelidade e evidência de benefício. Nunca importe hooks de Claude Code (`PreToolUse`, reescrita de comando) nem limites de contexto/compactação inferidos.
 
-### Codex — Revisão Independente de Mudanças de Código
-- **Atribuições:** Revisão independente e estrita de diffs ou commits estáveis. Foca em:
-  - Segurança, autenticação, anti-IDOR e RBAC;
-  - Integridade de dados e regras de persistência Firestore;
-  - Compatibilidade de contratos de API e paridade Web/Mobile;
-  - Prevenção de regressões e suficiência da cobertura de testes;
-  - Concorrência e isolamento entre ministérios.
-- **Disciplina de Revisão:** A revisão deve fornecer evidências concretas, arquivos e linhas afetados. **Não realizar uma revisão extensa com Gemini imediatamente antes de uma revisão Codex equivalente** para evitar desperdício de contexto e tempo.
+### Comparação V4 — antes/depois
+| Regra | Antes | Depois |
+| --- | --- | --- |
+| Modelo/esforço | Defaults e papéis já fixavam Sol/medium, Luna/low e Sol/high; modelo efetivo ainda precisava de evidência. | Preservar também effort e ferramentas/MCPs durante a sessão; conferir o modelo efetivo sem reconfigurar por rotina. |
+| CLI e saídas | Busca limitada, snippets e exit codes já eram recomendados. | Preferir CLI/ferramentas locais; guardar stdout/stderr completos em log e devolver apenas exit code e trechos relevantes. |
+| Ferramentas/MCPs | Gemini era opcional; não havia servidor MCP de projeto declarado no `.codex/config.toml`. | Manter a configuração enxuta; usar CLI nativo quando suficiente e não adicionar MCPs/hooks só para medir ou filtrar. |
+| Agentes | Delegar trabalho independente útil; limite de workers e revisão separada já existiam. | Tarefa simples fica no agente principal; delegar somente quando isolamento/paralelismo paga o overhead. |
+| Pausa/cota | Compactar só quando necessário; contexto e evidências deveriam ser preservados. | Retomar a sessão quando possível; ao abrir outra, reconciliar status/branch/HEAD e ExecPlan, sem repetir o que já foi verificado. |
+| Uso/cache | Sem regra de comparação de consumo e sem baseline medido. | Usar somente métricas que o CLI/autenticação realmente expõe; distinguir sessão, conta e cache; não atribuir economia sem comparação equivalente. |
 
-### Regras de Delegação e Eficiência
-- Delegar a subagentes apenas quando houver **ganho real de produtividade ou isolamento**.
-- Limite máximo recomendado de **2 workers de implementação concorrentes**.
-- **Propriedade estrita de arquivos:** Exatamente um escritor por arquivo. Se dois módulos precisam tocar o mesmo arquivo, eles devem ser sequenciados.
-- Investigações paralelas devem ser somente de leitura (`read-only`).
-- Não criar worktrees Git automaticamente sem necessidade justificada.
-- Não delegar tarefas triviais que possam ser concluídas de imediato no fluxo ativo.
-- Nunca declarar delegação bem-sucedida sem evidência real de conclusão.
+## Rust Token Killer (RTK)
+- Nesta auditoria, `rtk` / `rust-token-killer` não foram encontrados no PATH nem `rtk.exe` no local padrão `~/.cargo/bin`. Instalações em outros locais: **Unknown / Not yet verified**.
+- Não instalar, configurar hooks ou reescrever comandos automaticamente. Se disponível e autorizado futuramente, comparar isoladamente um comando somente leitura com/sem RTK, conferindo fidelidade, exit code e tamanho da saída antes de adotar.
 
----
+Referências para esta política:
+- [Codex developer commands: `/status`, `/usage`, `/resume` e `/recap`](https://learn.chatgpt.com/docs/developer-commands)
+- [Gemini CLI: token caching e `/stats`](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/token-caching.md)
+- [Beer And Code: economia de tokens nos CLIs](https://blog.beerandcode.com.br/tutoriais/como-economizar-tokens-claude-code-codex-cursor) — recomendações específicas de Claude Code foram tratadas como não aplicáveis automaticamente ao Codex/Gemini.
 
-## 3. Política de Testes e Validação
+## Evidência curta desta auditoria (2026-10-26)
+- `/root/context_audit`: spawn Luna/low, contexto separado, somente leitura; concluiu apontando leituras irrestritas de MEMORY.md nos papéis canônicos/adaptadores.
+- `/root/efficiency_audit`: spawn Luna/low independente e simultâneo; concluiu apontando hierarquia Gemini obsoleta e duplicação de política.
+- Ambos retornaram resultados concretos, sem edições, testes de produto ou rede; identidade resolvida de inferência não exposta. Os seis papéis continuam registrados; nenhum supervisor externo criado.
+- CLI 0.164.0: `codex debug prompt-input` validou/renderizou a configuração com exit 0 e os seis papéis; catálogo local/cache contém Luna/low e Sol/medium/high. `--strict-config` não é suportado por `debug`/`features` nesta versão; a renderização exigiu permissão fora do sandbox por acesso negado ao estado local do CLI.
+- `git diff --check` PASS; hash do diff Backend/Web/Flutter preservado antes/depois. Testes/builds de produto: NOT_EXECUTED (mudança somente documental/configuração).
+- Referência: [documentação oficial de subagentes](https://learn.chatgpt.com/docs/agent-configuration/subagents).
 
-Todo worker deve executar as validações cabíveis ao seu escopo e registrar os resultados reais.
-
-### Antes de executar suítes de teste:
-1. **Identificar dependências externas:** Verificar se o teste requer rede, Firebase Emulator ou serviços locais.
-2. **Ambiente e variáveis:** Garantir que dependências obrigatórias estejam presentes antes de invocar comandos amplos.
-3. **Priorizar testes direcionados:** Durante a implementação, rodar testes focados no arquivo ou funcionalidade modificada.
-4. **Timeouts razoáveis:** Estabelecer limite de tempo razoável para processos de teste.
-5. **Captura de logs e códigos de saída:** Registrar exit codes e mensagens de erro reais.
-6. **Sem polling indefinido:** Nunca aguardar processos em loop ativo infinito. Encerrar graciosamente processos travados.
-7. **Mudanças exclusivamente documentais:** **Não reexecutar suítes completas de código** quando a tarefa consistir unicamente em documentação, notas ou planos sem impacto sobre código executável.
-8. **Código alterado após revisão:** Se o código for alterado para sanar apontamentos de revisão, os testes pertinentes devem ser executados novamente.
-
-### Classificação Estrita de Resultados
-- `PASS`: O teste executou até o fim e passou com sucesso comprovado por log.
-- `FAIL`: O teste falhou, com erro ou asserção quebrada visível no log.
-- `NOT_EXECUTED`: O teste não foi executado (por exemplo, por desnecessidade em mudanças documentais).
-- `BLOCKED`: O teste não pôde rodar por impedimento externo (ex: ausência de Firebase Emulator ou credencial de teste).
-
----
-
-## 4. Fluxo Padrão de Implementação (8 Etapas)
-
-```
-[1. Discovery] ➔ [2. Planejamento] ➔ [3. Delegação] ➔ [4. Implementação]
-       │
-       ▼
-[5. Integração & Testes] ➔ [6. Revisão Independente] ➔ [7. Documentação] ➔ [8. Entrega]
-```
-
-### Etapa 1 — Discovery
-- A tarefa é recebida diretamente pelo chat ou por canal explícito (GitHub Issues são **opcionais**, não obrigatórias).
-- Confirmar branch-base (geralmente branch WIP, e.g. `wip/repertoire-versions-smartchords-20261022`), estado do código, funcionalidade afetada, contratos e critérios de aceite.
-
-### Etapa 2 — Planejamento
-- Tarefas simples recebem um resumo breve de plano.
-- Tarefas complexas recebem um ExecPlan estruturado em `docs/exec-plans/active/`.
-- Não produzir planos extensos para ajustes pontuais.
-
-### Etapa 3 — Delegação
-- Decompor apenas subtarefas genuinamente independentes.
-- Escolher o modelo adequado à complexidade (Flash para execução, Argon para arquitetura complexa).
-- Dar autonomia ao worker para investigar, implementar e testar seu escopo.
-
-### Etapa 4 — Implementação
-- Respeitar a posse exclusiva de arquivos.
-- Contratos compartilhados (API/tipos) devem ser congelados antes do trabalho paralelo entre Backend, Web e Mobile.
-
-### Etapa 5 — Integração e Testes
-- Consolidar as alterações na branch de trabalho.
-- Executar os testes direcionados pertinentes e verificar a integridade da persistência e contratos.
-
-### Etapa 6 — Revisão Independente
-- Codex revisa o diff ou commit estável.
-- Apontamentos de gravidade real (P1/P2) devem ser corrigidos pelo worker responsável.
-- Se houver alteração de código, revalidar os testes afetados.
-
-### Etapa 7 — Documentação
-- Atualizar a base de conhecimento no Obsidian (`praise-app/docs`), mantendo `docs/00-PAINEL.md` e `docs/01-CONTEXTO-ATUAL.md` em sincronia com os fatos.
-- Registrar decisões duráveis em `MEMORY.md` apenas de forma concisa.
-- Mover ExecPlans concluídos para `docs/exec-plans/completed/`.
-
-### Etapa 8 — Entrega
-- Relatar objetivamente commits, testes executados, revisões, riscos, estado da funcionalidade e próximos passos.
-
----
-
-## 5. Papéis de Agentes LouvAIO (.agents/agents/)
-
-O repositório mantém seis papéis canônicos de agentes:
-
-1. `product-architect`: Arquiteto de produto e domínio. Atua na descoberta técnica, modelagem de dados, separação de módulos e desenho de contratos compartilhados antes da implementação.
-2. `feature-engineer`: Especialista em implementação de funcionalidades de produto (Backend Express, Web React/Vite, regras multi-tenant, Firestore e testes).
-3. `feature-reviewer`: Revisor independente somente-leitura de funcionalidades de produto. Foca em isolamento multi-tenant, RBAC, anti-IDOR, segurança de APIs e cobertura de testes.
-4. `billing-engineer`: Especialista na implementação do módulo de faturamento (Billing Transition V1, gateway Asaas, planos, quotas recorrentes e máquinas de estado financeiras).
-5. `billing-reviewer`: Revisor independente do módulo financeiro. Foca em segurança financeira, concorrência, idempotência de webhooks, estados de grace e estanqueidade de tenants.
-6. `sandbox-auditor`: Especialista em homologação em Sandbox de provedores de pagamento (Asaas). Realiza testes de prova de conceito e validação de contratos externos.
-
----
-
-## 6. O Obsidian como Base de Conhecimento Central
-
-- O diretório `praise-app/docs` constitui o vault oficial do Obsidian para a equipe.
-- O código-fonte no Git permanece a fonte primária de verdade da lógica do software; o Obsidian organiza o conhecimento acumulado, diagramas, contratos e decisões duráveis.
-- A navegação parte de `[[00-PAINEL]]` e `[[01-CONTEXTO-ATUAL]]`.
-- Pastas de configuração do Obsidian (`docs/.obsidian/`) permanecem ignoradas pelo Git (`.gitignore`) para isolar preferências visuais pessoais de cada operador.
-
----
-
-## 7. Guardrails e Limites Operacionais Estritos
-
-> [!CAUTION]
-> Os seguintes limites são intransponíveis para qualquer agente autônomo sem autorização explícita:
->
-> 1. **Nenhum `git push` ou criação de PR sem autorização explícita humana.** Quando autorizado, preparar comandos e Draft PR.
-> 2. **Nunca utilizar `main` como base de PR automaticamente** quando o trabalho for derivado de uma branch WIP (e.g. `wip/repertoire-versions-smartchords-20261022`).
-> 3. **Nunca realizar merge automático** de branches ou PRs.
-> 4. **Nunca realizar deploy automático** em ambientes de Preview ou Produção (Vercel, Firebase Hosting, lojas de apps).
-> 5. **Nunca escrever no Firebase Firestore de produção** nem acessar credenciais ativas.
-> 6. **Nunca expor chaves privadas, tokens ou senhas** em logs, commits ou documentação.
+## Evidência da auditoria V4 (2026-10-27)
+- Configuração Codex validada com `tomllib`: `.codex/config.toml` e os seis arquivos de papel parseiam, referências existem; defaults Sol/medium e Luna/low confirmados. `codex debug prompt-input` no CLI 0.164.0: exit 0 e JSON válido, com saída completa capturada em temporário e não impressa no contexto. `--strict-config` não é aceito no subcomando `debug` desta versão (exit 1); a validação TOML/CLI sem esse flag passou.
+- CLI detectados: Codex 0.164.0 e Gemini 0.53.0; `gemini --help` confirma `--resume`. `/status`, `/usage` do Codex e `/stats` do Gemini são documentados, mas não foram executados nesta auditoria. Configurações de conta/MCP fora do escopo não foram inspecionadas.
+- Nenhum contador de tokens/cache foi coletado; não há baseline comparável. Economia medida: **NOT MEASURED**. Testes e builds do produto: **NOT_EXECUTED**.

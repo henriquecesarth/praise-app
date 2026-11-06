@@ -316,6 +316,28 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
         ),
         actions: [
           if (chord != null) ...[
+            if (chord.sourceUrl != null || chord.displayedKey != null || chord.capo != null)
+              IconButton(
+                tooltip: 'Origem da cifra',
+                icon: const Icon(Icons.link),
+                onPressed: () => showDialog<void>(
+                    context: context,
+                    builder: (dialogContext) => AlertDialog(
+                          title: const Text('Origem da cifra'),
+                    content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      if (chord.sourceUrl != null) SelectableText(chord.sourceUrl!),
+                      if (chord.displayedKey != null) Text('Tom exibido na fonte: ${chord.displayedKey}'),
+                      if (chord.capo != null) Text('Capotraste: casa ${chord.capo}'),
+                    ])),
+                          actions: [
+                            TextButton(
+                                onPressed: () =>
+                                    Navigator.of(dialogContext).pop(),
+                                child: const Text('Fechar'))
+                          ],
+                        )),
+              ),
             IconButton(
               tooltip: 'Editar Cifra',
               icon: const Icon(Icons.edit_outlined),
@@ -579,7 +601,8 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       for (int i = 0; i < lines.length; i++) ...[
-                        _buildRenderedLine(lines[i], semitones, theme, fontConfig),
+                        _buildRenderedLine(lines[i], semitones, theme, fontConfig,
+                          alignedLyrics: i > 0 && SmartChordParser.progressionTokens(lines[i - 1]) != null),
                       ],
                       const SizedBox(height: 48),
                     ],
@@ -598,11 +621,18 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
     String lineText,
     int semitones,
     ThemeData theme,
-    ChordFontConfig fontConfig,
-  ) {
+    ChordFontConfig fontConfig, {
+    bool alignedLyrics = false,
+  }) {
     if (SmartChordParser.progressionTokens(lineText) != null) {
       return MusicalProgressionLine(line: lineText, semitones: semitones, fontSize: _fontSize,
         fontFamily: fontConfig.fontFamily, fontFamilyFallback: fontConfig.fallback);
+    }
+    if (alignedLyrics && !SmartChordParser.parse(lineText).any(
+        (line) => line.segments.any((segment) => segment.hasChord))) {
+      return SingleChildScrollView(scrollDirection: Axis.horizontal,
+        child: SelectableText(lineText, style: TextStyle(fontFamily: 'monospace',
+          fontSize: _fontSize, height: 1.4)));
     }
     if (fontConfig.isMonospace) {
       return _buildMonospaceLine(
