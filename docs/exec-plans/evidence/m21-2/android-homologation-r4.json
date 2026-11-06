@@ -1,0 +1,44 @@
+{
+  "timestamp": "2026-11-06T14:13:44-0300",
+  "round": "M21.2-R4",
+  "device": {
+    "model": "Lenovo TB-J616F",
+    "serial": "HND29KG9",
+    "arch": "arm64-v8a",
+    "density": 240,
+    "size": "1200x2000"
+  },
+  "apk": {
+    "path": "mobile/build/app/outputs/flutter-apk/app-vocal-debug.apk",
+    "size_bytes": 126951109,
+    "sha256": "9b0d34c51ef5cac58d6f32e879a43882aa652003dfcef45a731ed8c598a4861e",
+    "applicationId": "com.louvaio.app.m21vocal",
+    "flavor": "vocal",
+    "samples_bundled": 14
+  },
+  "disk_recovery": {
+    "free_before_bytes": 3487121408,
+    "free_after_cleanup_bytes": 10661933056,
+    "free_after_build_bytes": 9072975872,
+    "space_recovered_mb": 6862.82
+  },
+  "tests_executed": {
+    "audio_stream_active": true,
+    "sample_rate": 44100,
+    "channels": "mono",
+    "encoding": "PCM_16BIT",
+    "audio_flinger_underruns": 0,
+    "bpms_tested": [
+      40,
+      80,
+      120,
+      180
+    ],
+    "metronome_toggle": true,
+    "transport_play_pause_resume_stop": true,
+    "minimize_stop_reopen_resume": true,
+    "cold_start_offline_playback": true,
+    "crashes_anrs": 0
+  },
+  "human_audition": "PENDING"
+}

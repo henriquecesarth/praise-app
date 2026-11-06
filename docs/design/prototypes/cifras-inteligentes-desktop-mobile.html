@@ -1,0 +1,1297 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LouvAIO — Protótipo D1: Cifras Inteligentes (Desktop & Mobile)</title>
+  <style>
+    /* ==========================================================================
+       LOUVAIO DESIGN SYSTEM v1.0 — TOKENS OFICIAIS (WCAG 2.1 AA VERIFICADOS)
+       ========================================================================== */
+    :root {
+      --brand-green: #0F2A1F;
+      --brand-terracotta: #B85A3C;
+      --brand-cream: #F5EFE6;
+
+      --bg-app: #F5EFE6;
+      --bg-surface: #FFFFFF;
+      --bg-surface-subtle: #EFE8DC;
+      --bg-surface-elevated: #FFFFFF;
+      --bg-sidebar: #EAE2D6;
+
+      --text-primary: #18221D;
+      --text-secondary: #46544E;
+      --text-muted: #5C6862;
+
+      --action-primary-bg: #AE5235;
+      --action-primary-hover: #964328;
+      --action-primary-subtle: rgba(184, 90, 60, 0.12);
+
+      --chord-text: #9E4427;
+      --structural-accent: #0F2A1F;
+
+      --border-subtle: #DCD3C6;
+      --border-strong: #B8AEA0;
+      --focus-ring: #0F2A1F;
+
+      --status-success-bg: #E6F4EC;
+      --status-success-fg: #145A3A;
+      --status-warning-bg: #FEF3C7;
+      --status-warning-fg: #92400E;
+      --status-danger-bg: #FEE2E2;
+      --status-danger-fg: #991B1B;
+      --status-info-bg: #E6EFEA;
+      --status-info-fg: #0F2A1F;
+
+      --radius-xs: 4px;
+      --radius-sm: 6px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-chord: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+      --shadow-popover: 0 8px 24px rgba(15, 42, 31, 0.14);
+    }
+
+    body.dark {
+      --bg-app: #0B1913;
+      --bg-surface: #11231B;
+      --bg-surface-subtle: #162C22;
+      --bg-surface-elevated: #1B362A;
+      --bg-sidebar: #08140F;
+
+      --text-primary: #F5EFE6;
+      --text-secondary: #C7C0B8;
+      --text-muted: #8E9B94;
+
+      --action-primary-bg: #B85A3C;
+      --action-primary-hover: #9E472B;
+      --action-primary-subtle: rgba(224, 138, 110, 0.16);
+
+      --chord-text: #E69176;
+      --structural-accent: #7CC4A4;
+
+      --border-subtle: #1E3D2F;
+      --border-strong: #2D5945;
+      --focus-ring: #7CC4A4;
+
+      --status-success-bg: rgba(43, 158, 107, 0.18);
+      --status-success-fg: #6EE7B7;
+      --status-warning-bg: rgba(217, 119, 6, 0.20);
+      --status-warning-fg: #FCD34D;
+      --status-danger-bg: rgba(220, 38, 38, 0.20);
+      --status-danger-fg: #FCA5A5;
+      --status-info-bg: rgba(124, 196, 164, 0.16);
+      --status-info-fg: #A7F3D0;
+
+      --shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.55);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background-color: #1E2421;
+      color: var(--text-primary);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ==========================================================================
+       BARRA DO REVISOR D1
+       ========================================================================== */
+    .prototype-control-bar {
+      position: sticky;
+      top: 0;
+      z-index: 2000;
+      background: #0F2A1F;
+      color: #F5EFE6;
+      border-bottom: 1px solid #2D5945;
+      padding: 10px 20px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 13px;
+    }
+    .prototype-control-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .prototype-badge {
+      background: #B85A3C;
+      color: #FFFFFF;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .proto-btn {
+      background: rgba(245, 239, 230, 0.1);
+      color: #F5EFE6;
+      border: 1px solid rgba(245, 239, 230, 0.22);
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      min-height: 34px;
+    }
+    .proto-btn.active {
+      background: #F5EFE6;
+      color: #0F2A1F;
+      border-color: #F5EFE6;
+    }
+
+    /* ==========================================================================
+       VIEWPORT FRAME (DESKTOP vs MOBILE 390px)
+       ========================================================================== */
+    .viewport-stage {
+      min-height: calc(100vh - 55px);
+      background: var(--bg-app);
+      margin: 0 auto;
+    }
+    body.viewport-mobile {
+      background: #141A17;
+      padding-bottom: 32px;
+    }
+    body.viewport-mobile .viewport-stage {
+      max-width: 390px;
+      margin: 20px auto;
+      border: 1px solid var(--border-strong);
+      border-radius: 20px;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+      min-height: 820px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .app-shell {
+      display: flex;
+      min-height: calc(100vh - 55px);
+    }
+    body.viewport-mobile .app-shell {
+      flex-direction: column;
+      min-height: 820px;
+    }
+
+    /* Sidebar Desktop */
+    .sidebar {
+      width: 224px;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      padding: 16px 12px;
+      gap: 16px;
+      flex-shrink: 0;
+    }
+    body.viewport-mobile .sidebar {
+      display: none;
+    }
+    .brand-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 800;
+      font-size: 17px;
+      color: var(--text-primary);
+    }
+    .brand-mark {
+      width: 26px;
+      height: 26px;
+      border-radius: 6px;
+      background: var(--brand-green);
+      color: #F5EFE6;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 800;
+    }
+    .ministry-switcher {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .role-pill {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--status-info-bg);
+      color: var(--status-info-fg);
+      text-transform: uppercase;
+    }
+    .nav-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      flex: 1;
+    }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      min-height: 36px;
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      font-size: 13.5px;
+      font-weight: 500;
+      text-decoration: none;
+      border-left: 3px solid transparent;
+    }
+    .nav-item.active {
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      font-weight: 600;
+      border-left-color: var(--action-primary-bg);
+    }
+    .sidebar-footer {
+      border-top: 1px solid var(--border-subtle);
+      padding-top: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .user-avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      background: var(--brand-green);
+      color: #F5EFE6;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    /* Mobile Header & BottomNav */
+    .mobile-header {
+      display: none;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 10px 16px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    body.viewport-mobile .mobile-header {
+      display: flex;
+    }
+    .mobile-bottom-nav {
+      display: none;
+      background: var(--bg-surface);
+      border-top: 1px solid var(--border-subtle);
+      padding: 6px 8px;
+      justify-content: space-around;
+      margin-top: auto;
+    }
+    body.viewport-mobile .mobile-bottom-nav {
+      display: flex;
+    }
+    .bottom-nav-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-width: 56px;
+      min-height: 44px;
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      border: none;
+      background: transparent;
+      cursor: pointer;
+    }
+    .bottom-nav-btn.active {
+      color: var(--action-primary-bg);
+      font-weight: 700;
+    }
+
+    /* Main Area */
+    .main-area {
+      flex: 1;
+      min-width: 0;
+      padding: 24px 32px;
+      max-width: 1200px;
+    }
+    body.viewport-mobile .main-area {
+      padding: 14px 14px 80px 14px;
+    }
+
+    /* ==========================================================================
+       BOTÕES, INPUTS E ELEMENTOS COMUNS
+       ========================================================================== */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-family: inherit;
+      font-size: 13.5px;
+      font-weight: 600;
+      padding: 8px 14px;
+      min-height: 38px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      border: 1px solid transparent;
+      white-space: nowrap;
+      text-decoration: none;
+    }
+    body.viewport-mobile .btn {
+      min-height: 44px;
+    }
+    .btn-primary {
+      background: var(--action-primary-bg);
+      color: #FFFFFF;
+    }
+    .btn-secondary {
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+    }
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-secondary);
+    }
+    .btn-danger {
+      background: var(--status-danger-bg);
+      color: var(--status-danger-fg);
+      border-color: rgba(220, 38, 38, 0.25);
+    }
+
+    .field-label {
+      display: block;
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 5px;
+    }
+    .field-input {
+      width: 100%;
+      min-height: 40px;
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-strong);
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      font-family: inherit;
+      font-size: 14px;
+    }
+    body.viewport-mobile .field-input {
+      min-height: 44px;
+    }
+
+    /* ==========================================================================
+       SMART CHORDS WORKSPACE TOOLBAR (ALTERNÂNCIA OBRIGATÓRIA EDITAR / VISUALIZAR)
+       ========================================================================== */
+    .smart-chord-toolbar {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 10px 16px;
+      margin-bottom: 16px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .toolbar-doc-info {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      flex-wrap: wrap;
+    }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: var(--status-success-bg);
+      color: var(--status-success-fg);
+    }
+    .status-pill.dirty {
+      background: var(--status-warning-bg);
+      color: var(--status-warning-fg);
+    }
+
+    /* Segmented Mode Switcher: Editar vs Visualizar (NUNCA LADO A LADO) */
+    .mode-switcher {
+      display: inline-flex;
+      background: var(--bg-surface-subtle);
+      padding: 3px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-strong);
+    }
+    body.viewport-mobile .mode-switcher {
+      width: 100%;
+      order: 3;
+    }
+    .mode-btn {
+      padding: 6px 16px;
+      min-height: 34px;
+      border-radius: var(--radius-sm);
+      font-size: 13.5px;
+      font-weight: 700;
+      color: var(--text-secondary);
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      flex: 1;
+    }
+    body.viewport-mobile .mode-btn {
+      min-height: 42px;
+    }
+    .mode-btn.active {
+      background: var(--structural-accent);
+      color: var(--bg-surface);
+    }
+
+    /* ==========================================================================
+       BIBLIOTECA PESSOAL (MINHAS CIFRAS)
+       ========================================================================== */
+    .ownership-banner {
+      background: var(--status-info-bg);
+      color: var(--status-info-fg);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 10px 14px;
+      font-size: 13px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .chord-library-list {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+    }
+    .chord-lib-row {
+      display: grid;
+      grid-template-columns: minmax(220px, 2fr) 90px 190px 160px;
+      align-items: center;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      gap: 12px;
+      cursor: pointer;
+    }
+    .chord-lib-row:last-child {
+      border-bottom: none;
+    }
+    .chord-lib-row:hover {
+      background: var(--bg-surface-subtle);
+    }
+    body.viewport-mobile .chord-lib-row {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+    }
+    .badge-key {
+      display: inline-flex;
+      font-family: var(--font-chord);
+      font-size: 12.5px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: var(--radius-xs);
+      background: var(--action-primary-subtle);
+      color: var(--chord-text);
+      border: 1px solid rgba(184, 90, 60, 0.25);
+    }
+
+    /* ==========================================================================
+       MODO EDITAR (SMART CHORD EDITOR)
+       ========================================================================== */
+    .editor-panel {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .meta-3-cols {
+      display: grid;
+      grid-template-columns: 2fr 1.5fr 1fr;
+      gap: 14px;
+    }
+    body.viewport-mobile .meta-3-cols {
+      grid-template-columns: 1fr;
+    }
+    .repertoire-link-box {
+      background: var(--bg-surface-subtle);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 12px 14px;
+    }
+    .syntax-helper-bar {
+      background: var(--bg-surface-subtle);
+      border: 1px solid var(--border-subtle);
+      border-bottom: none;
+      border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+      padding: 8px 12px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+    .syntax-code {
+      font-family: var(--font-chord);
+      font-weight: 700;
+      color: var(--chord-text);
+      background: var(--bg-surface);
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--border-subtle);
+    }
+    .chord-textarea {
+      width: 100%;
+      min-height: 360px;
+      padding: 16px;
+      border: 1px solid var(--border-strong);
+      border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      font-family: var(--font-chord);
+      font-size: 14.5px;
+      line-height: 1.65;
+      resize: vertical;
+    }
+
+    /* ==========================================================================
+       MODO VISUALIZAR (SMART CHORD READER + EDIÇÃO INLINE + CAMPO HARMÔNICO)
+       ========================================================================== */
+    .reader-control-bar {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 12px 16px;
+      margin-bottom: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .appearance-drawer {
+      border-top: 1px solid var(--border-subtle);
+      padding-top: 12px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+    body.viewport-mobile .appearance-drawer {
+      grid-template-columns: 1fr;
+    }
+
+    .reader-sheet {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 24px;
+      font-family: var(--font-chord);
+      position: relative;
+    }
+    .interactive-line {
+      margin-bottom: 12px;
+      padding: 4px 6px;
+      border-radius: 4px;
+      transition: background 0.12s ease;
+    }
+    .interactive-line:hover {
+      background: var(--bg-surface-subtle);
+    }
+    .chord-cell-active {
+      background: var(--action-primary-subtle);
+      outline: 2px solid var(--action-primary-bg);
+      border-radius: 3px;
+      padding: 0 3px;
+    }
+
+    /* Popover de Edição Inline de Acorde com Sugestões do Campo Harmônico */
+    .harmonic-popover {
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-md);
+      padding: 14px;
+      box-shadow: var(--shadow-popover);
+      max-width: 380px;
+      margin: 8px 0 14px 0;
+      font-family: var(--font-sans);
+    }
+    .harmonic-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .harmonic-chip {
+      font-family: var(--font-chord);
+      font-size: 12.5px;
+      font-weight: 700;
+      padding: 4px 10px;
+      min-height: 32px;
+      border-radius: var(--radius-xs);
+      border: 1px solid var(--border-strong);
+      background: var(--bg-surface-subtle);
+      color: var(--chord-text);
+      cursor: pointer;
+    }
+    .harmonic-chip:hover {
+      background: var(--action-primary-bg);
+      color: #FFFFFF;
+      border-color: var(--action-primary-bg);
+    }
+
+    /* ==========================================================================
+       MODAIS TOKENIZADOS: IMPORTAÇÃO (4 ABAS) E PDF PREVIEW A4
+       ========================================================================== */
+    .dual-modals-grid {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 20px;
+      align-items: start;
+    }
+    body.viewport-mobile .dual-modals-grid {
+      grid-template-columns: 1fr;
+    }
+    .modal-box {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: var(--shadow-popover);
+    }
+    .modal-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .modal-body {
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .modal-footer {
+      padding: 12px 18px;
+      background: var(--bg-surface-subtle);
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .a4-page-preview {
+      background: #FFFFFF;
+      color: #18221D;
+      border: 1px solid #B8AEA0;
+      border-radius: 4px;
+      padding: 18px;
+      font-family: var(--font-chord);
+      font-size: 12px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    }
+
+    .view-section {
+      display: none;
+    }
+    .view-section.active {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- BARRA DO REVISOR D1 -->
+  <div class="prototype-control-bar">
+    <div class="prototype-control-group">
+      <span class="prototype-badge">Protótipo D1 — Cifras Inteligentes</span>
+      <span>Fluxos fiéis (Editar/Visualizar Alternativos):</span>
+      <button class="proto-btn active" onclick="setScreen('library', this)">1. Biblioteca Pessoal</button>
+      <button class="proto-btn" onclick="setScreen('edit', this)">2. Modo Editar (Exclusivo)</button>
+      <button class="proto-btn" onclick="setScreen('read', this)">3. Modo Visualizar (Exclusivo)</button>
+      <button class="proto-btn" onclick="setScreen('modals', this)">4. Importação (4 Abas) & PDF A4</button>
+    </div>
+    <div class="prototype-control-group">
+      <span>Viewport:</span>
+      <button class="proto-btn active" id="btn-vp-desktop" onclick="setViewport('desktop')">Desktop (1280px)</button>
+      <button class="proto-btn" id="btn-vp-mobile" onclick="setViewport('mobile')">Mobile (390px)</button>
+      <span>Tema:</span>
+      <button class="proto-btn" onclick="toggleTheme()">Alternar Claro / Escuro</button>
+    </div>
+  </div>
+
+  <!-- STAGE PRINCIPAL -->
+  <div class="viewport-stage">
+    <div class="app-shell">
+
+      <!-- SIDEBAR DESKTOP -->
+      <aside class="sidebar" aria-label="Navegação Principal">
+        <div class="brand-logo">
+          <span class="brand-mark">L</span>
+          <span>LouvAIO</span>
+        </div>
+
+        <div class="ministry-switcher">
+          <div>
+            <div style="font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--text-muted);">Ministério Ativo</div>
+            <div style="font-size: 13px; font-weight: 600;">IB Central • Louvor ▾</div>
+          </div>
+          <span class="role-pill">Admin</span>
+        </div>
+
+        <nav class="nav-list">
+          <a class="nav-item" href="#inicio">Início</a>
+          <a class="nav-item" href="#escalas">Escalas</a>
+          <a class="nav-item" href="repertorio-desktop-mobile.html">Repertório</a>
+          <a class="nav-item active" href="#cifras">Cifras Inteligentes</a>
+          <a class="nav-item" href="#liturgias">Liturgias</a>
+          <a class="nav-item" href="#ministerio">Ministério</a>
+          <a class="nav-item" href="#vocal">Exercícios Vocais</a>
+        </nav>
+
+        <div class="sidebar-footer">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <div class="user-avatar">HS</div>
+            <span style="font-size: 12.5px; font-weight: 600;">Henrique S.</span>
+          </div>
+          <button class="btn-ghost" style="padding: 4px 8px; border: none; cursor: pointer;" onclick="toggleTheme()">☼/☾</button>
+        </div>
+      </aside>
+
+      <!-- HEADER MOBILE -->
+      <header class="mobile-header">
+        <div class="brand-logo" style="font-size: 15px;">
+          <span class="brand-mark" style="width: 24px; height: 24px; font-size: 12px;">L</span>
+          <span>Cifras Inteligentes</span>
+        </div>
+        <div style="display: flex; gap: 6px; align-items: center;">
+          <button class="btn btn-secondary" style="padding: 6px 10px; font-size: 12px;" onclick="toggleTheme()">Tema</button>
+          <div class="user-avatar">HS</div>
+        </div>
+      </header>
+
+      <!-- ÁREA PRINCIPAL -->
+      <main class="main-area">
+
+        <!-- ==================================================================
+             TELA 1: BIBLIOTECA PESSOAL (MINHAS CIFRAS)
+             ================================================================== -->
+        <section id="screen-library" class="view-section active">
+          <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px;">
+            <div>
+              <h1 style="font-size: 22px; font-weight: 700;">Minhas Cifras Inteligentes</h1>
+              <div style="font-size: 13.5px; color: var(--text-secondary);">Biblioteca pessoal sincronizada na sua conta</div>
+            </div>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              <button class="btn btn-secondary" onclick="setScreen('modals', document.querySelectorAll('.proto-btn')[3])">
+                ↑ Importar Cifra (PDF / Texto / URL / Foto)
+              </button>
+              <button class="btn btn-primary" onclick="setScreen('edit', document.querySelectorAll('.proto-btn')[1])">
+                + Criar Cifra
+              </button>
+            </div>
+          </div>
+
+          <!-- Explicação clara da regra de negócio para pessoas leigas -->
+          <div class="ownership-banner">
+            <div>
+              <strong>Privacidade das suas cifras:</strong> Suas cifras são pessoais por usuário. Quando você vincula uma cifra a uma música do repertório, ela aparece para você na música sem alterar nem compartilhar com os outros membros.
+            </div>
+          </div>
+
+          <div style="margin-bottom: 14px;">
+            <input type="search" class="field-input" placeholder="Buscar nas minhas cifras por título ou artista..." aria-label="Buscar nas minhas cifras" />
+          </div>
+
+          <div class="chord-library-list">
+            <div class="chord-lib-row" onclick="setScreen('read', document.querySelectorAll('.proto-btn')[2])">
+              <div>
+                <div style="font-size: 14.5px; font-weight: 600;">Bondade de Deus — Violão Base</div>
+                <div style="font-size: 12.5px; color: var(--text-secondary);">Isaías Saad / Bethel Music</div>
+              </div>
+              <div><span class="badge-key">Tom: G</span></div>
+              <div>
+                <span class="status-pill">Vinculada ao Repertório</span>
+              </div>
+              <div style="display: flex; justify-content: flex-end; gap: 6px;">
+                <button class="btn btn-secondary" style="padding: 4px 10px; min-height: 32px; font-size: 12px;" onclick="event.stopPropagation(); setScreen('read', document.querySelectorAll('.proto-btn')[2])">Visualizar</button>
+                <button class="btn btn-secondary" style="padding: 4px 10px; min-height: 32px; font-size: 12px;" onclick="event.stopPropagation(); setScreen('edit', document.querySelectorAll('.proto-btn')[1])">Editar</button>
+              </div>
+            </div>
+
+            <div class="chord-lib-row" onclick="setScreen('read', document.querySelectorAll('.proto-btn')[2])">
+              <div>
+                <div style="font-size: 14.5px; font-weight: 600;">Santo Pra Sempre (Holy Forever)</div>
+                <div style="font-size: 12.5px; color: var(--text-secondary);">Gabriel Guedes</div>
+              </div>
+              <div><span class="badge-key">Tom: Bb</span></div>
+              <div>
+                <span class="status-pill">Vinculada ao Repertório</span>
+              </div>
+              <div style="display: flex; justify-content: flex-end; gap: 6px;">
+                <button class="btn btn-secondary" style="padding: 4px 10px; min-height: 32px; font-size: 12px;">Visualizar</button>
+                <button class="btn btn-secondary" style="padding: 4px 10px; min-height: 32px; font-size: 12px;">Editar</button>
+              </div>
+            </div>
+
+            <div class="chord-lib-row" onclick="setScreen('read', document.querySelectorAll('.proto-btn')[2])">
+              <div>
+                <div style="font-size: 14.5px; font-weight: 600;">Rascunho — Medley Celebração</div>
+                <div style="font-size: 12.5px; color: var(--text-secondary);">Arranjo Próprio</div>
+              </div>
+              <div><span class="badge-key">Tom: D</span></div>
+              <div>
+                <span style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Apenas na biblioteca pessoal</span>
+              </div>
+              <div style="display: flex; justify-content: flex-end; gap: 6px;">
+                <button class="btn btn-secondary" style="padding: 4px 10px; min-height: 32px; font-size: 12px;">Visualizar</button>
+                <button class="btn btn-secondary" style="padding: 4px 10px; min-height: 32px; font-size: 12px;">Editar</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==================================================================
+             TELA 2: WORKSPACE — MODO EDITAR (data-workspace-mode="edit")
+             DECISÃO OBRIGATÓRIA: NUNCA EXIBIR EDITOR E PREVIEW LADO A LADO
+             ================================================================== -->
+        <section id="screen-edit" class="view-section" data-workspace-mode="edit">
+          <!-- SmartChordToolbar Contextual -->
+          <div class="smart-chord-toolbar">
+            <div class="toolbar-doc-info">
+              <button class="btn btn-ghost" style="padding: 4px 8px;" onclick="setScreen('library', document.querySelectorAll('.proto-btn')[0])">
+                ← Biblioteca
+              </button>
+              <strong style="font-size: 15px;">Bondade de Deus — Violão Base</strong>
+              <span class="status-pill dirty">● Alterações não salvas</span>
+            </div>
+
+            <!-- Alternância Obrigatória de Modo: Editar vs Visualizar -->
+            <div class="mode-switcher" role="tablist" aria-label="Modo de trabalho da cifra">
+              <button class="mode-btn active" role="tab" aria-selected="true">✎ Editar</button>
+              <button class="mode-btn" role="tab" aria-selected="false" onclick="setScreen('read', document.querySelectorAll('.proto-btn')[2])">👁 Visualizar</button>
+            </div>
+
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <button class="btn btn-secondary" onclick="setScreen('modals', document.querySelectorAll('.proto-btn')[3])">PDF / Imprimir</button>
+              <button class="btn btn-primary">Salvar Cifra</button>
+              <button class="btn btn-danger" title="Mais ações / Excluir cifra">Excluir</button>
+            </div>
+          </div>
+
+          <!-- SmartChordEditor Exclusivo -->
+          <div class="editor-panel">
+            <!-- Metadados Principais: Título *, Artista, Tom Original * (24 tons) -->
+            <div class="meta-3-cols">
+              <div>
+                <label class="field-label" for="sc-title">Título da Cifra *</label>
+                <input id="sc-title" class="field-input" type="text" value="Bondade de Deus — Violão Base" />
+              </div>
+              <div>
+                <label class="field-label" for="sc-artist">Artista</label>
+                <input id="sc-artist" class="field-input" type="text" value="Isaías Saad / Bethel Music" />
+              </div>
+              <div>
+                <label class="field-label" for="sc-key">Tom Original * (24 opções)</label>
+                <select id="sc-key" class="field-input">
+                  <option value="G" selected>G (Sol Maior)</option>
+                  <option value="A">A (Lá Maior)</option>
+                  <option value="E">E (Mi Maior)</option>
+                  <option value="Em">Em (Mi Menor)</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Seção Colapsável: Vínculo com o Repertório do Ministério -->
+            <div class="repertoire-link-box">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
+                <strong style="font-size: 13px;">Vínculo com o Repertório (IB Central • Louvor)</strong>
+                <span class="status-pill">Vinculada a: Bondade de Deus</span>
+              </div>
+              <div class="meta-3-cols" style="grid-template-columns: 2fr 1fr;">
+                <div>
+                  <label class="field-label" for="sc-link-song">Música do Repertório Vinculada</label>
+                  <select id="sc-link-song" class="field-input">
+                    <option value="">Nenhuma (apenas na minha biblioteca)</option>
+                    <option value="NEW">+ Nova Música (Auto-Criar no Repertório)...</option>
+                    <option value="song-1" selected>Bondade de Deus (Goodness of God) — Isaías Saad</option>
+                    <option value="song-2">Santo Pra Sempre — Gabriel Guedes</option>
+                  </select>
+                </div>
+                <div style="display: flex; align-items: flex-end;">
+                  <label style="display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-secondary); padding-bottom: 8px;">
+                    <input type="checkbox" checked style="width: 16px; height: 16px; accent-color: var(--action-primary-bg);" />
+                    Auto-criar música se não existir
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <!-- Editor de Cifra em Formato Colchetes (com guia simples para leigos) -->
+            <div>
+              <label class="field-label" for="sc-content">Letra e Acordes (Formato Colchetes) *</label>
+              <div class="syntax-helper-bar">
+                <div>
+                  <strong>Como escrever:</strong>
+                  Acorde antes da sílaba: <span class="syntax-code">[G]Santo</span> •
+                  Compassos: <span class="syntax-code">| G | C9 |</span> •
+                  Tablatura: <span class="syntax-code">[tab] ... [/tab]</span>
+                </div>
+                <span style="font-size: 11.5px; color: var(--status-success-fg); font-weight: 600;">✓ Rascunho protegido automaticamente</span>
+              </div>
+              <textarea id="sc-content" class="chord-textarea">[Intro]
+| G | C/G | G | C/G |
+
+[tab]
+E|-------0-----------2-----|
+B|-----2---2-------3---3---|
+G|---2-------2---2-------2-|
+D|-0-----------0-----------|
+[/tab]
+
+[Primeira Estrofe]
+Te [G]amo, Deus, Tua [C]graça nunca falha
+Todos os [D/F#]dias eu es[Em7]tou em Tuas [D]mãos
+Desde [C]quando me levanto até [Em7]eu me dei[D]tar
+Eu canta[C]rei da bon[D]dade de [G]Deus
+
+[Refrão]
+[C]És fiel em todo [G]tempo
+[C]Em todo tempo Tu [G]és tão, [D/F#]tão [Em7]bom
+Com todo [C]fôlego que [D]há em [Em7]mim
+Eu canta[C]rei da bon[D]dade de [G]Deus</textarea>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==================================================================
+             TELA 3: WORKSPACE — MODO VISUALIZAR (data-workspace-mode="read")
+             DECISÃO OBRIGATÓRIA: EDITOR OCULTO; FOCO TOTAL NA LEITURA E PALCO
+             ================================================================== -->
+        <section id="screen-read" class="view-section" data-workspace-mode="read">
+          <!-- SmartChordToolbar Contextual -->
+          <div class="smart-chord-toolbar">
+            <div class="toolbar-doc-info">
+              <button class="btn btn-ghost" style="padding: 4px 8px;" onclick="setScreen('library', document.querySelectorAll('.proto-btn')[0])">
+                ← Biblioteca
+              </button>
+              <strong style="font-size: 15px;">Bondade de Deus — Violão Base</strong>
+              <span class="status-pill">● Salvo</span>
+            </div>
+
+            <!-- Alternância Obrigatória de Modo: Editar vs Visualizar -->
+            <div class="mode-switcher" role="tablist" aria-label="Modo de trabalho da cifra">
+              <button class="mode-btn" role="tab" aria-selected="false" onclick="setScreen('edit', document.querySelectorAll('.proto-btn')[1])">✎ Editar</button>
+              <button class="mode-btn active" role="tab" aria-selected="true">👁 Visualizar</button>
+            </div>
+
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <button class="btn btn-secondary" onclick="setScreen('modals', document.querySelectorAll('.proto-btn')[3])">PDF / Imprimir</button>
+              <button class="btn btn-primary">Salvar Cifra</button>
+            </div>
+          </div>
+
+          <!-- SmartChordReader Control Bar (Transposição + Aparência da Leitura) -->
+          <div class="reader-control-bar">
+            <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;">
+              <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                <span class="badge-key" style="background: var(--bg-surface-subtle); color: var(--text-secondary); border-color: var(--border-subtle);">Tom Original: G</span>
+                <span class="badge-key" style="font-size: 14px;">Tom Atual: A (+2 semitons)</span>
+
+                <div style="display: inline-flex; gap: 6px;">
+                  <button class="btn btn-secondary" style="min-width: 40px; padding: 6px 12px;" title="Diminuir 1 semitom">−</button>
+                  <button class="btn btn-secondary" style="min-width: 40px; padding: 6px 12px;" title="Aumentar 1 semitom">+</button>
+                  <button class="btn btn-ghost" style="font-size: 12.5px;">Resetar</button>
+                </div>
+              </div>
+
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 12px; color: var(--text-muted);">Dica: clique em qualquer sílaba ou acorde para editar no palco</span>
+                <button class="btn btn-secondary" style="font-size: 12.5px;" onclick="document.getElementById('appearance-panel').style.display = document.getElementById('appearance-panel').style.display === 'none' ? 'grid' : 'none'">
+                  Aa Aparência da Leitura ▾
+                </button>
+              </div>
+            </div>
+
+            <!-- Painel Colapsável: Aparência da Leitura (Sincronizado via preferenceWriter) -->
+            <div id="appearance-panel" class="appearance-drawer">
+              <div>
+                <span class="field-label">Espaçamento entre linhas (0–24px)</span>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <button class="btn btn-secondary" style="padding: 4px 10px; min-height: 34px;">−2</button>
+                  <strong style="font-size: 13px; min-width: 48px; text-align: center;">8 px</strong>
+                  <button class="btn btn-secondary" style="padding: 4px 10px; min-height: 34px;">+2</button>
+                  <button class="btn btn-ghost" style="padding: 4px 8px; min-height: 34px; font-size: 12px;">Padrão</button>
+                </div>
+              </div>
+
+              <div>
+                <label class="field-label" for="reader-font">Fonte da Cifra (Sincronizada na Conta)</label>
+                <select id="reader-font" class="field-input" style="min-height: 36px;">
+                  <option value="monospace" selected>Monospace (Alinhamento Exato)</option>
+                  <option value="Courier New">Courier New</option>
+                  <option value="Arial">Arial</option>
+                  <option value="Georgia">Georgia</option>
+                  <option value="Times New Roman">Times New Roman</option>
+                  <option value="Verdana">Verdana</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="field-label" for="reader-size">Tamanho da Fonte: 16 px (10–24px)</label>
+                <input id="reader-size" type="range" min="10" max="24" value="16" style="width: 100%; accent-color: var(--action-primary-bg); margin-top: 6px;" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Folha de Leitura Interativa + Popover de Campo Harmônico -->
+          <div class="reader-sheet">
+            <div style="font-family: var(--font-sans); font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px;">Introdução</div>
+            <div style="display: inline-block; background: var(--bg-surface-subtle); border-left: 3px solid var(--action-primary-bg); padding: 6px 12px; border-radius: 4px; color: var(--chord-text); font-weight: 700; margin-bottom: 14px;">
+              | A | D/A | A | D/A | <span style="font-size: 12px; color: var(--text-muted); margin-left: 6px;">[+]</span>
+            </div>
+
+            <div class="interactive-line">
+              <div style="color: var(--chord-text); font-weight: 700; white-space: pre;">        A                 <span class="chord-cell-active">D</span></div>
+              <div style="color: var(--text-primary);">Te amo, Deus, Tua <span style="text-decoration: underline; text-decoration-color: var(--action-primary-bg);">g</span>raça nunca falha <span style="font-size: 11px; color: var(--text-muted); margin-left: 8px;">[+]</span></div>
+            </div>
+
+            <!-- Demonstração Fiel do Popover Inline com Sugestões do Campo Harmônico (getHarmonicFieldChords) -->
+            <div class="harmonic-popover" role="dialog" aria-label="Editar acorde na posição selecionada">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <strong style="font-size: 12.5px;">Acorde sobre a sílaba "gra" (Tom Atual: A)</strong>
+                <span style="font-size: 11px; color: var(--text-muted);">Esc para fechar</span>
+              </div>
+              <div style="display: flex; gap: 6px; margin-bottom: 10px;">
+                <input class="field-input" type="text" value="D9" style="min-height: 34px; font-family: var(--font-chord); font-weight: 700;" aria-label="Acorde" />
+                <button class="btn btn-primary" style="min-height: 34px; padding: 4px 12px;">Aplicar</button>
+                <button class="btn btn-danger" style="min-height: 34px; padding: 4px 10px;">Remover</button>
+              </div>
+              <div style="font-size: 11.5px; font-weight: 600; color: var(--text-secondary);">Sugestões do Campo Harmônico de A Maior:</div>
+              <div class="harmonic-chips">
+                <button class="harmonic-chip">A</button>
+                <button class="harmonic-chip">Bm7</button>
+                <button class="harmonic-chip">C#m7</button>
+                <button class="harmonic-chip">D</button>
+                <button class="harmonic-chip">D9</button>
+                <button class="harmonic-chip">E</button>
+                <button class="harmonic-chip">E/G#</button>
+                <button class="harmonic-chip">F#m7</button>
+              </div>
+            </div>
+
+            <div class="interactive-line">
+              <div style="color: var(--chord-text); font-weight: 700; white-space: pre;">      E/G#              F#m7          E</div>
+              <div style="color: var(--text-primary);">Todos os dias eu estou em Tuas mãos <span style="font-size: 11px; color: var(--text-muted); margin-left: 8px;">[+]</span></div>
+            </div>
+            <div class="interactive-line">
+              <div style="color: var(--chord-text); font-weight: 700; white-space: pre;">              D                      F#m7   E</div>
+              <div style="color: var(--text-primary);">Desde quando me levanto até eu me deitar <span style="font-size: 11px; color: var(--text-muted); margin-left: 8px;">[+]</span></div>
+            </div>
+            <div class="interactive-line">
+              <div style="color: var(--chord-text); font-weight: 700; white-space: pre;">         D            E             A</div>
+              <div style="color: var(--text-primary);">Eu cantarei da bondade de Deus <span style="font-size: 11px; color: var(--text-muted); margin-left: 8px;">[+]</span></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==================================================================
+             TELA 4: MODAIS CORRIGIDOS — IMPORTAÇÃO (4 ABAS) & PDF A4 PREVIEW
+             (Substitui os estilos hardcoded #1e293b/#3b82f6 por tokens LouvAIO)
+             ================================================================== -->
+        <section id="screen-modals" class="view-section">
+          <div class="dual-modals-grid">
+
+            <!-- Modal 1: SmartChordImportModal Tokenizado (4 Abas + Preview Sem Escrita) -->
+            <div class="modal-box" role="dialog" aria-labelledby="import-modal-title">
+              <div class="modal-header">
+                <div>
+                  <h2 id="import-modal-title" style="font-size: 17px; font-weight: 700;">Importar Cifra Inteligente</h2>
+                  <div style="font-size: 12px; color: var(--text-secondary);">Gera pré-visualização editável antes de salvar na sua biblioteca.</div>
+                </div>
+                <button class="btn btn-ghost" onclick="setScreen('library', document.querySelectorAll('.proto-btn')[0])">✕</button>
+              </div>
+
+              <div class="modal-body">
+                <!-- 4 Abas de Fonte Reais -->
+                <div class="mode-switcher" style="width: 100%;" role="tablist" aria-label="Fontes de importação">
+                  <button class="mode-btn active" style="font-size: 12px; padding: 6px 8px;">1. PDF (3MB)</button>
+                  <button class="mode-btn" style="font-size: 12px; padding: 6px 8px;">2. Colar Texto</button>
+                  <button class="mode-btn" style="font-size: 12px; padding: 6px 8px;">3. Link / URL</button>
+                  <button class="mode-btn" style="font-size: 12px; padding: 6px 8px;">4. Foto (5MB)</button>
+                </div>
+
+                <!-- Etapa de Preview Alinhado + Alertas + Metadados de Origem -->
+                <div style="background: var(--status-warning-bg); color: var(--status-warning-fg); padding: 8px 12px; border-radius: 6px; font-size: 12px;">
+                  <strong>Revisão de Importação:</strong> Tom detectado <strong>G</strong> (Capotraste: 2ª casa na fonte). Confira o alinhamento antes de confirmar.
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1.5fr 1fr 0.8fr; gap: 10px;">
+                  <div>
+                    <label class="field-label">Título *</label>
+                    <input class="field-input" type="text" value="Bondade de Deus" />
+                  </div>
+                  <div>
+                    <label class="field-label">Artista</label>
+                    <input class="field-input" type="text" value="Isaías Saad" />
+                  </div>
+                  <div>
+                    <label class="field-label">Tom *</label>
+                    <select class="field-input"><option>G</option></select>
+                  </div>
+                </div>
+
+                <!-- Alternância Editar Texto vs Visualização Alinhada dentro do Preview de Importação -->
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span class="field-label" style="margin-bottom: 0;">Pré-visualização antes de salvar</span>
+                  <div style="display: inline-flex; gap: 4px;">
+                    <button class="btn btn-secondary" style="min-height: 28px; padding: 2px 8px; font-size: 11.5px;">Editar Texto</button>
+                    <button class="btn btn-primary" style="min-height: 28px; padding: 2px 8px; font-size: 11.5px;">Visualização Alinhada</button>
+                  </div>
+                </div>
+
+                <div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 12px; font-family: var(--font-chord); font-size: 13px;">
+                  <div style="color: var(--chord-text); font-weight: 700; white-space: pre;">        G                 C</div>
+                  <div>Te amo, Deus, Tua graça nunca falha</div>
+                </div>
+
+                <!-- Vínculo Opcional Pós-Confirmação -->
+                <div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 10px 12px;">
+                  <label class="field-label">Vincular opcionalmente a uma música do repertório (IB Central)</label>
+                  <select class="field-input" style="min-height: 36px;">
+                    <option>Bondade de Deus (Goodness of God) — Isaías Saad</option>
+                    <option>Não vincular agora (salvar apenas em Minhas Cifras)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="modal-footer">
+                <button class="btn btn-secondary">Voltar</button>
+                <button class="btn btn-primary" onclick="setScreen('read', document.querySelectorAll('.proto-btn')[2])">Confirmar e Salvar Cifra</button>
+              </div>
+            </div>
+
+            <!-- Modal 2: SmartChordPdfSettings + Preview A4 Multi-página -->
+            <div class="modal-box" role="dialog" aria-labelledby="pdf-modal-title">
+              <div class="modal-header">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <h2 id="pdf-modal-title" style="font-size: 17px; font-weight: 700;">PDF A4 • Impressão</h2>
+                  <span class="status-pill">PDF • 1 página</span>
+                </div>
+                <button class="btn btn-ghost" onclick="setScreen('read', document.querySelectorAll('.proto-btn')[2])">✕</button>
+              </div>
+
+              <div class="modal-body">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                  <div>
+                    <label class="field-label">Fonte exclusiva do PDF</label>
+                    <select class="field-input" style="min-height: 36px;">
+                      <option>Monospace (Padrão)</option>
+                      <option>Arial</option>
+                      <option>Georgia</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="field-label">Marcador / Rodapé (Opcional)</label>
+                    <input class="field-input" style="min-height: 36px;" type="text" value="Culto de Domingo • Violão 1" />
+                  </div>
+                  <div>
+                    <label class="field-label">Tamanho no PDF: 12 pt</label>
+                    <input type="range" min="10" max="24" value="12" style="width: 100%; accent-color: var(--action-primary-bg);" />
+                  </div>
+                  <div>
+                    <label class="field-label">Espaçamento: 6 px</label>
+                    <input type="range" min="0" max="24" value="6" style="width: 100%; accent-color: var(--action-primary-bg);" />
+                  </div>
+                </div>
+
+                <!-- Folha A4 Preview -->
+                <div class="a4-page-preview">
+                  <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #DCD3C6; padding-bottom: 6px; margin-bottom: 10px; font-family: var(--font-sans);">
+                    <div>
+                      <strong style="font-size: 14px;">Bondade de Deus — Violão Base</strong>
+                      <div style="font-size: 11px; color: #46544E;">Isaías Saad • Tom: A (Original: G)</div>
+                    </div>
+                    <span style="font-size: 10px; font-weight: 700; color: #9E4427; border: 1px solid #9E4427; padding: 2px 6px; border-radius: 4px; height: fit-content;">Culto de Domingo • Violão 1</span>
+                  </div>
+                  <div style="color: #9E4427; font-weight: 700; white-space: pre;">        A                 D</div>
+                  <div style="margin-bottom: 6px;">Te amo, Deus, Tua graça nunca falha</div>
+                  <div style="color: #9E4427; font-weight: 700; white-space: pre;">      E/G#              F#m7          E</div>
+                  <div>Todos os dias eu estou em Tuas mãos</div>
+                </div>
+              </div>
+
+              <div class="modal-footer">
+                <button class="btn btn-secondary">Atualizar Preview</button>
+                <button class="btn btn-primary">📥 Baixar PDF A4</button>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+      </main>
+
+      <!-- BOTTOM NAV MOBILE -->
+      <nav class="mobile-bottom-nav" aria-label="Navegação Mobile">
+        <button class="bottom-nav-btn">Início</button>
+        <button class="bottom-nav-btn">Escalas</button>
+        <button class="bottom-nav-btn" onclick="window.location.href='repertorio-desktop-mobile.html'">Repertório</button>
+        <button class="bottom-nav-btn active">Cifras</button>
+        <button class="bottom-nav-btn">Ministério</button>
+      </nav>
+
+    </div>
+  </div>
+
+  <script>
+    function setScreen(screenId, btnEl) {
+      document.querySelectorAll('.view-section').forEach(s => s.classList.remove('active'));
+      document.getElementById('screen-' + screenId).classList.add('active');
+      if (btnEl) {
+        btnEl.parentElement.querySelectorAll('.proto-btn').forEach(b => b.classList.remove('active'));
+        btnEl.classList.add('active');
+      }
+    }
+
+    function setViewport(mode) {
+      document.body.classList.toggle('viewport-mobile', mode === 'mobile');
+      document.getElementById('btn-vp-desktop').classList.toggle('active', mode === 'desktop');
+      document.getElementById('btn-vp-mobile').classList.toggle('active', mode === 'mobile');
+    }
+
+    function toggleTheme() {
+      document.body.classList.toggle('dark');
+    }
+  </script>
+</body>
+</html>

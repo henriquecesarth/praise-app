@@ -1,0 +1,1694 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LouvAIO — Protótipo D1: Fluxo de Repertório (Desktop & Mobile)</title>
+  <style>
+    /* ==========================================================================
+       LOUVAIO DESIGN SYSTEM v1.0 — TOKENS OFICIAIS (WCAG 2.1 AA VERIFICADOS)
+       ========================================================================== */
+    :root {
+      --brand-green: #0F2A1F;
+      --brand-terracotta: #B85A3C;
+      --brand-cream: #F5EFE6;
+
+      --bg-app: #F5EFE6;
+      --bg-surface: #FFFFFF;
+      --bg-surface-subtle: #EFE8DC;
+      --bg-surface-elevated: #FFFFFF;
+      --bg-sidebar: #EAE2D6;
+
+      --text-primary: #18221D;
+      --text-secondary: #46544E;
+      --text-muted: #5C6862; /* 4.95:1 sobre #F5EFE6 (WCAG AA) */
+
+      --action-primary-bg: #AE5235; /* 5.02:1 com #FFFFFF (WCAG AA) */
+      --action-primary-hover: #964328;
+      --action-primary-subtle: rgba(184, 90, 60, 0.12);
+
+      --chord-text: #9E4427; /* 5.9:1 sobre #FFFFFF */
+      --structural-accent: #0F2A1F;
+
+      --border-subtle: #DCD3C6;
+      --border-strong: #B8AEA0;
+      --focus-ring: #0F2A1F;
+
+      --status-success-bg: #E6F4EC;
+      --status-success-fg: #145A3A;
+      --status-warning-bg: #FEF3C7;
+      --status-warning-fg: #92400E;
+      --status-danger-bg: #FEE2E2;
+      --status-danger-fg: #991B1B;
+      --status-info-bg: #E6EFEA;
+      --status-info-fg: #0F2A1F;
+
+      --radius-xs: 4px;
+      --radius-sm: 6px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-chord: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+      --shadow-popover: 0 8px 24px rgba(15, 42, 31, 0.14);
+    }
+
+    body.dark {
+      --bg-app: #0B1913;
+      --bg-surface: #11231B;
+      --bg-surface-subtle: #162C22;
+      --bg-surface-elevated: #1B362A;
+      --bg-sidebar: #08140F;
+
+      --text-primary: #F5EFE6;
+      --text-secondary: #C7C0B8;
+      --text-muted: #8E9B94;
+
+      --action-primary-bg: #B85A3C;
+      --action-primary-hover: #9E472B;
+      --action-primary-subtle: rgba(224, 138, 110, 0.16);
+
+      --chord-text: #E69176; /* 7.4:1 sobre #11231B */
+      --structural-accent: #7CC4A4;
+
+      --border-subtle: #1E3D2F;
+      --border-strong: #2D5945;
+      --focus-ring: #7CC4A4;
+
+      --status-success-bg: rgba(43, 158, 107, 0.18);
+      --status-success-fg: #6EE7B7;
+      --status-warning-bg: rgba(217, 119, 6, 0.20);
+      --status-warning-fg: #FCD34D;
+      --status-danger-bg: rgba(220, 38, 38, 0.20);
+      --status-danger-fg: #FCA5A5;
+      --status-info-bg: rgba(124, 196, 164, 0.16);
+      --status-info-fg: #A7F3D0;
+
+      --shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.55);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background-color: #1E2421;
+      color: var(--text-primary);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ==========================================================================
+       BARRA DO REVISOR D1 (CONTROLES DO PROTÓTIPO)
+       ========================================================================== */
+    .prototype-control-bar {
+      position: sticky;
+      top: 0;
+      z-index: 2000;
+      background: #0F2A1F;
+      color: #F5EFE6;
+      border-bottom: 1px solid #2D5945;
+      padding: 10px 20px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 13px;
+    }
+    .prototype-control-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .prototype-badge {
+      background: #B85A3C;
+      color: #FFFFFF;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .proto-btn {
+      background: rgba(245, 239, 230, 0.1);
+      color: #F5EFE6;
+      border: 1px solid rgba(245, 239, 230, 0.22);
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      min-height: 34px;
+    }
+    .proto-btn.active {
+      background: #F5EFE6;
+      color: #0F2A1F;
+      border-color: #F5EFE6;
+    }
+
+    /* ==========================================================================
+       VIEWPORT FRAME (DESKTOP 100% vs MOBILE 390px)
+       ========================================================================== */
+    .viewport-stage {
+      min-height: calc(100vh - 55px);
+      background: var(--bg-app);
+      transition: max-width 0.2s ease;
+      margin: 0 auto;
+    }
+    body.viewport-mobile {
+      background: #141A17;
+      padding-bottom: 32px;
+    }
+    body.viewport-mobile .viewport-stage {
+      max-width: 390px;
+      margin: 20px auto;
+      border: 1px solid var(--border-strong);
+      border-radius: 20px;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+      min-height: 820px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ==========================================================================
+       APP SHELL (SIDEBAR DESKTOP + HEADER + MAIN + BOTTOMNAV MOBILE)
+       ========================================================================== */
+    .app-shell {
+      display: flex;
+      min-height: calc(100vh - 55px);
+    }
+    body.viewport-mobile .app-shell {
+      flex-direction: column;
+      min-height: 820px;
+    }
+
+    /* Sidebar Desktop (Linear-inspired, 224px) */
+    .sidebar {
+      width: 224px;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      padding: 16px 12px;
+      gap: 16px;
+      flex-shrink: 0;
+    }
+    body.viewport-mobile .sidebar {
+      display: none;
+    }
+
+    .brand-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 6px;
+    }
+    .brand-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 800;
+      font-size: 17px;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
+    }
+    .brand-mark {
+      width: 26px;
+      height: 26px;
+      border-radius: 6px;
+      background: var(--brand-green);
+      color: #F5EFE6;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 800;
+      border: 1px solid rgba(245, 239, 230, 0.2);
+    }
+
+    /* Compact Ministry Switcher */
+    .ministry-switcher {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+    }
+    .ministry-switcher-info {
+      min-width: 0;
+    }
+    .ministry-switcher-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+    .ministry-switcher-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .role-pill {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--status-info-bg);
+      color: var(--status-info-fg);
+      text-transform: uppercase;
+    }
+
+    .nav-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      flex: 1;
+    }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      min-height: 36px;
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      font-size: 13.5px;
+      font-weight: 500;
+      cursor: pointer;
+      border-left: 3px solid transparent;
+      text-decoration: none;
+    }
+    .nav-item:hover {
+      background: var(--bg-surface-subtle);
+      color: var(--text-primary);
+    }
+    .nav-item.active {
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      font-weight: 600;
+      border-left-color: var(--action-primary-bg);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    }
+
+    .sidebar-footer {
+      border-top: 1px solid var(--border-subtle);
+      padding-top: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .user-chip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .user-avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      background: var(--brand-green);
+      color: #F5EFE6;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .user-name {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Mobile Header */
+    .mobile-header {
+      display: none;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 10px 16px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    body.viewport-mobile .mobile-header {
+      display: flex;
+    }
+
+    /* Main Workspace Area */
+    .main-area {
+      flex: 1;
+      min-width: 0;
+      padding: 24px 32px;
+      max-width: 1200px;
+    }
+    body.viewport-mobile .main-area {
+      padding: 14px 14px 80px 14px;
+    }
+
+    /* Mobile BottomNav */
+    .mobile-bottom-nav {
+      display: none;
+      background: var(--bg-surface);
+      border-top: 1px solid var(--border-subtle);
+      padding: 6px 8px;
+      justify-content: space-around;
+      margin-top: auto;
+    }
+    body.viewport-mobile .mobile-bottom-nav {
+      display: flex;
+    }
+    .bottom-nav-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-width: 56px;
+      min-height: 44px;
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      gap: 2px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+    }
+    .bottom-nav-btn.active {
+      color: var(--action-primary-bg);
+      font-weight: 700;
+    }
+
+    /* ==========================================================================
+       COMPONENTES COMUNS (BOTÕES, INPUTS, CHIPS, TABELAS)
+       ========================================================================== */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-family: inherit;
+      font-size: 13.5px;
+      font-weight: 600;
+      padding: 8px 14px;
+      min-height: 38px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: background 0.15s ease, border-color 0.15s ease;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    body.viewport-mobile .btn {
+      min-height: 44px;
+    }
+    .btn-primary {
+      background: var(--action-primary-bg);
+      color: #FFFFFF;
+    }
+    .btn-primary:hover {
+      background: var(--action-primary-hover);
+    }
+    .btn-secondary {
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+    }
+    .btn-secondary:hover {
+      background: var(--bg-surface-subtle);
+    }
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-secondary);
+    }
+    .btn-ghost:hover {
+      background: var(--bg-surface-subtle);
+      color: var(--text-primary);
+    }
+    .btn-danger {
+      background: var(--status-danger-bg);
+      color: var(--status-danger-fg);
+      border-color: rgba(220, 38, 38, 0.25);
+    }
+
+    /* Top Bar Header */
+    .page-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .page-title-group {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .page-title {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
+    }
+
+    /* Segmented Tabs (Músicas / Pastas / Artistas) */
+    .segmented-tabs {
+      display: inline-flex;
+      background: var(--bg-surface-subtle);
+      padding: 3px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-subtle);
+    }
+    body.viewport-mobile .segmented-tabs {
+      width: 100%;
+    }
+    .seg-tab {
+      padding: 6px 12px;
+      min-height: 34px;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      flex: 1;
+      font-variant-numeric: tabular-nums;
+    }
+    body.viewport-mobile .seg-tab {
+      min-height: 40px;
+    }
+    .seg-tab.active {
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    }
+    .seg-count {
+      font-size: 11px;
+      padding: 1px 6px;
+      border-radius: 10px;
+      background: var(--bg-surface-subtle);
+      color: var(--text-muted);
+    }
+    .seg-tab.active .seg-count {
+      background: var(--action-primary-subtle);
+      color: var(--chord-text);
+    }
+
+    /* Search & Filter Toolbar */
+    .toolbar-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+      position: relative;
+    }
+    .search-box {
+      flex: 1;
+      min-width: 240px;
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    .search-input {
+      width: 100%;
+      min-height: 38px;
+      padding: 8px 12px 8px 34px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-strong);
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      font-size: 13.5px;
+      font-family: inherit;
+    }
+    body.viewport-mobile .search-input {
+      min-height: 44px;
+    }
+    .search-icon {
+      position: absolute;
+      left: 11px;
+      color: var(--text-muted);
+      font-size: 14px;
+      pointer-events: none;
+    }
+
+    /* Filter Chips Bar */
+    .active-filters-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .filter-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 10px;
+      min-height: 30px;
+      border-radius: 999px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+    .filter-chip.active {
+      background: var(--action-primary-subtle);
+      border-color: var(--action-primary-bg);
+      color: var(--chord-text);
+    }
+
+    /* Filter Popover */
+    .filter-popover {
+      position: absolute;
+      top: 46px;
+      right: 0;
+      width: 310px;
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      box-shadow: var(--shadow-popover);
+      z-index: 100;
+      display: none;
+    }
+    .filter-popover.open {
+      display: block;
+    }
+    .keys-grid-12 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      margin-top: 8px;
+      margin-bottom: 14px;
+    }
+    .key-btn {
+      padding: 6px;
+      min-height: 36px;
+      border-radius: var(--radius-xs);
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-surface-subtle);
+      color: var(--text-primary);
+      font-weight: 600;
+      font-size: 12.5px;
+      cursor: pointer;
+    }
+    .key-btn.active {
+      background: var(--action-primary-bg);
+      color: #FFFFFF;
+      border-color: var(--action-primary-bg);
+    }
+
+    /* ==========================================================================
+       HIGH-DENSITY REPERTOIRE TABLE (DESKTOP) & COMPACT ROWS (MOBILE)
+       ========================================================================== */
+    .repertoire-list-container {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+    }
+    .repertoire-list-header {
+      display: grid;
+      grid-template-columns: minmax(220px, 2.2fr) 110px 85px 130px 150px 130px;
+      align-items: center;
+      padding: 10px 16px;
+      background: var(--bg-surface-subtle);
+      border-bottom: 1px solid var(--border-subtle);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+      gap: 12px;
+    }
+    .repertoire-row {
+      display: grid;
+      grid-template-columns: minmax(220px, 2.2fr) 110px 85px 130px 150px 130px;
+      align-items: center;
+      padding: 10px 16px;
+      min-height: 56px;
+      border-bottom: 1px solid var(--border-subtle);
+      gap: 12px;
+      cursor: pointer;
+      transition: background 0.12s ease;
+    }
+    .repertoire-row:last-child {
+      border-bottom: none;
+    }
+    .repertoire-row:hover {
+      background: var(--bg-surface-subtle);
+    }
+
+    body.viewport-mobile .repertoire-list-header {
+      display: none;
+    }
+    body.viewport-mobile .repertoire-row {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+      padding: 12px 14px;
+    }
+
+    .song-main-cell {
+      min-width: 0;
+    }
+    .song-title-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .song-title-text {
+      font-size: 14.5px;
+      font-weight: 600;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .song-artist-text {
+      font-size: 12.5px;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .badge-key {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-chord);
+      font-size: 12.5px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: var(--radius-xs);
+      background: var(--action-primary-subtle);
+      color: var(--chord-text);
+      border: 1px solid rgba(184, 90, 60, 0.25);
+      font-variant-numeric: tabular-nums;
+    }
+    .badge-versions {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: var(--radius-xs);
+      background: var(--status-info-bg);
+      color: var(--status-info-fg);
+    }
+    .meta-tabular {
+      font-size: 12.5px;
+      color: var(--text-secondary);
+      font-variant-numeric: tabular-nums;
+    }
+    .tag-classification {
+      display: inline-flex;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: var(--bg-surface-subtle);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      margin-right: 4px;
+    }
+    .resources-cell {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+    body.viewport-mobile .resources-cell {
+      justify-content: flex-start;
+    }
+    .res-pill {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      background: var(--bg-surface);
+    }
+    .res-pill.smart-chord {
+      background: var(--status-success-bg);
+      color: var(--status-success-fg);
+      border-color: transparent;
+    }
+
+    /* ==========================================================================
+       SONG DETAIL VIEW (MUSIC STAND CONTEXTUAL BAR + CHORD SHEET + SIDEBAR)
+       ========================================================================== */
+    .music-stand-bar {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .music-stand-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .music-stand-divider {
+      height: 1px;
+      background: var(--border-subtle);
+    }
+    .version-pills-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .version-pill {
+      padding: 6px 12px;
+      min-height: 36px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-strong);
+      background: var(--bg-surface-subtle);
+      color: var(--text-secondary);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    body.viewport-mobile .version-pill {
+      min-height: 44px;
+    }
+    .version-pill.active {
+      background: var(--structural-accent);
+      color: var(--bg-surface);
+      border-color: var(--structural-accent);
+    }
+
+    .transpose-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--bg-surface-subtle);
+      padding: 4px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-subtle);
+    }
+    .transpose-btn {
+      min-width: 36px;
+      min-height: 34px;
+      padding: 4px 10px;
+      border-radius: var(--radius-xs);
+      border: 1px solid var(--border-strong);
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    body.viewport-mobile .transpose-btn {
+      min-width: 44px;
+      min-height: 40px;
+    }
+    .transpose-readout {
+      padding: 0 10px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--chord-text);
+      font-family: var(--font-chord);
+    }
+
+    .song-detail-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 2.2fr) minmax(280px, 1fr);
+      gap: 20px;
+      align-items: start;
+    }
+    body.viewport-mobile .song-detail-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .chord-sheet-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 24px;
+      font-family: var(--font-chord);
+    }
+    body.viewport-mobile .chord-sheet-card {
+      padding: 16px 14px;
+    }
+    .section-marker {
+      font-family: var(--font-sans);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin: 16px 0 6px 0;
+    }
+    .section-marker:first-child {
+      margin-top: 0;
+    }
+    .progression-bar {
+      display: inline-block;
+      background: var(--bg-surface-subtle);
+      border-left: 3px solid var(--action-primary-bg);
+      padding: 6px 12px;
+      border-radius: var(--radius-xs);
+      color: var(--chord-text);
+      font-weight: 700;
+      font-size: 14px;
+      margin-bottom: 12px;
+    }
+    .tablature-box {
+      background: var(--bg-surface-subtle);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-xs);
+      padding: 10px 12px;
+      font-size: 12.5px;
+      line-height: 1.35;
+      color: var(--text-secondary);
+      margin-bottom: 14px;
+      overflow-x: auto;
+      white-space: pre;
+    }
+    .chord-lyric-pair {
+      margin-bottom: 10px;
+      line-height: 1.35;
+    }
+    .chord-line {
+      color: var(--chord-text);
+      font-weight: 700;
+      font-size: 14.5px;
+      white-space: pre;
+    }
+    .lyric-line {
+      color: var(--text-primary);
+      font-size: 15px;
+      white-space: pre-wrap;
+    }
+
+    .side-panel-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .side-panel-title {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-secondary);
+      margin-bottom: 12px;
+    }
+    .meta-kv-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .meta-kv-box {
+      background: var(--bg-surface-subtle);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 8px 10px;
+    }
+    .meta-kv-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .meta-kv-val {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text-primary);
+      font-variant-numeric: tabular-nums;
+    }
+    .link-item-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      margin-bottom: 8px;
+      text-decoration: none;
+      color: var(--text-primary);
+      background: var(--bg-surface);
+    }
+    .link-item-row:hover {
+      background: var(--bg-surface-subtle);
+    }
+
+    /* ==========================================================================
+       MODAL DE CADASTRO / EDIÇÃO DE MÚSICA E VERSÕES (STICKY HEADER & FOOTER)
+       ========================================================================== */
+    .modal-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-lg);
+      max-width: 780px;
+      margin: 0 auto;
+      overflow: hidden;
+      box-shadow: var(--shadow-popover);
+    }
+    .modal-sticky-header {
+      padding: 16px 20px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .modal-body-scroll {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .modal-sticky-footer {
+      padding: 14px 20px;
+      background: var(--bg-surface-subtle);
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+    .form-section-box {
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      background: var(--bg-surface);
+    }
+    .form-grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    .form-grid-3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+    }
+    body.viewport-mobile .form-grid-2,
+    body.viewport-mobile .form-grid-3 {
+      grid-template-columns: 1fr;
+    }
+    .field-label {
+      display: block;
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 5px;
+    }
+    .field-input {
+      width: 100%;
+      min-height: 40px;
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-strong);
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      font-family: inherit;
+      font-size: 14px;
+    }
+    body.viewport-mobile .field-input {
+      min-height: 44px;
+    }
+
+    .view-section {
+      display: none;
+    }
+    .view-section.active {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- BARRA DO REVISOR D1 -->
+  <div class="prototype-control-bar">
+    <div class="prototype-control-group">
+      <span class="prototype-badge">Protótipo D1 — Repertório</span>
+      <span>Telas fiéis ao código real (R16):</span>
+      <button class="proto-btn active" onclick="setScreen('list', this)">1. Lista de Repertório</button>
+      <button class="proto-btn" onclick="setScreen('detail', this)">2. Detalhe da Música & Versões</button>
+      <button class="proto-btn" onclick="setScreen('modal', this)">3. Modal Música & Edição de Versão</button>
+    </div>
+    <div class="prototype-control-group">
+      <span>Viewport:</span>
+      <button class="proto-btn active" id="btn-vp-desktop" onclick="setViewport('desktop')">Desktop (1280px)</button>
+      <button class="proto-btn" id="btn-vp-mobile" onclick="setViewport('mobile')">Mobile (390px)</button>
+      <span>Tema:</span>
+      <button class="proto-btn" id="btn-theme" onclick="toggleTheme()">Alternar Claro / Escuro</button>
+    </div>
+  </div>
+
+  <!-- STAGE PRINCIPAL -->
+  <div class="viewport-stage">
+    <div class="app-shell">
+
+      <!-- SIDEBAR DESKTOP (LINEAR STYLE) -->
+      <aside class="sidebar" aria-label="Navegação Principal">
+        <div class="brand-row">
+          <div class="brand-logo">
+            <span class="brand-mark">L</span>
+            <span>LouvAIO</span>
+          </div>
+        </div>
+
+        <!-- Seletor de Ministério Compacto (Substitui os 3 botões largos permanentes) -->
+        <div class="ministry-switcher" title="Trocar ministério ou gerenciar convites">
+          <div class="ministry-switcher-info">
+            <div class="ministry-switcher-label">Ministério Ativo</div>
+            <div class="ministry-switcher-name">IB Central • Louvor ▾</div>
+          </div>
+          <span class="role-pill">Admin</span>
+        </div>
+
+        <nav class="nav-list">
+          <a class="nav-item" href="#inicio">Início</a>
+          <a class="nav-item" href="#escalas">Escalas</a>
+          <a class="nav-item active" href="#repertorio">Repertório</a>
+          <a class="nav-item" href="cifras-inteligentes-desktop-mobile.html">Cifras Inteligentes</a>
+          <a class="nav-item" href="#liturgias">Liturgias</a>
+          <a class="nav-item" href="#ministerio">Ministério</a>
+          <a class="nav-item" href="#vocal">Exercícios Vocais</a>
+        </nav>
+
+        <div class="sidebar-footer">
+          <div class="user-chip">
+            <div class="user-avatar">HS</div>
+            <div class="user-name">Henrique S.</div>
+          </div>
+          <button class="btn-ghost" style="padding: 4px 8px; border-radius: 4px; font-size: 12px;" onclick="toggleTheme()">☼/☾</button>
+        </div>
+      </aside>
+
+      <!-- HEADER MOBILE -->
+      <header class="mobile-header">
+        <div class="brand-logo" style="font-size: 15px;">
+          <span class="brand-mark" style="width: 24px; height: 24px; font-size: 12px;">L</span>
+          <span>IB Central ▾</span>
+        </div>
+        <div style="display: flex; gap: 6px; align-items: center;">
+          <button class="btn btn-secondary" style="padding: 6px 10px; font-size: 12px;" onclick="toggleTheme()">Tema</button>
+          <div class="user-avatar">HS</div>
+        </div>
+      </header>
+
+      <!-- CONTEÚDO PRINCIPAL -->
+      <main class="main-area">
+
+        <!-- ==================================================================
+             TELA 1: LISTAGEM DO REPERTÓRIO (ALTA DENSIDADE + FILTROS REAIS)
+             ================================================================== -->
+        <section id="screen-list" class="view-section active">
+          <div class="page-header">
+            <div class="page-title-group">
+              <h1 class="page-title">Repertório</h1>
+              <!-- Sub-abas reais do Repertório: Músicas, Pastas, Artistas -->
+              <div class="segmented-tabs" role="tablist" aria-label="Visualizações do repertório">
+                <button class="seg-tab active" role="tab" aria-selected="true">
+                  Músicas <span class="seg-count">48</span>
+                </button>
+                <button class="seg-tab" role="tab" aria-selected="false">
+                  Pastas <span class="seg-count">6</span>
+                </button>
+                <button class="seg-tab" role="tab" aria-selected="false">
+                  Artistas <span class="seg-count">19</span>
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <button class="btn btn-primary" onclick="setScreen('modal', document.querySelectorAll('.proto-btn')[2])">
+                + Nova Música
+              </button>
+            </div>
+          </div>
+
+          <!-- Busca com Debounce 300ms + Botão de Filtro (FilterPopover) -->
+          <div class="toolbar-row">
+            <div class="search-box">
+              <span class="search-icon">⌕</span>
+              <input
+                type="search"
+                class="search-input"
+                placeholder="Buscar por título, artista ou trecho da letra..."
+                aria-label="Buscar músicas no repertório"
+              />
+            </div>
+
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn-secondary" onclick="document.getElementById('repertoire-filter-popover').classList.toggle('open')">
+                Filtros (Tom / YouTube) ▾
+              </button>
+            </div>
+
+            <!-- FilterPopover real (12 Tons + Apenas com YouTube) -->
+            <div id="repertoire-filter-popover" class="filter-popover" role="dialog" aria-label="Filtros do Repertório">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <strong style="font-size: 13px;">Filtrar por Tom Original</strong>
+                <button class="btn-ghost" style="font-size: 12px; padding: 2px 6px; border: none; cursor: pointer;" onclick="document.getElementById('repertoire-filter-popover').classList.remove('open')">Fechar ✕</button>
+              </div>
+              <div class="keys-grid-12">
+                <button class="key-btn">C</button>
+                <button class="key-btn">C#</button>
+                <button class="key-btn">D</button>
+                <button class="key-btn">D#</button>
+                <button class="key-btn">E</button>
+                <button class="key-btn">F</button>
+                <button class="key-btn">F#</button>
+                <button class="key-btn active">G</button>
+                <button class="key-btn">G#</button>
+                <button class="key-btn">A</button>
+                <button class="key-btn">A#</button>
+                <button class="key-btn">B</button>
+              </div>
+              <label style="display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 600; padding: 8px 0; border-top: 1px solid var(--border-subtle);">
+                <span>Apenas músicas com YouTube</span>
+                <input type="checkbox" checked style="width: 18px; height: 18px; accent-color: var(--action-primary-bg);" />
+              </label>
+              <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px;">
+                <button class="btn btn-secondary" style="width: 100%;">Limpar Filtros</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Chips Rápidos de Classificação e Filtros Ativos (Paridade Web + Flutter) -->
+          <div class="active-filters-row">
+            <span style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Classificações:</span>
+            <button class="filter-chip active">Todas (48)</button>
+            <button class="filter-chip">Adoração (21)</button>
+            <button class="filter-chip">Celebração (14)</button>
+            <button class="filter-chip">Santa Ceia (8)</button>
+            <button class="filter-chip">Harpa / Hinos (5)</button>
+          </div>
+
+          <!-- Lista de Alta Densidade (Linear / Planning Center Style) -->
+          <div class="repertoire-list-container">
+            <div class="repertoire-list-header">
+              <div>Música & Artista</div>
+              <div>Versões</div>
+              <div>Tom</div>
+              <div>BPM & Duração</div>
+              <div>Classificações</div>
+              <div style="text-align: right;">Recursos</div>
+            </div>
+
+            <!-- Linha 1 -->
+            <div class="repertoire-row" onclick="setScreen('detail', document.querySelectorAll('.proto-btn')[1])">
+              <div class="song-main-cell">
+                <div class="song-title-line">
+                  <span class="song-title-text">Bondade de Deus (Goodness of God)</span>
+                </div>
+                <div class="song-artist-text">Isaías Saad / Bethel Music</div>
+              </div>
+              <div><span class="badge-versions">2 versões</span></div>
+              <div><span class="badge-key">G / E</span></div>
+              <div class="meta-tabular">68 BPM • 05:14</div>
+              <div>
+                <span class="tag-classification">Adoração</span>
+                <span class="tag-classification">Ceia</span>
+              </div>
+              <div class="resources-cell">
+                <span class="res-pill smart-chord" title="Cifra Inteligente vinculada">Cifra</span>
+                <span class="res-pill" title="Vídeo no YouTube">YT</span>
+                <span class="res-pill" title="Áudio Spotify">Áudio</span>
+              </div>
+            </div>
+
+            <!-- Linha 2 -->
+            <div class="repertoire-row" onclick="setScreen('detail', document.querySelectorAll('.proto-btn')[1])">
+              <div class="song-main-cell">
+                <div class="song-title-line">
+                  <span class="song-title-text">Santo Pra Sempre (Holy Forever)</span>
+                </div>
+                <div class="song-artist-text">Gabriel Guedes / Chris Tomlin</div>
+              </div>
+              <div><span class="badge-versions">1 versão</span></div>
+              <div><span class="badge-key">Bb</span></div>
+              <div class="meta-tabular">72 BPM • 05:40</div>
+              <div>
+                <span class="tag-classification">Adoração</span>
+              </div>
+              <div class="resources-cell">
+                <span class="res-pill smart-chord">Cifra</span>
+                <span class="res-pill">YT</span>
+                <span class="res-pill">Letra</span>
+              </div>
+            </div>
+
+            <!-- Linha 3 -->
+            <div class="repertoire-row" onclick="setScreen('detail', document.querySelectorAll('.proto-btn')[1])">
+              <div class="song-main-cell">
+                <div class="song-title-line">
+                  <span class="song-title-text">Porque Ele Vive (HC 545)</span>
+                </div>
+                <div class="song-artist-text">Harpa Cristã / Tradicional</div>
+              </div>
+              <div><span class="badge-versions">2 versões</span></div>
+              <div><span class="badge-key">A / G</span></div>
+              <div class="meta-tabular">84 BPM • 04:10</div>
+              <div>
+                <span class="tag-classification">Harpa</span>
+                <span class="tag-classification">Ceia</span>
+              </div>
+              <div class="resources-cell">
+                <span class="res-pill smart-chord">Cifra</span>
+                <span class="res-pill">Áudio</span>
+              </div>
+            </div>
+
+            <!-- Linha 4 -->
+            <div class="repertoire-row" onclick="setScreen('detail', document.querySelectorAll('.proto-btn')[1])">
+              <div class="song-main-cell">
+                <div class="song-title-line">
+                  <span class="song-title-text">Leão (Lion)</span>
+                </div>
+                <div class="song-artist-text">Gabriela Rocha / Elevation Worship</div>
+              </div>
+              <div><span class="badge-versions">1 versão</span></div>
+              <div><span class="badge-key">C#m</span></div>
+              <div class="meta-tabular">67 BPM • 06:15</div>
+              <div>
+                <span class="tag-classification">Celebração</span>
+              </div>
+              <div class="resources-cell">
+                <span class="res-pill">YT</span>
+                <span class="res-pill">Áudio</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==================================================================
+             TELA 2: DETALHE DA MÚSICA (SONG DETAIL + VERSÕES + CIFRA VINCULADA)
+             ================================================================== -->
+        <section id="screen-detail" class="view-section">
+          <div class="page-header">
+            <div>
+              <button class="btn btn-ghost" style="padding-left: 0; font-size: 13px;" onclick="setScreen('list', document.querySelectorAll('.proto-btn')[0])">
+                ← Voltar para o Repertório
+              </button>
+              <h1 class="page-title">Bondade de Deus (Goodness of God)</h1>
+              <div style="font-size: 14px; color: var(--text-secondary);">Isaías Saad / Bethel Music</div>
+            </div>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              <button class="btn btn-secondary" onclick="setScreen('modal', document.querySelectorAll('.proto-btn')[2])">✎ Editar Música / Versões</button>
+              <button class="btn btn-danger">Excluir</button>
+            </div>
+          </div>
+
+          <!-- BARRA CONTEXTUAL UNIFICADA (MUSIC STAND BAR) -->
+          <div class="music-stand-bar">
+            <!-- Faixa 1: Seletor de Versão Musical -->
+            <div class="music-stand-row">
+              <div class="version-pills-group" role="tablist" aria-label="Versões da Música">
+                <span style="font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Versão da Música:</span>
+                <button class="version-pill active" role="tab" aria-selected="true">Gravação Original (Tom: G)</button>
+                <button class="version-pill" role="tab" aria-selected="false">Acústico Culto Jovem (Tom: E)</button>
+              </div>
+              <div style="display: flex; gap: 6px; align-items: center;">
+                <span class="tag-classification">Adoração</span>
+                <span class="tag-classification">Santa Ceia</span>
+              </div>
+            </div>
+
+            <div class="music-stand-divider"></div>
+
+            <!-- Faixa 2: Controles de Cifra Inteligente Vinculada & Transposição -->
+            <div class="music-stand-row">
+              <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                <!-- Alternância Cifra Inteligente vs Apenas Letra -->
+                <div class="segmented-tabs" style="width: auto;">
+                  <button class="seg-tab active">Cifra Inteligente</button>
+                  <button class="seg-tab">Apenas Letra</button>
+                </div>
+
+                <!-- Abas quando há mais de uma cifra pessoal vinculada -->
+                <select class="field-input" style="width: auto; min-height: 36px; font-size: 13px; font-weight: 600;" aria-label="Cifra pessoal ativa">
+                  <option>Minha Cifra: Violão Base (G)</option>
+                  <option>Minha Cifra: Teclado Capotraste (C)</option>
+                </select>
+              </div>
+
+              <!-- Transposição em Semitons (-1 / Resetar / +1) -->
+              <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                <div class="transpose-group" aria-label="Controles de Transposição">
+                  <button class="transpose-btn" title="Diminuir 1 semitom">−1</button>
+                  <span class="transpose-readout">Tom: A (+2) <small style="font-weight: 500; color: var(--text-muted);">(Orig: G)</small></span>
+                  <button class="transpose-btn" title="Aumentar 1 semitom">+1</button>
+                  <button class="transpose-btn" style="font-weight: 600; font-size: 12px;">Resetar</button>
+                </div>
+
+                <!-- Ações de Vínculo Pessoal -->
+                <button class="btn btn-secondary" style="font-size: 12.5px;">Vincular Outra Cifra</button>
+                <a class="btn btn-secondary" style="font-size: 12.5px;" href="cifras-inteligentes-desktop-mobile.html">Abrir no Cifrador ↗</a>
+                <button class="btn btn-ghost" style="font-size: 12.5px; color: var(--status-danger-fg);">Desvincular</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- CORPO DO DETALHE: COLUNA DE LEITURA MUSICAL + COLUNA DE FICHA/LINKS -->
+          <div class="song-detail-grid">
+            <!-- Folha Musical (Acordes ancorados, Progressão e Tablatura) -->
+            <div class="chord-sheet-card">
+              <div class="section-marker">Introdução (Progressão de Compassos)</div>
+              <div class="progression-bar" data-musical-progression="true">| A | D/A | A | D/A |</div>
+
+              <div class="section-marker">Dedilhado Violão (Tablatura)</div>
+              <div class="tablature-box" data-musical-tablature="true">E|-------0-----------2-----|
+B|-----2---2-------3---3---|
+G|---2-------2---2-------2-|
+D|-0-----------0-----------|</div>
+
+              <div class="section-marker">Primeira Estrofe</div>
+              <div class="chord-lyric-pair">
+                <div class="chord-line">        A                 D</div>
+                <div class="lyric-line">Te amo, Deus, Tua graça nunca falha</div>
+              </div>
+              <div class="chord-lyric-pair">
+                <div class="chord-line">      E/G#              F#m7          E</div>
+                <div class="lyric-line">Todos os dias eu estou em Tuas mãos</div>
+              </div>
+              <div class="chord-lyric-pair">
+                <div class="chord-line">              D                      F#m7   E</div>
+                <div class="lyric-line">Desde quando me levanto até eu me deitar</div>
+              </div>
+              <div class="chord-lyric-pair">
+                <div class="chord-line">         D            E             A</div>
+                <div class="lyric-line">Eu cantarei da bondade de Deus</div>
+              </div>
+
+              <div class="section-marker">Refrão</div>
+              <div class="chord-lyric-pair">
+                <div class="chord-line">D                        A</div>
+                <div class="lyric-line">És fiel em todo tempo</div>
+              </div>
+              <div class="chord-lyric-pair">
+                <div class="chord-line">D                        A      E/G#   F#m7</div>
+                <div class="lyric-line">Em todo tempo Tu és tão, tão bom</div>
+              </div>
+              <div class="chord-lyric-pair">
+                <div class="chord-line">          D                 E               F#m7</div>
+                <div class="lyric-line">Com todo fôlego que há em mim</div>
+              </div>
+              <div class="chord-lyric-pair">
+                <div class="chord-line">         D            E             A</div>
+                <div class="lyric-line">Eu cantarei da bondade de Deus</div>
+              </div>
+            </div>
+
+            <!-- Coluna Direita: Ficha da Versão + Links e Arquivos -->
+            <aside>
+              <div class="side-panel-card">
+                <div class="side-panel-title">Ficha da Versão (Gravação Original)</div>
+                <div class="meta-kv-grid">
+                  <div class="meta-kv-box">
+                    <div class="meta-kv-label">Tom da Versão</div>
+                    <div class="meta-kv-val">G (Sol Maior)</div>
+                  </div>
+                  <div class="meta-kv-box">
+                    <div class="meta-kv-label">Andamento</div>
+                    <div class="meta-kv-val">68 BPM</div>
+                  </div>
+                  <div class="meta-kv-box">
+                    <div class="meta-kv-label">Duração</div>
+                    <div class="meta-kv-val">00:05:14</div>
+                  </div>
+                  <div class="meta-kv-box">
+                    <div class="meta-kv-label">Compassos</div>
+                    <div class="meta-kv-val">4/4</div>
+                  </div>
+                </div>
+                <div style="font-size: 12.5px; color: var(--text-secondary); background: var(--bg-surface-subtle); padding: 10px; border-radius: 6px;">
+                  <strong>Observações da Versão:</strong> Iniciar apenas voz e piano na 1ª estrofe; banda entra suave no 1º refrão. Subir dinâmica na ponte.
+                </div>
+              </div>
+
+              <div class="side-panel-card">
+                <div class="side-panel-title">Links e Arquivos da Versão</div>
+                <a class="link-item-row" href="#yt">
+                  <div>
+                    <div style="font-size: 13.5px; font-weight: 600;">Vídeo de Referência</div>
+                    <div style="font-size: 11.5px; color: var(--text-muted);">YouTube • Isaías Saad (Ao Vivo)</div>
+                  </div>
+                  <span style="font-size: 12px; font-weight: 700; color: var(--action-primary-bg);">Abrir ↗</span>
+                </a>
+                <a class="link-item-row" href="#spotify">
+                  <div>
+                    <div style="font-size: 13.5px; font-weight: 600;">Áudio Oficial</div>
+                    <div style="font-size: 11.5px; color: var(--text-muted);">Spotify • Faixa Original</div>
+                  </div>
+                  <span style="font-size: 12px; font-weight: 700; color: var(--action-primary-bg);">Abrir ↗</span>
+                </a>
+                <a class="link-item-row" href="#cifra">
+                  <div>
+                    <div style="font-size: 13.5px; font-weight: 600;">Cifra Externa</div>
+                    <div style="font-size: 11.5px; color: var(--text-muted);">CifraClub • Referência</div>
+                  </div>
+                  <span style="font-size: 12px; font-weight: 700; color: var(--action-primary-bg);">Abrir ↗</span>
+                </a>
+                <a class="link-item-row" href="#drive">
+                  <div>
+                    <div style="font-size: 13.5px; font-weight: 600;">VS / Multitracks (Link Customizado)</div>
+                    <div style="font-size: 11.5px; color: var(--text-muted);">Google Drive • Pasta do Ministério</div>
+                  </div>
+                  <span style="font-size: 12px; font-weight: 700; color: var(--action-primary-bg);">Abrir ↗</span>
+                </a>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <!-- ==================================================================
+             TELA 3: MODAL DE CADASTRO / EDIÇÃO DE MÚSICA E VERSÕES
+             ================================================================== -->
+        <section id="screen-modal" class="view-section">
+          <div class="modal-card" role="dialog" aria-labelledby="modal-song-title">
+            <div class="modal-sticky-header">
+              <div>
+                <h2 id="modal-song-title" style="font-size: 18px; font-weight: 700;">Editar Música e Versões Musicais</h2>
+                <div style="font-size: 12.5px; color: var(--text-secondary);">Campos obrigatórios marcados com *. Todas as versões e links são preservados.</div>
+              </div>
+              <button class="btn btn-ghost" onclick="setScreen('list', document.querySelectorAll('.proto-btn')[0])">✕</button>
+            </div>
+
+            <div class="modal-body-scroll">
+              <!-- Bloco 1: Dados Gerais da Música -->
+              <div class="form-section-box">
+                <div class="side-panel-title">1. Dados Gerais da Música</div>
+                <div class="form-grid-2" style="margin-bottom: 12px;">
+                  <div>
+                    <label class="field-label" for="song-title">Título da Música *</label>
+                    <input id="song-title" class="field-input" type="text" value="Bondade de Deus (Goodness of God)" />
+                  </div>
+                  <div>
+                    <label class="field-label" for="song-artist">Artista / Banda</label>
+                    <input id="song-artist" class="field-input" type="text" value="Isaías Saad / Bethel Music" />
+                  </div>
+                </div>
+                <div>
+                  <label class="field-label" for="song-notes">Observações Gerais da Música</label>
+                  <input id="song-notes" class="field-input" type="text" value="Canção tema de consagração e Santa Ceia." />
+                </div>
+              </div>
+
+              <!-- Bloco 2: Lista de Versões (Adicionar, Editar, Clonar, Excluir) -->
+              <div class="form-section-box">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+                  <div class="side-panel-title" style="margin-bottom: 0;">2. Versões Cadastradas (2)</div>
+                  <button class="btn btn-secondary" style="font-size: 12.5px;">+ Adicionar Versão</button>
+                </div>
+
+                <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: var(--bg-surface-subtle); border: 1px solid var(--action-primary-bg); border-radius: 6px; flex-wrap: wrap; gap: 8px;">
+                    <div>
+                      <strong style="font-size: 13.5px;">Gravação Original</strong>
+                      <span class="badge-key" style="margin-left: 6px;">Tom: G</span>
+                      <span style="font-size: 12px; color: var(--text-secondary); margin-left: 6px;">68 BPM • 00:05:14 • 4 links</span>
+                    </div>
+                    <div style="display: flex; gap: 6px;">
+                      <button class="btn btn-secondary" style="padding: 4px 10px; min-height: 32px; font-size: 12px;">Editando abaixo</button>
+                      <button class="btn btn-secondary" style="padding: 4px 10px; min-height: 32px; font-size: 12px;">Clonar</button>
+                      <button class="btn btn-danger" style="padding: 4px 10px; min-height: 32px; font-size: 12px;">Excluir</button>
+                    </div>
+                  </div>
+
+                  <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 6px; flex-wrap: wrap; gap: 8px;">
+                    <div>
+                      <strong style="font-size: 13.5px;">Acústico Culto Jovem</strong>
+                      <span class="badge-key" style="margin-left: 6px;">Tom: E</span>
+                      <span style="font-size: 12px; color: var(--text-secondary); margin-left: 6px;">70 BPM • 00:04:45 • 2 links</span>
+                    </div>
+                    <div style="display: flex; gap: 6px;">
+                      <button class="btn btn-secondary" style="padding: 4px 10px; min-height: 32px; font-size: 12px;">Editar</button>
+                      <button class="btn btn-secondary" style="padding: 4px 10px; min-height: 32px; font-size: 12px;">Clonar</button>
+                      <button class="btn btn-danger" style="padding: 4px 10px; min-height: 32px; font-size: 12px;">Excluir</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Sub-formulário de Edição da Versão Selecionada (VersionEditModal) -->
+                <div style="border-top: 1px solid var(--border-subtle); padding-top: 16px;">
+                  <div class="side-panel-title">Detalhes da Versão: Gravação Original</div>
+
+                  <div class="form-grid-3" style="margin-bottom: 12px;">
+                    <div>
+                      <label class="field-label" for="ver-name">Nome da Versão *</label>
+                      <input id="ver-name" class="field-input" type="text" value="Gravação Original" />
+                    </div>
+                    <div>
+                      <label class="field-label" for="ver-key">Tom da Versão * (30 opções)</label>
+                      <select id="ver-key" class="field-input">
+                        <option value="G" selected>G (Sol Maior)</option>
+                        <option value="E">E (Mi Maior)</option>
+                        <option value="C">C (Dó Maior)</option>
+                        <option value="Em">Em (Mi Menor)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="field-label" for="ver-bpm">Andamento (BPM)</label>
+                      <input id="ver-bpm" class="field-input" type="number" value="68" />
+                    </div>
+                  </div>
+
+                  <!-- Duração em 3 campos (HH : MM : SS) conforme VersionEditModal real -->
+                  <div style="margin-bottom: 12px;">
+                    <label class="field-label">Duração da Versão (Horas : Minutos : Segundos)</label>
+                    <div class="form-grid-3">
+                      <input class="field-input" type="number" value="0" aria-label="Horas (HH)" placeholder="Horas (HH)" />
+                      <input class="field-input" type="number" value="5" aria-label="Minutos (MM)" placeholder="Minutos (MM)" />
+                      <input class="field-input" type="number" value="14" aria-label="Segundos (SS)" placeholder="Segundos (SS)" />
+                    </div>
+                  </div>
+
+                  <!-- Classificações da Versão -->
+                  <div style="margin-bottom: 12px;">
+                    <span class="field-label">Classificações da Versão</span>
+                    <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                      <button type="button" class="filter-chip active">✓ Adoração</button>
+                      <button type="button" class="filter-chip active">✓ Santa Ceia</button>
+                      <button type="button" class="filter-chip">Celebração</button>
+                      <button type="button" class="filter-chip">Abertura</button>
+                    </div>
+                  </div>
+
+                  <!-- Links Padrão + Links Customizados -->
+                  <div style="margin-top: 14px;">
+                    <span class="field-label">Links Padrão da Versão (Letra, Cifra, Áudio, Vídeo)</span>
+                    <div class="form-grid-2" style="margin-bottom: 12px;">
+                      <div>
+                        <label class="field-label" for="lnk-video">Link de Vídeo (YouTube)</label>
+                        <input id="lnk-video" class="field-input" type="url" value="https://youtube.com/watch?v=exemplo" />
+                      </div>
+                      <div>
+                        <label class="field-label" for="lnk-audio">Link de Áudio (Spotify / Deezer)</label>
+                        <input id="lnk-audio" class="field-input" type="url" value="https://open.spotify.com/track/exemplo" />
+                      </div>
+                      <div>
+                        <label class="field-label" for="lnk-cifra">Link de Cifra Externa</label>
+                        <input id="lnk-cifra" class="field-input" type="url" value="https://cifraclub.com.br/isaias-saad/bondade-de-deus" />
+                      </div>
+                      <div>
+                        <label class="field-label" for="lnk-letra">Link de Letra</label>
+                        <input id="lnk-letra" class="field-input" type="url" placeholder="https://letras.mus.br/..." />
+                      </div>
+                    </div>
+
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                      <span class="field-label" style="margin-bottom: 0;">Links Customizados (Ex.: VS, Multitracks, Partitura)</span>
+                      <button type="button" class="btn btn-secondary" style="padding: 4px 10px; min-height: 32px; font-size: 12px;">+ Adicionar Link Customizado</button>
+                    </div>
+                    <div class="form-grid-2">
+                      <input class="field-input" type="text" value="VS / Multitracks (Google Drive)" aria-label="Rótulo do link customizado" />
+                      <input class="field-input" type="url" value="https://drive.google.com/drive/folders/exemplo" aria-label="URL do link customizado" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="modal-sticky-footer">
+              <button class="btn btn-secondary" onclick="setScreen('list', document.querySelectorAll('.proto-btn')[0])">Cancelar</button>
+              <button class="btn btn-primary" onclick="setScreen('detail', document.querySelectorAll('.proto-btn')[1])">Salvar Música e Versões</button>
+            </div>
+          </div>
+        </section>
+
+      </main>
+
+      <!-- BOTTOM NAV MOBILE -->
+      <nav class="mobile-bottom-nav" aria-label="Navegação Mobile">
+        <button class="bottom-nav-btn">Início</button>
+        <button class="bottom-nav-btn">Escalas</button>
+        <button class="bottom-nav-btn active">Repertório</button>
+        <button class="bottom-nav-btn" onclick="window.location.href='cifras-inteligentes-desktop-mobile.html'">Cifras</button>
+        <button class="bottom-nav-btn">Ministério</button>
+      </nav>
+
+    </div>
+  </div>
+
+  <script>
+    function setScreen(screenId, btnEl) {
+      document.querySelectorAll('.view-section').forEach(s => s.classList.remove('active'));
+      document.getElementById('screen-' + screenId).classList.add('active');
+      if (btnEl) {
+        btnEl.parentElement.querySelectorAll('.proto-btn').forEach(b => b.classList.remove('active'));
+        btnEl.classList.add('active');
+      }
+    }
+
+    function setViewport(mode) {
+      document.body.classList.toggle('viewport-mobile', mode === 'mobile');
+      document.getElementById('btn-vp-desktop').classList.toggle('active', mode === 'desktop');
+      document.getElementById('btn-vp-mobile').classList.toggle('active', mode === 'mobile');
+    }
+
+    function toggleTheme() {
+      document.body.classList.toggle('dark');
+    }
+  </script>
+</body>
+</html>
