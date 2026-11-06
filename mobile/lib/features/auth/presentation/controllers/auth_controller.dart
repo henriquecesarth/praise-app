@@ -55,6 +55,8 @@ class AuthState {
       status == AuthStatus.error || status == AuthStatus.bootstrapError;
   String get chordFontFamily =>
       user?.chordFontFamily ?? AuthUser.defaultChordFont;
+  int get chordLineSpacingPx =>
+      user?.chordLineSpacingPx ?? AuthUser.defaultChordLineSpacingPx;
 
   AuthState copyWith({
     AuthStatus? status,
@@ -86,8 +88,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
   final Future<void> Function()? _onBeforeSignOut;
   StreamSubscription<User?>? _authSubscription;
   int _authOpId = 0;
-  int _preferenceOpId = 0;
-  int _confirmedPreferenceOpId = 0;
+  int _fontPreferenceOpId = 0;
+  int _spacingPreferenceOpId = 0;
+  int _confirmedFontPreferenceOpId = 0;
+  int _confirmedSpacingPreferenceOpId = 0;
   int? _credentialOpId;
 
   AuthNotifier(this._repository, {Future<void> Function()? onBeforeSignOut})
@@ -105,8 +109,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
       if (_credentialOpId != null) return;
       final opId = ++_authOpId;
       if (firebaseUser == null) {
-        ++_preferenceOpId;
-        ++_confirmedPreferenceOpId;
+        ++_fontPreferenceOpId;
+        ++_spacingPreferenceOpId;
+        ++_confirmedFontPreferenceOpId;
+        ++_confirmedSpacingPreferenceOpId;
         if (!state.isUnauthenticated) {
           state = const AuthState.unauthenticated();
         }
@@ -121,22 +127,31 @@ class AuthNotifier extends StateNotifier<AuthState> {
     bool canRetrySessionChange = true,
   ]) async {
     final opId = expectedOpId ?? ++_authOpId;
-    final confirmedPrefIdAtStart = _confirmedPreferenceOpId;
+    final confirmedFontIdAtStart = _confirmedFontPreferenceOpId;
+    final confirmedSpacingIdAtStart = _confirmedSpacingPreferenceOpId;
     try {
       final authUser = await _repository.getMe();
       if (opId == _authOpId) {
         final currentUser = state.user;
-        final hasNewerPreference =
-            currentUser != null &&
-            currentUser.id == authUser.id &&
-            confirmedPrefIdAtStart != _confirmedPreferenceOpId;
+        final isSameUser = currentUser != null && currentUser.id == authUser.id;
+        final hasNewerFont =
+            isSameUser && confirmedFontIdAtStart != _confirmedFontPreferenceOpId;
+        final hasNewerSpacing =
+            isSameUser &&
+            confirmedSpacingIdAtStart != _confirmedSpacingPreferenceOpId;
 
-        final effectiveFont = hasNewerPreference
+        final effectiveFont = hasNewerFont
             ? currentUser.chordFontFamily
             : authUser.chordFontFamily;
+        final effectiveSpacing = hasNewerSpacing
+            ? currentUser.chordLineSpacingPx
+            : authUser.chordLineSpacingPx;
 
         state = AuthState.authenticated(
-          authUser.copyWith(chordFontFamily: effectiveFont),
+          authUser.copyWith(
+            chordFontFamily: effectiveFont,
+            chordLineSpacingPx: effectiveSpacing,
+          ),
         );
       }
     } catch (e) {
@@ -247,22 +262,45 @@ class AuthNotifier extends StateNotifier<AuthState> {
     final currentUser = state.user;
     if (currentUser == null) return;
 
-    final opId = ++_preferenceOpId;
+    final opId = ++_fontPreferenceOpId;
     try {
       final confirmedFont = await _repository.updateChordFontPreference(
         chordFontFamily: fontFamily,
       );
 
       // Fencing: ignore if a newer preference op ran or if user changed / logged out
-      if (opId == _preferenceOpId &&
+      if (opId == _fontPreferenceOpId &&
           state.isAuthenticated &&
           state.user?.id == currentUser.id) {
-        _confirmedPreferenceOpId = opId;
+        ++_confirmedFontPreferenceOpId;
         state = state.copyWith(
-          user: currentUser.copyWith(chordFontFamily: confirmedFont),
+          user: state.user!.copyWith(chordFontFamily: confirmedFont),
         );
       }
     } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> updateChordLineSpacingPreference(int spacingPx) async {
+    final currentUser = state.user;
+    if (currentUser == null) return;
+    final bounded = spacingPx.clamp(0, 24);
+    final spacing = bounded.isEven ? bounded : bounded - 1;
+    final opId = ++_spacingPreferenceOpId;
+    try {
+      final confirmed = await _repository.updateChordLineSpacingPreference(
+        spacingPx: spacing,
+      );
+      if (opId == _spacingPreferenceOpId &&
+          state.isAuthenticated &&
+          state.user?.id == currentUser.id) {
+        ++_confirmedSpacingPreferenceOpId;
+        state = state.copyWith(
+          user: state.user!.copyWith(chordLineSpacingPx: confirmed),
+        );
+      }
+    } catch (_) {
       rethrow;
     }
   }
@@ -275,8 +313,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
       (repository as AuthAttemptInvalidator).cancelPendingAuthentication();
     }
     _credentialOpId = opId;
-    ++_preferenceOpId;
-    ++_confirmedPreferenceOpId;
+    ++_fontPreferenceOpId;
+    ++_spacingPreferenceOpId;
+    ++_confirmedFontPreferenceOpId;
+    ++_confirmedSpacingPreferenceOpId;
     state = const AuthState.unauthenticated();
     if (_onBeforeSignOut != null) {
       try {

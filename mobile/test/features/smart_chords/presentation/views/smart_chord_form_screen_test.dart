@@ -144,6 +144,9 @@ class FakeSmartChordRepo implements SmartChordRepository {
       content: payload['content'] as String,
       songId: payload['song_id'] as String?,
       artistId: payload['artist_id'] as String?,
+      sourceUrl: payload['source_url'] as String?,
+      displayedKey: payload['displayed_key'] as String?,
+      capo: payload['capo'] as int?,
       createdAt: '',
       updatedAt: '',
     );
@@ -446,4 +449,66 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('editing imported Smart Chord displays metadata banner and preserves sourceUrl, displayedKey, and capo on save', (tester) async {
+    const importedChord = SmartChord(
+      id: 'sc-imported-1',
+      userId: 'user-a',
+      title: 'Bondade de Deus',
+      originalKey: 'G',
+      content: '[G]Te amo Deus',
+      sourceUrl: 'https://www.cifraclub.com.br/isaias-saad/bondade-de-deus/',
+      displayedKey: 'A',
+      capo: 2,
+      createdAt: '',
+      updatedAt: '',
+    );
+
+    await tester.pumpWidget(buildApp(initialChord: importedChord));
+    await tester.tap(find.text('Abrir Form'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('smart_chord_metadata_banner')), findsOneWidget);
+    expect(find.text('Capo: 2ª casa'), findsOneWidget);
+    expect(find.text('Tom exibido: A'), findsOneWidget);
+
+    await tester.enterText(find.byKey(const ValueKey('smart_chord_title_field')), 'Bondade de Deus (Ao Vivo)');
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('smart_chord_save_button')));
+    await tester.pumpAndSettle();
+
+    expect(repo.lastUpdatedPayload, isNotNull);
+    expect(repo.lastUpdatedPayload!['title'], equals('Bondade de Deus (Ao Vivo)'));
+    expect(
+      repo.lastUpdatedPayload!['source_url'],
+      equals('https://www.cifraclub.com.br/isaias-saad/bondade-de-deus/'),
+    );
+    expect(repo.lastUpdatedPayload!['displayed_key'], equals('A'));
+    expect(repo.lastUpdatedPayload!['capo'], equals(2));
+  });
+
+  testWidgets('dirty form intercepts back navigation with discard confirmation dialog', (tester) async {
+    await tester.pumpWidget(buildApp());
+    await tester.tap(find.text('Abrir Form'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const ValueKey('smart_chord_title_field')), 'Rascunho Não Salvo');
+    await tester.pumpAndSettle();
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Descartar alterações?'), findsOneWidget);
+    await tester.tap(find.text('Continuar editando'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('smart_chord_save_button')), findsOneWidget);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Descartar'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('smart_chord_save_button')), findsNothing);
+  });
 }

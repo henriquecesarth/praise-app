@@ -5,7 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/core/errors/app_failure.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/views/cifraclub_capture_screen.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
 
 const _sourceUrl = 'https://cifraclub.com.br/artista/minha-musica/';
@@ -80,8 +79,7 @@ class _FakeWebViewPlatform extends WebViewPlatform {
 }
 
 class _FakeNavigationDelegate extends PlatformNavigationDelegate {
-  _FakeNavigationDelegate(PlatformNavigationDelegateCreationParams params)
-    : super.implementation(params);
+  _FakeNavigationDelegate(super.params) : super.implementation();
 
   NavigationRequestCallback? navigationRequest;
   PageEventCallback? pageStarted;
@@ -118,9 +116,9 @@ class _FakeNavigationDelegate extends PlatformNavigationDelegate {
 
 class _FakeWebViewController extends PlatformWebViewController {
   _FakeWebViewController(
-    PlatformWebViewControllerCreationParams params,
+    super.params,
     this.owner,
-  ) : super.implementation(params);
+  ) : super.implementation();
 
   final _FakeWebViewPlatform owner;
   PlatformNavigationDelegate? delegate;
@@ -171,8 +169,7 @@ class _FakeWebViewController extends PlatformWebViewController {
 }
 
 class _FakeWebViewWidget extends PlatformWebViewWidget {
-  _FakeWebViewWidget(PlatformWebViewWidgetCreationParams params)
-    : super.implementation(params);
+  _FakeWebViewWidget(super.params) : super.implementation();
 
   @override
   Widget build(BuildContext context) =>
@@ -245,7 +242,7 @@ void main() {
             )
             .first,
       );
-      expect(overlay.color!.alpha, 0xff);
+      expect((overlay.color!.a * 255.0).round().clamp(0, 255), 0xff);
 
       platform.navigationDelegate!.pageFinished?.call(_sourceUrl);
       await tester.pump();

@@ -207,8 +207,12 @@ class InMemoryPreferencesStorage
     implements
         PreferencesStorage,
         UserChordFontPreferencesStorage,
+        UserChordLineSpacingPreferencesStorage,
+        UserPdfMarkerPreferencesStorage,
         UserMinistrySelectionStorage {
   final Map<String, String> _data = {};
+  final Map<String, int> _intData = {};
+  final Map<String, bool> _boolData = {};
 
   @override
   Future<void> setSelectedMinistryId(String? ministryId) async {
@@ -264,8 +268,48 @@ class InMemoryPreferencesStorage
       _data['louvaio_chord_font_user_$userId'];
 
   @override
+  Future<void> setUserChordLineSpacingPx(
+      String userId, int? lineSpacingPx) async {
+    final key = 'louvaio_chord_line_spacing_user_$userId';
+    if (lineSpacingPx == null) {
+      _intData.remove(key);
+    } else {
+      _intData[key] = lineSpacingPx;
+    }
+  }
+
+  @override
+  int? getUserChordLineSpacingPx(String userId) =>
+      _intData['louvaio_chord_line_spacing_user_$userId'];
+
+  @override
+  Future<void> setUserPdfMarkerText(String userId, String? markerText) async {
+    final key = 'louvaio_pdf_marker_text_user_$userId';
+    if (markerText == null) {
+      _data.remove(key);
+    } else {
+      _data[key] = markerText;
+    }
+  }
+
+  @override
+  String? getUserPdfMarkerText(String userId) =>
+      _data['louvaio_pdf_marker_text_user_$userId'];
+
+  @override
+  Future<void> setUserPdfMarkerEnabled(String userId, bool enabled) async {
+    _boolData['louvaio_pdf_marker_enabled_user_$userId'] = enabled;
+  }
+
+  @override
+  bool getUserPdfMarkerEnabled(String userId) =>
+      _boolData['louvaio_pdf_marker_enabled_user_$userId'] ?? false;
+
+  @override
   Future<void> clear() async {
     _data.clear();
+    _intData.clear();
+    _boolData.clear();
   }
 }
 
@@ -385,6 +429,11 @@ final authNotifierProvider =
 final chordFontPreferenceProvider = Provider<String>((ref) {
   final authState = ref.watch(authNotifierProvider);
   return authState.chordFontFamily;
+});
+
+final chordLineSpacingPreferenceProvider = Provider<int>((ref) {
+  final authState = ref.watch(authNotifierProvider);
+  return authState.chordLineSpacingPx;
 });
 
 /// Provider for the ministry repository.

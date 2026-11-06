@@ -1341,5 +1341,85 @@ void main() {
       );
       expect((serialized['versions'] as List)[1]['bpm'], equals(' Rubato '));
     });
+
+    testWidgets(
+        'VersionEditorSheet preserves orphan classification IDs and edits Letra and custom links',
+        (tester) async {
+      final song = SongDetail.fromJson(const {
+        'id': 'song-web-links',
+        'ministry_id': 'min_1',
+        'title': 'Música Com Links Web',
+        'versions': [
+          {
+            'id': 'v_1',
+            'name': 'Original',
+            'classificationIds': ['orphan-class-99'],
+            'links': [
+              {
+                'id': 'l_1',
+                'label': 'Letra',
+                'url': 'https://letras.mus.br/exemplo',
+                'isCustom': false,
+              },
+            ],
+          },
+        ],
+      });
+
+      await tester.pumpWidget(buildSubject(initialSong: song));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('edit_version_button_0')),
+      );
+      await tester.tap(find.byKey(const ValueKey('edit_version_button_0')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('class_chip_orphan-class-99')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('song_lyrics_url_input')),
+        findsOneWidget,
+      );
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('add_custom_link_button')),
+      );
+      await tester.tap(find.byKey(const ValueKey('add_custom_link_button')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const ValueKey('custom_link_label_0')),
+        'VS Multitrack',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('custom_link_url_0')),
+        'https://drive.google.com/vs-multitrack',
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('save_version_sheet_button')));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('song_form_save_button')),
+      );
+      await tester.tap(find.byKey(const ValueKey('song_form_save_button')));
+      await tester.pumpAndSettle();
+
+      expect(fakeRepo.lastUpdatedData, isNotNull);
+      final serialized = fakeRepo.lastUpdatedData!.toJson();
+      final v0 = (serialized['versions'] as List)[0] as Map<String, dynamic>;
+      expect(v0['classificationIds'], equals(['orphan-class-99']));
+      final links = v0['links'] as List;
+      expect(links.length, equals(2));
+      expect(links[0]['label'], equals('Letra'));
+      expect(links[0]['url'], equals('https://letras.mus.br/exemplo'));
+      expect(links[1]['label'], equals('VS Multitrack'));
+      expect(links[1]['url'], equals('https://drive.google.com/vs-multitrack'));
+      expect(links[1]['isCustom'], isTrue);
+    });
   });
 }

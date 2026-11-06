@@ -36,6 +36,21 @@ abstract class ChordFontPreferenceUpdater {
   Future<String> updateChordFontPreference({required String chordFontFamily});
 }
 
+abstract class ChordLineSpacingPreferenceUpdater {
+  Future<int> updateChordLineSpacingPreference({required int spacingPx});
+}
+
+extension AuthRepositoryChordLineSpacingExtension on AuthRepository {
+  Future<int> updateChordLineSpacingPreference({required int spacingPx}) async {
+    final self = this;
+    if (self is ChordLineSpacingPreferenceUpdater) {
+      return (self as ChordLineSpacingPreferenceUpdater)
+          .updateChordLineSpacingPreference(spacingPx: spacingPx);
+    }
+    return AuthUser.defaultChordLineSpacingPx;
+  }
+}
+
 /// Safe extension providing updateChordFontPreference on any [AuthRepository].
 extension AuthRepositoryChordFontExtension on AuthRepository {
   Future<String> updateChordFontPreference({
@@ -57,12 +72,14 @@ class FirebaseAuthRepository
     implements
         AuthRepository,
         ChordFontPreferenceUpdater,
+        ChordLineSpacingPreferenceUpdater,
         AuthAttemptInvalidator {
   final FirebaseAuth _firebaseAuth;
   final ApiClient _apiClient;
   final PreferencesStorage _preferencesStorage;
 
   int _preferenceMutationGeneration = 0;
+  Future<void> _spacingPreferenceTail = Future<void>.value();
   int _sessionGeneration = 0;
   String? _activeSessionUid;
   StreamSubscription<User?>? _authStateSub;
@@ -308,6 +325,10 @@ class FirebaseAuthRepository
           user.id,
           user.chordFontFamily,
         );
+        await _preferencesStorage.setUserChordLineSpacingPx(
+          user.id,
+          user.chordLineSpacingPx,
+        );
       }
       return user;
     } on DioException catch (e) {
@@ -368,6 +389,78 @@ class FirebaseAuthRepository
       throw _apiClient.mapDioException(e);
     } catch (e) {
       throw AuthFailureNormalizer.normalize(e);
+    }
+  }
+
+  @override
+  Future<int> updateChordLineSpacingPreference({required int spacingPx}) {
+    final previous = _spacingPreferenceTail;
+    final completer = Completer<void>();
+    _spacingPreferenceTail = completer.future;
+    return _updateChordLineSpacingPreferenceAfter(
+      previous,
+      completer,
+      spacingPx,
+    );
+  }
+
+  Future<int> _updateChordLineSpacingPreferenceAfter(
+    Future<void> previous,
+    Completer<void> completer,
+    int spacingPx,
+  ) async {
+    final bounded = spacingPx.clamp(0, 24);
+    final effectiveSpacing = bounded.isEven ? bounded : bounded - 1;
+    final session = currentSessionContext;
+    final initiatingUid = session?.userId ?? _firebaseAuth.currentUser?.uid;
+    final initiatingSessionGen =
+        session?.sessionGeneration ?? _sessionGeneration;
+    ++_preferenceMutationGeneration;
+    try {
+      await previous;
+      final activeSession = currentSessionContext;
+      if ((activeSession?.userId ?? _firebaseAuth.currentUser?.uid) !=
+              initiatingUid ||
+          (activeSession?.sessionGeneration ?? _sessionGeneration) !=
+              initiatingSessionGen) {
+        return AuthUser.defaultChordLineSpacingPx;
+      }
+      final response = await _apiClient.dio.patch<Map<String, dynamic>>(
+        '/auth/me/preferences',
+        data: {'chord_line_spacing_px': effectiveSpacing},
+        options: Options(
+          extra: {
+            if (initiatingUid != null)
+              AuthInterceptor.sessionUserIdKey: initiatingUid,
+            if (initiatingSessionGen > 0)
+              AuthInterceptor.sessionGenerationKey: initiatingSessionGen,
+          },
+        ),
+      );
+      final prefs = response.data?['preferences'];
+      final confirmed = prefs is Map ? prefs['chord_line_spacing_px'] : null;
+      if (confirmed is int &&
+          confirmed >= 0 &&
+          confirmed <= 24 &&
+          confirmed.isEven) {
+        if (initiatingUid != null && initiatingUid.isNotEmpty) {
+          await _preferencesStorage.setUserChordLineSpacingPx(
+            initiatingUid,
+            confirmed,
+          );
+        }
+        return confirmed;
+      }
+      throw const AppFailure(
+        message: 'Resposta inválida ao salvar espaçamento das cifras.',
+        statusCode: 500,
+      );
+    } on DioException catch (e) {
+      throw _apiClient.mapDioException(e);
+    } catch (e) {
+      throw AuthFailureNormalizer.normalize(e);
+    } finally {
+      completer.complete();
     }
   }
 
