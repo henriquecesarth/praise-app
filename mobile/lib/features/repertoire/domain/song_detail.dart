@@ -165,6 +165,9 @@ class SongVersion {
         _duration = duration,
         _links = links;
 
+  bool get hasClassificationIds =>
+      _classificationIds is! _SongFieldOmitted && _classificationIds != null;
+
   List<String> get classificationIds =>
       (_classificationIds is _SongFieldOmitted || _classificationIds == null)
           ? const []
@@ -194,21 +197,28 @@ class SongVersion {
         ? rawName
         : (index == 0 ? 'Original' : 'Versão ${index + 1}');
 
-    List<String> parsedClassificationIds = const [];
+    Object? parsedClassificationIds = songFieldOmitted;
+    final hasClassIdsKey = json.containsKey('classificationIds') ||
+        json.containsKey('classification_ids');
+    final hasSingleClassIdKey = json.containsKey('classificationId') ||
+        json.containsKey('classification_id');
     final rawClassIds = json['classificationIds'] ?? json['classification_ids'];
     if (rawClassIds is List) {
       parsedClassificationIds = rawClassIds
           .where((e) => e != null && e.toString().trim().isNotEmpty)
           .map((e) => e.toString().trim())
           .toList();
-    } else {
+    } else if (hasSingleClassIdKey) {
       final singleClassId =
           (json['classificationId'] ?? json['classification_id'])
               ?.toString()
               .trim();
-      if (singleClassId != null && singleClassId.isNotEmpty) {
-        parsedClassificationIds = [singleClassId];
-      }
+      parsedClassificationIds =
+          (singleClassId != null && singleClassId.isNotEmpty)
+              ? <String>[singleClassId]
+              : const <String>[];
+    } else if (hasClassIdsKey) {
+      parsedClassificationIds = const <String>[];
     }
 
     final rawNotes = json['notes']?.toString();
@@ -535,6 +545,23 @@ class SongDetail {
           idx++;
         }
       }
+      if (parsedVersions.isNotEmpty &&
+          !parsedVersions.first.hasClassificationIds) {
+        if (resolvedClassificationId != null &&
+            resolvedClassificationId.trim().isNotEmpty) {
+          parsedVersions[0] = parsedVersions[0].copyWith(
+            classificationIds: <String>[resolvedClassificationId.trim()],
+          );
+        } else if (json['classification_ids'] is List) {
+          final rootClassIds = (json['classification_ids'] as List)
+              .where((c) => c != null && c.toString().trim().isNotEmpty)
+              .map((c) => c.toString().trim())
+              .toList();
+          parsedVersions[0] = parsedVersions[0].copyWith(
+            classificationIds: rootClassIds,
+          );
+        }
+      }
     }
 
     if (parsedVersions.isEmpty) {
@@ -568,6 +595,10 @@ class SongDetail {
         }
       });
 
+      final hasRootClassificationKey = json.containsKey('classification_id') ||
+          json.containsKey('classificationId') ||
+          json.containsKey('classification_ids') ||
+          json.containsKey('classification');
       final legacyClassIds = <String>[];
       if (resolvedClassificationId != null &&
           resolvedClassificationId.trim().isNotEmpty) {
@@ -584,7 +615,9 @@ class SongDetail {
         SongVersion(
           id: songId.trim().isNotEmpty ? '${songId.trim()}_v1' : 'v1',
           name: 'Original',
-          classificationIds: legacyClassIds,
+          classificationIds: (legacyClassIds.isNotEmpty || hasRootClassificationKey)
+              ? legacyClassIds
+              : songFieldOmitted,
           notes: json['version_notes']?.toString(),
           key: flatKey,
           bpm: flatBpm,

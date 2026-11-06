@@ -345,6 +345,13 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
           color: theme.colorScheme.secondary,
         );
       }
+      if (lower == 'letra' || lower == 'letras') {
+        return (
+          title: 'Letra Externa',
+          icon: Icons.article_outlined,
+          color: theme.colorScheme.tertiary,
+        );
+      }
     }
     return (
       title: link.label.trim().isNotEmpty ? link.label.trim() : 'Link Externo',

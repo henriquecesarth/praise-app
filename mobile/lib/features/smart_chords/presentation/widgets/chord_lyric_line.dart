@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import '../../../auth/domain/auth_user.dart';
 import '../../domain/smart_chord_parser.dart';
 
 /// Measured syllabic reader layout. No padding is written into musical content.
@@ -10,10 +11,11 @@ class ChordLyricLine extends StatelessWidget {
   final String fontFamily;
   final List<String> fontFamilyFallback;
   final bool monospace;
+  final double spacingPx;
 
   const ChordLyricLine({super.key, required this.line, required this.semitones,
     required this.fontSize, required this.fontFamily,
-    required this.fontFamilyFallback, required this.monospace});
+    required this.fontFamilyFallback, required this.monospace, this.spacingPx = AuthUser.defaultChordLineSpacingPxDouble});
 
   @override
   Widget build(BuildContext context) {
@@ -30,8 +32,7 @@ class ChordLyricLine extends StatelessWidget {
       color: theme.colorScheme.primary, height: 1.2);
     final segments = SmartChordParser.parse(line).first.segments;
     if (!segments.any((segment) => segment.hasChord)) {
-      return Padding(padding: const EdgeInsets.only(bottom: 6),
-        child: SelectableText(line, style: lyricStyle));
+      return SelectableText(line, style: lyricStyle);
     }
     final scale = MediaQuery.textScalerOf(context);
     double width(String value, TextStyle style) {
@@ -66,8 +67,7 @@ class ChordLyricLine extends StatelessWidget {
       // including inherited style, text scaling, locale and platform fallback.
       return LayoutBuilder(builder: (context, constraints) {
         var fragmentIndex = 0;
-        return Padding(padding: const EdgeInsets.only(bottom: 10),
-          child: SelectionArea(child: Wrap(runSpacing: 10,
+        return SelectionArea(child: Wrap(runSpacing: spacingPx,
             crossAxisAlignment: WrapCrossAlignment.end,
             children: [
               for (var wordIndex = 0; wordIndex < words.length; wordIndex++)
@@ -93,7 +93,7 @@ class ChordLyricLine extends StatelessWidget {
                             ]),
                       ])),
                 )),
-            ])));
+            ]));
       });
     }
 
@@ -127,11 +127,11 @@ class ChordLyricLine extends StatelessWidget {
           child: !monospace && wordWidth > constraints.maxWidth
             ? SingleChildScrollView(scrollDirection: Axis.horizontal, child: row) : row));
       }
-      return Padding(padding: const EdgeInsets.only(bottom: 10), child: monospace
+      return monospace
         ? SingleChildScrollView(scrollDirection: Axis.horizontal,
             child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: items))
-        : SelectionArea(child: Wrap(runSpacing: 10, crossAxisAlignment: WrapCrossAlignment.end,
-            children: items)));
+        : SelectionArea(child: Wrap(runSpacing: spacingPx, crossAxisAlignment: WrapCrossAlignment.end,
+            children: items));
     });
   }
 }

@@ -6,6 +6,27 @@ import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/chord_
 import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/musical_progression_line.dart';
 
 void main() {
+  for (final spacing in [0.0, 8.0, 24.0]) {
+    for (final width in [360.0, 768.0]) {
+      testWidgets('spacing $spacing keeps transposed chord blocks on width $width', (tester) async {
+        tester.view.physicalSize = Size(width, 800);
+        tester.view.devicePixelRatio = 1;
+        await tester.pumpWidget(MaterialApp(home: Scaffold(body: ChordLyricLine(
+          line: '[C]Hoje eu quero [G]cantar [Am]com [F]alegria',
+          semitones: 2, fontSize: 16, fontFamily: 'Georgia',
+          fontFamilyFallback: const ['serif'], monospace: false, spacingPx: spacing,
+        ))));
+        expect(find.text('D'), findsOneWidget);
+        expect(find.text('A'), findsOneWidget);
+        expect(find.text('Bm'), findsOneWidget);
+        expect(find.text('G'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+    }
+  }
+
   const source = '[G#m7]a[C#m7]mor [A7M/9]e [F#/A#]fé';
   for (final monospace in [false, true]) {
     for (final offset in [-1, 2]) {

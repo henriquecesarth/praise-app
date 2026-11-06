@@ -408,12 +408,17 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
         ? songFieldOmitted
         : _selectedArtistId;
 
+    final Object? classificationIdPayload =
+        (widget.isEditing && !primary.hasClassificationIds)
+            ? songFieldOmitted
+            : (primary.classificationIds.isNotEmpty
+                ? primary.classificationIds.first
+                : null);
+
     final formData = SongFormData(
       title: _titleController.text.trim(),
       artistId: artistIdPayload,
-      classificationId: primary.classificationIds.isNotEmpty
-          ? primary.classificationIds.first
-          : null,
+      classificationId: classificationIdPayload,
       originalKey: primary.key,
       bpm: primary.bpm,
       duration: primary.duration,

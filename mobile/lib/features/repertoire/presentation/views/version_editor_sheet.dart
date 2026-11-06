@@ -41,6 +41,24 @@ class VersionEditorSheet extends StatefulWidget {
   State<VersionEditorSheet> createState() => _VersionEditorSheetState();
 }
 
+class _CustomLinkDraft {
+  final String? id;
+  final TextEditingController labelController;
+  final TextEditingController urlController;
+
+  _CustomLinkDraft({
+    this.id,
+    String label = '',
+    String url = '',
+  })  : labelController = TextEditingController(text: label),
+        urlController = TextEditingController(text: url);
+
+  void dispose() {
+    labelController.dispose();
+    urlController.dispose();
+  }
+}
+
 class _VersionEditorSheetState extends State<VersionEditorSheet> {
   final _formKey = GlobalKey<FormState>();
 
@@ -51,10 +69,12 @@ class _VersionEditorSheetState extends State<VersionEditorSheet> {
   late final TextEditingController _youtubeUrlController;
   late final TextEditingController _audioUrlController;
   late final TextEditingController _chordSheetUrlController;
+  late final TextEditingController _lyricsUrlController;
 
   String? _selectedKey;
   late List<String> _selectedClassificationIds;
-  late List<SongLink> _customLinks;
+  bool _classificationsTouched = false;
+  late List<_CustomLinkDraft> _customLinkDrafts;
 
   @override
   void initState() {
@@ -74,13 +94,33 @@ class _VersionEditorSheetState extends State<VersionEditorSheet> {
     _chordSheetUrlController = TextEditingController(
       text: _findStandardLink(v.links, const ['cifra']),
     );
+    _lyricsUrlController = TextEditingController(
+      text: _findStandardLink(v.links, const ['letra', 'letras']),
+    );
 
-    _customLinks = v.links.where((l) {
+    final customLinks = v.links.where((l) {
       if (l.isCustom) return true;
       final lower = l.label.trim().toLowerCase();
-      return !const ['vídeo', 'video', 'youtube', 'áudio', 'audio', 'cifra']
-          .contains(lower);
+      return !const [
+        'vídeo',
+        'video',
+        'youtube',
+        'áudio',
+        'audio',
+        'cifra',
+        'letra',
+        'letras',
+      ].contains(lower);
     }).toList();
+    _customLinkDrafts = customLinks
+        .map(
+          (l) => _CustomLinkDraft(
+            id: l.id,
+            label: l.label,
+            url: l.url,
+          ),
+        )
+        .toList();
 
     _selectedKey = v.key;
     _selectedClassificationIds = List<String>.from(v.classificationIds);
@@ -95,6 +135,10 @@ class _VersionEditorSheetState extends State<VersionEditorSheet> {
     _youtubeUrlController.dispose();
     _audioUrlController.dispose();
     _chordSheetUrlController.dispose();
+    _lyricsUrlController.dispose();
+    for (final draft in _customLinkDrafts) {
+      draft.dispose();
+    }
     super.dispose();
   }
 
@@ -160,16 +204,37 @@ class _VersionEditorSheetState extends State<VersionEditorSheet> {
     if (audUrl.isNotEmpty) {
       links.add(SongLink(label: 'Áudio', url: audUrl));
     }
-    for (final custom in _customLinks) {
-      if (custom.label.trim().isNotEmpty && custom.url.trim().isNotEmpty) {
-        links.add(custom);
+    final lyricsUrl = _lyricsUrlController.text.trim();
+    if (lyricsUrl.isNotEmpty) {
+      links.add(SongLink(label: 'Letra', url: lyricsUrl));
+    }
+    for (int i = 0; i < _customLinkDrafts.length; i++) {
+      final draft = _customLinkDrafts[i];
+      final label = draft.labelController.text.trim();
+      final url = draft.urlController.text.trim();
+      if (label.isNotEmpty && url.isNotEmpty) {
+        links.add(
+          SongLink(
+            id: draft.id ?? 'custom_${i + 1}',
+            label: label,
+            url: url,
+            isCustom: true,
+          ),
+        );
       }
     }
+
+    final Object resolvedClassificationIds = (!widget.isNew &&
+            !widget.initialVersion.hasClassificationIds &&
+            !_classificationsTouched &&
+            _selectedClassificationIds.isEmpty)
+        ? songFieldOmitted
+        : _selectedClassificationIds;
 
     final updatedVersion = SongVersion(
       id: widget.initialVersion.id,
       name: nameText.isNotEmpty ? nameText : 'Original',
-      classificationIds: _selectedClassificationIds,
+      classificationIds: resolvedClassificationIds,
       notes: notesText.isNotEmpty ? notesText : null,
       key: _selectedKey,
       bpm: resolvedBpm,
@@ -343,7 +408,8 @@ class _VersionEditorSheetState extends State<VersionEditorSheet> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      if (widget.classifications.isEmpty)
+                      if (widget.classifications.isEmpty &&
+                          _selectedClassificationIds.isEmpty)
                         Text(
                           'Nenhuma classificação cadastrada no ministério.',
                           style: theme.textTheme.bodySmall?.copyWith(
@@ -361,6 +427,7 @@ class _VersionEditorSheetState extends State<VersionEditorSheet> {
                               onSelected: (selected) {
                                 if (selected) {
                                   setState(() {
+                                    _classificationsTouched = true;
                                     _selectedClassificationIds = [];
                                   });
                                 }
@@ -393,6 +460,7 @@ class _VersionEditorSheetState extends State<VersionEditorSheet> {
                                     : null,
                                 onSelected: (selected) {
                                   setState(() {
+                                    _classificationsTouched = true;
                                     if (selected) {
                                       if (!_selectedClassificationIds
                                           .contains(c.id)) {
@@ -406,6 +474,27 @@ class _VersionEditorSheetState extends State<VersionEditorSheet> {
                                 },
                               );
                             }),
+                            ..._selectedClassificationIds
+                                .where(
+                                  (id) => !widget.classifications
+                                      .any((c) => c.id == id),
+                                )
+                                .map(
+                                  (orphanId) => FilterChip(
+                                    key: ValueKey('class_chip_$orphanId'),
+                                    label: Text('ID: $orphanId'),
+                                    selected: true,
+                                    onSelected: (selected) {
+                                      if (!selected) {
+                                        setState(() {
+                                          _classificationsTouched = true;
+                                          _selectedClassificationIds
+                                              .remove(orphanId);
+                                        });
+                                      }
+                                    },
+                                  ),
+                                ),
                           ],
                         ),
                       const SizedBox(height: 20),
@@ -472,6 +561,112 @@ class _VersionEditorSheetState extends State<VersionEditorSheet> {
                         ),
                         validator: _validateUrl,
                       ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        key: const ValueKey('song_lyrics_url_input'),
+                        controller: _lyricsUrlController,
+                        keyboardType: TextInputType.url,
+                        decoration: const InputDecoration(
+                          labelText: 'Link da Letra Externa',
+                          hintText: 'https://...',
+                          prefixIcon: Icon(Icons.article_outlined),
+                          border: OutlineInputBorder(),
+                        ),
+                        validator: _validateUrl,
+                      ),
+                      const SizedBox(height: 16),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        alignment: WrapAlignment.spaceBetween,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text(
+                            'Links Personalizados',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          TextButton.icon(
+                            key: const ValueKey('add_custom_link_button'),
+                            onPressed: () {
+                              setState(() {
+                                _customLinkDrafts.add(
+                                  _CustomLinkDraft(
+                                    id: 'custom_${DateTime.now().microsecondsSinceEpoch}',
+                                  ),
+                                );
+                              });
+                            },
+                            icon: const Icon(Icons.add_link, size: 18),
+                            label: const Text('Adicionar Link'),
+                          ),
+                        ],
+                      ),
+                      if (_customLinkDrafts.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        ...List.generate(_customLinkDrafts.length, (idx) {
+                          final draft = _customLinkDrafts[idx];
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  flex: 2,
+                                  child: TextFormField(
+                                    key: ValueKey('custom_link_label_$idx'),
+                                    controller: draft.labelController,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Rótulo',
+                                      hintText: 'Ex: VS, Playback',
+                                      border: OutlineInputBorder(),
+                                      isDense: true,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  flex: 3,
+                                  child: TextFormField(
+                                    key: ValueKey('custom_link_url_$idx'),
+                                    controller: draft.urlController,
+                                    keyboardType: TextInputType.url,
+                                    decoration: const InputDecoration(
+                                      labelText: 'URL',
+                                      hintText: 'https://...',
+                                      border: OutlineInputBorder(),
+                                      isDense: true,
+                                    ),
+                                    validator: (val) {
+                                      final hasLabel = draft.labelController.text
+                                          .trim()
+                                          .isNotEmpty;
+                                      if (hasLabel &&
+                                          (val == null || val.trim().isEmpty)) {
+                                        return 'Informe a URL';
+                                      }
+                                      return _validateUrl(val);
+                                    },
+                                  ),
+                                ),
+                                IconButton(
+                                  key: ValueKey('remove_custom_link_$idx'),
+                                  icon: const Icon(Icons.delete_outline),
+                                  tooltip: 'Remover link',
+                                  onPressed: () {
+                                    setState(() {
+                                      final removed =
+                                          _customLinkDrafts.removeAt(idx);
+                                      removed.dispose();
+                                    });
+                                  },
+                                ),
+                              ],
+                            ),
+                          );
+                        }),
+                      ],
                     ],
                   ),
                 ),

@@ -418,6 +418,28 @@ void main() {
         expect(summary.bpm, equals(' Rubato '));
         expect(summary.versions[0].bpm, equals(' Rubato '));
       });
+
+      test('SongVersion.fromJson omits classificationIds in toJson when absent from JSON and SongDetail seeds primary version from root classification_id', () {
+        final rawVersion = SongVersion.fromJson(const {'id': 'v_2', 'name': 'Acústica'}, index: 1);
+        expect(rawVersion.hasClassificationIds, isFalse);
+        expect(rawVersion.classificationIds, isEmpty);
+        expect(rawVersion.toJson().containsKey('classificationIds'), isFalse);
+        expect(rawVersion.toJson().containsKey('classification_ids'), isFalse);
+
+        final detail = SongDetail.fromJson(const {
+          'id': 'song-root-class',
+          'ministry_id': 'min-alpha',
+          'title': 'Com Classificação Raiz',
+          'classification_id': 'class-root-1',
+          'versions': [
+            {'id': 'v_1', 'name': 'Original', 'key': 'G'},
+            {'id': 'v_2', 'name': 'Acústica', 'key': 'F'},
+          ],
+        });
+        expect(detail.versions[0].hasClassificationIds, isTrue);
+        expect(detail.versions[0].classificationIds, equals(['class-root-1']));
+        expect(detail.versions[1].hasClassificationIds, isFalse);
+      });
     });
 
     group('PaginatedSongs', () {
