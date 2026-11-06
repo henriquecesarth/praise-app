@@ -3,11 +3,18 @@ import { config } from '../config/unifiedConfig';
 import { AppError } from '../middleware/error-handler';
 import jwt from 'jsonwebtoken';
 
+export interface UserPreferences {
+  chord_font_family?: string;
+  chord_line_spacing_px?: number;
+  [key: string]: unknown;
+}
+
 export interface UserRecordData {
   id: string;
   email: string;
   name: string;
   createdAt?: string;
+  preferences?: UserPreferences;
 }
 
 export class UserRepository {
@@ -71,11 +78,14 @@ export class UserRepository {
       }
 
       const data = (await response.json()) as any;
-      const doc = await this.usersCollection.doc(data.localId).get();
+      if (typeof data.idToken !== 'string') throw new AppError(401, 'Invalid Firebase identity response.');
+      const identity = await authAdmin.verifyIdToken(data.idToken);
+      if (!identity.uid || identity.uid !== data.localId) throw new AppError(401, 'Firebase identity mismatch.');
+      const doc = await this.usersCollection.doc(identity.uid).get();
       const userData = doc.exists ? (doc.data() as UserRecordData) : null;
 
       return {
-        uid: data.localId,
+        uid: identity.uid,
         email: data.email,
         name: userData?.name || data.displayName || data.email.split('@')[0],
       };
@@ -120,6 +130,7 @@ export class UserRepository {
           email: data?.email || '',
           name: data?.name || (data?.email ? data.email.split('@')[0] : 'Usuário'),
           createdAt: data?.createdAt,
+          preferences: data?.preferences,
         };
       }
       if (authAdmin && typeof authAdmin.getUser === 'function') {
@@ -139,6 +150,72 @@ export class UserRepository {
   /**
    * Gera token JWT assinado para autenticação de sessões da API
    */
+  async updatePreferences(userId: string, patch: Partial<UserPreferences>): Promise<UserPreferences> {
+    if (!userId) {
+      throw new AppError(401, 'Sessão inválida ou expirada. Faça login novamente.');
+    }
+
+    const userDocRef = this.usersCollection.doc(userId);
+    const fields = Object.fromEntries(
+      Object.entries(patch).map(([key, value]) => [`preferences.${key}`, value])
+    );
+    try {
+      // Dotted field updates keep unrelated preferences and avoid lost updates when
+      // font and spacing are changed concurrently by separate clients.
+      await userDocRef.update(fields);
+    } catch (error) {
+      const code = (error as { code?: string | number })?.code;
+      if (code !== 5 && code !== '5' && code !== 'not-found') {
+        throw error;
+      }
+
+      let verifiedRecord;
+      try {
+        verifiedRecord = await authAdmin.getUser(userId);
+      } catch (authError) {
+        const authCode = (authError as { code?: string })?.code;
+        if (authCode === 'auth/user-not-found') {
+          throw new AppError(404, 'Perfil de usuário não encontrado.');
+        }
+        throw authError;
+      }
+      if (verifiedRecord.uid !== userId) {
+        throw new AppError(403, 'Identidade do usuário inválida.');
+      }
+      if (verifiedRecord.disabled) {
+        throw new AppError(403, 'Conta de usuário desabilitada.');
+      }
+
+
+      const email = verifiedRecord.email || '';
+      const profile: UserRecordData = {
+        id: verifiedRecord.uid,
+        email,
+        name: verifiedRecord.displayName || (email ? email.split('@')[0] : 'Usuário'),
+        createdAt: new Date().toISOString(),
+        preferences: patch,
+      };
+      try {
+        // create is atomic: one concurrent first writer wins; losers patch only
+        // their requested fields and never replace the winning profile.
+        await userDocRef.create(profile);
+      } catch (createError) {
+        const createCode = (createError as { code?: string | number })?.code;
+        if (createCode !== 6 && createCode !== '6' && createCode !== 'already-exists') {
+          throw createError;
+        }
+        await userDocRef.update(fields);
+      }
+    }
+
+    const doc = await userDocRef.get();
+    const currentData = doc.data() as Partial<UserRecordData> | undefined;
+    return (currentData?.preferences && typeof currentData.preferences === 'object')
+      ? currentData.preferences
+      : {};
+  }
+
+
   generateAuthToken(userId: string, email: string): string {
     return jwt.sign(
       { uid: userId, email },

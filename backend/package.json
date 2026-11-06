@@ -1,15 +1,16 @@
 {
   "name": "praise-backend",
   "version": "1.0.0",
-  "description": "LouvAIO — Backend API (Node.js + TypeScript + Firebase)",
-  "main": "dist/server.js",
+  "description": "LouvAIO \u00e2\u20ac\u201d Backend API (Node.js + TypeScript + Firebase)",
+  "main": "dist-publish/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
-    "start": "node dist/server.js",
+    "build": "tsc -p tsconfig.publish.json",
+    "start": "node dist-publish/server.js",
     "billing:sandbox": "tsx src/scripts/billing-sandbox-bootstrap.ts",
     "test": "vitest run",
-    "lint": "eslint src/"
+    "lint": "eslint src/",
+    "build:local": "tsc"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",

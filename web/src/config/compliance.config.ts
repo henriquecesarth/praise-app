@@ -28,8 +28,10 @@ export function resolveComplianceConfig(
   const publicSupportEmail = getVal('VITE_PUBLIC_SUPPORT_EMAIL');
   const privacyContactEmail = getVal('VITE_PRIVACY_CONTACT_EMAIL') || publicSupportEmail;
   const controllerDisplayName = getVal('VITE_CONTROLLER_DISPLAY_NAME');
+  const buildEnv = (globalThis as typeof globalThis & { __LOUVAIO_BUILD_ENV__?: string }).__LOUVAIO_BUILD_ENV__;
+  const published = buildEnv === 'preview' || buildEnv === 'production';
   const firebaseWebApiKey =
-    getVal('VITE_FIREBASE_API_KEY') || 'AIzaSyC4Fbmri7h8V5lhmiOTKcUJvQQeqo2BuwU';
+    getVal('VITE_FIREBASE_API_KEY') || (published ? '' : 'AIzaSyC4Fbmri7h8V5lhmiOTKcUJvQQeqo2BuwU');
   const accountDeletionWebUrl =
     getVal('VITE_ACCOUNT_DELETION_WEB_URL') || CANONICAL_ACCOUNT_DELETION_WEB_URL;
 

@@ -1,10 +1,14 @@
+import { validatePublishEnvironment } from './src/config/publish-guard';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 // https://vitejs.dev/config/
-export default defineConfig({
+export default defineConfig(({ command, mode }) => {
+validatePublishEnvironment(process.env, command, mode);
+return {
+define: { 'globalThis.__LOUVAIO_VERIFIED_API__': JSON.stringify(['preview','production'].includes(process.env.VERCEL_ENV || '') ? process.env.VITE_API_URL : ''), 'globalThis.__LOUVAIO_BUILD_ENV__': JSON.stringify(process.env.VERCEL_ENV || 'local') },
   plugins: [
     react(),
     tailwindcss(),
@@ -65,4 +69,4 @@ export default defineConfig({
   server: {
     port: 5173,
   },
-});
+}; });

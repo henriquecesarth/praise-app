@@ -14,6 +14,9 @@ export class SmartChordRepository {
       song_id: raw.song_id ?? null,
       original_key: raw.original_key || 'C',
       content: raw.content || '',
+      source_url: raw.source_url ?? null,
+      displayed_key: raw.displayed_key ?? null,
+      capo: raw.capo ?? null,
       created_at: raw.created_at || '',
       updated_at: raw.updated_at || '',
       artist: raw.artist ?? null,
@@ -67,6 +70,9 @@ export class SmartChordRepository {
       song_id: data.song_id || null,
       original_key: data.original_key,
       content: data.content,
+      source_url: data.source_url ?? null,
+      displayed_key: data.displayed_key ?? null,
+      capo: data.capo ?? null,
       created_at: now,
       updated_at: now,
     };
@@ -84,6 +90,9 @@ export class SmartChordRepository {
     if (data.title !== undefined) updateData.title = data.title;
     if (data.original_key !== undefined) updateData.original_key = data.original_key;
     if (data.content !== undefined) updateData.content = data.content;
+    if (data.source_url !== undefined) updateData.source_url = data.source_url;
+    if (data.displayed_key !== undefined) updateData.displayed_key = data.displayed_key;
+    if (data.capo !== undefined) updateData.capo = data.capo;
     if (data.artist_name !== undefined) updateData.artist_name = data.artist_name || null;
     if (data.artist_id !== undefined) updateData.artist_id = data.artist_id || null;
     if (data.song_id !== undefined) updateData.song_id = data.song_id || null;
