@@ -2,17 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/providers.dart';
 import '../../../ministry_context/presentation/controllers/ministry_context_controller.dart';
+import '../../../repertoire/presentation/views/song_detail_view.dart';
 import '../../domain/schedule.dart';
-import '../../domain/schedule_comment.dart';
+import '../../domain/song_timeline.dart';
+import 'schedule_chat_view.dart';
 import '../../domain/schedule_participant.dart';
-import '../controllers/schedule_detail_controller.dart';
 import 'schedule_form_screen.dart';
 
 /// Full schedule detail screen.
 ///
 /// State is keyed by [ministryId] + [scheduleId].
 /// Contains: title, date/time, duration, notes, participants,
-/// songs/timeline/clothing (when present), confirmation section, comments.
+/// songs/timeline/clothing (when present), confirmation section, comments,
+/// and admin edit/delete controls.
 class ScheduleDetailView extends ConsumerStatefulWidget {
   final String ministryId;
   final String scheduleId;
@@ -30,8 +32,6 @@ class ScheduleDetailView extends ConsumerStatefulWidget {
 }
 
 class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
-  final _commentController = TextEditingController();
-  final _commentFocusNode = FocusNode();
 
   @override
   void initState() {
@@ -50,11 +50,59 @@ class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
         .load(widget.ministryId, widget.scheduleId);
   }
 
-  @override
-  void dispose() {
-    _commentController.dispose();
-    _commentFocusNode.dispose();
-    super.dispose();
+  Future<void> _confirmAndDeleteSchedule(
+    ScheduleDetail schedule,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Excluir escala?'),
+        content: Text(
+          'Tem certeza que deseja excluir a escala "${schedule.title}"? Esta ação não pode ser desfeita.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const ValueKey('confirm_delete_schedule_button'),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    final deleted = await ref
+        .read(scheduleDetailNotifierProvider.notifier)
+        .deleteSchedule(widget.ministryId, widget.scheduleId);
+
+    if (!mounted) return;
+
+    if (deleted) {
+      ref.read(scheduleListNotifierProvider.notifier).refresh();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Escala "${schedule.title}" excluída com sucesso.'),
+        ),
+      );
+      Navigator.of(context).maybePop();
+    } else {
+      final err = ref.read(scheduleDetailNotifierProvider).deleteError ??
+          'Não foi possível excluir a escala.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(err),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+    }
   }
 
   @override
@@ -105,9 +153,6 @@ class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
         scheduleId: widget.scheduleId,
         isConfirming: detailState.isConfirming,
         confirmationError: detailState.confirmationError,
-        commentsState: commentsState,
-        commentController: _commentController,
-        commentFocusNode: _commentFocusNode,
       );
     } else {
       body = const Center(child: CircularProgressIndicator());
@@ -128,7 +173,28 @@ class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
           overflow: TextOverflow.ellipsis,
         ),
         actions: [
-          if (isAdmin && detailState.schedule != null)
+          IconButton(
+            key: const ValueKey('open_schedule_chat'),
+            tooltip: 'Chat da Escala',
+            icon: Badge(
+              isLabelVisible: commentsState.ministryId == widget.ministryId &&
+                  commentsState.scheduleId == widget.scheduleId && commentsState.comments.isNotEmpty,
+              label: Text('${commentsState.comments.length}'),
+              child: const Icon(Icons.chat_bubble_outline)),
+            onPressed: !isMatchingTenant ? null : () async {
+              final userId = ref.read(authNotifierProvider).user?.id;
+              if (userId == null || userId.isEmpty) return;
+              await Navigator.of(context).push(MaterialPageRoute<void>(
+                builder: (_) => ScheduleChatView(ministryId: widget.ministryId,
+                  scheduleId: widget.scheduleId, userId: userId)));
+              if (!mounted || ref.read(authNotifierProvider).user?.id != userId ||
+                  ref.read(ministryContextNotifierProvider).selectedMinistry?.id != widget.ministryId) {
+                return;
+              }
+              ref.read(commentsNotifierProvider.notifier).load(widget.ministryId, widget.scheduleId);
+            },
+          ),
+          if (isAdmin && detailState.schedule != null) ...[
             IconButton(
               key: const ValueKey('edit_schedule_button'),
               icon: const Icon(Icons.edit_outlined),
@@ -144,9 +210,29 @@ class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
                 );
               },
             ),
+            IconButton(
+              key: const ValueKey('delete_schedule_button'),
+              icon: detailState.isDeleting
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      Icons.delete_outline,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+              tooltip: 'Excluir escala',
+              onPressed: detailState.isDeleting
+                  ? null
+                  : () => _confirmAndDeleteSchedule(
+                        detailState.schedule!,
+                      ),
+            ),
+          ],
         ],
       ),
-      body: SafeArea(child: body),
+      body: SafeArea(bottom: false, child: body),
     );
   }
 }
@@ -159,90 +245,35 @@ class _DetailContent extends ConsumerWidget {
   final String scheduleId;
   final bool isConfirming;
   final String? confirmationError;
-  final CommentsState commentsState;
-  final TextEditingController commentController;
-  final FocusNode commentFocusNode;
-
-  const _DetailContent({
-    required this.schedule,
-    required this.ministryId,
-    required this.scheduleId,
-    required this.isConfirming,
-    required this.confirmationError,
-    required this.commentsState,
-    required this.commentController,
-    required this.commentFocusNode,
-  });
+  const _DetailContent({required this.schedule, required this.ministryId,
+    required this.scheduleId, required this.isConfirming, this.confirmationError});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final isWide = MediaQuery.sizeOf(context).width >= 600;
-    final maxWidth = isWide ? 680.0 : double.infinity;
-
-    return Center(
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: maxWidth),
-        child: Column(
-          children: [
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.all(20),
-                children: [
-                  _InfoSection(schedule: schedule),
-                  const SizedBox(height: 16),
-                  if (schedule.participants.isNotEmpty) ...[
-                    _ParticipantsSection(participants: schedule.participants),
-                    const SizedBox(height: 16),
-                  ],
-                  _ConfirmationSection(
-                    schedule: schedule,
-                    ministryId: ministryId,
-                    scheduleId: scheduleId,
-                    isConfirming: isConfirming,
-                    error: confirmationError,
-                  ),
-                  const SizedBox(height: 16),
-                  if (schedule.songs.isNotEmpty) ...[
-                    _SongsSection(songs: schedule.songs),
-                    const SizedBox(height: 16),
-                  ],
-                  if (schedule.timeline.isNotEmpty) ...[
-                    _TimelineSection(items: schedule.timeline),
-                    const SizedBox(height: 16),
-                  ],
-                  if (schedule.clothingPieces.isNotEmpty ||
-                      (schedule.colorPalette != null &&
-                          schedule.colorPalette!.trim().isNotEmpty)) ...[
-                    _ClothingSection(
-                      pieces: schedule.clothingPieces,
-                      palette: schedule.colorPalette,
-                    ),
-                    const SizedBox(height: 16),
-                  ],
-                  if (schedule.notes?.isNotEmpty == true) ...[
-                    _NotesSection(notes: schedule.notes!),
-                    const SizedBox(height: 16),
-                  ],
-                  _CommentsSection(
-                    ministryId: ministryId,
-                    scheduleId: scheduleId,
-                    commentsState: commentsState,
-                  ),
-                  const SizedBox(height: 20),
-                ],
-              ),
-            ),
-            _CommentComposer(
-              ministryId: ministryId,
-              scheduleId: scheduleId,
-              controller: commentController,
-              focusNode: commentFocusNode,
-              commentsState: commentsState,
-            ),
+    return Center(child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 760),
+      child: SingleChildScrollView(
+        key: const ValueKey('schedule_detail_sections'),
+        padding: const EdgeInsets.all(12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          _InfoSection(schedule: schedule),
+          const SizedBox(height: 16),
+          _SongsSection(songs: schedule.songs, ministryId: ministryId),
+          const SizedBox(height: 16),
+          _TimelineSection(items: schedule.timeline, songs: schedule.songs, ministryId: ministryId),
+          const SizedBox(height: 16),
+          _ParticipantsSection(participants: schedule.participants),
+          const SizedBox(height: 16),
+          _ConfirmationSection(schedule: schedule, ministryId: ministryId,
+            scheduleId: scheduleId, isConfirming: isConfirming, error: confirmationError),
+          const SizedBox(height: 16),
+          _ClothingSection(pieces: schedule.clothingPieces, palette: schedule.colorPalette),
+          if (schedule.notes?.isNotEmpty == true) ...[
+            const SizedBox(height: 16), _NotesSection(notes: schedule.notes!),
           ],
-        ),
+        ]),
       ),
-    );
+    ));
   }
 }
 
@@ -258,11 +289,11 @@ class _SectionCard extends StatelessWidget {
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(20),
         side: BorderSide(
             color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4)),
       ),
-      child: Padding(padding: const EdgeInsets.all(16), child: child),
+      child: Padding(padding: const EdgeInsets.all(20), child: child),
     );
   }
 }
@@ -302,13 +333,96 @@ class _InfoSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return _SectionCard(
+    final dressCount = schedule.clothingPieces.length +
+        ((schedule.colorPalette != null &&
+                schedule.colorPalette!.trim().isNotEmpty &&
+                schedule.clothingPieces.isEmpty)
+            ? 1
+            : 0);
+
+    return Card(
+      key: const ValueKey('schedule_detail_hero'),
+      elevation: 0,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4)),
+      ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            key: const ValueKey('schedule_detail_accent_bar'),
+            height: 8,
+            color: parseScheduleColor(schedule.colorPalette) ?? theme.colorScheme.secondary,
+          ),
+          Padding(
+            padding: const EdgeInsets.all(22),
+            child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(schedule.title,
-              style: theme.textTheme.titleLarge
-                  ?.copyWith(fontWeight: FontWeight.bold)),
+              style: theme.textTheme.headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w800)),
+          if (!schedule.isVisible || schedule.requireConfirmation) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: [
+                if (!schedule.isVisible)
+                  Container(
+                    key: const ValueKey('schedule_private_badge'),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.secondaryContainer,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.visibility_off_outlined,
+                          size: 13,
+                          color: theme.colorScheme.onSecondaryContainer,
+                        ),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            'Privado (apenas admins)',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.onSecondaryContainer,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (schedule.requireConfirmation)
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primaryContainer
+                          .withValues(alpha: 0.6),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      'Confirmação solicitada',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onPrimaryContainer,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
           const SizedBox(height: 12),
           _InfoRow(
               icon: Icons.calendar_today_outlined,
@@ -326,8 +440,57 @@ class _InfoSection extends StatelessWidget {
               text: schedule.weeksUntil(),
               color: theme.colorScheme.primary,
             ),
+          const SizedBox(height: 12),
+          const Divider(height: 1),
+          const SizedBox(height: 10),
+          LayoutBuilder(builder: (context, constraints) {
+            final width = (constraints.maxWidth - 8) / 2;
+            return Wrap(key: const ValueKey('schedule_detail_stats_row'), spacing: 8, runSpacing: 8, children: [
+              for (final stat in [
+                ('participantes', Icons.people_outline, schedule.participants.length, 'Participantes'),
+                ('musicas', Icons.music_note_outlined, schedule.songs.length, 'Músicas'),
+                ('roteiro', Icons.view_timeline_outlined, schedule.timeline.length, 'Roteiro'),
+                ('vestimenta', Icons.checkroom_outlined, dressCount, 'Vestimenta'),
+              ]) SizedBox(width: width, child: _StatCell(
+                keyName: 'schedule_detail_stat_${stat.$1}', icon: stat.$2, count: stat.$3, label: stat.$4)),
+            ]);
+          }),
         ],
       ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatCell extends StatelessWidget {
+  final String keyName;
+  final IconData icon;
+  final int count;
+  final String label;
+
+  const _StatCell({
+    required this.keyName,
+    required this.icon,
+    required this.count,
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      key: ValueKey(keyName),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(12)),
+      child: Column(children: [
+        Icon(icon, size: 22, color: theme.colorScheme.primary),
+        const SizedBox(height: 6),
+        Text('$count', style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+        Text(label, textAlign: TextAlign.center, style: theme.textTheme.labelMedium),
+      ]),
     );
   }
 }
@@ -351,9 +514,13 @@ class _ParticipantsSection extends StatelessWidget {
             Icon(Icons.people_outline,
                 size: 18, color: theme.colorScheme.primary),
             const SizedBox(width: 8),
-            Text('Participantes ($confirmed/$total confirmados)',
-                style: theme.textTheme.titleSmall
-                    ?.copyWith(fontWeight: FontWeight.w600)),
+            Expanded(
+              child: Text(
+                'Participantes ($confirmed/$total confirmados)',
+                style: theme.textTheme.titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
           ]),
           const SizedBox(height: 12),
           ...participants.map((p) => _ParticipantRow(participant: p)),
@@ -390,10 +557,17 @@ class _ParticipantRow extends StatelessWidget {
         const SizedBox(width: 8),
         Expanded(
             child: Text(participant.name, style: theme.textTheme.bodyMedium)),
-        if (participant.role.isNotEmpty)
-          Text(participant.role,
+        if (participant.role.isNotEmpty) ...[
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              participant.role,
+              textAlign: TextAlign.end,
               style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.55))),
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.55)),
+            ),
+          ),
+        ],
       ]),
     );
   }
@@ -436,18 +610,82 @@ class _ConfirmationSection extends ConsumerWidget {
         ]),
       );
     }
+
+    final authUser = ref.watch(authNotifierProvider).user;
+    ScheduleParticipant? myParticipant;
+    if (authUser != null) {
+      for (final p in schedule.participants) {
+        if (p.userId == authUser.id ||
+            p.id == authUser.id ||
+            (p.userId == null &&
+                authUser.name.trim().isNotEmpty &&
+                p.name.trim().toLowerCase() ==
+                    authUser.name.trim().toLowerCase())) {
+          myParticipant = p;
+          break;
+        }
+      }
+    }
+
+    final isExplicitlyUnscheduledUser =
+        authUser != null && myParticipant == null;
+
     return _SectionCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            Icon(Icons.how_to_reg_outlined,
-                size: 18, color: theme.colorScheme.primary),
-            const SizedBox(width: 8),
-            Text('Confirmação de Presença',
-                style: theme.textTheme.titleSmall
-                    ?.copyWith(fontWeight: FontWeight.w600)),
-          ]),
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.how_to_reg_outlined,
+                      size: 18, color: theme.colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      'Confirmação de Presença',
+                      style: theme.textTheme.titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+              if (myParticipant != null)
+                Container(
+                  key: const ValueKey('my_confirmation_status_badge'),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: myParticipant.confirmed == true
+                        ? Colors.green.withValues(alpha: 0.15)
+                        : myParticipant.confirmed == false
+                            ? theme.colorScheme.errorContainer
+                            : theme.colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    myParticipant.confirmed == true
+                        ? 'Confirmado'
+                        : myParticipant.confirmed == false
+                            ? 'Recusado'
+                            : 'Pendente',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: myParticipant.confirmed == true
+                          ? Colors.green.shade700
+                          : myParticipant.confirmed == false
+                              ? theme.colorScheme.onErrorContainer
+                              : theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+            ],
+          ),
           const SizedBox(height: 12),
           if (error != null) ...[
             Container(
@@ -475,48 +713,71 @@ class _ConfirmationSection extends ConsumerWidget {
             ),
             const SizedBox(height: 10),
           ],
-          Row(children: [
-            Expanded(
-              child: SizedBox(
-                height: 44,
-                child: OutlinedButton.icon(
-                  onPressed: isConfirming
-                      ? null
-                      : () => ref
-                          .read(scheduleDetailNotifierProvider.notifier)
-                          .confirm(ministryId, scheduleId, false),
-                  icon: const Icon(Icons.cancel_outlined, size: 17),
-                  label: const Text('Não vou'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: theme.colorScheme.error,
-                    side: BorderSide(
-                        color: theme.colorScheme.error.withValues(alpha: 0.5)),
+          if (isExplicitlyUnscheduledUser)
+            Text(
+              'Você não está escalado nesta escala.',
+              key: const ValueKey('not_scheduled_participant_notice'),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                fontStyle: FontStyle.italic,
+              ),
+            )
+          else
+            Row(children: [
+              Expanded(
+                child: SizedBox(
+                  height: 44,
+                  child: OutlinedButton.icon(
+                    onPressed: isConfirming
+                        ? null
+                        : () => ref
+                            .read(scheduleDetailNotifierProvider.notifier)
+                            .confirm(ministryId, scheduleId, false),
+                    icon: const Icon(Icons.cancel_outlined, size: 17),
+                    label: const Text(
+                      'Não vou',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      foregroundColor: theme.colorScheme.error,
+                      side: BorderSide(
+                          color:
+                              theme.colorScheme.error.withValues(alpha: 0.5)),
+                    ),
                   ),
                 ),
               ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: SizedBox(
-                height: 44,
-                child: FilledButton.icon(
-                  onPressed: isConfirming
-                      ? null
-                      : () => ref
-                          .read(scheduleDetailNotifierProvider.notifier)
-                          .confirm(ministryId, scheduleId, true),
-                  icon: isConfirming
-                      ? const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white))
-                      : const Icon(Icons.check_circle_outline, size: 17),
-                  label: Text(isConfirming ? 'Confirmando...' : 'Confirmar'),
+              const SizedBox(width: 10),
+              Expanded(
+                child: SizedBox(
+                  height: 44,
+                  child: FilledButton.icon(
+                    onPressed: isConfirming
+                        ? null
+                        : () => ref
+                            .read(scheduleDetailNotifierProvider.notifier)
+                            .confirm(ministryId, scheduleId, true),
+                    icon: isConfirming
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white))
+                        : const Icon(Icons.check_circle_outline, size: 17),
+                    label: Text(
+                      isConfirming ? 'Confirmando...' : 'Confirmar',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ]),
+            ]),
         ],
       ),
     );
@@ -527,7 +788,12 @@ class _ConfirmationSection extends ConsumerWidget {
 
 class _SongsSection extends StatelessWidget {
   final List<ScheduleSong> songs;
-  const _SongsSection({required this.songs});
+  final String ministryId;
+
+  const _SongsSection({
+    required this.songs,
+    required this.ministryId,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -540,31 +806,93 @@ class _SongsSection extends StatelessWidget {
             Icon(Icons.queue_music_outlined,
                 size: 18, color: theme.colorScheme.primary),
             const SizedBox(width: 8),
-            Text('Músicas (${songs.length})',
-                style: theme.textTheme.titleSmall
-                    ?.copyWith(fontWeight: FontWeight.w600)),
+            Expanded(
+              child: Text(
+                'Músicas Escaladas (${songs.length})',
+                style: theme.textTheme.titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
           ]),
           const SizedBox(height: 10),
           ...songs.asMap().entries.map((e) {
             final idx = e.key + 1;
             final song = e.value;
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 3),
-              child: Row(children: [
-                Text('$idx.',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurface
-                            .withValues(alpha: 0.5))),
-                const SizedBox(width: 8),
-                Expanded(
-                    child: Text(song.title ?? '—',
-                        style: theme.textTheme.bodyMedium)),
-                if (song.artist != null)
-                  Text(song.artist!,
+            final canOpenDetail = song.id.trim().isNotEmpty;
+            return InkWell(
+              key: ValueKey('detail_song_row_$idx'),
+              onTap: canOpenDetail
+                  ? () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => SongDetailView(
+                            ministryId: ministryId,
+                            songId: song.id,
+                            initialTitle: song.title,
+                          ),
+                        ),
+                      );
+                    }
+                  : null,
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(vertical: 16, horizontal: 4),
+                child: Row(children: [
+                  Text('$idx.',
                       style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurface
-                              .withValues(alpha: 0.55))),
-              ]),
+                              .withValues(alpha: 0.5))),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(song.title ?? '—',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w500,
+                            )),
+                        if (song.artist != null && song.artist!.isNotEmpty)
+                          Text(
+                            song.artist!,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurface
+                                    .withValues(alpha: 0.55)),
+                          ),
+                      ],
+                    ),
+                  ),
+                  if (song.key != null && song.key!.trim().isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      key: ValueKey('detail_song_key_${song.id}'),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                            color: theme.colorScheme.outlineVariant),
+                      ),
+                      child: Text(
+                        'Tom: ${song.key}',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (canOpenDetail) ...[
+                    const SizedBox(width: 4),
+                    Icon(
+                      Icons.chevron_right,
+                      size: 18,
+                      color:
+                          theme.colorScheme.onSurface.withValues(alpha: 0.45),
+                    ),
+                  ],
+                ]),
+              ),
             );
           }),
         ],
@@ -577,159 +905,104 @@ class _SongsSection extends StatelessWidget {
 
 class _TimelineSection extends StatelessWidget {
   final List<ScheduleTimelineItem> items;
-  const _TimelineSection({required this.items});
+  final List<ScheduleSong> songs;
+  final String ministryId;
+  const _TimelineSection({required this.items, required this.songs, required this.ministryId});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return _SectionCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Icon(Icons.view_timeline_outlined,
-                size: 18, color: theme.colorScheme.primary),
-            const SizedBox(width: 8),
-            Text('Roteiro',
-                style: theme.textTheme.titleSmall
-                    ?.copyWith(fontWeight: FontWeight.w600)),
-          ]),
-          const SizedBox(height: 10),
-          ...items.map((item) => Padding(
-                padding: const EdgeInsets.symmetric(vertical: 3),
-                child: Row(children: [
-                  SizedBox(
-                    width: 42,
-                    child: Text(
-                      item.time ?? '',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurface
-                              .withValues(alpha: 0.5),
-                          fontFamily: 'monospace'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                      child:
-                          Text(item.title, style: theme.textTheme.bodyMedium)),
-                ]),
-              )),
-        ],
-      ),
-    );
+    return _SectionCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('Roteiro do Culto', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+      const SizedBox(height: 20),
+      if (items.isEmpty) const Text('Nenhum momento no roteiro desta escala.'),
+      for (var index = 0; index < items.length; index++)
+        Builder(builder: (context) {
+          final item = items[index];
+          final song = isSongSlot(item) ? resolveTimelineSong(item, items.take(index).where(isSongSlot).length, songs) : null;
+          return IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            SizedBox(width: 36, child: Column(children: [
+              CircleAvatar(radius: 18, child: Text('${index + 1}')),
+              if (index < items.length - 1)
+                Expanded(child: Center(child: Container(width: 2, color: theme.colorScheme.outlineVariant))),
+            ])),
+            const SizedBox(width: 14),
+            Expanded(child: InkWell(
+              key: ValueKey('timeline_item_${item.id}'),
+              onTap: song == null ? null : () => Navigator.of(context).push(MaterialPageRoute<void>(
+                builder: (_) => SongDetailView(ministryId: ministryId, songId: song.id, initialTitle: song.title))),
+              child: Padding(padding: const EdgeInsets.only(bottom: 24, top: 4),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(song?.title ?? item.title,
+                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  Wrap(spacing: 8, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                    Chip(label: Text(const {
+                      'Música': 'Louvor', 'worship': 'Louvor', 'prayer': 'Oração',
+                      'word': 'Palavra', 'transition': 'Transição', 'other': 'Outro',
+                    }[item.type] ?? item.type),
+                      visualDensity: VisualDensity.compact),
+                    if (item.time?.isNotEmpty == true) Text(item.time!),
+                    if (song != null) const Icon(Icons.chevron_right, size: 20),
+                  ]),
+                ])),
+            )),
+          ]));
+        }),
+    ]));
   }
 }
 
-// ─── Clothing Section ─────────────────────────────────────────────────────────
+/// Existing stored hex values are rendered without changing persistence.
+Color? parseScheduleColor(String? value) {
+  final text = value?.trim() ?? '';
+  if (!RegExp(r'^#?[0-9a-fA-F]{3}$|^#?[0-9a-fA-F]{6}$').hasMatch(text)) return null;
+  var hex = text.replaceFirst('#', '');
+  if (hex.length == 3) hex = hex.split('').map((c) => '$c$c').join();
+  return Color(int.parse('FF$hex', radix: 16));
+}
+
+class _ColorSwatch extends StatelessWidget {
+  final Color color;
+  final Key? swatchKey;
+  const _ColorSwatch(this.color, {this.swatchKey});
+  @override
+  Widget build(BuildContext context) => Semantics(label: 'Cor da equipe',
+    child: Container(key: swatchKey, width: 48, height: 48,
+      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Theme.of(context).colorScheme.outline))));
+}
 
 class _ClothingSection extends StatelessWidget {
   final List<ScheduleClothingPiece> pieces;
   final String? palette;
-
   const _ClothingSection({required this.pieces, this.palette});
-
-  Color? _parseColor(String hex) {
-    try {
-      final clean = hex.replaceAll('#', '').trim();
-      if (clean.length == 6) {
-        return Color(int.parse('FF$clean', radix: 16));
-      }
-    } catch (_) {}
-    return null;
-  }
-
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final hasPalette = palette != null && palette!.trim().isNotEmpty;
-
-    return _SectionCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Icon(Icons.checkroom_outlined,
-                size: 18, color: theme.colorScheme.primary),
-            const SizedBox(width: 8),
-            Text('Vestimenta',
-                style: theme.textTheme.titleSmall
-                    ?.copyWith(fontWeight: FontWeight.w600)),
-            if (hasPalette) ...[
-              const Spacer(),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  palette!.trim(),
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ]),
-          if (pieces.isEmpty && hasPalette)
-            Padding(
-              padding: const EdgeInsets.only(top: 8.0),
-              child: Text(
-                'Paleta definida: ${palette!.trim()}',
-                style: theme.textTheme.bodyMedium,
-              ),
-            ),
-          if (pieces.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            ...pieces.map((piece) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 3),
-                  child: Row(children: [
-                    if (piece.colors.isNotEmpty)
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: piece.colors.map((c) {
-                          return Container(
-                            width: 14,
-                            height: 14,
-                            margin: const EdgeInsets.only(right: 4),
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: _parseColor(c) ??
-                                  theme.colorScheme.primary,
-                              border: Border.all(
-                                  color: theme.colorScheme.outlineVariant),
-                            ),
-                          );
-                        }).toList(),
-                      )
-                    else if (piece.colorHex != null)
-                      Container(
-                        width: 14,
-                        height: 14,
-                        margin: const EdgeInsets.only(right: 8),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: _parseColor(piece.colorHex!) ??
-                              theme.colorScheme.primary,
-                          border: Border.all(
-                              color: theme.colorScheme.outlineVariant),
-                        ),
-                      ),
-                    if (piece.description.isNotEmpty)
-                      Expanded(
-                        child: Text(
-                          piece.description,
-                          style: theme.textTheme.bodyMedium,
-                        ),
-                      ),
-                  ]),
-                )),
-          ],
-        ],
-      ),
-    );
+    final color = parseScheduleColor(palette);
+    final legacyLabel = palette?.trim();
+    return _SectionCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('Vestimenta', style: Theme.of(context).textTheme.titleLarge),
+      const SizedBox(height: 16),
+      if (color != null)
+        Row(children: [
+          _ColorSwatch(color, swatchKey: const ValueKey('schedule_palette_swatch')),
+          const SizedBox(width: 12), const Expanded(child: Text('Cor da equipe')),
+        ])
+      else if (legacyLabel != null && legacyLabel.isNotEmpty && !legacyLabel.startsWith('#'))
+        Text(legacyLabel)
+      else
+        const Text('Cor da equipe não definida'),
+      for (final piece in pieces) ...[
+        const SizedBox(height: 16),
+        Text(piece.description.isEmpty ? piece.name : piece.description),
+        const SizedBox(height: 8),
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          for (final value in piece.colors.isNotEmpty ? piece.colors : [if (piece.colorHex != null) piece.colorHex!])
+            if (parseScheduleColor(value) case final Color parsed) _ColorSwatch(parsed),
+        ]),
+      ],
+    ]));
   }
 }
 
@@ -750,9 +1023,13 @@ class _NotesSection extends StatelessWidget {
             Icon(Icons.notes_outlined,
                 size: 18, color: theme.colorScheme.primary),
             const SizedBox(width: 8),
-            Text('Observações',
-                style: theme.textTheme.titleSmall
-                    ?.copyWith(fontWeight: FontWeight.w600)),
+            Expanded(
+              child: Text(
+                'Observações',
+                style: theme.textTheme.titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
           ]),
           const SizedBox(height: 8),
           Text(notes, style: theme.textTheme.bodyMedium),
@@ -762,329 +1039,7 @@ class _NotesSection extends StatelessWidget {
   }
 }
 
-// ─── Comments Section ─────────────────────────────────────────────────────────
-
-class _CommentsSection extends ConsumerWidget {
-  final String ministryId;
-  final String scheduleId;
-  final CommentsState commentsState;
-
-  const _CommentsSection({
-    required this.ministryId,
-    required this.scheduleId,
-    required this.commentsState,
-  });
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
-    final isMatchingCommentsKey = commentsState.ministryId == ministryId &&
-        commentsState.scheduleId == scheduleId;
-
-    return _SectionCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Icon(Icons.chat_bubble_outline,
-                size: 18, color: theme.colorScheme.primary),
-            const SizedBox(width: 8),
-            Text('Comentários',
-                style: theme.textTheme.titleSmall
-                    ?.copyWith(fontWeight: FontWeight.w600)),
-          ]),
-          const SizedBox(height: 10),
-          if (commentsState.isCommerciallyRestricted) ...[
-            const _CommercialRestrictionBanner(),
-            const SizedBox(height: 8),
-          ],
-          if (!isMatchingCommentsKey || commentsState.isLoading) ...[
-            const Padding(
-                padding: EdgeInsets.symmetric(vertical: 16),
-                child: Center(child: CircularProgressIndicator())),
-          ] else if (commentsState.error != null) ...[
-            _InlineError(
-              message: commentsState.error!,
-              onRetry: () => ref
-                  .read(commentsNotifierProvider.notifier)
-                  .load(ministryId, scheduleId),
-            ),
-          ] else if (commentsState.comments.isEmpty) ...[
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Text(
-                'Nenhum comentário ainda. Seja o primeiro!',
-                style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.55),
-                    fontStyle: FontStyle.italic),
-              ),
-            ),
-          ] else ...[
-            ...commentsState.comments.map((c) => _CommentTile(comment: c)),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _CommentTile extends StatelessWidget {
-  final ScheduleComment comment;
-  const _CommentTile({required this.comment});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            CircleAvatar(
-              radius: 13,
-              backgroundColor: theme.colorScheme.secondaryContainer,
-              child: Text(
-                comment.userName.isNotEmpty
-                    ? comment.userName[0].toUpperCase()
-                    : '?',
-                style: theme.textTheme.labelSmall?.copyWith(
-                    color: theme.colorScheme.onSecondaryContainer,
-                    fontWeight: FontWeight.bold),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-                child: Text(comment.userName,
-                    style: theme.textTheme.labelMedium
-                        ?.copyWith(fontWeight: FontWeight.w600))),
-            Text(comment.formattedDate,
-                style: theme.textTheme.labelSmall?.copyWith(
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.5))),
-          ]),
-          const SizedBox(height: 4),
-          Padding(
-            padding: const EdgeInsets.only(left: 34),
-            child: Text(comment.content, style: theme.textTheme.bodyMedium),
-          ),
-          const Divider(height: 16, thickness: 0.5),
-        ],
-      ),
-    );
-  }
-}
-
-class _CommercialRestrictionBanner extends StatelessWidget {
-  const _CommercialRestrictionBanner();
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.tertiaryContainer.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(children: [
-        Icon(Icons.info_outline, size: 16, color: theme.colorScheme.tertiary),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            'O envio de comentários está temporariamente indisponível. A leitura continua disponível.',
-            style: theme.textTheme.bodySmall
-                ?.copyWith(color: theme.colorScheme.onTertiaryContainer),
-          ),
-        ),
-      ]),
-    );
-  }
-}
-
-// ─── Comment Composer ─────────────────────────────────────────────────────────
-
-class _CommentComposer extends ConsumerStatefulWidget {
-  final String ministryId;
-  final String scheduleId;
-  final TextEditingController controller;
-  final FocusNode focusNode;
-  final CommentsState commentsState;
-
-  const _CommentComposer({
-    required this.ministryId,
-    required this.scheduleId,
-    required this.controller,
-    required this.focusNode,
-    required this.commentsState,
-  });
-
-  @override
-  ConsumerState<_CommentComposer> createState() => _CommentComposerState();
-}
-
-class _CommentComposerState extends ConsumerState<_CommentComposer> {
-  String _text = '';
-
-  @override
-  void initState() {
-    super.initState();
-    widget.controller.addListener(_onTextChanged);
-  }
-
-  void _onTextChanged() {
-    setState(() => _text = widget.controller.text);
-  }
-
-  @override
-  void dispose() {
-    widget.controller.removeListener(_onTextChanged);
-    super.dispose();
-  }
-
-  bool get _canPost =>
-      widget.commentsState.ministryId == widget.ministryId &&
-      widget.commentsState.scheduleId == widget.scheduleId &&
-      _text.trim().isNotEmpty &&
-      _text.trim().length <= 1000 &&
-      !widget.commentsState.isPosting &&
-      !widget.commentsState.isCommerciallyRestricted;
-
-  Future<void> _submit() async {
-    if (!_canPost) return;
-    final success = await ref
-        .read(commentsNotifierProvider.notifier)
-        .postComment(widget.ministryId, widget.scheduleId, _text);
-    if (success && mounted) {
-      widget.controller.clear();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final postError = widget.commentsState.postError;
-    final isPosting = widget.commentsState.isPosting;
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (postError != null &&
-            !widget.commentsState.isCommerciallyRestricted) ...[
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-            color: theme.colorScheme.errorContainer.withValues(alpha: 0.8),
-            child: Row(children: [
-              Icon(Icons.warning_amber_outlined,
-                  size: 14, color: theme.colorScheme.error),
-              const SizedBox(width: 8),
-              Expanded(
-                  child: Text(postError,
-                      style: theme.textTheme.bodySmall
-                          ?.copyWith(color: theme.colorScheme.error))),
-              GestureDetector(
-                onTap: () => ref
-                    .read(commentsNotifierProvider.notifier)
-                    .clearPostError(),
-                child:
-                    Icon(Icons.close, size: 14, color: theme.colorScheme.error),
-              ),
-            ]),
-          ),
-        ],
-        Container(
-          padding: EdgeInsets.only(
-            left: 12,
-            right: 8,
-            top: 8,
-            bottom: MediaQuery.viewInsetsOf(context).bottom > 0 ? 8 : 12,
-          ),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
-            border: Border(
-              top: BorderSide(
-                  color:
-                      theme.colorScheme.outlineVariant.withValues(alpha: 0.4)),
-            ),
-          ),
-          child: Row(children: [
-            Expanded(
-              child: TextField(
-                controller: widget.controller,
-                focusNode: widget.focusNode,
-                maxLength: 1000,
-                maxLines: null,
-                textCapitalization: TextCapitalization.sentences,
-                decoration: InputDecoration(
-                  hintText: widget.commentsState.isCommerciallyRestricted
-                      ? 'Envio de comentários indisponível'
-                      : 'Escreva um comentário...',
-                  counterText: '',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(20),
-                    borderSide: BorderSide.none,
-                  ),
-                  filled: true,
-                  fillColor: theme.colorScheme.surfaceContainerHighest
-                      .withValues(alpha: 0.6),
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  isDense: true,
-                ),
-                enabled: widget.commentsState.ministryId == widget.ministryId &&
-                    widget.commentsState.scheduleId == widget.scheduleId &&
-                    !widget.commentsState.isCommerciallyRestricted,
-                onSubmitted: (_) => _submit(),
-              ),
-            ),
-            const SizedBox(width: 6),
-            SizedBox(
-              height: 44,
-              width: 44,
-              child: isPosting
-                  ? const Padding(
-                      padding: EdgeInsets.all(10),
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : IconButton(
-                      onPressed: _canPost ? _submit : null,
-                      icon: const Icon(Icons.send_rounded),
-                      tooltip: 'Enviar comentário',
-                    ),
-            ),
-          ]),
-        ),
-      ],
-    );
-  }
-}
-
-// ─── Error / Shared Widgets ───────────────────────────────────────────────────
-
-class _InlineError extends StatelessWidget {
-  final String message;
-  final VoidCallback onRetry;
-  const _InlineError({required this.message, required this.onRetry});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(message,
-            style: theme.textTheme.bodySmall
-                ?.copyWith(color: theme.colorScheme.error)),
-        const SizedBox(height: 8),
-        TextButton.icon(
-          onPressed: onRetry,
-          icon: const Icon(Icons.refresh, size: 14),
-          label: const Text('Tentar novamente'),
-          style: TextButton.styleFrom(
-              padding: EdgeInsets.zero, minimumSize: const Size(0, 44)),
-        ),
-      ],
-    );
-  }
-}
+// ─── Detail error ────────────────────────────────────────────────────────────
 
 class _DetailError extends StatelessWidget {
   final String message;

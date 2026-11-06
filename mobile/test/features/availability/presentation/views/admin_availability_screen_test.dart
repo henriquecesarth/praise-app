@@ -263,17 +263,24 @@ void main() {
     });
 
     testWidgets('admin sees items and privacy invariant: reason is never displayed', (tester) async {
+      final futureDate = DateTime.now().add(const Duration(days: 7));
+      final y = futureDate.year.toString().padLeft(4, '0');
+      final m = futureDate.month.toString().padLeft(2, '0');
+      final d = futureDate.day.toString().padLeft(2, '0');
+      final dateStr = '$y-$m-$d';
+      final formattedDate = '$d/$m/$y';
+
       availabilityRepo.items = [
-        const ConsolidatedAvailabilityItem(
+        ConsolidatedAvailabilityItem(
           id: 'cons_1',
           ministryId: 'min_1',
           memberId: 'm1',
           memberName: 'Baterista João',
-          startDate: '2026-10-25',
-          endDate: '2026-10-25',
+          startDate: dateStr,
+          endDate: dateStr,
           allDay: true,
-          startsAt: '2026-10-25T00:00:00',
-          endsAt: '2026-10-26T00:00:00',
+          startsAt: '${dateStr}T00:00:00',
+          endsAt: '${dateStr}T23:59:59',
         ),
       ];
 
@@ -284,7 +291,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Baterista João'), findsOneWidget);
-      expect(find.text('25/10/2026 • Dia inteiro'), findsOneWidget);
+      expect(find.text('$formattedDate • Dia inteiro'), findsOneWidget);
       expect(find.text('Agendado'), findsOneWidget);
 
       // Verify privacy preservation: no reason text in widget tree

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../core/storage/preferences_storage.dart';
 import '../firebase_options.dart';
+import 'environment/app_environment.dart';
 import 'app.dart';
 import 'providers.dart';
 import 'theme/app_theme.dart';
@@ -16,6 +17,36 @@ Future<void> bootstrap() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   try {
+    final environment = AppEnvironment.fromDartDefines();
+    const firebaseEnvironment = String.fromEnvironment('FIREBASE_ENV');
+    if (firebaseEnvironment == 'staging' || firebaseEnvironment == 'qa') {
+      const projectId = String.fromEnvironment('FIREBASE_STAGING_PROJECT_ID');
+      const productionProjectId = 'praise-app-7a362';
+      const qaProjectId = String.fromEnvironment('FIREBASE_QA_PROJECT_ID');
+      final options = DefaultFirebaseOptions.currentPlatform;
+      final stagingInvalid =
+          firebaseEnvironment == 'staging' &&
+          (projectId == productionProjectId || options.projectId != projectId);
+      final qaInvalid =
+          firebaseEnvironment == 'qa' &&
+          (qaProjectId != productionProjectId ||
+              options.projectId != qaProjectId);
+      if (stagingInvalid ||
+          qaInvalid ||
+          options.apiKey.isEmpty ||
+          options.appId.isEmpty ||
+          options.messagingSenderId.isEmpty ||
+          options.storageBucket == null ||
+          options.storageBucket!.isEmpty) {
+        throw StateError(
+          firebaseEnvironment == 'qa'
+              ? 'QA Firebase configuration is missing or unsafe.'
+              : 'Staging Firebase configuration is missing or unsafe.',
+        );
+      }
+    } else if (environment.isStaging) {
+      throw StateError('Staging app requires FIREBASE_ENV=staging.');
+    }
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
@@ -54,11 +85,7 @@ class FirebaseInitErrorApp extends StatelessWidget {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(
-                    Icons.error_outline,
-                    size: 56,
-                    color: AppColors.error,
-                  ),
+                  Icon(Icons.error_outline, size: 56, color: AppColors.error),
                   SizedBox(height: 16),
                   Text(
                     'Falha na Inicialização',

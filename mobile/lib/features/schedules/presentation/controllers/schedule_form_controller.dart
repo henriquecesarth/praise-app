@@ -8,6 +8,7 @@ import '../../data/schedule_repository.dart';
 import '../../domain/ministry_member.dart';
 import '../../domain/ministry_role.dart';
 import '../../domain/schedule.dart';
+import '../../domain/song_timeline.dart';
 import '../../domain/schedule_participant.dart';
 
 /// Snapshot of editable schedule form values used for pristine/dirty state comparison.
@@ -623,6 +624,7 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
     }
     state = state.copyWith(
       songs: [...state.songs, song],
+      timeline: syncSongTimeline(state.timeline, state.songs, [...state.songs, song]),
       isDirty: true,
       clearError: true,
     );
@@ -633,8 +635,21 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
   void removeSong(int index) {
     if (index < 0 || index >= state.songs.length) return;
     final updated = List<ScheduleSong>.from(state.songs)..removeAt(index);
+    final synced = syncSongTimeline(state.timeline, state.songs, updated);
+    final originalIds = state.initialSnapshot?.timeline.map((item) => item.id).toSet() ?? <String>{};
+    var slot = 0;
+    // Undoing a newly added song also removes its untouched, automatically
+    // created slot. Persisted/template/customized slots are always retained.
+    final timeline = synced.where((item) {
+      if (!isSongSlot(item)) return true;
+      slot++;
+      return slot <= updated.length || originalIds.contains(item.id) ||
+          !item.id.startsWith('song_slot_') || item.time?.isNotEmpty == true ||
+          item.title != 'Música $slot';
+    }).toList();
     state = state.copyWith(
       songs: updated,
+      timeline: timeline,
       isDirty: true,
       clearError: true,
     );
@@ -653,6 +668,7 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
     updated.insert(target, item);
     state = state.copyWith(
       songs: updated,
+      timeline: syncSongTimeline(state.timeline, state.songs, updated),
       isDirty: true,
       clearError: true,
     );
@@ -721,6 +737,36 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
     updated.insert(target, item);
     state = state.copyWith(
       timeline: updated,
+      isDirty: true,
+      clearError: true,
+    );
+  }
+
+  /// Applies a [ScheduleTemplate] to the roteiro timeline.
+  ///
+  /// Matches Web `convertTemplateToTimeline` and `handleApplyTemplate`:
+  /// - `'song'` slots are populated in order with selected songs from [state.songs],
+  ///   falling back to the template item's `title`.
+  /// - `'event'` items use their `title`, formatted duration as `time`, and `icon` (or `'Evento'`) as `type`.
+  /// - When [replace] is `true`, replaces [state.timeline]; otherwise appends to [state.timeline].
+  void applyTemplate(ScheduleTemplate template, {required bool replace}) {
+    final offset = replace ? 0 : state.timeline.where(isSongSlot).length;
+    var slot = offset;
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    final items = <ScheduleTimelineItem>[];
+    for (var i = 0; i < template.items.length; i++) {
+      final item = template.items[i];
+      items.add(ScheduleTimelineItem(
+        id: 'tl_${stamp}_$i',
+        title: item.type == 'song' ? 'Música ${++slot}' : item.title,
+        time: item.formattedDuration.isEmpty ? null : item.formattedDuration,
+        type: item.type == 'song' ? 'Música'
+            : (item.icon?.trim().isNotEmpty == true ? item.icon!.trim() : 'Evento'),
+      ));
+    }
+    state = state.copyWith(
+      timeline: syncSongTimeline(
+        replace ? items : [...state.timeline, ...items], state.songs, state.songs),
       isDirty: true,
       clearError: true,
     );
@@ -843,7 +889,8 @@ class ScheduleFormNotifier extends StateNotifier<ScheduleFormState> {
         };
       }).toList(),
       'songs': state.songs.map((s) => s.toJson()).toList(),
-      'timeline': state.timeline.map((t) => t.toJson()).toList(),
+      'timeline': syncSongTimeline(state.timeline, state.songs, state.songs)
+          .map((t) => t.toJson()).toList(),
       'clothingPieces': state.clothingPieces.map((p) => p.toJson()).toList(),
       if (state.colorPalette != null && state.colorPalette!.trim().isNotEmpty)
         'colorPalette': state.colorPalette!.trim(),

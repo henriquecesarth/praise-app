@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../../domain/smart_chord.dart';
 
 class SmartChordCard extends StatelessWidget {
@@ -15,11 +15,15 @@ class SmartChordCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
+    final hasArtist = chord.artistName != null && chord.artistName!.trim().isNotEmpty;
+    final hasSongTitle = chord.songTitle != null && chord.songTitle!.trim().isNotEmpty;
+    final hasCapo = chord.capo != null && chord.capo! > 0;
+
     String? subtitleText;
-    if (chord.artistName != null && chord.artistName!.isNotEmpty) {
-      subtitleText = chord.artistName;
-    } else if (chord.songTitle != null && chord.songTitle!.isNotEmpty) {
-      subtitleText = chord.songTitle;
+    if (hasArtist) {
+      subtitleText = chord.artistName!.trim();
+    } else if (hasSongTitle) {
+      subtitleText = chord.songTitle!.trim();
     }
 
     return Card(
@@ -74,6 +78,32 @@ class SmartChordCard extends StatelessWidget {
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                    if ((hasArtist && hasSongTitle) || hasCapo) ...[
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        children: [
+                          if (hasArtist && hasSongTitle)
+                            Text(
+                              'Repertório: ${chord.songTitle!.trim()}',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: theme.colorScheme.secondary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          if (hasCapo)
+                            Text(
+                              'Capo ${chord.capo}ª',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                        ],
                       ),
                     ],
                   ],

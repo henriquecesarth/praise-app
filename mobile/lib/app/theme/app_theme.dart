@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 /// Centralized brand color tokens matching LouvAIO official identity.
 ///
@@ -24,6 +25,26 @@ class AppColors {
 
 /// Material 3 Themes for LouvAIO.
 class AppTheme {
+  /// Dark system bars: navigation bar painted with the dark surface so no
+  /// light strip appears under the app or modal sheets.
+  static const SystemUiOverlayStyle darkSystemOverlayStyle = SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.light,
+    statusBarBrightness: Brightness.dark,
+    systemNavigationBarColor: AppColors.darkSurface,
+    systemNavigationBarDividerColor: AppColors.darkSurface,
+    systemNavigationBarIconBrightness: Brightness.light,
+  );
+
+  static const SystemUiOverlayStyle lightSystemOverlayStyle = SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.light,
+    statusBarBrightness: Brightness.dark,
+    systemNavigationBarColor: AppColors.lightBackground,
+    systemNavigationBarDividerColor: AppColors.lightBackground,
+    systemNavigationBarIconBrightness: Brightness.dark,
+  );
+
   static ThemeData get lightTheme {
     final colorScheme = ColorScheme.fromSeed(
       seedColor: AppColors.green,
@@ -46,6 +67,10 @@ class AppTheme {
         foregroundColor: AppColors.cream,
         elevation: 0,
         centerTitle: false,
+        systemOverlayStyle: lightSystemOverlayStyle,
+      ),
+      bottomSheetTheme: const BottomSheetThemeData(
+        surfaceTintColor: Colors.transparent,
       ),
       cardTheme: CardThemeData(
         color: AppColors.lightCard,
@@ -89,6 +114,16 @@ class AppTheme {
         foregroundColor: AppColors.cream,
         elevation: 0,
         centerTitle: false,
+        systemOverlayStyle: darkSystemOverlayStyle,
+      ),
+      bottomSheetTheme: const BottomSheetThemeData(
+        backgroundColor: AppColors.darkSurface,
+        modalBackgroundColor: AppColors.darkSurface,
+        surfaceTintColor: Colors.transparent,
+      ),
+      navigationBarTheme: const NavigationBarThemeData(
+        backgroundColor: AppColors.darkSurface,
+        surfaceTintColor: Colors.transparent,
       ),
       cardTheme: CardThemeData(
         color: AppColors.darkCard,

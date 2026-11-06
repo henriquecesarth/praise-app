@@ -1,3 +1,7 @@
+import 'package:firebase_auth/firebase_auth.dart' as fb;
+import 'package:louvaio_mobile/features/auth/data/auth_repository.dart';
+import 'package:louvaio_mobile/features/auth/domain/auth_user.dart';
+import 'package:louvaio_mobile/features/auth/presentation/controllers/auth_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -17,15 +21,27 @@ import 'package:louvaio_mobile/features/schedules/domain/schedule_participant.da
 import 'package:louvaio_mobile/features/schedules/presentation/controllers/schedule_detail_controller.dart';
 import 'package:louvaio_mobile/features/schedules/presentation/views/schedule_detail_view.dart';
 
-class FakeDetailScheduleRepo implements ScheduleRepository {
+class FakeDetailScheduleRepo
+    implements ScheduleRepository, ScheduleDeletionCapable {
   ScheduleDetail? detail;
   List<ScheduleComment> comments = [];
   Exception? detailError;
   Exception? confirmError;
   Exception? commentPostError;
+  Exception? commentLoadError;
+  Exception? deleteError;
 
   bool? lastConfirmed;
   String? lastPostedComment;
+  int deleteCalls = 0;
+  int commentReads = 0;
+  int commentPosts = 0;
+
+  @override
+  Future<void> deleteSchedule(String ministryId, String scheduleId) async {
+    deleteCalls++;
+    if (deleteError != null) throw deleteError!;
+  }
 
   @override
   Future<List<ScheduleSummary>> listSchedules(String ministryId) async => [];
@@ -73,15 +89,18 @@ class FakeDetailScheduleRepo implements ScheduleRepository {
   @override
   Future<List<ScheduleComment>> getComments(
       String ministryId, String scheduleId) async {
+    commentReads++;
+    if (commentLoadError != null) throw commentLoadError!;
     return List.of(comments);
   }
 
   @override
   Future<ScheduleComment> postComment(
       String ministryId, String scheduleId, String content) async {
+    commentPosts++;
     lastPostedComment = content;
     if (commentPostError != null) throw commentPostError!;
-    return ScheduleComment(
+    final comment = ScheduleComment(
       id: 'comment_new',
       scheduleId: scheduleId,
       ministryId: ministryId,
@@ -90,6 +109,8 @@ class FakeDetailScheduleRepo implements ScheduleRepository {
       content: content,
       createdAt: '2026-09-25T14:30:00Z',
     );
+    comments = [...comments, comment];
+    return comment;
   }
 
   @override
@@ -157,6 +178,20 @@ class FakeMinistryContextNotifier extends MinistryContextNotifier {
   }
 }
 
+class TestAuthRepo implements AuthRepository {
+  @override
+  Stream<fb.User?> authStateChanges() => const Stream.empty();
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class TestAuthNotifier extends AuthNotifier {
+  TestAuthNotifier() : super(TestAuthRepo()) {
+    state = const AuthState.authenticated(AuthUser(id: 'user_1', email: 'test@example.com', name: 'Membro Teste'));
+  }
+  void changeUser() { state = const AuthState.unauthenticated(); }
+}
+
 void main() {
   late FakeDetailScheduleRepo fakeRepo;
 
@@ -173,6 +208,7 @@ void main() {
       participants: [
         ScheduleParticipant(
           id: 'p1',
+          userId: 'user_1',
           name: 'Henrique Vocal',
           role: 'Ministro',
           confirmed: null,
@@ -185,7 +221,12 @@ void main() {
         ),
       ],
       songs: [
-        ScheduleSong(id: 's1', title: 'Bondade de Deus', artist: 'Isaías Saad'),
+        ScheduleSong(
+          id: 's1',
+          title: 'Bondade de Deus',
+          artist: 'Isaías Saad',
+          key: 'G',
+        ),
         ScheduleSong(id: 's2', title: 'A Casa É Sua', artist: 'Casa Worship'),
       ],
       timeline: [
@@ -223,6 +264,7 @@ void main() {
   Widget createSubject({String role = 'member'}) {
     return ProviderScope(
       overrides: [
+        authNotifierProvider.overrideWith((ref) => TestAuthNotifier()),
         appEnvironmentProvider.overrideWithValue(
           const AppEnvironment(
             env: AppEnv.development,
@@ -276,29 +318,65 @@ void main() {
       expect(find.text('19:30'), findsWidgets);
       expect(find.text('Duração: 2h'), findsOneWidget);
 
-      // Notes
+      // Detalhes tab (default): notes, clothing & palette, comments
       expect(find.text('Chegar com 30min de antecedência para aquecimento.'),
           findsOneWidget);
+      expect(find.text('Camisa Preta e Calça Jeans Escura'), findsOneWidget);
+      expect(find.text('Tons Terrosos'), findsOneWidget);
+      expect(find.text('Qual o tom da primeira música?'), findsNothing);
+      expect(find.byType(TextField), findsNothing);
+      expect(find.text('Bondade de Deus'), findsOneWidget);
 
-      // Participants
+      // Participantes tab
       expect(find.text('Henrique Vocal'), findsOneWidget);
-      expect(find.text('Ana Teclado'),
-          findsWidgets); // Appears in participants and comments
+      expect(find.text('Ana Teclado'), findsOneWidget);
 
-      // Songs
+      // Músicas tab
       expect(find.text('Bondade de Deus'), findsOneWidget);
       expect(find.text('A Casa É Sua'), findsOneWidget);
 
-      // Timeline
+      // Roteiro tab
       expect(find.text('Abertura e Oração'), findsOneWidget);
       expect(find.text('Louvor Congregacional'), findsOneWidget);
+    });
 
-      // Clothing & Palette
-      expect(find.text('Camisa Preta e Calça Jeans Escura'), findsOneWidget);
-      expect(find.text('Tons Terrosos'), findsOneWidget);
+    testWidgets('shows hero summary and scrolling sections without inline composer', (tester) async {
+      tester.view.physicalSize = const Size(1024, 2048);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
 
-      // Comments
-      expect(find.text('Qual o tom da primeira música?'), findsOneWidget);
+      await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('schedule_detail_hero')), findsOneWidget);
+      expect(find.byKey(const ValueKey('schedule_detail_accent_bar')), findsOneWidget);
+      expect(find.byKey(const ValueKey('schedule_detail_tab_bar')), findsNothing);
+      for (final k in ['participantes', 'musicas', 'roteiro', 'vestimenta']) {
+        expect(find.byKey(ValueKey('schedule_detail_stat_$k')), findsOneWidget);
+      }
+      // Tapping a summary stat switches to the matching tab.
+      expect(find.text('Bondade de Deus'), findsOneWidget);
+      // Composer is only pinned on the Detalhes tab.
+      expect(find.byTooltip('Enviar comentário'), findsNothing);
+    });
+
+    testWidgets('empty sections show an explicit empty state', (tester) async {
+      tester.view.physicalSize = const Size(1024, 2048);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      fakeRepo.detail = const ScheduleDetail(
+        id: 'sch_1',
+        ministryId: 'min_1',
+        title: 'Escala Vazia',
+        date: '2099-10-01',
+      );
+
+      await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Músicas Escaladas (0)'), findsOneWidget);
+      expect(find.textContaining('Participantes'), findsWidgets);
+      expect(find.text('Nenhum momento no roteiro desta escala.'), findsOneWidget);
     });
 
     testWidgets(
@@ -311,6 +389,7 @@ void main() {
       final confirmButton = find.text('Confirmar');
       expect(confirmButton, findsOneWidget);
 
+      await tester.ensureVisible(confirmButton);
       await tester.tap(confirmButton);
       await tester.pumpAndSettle();
 
@@ -324,6 +403,7 @@ void main() {
       final declineButton = find.text('Não vou');
       expect(declineButton, findsOneWidget);
 
+      await tester.ensureVisible(declineButton);
       await tester.tap(declineButton);
       await tester.pumpAndSettle();
 
@@ -339,6 +419,7 @@ void main() {
       await tester.pumpWidget(createSubject());
       await tester.pumpAndSettle();
 
+      await tester.ensureVisible(find.text('Confirmar'));
       await tester.tap(find.text('Confirmar'));
       await tester.pumpAndSettle();
 
@@ -355,6 +436,9 @@ void main() {
       await tester.pumpWidget(createSubject());
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byKey(const ValueKey('open_schedule_chat')));
+      await tester.pumpAndSettle();
+      expect(find.text('Chat da Escala'), findsOneWidget);
       final input = find.byType(TextField);
       expect(input, findsOneWidget);
 
@@ -369,6 +453,10 @@ void main() {
 
       expect(fakeRepo.lastPostedComment, equals('Tom de Sol Maior!'));
       expect(find.text('Tom de Sol Maior!'), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.byType(ScheduleDetailView), findsOneWidget);
+      expect(find.byType(TextField), findsNothing);
     });
 
     testWidgets(
@@ -387,6 +475,9 @@ void main() {
       await tester.pumpWidget(createSubject());
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byKey(const ValueKey('open_schedule_chat')));
+      await tester.pumpAndSettle();
+      expect(find.text('Chat da Escala'), findsOneWidget);
       final input = find.byType(TextField);
       await tester.enterText(input, 'Comentário bloqueado');
       await tester.pump();
@@ -526,12 +617,13 @@ void main() {
       expect(find.text('Shell Screen'), findsOneWidget);
     });
 
-    testWidgets('ordinary member does not see edit schedule button',
+    testWidgets('ordinary member does not see edit or delete schedule buttons',
         (tester) async {
       await tester.pumpWidget(createSubject(role: 'member'));
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('edit_schedule_button')), findsNothing);
+      expect(find.byKey(const ValueKey('delete_schedule_button')), findsNothing);
     });
 
     testWidgets(
@@ -548,6 +640,73 @@ void main() {
 
       expect(find.text('Editar Escala'), findsOneWidget);
       expect(find.text('Culto de Domingo Especial'), findsWidgets);
+    });
+
+    testWidgets(
+        'admin sees delete schedule button and confirming deletion calls deleteSchedule',
+        (tester) async {
+      await tester.pumpWidget(createSubject(role: 'admin'));
+      await tester.pumpAndSettle();
+
+      final deleteBtn = find.byKey(const ValueKey('delete_schedule_button'));
+      expect(deleteBtn, findsOneWidget);
+
+      await tester.tap(deleteBtn);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Excluir escala?'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('confirm_delete_schedule_button')));
+      await tester.pumpAndSettle();
+
+      expect(fakeRepo.deleteCalls, equals(1));
+    });
+
+    testWidgets('displays song key badge, timeline type labels, and stats summary row',
+        (tester) async {
+      tester.view.physicalSize = const Size(1024, 2048);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('schedule_detail_stats_row')), findsOneWidget);
+      expect(find.byKey(const ValueKey('detail_song_key_s1')), findsOneWidget);
+      expect(find.text('Tom: G'), findsOneWidget);
+      expect(find.text('Oração'), findsOneWidget);
+      expect(find.text('Louvor'), findsOneWidget);
+    });
+
+    testWidgets('renders schedule detail without overflow at 320px, 360px, and 393px widths and 1.3x text scale',
+        (tester) async {
+      for (final width in [320.0, 360.0, 393.0]) {
+        tester.view.physicalSize = Size(width, 780);
+        tester.view.devicePixelRatio = 1.0;
+
+        await tester.pumpWidget(
+          MediaQuery(
+            data: MediaQueryData(
+              size: Size(width, 780),
+              textScaler: width == 320.0
+                  ? const TextScaler.linear(1.3)
+                  : TextScaler.noScaling,
+            ),
+            child: createSubject(role: 'admin'),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull,
+            reason: 'No overflow on ScheduleDetailView at ${width}px');
+        expect(MediaQuery.textScalerOf(tester.element(find.byType(ScheduleDetailView))).scale(10),
+          width == 320 ? 13 : 10);
+        for (final label in ['Roteiro do Culto', 'Vestimenta', 'Observações']) {
+          await tester.ensureVisible(find.text(label).last);
+          await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull, reason: 'No overflow at $width for $label');
+        }
+      }
+
+      addTearDown(tester.view.resetPhysicalSize);
     });
   });
 }

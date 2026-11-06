@@ -10,6 +10,9 @@ class SmartChord {
   final String updatedAt;
   final String? artistName;
   final String? songTitle;
+  final String? sourceUrl;
+  final String? displayedKey;
+  final int? capo;
 
   const SmartChord({
     required this.id,
@@ -23,6 +26,9 @@ class SmartChord {
     required this.updatedAt,
     this.artistName,
     this.songTitle,
+    this.sourceUrl,
+    this.displayedKey,
+    this.capo,
   });
 
   bool get hasLinkedSong => songId != null && songId!.trim().isNotEmpty;
@@ -31,14 +37,16 @@ class SmartChord {
   factory SmartChord.fromJson(Map<String, dynamic> json) {
     String? resolvedArtistName;
     if (json['artist'] is Map<String, dynamic>) {
-      resolvedArtistName = (json['artist'] as Map<String, dynamic>)['name'] as String?;
+      resolvedArtistName =
+          (json['artist'] as Map<String, dynamic>)['name'] as String?;
     } else if (json['artist_name'] is String) {
       resolvedArtistName = json['artist_name'] as String;
     }
 
     String? resolvedSongTitle;
     if (json['song'] is Map<String, dynamic>) {
-      resolvedSongTitle = (json['song'] as Map<String, dynamic>)['title'] as String?;
+      resolvedSongTitle =
+          (json['song'] as Map<String, dynamic>)['title'] as String?;
     } else if (json['song_title'] is String) {
       resolvedSongTitle = json['song_title'] as String;
     }
@@ -55,6 +63,9 @@ class SmartChord {
       updatedAt: (json['updated_at'] as String?) ?? '',
       artistName: resolvedArtistName,
       songTitle: resolvedSongTitle,
+      sourceUrl: json['source_url'] as String?,
+      displayedKey: json['displayed_key'] as String?,
+      capo: json['capo'] as int?,
     );
   }
 
@@ -71,6 +82,9 @@ class SmartChord {
       'updated_at': updatedAt,
       if (artistName != null) 'artist': {'id': artistId, 'name': artistName},
       if (songTitle != null) 'song': {'id': songId, 'title': songTitle},
+      if (sourceUrl != null) 'source_url': sourceUrl,
+      if (displayedKey != null) 'displayed_key': displayedKey,
+      if (capo != null) 'capo': capo,
     };
   }
 
@@ -79,9 +93,18 @@ class SmartChord {
       'title': title.trim(),
       'original_key': originalKey.trim(),
       'content': content,
-      'artist_name': (artistName != null && artistName!.trim().isNotEmpty) ? artistName!.trim() : null,
-      'artist_id': (artistId != null && artistId!.trim().isNotEmpty) ? artistId!.trim() : null,
-      'song_id': (songId != null && songId!.trim().isNotEmpty) ? songId!.trim() : null,
+      if (sourceUrl != null) 'source_url': sourceUrl,
+      if (displayedKey != null) 'displayed_key': displayedKey,
+      if (capo != null) 'capo': capo,
+      'artist_name': (artistName != null && artistName!.trim().isNotEmpty)
+          ? artistName!.trim()
+          : null,
+      'artist_id': (artistId != null && artistId!.trim().isNotEmpty)
+          ? artistId!.trim()
+          : null,
+      'song_id': (songId != null && songId!.trim().isNotEmpty)
+          ? songId!.trim()
+          : null,
     };
   }
 
@@ -101,6 +124,9 @@ class SmartChord {
     bool clearArtistName = false,
     String? songTitle,
     bool clearSongTitle = false,
+    String? sourceUrl,
+    String? displayedKey,
+    int? capo,
   }) {
     return SmartChord(
       id: id ?? this.id,
@@ -114,6 +140,9 @@ class SmartChord {
       updatedAt: updatedAt ?? this.updatedAt,
       artistName: clearArtistName ? null : (artistName ?? this.artistName),
       songTitle: clearSongTitle ? null : (songTitle ?? this.songTitle),
+      sourceUrl: sourceUrl ?? this.sourceUrl,
+      displayedKey: displayedKey ?? this.displayedKey,
+      capo: capo ?? this.capo,
     );
   }
 
@@ -128,6 +157,9 @@ class SmartChord {
         other.songId == songId &&
         other.originalKey == originalKey &&
         other.content == content &&
+        other.sourceUrl == sourceUrl &&
+        other.displayedKey == displayedKey &&
+        other.capo == capo &&
         other.createdAt == createdAt &&
         other.updatedAt == updatedAt;
   }
@@ -142,6 +174,9 @@ class SmartChord {
       songId,
       originalKey,
       content,
+      sourceUrl,
+      displayedKey,
+      capo,
       createdAt,
       updatedAt,
     );

@@ -522,3 +522,93 @@ class ScheduleSummary {
   @override
   String toString() => 'ScheduleSummary(id: $id, title: $title, date: $date)';
 }
+
+/// Item within a [ScheduleTemplate] matching backend `templateItemSchema`
+/// (`id`, `type: 'song' | 'event'`, `title`, `description`, `durationSeconds`, `icon`, `order`).
+@immutable
+class ScheduleTemplateItem {
+  final String id;
+  final String type;
+  final String title;
+  final String? description;
+  final int? durationSeconds;
+  final String? icon;
+  final int order;
+
+  const ScheduleTemplateItem({
+    required this.id,
+    this.type = 'event',
+    required this.title,
+    this.description,
+    this.durationSeconds,
+    this.icon,
+    this.order = 0,
+  });
+
+  factory ScheduleTemplateItem.fromJson(Map<String, dynamic> json, [int fallbackOrder = 0]) {
+    final rawDuration = json['durationSeconds'] ?? json['duration_seconds'];
+    final rawOrder = json['order'];
+    return ScheduleTemplateItem(
+      id: json['id']?.toString() ?? 'item_$fallbackOrder',
+      type: (json['type'] as String?)?.trim().isNotEmpty == true
+          ? (json['type'] as String).trim()
+          : 'event',
+      title: json['title'] as String? ?? '',
+      description: json['description'] as String?,
+      durationSeconds: rawDuration is num ? rawDuration.toInt() : null,
+      icon: json['icon'] as String?,
+      order: rawOrder is num ? rawOrder.toInt() : fallbackOrder,
+    );
+  }
+
+  /// Formats [durationSeconds] matching Web `formatTemplateDuration(seconds)`.
+  String get formattedDuration {
+    final s = durationSeconds;
+    if (s == null || s <= 0) return '';
+    final h = s ~/ 3600;
+    final m = (s % 3600) ~/ 60;
+    final remS = s % 60;
+    final parts = <String>[];
+    if (h > 0) parts.add('${h}h');
+    if (m > 0) parts.add('${m}min');
+    if (remS > 0) parts.add('${remS}s');
+    return parts.join(' ');
+  }
+}
+
+/// Schedule roteiro template model from `GET /ministries/:ministryId/schedule-templates`.
+@immutable
+class ScheduleTemplate {
+  final String id;
+  final String name;
+  final List<ScheduleTemplateItem> items;
+
+  const ScheduleTemplate({
+    required this.id,
+    required this.name,
+    this.items = const [],
+  });
+
+  factory ScheduleTemplate.fromJson(Map<String, dynamic> json) {
+    final rawItems = json['items'];
+    final parsedItems = <ScheduleTemplateItem>[];
+    if (rawItems is List) {
+      for (var i = 0; i < rawItems.length; i++) {
+        final item = rawItems[i];
+        if (item is Map<String, dynamic>) {
+          parsedItems.add(ScheduleTemplateItem.fromJson(item, i));
+        }
+      }
+    }
+    parsedItems.sort((a, b) => a.order.compareTo(b.order));
+
+    return ScheduleTemplate(
+      id: json['id']?.toString() ?? '',
+      name: json['name'] as String? ?? 'Modelo',
+      items: List.unmodifiable(parsedItems),
+    );
+  }
+
+  int get songsCount => items.where((it) => it.type == 'song').length;
+  int get eventsCount => items.where((it) => it.type != 'song').length;
+}

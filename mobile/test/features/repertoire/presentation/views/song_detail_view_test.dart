@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart' hide AuthProvider;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -5,6 +6,9 @@ import 'package:louvaio_mobile/app/environment/app_environment.dart';
 import 'package:louvaio_mobile/app/providers.dart';
 import 'package:louvaio_mobile/core/errors/app_failure.dart';
 import 'package:louvaio_mobile/core/storage/preferences_storage.dart';
+import 'package:louvaio_mobile/features/auth/data/auth_repository.dart';
+import 'package:louvaio_mobile/features/auth/domain/auth_user.dart';
+import 'package:louvaio_mobile/features/auth/presentation/controllers/auth_controller.dart';
 import 'package:louvaio_mobile/features/ministry_context/data/ministry_repository.dart';
 import 'package:louvaio_mobile/features/ministry_context/domain/ministry.dart';
 import 'package:louvaio_mobile/features/ministry_context/presentation/controllers/ministry_context_controller.dart';
@@ -16,6 +20,41 @@ import 'package:louvaio_mobile/features/repertoire/domain/song_detail.dart';
 import 'package:louvaio_mobile/features/repertoire/domain/song_form_data.dart';
 import 'package:louvaio_mobile/features/repertoire/presentation/controllers/song_detail_controller.dart';
 import 'package:louvaio_mobile/features/repertoire/presentation/views/song_detail_view.dart';
+import 'package:louvaio_mobile/features/smart_chords/presentation/views/smart_chord_form_screen.dart';
+
+class _FakeAuthRepo implements AuthRepository {
+  @override
+  Stream<User?> authStateChanges() => const Stream.empty();
+  @override
+  User? get currentFirebaseUser => null;
+  @override
+  Future<String?> getIdToken({bool forceRefresh = false}) async => null;
+  @override
+  Future<UserCredential> signInWithEmailAndPassword({
+    required String email,
+    required String password,
+  }) =>
+      throw UnimplementedError();
+  @override
+  Future<AuthUser> signUp({
+    required String name,
+    required String email,
+    required String password,
+  }) =>
+      throw UnimplementedError();
+  @override
+  Future<AuthUser> getMe() => throw UnimplementedError();
+  @override
+  Future<void> signOut() async {}
+}
+
+class _FakeAuthNotifier extends AuthNotifier {
+  _FakeAuthNotifier() : super(_FakeAuthRepo()) {
+    state = const AuthState.authenticated(
+      AuthUser(id: 'member_user', email: 'member@test.com', name: 'Member'),
+    );
+  }
+}
 
 class FakeRepertoireRepo implements RepertoireRepository {
   SongDetail? detail;
@@ -159,6 +198,7 @@ void main() {
         }),
         ministryContextNotifierProvider
             .overrideWith((ref) => FakeMinistryContextNotifier()),
+        authNotifierProvider.overrideWith((ref) => _FakeAuthNotifier()),
       ],
       child: const MaterialApp(
         home: SongDetailView(
@@ -302,6 +342,145 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Em Teus Braços'), findsWidgets);
+    });
+
+    testWidgets('displays version selector chips and updates metadata, notes and links when switching versions',
+        (tester) async {
+      fakeRepo.detail = const SongDetail(
+        id: 'song_multi',
+        ministryId: 'min_1',
+        title: 'Em Teus Braços',
+        artistName: 'Laura Souguellis',
+        originalKey: 'E',
+        bpm: 72,
+        duration: '5:10',
+        versions: [
+          SongVersion(
+            id: 'v_1',
+            name: 'Original',
+            key: 'E',
+            bpm: 72,
+            duration: '5:10',
+            notes: 'Arranjo original com pad',
+            links: [
+              SongLink(label: 'Vídeo', url: 'https://youtube.com/watch?v=v1'),
+            ],
+          ),
+          SongVersion(
+            id: 'v_2',
+            name: 'Acústico',
+            key: null,
+            bpm: 65,
+            duration: '4:15',
+            notes: 'Apenas violão folk',
+            links: [
+              SongLink(label: 'Multitracks Acústico', url: 'https://multitracks.com/v2', isCustom: true),
+            ],
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+
+      // Both version chips are visible
+      expect(find.byKey(const ValueKey('detail_version_chip_v_1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('detail_version_chip_v_2')), findsOneWidget);
+
+      // Initially inspecting Version 1 (Original)
+      expect(find.text('Tom: E'), findsOneWidget);
+      expect(find.text('72 BPM'), findsOneWidget);
+      expect(find.text('5:10'), findsOneWidget);
+      expect(find.text('Arranjo original com pad'), findsOneWidget);
+
+      // Switch to Version 2 (Acústico)
+      await tester.tap(find.byKey(const ValueKey('detail_version_chip_v_2')));
+      await tester.pumpAndSettle();
+
+      // Null key hides 'Tom:' badge, BPM/duration/notes/links reflect Version 2
+      expect(find.text('Tom: E'), findsNothing);
+      expect(find.textContaining('Tom:'), findsNothing);
+      expect(find.text('65 BPM'), findsOneWidget);
+      expect(find.text('4:15'), findsOneWidget);
+      expect(find.text('Apenas violão folk'), findsOneWidget);
+      expect(find.text('Multitracks Acústico'), findsOneWidget);
+    });
+
+    testWidgets(
+        'F02: secondary version with explicit null key opens SmartChordFormScreen with prefillKey: null (both call sites) while primary version prefills its valid key',
+        (tester) async {
+      fakeRepo.detail = const SongDetail(
+        id: 'song_f02',
+        ministryId: 'min_1',
+        title: 'Santo Espírito',
+        artistName: 'Laura Souguellis',
+        originalKey: 'E',
+        bpm: 72,
+        versions: [
+          SongVersion(
+            id: 'v_1',
+            name: 'Original',
+            key: 'E',
+            bpm: 72,
+          ),
+          SongVersion(
+            id: 'v_2',
+            name: 'Acústico Sem Tom',
+            key: null,
+            bpm: 68,
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+
+      // 1. Primary version (key: 'E') selected -> opens SmartChordFormScreen with prefillKey: 'E'
+      await tester.ensureVisible(find.byTooltip('Nova Cifra para esta música'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Nova Cifra para esta música'));
+      await tester.pumpAndSettle();
+
+      var formScreen = tester.widget<SmartChordFormScreen>(
+        find.byType(SmartChordFormScreen),
+      );
+      expect(formScreen.prefillKey, equals('E'));
+
+      Navigator.of(tester.element(find.byType(SmartChordFormScreen))).pop();
+      await tester.pumpAndSettle();
+
+      // 2. Select secondary version with explicit key: null
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('detail_version_chip_v_2')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('detail_version_chip_v_2')));
+      await tester.pumpAndSettle();
+
+      // Call site 1: Header icon button 'Nova Cifra para esta música'
+      await tester.ensureVisible(find.byTooltip('Nova Cifra para esta música'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Nova Cifra para esta música'));
+      await tester.pumpAndSettle();
+
+      formScreen = tester.widget<SmartChordFormScreen>(
+        find.byType(SmartChordFormScreen),
+      );
+      expect(formScreen.prefillKey, isNull);
+
+      Navigator.of(tester.element(find.byType(SmartChordFormScreen))).pop();
+      await tester.pumpAndSettle();
+
+      // Call site 2: Empty-state card ListTile 'Cadastrar nova cifra inteligente'
+      await tester.ensureVisible(find.text('Cadastrar nova cifra inteligente'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cadastrar nova cifra inteligente'));
+      await tester.pumpAndSettle();
+
+      formScreen = tester.widget<SmartChordFormScreen>(
+        find.byType(SmartChordFormScreen),
+      );
+      expect(formScreen.prefillKey, isNull);
     });
   });
 }

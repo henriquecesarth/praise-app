@@ -316,17 +316,23 @@ void main() {
         title: 'Culto de Domingo',
         date: '2026-10-25',
         time: '19:00',
-        participants: [ ScheduleParticipant(id: 'm1', name: 'Alice Silva', role: 'Vocal'), ScheduleParticipant(id: 'm2', name: 'Bob Souza', role: 'Bateria'),
+        participants: [
+          ScheduleParticipant(id: 'm1', name: 'Alice Silva', role: 'Vocal'),
+          ScheduleParticipant(id: 'm2', name: 'Bob Souza', role: 'Bateria'),
         ],
       );
 
       await tester.pumpWidget(createSubject(initialSchedule: initialSchedule));
       await tester.pumpAndSettle();
 
-      // Tab conflict badge displays count '1'
+      // Tab conflict badge is visible in TabBar even from Geral tab
       final tabBadgeFinder = find.byKey(const ValueKey('tab_conflict_badge'));
       expect(tabBadgeFinder, findsOneWidget);
       expect(find.descendant(of: tabBadgeFinder, matching: find.text('1')), findsOneWidget);
+
+      // Switch to Integrantes tab to inspect conflict banner and participant badges
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_integrantes')));
+      await tester.pumpAndSettle();
 
       // Warning banner is displayed
       final bannerFinder = find.byKey(const ValueKey('schedule_conflict_warning_banner'));
@@ -352,6 +358,10 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
 
       await tester.pumpWidget(createSubject());
+      await tester.pumpAndSettle();
+
+      // Switch to Integrantes tab
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_integrantes')));
       await tester.pumpAndSettle();
 
       // Open member picker
@@ -393,6 +403,10 @@ void main() {
       await tester.pumpWidget(createSubject());
       await tester.pumpAndSettle();
 
+      // Switch to Integrantes tab
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_integrantes')));
+      await tester.pumpAndSettle();
+
       // Error banner rendered
       final errorBanner = find.byKey(const ValueKey('schedule_conflict_error_banner'));
       expect(errorBanner, findsOneWidget);
@@ -424,11 +438,15 @@ void main() {
         title: 'Culto Especial',
         date: '2026-10-25',
         time: '19:00',
-        participants: [ ScheduleParticipant(id: 'm1', name: 'Alice Silva', role: 'Vocal'),
+        participants: [
+          ScheduleParticipant(id: 'm1', name: 'Alice Silva', role: 'Vocal'),
         ],
       );
 
       await tester.pumpWidget(createSubject(initialSchedule: initialSchedule));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_integrantes')));
       await tester.pumpAndSettle();
 
       // Conflict warning banner is visible
@@ -455,11 +473,15 @@ void main() {
         title: 'Culto',
         date: '2026-10-25',
         time: '19:00',
-        participants: [ ScheduleParticipant(id: 'm1', name: 'Alice Silva', role: 'Vocal'),
+        participants: [
+          ScheduleParticipant(id: 'm1', name: 'Alice Silva', role: 'Vocal'),
         ],
       );
 
       await tester.pumpWidget(createSubject(initialSchedule: initialSchedule));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('schedule_tab_integrantes')));
       await tester.pumpAndSettle();
 
       // Verify privacy invariant
