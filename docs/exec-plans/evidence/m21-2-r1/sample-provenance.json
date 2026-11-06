@@ -1,0 +1,142 @@
+{
+  "origin": "https://freepats.zenvoid.org/Piano/acoustic-grand-piano.html",
+  "archiveUrl": "https://freepats.zenvoid.org/Piano/UprightPianoKW/UprightPianoKW-small-SFZ-20190703.7z",
+  "archiveSha256": "ffb547fceb91eeb93d78cf8d220d1d5f726dcac891afc15e517805ac48abb39d",
+  "archiveBytes": 4551289,
+  "archive7zInternalIntegrity": "PASS (7z t performed at download)",
+  "authenticityLimit": "No upstream published SHA/signature; official HTTPS origin, internal CRC and locally pinned hash",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "licenseSha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+  "readmeSha256": "176d252d3192c4cb1576c88512f94e981f6208aedec65b9ec5174280c02dc534",
+  "sfzSha256": "239b21ca2579bc0603f1fe667fe1cd0bc09e2eedcdfb6f353390a702009d9001",
+  "sampleBytes": 4927904,
+  "files": [
+    {
+      "file": "/audio/upright-kw/midi-047.wav",
+      "sha256": "b6de881fdc81b2d40eaf4b2ed0a77c2cc78782ece86a917c6513d74f46817c3f",
+      "bytes": 682670,
+      "original": "B2vH.wav",
+      "frames": 341313,
+      "rate": 44100,
+      "channels": 1
+    },
+    {
+      "file": "/audio/upright-kw/midi-051.wav",
+      "sha256": "fc214f9a50a0df5e4e668ce2d8686cbf2dd64254863fa51c2dce1f3fdb1362e3",
+      "bytes": 480704,
+      "original": "D#3vH.wav",
+      "frames": 240330,
+      "rate": 44100,
+      "channels": 1
+    },
+    {
+      "file": "/audio/upright-kw/midi-054.wav",
+      "sha256": "ee4ef934d1fd5a3e1f42a2b54ff8227032974822daded770637860022b0a66c2",
+      "bytes": 531344,
+      "original": "F#3vH.wav",
+      "frames": 265650,
+      "rate": 44100,
+      "channels": 1
+    },
+    {
+      "file": "/audio/upright-kw/midi-057.wav",
+      "sha256": "2fe091f5d07238e68aeba150cd2f0bd21dcedc14bbb246bce9ce56febe2695c5",
+      "bytes": 373678,
+      "original": "A3vH.wav",
+      "frames": 186817,
+      "rate": 44100,
+      "channels": 1
+    },
+    {
+      "file": "/audio/upright-kw/midi-060.wav",
+      "sha256": "9eb060c0a86196673e38b7b9532a94c7f2c54960391aa1f5ae0b75079c5c9db3",
+      "bytes": 426834,
+      "original": "C4vH.wav",
+      "frames": 213395,
+      "rate": 44100,
+      "channels": 1
+    },
+    {
+      "file": "/audio/upright-kw/midi-063.wav",
+      "sha256": "1bbe2555554a824f27af50e6f6982f04fcd03a86526e845b3f065b8b4bb702bd",
+      "bytes": 435270,
+      "original": "D#4vH.wav",
+      "frames": 217613,
+      "rate": 44100,
+      "channels": 1
+    },
+    {
+      "file": "/audio/upright-kw/midi-066.wav",
+      "sha256": "011156e087c1da7f8111f7486f9d6b9939c9ac1e378632c9c9c66ef1c278db8e",
+      "bytes": 370736,
+      "original": "F#4vH.wav",
+      "frames": 185346,
+      "rate": 44100,
+      "channels": 1
+    },
+    {
+      "file": "/audio/upright-kw/midi-069.wav",
+      "sha256": "5a4b83e4d64d523430b7496edc62d525519844ec13824e362e9a6cd9a63c710d",
+      "bytes": 261056,
+      "original": "A4vH.wav",
+      "frames": 130506,
+      "rate": 44100,
+      "channels": 1
+    },
+    {
+      "file": "/audio/upright-kw/midi-072.wav",
+      "sha256": "8b1022b0c5adb5656f065220d9e56b02ff2b970ba0e24e97d4fc877fe0250aa4",
+      "bytes": 306124,
+      "original": "C5vH.wav",
+      "frames": 153040,
+      "rate": 44100,
+      "channels": 1
+    },
+    {
+      "file": "/audio/upright-kw/midi-075.wav",
+      "sha256": "9741c76e21a6f7b8ef802e8a88ab4002d94b61c4bf4ce13f64169b2139958dc6",
+      "bytes": 278544,
+      "original": "D#5vH.wav",
+      "frames": 139250,
+      "rate": 44100,
+      "channels": 1
+    },
+    {
+      "file": "/audio/upright-kw/midi-078.wav",
+      "sha256": "7c977d422e69ef7c384cb40093416f92438f74ff392117d0b56db811cb8cde0a",
+      "bytes": 173504,
+      "original": "F#5vH.wav",
+      "frames": 86730,
+      "rate": 44100,
+      "channels": 1
+    },
+    {
+      "file": "/audio/upright-kw/midi-081.wav",
+      "sha256": "1f80bf1211b42367e0150e4cef87a3b213f85b9d14b14c7c35ac9ce2f8c85822",
+      "bytes": 250462,
+      "original": "A5vH.wav",
+      "frames": 125209,
+      "rate": 44100,
+      "channels": 1
+    },
+    {
+      "file": "/audio/upright-kw/midi-084.wav",
+      "sha256": "ea1ea4cfbb11c622df0ab757fe0a7bacf6fbb7e6fc92e101ae6a9a398af47b19",
+      "bytes": 194986,
+      "original": "C6vH.wav",
+      "frames": 97471,
+      "rate": 44100,
+      "channels": 1
+    },
+    {
+      "file": "/audio/upright-kw/midi-087.wav",
+      "sha256": "3717889698e547a675d8a0ecc12d9298bfeea246a01dab7a4ded7777a084e935",
+      "bytes": 161992,
+      "original": "D#6vH.wav",
+      "frames": 80974,
+      "rate": 44100,
+      "channels": 1
+    }
+  ]
+}

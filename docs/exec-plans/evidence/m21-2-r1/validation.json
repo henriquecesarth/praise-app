@@ -1,0 +1,17 @@
+{
+  "technicalStatus": "PASS_WITH_RECORDED_LIMITS",
+  "humanStatus": "Unknown / Not yet verified",
+  "actualCapturedCases": 8,
+  "fingerprintedNotes": 87,
+  "maxMIDIDeviationCents": 11.700640293085236,
+  "captureGapFramesMaximum": 384,
+  "captureGapUncertaintyMs": 8.0,
+  "stopLastSampleToZeroStep": 3.0517578125e-05,
+  "limitations": [
+    "Source piano carries original acoustic tuning, no cents-perfect oscillator claim",
+    "Worklet captures before speakers; missing captured frames remain unpadded",
+    "Offline is browser network emulation, navigator.onLine remained true",
+    "No human click/timbre approval yet",
+    "Android backend not integrated or built in R1"
+  ]
+}

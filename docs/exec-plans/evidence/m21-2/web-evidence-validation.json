@@ -1,0 +1,15 @@
+{
+  "status": "PASS_TECHNICAL_WEB_EVIDENCE",
+  "cases": 12,
+  "firstNotesMeasured": 36,
+  "fullProgressionsMeasured": 2,
+  "captureGapFramesMaximum": 256,
+  "captureGapUncertaintyMs": 5.333333333333333,
+  "limitations": [
+    "Captured PCM is before speaker/DAC, not acoustic output",
+    "5ms onset resolution plus up to5.33ms omitted capture frames",
+    "First3notes per BPM case; only2full arpeggio progressions",
+    "Browser network emulation: navigator.onLine remained true, uncached fetch failed",
+    "No human timbre approval; no Android runtime evidence"
+  ]
+}

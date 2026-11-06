@@ -1,0 +1,13 @@
+{
+  "method": "Actual Chromium OfflineAudioContext, constant input to isolate gain automation (no speakers/no piano mock); transitions at real suspended render clock",
+  "cases": [
+    {
+      "anchored": false,
+      "largestStep": 0.3334035873413086
+    },
+    {
+      "anchored": true,
+      "largestStep": 0.00048632919788360596
+    }
+  ]
+}

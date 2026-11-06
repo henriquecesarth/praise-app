@@ -1,0 +1,15 @@
+{
+  "browser": "151.0.7922.34",
+  "method": "Headed Chromium without capture instrumentation; default full-range player plus metronome; CDP process CPU and JS heap metrics",
+  "startupToNoteIndicatorMs": 1120,
+  "elapsedSeconds": 7.133,
+  "steadySeconds": 6.063,
+  "steadyCpuSeconds": 2.527046,
+  "steadyCpuPercentOfOneCore": 41.679795480785096,
+  "rendererCpuSeconds": 3.297317,
+  "rendererCpuPercentOfOneCore": 46.22623019767279,
+  "jsHeapBefore": 5621516,
+  "jsHeapAfter": 6275412,
+  "decodedSampleEstimateAt48k": 10727410.068027211,
+  "limitations": "CPU includes Chromium renderer/UI/decode workload; JS heap excludes native audio buffers; not acoustic output latency or hardware energy benchmark"
+}

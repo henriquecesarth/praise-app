@@ -3,7 +3,11 @@ package com.louvaio.louvaio_mobile
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.ViewGroup
+import com.louvaio.louvaio_mobile.vocal.PianoBank
+import com.louvaio.louvaio_mobile.vocal.VocalAudioPlayer
+import io.flutter.FlutterInjector
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -20,6 +24,7 @@ class MainActivity : FlutterActivity() {
         private const val CHANNEL = "com.louvaio.louvaio_mobile/share_intent"
         private const val READ_TIMEOUT_MS = 15_000L
         private const val MAX_PENDING_SHARES = 8
+        private const val AUDIO_CHANNEL = "com.louvaio.mobile/vocal_audio"
     }
 
     // Keep IO bounded even when a remote provider ignores cancellation.
@@ -34,6 +39,7 @@ class MainActivity : FlutterActivity() {
     private var initialResult: MethodChannel.Result? = null
     private var destroyed = false
     private var nextRequestId = 0L
+    private var vocalPlayer: VocalAudioPlayer? = null
 
     private class ShareRequest(
         val initial: Boolean,
@@ -56,6 +62,104 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         shareIntentHandler = ShareIntentHandler(applicationContext)
         methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+        val bank = PianoBank { assetPath ->
+
+            val key = FlutterInjector.instance().flutterLoader().getLookupKeyForAsset("assets/audio/upright-kw/$assetPath")
+
+            try {
+
+                applicationContext.assets.open(key)
+
+            } catch (_: Exception) {
+
+                try {
+
+                    applicationContext.assets.open("flutter_assets/assets/audio/upright-kw/$assetPath")
+
+                } catch (_: Exception) {
+
+                    applicationContext.assets.open(assetPath)
+
+                }
+
+            }
+
+        }
+
+        val player = VocalAudioPlayer(bank)
+
+        vocalPlayer = player
+
+
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, AUDIO_CHANNEL).setMethodCallHandler { call, result ->
+
+            when (call.method) {
+
+                "playSequence" -> {
+
+                    val sessionId = call.argument<Number>("sessionId")?.toLong() ?: 1L
+
+                    val notes = call.argument<List<Int>>("notes") ?: emptyList()
+
+                    val durations = call.argument<List<Number>>("durations")?.map { it.toDouble() } ?: emptyList()
+
+                    val bpm = (call.argument<Int>("bpm") ?: 80).coerceIn(40, 180)
+
+                    val metronome = call.argument<Boolean>("metronome") ?: true
+
+
+
+                    if (notes.isEmpty() || notes.size != durations.size || notes.any { it != -1 && it !in 24..108 } || durations.any { !it.isFinite() || it <= 0 || it > 8 }) {
+
+                        result.error("INVALID_SEQUENCE", "Invalid vocal exercise sequence", null)
+
+                        return@setMethodCallHandler
+
+                    }
+
+                    player.playSequence(sessionId, notes, durations, bpm, metronome, result)
+
+                }
+
+                "pause" -> {
+
+                    val sessionId = call.argument<Number>("sessionId")?.toLong() ?: player.currentSessionId
+
+                    player.pause(sessionId, result)
+
+                }
+
+                "resume" -> {
+
+                    val sessionId = call.argument<Number>("sessionId")?.toLong() ?: player.currentSessionId
+
+                    player.resume(sessionId, result)
+
+                }
+
+                "stop" -> {
+
+                    val sessionId = call.argument<Number>("sessionId")?.toLong()
+
+                    player.stop(sessionId, result)
+
+                }
+
+                "position" -> {
+
+                    val sessionId = call.argument<Number>("sessionId")?.toLong()
+
+                    player.getPosition(sessionId, result)
+
+                }
+
+                else -> result.notImplemented()
+
+            }
+
+        }
+
         // Capture cold launch before setIntent() can replace it on a warm launch.
         initialRequest = enqueueShare(intent?.let { Intent(it) }, initial = true)
 
@@ -104,6 +208,24 @@ class MainActivity : FlutterActivity() {
             }
         }
     }
+
+    override fun onStop() {
+
+        vocalPlayer?.stop(null, object : MethodChannel.Result {
+
+            override fun success(result: Any?) {}
+
+            override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {}
+
+            override fun notImplemented() {}
+
+        })
+
+        super.onStop()
+
+    }
+
+
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -204,6 +326,10 @@ class MainActivity : FlutterActivity() {
 
     override fun onDestroy() {
         destroyed = true
+
+        vocalPlayer?.release()
+
+        vocalPlayer = null
         methodChannel?.setMethodCallHandler(null)
         requests.forEach { cancelRead(it) }
         requests.clear()

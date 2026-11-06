@@ -1,0 +1,60 @@
+{
+  "method": "Unmodified AudioContext constructor, headed Chromium; CDP events only, no mocks/taps",
+  "before": 0,
+  "currentNote": "Nota atual: Dó3 · MIDI 48",
+  "events": [
+    {
+      "event": "created",
+      "data": {
+        "context": {
+          "contextId": "bb0bc17b-cb8f-4252-bd74-f814708baa94",
+          "contextType": "realtime",
+          "contextState": "suspended",
+          "callbackBufferSize": 480,
+          "maxOutputChannelCount": 2,
+          "sampleRate": 48000
+        }
+      }
+    },
+    {
+      "event": "changed",
+      "data": {
+        "context": {
+          "contextId": "bb0bc17b-cb8f-4252-bd74-f814708baa94",
+          "contextType": "realtime",
+          "contextState": "running",
+          "callbackBufferSize": 480,
+          "maxOutputChannelCount": 2,
+          "sampleRate": 48000
+        }
+      }
+    },
+    {
+      "event": "changed",
+      "data": {
+        "context": {
+          "contextId": "bb0bc17b-cb8f-4252-bd74-f814708baa94",
+          "contextType": "realtime",
+          "contextState": "suspended",
+          "callbackBufferSize": 480,
+          "maxOutputChannelCount": 2,
+          "sampleRate": 48000
+        }
+      }
+    },
+    {
+      "event": "changed",
+      "data": {
+        "context": {
+          "contextId": "bb0bc17b-cb8f-4252-bd74-f814708baa94",
+          "contextType": "realtime",
+          "contextState": "running",
+          "callbackBufferSize": 480,
+          "maxOutputChannelCount": 2,
+          "sampleRate": 48000
+        }
+      }
+    }
+  ],
+  "consoleErrors": []
+}

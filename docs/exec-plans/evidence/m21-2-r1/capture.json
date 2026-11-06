@@ -1,0 +1,116 @@
+{
+  "cases": [
+    {
+      "name": "arpeggio-80",
+      "id": "vocal-02",
+      "bpm": 80,
+      "low": 48,
+      "high": 84,
+      "frames": 396032,
+      "rate": 48000,
+      "peak": 0.10170094668865204,
+      "clipped": 0,
+      "gapFrames": 128
+    },
+    {
+      "name": "scale-up",
+      "id": "vocal-01",
+      "bpm": 120,
+      "direction": 1,
+      "low": 60,
+      "high": 73,
+      "frames": 774400,
+      "rate": 48000,
+      "peak": 0.10264243185520172,
+      "clipped": 0,
+      "gapFrames": 0
+    },
+    {
+      "name": "scale-down",
+      "id": "vocal-01",
+      "bpm": 120,
+      "direction": -1,
+      "low": 60,
+      "high": 73,
+      "frames": 774400,
+      "rate": 48000,
+      "peak": 0.10264243185520172,
+      "clipped": 0,
+      "gapFrames": 0
+    },
+    {
+      "name": "rapid-repeats",
+      "id": "vocal-19",
+      "bpm": 180,
+      "low": 60,
+      "high": 73,
+      "frames": 298112,
+      "rate": 48000,
+      "peak": 0.10815340280532837,
+      "clipped": 0,
+      "gapFrames": 384
+    },
+    {
+      "name": "low-high",
+      "notes": [
+        48,
+        88
+      ],
+      "held": 1.4,
+      "frames": 100992,
+      "rate": 48000,
+      "peak": 0.16022828221321106,
+      "clipped": 0,
+      "gapFrames": 0
+    },
+    {
+      "name": "chord",
+      "notes": [
+        60,
+        64,
+        67,
+        72
+      ],
+      "held": 1.5,
+      "frames": 105856,
+      "rate": 48000,
+      "peak": 0.19141742587089539,
+      "clipped": 0,
+      "gapFrames": 0
+    },
+    {
+      "name": "eight-voices",
+      "notes": [
+        60,
+        60,
+        60,
+        60,
+        60,
+        60,
+        60,
+        60
+      ],
+      "held": 1.2,
+      "frames": 91648,
+      "rate": 48000,
+      "peak": 0.7416096925735474,
+      "clipped": 0,
+      "gapFrames": 0
+    },
+    {
+      "name": "sustain-loop",
+      "notes": [
+        60
+      ],
+      "held": 7,
+      "frames": 369792,
+      "rate": 48000,
+      "peak": 0.09270121157169342,
+      "clipped": 0,
+      "gapFrames": 0
+    }
+  ],
+  "errors": [],
+  "pauseClockDelta": 0,
+  "transportEvidence": "transport.json (final rerun after gain-anchor correction; initial transport placeholders superseded)"
+}

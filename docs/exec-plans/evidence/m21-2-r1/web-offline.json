@@ -1,0 +1,24 @@
+{
+  "cachedSamples": [
+    "http://127.0.0.1:4183/audio/upright-kw/midi-087.wav?__WB_REVISION__=04dc3f9d5947c2424da00ebe44b65f32",
+    "http://127.0.0.1:4183/audio/upright-kw/midi-084.wav?__WB_REVISION__=65d9001e4c9b80bc75c935c379a18752",
+    "http://127.0.0.1:4183/audio/upright-kw/midi-081.wav?__WB_REVISION__=1b9a5074245b9f99b5f2b103080e0ee7",
+    "http://127.0.0.1:4183/audio/upright-kw/midi-078.wav?__WB_REVISION__=b7c39c9eefe248fbca584dbae5087f4d",
+    "http://127.0.0.1:4183/audio/upright-kw/midi-075.wav?__WB_REVISION__=c1c8eafa1da25df8f985176c780b947c",
+    "http://127.0.0.1:4183/audio/upright-kw/midi-072.wav?__WB_REVISION__=dc2e1fa4f073fa395805e1737136eee9",
+    "http://127.0.0.1:4183/audio/upright-kw/midi-069.wav?__WB_REVISION__=ab4b6895226f4d9a7b8966c63ed3154d",
+    "http://127.0.0.1:4183/audio/upright-kw/midi-066.wav?__WB_REVISION__=7aeef2f8f1141fdd4e1b4924328617f0",
+    "http://127.0.0.1:4183/audio/upright-kw/midi-063.wav?__WB_REVISION__=28cf7f4f7b866c33291d6347cf48ad90",
+    "http://127.0.0.1:4183/audio/upright-kw/midi-060.wav?__WB_REVISION__=9e0fc500da6ff91977166e26cc7bac20",
+    "http://127.0.0.1:4183/audio/upright-kw/midi-057.wav?__WB_REVISION__=06b3f9fa09f1fdab149cde438001382f",
+    "http://127.0.0.1:4183/audio/upright-kw/midi-054.wav?__WB_REVISION__=ea0d4a700d2303420ecd2a2862378e8c",
+    "http://127.0.0.1:4183/audio/upright-kw/midi-051.wav?__WB_REVISION__=bd34f6345bc1195434145273eb3b2b45",
+    "http://127.0.0.1:4183/audio/upright-kw/midi-047.wav?__WB_REVISION__=4db8d870bd90bce56aa86842bc09c67b"
+  ],
+  "probe": "NETWORK_REQUEST_FAILED",
+  "online": true,
+  "controller": true,
+  "frames": 67968,
+  "peak": 0.10900416970252991,
+  "errors": []
+}

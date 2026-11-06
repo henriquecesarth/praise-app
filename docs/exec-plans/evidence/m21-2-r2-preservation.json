@@ -1,0 +1,454 @@
+{
+  "status": "COMMIT_BLOCKED_MIXED_M20_BASELINE_M21",
+  "branch": "feat/m21-vocal",
+  "head": "29d09f1b2cf1d94aa8f5e84d77f906a6a88ae6f8",
+  "humanWebAudio": "PASS (owner confirmation M21.2-R2)",
+  "archive": "C:\\Users\\henrique.hermogenes\\Documents\\p\\praise\\worktrees\\m21-vocal\\docs\\exec-plans\\evidence\\m21-2-r2\\m21-source-checkpoint.zip",
+  "archiveBytes": 3832598,
+  "archiveSha256": "274d93a94dff2b2611875fb5abc91ae39ab961fad522dac0e14d909629bdc19f",
+  "archiveIntegrity": "PASS",
+  "secretPatternHits": [],
+  "note": "Archive is local backup, not commit/staging allowlist; mobile overlays include certified baseline context. No build products or credentials. WAV files here are 14 licensed production source samples, not generated test recordings.",
+  "files": [
+    {
+      "path": "docs/exec-plans/2026-11-06-m21-2-homologacao.md",
+      "bytes": 8273,
+      "sha256": "decaaba3353b7de39114b2af89c1a178a0a04bf1d130be562b39c30a6b9ea9e3"
+    },
+    {
+      "path": "docs/exec-plans/2026-11-06-m21-2-r1-piano.md",
+      "bytes": 9910,
+      "sha256": "43cb2afedcc520978b563adc2f8f414fe585a98248ef0e57ad859c719515a69e"
+    },
+    {
+      "path": "docs/exec-plans/2026-11-06-m21-2-r2-android-handoff.md",
+      "bytes": 16384,
+      "sha256": "9548188fe61758d6d69fa0b062d3c8fb012519efa4016e2028cbd0f708faf778"
+    },
+    {
+      "path": "docs/exec-plans/2026-11-06-m21-vocal.md",
+      "bytes": 5535,
+      "sha256": "4e0ec700193744bf07582d7555bf861fe6dfdc9112efb708e51d9ce7a07434f9"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2/analyze-metronome.py",
+      "bytes": 707,
+      "sha256": "95322e9553aeced50d513765fe52d86b39554d6c78691e9269e405c876779840"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2/analyze-progression.py",
+      "bytes": 1656,
+      "sha256": "b0e46d4d558a4a5ccc508bb07570b6fb92a13e0797efe1675ec61d33d8c863bb"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2/analyze-web.py",
+      "bytes": 2084,
+      "sha256": "827f3d965e0ad2e932feefcd1efd2c4c5c4dc8d79bc23f90e67c9f9172772855"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2/android-build-status.json",
+      "bytes": 528,
+      "sha256": "8e70aa6266012db3b7bbdeb2ca7b8337b7e05f686530273c6ded99d682226970"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2/web-evidence-validation.json",
+      "bytes": 571,
+      "sha256": "9295728f8e74a3ba51d1c849c9a98e19d362732d4f63d1e5664a69599ed90e75"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2/web-gates.json",
+      "bytes": 491,
+      "sha256": "e08f10f2e441f41d7bd57e4b4f740697cea94e744144dfa50cb14a20ad47aaa3"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2/web-metronome-analysis.json",
+      "bytes": 198,
+      "sha256": "3838582f79908e673dd952cf18cab01465a3d789508e9aadd17e9bc5347d3e87"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2/web-native-context.json",
+      "bytes": 1554,
+      "sha256": "19909a54fccf685b074cc2da04c082d66138b79384e03a38df0e9ee0fd0e3cbc"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2/web-offline.json",
+      "bytes": 145,
+      "sha256": "a90769f8968dc03c723ca806f2096557653b38dc550741744654c127bb35cee7"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2/web-progression-analysis.json",
+      "bytes": 2543,
+      "sha256": "f8bc76e0a8e14afa92166cc0ce03da141614562fad03900c7f643c1d935aaa48"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2/web-real-audio.json",
+      "bytes": 2906,
+      "sha256": "dd153f1a4c4833cb8ebe4646d04b94b3fb32eaabdc0ca6760d3d54e9c16bb408"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2/web-signal-analysis.json",
+      "bytes": 9206,
+      "sha256": "b3392d1f6c7ae76a9782f7be8478f2b8c386dbe494fec944e771a4cd9ca13a81"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2-r1/analyze-samples.py",
+      "bytes": 3534,
+      "sha256": "ea725d029f6634bad736950f605f43c2b354b6c66b95f85151f1549d266b0aed"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2-r1/capture.json",
+      "bytes": 2304,
+      "sha256": "f462ae2457dd9e70c046040d0551331248caeac472fe8e68ef7817cf7ea8897c"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2-r1/click-debug.json",
+      "bytes": 4444,
+      "sha256": "0504cc617f45b8510300188f07723e034fcb7f2a76e937733fdfcb7e69c7fbae"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2-r1/gain-ramp-regression.json",
+      "bytes": 344,
+      "sha256": "048bb3f4103f9f6220ad085303d02f116eb4aeb3886f4b8106a006f1841ba3a2"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2-r1/performance.json",
+      "bytes": 704,
+      "sha256": "dda4b45a2dc010cd6662a79d96dcb00db59360a927f97913349058838e80f2de"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2-r1/polyphony.json",
+      "bytes": 239,
+      "sha256": "0a851a6f177c71838e6b27d533fd02d91666f3b84d524d71cab5acd2967b1f49"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2-r1/sample-provenance.json",
+      "bytes": 4710,
+      "sha256": "e3b193b441f33bd3c62e961bf2f3e3d824da99c44cc93a51510364879e323a45"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2-r1/signal-analysis.json",
+      "bytes": 31896,
+      "sha256": "ff0f8050a854de42a4caf625712184a510353da413a4285d3e7dd88423a0e50e"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2-r1/transport-debug.json",
+      "bytes": 325,
+      "sha256": "f914f21f5018c9d360874a62b203978f3d0f36cbd895a5cbf3ceb1ad308b71fc"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2-r1/transport.json",
+      "bytes": 325,
+      "sha256": "0c8084a12c82ec8718784a8b450b50ac82034a879a5c622f18c87923f159edca"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2-r1/validate.py",
+      "bytes": 2647,
+      "sha256": "1898282e498c4ab45af0ead4c8c10908f238b05e34a6b6a8b4f15b3f88c29be5"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2-r1/validation.json",
+      "bytes": 697,
+      "sha256": "833627503f9cd2450a1644c4d2a1b746e4839a93d922d4799f2507e7da187b38"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2-r1/verify-assets.py",
+      "bytes": 1917,
+      "sha256": "cb2347cab495acf51f99dce46272ce6aa3c069dcdf6dfcf2a02617309e399f3f"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-2-r1/web-offline.json",
+      "bytes": 1682,
+      "sha256": "684958f0558c764a41eed9ed69fc93f424d30e13c22ca28674ae7198af3c3735"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-mobile-baseline-delta.txt",
+      "bytes": 9710,
+      "sha256": "2e0c19b095dd6efaab84b5a7643b2de00d809e339594be88e7f8743ac65356aa"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-mobile-vs-certified.json",
+      "bytes": 412,
+      "sha256": "03835fd5cbc2c67f801451c5f491263afeb9c2602bdd60f80b70a07301ddcf6f"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-original-wip-sha256.txt",
+      "bytes": 88274,
+      "sha256": "f5b3f741250b18f8710aa1329a202b8c27e065b53755d2f2370b4b4a4225d1ea"
+    },
+    {
+      "path": "docs/exec-plans/evidence/m21-original-wip-status.txt",
+      "bytes": 45812,
+      "sha256": "f569b1d83e14abeb689246c85c1e6fe961dd4e711fa0a25225947b4e8a52ce25"
+    },
+    {
+      "path": "mobile/android/app/build.gradle.kts",
+      "bytes": 4783,
+      "sha256": "7fadc6d79eb3d4713392e11df0fee07705e05fe37efbf1f31717afe247aa725a"
+    },
+    {
+      "path": "mobile/android/app/src/main/kotlin/com/louvaio/louvaio_mobile/MainActivity.kt",
+      "bytes": 17451,
+      "sha256": "1d3a07027057df7e458399e498df3e65638e9f5392d4362ce1b5b21aedc5d57e"
+    },
+    {
+      "path": "mobile/assets/vocal-exercises.json",
+      "bytes": 13900,
+      "sha256": "2c64faa7528e71db54ee85b079963a0632d95d85fea66a5406907e998752fff7"
+    },
+    {
+      "path": "mobile/lib/app/router/app_router.dart",
+      "bytes": 10334,
+      "sha256": "408732a953c4bf752ebd0bc71e723e57898ce51317806e1dca4029006784c732"
+    },
+    {
+      "path": "mobile/lib/features/auth/presentation/login_screen.dart",
+      "bytes": 16948,
+      "sha256": "d9313fef9d1ef6c77535208f5886855c40ca385a50ddc25d031aefeb6960033d"
+    },
+    {
+      "path": "mobile/lib/features/dashboard/presentation/dashboard_view.dart",
+      "bytes": 23554,
+      "sha256": "bff5a435111061c797c77a654fdca18f167b04dd1671ef315459bd5f722318ce"
+    },
+    {
+      "path": "mobile/lib/features/vocal/domain/vocal_catalog.dart",
+      "bytes": 7401,
+      "sha256": "8beb3cfa36646584e196f35210e6c1c5ceea66b5c6e44c75f5208c15f46a4d70"
+    },
+    {
+      "path": "mobile/lib/features/vocal/domain/vocal_exercise.dart",
+      "bytes": 2934,
+      "sha256": "c568ab881f94961a53a72e217f34ed06ec6f8a0518641558fe653935cd801bf1"
+    },
+    {
+      "path": "mobile/lib/features/vocal/presentation/vocal_player_screen.dart",
+      "bytes": 12841,
+      "sha256": "7c1adb3e910c20f9e0230aab6ffa6c909da94407a80f5c2a7ab438b98eec47df"
+    },
+    {
+      "path": "mobile/lib/main_vocal.dart",
+      "bytes": 582,
+      "sha256": "fe47fa28a462bf5b6648edf322c1dc8f3a9e3ef59137b4e60cf517b617637d17"
+    },
+    {
+      "path": "mobile/pubspec.yaml",
+      "bytes": 4534,
+      "sha256": "ff7ae032e600359dfb5aeb536caeaec63c9ebb2e81400bc272bfe3c021ce1b83"
+    },
+    {
+      "path": "mobile/test/features/vocal/vocal_player_test.dart",
+      "bytes": 4836,
+      "sha256": "ba15f0ef95d78dd2915d840a69343120306837232e44cc752e2da53d037b93c4"
+    },
+    {
+      "path": "scripts/prepare-upright-kw.py",
+      "bytes": 3588,
+      "sha256": "7f713de097291712f88d95140431f2e8d80fea92c7ae67f1f7ea02aefb6ed109"
+    },
+    {
+      "path": "shared/audio/upright-kw.json",
+      "bytes": 2499,
+      "sha256": "1b9a9c31250d8cd0ce98e3d19dac3a2c1f5e73b7187968f31905ea5ec40a6114"
+    },
+    {
+      "path": "shared/README.md",
+      "bytes": 2192,
+      "sha256": "9ac26b6402b4c1c78c879781ecc703e3135b0abe38fa80cacdc902c8dc34f4c8"
+    },
+    {
+      "path": "shared/validate-catalog.mjs",
+      "bytes": 741,
+      "sha256": "c8b96ded5e48403ee194d47a1950fa495e36d309f3e900b67c9047cec80bc7ef"
+    },
+    {
+      "path": "shared/vocal-exercises.json",
+      "bytes": 13900,
+      "sha256": "2c64faa7528e71db54ee85b079963a0632d95d85fea66a5406907e998752fff7"
+    },
+    {
+      "path": "web/public/audio/upright-kw/cc0.txt",
+      "bytes": 7048,
+      "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499"
+    },
+    {
+      "path": "web/public/audio/upright-kw/midi-047.wav",
+      "bytes": 682670,
+      "sha256": "b6de881fdc81b2d40eaf4b2ed0a77c2cc78782ece86a917c6513d74f46817c3f"
+    },
+    {
+      "path": "web/public/audio/upright-kw/midi-051.wav",
+      "bytes": 480704,
+      "sha256": "fc214f9a50a0df5e4e668ce2d8686cbf2dd64254863fa51c2dce1f3fdb1362e3"
+    },
+    {
+      "path": "web/public/audio/upright-kw/midi-054.wav",
+      "bytes": 531344,
+      "sha256": "ee4ef934d1fd5a3e1f42a2b54ff8227032974822daded770637860022b0a66c2"
+    },
+    {
+      "path": "web/public/audio/upright-kw/midi-057.wav",
+      "bytes": 373678,
+      "sha256": "2fe091f5d07238e68aeba150cd2f0bd21dcedc14bbb246bce9ce56febe2695c5"
+    },
+    {
+      "path": "web/public/audio/upright-kw/midi-060.wav",
+      "bytes": 426834,
+      "sha256": "9eb060c0a86196673e38b7b9532a94c7f2c54960391aa1f5ae0b75079c5c9db3"
+    },
+    {
+      "path": "web/public/audio/upright-kw/midi-063.wav",
+      "bytes": 435270,
+      "sha256": "1bbe2555554a824f27af50e6f6982f04fcd03a86526e845b3f065b8b4bb702bd"
+    },
+    {
+      "path": "web/public/audio/upright-kw/midi-066.wav",
+      "bytes": 370736,
+      "sha256": "011156e087c1da7f8111f7486f9d6b9939c9ac1e378632c9c9c66ef1c278db8e"
+    },
+    {
+      "path": "web/public/audio/upright-kw/midi-069.wav",
+      "bytes": 261056,
+      "sha256": "5a4b83e4d64d523430b7496edc62d525519844ec13824e362e9a6cd9a63c710d"
+    },
+    {
+      "path": "web/public/audio/upright-kw/midi-072.wav",
+      "bytes": 306124,
+      "sha256": "8b1022b0c5adb5656f065220d9e56b02ff2b970ba0e24e97d4fc877fe0250aa4"
+    },
+    {
+      "path": "web/public/audio/upright-kw/midi-075.wav",
+      "bytes": 278544,
+      "sha256": "9741c76e21a6f7b8ef802e8a88ab4002d94b61c4bf4ce13f64169b2139958dc6"
+    },
+    {
+      "path": "web/public/audio/upright-kw/midi-078.wav",
+      "bytes": 173504,
+      "sha256": "7c977d422e69ef7c384cb40093416f92438f74ff392117d0b56db811cb8cde0a"
+    },
+    {
+      "path": "web/public/audio/upright-kw/midi-081.wav",
+      "bytes": 250462,
+      "sha256": "1f80bf1211b42367e0150e4cef87a3b213f85b9d14b14c7c35ac9ce2f8c85822"
+    },
+    {
+      "path": "web/public/audio/upright-kw/midi-084.wav",
+      "bytes": 194986,
+      "sha256": "ea1ea4cfbb11c622df0ab757fe0a7bacf6fbb7e6fc92e101ae6a9a398af47b19"
+    },
+    {
+      "path": "web/public/audio/upright-kw/midi-087.wav",
+      "bytes": 161992,
+      "sha256": "3717889698e547a675d8a0ecc12d9298bfeea246a01dab7a4ded7777a084e935"
+    },
+    {
+      "path": "web/public/audio/upright-kw/README.md",
+      "bytes": 1265,
+      "sha256": "dbc6eaf60b2a2773f501dc873cba146bd677115058173b9289c4e3042a3237a5"
+    },
+    {
+      "path": "web/public/audio/upright-kw/readme.txt",
+      "bytes": 896,
+      "sha256": "176d252d3192c4cb1576c88512f94e981f6208aedec65b9ec5174280c02dc534"
+    },
+    {
+      "path": "web/scripts/m21-r1-audio.mjs",
+      "bytes": 6451,
+      "sha256": "4833180febcdb3c3ad6ad6aa09f301b4e94711bcf3f5ec87b368efe52bb4b155"
+    },
+    {
+      "path": "web/scripts/m21-r1-click-debug.mjs",
+      "bytes": 5302,
+      "sha256": "6582d4bd31c9ac804dd19a57a0714c17cefba5e8a90b658c458770e99597587f"
+    },
+    {
+      "path": "web/scripts/m21-r1-gain-regression.mjs",
+      "bytes": 1469,
+      "sha256": "951380388e37e5aca6ff1b85371acb956c6decbe2f8ae6ae1e80e8cc6fb1f0c5"
+    },
+    {
+      "path": "web/scripts/m21-r1-offline.mjs",
+      "bytes": 4169,
+      "sha256": "921093de69cb7da84e84cc9cf2437770472ff9a7f37fc495462096b01af5ac3d"
+    },
+    {
+      "path": "web/scripts/m21-r1-performance.mjs",
+      "bytes": 2395,
+      "sha256": "f17def63bcc7a9ce63894fbaee880c280384586b4c55e94d0e92f27b7263121f"
+    },
+    {
+      "path": "web/scripts/m21-r1-polyphony.mjs",
+      "bytes": 1246,
+      "sha256": "ad2ce86cb7a2787d06bee7bbcea2da375d8f66508f7d661982c04e15a555dc18"
+    },
+    {
+      "path": "web/scripts/m21-r1-transport.mjs",
+      "bytes": 4623,
+      "sha256": "61ef66a4bcde6a274f7e484783f6894660d2e891764fa4726d558bbc1675d26a"
+    },
+    {
+      "path": "web/scripts/m21-real-audio.mjs",
+      "bytes": 4967,
+      "sha256": "20961ebfd00a65a0a8f6dcd8957ad8a566e9002cd2420912d5f159f6371229e7"
+    },
+    {
+      "path": "web/scripts/m21-validate-web-evidence.mjs",
+      "bytes": 2310,
+      "sha256": "d319ef76b026c33d248b324d90297669a7f0bb0fb97dd0a688249b98a46980fa"
+    },
+    {
+      "path": "web/scripts/m21-web-gates.mjs",
+      "bytes": 6273,
+      "sha256": "2c12f935e95be38b0d968dee4ee300182b111d30af5f2b181de66d73366f7231"
+    },
+    {
+      "path": "web/scripts/m21-web-native-context.mjs",
+      "bytes": 1439,
+      "sha256": "9dc1e3fcecbfebdbe28befc7d9f2ef367754bbea465ece388b13b15064e69f05"
+    },
+    {
+      "path": "web/scripts/m21-web-offline.mjs",
+      "bytes": 3775,
+      "sha256": "a813a1096f34f48d9de0524d5f9c278b8c3349acd8455ea1019e1d8c3562d8bd"
+    },
+    {
+      "path": "web/src/App.tsx",
+      "bytes": 68225,
+      "sha256": "bd093db22619ad58eaa224f1830483a1af56912506d6c12e58ddac5aae4025ed"
+    },
+    {
+      "path": "web/src/audio/sampled-piano.ts",
+      "bytes": 7201,
+      "sha256": "e0f8a149aaba4e85ed4c82c66a0f341e9e6b12240014e8fa44f4f73ff1212035"
+    },
+    {
+      "path": "web/src/components/VocalExercisePlayer.test.tsx",
+      "bytes": 6463,
+      "sha256": "760cc379d6d7c986edccefe863d8e07c25bb0db3ebaa2fb7b9863699183591b7"
+    },
+    {
+      "path": "web/src/components/VocalExercisePlayer.tsx",
+      "bytes": 12868,
+      "sha256": "354d571773420b11117c6171e9cf51adce365c2011e04a8299241261065f0cce"
+    },
+    {
+      "path": "web/src/routing.test.ts",
+      "bytes": 1619,
+      "sha256": "1761e63953c4e1e03c10631eeec23d1b8f2ac0e94afb1161a8c359147b2730ca"
+    },
+    {
+      "path": "web/src/routing.ts",
+      "bytes": 3788,
+      "sha256": "7be1ddc2e1bb68d4cf4fdfb602e8d0c6ef3f334e522b0e6dc6d4cbb2d526a248"
+    },
+    {
+      "path": "web/src/vocal-exercises.ts",
+      "bytes": 309,
+      "sha256": "6ec025ed8b0614503f276f9dc2bcc2128d67b3f4bc453921e7c598fe7a9b796e"
+    },
+    {
+      "path": "web/vite.config.ts",
+      "bytes": 2656,
+      "sha256": "b27ba65f773c007f3308c0c0633e2deb38a622533ded4d1c67d484a4e9777173"
+    }
+  ]
+}

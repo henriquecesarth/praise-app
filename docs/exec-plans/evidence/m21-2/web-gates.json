@@ -1,0 +1,29 @@
+{
+  "cases": [
+    {
+      "direction": "1",
+      "frames": 257792,
+      "ended": true
+    },
+    {
+      "direction": "-1",
+      "frames": 262016,
+      "ended": true
+    }
+  ],
+  "metronomeFrames": 58112,
+  "pauseClockDelta": 0,
+  "resumeClockDelta": 0.3386666666666649,
+  "stopped": {
+    "frames": 12800,
+    "peak": 0
+  },
+  "invalidDisabled": true,
+  "offline": {
+    "online": true,
+    "controller": true,
+    "frames": 48512,
+    "peak": 0.21272088587284088
+  },
+  "errors": []
+}

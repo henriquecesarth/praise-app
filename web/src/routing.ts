@@ -1,4 +1,4 @@
-export type MainModuleType = 'dashboard' | 'repertoire' | 'cifrador' | 'schedules' | 'ministry' | 'liturgies';
+export type MainModuleType = 'dashboard' | 'repertoire' | 'cifrador' | 'schedules' | 'ministry' | 'liturgies' | 'vocal';
 
 export interface AppRouteState {
   module: MainModuleType;
@@ -12,6 +12,10 @@ export interface AppRouteState {
   isKnown: boolean;
 }
 
+export function shouldBootstrapSession(module: MainModuleType, authReady: boolean) {
+  return module !== 'vocal' && !authReady;
+}
+
 export const MODULE_PATHS: Record<MainModuleType, string> = {
   dashboard: '/',
   schedules: '/escalas',
@@ -19,6 +23,7 @@ export const MODULE_PATHS: Record<MainModuleType, string> = {
   cifrador: '/cifras',
   ministry: '/ministerio',
   liturgies: '/liturgias',
+  vocal: '/exercicios-vocais',
 };
 
 const decodeSegment = (value: string | undefined) => {
@@ -40,6 +45,7 @@ export function parseAppRoute(pathname: string): AppRouteState {
   if (normalized === '/cifras') return { module: 'cifrador', isKnown: true };
   if (normalized === '/ministerio') return { module: 'ministry', isKnown: true };
   if (normalized === '/liturgias') return { module: 'liturgies', isKnown: true };
+  if (normalized === '/exercicios-vocais') return { module: 'vocal', isKnown: true };
   if (normalized === '/privacidade') return { module: 'dashboard', isPrivacy: true, isKnown: true };
   if (normalized === '/exclusao-conta') return { module: 'dashboard', isAccountDeletion: true, isKnown: true };
   if (normalized === '/whatsapp/callback') {

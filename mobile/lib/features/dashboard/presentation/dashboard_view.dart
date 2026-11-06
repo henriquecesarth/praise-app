@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+
 import '../../../app/providers.dart';
 import '../../ministry_context/domain/ministry.dart';
 import '../../ministry_context/presentation/widgets/ministry_switcher_sheet.dart';
@@ -65,7 +67,8 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
     final user = ref.watch(authNotifierProvider).user;
     final userName = user?.name.isNotEmpty == true ? user!.name : 'Músico';
 
-    final isMatchingMinistry = widget.selectedMinistry != null &&
+    final isMatchingMinistry =
+        widget.selectedMinistry != null &&
         dashboardState.ministryId == widget.selectedMinistry!.id;
 
     final isAdmin =
@@ -90,6 +93,15 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
           children: [
             // 1. Header & Greeting
             _buildHeader(context, userName, isDark),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.tonalIcon(
+                onPressed: () => context.push('/vocal'),
+                icon: const Icon(Icons.mic),
+                label: const Text('Aquecimento vocal'),
+              ),
+            ),
             const SizedBox(height: 16),
 
             // 2. Active Ministry Card
@@ -207,10 +219,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
     final theme = Theme.of(context);
 
     final roleBadge = Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 6,
-        vertical: 2,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: ministry.isAdmin
             ? theme.colorScheme.primary.withValues(alpha: 0.2)
@@ -279,8 +288,9 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color:
-            theme.colorScheme.primary.withValues(alpha: isDark ? 0.12 : 0.06),
+        color: theme.colorScheme.primary.withValues(
+          alpha: isDark ? 0.12 : 0.06,
+        ),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: theme.colorScheme.primary.withValues(alpha: 0.2),
@@ -299,8 +309,9 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                   children: [
                     CircleAvatar(
                       radius: 20,
-                      backgroundColor: theme.colorScheme.primary
-                          .withValues(alpha: isDark ? 0.3 : 0.15),
+                      backgroundColor: theme.colorScheme.primary.withValues(
+                        alpha: isDark ? 0.3 : 0.15,
+                      ),
                       child: Icon(
                         Icons.church,
                         size: 20,
@@ -343,8 +354,9 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
             children: [
               CircleAvatar(
                 radius: 20,
-                backgroundColor: theme.colorScheme.primary
-                    .withValues(alpha: isDark ? 0.3 : 0.15),
+                backgroundColor: theme.colorScheme.primary.withValues(
+                  alpha: isDark ? 0.3 : 0.15,
+                ),
                 child: Icon(
                   Icons.church,
                   size: 20,
@@ -554,8 +566,10 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                 label: const Text('Novo Aviso'),
                 style: FilledButton.styleFrom(
                   visualDensity: VisualDensity.compact,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
                 ),
               ),
             ],
@@ -609,9 +623,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: theme.dividerColor.withValues(alpha: 0.15),
-        ),
+        border: Border.all(color: theme.dividerColor.withValues(alpha: 0.15)),
       ),
       child: Column(
         children: [
@@ -683,9 +695,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
               onPressed: onRetry,
               icon: const Icon(Icons.refresh, size: 16),
               label: const Text('Tentar novamente'),
-              style: TextButton.styleFrom(
-                foregroundColor: Colors.red.shade800,
-              ),
+              style: TextButton.styleFrom(foregroundColor: Colors.red.shade800),
             ),
           ),
         ],

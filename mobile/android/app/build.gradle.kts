@@ -59,6 +59,10 @@ android {
             dimension = "environment"
             applicationId = "com.louvaio.app.cifraprobe"
         }
+        create("vocal") {
+            dimension = "environment"
+            applicationId = "com.louvaio.app.m21vocal"
+        }
     }
 
 
@@ -94,7 +98,7 @@ android {
 
 // Local WebView investigation has no Firebase configuration or initialization.
 tasks.configureEach {
-    if (name.startsWith("processCifraProbe") && name.endsWith("GoogleServices")) {
+    if ((name.startsWith("processCifraProbe") || name.startsWith("processVocal")) && name.endsWith("GoogleServices")) {
         enabled = false
     }
 }

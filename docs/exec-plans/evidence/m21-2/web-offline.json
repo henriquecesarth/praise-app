@@ -1,0 +1,8 @@
+{
+  "probe": "NETWORK_REQUEST_FAILED",
+  "online": true,
+  "controller": true,
+  "frames": 54272,
+  "peak": 0.21272088587284088,
+  "errors": []
+}

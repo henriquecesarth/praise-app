@@ -1,0 +1,130 @@
+{
+  "browser": "151.0.7922.34",
+  "headless": false,
+  "method": "Actual AudioWorklet PCM tapped in parallel to browser destination; no audio mocks",
+  "results": [
+    {
+      "id": "vocal-01",
+      "bpm": 40,
+      "rate": 48000,
+      "frames": 256768,
+      "peak": 0.19844819605350494,
+      "rms": 0.025021887019440144,
+      "state": "running",
+      "captureGapFrames": 0
+    },
+    {
+      "id": "vocal-01",
+      "bpm": 80,
+      "rate": 48000,
+      "frames": 127616,
+      "peak": 0.19839569926261902,
+      "rms": 0.025088915384471288,
+      "state": "running",
+      "captureGapFrames": 128
+    },
+    {
+      "id": "vocal-01",
+      "bpm": 120,
+      "rate": 48000,
+      "frames": 91136,
+      "peak": 0.1983412504196167,
+      "rms": 0.02424900612069335,
+      "state": "running",
+      "captureGapFrames": 0
+    },
+    {
+      "id": "vocal-01",
+      "bpm": 180,
+      "rate": 48000,
+      "frames": 67200,
+      "peak": 0.19825556874275208,
+      "rms": 0.023058215299502024,
+      "state": "running",
+      "captureGapFrames": 128
+    },
+    {
+      "id": "vocal-02",
+      "bpm": 40,
+      "rate": 48000,
+      "frames": 235648,
+      "peak": 0.19844819605350494,
+      "rms": 0.025963746374345825,
+      "state": "running",
+      "captureGapFrames": 256
+    },
+    {
+      "id": "vocal-02",
+      "bpm": 80,
+      "rate": 48000,
+      "frames": 129152,
+      "peak": 0.19839569926261902,
+      "rms": 0.024960486145889485,
+      "state": "running",
+      "captureGapFrames": 128
+    },
+    {
+      "id": "vocal-02",
+      "bpm": 120,
+      "rate": 48000,
+      "frames": 91264,
+      "peak": 0.1983412355184555,
+      "rms": 0.02426058037870991,
+      "state": "running",
+      "captureGapFrames": 128
+    },
+    {
+      "id": "vocal-02",
+      "bpm": 180,
+      "rate": 48000,
+      "frames": 67200,
+      "peak": 0.19825555384159088,
+      "rms": 0.023101503764028312,
+      "state": "running",
+      "captureGapFrames": 0
+    },
+    {
+      "id": "vocal-03",
+      "bpm": 40,
+      "rate": 48000,
+      "frames": 234752,
+      "peak": 0.19844819605350494,
+      "rms": 0.025983696399105125,
+      "state": "running",
+      "captureGapFrames": 256
+    },
+    {
+      "id": "vocal-03",
+      "bpm": 80,
+      "rate": 48000,
+      "frames": 127232,
+      "peak": 0.19839569926261902,
+      "rms": 0.02512051604449811,
+      "state": "running",
+      "captureGapFrames": 0
+    },
+    {
+      "id": "vocal-03",
+      "bpm": 120,
+      "rate": 48000,
+      "frames": 91648,
+      "peak": 0.1983412206172943,
+      "rms": 0.0241729322179594,
+      "state": "running",
+      "captureGapFrames": 0
+    },
+    {
+      "id": "vocal-03",
+      "bpm": 180,
+      "rate": 48000,
+      "frames": 67200,
+      "peak": 0.19825556874275208,
+      "rms": 0.023048753110316792,
+      "state": "running",
+      "captureGapFrames": 0
+    }
+  ],
+  "pauseClockDelta": 0,
+  "stopPeak": 0,
+  "errors": []
+}

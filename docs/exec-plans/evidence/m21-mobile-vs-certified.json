@@ -1,0 +1,18 @@
+[
+  {
+    "path": "mobile/android/app/src/main/kotlin/com/louvaio/louvaio_mobile/MainActivity.kt",
+    "status": "changed"
+  },
+  {
+    "path": "mobile/lib/app/router/app_router.dart",
+    "status": "changed"
+  },
+  {
+    "path": "mobile/lib/features/dashboard/presentation/dashboard_view.dart",
+    "status": "changed"
+  },
+  {
+    "path": "mobile/pubspec.yaml",
+    "status": "changed"
+  }
+]

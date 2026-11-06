@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+
 import '../../features/auth/presentation/controllers/auth_controller.dart';
 import '../../features/auth/presentation/login_screen.dart';
 import '../../features/ministry_context/presentation/controllers/ministry_context_controller.dart';
@@ -8,12 +9,12 @@ import '../../features/ministry_context/presentation/ministry_empty_screen.dart'
 import '../../features/ministry_context/presentation/ministry_selector_screen.dart';
 import '../providers.dart';
 import '../shell/app_shell.dart';
+import '../../features/vocal/presentation/vocal_player_screen.dart';
 
 bool shouldPreservePendingShareOnAuthentication(
   AuthState? previous, {
   required bool hasAuthenticatedSession,
-}) =>
-    !hasAuthenticatedSession && previous?.user == null;
+}) => !hasAuthenticatedSession && previous?.user == null;
 
 GoRouter createRouter(Ref ref) {
   final rootNavKey = ref.watch(rootNavigatorKeyProvider);
@@ -27,6 +28,8 @@ GoRouter createRouter(Ref ref) {
       final auth = ref.read(authNotifierProvider);
       final ministry = ref.read(ministryContextNotifierProvider);
       final loc = state.matchedLocation;
+      // This route contains only bundled public exercises and works offline.
+      if (loc == '/vocal') return null;
       final isLoggingIn = loc == '/login';
       final isNoMinistry = loc == '/no-ministry';
       final isSelectMinistry = loc == '/select-ministry';
@@ -74,15 +77,18 @@ GoRouter createRouter(Ref ref) {
     },
     routes: [
       GoRoute(
+        path: '/vocal',
+        name: 'vocal-player',
+        builder: (_, __) => const VocalPlayerScreen(),
+      ),
+      GoRoute(
         path: '/',
         name: 'home',
         builder: (BuildContext context, GoRouterState state) {
           final auth = ref.watch(authNotifierProvider);
           if (auth.isInitializing) {
             return const Scaffold(
-              body: Center(
-                child: CircularProgressIndicator(),
-              ),
+              body: Center(child: CircularProgressIndicator()),
             );
           }
           if (auth.hasBootstrapError) {
@@ -113,8 +119,9 @@ GoRouter createRouter(Ref ref) {
                             'Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.',
                         textAlign: TextAlign.center,
                         style: theme.textTheme.bodyMedium?.copyWith(
-                          color: theme.colorScheme.onSurface
-                              .withValues(alpha: 0.7),
+                          color: theme.colorScheme.onSurface.withValues(
+                            alpha: 0.7,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 24),
@@ -126,6 +133,11 @@ GoRouter createRouter(Ref ref) {
                         },
                         icon: const Icon(Icons.refresh),
                         label: const Text('Tentar novamente'),
+                      ),
+                      TextButton.icon(
+                        onPressed: () => GoRouter.of(context).push('/vocal'),
+                        icon: const Icon(Icons.mic),
+                        label: const Text('Exercícios vocais offline'),
                       ),
                       const SizedBox(height: 12),
                       OutlinedButton(
@@ -189,9 +201,9 @@ class _RouterRefreshNotifier extends ChangeNotifier {
       if (next.isAuthenticated && previous?.user?.id != next.user?.id) {
         final isInitialAuthentication =
             shouldPreservePendingShareOnAuthentication(
-          previous,
-          hasAuthenticatedSession: _hasAuthenticatedSession,
-        );
+              previous,
+              hasAuthenticatedSession: _hasAuthenticatedSession,
+            );
         resetAuthenticatedFeatures(
           ref,
           preservePendingShareIntent: isInitialAuthentication,
@@ -214,8 +226,10 @@ class _RouterRefreshNotifier extends ChangeNotifier {
       notifyListeners();
     });
 
-    ref.listen<MinistryContextState>(ministryContextNotifierProvider,
-        (previous, next) {
+    ref.listen<MinistryContextState>(ministryContextNotifierProvider, (
+      previous,
+      next,
+    ) {
       if (next.isReady) {
         // Trigger push notification sync upon authenticated bootstrap
         try {
@@ -262,7 +276,9 @@ class _RouterRefreshNotifier extends ChangeNotifier {
 }
 
 void _dispatchPendingShareAfterNavigationReady(
-    Ref ref, GlobalKey<NavigatorState> navigatorKey) {
+  Ref ref,
+  GlobalKey<NavigatorState> navigatorKey,
+) {
   WidgetsBinding.instance.addPostFrameCallback((_) {
     if (navigatorKey.currentState == null) return;
     try {

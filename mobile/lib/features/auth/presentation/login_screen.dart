@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../../app/theme/app_theme.dart';
 import '../../../app/providers.dart';
 
@@ -72,7 +73,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       final authState = ref.read(authNotifierProvider);
       if (mounted && authState.hasError) {
         setState(() {
-          _errorMessage = authState.failure?.message ??
+          _errorMessage =
+              authState.failure?.message ??
               'Falha na autenticação. Verifique os dados.';
         });
       }
@@ -89,8 +91,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 28.0, vertical: 24.0),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 28.0,
+              vertical: 24.0,
+            ),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 420),
               child: Form(
@@ -131,8 +135,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           : 'Crie sua conta no LouvAIO',
                       textAlign: TextAlign.center,
                       style: theme.textTheme.bodyMedium?.copyWith(
-                        color:
-                            theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                        color: theme.colorScheme.onSurface.withValues(
+                          alpha: 0.7,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 28),
@@ -173,7 +178,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     if (_errorMessage != null) ...[
                       Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 10),
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
                         decoration: BoxDecoration(
                           color: AppColors.error.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(8),
@@ -276,7 +283,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           ),
                           onPressed: () {
                             setState(
-                                () => _obscurePassword = !_obscurePassword);
+                              () => _obscurePassword = !_obscurePassword,
+                            );
                           },
                         ),
                       ),
@@ -311,8 +319,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   : Icons.visibility,
                             ),
                             onPressed: () {
-                              setState(() => _obscureConfirmPassword =
-                                  !_obscureConfirmPassword);
+                              setState(
+                                () => _obscureConfirmPassword =
+                                    !_obscureConfirmPassword,
+                              );
                             },
                           ),
                         ),
@@ -349,7 +359,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
                                 valueColor: AlwaysStoppedAnimation<Color>(
-                                    AppColors.cream),
+                                  AppColors.cream,
+                                ),
                               ),
                             )
                           : Text(
@@ -359,6 +370,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => context.push('/vocal'),
+                      icon: const Icon(Icons.mic),
+                      label: const Text('Exercícios vocais offline'),
                     ),
                   ],
                 ),

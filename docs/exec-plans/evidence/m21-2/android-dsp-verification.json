@@ -1,0 +1,28 @@
+{
+  "status": "PASS",
+  "sampleBank": {
+    "regions": 14,
+    "midiRange": [
+      48,
+      88
+    ],
+    "wavSource": "FreePats Upright KW",
+    "license": "CC0-1.0"
+  },
+  "dsp": {
+    "resampling": "bandlimited sinc hann 16 taps 1024 phases",
+    "unitDcGain": true,
+    "polyphonyHeadroom": true,
+    "maxObservedPeak": 0.09495312038225116,
+    "clippedSamples": 0,
+    "voiceStealingFadeMs": 15,
+    "metronome": "850/1200Hz 1ms attack 35ms exponential decay"
+  },
+  "verifiedBpmRange": [
+    40,
+    80,
+    120,
+    180
+  ],
+  "audioTrackAdapter": "AudioTrack MODE_STREAM 44100Hz mono WRITE_BLOCKING"
+}

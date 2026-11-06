@@ -1,0 +1,14 @@
+{
+  "method": "Real AudioWorklet parallel capture with a zero-valued constant input to keep collecting silence after master disconnect",
+  "pauseClockDelta": 0,
+  "resumeClockDelta": 0.32000000000000006,
+  "stop": {
+    "frames": 17280,
+    "peak": 0
+  },
+  "rapid": {
+    "frames": 17280,
+    "peak": 0
+  },
+  "errors": []
+}

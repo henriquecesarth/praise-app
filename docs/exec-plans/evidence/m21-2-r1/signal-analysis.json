@@ -1,0 +1,939 @@
+{
+  "method": "Matched filtering against original recorded WAV attack templates resampled to target MIDI. No synthesized expected PCM. F0: Hann FFT around expected acoustic fundamental; recorded piano tuning may differ from equal temperament. Capture gaps remain unpadded and bound timing uncertainty.",
+  "results": [
+    {
+      "name": "arpeggio-80",
+      "sampleRate": 48000,
+      "captureGapFrames": 128,
+      "detectedStart": 0.2,
+      "notes": [
+        {
+          "midi": 48,
+          "onsetSeconds": 0.2,
+          "expectedRelativeSeconds": 0.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9999995890789425,
+          "measuredHz": 130.6488100455343,
+          "centsFromEqualTemperament": -2.1714469859429477
+        },
+        {
+          "midi": 52,
+          "onsetSeconds": 0.95,
+          "expectedRelativeSeconds": 0.75,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9906285149864335,
+          "measuredHz": 164.21022368048986,
+          "centsFromEqualTemperament": -6.351486480098716
+        },
+        {
+          "midi": 55,
+          "onsetSeconds": 1.7,
+          "expectedRelativeSeconds": 1.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9945593892853324,
+          "measuredHz": 194.84418277161524,
+          "centsFromEqualTemperament": -10.219197292495073
+        },
+        {
+          "midi": 60,
+          "onsetSeconds": 2.45,
+          "expectedRelativeSeconds": 2.25,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9992102484114878,
+          "measuredHz": 260.79518125772495,
+          "centsFromEqualTemperament": -5.503572930366573
+        },
+        {
+          "midi": 55,
+          "onsetSeconds": 3.2,
+          "expectedRelativeSeconds": 3.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9954112317906175,
+          "measuredHz": 194.84613474193003,
+          "centsFromEqualTemperament": -10.20185368748422
+        },
+        {
+          "midi": 52,
+          "onsetSeconds": 3.95,
+          "expectedRelativeSeconds": 3.75,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9981419940181125,
+          "measuredHz": 164.2437677133614,
+          "centsFromEqualTemperament": -5.99787487193606
+        },
+        {
+          "midi": 48,
+          "onsetSeconds": 4.7,
+          "expectedRelativeSeconds": 4.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9942636382608373,
+          "measuredHz": 130.6472604531356,
+          "centsFromEqualTemperament": -2.191980835669126
+        },
+        {
+          "midi": 49,
+          "onsetSeconds": 6.2,
+          "expectedRelativeSeconds": 6.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9999994628016324,
+          "measuredHz": 138.93769501105325,
+          "centsFromEqualTemperament": 4.3214533409946245
+        },
+        {
+          "midi": 53,
+          "onsetSeconds": 6.95,
+          "expectedRelativeSeconds": 6.75,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9959960270520942,
+          "measuredHz": 173.43795568451256,
+          "centsFromEqualTemperament": -11.700640293085236
+        },
+        {
+          "midi": 56,
+          "onsetSeconds": 7.7,
+          "expectedRelativeSeconds": 7.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9981508283289227,
+          "measuredHz": 207.16865925687182,
+          "centsFromEqualTemperament": -4.037308391517697
+        }
+      ]
+    },
+    {
+      "name": "scale-up",
+      "sampleRate": 48000,
+      "captureGapFrames": 0,
+      "detectedStart": 0.12,
+      "notes": [
+        {
+          "midi": 60,
+          "onsetSeconds": 0.12,
+          "expectedRelativeSeconds": 0.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9999999234341074,
+          "measuredHz": 260.79525224990766,
+          "centsFromEqualTemperament": -5.503101663732642
+        },
+        {
+          "midi": 62,
+          "onsetSeconds": 0.62,
+          "expectedRelativeSeconds": 0.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9730109246413038,
+          "measuredHz": 293.1825593370127,
+          "centsFromEqualTemperament": -2.845087852478365
+        },
+        {
+          "midi": 64,
+          "onsetSeconds": 1.12,
+          "expectedRelativeSeconds": 1.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9845852185112627,
+          "measuredHz": 329.00674783229886,
+          "centsFromEqualTemperament": -3.2636202785043045
+        },
+        {
+          "midi": 65,
+          "onsetSeconds": 1.62,
+          "expectedRelativeSeconds": 1.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9794806455336048,
+          "measuredHz": 349.244650247838,
+          "centsFromEqualTemperament": 0.08139130963256996
+        },
+        {
+          "midi": 67,
+          "onsetSeconds": 2.12,
+          "expectedRelativeSeconds": 2.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9874427725651649,
+          "measuredHz": 391.960035715567,
+          "centsFromEqualTemperament": -0.15635108986407015
+        },
+        {
+          "midi": 69,
+          "onsetSeconds": 2.62,
+          "expectedRelativeSeconds": 2.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9954844413422846,
+          "measuredHz": 439.27868562813785,
+          "centsFromEqualTemperament": -2.840428867860245
+        },
+        {
+          "midi": 71,
+          "onsetSeconds": 3.12,
+          "expectedRelativeSeconds": 3.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9990369800743883,
+          "measuredHz": 493.4036132513569,
+          "centsFromEqualTemperament": -1.68229166197952
+        },
+        {
+          "midi": 72,
+          "onsetSeconds": 3.62,
+          "expectedRelativeSeconds": 3.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9966503155349486,
+          "measuredHz": 522.7365671946789,
+          "centsFromEqualTemperament": -1.7033274167705343
+        },
+        {
+          "midi": 71,
+          "onsetSeconds": 4.12,
+          "expectedRelativeSeconds": 4.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9964834409512036,
+          "measuredHz": 493.4023519133003,
+          "centsFromEqualTemperament": -1.6867173980777443
+        },
+        {
+          "midi": 69,
+          "onsetSeconds": 4.62,
+          "expectedRelativeSeconds": 4.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9954942812558344,
+          "measuredHz": 439.2781502592095,
+          "centsFromEqualTemperament": -2.8425388028803815
+        },
+        {
+          "midi": 67,
+          "onsetSeconds": 5.12,
+          "expectedRelativeSeconds": 5.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.997439288751219,
+          "measuredHz": 391.96107106979605,
+          "centsFromEqualTemperament": -0.15177807740498614
+        },
+        {
+          "midi": 65,
+          "onsetSeconds": 5.62,
+          "expectedRelativeSeconds": 5.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9908525369445657,
+          "measuredHz": 349.2417145305781,
+          "centsFromEqualTemperament": 0.06683865997440444
+        },
+        {
+          "midi": 64,
+          "onsetSeconds": 6.12,
+          "expectedRelativeSeconds": 6.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9934836528266585,
+          "measuredHz": 329.00621844600323,
+          "centsFromEqualTemperament": -3.266405912304934
+        },
+        {
+          "midi": 62,
+          "onsetSeconds": 6.62,
+          "expectedRelativeSeconds": 6.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9897441330148088,
+          "measuredHz": 293.18169411147034,
+          "centsFromEqualTemperament": -2.850196990391561
+        },
+        {
+          "midi": 60,
+          "onsetSeconds": 7.12,
+          "expectedRelativeSeconds": 7.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.985935247496125,
+          "measuredHz": 260.79592155159435,
+          "centsFromEqualTemperament": -5.498658651935998
+        },
+        {
+          "midi": 61,
+          "onsetSeconds": 8.12,
+          "expectedRelativeSeconds": 8.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9999995500289547,
+          "measuredHz": 276.2295368288689,
+          "centsFromEqualTemperament": -5.963116708744352
+        },
+        {
+          "midi": 63,
+          "onsetSeconds": 8.62,
+          "expectedRelativeSeconds": 8.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9769821414408646,
+          "measuredHz": 310.5787900679894,
+          "centsFromEqualTemperament": -3.053057589030548
+        },
+        {
+          "midi": 65,
+          "onsetSeconds": 9.12,
+          "expectedRelativeSeconds": 9.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9758950540488159,
+          "measuredHz": 349.24338551804937,
+          "centsFromEqualTemperament": 0.07512193017022728
+        },
+        {
+          "midi": 66,
+          "onsetSeconds": 9.62,
+          "expectedRelativeSeconds": 9.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9873947558315854,
+          "measuredHz": 369.99298806063393,
+          "centsFromEqualTemperament": -0.006712861933539052
+        },
+        {
+          "midi": 68,
+          "onsetSeconds": 10.12,
+          "expectedRelativeSeconds": 10.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9948004764894257,
+          "measuredHz": 414.65409705343046,
+          "centsFromEqualTemperament": -2.7142118906027495
+        },
+        {
+          "midi": 70,
+          "onsetSeconds": 10.62,
+          "expectedRelativeSeconds": 10.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.998306705985646,
+          "measuredHz": 465.38154625359226,
+          "centsFromEqualTemperament": -2.9074227664024828
+        },
+        {
+          "midi": 72,
+          "onsetSeconds": 11.12,
+          "expectedRelativeSeconds": 11.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9992689277117575,
+          "measuredHz": 522.7348993870625,
+          "centsFromEqualTemperament": -1.7088509827885252
+        },
+        {
+          "midi": 73,
+          "onsetSeconds": 11.62,
+          "expectedRelativeSeconds": 11.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9964041950206262,
+          "measuredHz": 553.8101205284917,
+          "centsFromEqualTemperament": -1.734526561466667
+        },
+        {
+          "midi": 72,
+          "onsetSeconds": 12.12,
+          "expectedRelativeSeconds": 12.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9965832906053008,
+          "measuredHz": 522.7350578024335,
+          "centsFromEqualTemperament": -1.7083263305355407
+        },
+        {
+          "midi": 70,
+          "onsetSeconds": 12.62,
+          "expectedRelativeSeconds": 12.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9951067800850864,
+          "measuredHz": 465.3811804206738,
+          "centsFromEqualTemperament": -2.908783676947209
+        },
+        {
+          "midi": 68,
+          "onsetSeconds": 13.12,
+          "expectedRelativeSeconds": 13.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9990360325907013,
+          "measuredHz": 414.6553103027411,
+          "centsFromEqualTemperament": -2.7091464264997884
+        },
+        {
+          "midi": 66,
+          "onsetSeconds": 13.62,
+          "expectedRelativeSeconds": 13.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9967275203383495,
+          "measuredHz": 369.9882580207503,
+          "centsFromEqualTemperament": -0.02884533121812865
+        },
+        {
+          "midi": 65,
+          "onsetSeconds": 14.12,
+          "expectedRelativeSeconds": 14.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9891802617895741,
+          "measuredHz": 349.24144942709614,
+          "centsFromEqualTemperament": 0.06552450897367218
+        },
+        {
+          "midi": 63,
+          "onsetSeconds": 14.62,
+          "expectedRelativeSeconds": 14.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9935320446822681,
+          "measuredHz": 310.5821115943291,
+          "centsFromEqualTemperament": -3.0345427743382043
+        },
+        {
+          "midi": 61,
+          "onsetSeconds": 15.12,
+          "expectedRelativeSeconds": 15.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9883241020615849,
+          "measuredHz": 276.2277203362536,
+          "centsFromEqualTemperament": -5.974501386291009
+        }
+      ]
+    },
+    {
+      "name": "scale-down",
+      "sampleRate": 48000,
+      "captureGapFrames": 0,
+      "detectedStart": 0.12,
+      "notes": [
+        {
+          "midi": 61,
+          "onsetSeconds": 0.12,
+          "expectedRelativeSeconds": 0.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.99999959733291,
+          "measuredHz": 276.2295368288689,
+          "centsFromEqualTemperament": -5.963116708744352
+        },
+        {
+          "midi": 63,
+          "onsetSeconds": 0.62,
+          "expectedRelativeSeconds": 0.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9769821414408644,
+          "measuredHz": 310.5787900679894,
+          "centsFromEqualTemperament": -3.053057589030548
+        },
+        {
+          "midi": 65,
+          "onsetSeconds": 1.12,
+          "expectedRelativeSeconds": 1.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9758950540488157,
+          "measuredHz": 349.24338551804937,
+          "centsFromEqualTemperament": 0.07512193017022728
+        },
+        {
+          "midi": 66,
+          "onsetSeconds": 1.62,
+          "expectedRelativeSeconds": 1.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9873948044907576,
+          "measuredHz": 369.99298806063393,
+          "centsFromEqualTemperament": -0.006712861933539052
+        },
+        {
+          "midi": 68,
+          "onsetSeconds": 2.12,
+          "expectedRelativeSeconds": 2.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9948004764894258,
+          "measuredHz": 414.65409705343046,
+          "centsFromEqualTemperament": -2.7142118906027495
+        },
+        {
+          "midi": 70,
+          "onsetSeconds": 2.62,
+          "expectedRelativeSeconds": 2.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9983067059856457,
+          "measuredHz": 465.38154625359226,
+          "centsFromEqualTemperament": -2.9074227664024828
+        },
+        {
+          "midi": 72,
+          "onsetSeconds": 3.12,
+          "expectedRelativeSeconds": 3.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9992689277117575,
+          "measuredHz": 522.7348993870625,
+          "centsFromEqualTemperament": -1.7088509827885252
+        },
+        {
+          "midi": 73,
+          "onsetSeconds": 3.62,
+          "expectedRelativeSeconds": 3.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9964041950206262,
+          "measuredHz": 553.8101205284917,
+          "centsFromEqualTemperament": -1.734526561466667
+        },
+        {
+          "midi": 72,
+          "onsetSeconds": 4.12,
+          "expectedRelativeSeconds": 4.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9965832906053009,
+          "measuredHz": 522.7350578024335,
+          "centsFromEqualTemperament": -1.7083263305355407
+        },
+        {
+          "midi": 70,
+          "onsetSeconds": 4.62,
+          "expectedRelativeSeconds": 4.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9951067800850862,
+          "measuredHz": 465.3811804206738,
+          "centsFromEqualTemperament": -2.908783676947209
+        },
+        {
+          "midi": 68,
+          "onsetSeconds": 5.12,
+          "expectedRelativeSeconds": 5.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9990360325907012,
+          "measuredHz": 414.6553103027411,
+          "centsFromEqualTemperament": -2.7091464264997884
+        },
+        {
+          "midi": 66,
+          "onsetSeconds": 5.62,
+          "expectedRelativeSeconds": 5.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9967275203383495,
+          "measuredHz": 369.9882580207503,
+          "centsFromEqualTemperament": -0.02884533121812865
+        },
+        {
+          "midi": 65,
+          "onsetSeconds": 6.12,
+          "expectedRelativeSeconds": 6.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9891802617895737,
+          "measuredHz": 349.24144942709614,
+          "centsFromEqualTemperament": 0.06552450897367218
+        },
+        {
+          "midi": 63,
+          "onsetSeconds": 6.62,
+          "expectedRelativeSeconds": 6.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9935320446822681,
+          "measuredHz": 310.5821115943291,
+          "centsFromEqualTemperament": -3.0345427743382043
+        },
+        {
+          "midi": 61,
+          "onsetSeconds": 7.12,
+          "expectedRelativeSeconds": 7.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9883241020615847,
+          "measuredHz": 276.2277203362536,
+          "centsFromEqualTemperament": -5.974501386291009
+        },
+        {
+          "midi": 60,
+          "onsetSeconds": 8.12,
+          "expectedRelativeSeconds": 8.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.99999986386093,
+          "measuredHz": 260.79525224990766,
+          "centsFromEqualTemperament": -5.503101663732642
+        },
+        {
+          "midi": 62,
+          "onsetSeconds": 8.62,
+          "expectedRelativeSeconds": 8.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.973010924641304,
+          "measuredHz": 293.1825593370127,
+          "centsFromEqualTemperament": -2.845087852478365
+        },
+        {
+          "midi": 64,
+          "onsetSeconds": 9.12,
+          "expectedRelativeSeconds": 9.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9845852185112626,
+          "measuredHz": 329.00674783229886,
+          "centsFromEqualTemperament": -3.2636202785043045
+        },
+        {
+          "midi": 65,
+          "onsetSeconds": 9.62,
+          "expectedRelativeSeconds": 9.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9794806455336046,
+          "measuredHz": 349.244650247838,
+          "centsFromEqualTemperament": 0.08139130963256996
+        },
+        {
+          "midi": 67,
+          "onsetSeconds": 10.12,
+          "expectedRelativeSeconds": 10.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9874427725651649,
+          "measuredHz": 391.960035715567,
+          "centsFromEqualTemperament": -0.15635108986407015
+        },
+        {
+          "midi": 69,
+          "onsetSeconds": 10.62,
+          "expectedRelativeSeconds": 10.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9954844413422845,
+          "measuredHz": 439.27868562813785,
+          "centsFromEqualTemperament": -2.840428867860245
+        },
+        {
+          "midi": 71,
+          "onsetSeconds": 11.12,
+          "expectedRelativeSeconds": 11.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9990369800743877,
+          "measuredHz": 493.4036132513569,
+          "centsFromEqualTemperament": -1.68229166197952
+        },
+        {
+          "midi": 72,
+          "onsetSeconds": 11.62,
+          "expectedRelativeSeconds": 11.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9966503155349485,
+          "measuredHz": 522.7365671946789,
+          "centsFromEqualTemperament": -1.7033274167705343
+        },
+        {
+          "midi": 71,
+          "onsetSeconds": 12.12,
+          "expectedRelativeSeconds": 12.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9964834409512036,
+          "measuredHz": 493.4023519133003,
+          "centsFromEqualTemperament": -1.6867173980777443
+        },
+        {
+          "midi": 69,
+          "onsetSeconds": 12.62,
+          "expectedRelativeSeconds": 12.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9954942812558344,
+          "measuredHz": 439.2781502592095,
+          "centsFromEqualTemperament": -2.8425388028803815
+        },
+        {
+          "midi": 67,
+          "onsetSeconds": 13.12,
+          "expectedRelativeSeconds": 13.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.997439288751219,
+          "measuredHz": 391.96107106979605,
+          "centsFromEqualTemperament": -0.15177807740498614
+        },
+        {
+          "midi": 65,
+          "onsetSeconds": 13.62,
+          "expectedRelativeSeconds": 13.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9908525369445653,
+          "measuredHz": 349.2417145305781,
+          "centsFromEqualTemperament": 0.06683865997440444
+        },
+        {
+          "midi": 64,
+          "onsetSeconds": 14.12,
+          "expectedRelativeSeconds": 14.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9934836528266588,
+          "measuredHz": 329.00621844600323,
+          "centsFromEqualTemperament": -3.266405912304934
+        },
+        {
+          "midi": 62,
+          "onsetSeconds": 14.62,
+          "expectedRelativeSeconds": 14.5,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9897441330148088,
+          "measuredHz": 293.18169411147034,
+          "centsFromEqualTemperament": -2.850196990391561
+        },
+        {
+          "midi": 60,
+          "onsetSeconds": 15.12,
+          "expectedRelativeSeconds": 15.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9859352474961249,
+          "measuredHz": 260.79592155159435,
+          "centsFromEqualTemperament": -5.498658651935998
+        }
+      ]
+    },
+    {
+      "name": "rapid-repeats",
+      "sampleRate": 48000,
+      "captureGapFrames": 384,
+      "detectedStart": 0.12,
+      "notes": [
+        {
+          "midi": 60,
+          "onsetSeconds": 0.12,
+          "expectedRelativeSeconds": 0.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9999999234341074,
+          "measuredHz": 260.79525224990766,
+          "centsFromEqualTemperament": -5.503101663732642
+        },
+        {
+          "midi": 64,
+          "onsetSeconds": 0.4533333333333333,
+          "expectedRelativeSeconds": 0.3333333333333333,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9244204074707791,
+          "measuredHz": 329.0073299937403,
+          "centsFromEqualTemperament": -3.2605569467505084
+        },
+        {
+          "midi": 67,
+          "onsetSeconds": 0.7866666666666666,
+          "expectedRelativeSeconds": 0.6666666666666666,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.933895281189594,
+          "measuredHz": 391.96078529391775,
+          "centsFromEqualTemperament": -0.15304030763088006
+        },
+        {
+          "midi": 67,
+          "onsetSeconds": 1.12,
+          "expectedRelativeSeconds": 1.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.966140746303071,
+          "measuredHz": 392.0085648659921,
+          "centsFromEqualTemperament": 0.057982284286945664
+        },
+        {
+          "midi": 72,
+          "onsetSeconds": 1.4533333333333334,
+          "expectedRelativeSeconds": 1.3333333333333333,
+          "timingErrorMs": 2.220446049250313e-13,
+          "sampleFingerprintCorrelation": 0.9879603629308834,
+          "measuredHz": 522.7350855914005,
+          "centsFromEqualTemperament": -1.7082342969060516
+        },
+        {
+          "midi": 72,
+          "onsetSeconds": 1.7866666666666666,
+          "expectedRelativeSeconds": 1.6666666666666667,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9983550639012928,
+          "measuredHz": 522.624089447472,
+          "centsFromEqualTemperament": -2.0758788519925244
+        },
+        {
+          "midi": 67,
+          "onsetSeconds": 2.12,
+          "expectedRelativeSeconds": 2.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9957648387230117,
+          "measuredHz": 391.9597732966067,
+          "centsFromEqualTemperament": -0.15751015902903945
+        },
+        {
+          "midi": 64,
+          "onsetSeconds": 2.453333333333333,
+          "expectedRelativeSeconds": 2.3333333333333335,
+          "timingErrorMs": -4.440892098500626e-13,
+          "sampleFingerprintCorrelation": 0.9821598251516088,
+          "measuredHz": 329.00761732272844,
+          "centsFromEqualTemperament": -3.2590450244772193
+        },
+        {
+          "midi": 60,
+          "onsetSeconds": 2.7866666666666666,
+          "expectedRelativeSeconds": 2.6666666666666665,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9694676737513186,
+          "measuredHz": 260.79640739722845,
+          "centsFromEqualTemperament": -5.495433479870891
+        },
+        {
+          "midi": 61,
+          "onsetSeconds": 3.453333333333333,
+          "expectedRelativeSeconds": 3.3333333333333335,
+          "timingErrorMs": -4.440892098500626e-13,
+          "sampleFingerprintCorrelation": 0.9988515993252594,
+          "measuredHz": 276.22849840523844,
+          "centsFromEqualTemperament": -5.969624911111962
+        },
+        {
+          "midi": 65,
+          "onsetSeconds": 3.7866666666666666,
+          "expectedRelativeSeconds": 3.6666666666666665,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.8771984404043497,
+          "measuredHz": 349.2461435629802,
+          "centsFromEqualTemperament": 0.0887937780490132
+        },
+        {
+          "midi": 68,
+          "onsetSeconds": 4.12,
+          "expectedRelativeSeconds": 4.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9755614159062158,
+          "measuredHz": 414.6553471778545,
+          "centsFromEqualTemperament": -2.7089924686283693
+        },
+        {
+          "midi": 68,
+          "onsetSeconds": 4.453333333333333,
+          "expectedRelativeSeconds": 4.333333333333333,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.993374577539712,
+          "measuredHz": 414.606362159893,
+          "centsFromEqualTemperament": -2.91352266731648
+        },
+        {
+          "midi": 73,
+          "onsetSeconds": 4.786666666666667,
+          "expectedRelativeSeconds": 4.666666666666667,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9943815983384192,
+          "measuredHz": 553.8110597138802,
+          "centsFromEqualTemperament": -1.7315906303883228
+        },
+        {
+          "midi": 73,
+          "onsetSeconds": 5.12,
+          "expectedRelativeSeconds": 5.0,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.9989158286123474,
+          "measuredHz": 553.8144602434788,
+          "centsFromEqualTemperament": -1.7209604805409378
+        },
+        {
+          "midi": 68,
+          "onsetSeconds": 5.453333333333333,
+          "expectedRelativeSeconds": 5.333333333333333,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.997537872440065,
+          "measuredHz": 414.65450813164426,
+          "centsFromEqualTemperament": -2.7124955871757943
+        },
+        {
+          "midi": 65,
+          "onsetSeconds": 5.786666666666667,
+          "expectedRelativeSeconds": 5.666666666666667,
+          "timingErrorMs": 0.0,
+          "sampleFingerprintCorrelation": 0.985163928576101,
+          "measuredHz": 349.24335291702903,
+          "centsFromEqualTemperament": 0.07496032367645288
+        }
+      ]
+    }
+  ],
+  "signalCases": [
+    {
+      "name": "arpeggio-80",
+      "id": "vocal-02",
+      "bpm": 80,
+      "low": 48,
+      "high": 84,
+      "frames": 396032,
+      "rate": 48000,
+      "peak": 0.10170094668865204,
+      "clipped": 0,
+      "gapFrames": 128,
+      "maxAdjacentStep": 0.00799560546875
+    },
+    {
+      "name": "scale-up",
+      "id": "vocal-01",
+      "bpm": 120,
+      "direction": 1,
+      "low": 60,
+      "high": 73,
+      "frames": 774400,
+      "rate": 48000,
+      "peak": 0.10264243185520172,
+      "clipped": 0,
+      "gapFrames": 0,
+      "maxAdjacentStep": 0.009368896484375
+    },
+    {
+      "name": "scale-down",
+      "id": "vocal-01",
+      "bpm": 120,
+      "direction": -1,
+      "low": 60,
+      "high": 73,
+      "frames": 774400,
+      "rate": 48000,
+      "peak": 0.10264243185520172,
+      "clipped": 0,
+      "gapFrames": 0,
+      "maxAdjacentStep": 0.009368896484375
+    },
+    {
+      "name": "rapid-repeats",
+      "id": "vocal-19",
+      "bpm": 180,
+      "low": 60,
+      "high": 73,
+      "frames": 298112,
+      "rate": 48000,
+      "peak": 0.10815340280532837,
+      "clipped": 0,
+      "gapFrames": 384,
+      "maxAdjacentStep": 0.009033203125
+    },
+    {
+      "name": "low-high",
+      "notes": [
+        48,
+        88
+      ],
+      "held": 1.4,
+      "frames": 100992,
+      "rate": 48000,
+      "peak": 0.16022828221321106,
+      "clipped": 0,
+      "gapFrames": 0,
+      "maxAdjacentStep": 0.016387939453125
+    },
+    {
+      "name": "chord",
+      "notes": [
+        60,
+        64,
+        67,
+        72
+      ],
+      "held": 1.5,
+      "frames": 105856,
+      "rate": 48000,
+      "peak": 0.19141742587089539,
+      "clipped": 0,
+      "gapFrames": 0,
+      "maxAdjacentStep": 0.014862060546875
+    },
+    {
+      "name": "eight-voices",
+      "notes": [
+        60,
+        60,
+        60,
+        60,
+        60,
+        60,
+        60,
+        60
+      ],
+      "held": 1.2,
+      "frames": 91648,
+      "rate": 48000,
+      "peak": 0.7416096925735474,
+      "clipped": 0,
+      "gapFrames": 0,
+      "maxAdjacentStep": 0.0606689453125
+    },
+    {
+      "name": "sustain-loop",
+      "notes": [
+        60
+      ],
+      "held": 7,
+      "frames": 369792,
+      "rate": 48000,
+      "peak": 0.09270121157169342,
+      "clipped": 0,
+      "gapFrames": 0,
+      "maxAdjacentStep": 0.007598876953125
+    }
+  ]
+}
