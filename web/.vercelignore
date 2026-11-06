@@ -1,0 +1,6 @@
+e2e/
+src/**/*.test.ts
+src/**/*.test.tsx
+playwright*.ts
+test-results/
+.env*

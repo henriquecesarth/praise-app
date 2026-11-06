@@ -40,6 +40,7 @@ if (getApps().length === 0) {
     config.firebase.privateKey
   ) {
     firebaseApp = initializeApp({
+      projectId: config.firebase.projectId,
       credential: cert({
         projectId: config.firebase.projectId,
         clientEmail: config.firebase.clientEmail,
@@ -58,6 +59,10 @@ if (getApps().length === 0) {
   }
 } else {
   firebaseApp = getApps()[0];
+}
+
+if (['preview', 'production'].includes(process.env.VERCEL_ENV || '') && firebaseApp.options.projectId !== config.firebase.projectId) {
+  throw new Error('Firebase application identity mismatch');
 }
 
 export const db: Firestore = getFirestore(firebaseApp);

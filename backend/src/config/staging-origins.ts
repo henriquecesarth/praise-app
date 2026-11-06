@@ -1,0 +1,12 @@
+export const INTEGRATED_STAGING_WEB_ORIGIN = 'https://louvaio-m20-c14-web-staging.vercel.app';
+export const LEGACY_STAGING_WEB_ORIGIN = 'https://praise-app-m7tn-git-feat-m20-p-904232-henriquecesarths-projects.vercel.app';
+
+/** Deployment-specific opt-in; never changes the shared Preview CORS_ORIGIN. */
+export function resolveStagingCorsOrigin(env: Record<string, string | undefined>): string | undefined {
+  const mode = env.LOUVAIO_STAGING_INTEGRATION;
+  if (!mode) return env.CORS_ORIGIN;
+  if (mode !== 'm20-c14' || env.VERCEL_ENV !== 'preview') {
+    throw new Error('Integrated Staging CORS requires explicit Preview context');
+  }
+  return [LEGACY_STAGING_WEB_ORIGIN, INTEGRATED_STAGING_WEB_ORIGIN].join(',');
+}

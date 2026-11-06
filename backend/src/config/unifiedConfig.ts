@@ -1,3 +1,5 @@
+import { resolveFirebaseEnvironment } from './firebase-environment';
+import { resolveStagingCorsOrigin } from './staging-origins';
 import dotenv from 'dotenv';
 import { z } from 'zod';
 import { AppError } from '../middleware/error-handler';
@@ -56,17 +58,19 @@ const configSchema = z.object({
   path: ['jwtSecret'],
 });
 
+const firebaseEnvironment = resolveFirebaseEnvironment(process.env);
+
 const rawConfig = {
   port: process.env.PORT,
   nodeEnv: process.env.NODE_ENV,
   jwtSecret: process.env.JWT_SECRET,
-  firebaseWebApiKey: process.env.FIREBASE_WEB_API_KEY,
-  corsOrigin: process.env.CORS_ORIGIN,
+  firebaseWebApiKey: firebaseEnvironment.apiKey,
+  corsOrigin: resolveStagingCorsOrigin(process.env),
   firebase: {
-    projectId: process.env.FIREBASE_PROJECT_ID,
-    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-    privateKey: sanitizePrivateKey(process.env.FIREBASE_PRIVATE_KEY),
-    databaseURL: process.env.FIREBASE_DATABASE_URL,
+    projectId: firebaseEnvironment.projectId,
+    clientEmail: firebaseEnvironment.clientEmail,
+    privateKey: sanitizePrivateKey(firebaseEnvironment.privateKey),
+    databaseURL: firebaseEnvironment.databaseURL,
   },
   defaultMinistryId: process.env.DEFAULT_MINISTRY_ID,
   platformAdminSecret: process.env.PLATFORM_ADMIN_SECRET,

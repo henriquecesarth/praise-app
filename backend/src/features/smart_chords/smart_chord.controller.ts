@@ -1,3 +1,5 @@
+import { extractSmartChordFromUrl } from './smart_chord_url_extractor';
+import { extractSmartChordFromImage } from './smart_chord_image_extractor';
 import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
 import { BaseController } from '../../controllers/BaseController';
@@ -9,7 +11,7 @@ import {
   singleDocumentIdSchema,
   setSmartChordRepertoireLinkSchema,
 } from './smart_chord.types';
-import { importTextPayloadSchema } from './smart_chord_import.types';
+import { importTextPayloadSchema, importUrlPayloadSchema } from './smart_chord_import.types';
 import { normalizeChordText } from './smart_chord_normalizer';
 import { extractSmartChordDraftFromPdf, MAX_PDF_FILE_SIZE } from './smart_chord_pdf_extractor';
 
@@ -213,6 +215,41 @@ export class SmartChordController extends BaseController {
       this.handleError(error, res, next);
     }
   };
+  importUrlDraft = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      getUserId(req);
+      const parsed = importUrlPayloadSchema.parse(req.body);
+      const draft = await extractSmartChordFromUrl(parsed.url);
+      this.handleSuccess(res, draft);
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  importImageDraft = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      getUserId(req);
+      const anyReq = req as any;
+      let buffer: Buffer | null = null;
+      let filename = 'imagem_cifra.png';
+
+      if (anyReq.file && anyReq.file.buffer) {
+        buffer = anyReq.file.buffer;
+        filename = anyReq.file.originalname || filename;
+      } else if (Buffer.isBuffer(req.body) && req.body.length > 0) {
+        buffer = req.body;
+      }
+
+      if (!buffer) {
+        throw new AppError(400, 'Nenhum arquivo de imagem foi enviado na requisição.');
+      }
+
+      const draft = await extractSmartChordFromImage(buffer, filename);
+      this.handleSuccess(res, draft);
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
 }
 
 const scInstance = new SmartChordController();
@@ -228,3 +265,6 @@ export const removeRepertoireLink = scInstance.removeRepertoireLink;
 export const getMySmartChordsForSong = scInstance.getMySmartChordsForSong;
 export const importPdfDraft = scInstance.importPdfDraft;
 export const importTextDraft = scInstance.importTextDraft;
+
+export const importUrlDraft = scInstance.importUrlDraft;
+export const importImageDraft = scInstance.importImageDraft;

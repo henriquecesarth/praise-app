@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   isMusicalChord,
+  isTablatureLine,
   transposeNote,
   transposeChord,
   transposeSmartChord,
@@ -420,5 +421,68 @@ describe('Web Smart Chord Utility Test Suite', () => {
       expect(tokens[0].type).toBe('bracket_open');
       expect(tokens[tokens.length - 1].type).toBe('bracket_close');
     });
+  });
+});
+
+
+describe('R4-M9 progression token representation', () => {
+  it.each(['[ G | D ]', 'Solo: [ Am | D ]', 'Interlúdio: [ ||: G | D | % :|| ]',
+    'Intro: (riff viol) [ ||: A | A7M | D | % :|| ]', '[||: A | D :||]'])('renders %s as one musical row', (line) => {
+    expect(hasBarProgression(line)).toBe(true);
+    const tokens = parseBarProgressionLine(line);
+    expect(tokens.filter(t => t.type === 'chord').length).toBeGreaterThanOrEqual(2);
+    expect(tokens.filter(t => !t.type.startsWith('bracket_')).map(t => t.value).join(''))
+      .toBe(line.replace(/[\[\]]/g, ''));
+  });
+  it('transposes and edits only musical tokens, retaining labels, annotation and spacing', () => {
+    const line = 'Intro: (riff viol) [ G | D | (tocar A E juntos) Am ]';
+    expect(transposeSmartChord(line, 2)).toBe('Intro: (riff viol) [ A | E | (tocar A E juntos) Bm ]');
+    expect(updateBarProgressionChord(line, 1, 'D/F#')).toBe('Intro: (riff viol) [ G | D/F# | (tocar A E juntos) Am ]');
+    expect(transposeSmartChord('[ A | E | F#m ]', 2)).toBe('[ B | F# | G#m ]');
+    expect(hasBarProgression('[G]Graças Te dou [D]pelo Teu amor')).toBe(false);
+  });
+});
+
+describe('M20-C4 web tablature and bracketed annotation preservation', () => {
+  it('correctly identifies tablature lines across standard formats', () => {
+    expect(isTablatureLine('e|--0h2--2p0--[7]--12/14--|')).toBe(true);
+    expect(isTablatureLine('B|--3----3----[7]---------|')).toBe(true);
+    expect(isTablatureLine('G|--2----2----[7]---------|')).toBe(true);
+    expect(isTablatureLine('D|--0----0----------------|')).toBe(true);
+    expect(isTablatureLine('A|------------------------|')).toBe(true);
+    expect(isTablatureLine('E|------------------------|')).toBe(true);
+    expect(isTablatureLine('e | -- 0h2 -- 2p0 -- |')).toBe(true);
+    expect(isTablatureLine('E | ---------------- |')).toBe(true);
+    expect(isTablatureLine('|--0h2--2p0--|')).toBe(true);
+    expect(isTablatureLine('e|──0h2──2p0──|')).toBe(true);
+    expect(isTablatureLine('[G]Graças Te dou')).toBe(false);
+    expect(isTablatureLine('Intro: ||: G | D | % :||')).toBe(false);
+  });
+
+  it('renders tablature lines without extracting false chords or losing harmonics', () => {
+    const tabLine = 'e|--0h2--2p0--[7]--12/14--|';
+    const rendered = renderSmartChordLine(tabLine, 2);
+    expect(rendered.chordLine).toBe('');
+    expect(rendered.lyricsLine).toBe(tabLine);
+  });
+
+  it('does not transpose tablature lines during transposeSmartChord', () => {
+    const tabSheet = 'e|--0h2--2p0--[7]--12/14--|\nB|--3----3----[7]---------|\n[G]Graças Te dou';
+    const transposed = transposeSmartChord(tabSheet, 2);
+    expect(transposed).toBe('e|--0h2--2p0--[7]--12/14--|\nB|--3----3----[7]---------|\n[A]Graças Te dou');
+  });
+
+  it('preserves tablature lines in rawToVisual as clean text without chords', () => {
+    const tabLine = 'e|--0h2--2p0--[7]--12/14--|';
+    const visual = rawToVisual(tabLine);
+    expect(visual.cleanText).toBe(tabLine);
+    expect(Object.keys(visual.chords)).toHaveLength(0);
+  });
+
+  it('preserves section headers like [Intro] in cleanText rather than chords', () => {
+    const line = '[Intro]';
+    const rendered = renderSmartChordLine(line, 0);
+    expect(rendered.chordLine).toBe('');
+    expect(rendered.lyricsLine).toBe('[Intro]');
   });
 });

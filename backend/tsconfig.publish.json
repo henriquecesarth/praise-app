@@ -1,0 +1,1 @@
+{"extends":"./tsconfig.json","compilerOptions":{"outDir":"./dist-publish","sourceMap":false,"declaration":false,"declarationMap":false},"exclude":["node_modules","dist","dist-publish","src/**/*.test.ts","src/scripts/**"]}

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import * as controller from './auth.controller';
 import { validate } from '../../middleware/validate';
-import { signupSchema, loginSchema } from './auth.types';
+import { signupSchema, loginSchema, updatePreferencesSchema } from './auth.types';
 import { authenticate } from '../../middleware/auth';
 
 import accountDeletionRoutes from '../account_deletion/account-deletion.routes';
@@ -13,6 +13,7 @@ const router = Router();
 router.post('/signup', validate(signupSchema), controller.signUp);
 router.post('/login', validate(loginSchema), controller.login);
 router.get('/me', authenticate, controller.getMe);
+router.patch('/me/preferences', authenticate, validate(updatePreferencesSchema), controller.updatePreferences);
 router.use('/account-deletion', accountDeletionRoutes);
 router.use('/push-devices', pushDeviceRoutes);
 router.use('/notifications', authenticate, notificationRoutes);

@@ -1,0 +1,65 @@
+import { expect, test } from '@playwright/test';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { installMockApi, seedAuthenticatedSession, mockUser } from './mock-api';
+
+const directory = resolve(process.env.SMART_CHORD_GATE3_EVIDENCE_DIR || '../docs/exec-plans/evidence/m20-c14-gate3');
+for (const theme of ['light', 'dark'] as const) for (const [width, height] of [[1366, 768], [1920, 1080], [768, 1024], [390, 844]]) {
+  test(`PDF demand ${width} ${theme}`, async ({ page }) => {
+    test.setTimeout(90000);
+    await page.setViewportSize({ width, height });
+    await seedAuthenticatedSession(page, theme); await installMockApi(page);
+    let preferences = { chord_font_family: 'Arial', chord_line_spacing_px: 0 };
+    await page.route(/\/auth\/me(?:\/preferences)?$/, async route => {
+      if (route.request().method() === 'PATCH') preferences = { ...preferences, ...route.request().postDataJSON() };
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(route.request().url().endsWith('/preferences') ? { preferences } : { ...mockUser, preferences }) });
+    });
+    const multiple = width === 1366 && theme === 'light';
+    const content = '[Intro]\n[| C | G | Am | F |]\ne|--0h2--3--0--|\n' + Array.from({ length: multiple ? 64 : 5 }, () => '[C]Hoje eu quero [G]cantar\n[Am]Uma nova [F]melodia').join('\n');
+    const chord = { id: 'pdf-demand', title: 'Caminho de luz', artist_name: 'Equipe LouvAIO', original_key: 'C', content, created_at: '2026-11-04', updated_at: '2026-11-04' };
+    await page.route(/\/api\/v1\/smart-chords(?:\?|\/|$)/, route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: [chord] }) }));
+    mkdirSync(directory, { recursive: true });
+    await page.goto('/cifras'); await page.getByText(chord.title, { exact: true }).click();
+    await page.waitForFunction(() => typeof (window as any).html2pdf === 'function');
+    await page.evaluate(() => { const engine = (window as any).html2pdf; (window as any).pdfCalls = 0; (window as any).html2pdf = (...args: unknown[]) => { (window as any).pdfCalls++; return engine(...args); }; });
+    if (theme === 'dark') await page.getByRole('button', { name: 'Visualizar', exact: true }).click();
+    await page.getByRole('button', { name: 'Exportar PDF', exact: true }).click();
+    const settings = page.getByRole('dialog', { name: 'Exportar PDF', exact: true });
+    await expect(settings).toBeVisible();
+    await expect(settings.locator('select option')).toHaveCount(6);
+    await page.getByTestId('modal-font-family-select').selectOption('Arial');
+    await page.getByTestId('modal-font-size-increase').click();
+    await page.getByTestId('modal-spacing-increase').click();
+    await expect(page.getByTestId('modal-line-spacing-value')).toHaveText('2px');
+    await page.getByTestId('modal-pdf-marker-input').fill('Ministério de Louvor — ensaio e celebração');
+    expect(await page.evaluate(() => (window as any).pdfCalls)).toBe(0);
+    if (!process.env.SMART_CHORD_SKIP_SCREENSHOTS) await settings.screenshot({ path: resolve(directory, `${width}-${theme}-settings.png`) });
+    const generationStart = performance.now();
+    await page.getByRole('button', { name: 'Gerar e visualizar PDF' }).click();
+    const preview = page.getByTestId('pdf-preview-dialog');
+    await expect(preview).toBeVisible();
+    await expect(preview.getByRole('button', { name: 'Baixar PDF' })).toBeEnabled({ timeout: 60000 });
+    await expect(preview.locator('img')).not.toHaveCount(0);
+    const generationMs = performance.now() - generationStart;
+    const pages = await preview.locator('img').count();
+    if (multiple) expect(pages).toBeGreaterThan(1);
+    await expect(page.getByTestId('pdf-page-count')).toContainText(String(pages));
+    await expect(preview.locator('select')).toHaveCount(0);
+    expect(await page.getByTestId('pdf-preview-scroll').evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    await expect(preview.getByRole('button', { name: 'Fechar', exact: true })).toBeInViewport();
+    if (!process.env.SMART_CHORD_SKIP_SCREENSHOTS) await preview.screenshot({ path: resolve(directory, `${width}-${theme}-preview.png`) });
+    const downloadEvent = page.waitForEvent('download');
+    await preview.getByRole('button', { name: 'Baixar PDF' }).click();
+    const download = await downloadEvent;
+    if (multiple && !process.env.SMART_CHORD_SKIP_SCREENSHOTS) await download.saveAs(resolve(directory, 'multipage.pdf'));
+    const calls = await page.evaluate(() => (window as any).pdfCalls);
+    expect(calls).toBe(1);
+    await preview.getByRole('button', { name: 'Configurações', exact: true }).click();
+    await expect(page.getByTestId('modal-pdf-marker-input')).toHaveValue('Ministério de Louvor — ensaio e celebração');
+    await page.getByRole('button', { name: 'Gerar e visualizar PDF' }).click();
+    await expect(preview.getByRole('button', { name: 'Baixar PDF' })).toBeEnabled();
+    expect(await page.evaluate(() => (window as any).pdfCalls)).toBe(calls);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    writeFileSync(resolve(directory, `${width}-${theme}-timings.json`), JSON.stringify({ width, height, theme, pages, generationMs, html2pdfCalls: calls, afterReopenCalls: await page.evaluate(() => (window as any).pdfCalls), environment: 'Chrome + local compiled Vite preview, real html2pdf, synthetic API; elapsed includes Playwright waits' }, null, 2));
+  });
+}
