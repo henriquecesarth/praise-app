@@ -2,7 +2,7 @@
  * P2 advanced Smart Chords notation, intentionally independent of the visual editor.
  * All tokens refer to UTF-16 offsets in their original line; source is never normalized.
  */
-import { isMusicalChord, isTablatureLine, transposeChord } from './smart_chord';
+import { isMusicalChord, isTablatureLine, transposeChord, transposeNote } from './smart_chord';
 
 export type NotationTokenKind =
   | 'text' | 'whitespace' | 'barline' | 'chord' | 'optional_chord'
@@ -40,6 +40,29 @@ export interface AnnotationAnchor {
 export const ANNOTATION_FONT_SCALE = 0.8;
 
 const BARLINES = ['||:', ':||', '|:', ':|', '||', '|'] as const;
+
+/** Preserve parenthesized additions as part of the chord, like C(add9). */
+function normalizedChord(chord: string): string {
+  return chord.replace(/\(add([249])\)/g, 'add$1');
+}
+function isNotationChord(chord: string): boolean {
+  return isMusicalChord(chord) || (normalizedChord(chord) !== chord && isMusicalChord(normalizedChord(chord)));
+}
+function transposeNotationChord(chord: string, semitones: number): string {
+  if (isMusicalChord(chord)) return transposeChord(chord, semitones);
+  if (!isNotationChord(chord)) return chord;
+  // Preserve extension spelling and transpose both root and slash bass.
+  const match = chord.match(/^([A-Ga-g][#b]?)(.*?)(?:\/([A-Ga-g][#b]?))?$/);
+  if (!match) return chord;
+  return transposeNote(match[1], semitones) + match[2] + (match[3] ? '/' + transposeNote(match[3], semitones) : '');
+}
+
+/** Legacy tablature regex also matches barline progressions containing hyphens. */
+function isTabOnlyLine(raw: string, progression: boolean): boolean {
+  if (!isTablatureLine(raw)) return false;
+  if (!progression) return true;
+  return /^\s*(?:[A-Ga-g][#b]?\s*)?[|:]\s*(?:[-─]{2,}|\d[-─hHpP/])/.test(raw);
+}
 
 function push(tokens: NotationToken[], kind: NotationTokenKind, raw: string, start: number, extras: Partial<NotationToken> = {}): void {
   tokens.push({ kind, raw, start, end: start + raw.length, ...extras });
@@ -141,10 +164,25 @@ function parseProgressionLine(raw: string): NotationToken[] {
       continue;
     }
     let end = i + 1;
-    while (end < raw.length && !/[\s|()%\[\]]/.test(raw[end]) && !raw.startsWith('{{', end)) end++;
-    const word = raw.slice(i, end);
-    if (isMusicalChord(word)) push(tokens, 'chord', word, i, { chord: word });
-    else if (/^(?:N\.C\.|NC)$/i.test(word)) push(tokens, 'no_chord', word, i);
+    // Chord extensions may contain parentheses; scan the whole atom first.
+    while (end < raw.length && !/[\s|%\[\]{}]/.test(raw[end])) end++;
+    const candidate = raw.slice(i, end);
+    if (isNotationChord(candidate)) {
+      push(tokens, 'chord', candidate, i, { chord: candidate });
+      i = end;
+      continue;
+    }
+    // Also support an adjacent optional chord: C(Am).
+    const opening = candidate.indexOf('(');
+    if (opening > 0 && isNotationChord(candidate.slice(0, opening))) {
+      const prefix = candidate.slice(0, opening);
+      push(tokens, 'chord', prefix, i, { chord: prefix });
+      i += opening;
+      continue;
+    }
+    // Leave all unknown tokens untouched.
+    const word = candidate;
+    if (/^(?:N\.C\.|NC)$/i.test(word)) push(tokens, 'no_chord', word, i);
     else if (/^\d+[xX]$/.test(word) && tokens.some(t => t.kind === 'barline' && /:\|/.test(t.raw))) {
       push(tokens, 'repeat_count', word, i);
     } else push(tokens, 'text', word, i);
@@ -157,8 +195,8 @@ export function parseNotationLine(raw: string): NotationLine {
   if (raw.length === 0 || /^\s+$/.test(raw)) {
     return { kind: 'blank', raw, tokens: raw ? [{ kind: 'whitespace', raw, start: 0, end: raw.length }] : [] };
   }
-  if (isTablatureLine(raw)) return { kind: 'lyrics', raw, tokens: [{ kind: 'text', raw, start: 0, end: raw.length }] };
   const progression = isProgression(raw);
+  if (isTabOnlyLine(raw, progression)) return { kind: 'lyrics', raw, tokens: [{ kind: 'text', raw, start: 0, end: raw.length }] };
   const tokens = progression ? parseProgressionLine(raw) : parseLyricsLine(raw);
   const annotationsOnly = tokens.length > 0 && tokens.every(token =>
     token.kind === 'annotation' || (token.kind === 'text' && /^\s*$/.test(token.raw)) || token.kind === 'whitespace');
@@ -206,9 +244,9 @@ export function transposeNotationLine(raw: string, semitones: number): string {
   if (semitones === 0) return raw;
   const line = parseNotationLine(raw);
   return line.tokens.map(token => {
-    if (token.kind === 'optional_chord' && token.chord) return '(' + transposeChord(token.chord, semitones) + ')';
+    if (token.kind === 'optional_chord' && token.chord) return '(' + transposeNotationChord(token.chord, semitones) + ')';
     if (token.kind === 'chord' && token.chord) {
-      const next = transposeChord(token.chord, semitones);
+      const next = transposeNotationChord(token.chord, semitones);
       return token.raw.startsWith('[') ? '[' + next + ']' : next;
     }
     return token.raw;
