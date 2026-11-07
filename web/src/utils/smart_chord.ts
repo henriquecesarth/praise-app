@@ -66,9 +66,9 @@ export function parseSmartChord(smartChordText: string): ISmartChordLine[] {
  * Transposes a single musical note (e.g. C#) by n semitones.
  */
 export function transposeNote(note: string, semitones: number): string {
-  let normalized = note;
-  if (note in flatMap) {
-    normalized = flatMap[note];
+  let normalized = note.charAt(0).toUpperCase() + note.slice(1);
+  if (normalized in flatMap) {
+    normalized = flatMap[normalized];
   }
   const index = scale.indexOf(normalized);
   if (index === -1) return note;
@@ -151,9 +151,10 @@ export function transposeChord(chord: string, semitones: number): string {
  */
 export function transposeSmartChord(smartChordText: string, semitones: number): string {
   const lines = parseSmartChord(smartChordText);
+  const originalLines = smartChordText.split('\n');
   return lines
     .map(line => {
-      if (line.segments.length === 0) return '';
+      if (line.segments.length === 0) return originalLines[line.line - 1];
       return line.segments
         .map(seg => {
           if (seg.chord) {
