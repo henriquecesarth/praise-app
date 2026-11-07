@@ -73,3 +73,9 @@ O Playwright inicia `vite preview` em `127.0.0.1:4173`. Reconstrua `web/dist/` a
 - `web/e2e/mock-api.ts` deve interceptar contratos HTTP e manter qualquer escrita em memória.
 - Jornadas E2E de leitura usam entidades de fixture.
 - Mudanças de contrato no backend devem incluir testes unitários/integrados próprios em `backend/src/`.
+
+## P1 — Regressão musical independente (2026-11-07)
+
+Os arquivos `*parallel.test.ts` cobrem transposição e preservação musical, contratos Web de versões, atualização parcial de repertório/escalas e RBAC real das rotas de escalas com persistência simulada. Dois `it.fails` documentam que o schema HTTP ainda descarta `versions`/`notes`; não representam persistência de versões aprovada. Resultados, comandos e integração seletiva: [handoff P1](PARALLEL_WORK_HANDOFF_20261107.md).
+
+Na baseline R16, o build Web padrão exige identidade verificada de publicação. Para validação estritamente local, a guarda existente admite `npm run build -- --mode test`; isso não valida um build de publicação.
