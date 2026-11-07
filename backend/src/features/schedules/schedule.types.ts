@@ -51,7 +51,11 @@ export const createScheduleSchema = z.object({
   ).optional(),
 });
 
-export const updateScheduleSchema = createScheduleSchema.partial().refine(
+// Creation defaults must not overwrite omitted fields in partial updates.
+export const updateScheduleSchema = createScheduleSchema.partial().extend({
+  durationMinutes: createScheduleSchema.shape.durationMinutes.removeDefault().optional(),
+  isVisible: z.boolean().optional(),
+}).refine(
   (data) => {
     if (!data.participants) return true;
     const ids = data.participants.map((p) => p.id?.trim()).filter(Boolean);
