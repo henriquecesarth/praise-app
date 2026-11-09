@@ -165,6 +165,7 @@ describe('Web Smart Chord Utility Test Suite', () => {
         expect(hasBarProgression('[||: A9 | A7M/9 | D9 | % :||]')).toBe(true);
         expect(hasBarProgression('[| A | F#m | D | E |]')).toBe(true);
         expect(hasBarProgression('[| | | | | |]')).toBe(true);
+        expect(hasBarProgression('| C7(b9) (Am) | % N.C. 2x |')).toBe(true);
         expect(hasBarProgression('[||]')).toBe(true);
         expect(hasBarProgression('Intro: (riff viol) [||: A | A7M | D | % :||]')).toBe(true);
 
@@ -172,6 +173,9 @@ describe('Web Smart Chord Utility Test Suite', () => {
         expect(hasBarProgression('Ne[A7M/9]nhum')).toBe(false);
         expect(hasBarProgression('[A9]Graças Te [A7M/9]dou')).toBe(false);
         expect(hasBarProgression('Texto comum sem acordes')).toBe(false);
+        const naked = '| C7(b9) (Am) | % N.C. 2x |';
+        expect(parseBarProgressionLine(naked).filter(token => token.type === 'chord').map(token => token.value)).toEqual(['C7(b9)', 'Am']);
+        expect(updateBarProgressionChord(naked, 0, 'D7(b9)')).toBe('| D7(b9) (Am) | % N.C. 2x |');
       });
 
       it('evaluates individual tokens via isBarProgression', () => {
@@ -484,5 +488,37 @@ describe('M20-C4 web tablature and bracketed annotation preservation', () => {
     const rendered = renderSmartChordLine(line, 0);
     expect(rendered.chordLine).toBe('');
     expect(rendered.lyricsLine).toBe('[Intro]');
+  });
+
+  it('round-trips annotations and distinct chords at one visible lyric offset during edits', () => {
+    const raw = '[C][G]Luz {{nota}} [A]vem';
+    const visual = rawToVisual(raw);
+    expect(visualToRaw(visual)).toBe(raw);
+    visual.chords[0] = 'D';
+    expect(visualToRaw(visual)).toBe('[C][D]Luz {{nota}} [A]vem');
+    expect(visualToRaw(rawToVisual('[C]Luz {{nota}} [G]vem'))).toBe('[C]Luz {{nota}} [G]vem');
+  });
+
+  it('edits a naked bar chord around inline annotations without deleting source text', () => {
+    expect(updateBarProgressionChord('| C{{nota}}7 | Am |', 0, 'D')).toBe('| D{{nota}}7 | Am |');
+    expect(updateBarProgressionChord('| C{{nota}}7 | Am |', 1, 'Bm')).toBe('| C{{nota}}7 | Bm |');
+    expect(updateBarProgressionChord('| C {{S\u00f3 viol\u00e3o}} | Am |', 0, 'D')).toBe('| D {{S\u00f3 viol\u00e3o}} | Am |');
+    expect(updateBarProgressionChord('||: C | Am :|| 2x', 0, 'D')).toBe('||: D | Am :|| 2x');
+    expect(updateBarProgressionChord('| C(add9)/E | Am |', 0, 'D7/F#')).toBe('| D7/F# | Am |');
+    expect(updateBarProgressionChord('| C{{nota}}/E G | Am |', 0, 'D')).toBe('| D{{nota}}/E G | Am |');
+    expect(updateBarProgressionChord('| C | (Am) |', 1, 'Bm')).toBe('| C | (Bm) |');
+    expect(updateBarProgressionChord('[| C7 | Am |]', 0, 'D')).toBe('[| D | Am |]');
+    expect(updateBarProgressionChord('| C | Am |', -1, 'D')).toBe('| C | Am |');
+    expect(updateBarProgressionChord('| C | Am |', Number.NaN, 'D')).toBe('| C | Am |');
+    expect(updateBarProgressionChord('| C{{unclosed G | Am |', 0, 'D')).toBe('| C{{unclosed G | Am |');
+    expect(parseBarProgressionLine('| C{{unclosed G | Am |').map(token => token.value).join('')).toBe('| C{{unclosed G | Am |');
+    expect(parseBarProgressionLine('| {{[G]nota}} C |').filter(token => token.type === 'chord').map(token => token.value)).toEqual(['C']);
+    const exact = '||:  C(add9)/E {{^intro}}  | (Am)  :|| 2x  ';
+    const exactEdited = updateBarProgressionChord(exact, 0, 'D7/F#');
+    expect(exactEdited).toBe('||:  D7/F# {{^intro}}  | (Am)  :|| 2x  ');
+    expect(exactEdited.slice(0, exact.indexOf('C(add9)/E'))).toBe(exact.slice(0, exact.indexOf('C(add9)/E')));
+    expect(exactEdited.slice(exactEdited.indexOf(' {{^intro}}'))).toBe(exact.slice(exact.indexOf(' {{^intro}}')));
+    expect(updateBarProgressionChord('| C{{nota}} G | Am |', 0, 'D')).toBe('| D{{nota}} G | Am |');
+    expect(updateBarProgressionChord('| C {{[G]nota}} | Am |', 1, 'D')).toBe('| C {{[G]nota}} | D |');
   });
 });

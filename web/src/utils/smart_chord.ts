@@ -1,3 +1,5 @@
+import { parseNotationLine } from './smart_chord_notation';
+
 export interface ISegment {
   chord: string;
   text: string;
@@ -89,7 +91,7 @@ export const EXT_REGEX = /^(m|min|maj|M|dim|aug|sus[24]?|add[249]?|[0-9]+|\+|\-|
 
 export function isMusicalChord(token: string): boolean {
   if (!token || typeof token !== 'string') return false;
-  const trimmed = token.trim();
+  const trimmed = token.trim().replace(/♭/g, 'b').replace(/♯/g, '#').replace(/♮/g, '').replace(/\(add([249])\)/g, 'add$1');
   if (!trimmed) return false;
 
   const slashParts = trimmed.split('/');
@@ -128,6 +130,18 @@ function transposeChordSingle(chord: string, semitones: number): string {
  */
 export function transposeChord(chord: string, semitones: number): string {
   if (!chord || semitones === 0) return chord;
+
+  if (/[♭♯♮]/.test(chord)) {
+    const source = chord.match(/^([A-G][♭♯♮])(.*?)(?:\/([A-G][♭♯♮]?))?$/);
+    if (!source) return chord;
+    const normalized = chord.replace(/♭/g, 'b').replace(/♯/g, '#').replace(/♮/g, '');
+    const transposed = transposeChord(normalized, semitones);
+    const target = transposed.match(/^([A-G][#b]?)(.*?)(?:\/([A-G][#b]?))?$/);
+    if (!target) return chord;
+    const flats: Record<string, string> = { 'C#': 'D♭', 'D#': 'E♭', 'F#': 'G♭', 'G#': 'A♭', 'A#': 'B♭' };
+    const style = (note: string, original: string) => original.includes('♭') ? (flats[note] ?? note) : note.replace(/#/g, '♯').replace(/b/g, '♭');
+    return style(target[1], source[1]) + target[2] + (target[3] && source[3] ? `/${style(target[3], source[3])}` : '');
+  }
 
   if (chord.includes('|') || chord.includes('%')) {
     return parseBarProgressionLine(`[${chord}]`)
@@ -233,6 +247,8 @@ export function renderSmartChordLine(lineText: string, semitones: number): ITran
 export interface IVisualLine {
   cleanText: string;
   chords: Record<number, string>;
+  /** Hidden source annotations kept at visible-character offsets during chord edits. */
+  rawInsertions?: Record<number, Array<{ kind: 'chord' | 'annotation'; value: string }>>;
 }
 
 export function rawToVisual(rawLine: string): IVisualLine {
@@ -242,22 +258,30 @@ export function rawToVisual(rawLine: string): IVisualLine {
   }
   let cleanText = '';
   const chords: Record<number, string> = {};
-  const chordRegex = /\[(.*?)\]/g;
+  const rawInsertions: IVisualLine['rawInsertions'] = {};
+  const insertion = (index: number, kind: 'chord' | 'annotation', value: string) => {
+    (rawInsertions![index] ??= []).push({ kind, value });
+  };
+  const chordRegex = /\{\{.*?\}\}|\[(.*?)\]/g;
   let match;
   let lastPos = 0;
-  let currentPos = 0;
 
   while ((match = chordRegex.exec(rawLine)) !== null) {
-    const chord = match[1];
-    if (!isMusicalChord(chord) && !isBarProgression(chord)) {
+    const raw = match[0];
+    const isAnnotation = raw.startsWith('{{');
+    const chord = isAnnotation ? '' : match[1];
+    if (!isAnnotation && !isMusicalChord(chord) && !isBarProgression(chord)) {
       continue;
     }
     if (match.index > lastPos) {
       const textSegment = rawLine.substring(lastPos, match.index);
       cleanText += textSegment;
-      currentPos += textSegment.length;
     }
-    chords[currentPos] = chord;
+    if (isAnnotation) insertion(cleanText.length, 'annotation', raw);
+    else {
+      chords[cleanText.length] = chord;
+      insertion(cleanText.length, 'chord', chord);
+    }
     lastPos = chordRegex.lastIndex;
   }
 
@@ -266,14 +290,26 @@ export function rawToVisual(rawLine: string): IVisualLine {
     cleanText += textSegment;
   }
 
-  return { cleanText, chords };
+  return { cleanText, chords, rawInsertions };
 }
 
 export function visualToRaw(visual: IVisualLine): string {
   let raw = '';
   const text = visual.cleanText;
   for (let i = 0; i <= text.length; i++) {
-    if (visual.chords[i] !== undefined) {
+    const insertions = visual.rawInsertions?.[i];
+    if (insertions?.length) {
+      const chordInsertions = insertions.filter(item => item.kind === 'chord');
+      let seenChords = 0;
+      for (const item of insertions) {
+        if (item.kind === 'annotation') raw += item.value;
+        else {
+          const value = seenChords++ === chordInsertions.length - 1 ? visual.chords[i] : item.value;
+          if (value !== undefined) raw += `[${value}]`;
+        }
+      }
+      if (visual.chords[i] !== undefined && chordInsertions.length === 0) raw += `[${visual.chords[i]}]`;
+    } else if (visual.chords[i] !== undefined) {
       raw += `[${visual.chords[i]}]`;
     }
     if (i < text.length) {
@@ -300,20 +336,93 @@ export function isBarProgression(token: string): boolean {
 
 export function hasBarProgression(lineText: string): boolean {
   if (!lineText || typeof lineText !== 'string') return false;
-  return /\[[^\]]*[|%][^\]]*\]/.test(lineText);
+  return /\[[^\]]*[|%][^\]]*\]/.test(lineText) || /^\s*(?:\{\{[^}]*\}\}\s*)?(?:\|\||\|:|\|)\s*(?=.*\|)(?![-─])/.test(lineText);
 }
 
 export function parseBarProgressionLine(lineText: string): IBarProgressionToken[] {
   if (!lineText) return [];
+  if ((lineText.match(/\{\{/g)?.length ?? 0) !== (lineText.match(/\}\}/g)?.length ?? 0)) {
+    return [{ type: 'text', value: lineText, startIndex: 0, endIndex: lineText.length }];
+  }
+  // Keep annotation offsets stable while preventing annotation contents (which may
+  // contain chord syntax) from participating in musical tokenization.
+  const annotationRanges: Array<{ start: number; end: number }> = [];
+  const maskedLine = lineText.replace(/\{\{.*?\}\}/g, (annotation, start: number) => {
+    annotationRanges.push({ start, end: start + annotation.length });
+    return annotation.replace(/[^\r\n]/g, ' ');
+  });
+  const projectVisibleTokens = (tokens: IBarProgressionToken[]) => {
+    if (annotationRanges.length === 0) return tokens;
+    const visibleTokens: IBarProgressionToken[] = [];
+    for (const token of tokens) {
+      let cursor = token.startIndex;
+      const overlaps = annotationRanges.filter(range => range.start < token.endIndex && range.end > token.startIndex);
+      if (overlaps.length === 0) {
+        visibleTokens.push({ ...token, value: lineText.slice(token.startIndex, token.endIndex) });
+        continue;
+      }
+      if (token.type === 'chord') continue;
+      for (const range of overlaps) {
+        if (cursor < range.start) {
+          const end = Math.min(range.start, token.endIndex);
+          if (end > cursor) visibleTokens.push({ type: 'text', value: lineText.slice(cursor, end), startIndex: cursor, endIndex: end });
+        }
+        cursor = Math.max(cursor, range.end);
+      }
+      if (cursor < token.endIndex) visibleTokens.push({ type: 'text', value: lineText.slice(cursor, token.endIndex), startIndex: cursor, endIndex: token.endIndex });
+    }
+    return visibleTokens;
+  };
+  const nakedProgression = !/\[[^\]]*[|%][^\]]*\]/.test(maskedLine) && /^\s*(?:\|\||\|:|\|)/.test(maskedLine);
+  if (nakedProgression) {
+    // Parse naked source directly: synthetic brackets corrupt ending markers such as [1].
+    let chordCounter = 0;
+    const notationTokens = parseNotationLine(maskedLine).tokens;
+    const result: IBarProgressionToken[] = [];
+    for (let tokenIndex = 0; tokenIndex < notationTokens.length; tokenIndex++) {
+      const token = notationTokens[tokenIndex];
+      const suffix = token.kind === 'chord' ? notationTokens[tokenIndex + 1] : undefined;
+      if (token.kind === 'chord' && token.chord && suffix?.kind === 'text' && /^\((?:b|#)?(?:5|9|11|13)\)$/.test(suffix.raw)) {
+        const fullChord = token.chord + suffix.raw;
+        result.push({ type: 'chord', value: fullChord, startIndex: token.start, endIndex: suffix.end, chordIndex: chordCounter++ });
+        tokenIndex++;
+        continue;
+      }
+      if (token.kind === 'barline' || token.kind === 'repeat_previous') {
+        result.push({ type: 'delimiter', value: token.raw, startIndex: token.start, endIndex: token.end });
+        continue;
+      }
+      if (token.kind === 'whitespace') {
+        result.push({ type: 'whitespace', value: token.raw, startIndex: token.start, endIndex: token.end });
+        continue;
+      }
+      if (token.kind === 'chord' && token.chord) {
+        result.push({ type: 'chord', value: token.chord, startIndex: token.start, endIndex: token.end, chordIndex: chordCounter++ });
+        continue;
+      }
+      if (token.kind === 'optional_chord' && token.chord) {
+        const start = token.start;
+        const end = token.end;
+        result.push(
+          { type: 'text' as const, value: '(', startIndex: start, endIndex: start + 1 },
+          { type: 'chord' as const, value: token.chord, startIndex: start + 1, endIndex: end - 1, chordIndex: chordCounter++ },
+          { type: 'text' as const, value: ')', startIndex: end - 1, endIndex: end },
+        );
+        continue;
+      }
+      result.push({ type: 'text', value: token.raw, startIndex: token.start, endIndex: token.end });
+    }
+    return projectVisibleTokens(result);
+  }
   const tokens: IBarProgressionToken[] = [];
   const bracketRegex = /\[(.*?)\]/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   let chordCounter = 0;
 
-  while ((match = bracketRegex.exec(lineText)) !== null) {
+  while ((match = bracketRegex.exec(maskedLine)) !== null) {
     if (match.index > lastIndex) {
-      const text = lineText.substring(lastIndex, match.index);
+      const text = maskedLine.substring(lastIndex, match.index);
       tokens.push({
         type: 'text',
         value: text,
@@ -332,11 +441,16 @@ export function parseBarProgressionLine(lineText: string): IBarProgressionToken[
 
     const innerContent = match[1];
     const innerStart = openBracketIdx + 1;
-    const innerRegex = /(\([^()]*\)|\|\|:|:\|\||\|\||\|:|:\||\||%|:+|\s+|[^\s|%:]+)/g;
+    const innerRegex = /([^\s|%:()]+(?:\([^()]*\))+(?:\/[A-Ga-g][#b]?)?|\([^()]*\)|\|\|:|:\|\||\|\||\|:|:\||\||%|:+|\s+|[^\s|%:()]+(?:\/[A-Ga-g][#b]?)?)/g;
     let innerMatch: RegExpExecArray | null;
 
     while ((innerMatch = innerRegex.exec(innerContent)) !== null) {
-      const val = innerMatch[0];
+      let val = innerMatch[0];
+      const nextParenthesized = innerContent.slice(innerRegex.lastIndex).match(/^\([^()]*\)/)?.[0];
+      if (nextParenthesized && isMusicalChord(val) && isMusicalChord(val + nextParenthesized)) {
+        val += nextParenthesized;
+        innerRegex.lastIndex += nextParenthesized.length;
+      }
       const start = innerStart + innerMatch.index;
       const end = start + val.length;
 
@@ -344,6 +458,16 @@ export function parseBarProgressionLine(lineText: string): IBarProgressionToken[
         tokens.push({ type: 'whitespace', value: val, startIndex: start, endIndex: end });
       } else if (/^(\|\|:|:\|\||\|\||\|:|:\||\||%)$/.test(val)) {
         tokens.push({ type: 'delimiter', value: val, startIndex: start, endIndex: end });
+      } else if (val.startsWith('(') && val.endsWith(')') && isMusicalChord(val.slice(1, -1))) {
+        tokens.push({ type: 'text', value: '(', startIndex: start, endIndex: start + 1 });
+        tokens.push({ type: 'chord', value: val.slice(1, -1), startIndex: start + 1, endIndex: end - 1, chordIndex: chordCounter++ });
+        tokens.push({ type: 'text', value: ')', startIndex: end - 1, endIndex: end });
+      } else if (val.includes('(') && val.endsWith(')') && isMusicalChord(val.slice(0, val.indexOf('('))) && isMusicalChord(val.slice(val.indexOf('(') + 1, -1))) {
+        const optionalAt = val.indexOf('(');
+        tokens.push({ type: 'chord', value: val.slice(0, optionalAt), startIndex: start, endIndex: start + optionalAt, chordIndex: chordCounter++ });
+        tokens.push({ type: 'text', value: '(', startIndex: start + optionalAt, endIndex: start + optionalAt + 1 });
+        tokens.push({ type: 'chord', value: val.slice(optionalAt + 1, -1), startIndex: start + optionalAt + 1, endIndex: end - 1, chordIndex: chordCounter++ });
+        tokens.push({ type: 'text', value: ')', startIndex: end - 1, endIndex: end });
       } else if (isMusicalChord(val)) {
         tokens.push({
           type: 'chord',
@@ -371,13 +495,13 @@ export function parseBarProgressionLine(lineText: string): IBarProgressionToken[
   if (lastIndex < lineText.length) {
     tokens.push({
       type: 'text',
-      value: lineText.substring(lastIndex),
+      value: maskedLine.substring(lastIndex),
       startIndex: lastIndex,
       endIndex: lineText.length,
     });
   }
 
-  return tokens;
+  return projectVisibleTokens(tokens);
 }
 
 export function updateBarProgressionChord(
@@ -386,6 +510,8 @@ export function updateBarProgressionChord(
   newChord: string
 ): string {
   if (!rawLine) return rawLine;
+  if (/[\r\n]/.test(rawLine) || !Number.isInteger(targetChordIndex) || targetChordIndex < 0) return rawLine;
+  if ((rawLine.match(/\{\{/g)?.length ?? 0) !== (rawLine.match(/\}\}/g)?.length ?? 0)) return rawLine;
   const trimmed = newChord ? newChord.trim() : '';
   if (!isMusicalChord(trimmed)) {
     return rawLine;
@@ -396,9 +522,10 @@ export function updateBarProgressionChord(
   if (!targetToken) {
     return rawLine;
   }
-
-  targetToken.value = trimmed;
-  return tokens.map(t => t.value).join('');
+  const start = targetToken.startIndex;
+  const end = targetToken.endIndex;
+  if (start < 0 || end > rawLine.length || end <= start || rawLine.slice(start, end) !== targetToken.value) return rawLine;
+  return rawLine.slice(0, start) + trimmed + rawLine.slice(end);
 }
 
 export interface IFontFamilyOption {

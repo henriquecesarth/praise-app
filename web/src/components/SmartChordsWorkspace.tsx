@@ -21,6 +21,10 @@ import {
 } from '../utils/smart_chord';
 import { SmartChordImportModal } from './SmartChordImportModal';
 import { preferenceWriter } from '../utils/preferenceWriter';
+import { transposeNotationChord } from '../utils/smart_chord_notation';
+import { parseNotation } from '../utils/smart_chord_notation';
+import { extractMusicalInstructions } from '../utils/smart_chord_annotation_semantics';
+import { parseNotation as parseSmartNotation } from '../utils/smart_chord_notation';
 
 function getHarmonicFieldChords(originalKey: string): string[] {
   let key = originalKey;
@@ -1075,31 +1079,30 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
   const [editingCell, setEditingCell] = useState<SmartChordEditTarget | null>(null);
   const [editingChordValue, setEditingChordValue] = useState('');
 
+  const updateSourceLine = (source: string, lineIdx: number, update: (line: string) => string) => {
+    const parts = source.split(/(\r\n|\n|\r)/);
+    const partIndex = lineIdx * 2;
+    if (partIndex >= parts.length) return source;
+    parts[partIndex] = update(parts[partIndex] ?? '');
+    return parts.join('');
+  };
+
   const saveInlineChord = (lineIdx: number, charIdx: number, value: string) => {
-    const lines = content.split('\n');
-    const lineText = lines[lineIdx] || '';
-    const visual = rawToVisual(lineText);
-
     const trimmed = value.trim();
-    if (trimmed) {
-      visual.chords[charIdx] = trimmed;
-    } else {
-      delete visual.chords[charIdx];
-    }
-
-    lines[lineIdx] = visualToRaw(visual);
-    setContent(lines.join('\n'));
+    setContent(updateSourceLine(content, lineIdx, lineText => {
+      const visual = rawToVisual(lineText);
+      if (trimmed) visual.chords[charIdx] = trimmed;
+      else delete visual.chords[charIdx];
+      return visualToRaw(visual);
+    }));
     setEditingCell(null);
   };
 
   const saveBarChord = (lineIdx: number, barChordIdx: number, value: string) => {
-    const lines = content.split('\n');
-    const lineText = lines[lineIdx] || '';
     const trimmed = value.trim();
 
     if (trimmed && isMusicalChord(trimmed)) {
-      lines[lineIdx] = updateBarProgressionChord(lineText, barChordIdx, trimmed);
-      setContent(lines.join('\n'));
+      setContent(updateSourceLine(content, lineIdx, lineText => updateBarProgressionChord(lineText, barChordIdx, trimmed)));
     }
     setEditingCell(null);
   };
@@ -1207,7 +1210,9 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
   };
 
   // Parsing & pitch shifting preview
-  const printLines = (content || '').trimEnd().split('\n');
+  const printLines = (content || '').trimEnd().split(/\r\n|\n|\r/);
+  const printInstructions = extractMusicalInstructions(parseNotation(content));
+  const printNotation = parseSmartNotation(content);
 
 
   return (
@@ -1612,7 +1617,19 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                   {/* Sheet lines */}
                   <div data-testid="pdf-sheet-lines" style={{ display: 'flex', flexDirection: 'column', gap: `${chordLineSpacingPx}px` }}>
                     {printLines.map((lineText, lineIdx) => {
-                    if (isTablatureLine(lineText)) {
+                    const lineInstructions = printInstructions.filter(item => item.line === lineIdx);
+                    const anchoredInstructions = printInstructions.filter(item => item.placement === 'above-next-chord' && item.target?.line === lineIdx);
+                    const targetChordOrdinal = (item: typeof printInstructions[number]) => {
+                      const targetIndex = item.target?.token;
+                      if (targetIndex === undefined) return -1;
+                      return printNotation.lines[item.target!.line].tokens.slice(0, targetIndex).filter(token => token.kind === 'chord' || token.kind === 'optional_chord').length;
+                    };
+                    if (printNotation.lines[lineIdx]?.kind === 'annotation') {
+                      const lineOnlyInstructions = lineInstructions.filter(item => item.placement !== 'above-next-chord' || !item.target);
+                      if (lineOnlyInstructions.length === 0) return null;
+                      return <div key={lineIdx} className="pdf-line-row" data-notation-annotation-line style={{ fontSize: `${pdfFontSize}px`, color: 'black' }}>{lineOnlyInstructions.map((item, idx) => <span key={idx} data-notation-annotation data-annotation-kind={item.kind} data-annotation-placement={item.placement}>{item.displayText}</span>)}</div>;
+                    }
+                    if (isTablatureLine(lineText) && !hasBarProgression(lineText)) {
                       return (
                         <div
                           key={lineIdx}
@@ -1660,17 +1677,21 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                         >
                           {tokens.map((token, tokenIdx) => {
                             if (token.type === 'chord') {
-                              const transposedChord = transposeChord(token.value, semitones);
+                              const transposedChord = transposeNotationChord(token.value, semitones);
+                              const targetAnnotations = anchoredInstructions.filter(item => targetChordOrdinal(item) === token.chordIndex);
                               return (
                                 <span
                                   key={tokenIdx}
                                   className="print-chord-span"
+                                  data-chord-display
                                   style={{
                                     color: 'black',
                                     fontWeight: 'bold',
-                                    padding: '0 1px'
+                                    padding: '0 1px',
+                                    position: 'relative'
                                   }}
                                 >
+                                  {targetAnnotations.map((item, idx) => <span key={`anchor-${idx}`} data-notation-anchor data-notation-annotation data-annotation-placement="above-next-chord" data-annotation-target-token={item.target?.token} style={{ position: 'absolute', bottom: '100%', left: 0, whiteSpace: 'nowrap', fontSize: `${Math.round(pdfFontSize * item.fontScale)}px`, color: 'black' }}>{item.displayText}</span>)}
                                   {transposedChord}
                                 </span>
                               );
@@ -1708,12 +1729,14 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                               </span>
                             );
                           })}
+                          {lineInstructions.filter(item => item.placement !== 'above-next-chord' || !item.target).map((item, idx) => <span key={`instruction-${idx}`} data-notation-annotation data-annotation-kind={item.kind} data-annotation-placement={item.placement} data-annotation-target-line={item.target?.line} data-annotation-target-token={item.target?.token} style={{ fontSize: `${Math.round(pdfFontSize * item.fontScale)}px`, color: 'black', marginInlineStart: 8 }}>{item.displayText}</span>)}
                         </div>
                       );
                     }
 
                     const visual = rawToVisual(lineText);
                     const text = visual.cleanText;
+                    const visualChordIndexes = Object.keys(visual.chords).map(Number);
 
                     if (!text && Object.keys(visual.chords).length === 0) {
                       return <div key={lineIdx} data-empty-line style={{ height: '1.2em' }} />;
@@ -1742,7 +1765,14 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                         {text.split('').map((char, charIdx) => {
                           const hasChord = visual.chords[charIdx] !== undefined;
                           const chord = visual.chords[charIdx] || '';
-                          const transposedChord = hasChord ? transposeChord(chord, semitones) : '';
+                          const transposedChord = hasChord ? transposeNotationChord(chord, semitones) : '';
+                          const chordOrdinal = visualChordIndexes.indexOf(charIdx);
+                          const targetAnnotations = anchoredInstructions.filter(item => targetChordOrdinal(item) === chordOrdinal);
+                          const previousChordIndex = visualChordIndexes.filter(index => index < charIdx).pop();
+                          const previousChord = previousChordIndex === undefined ? '' : transposeNotationChord(visual.chords[previousChordIndex], semitones);
+                          const reserveBeforeChord = hasChord && previousChordIndex !== undefined
+                            ? Math.max(0, previousChord.length - (charIdx - previousChordIndex - 1)) * pdfFontSize * 0.58
+                            : 0;
 
                           return (
                             <div
@@ -1750,13 +1780,15 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                               style={{
                                 display: 'flex',
                                 flexDirection: 'column',
-                                position: 'relative'
+                                position: 'relative',
+                                marginLeft: reserveBeforeChord ? `${reserveBeforeChord}px` : undefined
                               }}
                             >
                               {hasChord && (
                                 <span
                                   aria-hidden="true"
                                   className="print-chord-span"
+                                  data-chord-display
                                   style={{
                                     position: 'absolute',
                                     bottom: '100%',
@@ -1768,6 +1800,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                                     padding: '0 1px'
                                   }}
                                 >
+                                  {targetAnnotations.map((item, idx) => <span key={`anchor-${idx}`} data-notation-anchor data-notation-annotation data-annotation-placement="above-next-chord" data-annotation-target-token={item.target?.token} style={{ position: 'absolute', bottom: '100%', left: 0, whiteSpace: 'nowrap', fontSize: `${Math.round(pdfFontSize * item.fontScale)}px`, color: 'black' }}>{item.displayText}</span>)}
                                   {transposedChord}
                                 </span>
                               )}
@@ -1784,11 +1817,14 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                             </div>
                           );
                         })}
+                        {lineInstructions.filter(item => item.placement !== 'above-next-chord' || !item.target).map((item, idx) => <span key={`instruction-${idx}`} data-notation-annotation data-annotation-kind={item.kind} data-annotation-placement={item.placement} data-annotation-target-line={item.target?.line} data-annotation-target-token={item.target?.token} style={{ fontSize: `${Math.round(pdfFontSize * item.fontScale)}px`, color: 'black', marginInlineStart: 8 }}>{item.displayText}</span>)}
 
                         {/* Extra cell chord at the end */}
                         {(() => {
                           const hasExtraChord = visual.chords[text.length] !== undefined;
                           const extraChord = visual.chords[text.length] || '';
+                          const extraChordOrdinal = visualChordIndexes.indexOf(text.length);
+                          const extraTargetAnnotations = anchoredInstructions.filter(item => targetChordOrdinal(item) === extraChordOrdinal);
 
                           return hasExtraChord ? (
                             <div
@@ -1802,6 +1838,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                               <span
                                 aria-hidden="true"
                                 className="print-chord-span"
+                                data-chord-display
                                 style={{
                                   position: 'absolute',
                                   bottom: '100%',
@@ -1813,7 +1850,8 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                                   padding: '0 1px'
                                 }}
                               >
-                                {transposeChord(extraChord, semitones)}
+                                {extraTargetAnnotations.map((item, idx) => <span key={`anchor-${idx}`} data-notation-anchor data-notation-annotation data-annotation-placement="above-next-chord" data-annotation-target-token={item.target?.token} style={{ position: 'absolute', bottom: '100%', left: 0, whiteSpace: 'nowrap', fontSize: `${Math.round(pdfFontSize * item.fontScale)}px`, color: 'black' }}>{item.displayText}</span>)}
+                                {transposeNotationChord(extraChord, semitones)}
                               </span>
                               <span aria-hidden="true" style={{ visibility: 'hidden' }}>➕</span>
                             </div>

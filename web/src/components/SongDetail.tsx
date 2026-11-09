@@ -10,6 +10,8 @@ import {
   getFontFamilyCss,
   CHORD_FONT_FAMILIES,
 } from '../utils/smart_chord';
+import { parseNotation, transposeNotationChord } from '../utils/smart_chord_notation';
+import { extractMusicalInstructions } from '../utils/smart_chord_annotation_semantics';
 import {
   ArrowLeft,
   Edit2,
@@ -601,7 +603,9 @@ export const SongDetail: React.FC<SongDetailProps> = ({
 
   const originalKey = activeChord?.originalKey || activeVersion.key || song.originalKey || 'C';
   const currentKeyTransposed = transposeChord(originalKey, semitones);
-  const rawLines = activeChord ? activeChord.content.split('\n') : [];
+  const rawLines = activeChord ? activeChord.content.split(/\r\n|\n|\r/) : [];
+  const detailNotation = parseNotation(activeChord?.content ?? '');
+  const detailInstructions = extractMusicalInstructions(detailNotation);
   const artistText = (typeof song.artist === 'string' ? song.artist : (song.artist as any)?.name) || song.artistName || 'Artista não especificado';
 
   return (
@@ -1079,7 +1083,19 @@ export const SongDetail: React.FC<SongDetailProps> = ({
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: `${lineSpacingPx}px` }}>
                 {rawLines.map((lineText, lineIdx) => {
-                  if (isTablatureLine(lineText)) {
+                  const lineInstructions = detailInstructions.filter(item => item.line === lineIdx);
+                  const anchoredInstructions = detailInstructions.filter(item => item.placement === 'above-next-chord' && item.target?.line === lineIdx);
+                  const targetChordOrdinal = (item: typeof detailInstructions[number]) => {
+                    const targetIndex = item.target?.token;
+                    if (targetIndex === undefined) return -1;
+                    return detailNotation.lines[item.target!.line].tokens.slice(0, targetIndex).filter(token => token.kind === 'chord' || token.kind === 'optional_chord').length;
+                  };
+                  if (detailNotation.lines[lineIdx]?.kind === 'annotation') {
+                    const lineOnly = lineInstructions.filter(item => item.placement !== 'above-next-chord' || !item.target);
+                    if (!lineOnly.length) return null;
+                    return <div key={lineIdx} data-notation-annotation-line>{lineOnly.map((item, idx) => <span key={idx} data-notation-annotation data-annotation-kind={item.kind}>{item.displayText}</span>)}</div>;
+                  }
+                  if (isTablatureLine(lineText) && !hasBarProgression(lineText)) {
                     return (
                       <div
                         key={lineIdx}
@@ -1125,19 +1141,23 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                       >
                         {tokens.map((token, tokenIdx) => {
                           if (token.type === 'chord') {
-                            const transposedChord = transposeChord(token.value, semitones);
+                            const targetAnnotations = anchoredInstructions.filter(item => targetChordOrdinal(item) === token.chordIndex);
+                            const transposedChord = transposeNotationChord(token.value, semitones);
                             return (
                               <span
                                 key={tokenIdx}
                                 className="has-chord"
+                                data-chord-display
                                 data-bar-chord-idx={token.chordIndex}
                                 style={{
                                   color: 'var(--primary-light)',
                                   fontWeight: 'bold',
                                   textDecoration: 'underline 2px solid var(--primary-light)',
                                   padding: '0 1px',
+                                  position: 'relative',
                                 }}
                               >
+                                {targetAnnotations.map((item, idx) => <span key={`anchor-${idx}`} data-notation-anchor data-notation-annotation data-annotation-placement="above-next-chord" style={{ position: 'absolute', bottom: '100%', left: 0, whiteSpace: 'nowrap', fontSize: '0.8em', color: 'var(--text-secondary)' }}>{item.displayText}</span>)}
                                 {transposedChord}
                               </span>
                             );
@@ -1176,12 +1196,14 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                             </span>
                           );
                         })}
+                          {lineInstructions.filter(item => item.placement !== 'above-next-chord' || !item.target).map((item, idx) => <span key={`instruction-${idx}`} data-notation-annotation data-annotation-kind={item.kind} data-annotation-placement={item.placement}>{item.displayText}</span>)}
                       </div>
                     );
                   }
 
                   const visual = rawToVisual(lineText);
                   const text = visual.cleanText;
+                    const visualChordIndexes = Object.keys(visual.chords).map(Number);
 
                   if (!text && Object.keys(visual.chords).length === 0) {
                     return <div key={lineIdx} style={{ height: '1.4em' }} />;
@@ -1218,18 +1240,25 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                           border: 0,
                         }}
                       >
-                        {text}
+                        {anchoredInstructions.map(item => item.displayText).join(' ')} {text}
                       </span>
                       {text.split('').map((char, charIdx) => {
                         const hasChord = visual.chords[charIdx] !== undefined;
                         const chord = visual.chords[charIdx] || '';
-                        const transposedChord = hasChord ? transposeChord(chord, semitones) : '';
+                        const transposedChord = hasChord ? transposeNotationChord(chord, semitones) : '';
+                        const chordOrdinal = visualChordIndexes.indexOf(charIdx);
+                        const targetAnnotations = anchoredInstructions.filter(item => targetChordOrdinal(item) === chordOrdinal);
+                        const previousChordIndex = visualChordIndexes.filter(index => index < charIdx).pop();
+                        const previousChord = previousChordIndex === undefined ? '' : transposeNotationChord(visual.chords[previousChordIndex], semitones);
+                        const reserveBeforeChord = hasChord && previousChordIndex !== undefined
+                          ? Math.max(0, previousChord.length - (charIdx - previousChordIndex - 1)) * 14 * 0.58 : 0;
 
                         return (
                           <div
                             key={charIdx}
                             data-char-idx={charIdx}
                             style={{
+                              marginLeft: reserveBeforeChord ? `${reserveBeforeChord}px` : undefined,
                               display: 'flex',
                               flexDirection: 'column',
                               position: 'relative',
@@ -1240,6 +1269,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                                 aria-hidden="true"
                                 className="print-chord-span"
                                 data-chord={transposedChord}
+                                data-chord-display
                                 data-anchor-idx={charIdx}
                                 style={{
                                   position: 'absolute',
@@ -1252,6 +1282,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                                   padding: '0 1px',
                                 }}
                               >
+                                {targetAnnotations.map((item, idx) => <span key={`anchor-${idx}`} data-notation-anchor data-notation-annotation data-annotation-placement="above-next-chord" style={{ position: 'absolute', bottom: '100%', left: 0, whiteSpace: 'nowrap', fontSize: '0.8em', color: 'var(--text-secondary)' }}>{item.displayText}</span>)}
                                 {transposedChord}
                               </span>
                             )}
@@ -1267,13 +1298,16 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                           </div>
                         );
                       })}
+                      {lineInstructions.filter(item => item.placement !== 'above-next-chord' || !item.target).map((item, idx) => <span key={`instruction-${idx}`} data-notation-annotation data-annotation-kind={item.kind} data-annotation-placement={item.placement}>{item.displayText}</span>)}
 
                       {/* Extra chord at end of line (if any, at text.length) */}
                       {(() => {
                         const hasExtraChord = visual.chords[text.length] !== undefined;
                         const extraChord = visual.chords[text.length] || '';
                         if (!hasExtraChord) return null;
-                        const transposedExtra = transposeChord(extraChord, semitones);
+                        const transposedExtra = transposeNotationChord(extraChord, semitones);
+                        const extraChordOrdinal = visualChordIndexes.indexOf(text.length);
+                        const extraTargetAnnotations = anchoredInstructions.filter(item => targetChordOrdinal(item) === extraChordOrdinal);
                         return (
                           <div
                             key="extra"
@@ -1288,6 +1322,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                             <span
                               aria-hidden="true"
                               className="print-chord-span"
+                              data-chord-display
                               data-chord={transposedExtra}
                               data-anchor-idx={text.length}
                               style={{
@@ -1301,6 +1336,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                                 padding: '0 1px',
                               }}
                             >
+                              {extraTargetAnnotations.map((item, idx) => <span key={`anchor-${idx}`} data-notation-anchor data-notation-annotation data-annotation-placement="above-next-chord" style={{ position: 'absolute', bottom: '100%', left: 0, whiteSpace: 'nowrap', fontSize: '0.8em', color: 'var(--text-secondary)' }}>{item.displayText}</span>)}
                               {transposedExtra}
                             </span>
                             <span style={{ visibility: 'hidden', whiteSpace: 'pre' }}> </span>

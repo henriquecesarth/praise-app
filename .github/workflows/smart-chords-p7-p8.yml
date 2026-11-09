@@ -1,0 +1,40 @@
+name: Smart Chords P7-P8 isolated validation
+
+on:
+  push:
+    branches:
+      - 'parallel/smart-chords-p7-p8-*'
+      - 'integration/smart-chords-p1-p8'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: notation-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web-musical-integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout test branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Node.js LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install locked Web dependencies
+        working-directory: web
+        run: npm ci --no-audit --no-fund
+      - name: Run all Web Vitest tests (includes P2-P8 regressions)
+        working-directory: web
+        run: npm test
+      - name: Build Web locally in test mode (not a publish build)
+        working-directory: web
+        run: npm run build -- --mode test
