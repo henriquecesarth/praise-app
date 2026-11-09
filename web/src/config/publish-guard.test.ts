@@ -32,6 +32,21 @@ it('rejects unrecognized integration mode',()=>expect(()=>validate({...integrate
 it('integrated mode keeps Firebase identity, key and emulator restrictions',()=>{
  for(const override of [{VITE_FIREBASE_PROJECT_ID:'production-other'},{VITE_FIREBASE_API_KEY:'other'},{VITE_AUTH_BYPASS:'1'},{FIREBASE_AUTH_EMULATOR_HOST:'127.0.0.1:9099'}])expect(()=>validate({...integrated,...override},'build','production')).toThrow();
 });
+
+const r17Integrated={...preview,LOUVAIO_STAGING_INTEGRATION:'r17',VITE_API_URL:'https://louvaio-r17-api-staging.vercel.app/api/v1'};
+it('accepts exact r17 integrated Staging API with explicit Preview context',()=>expect(()=>validate(r17Integrated,'build','production')).not.toThrow());
+it.each([
+ 'http://louvaio-r17-api-staging.vercel.app/api/v1',
+ 'https://louvaio-r17-api-staging.vercel.app.evil.test/api/v1',
+ 'https://evil-louvaio-r17-api-staging.vercel.app/api/v1',
+ 'https://louvaio-r17-api-staging.vercel.app:443/api/v1',
+ 'https://user@louvaio-r17-api-staging.vercel.app/api/v1',
+ 'https://louvaio-r17-api-staging.vercel.app/api/v1?override=1',
+ 'https://louvaio-r17-api-staging.vercel.app/api/v1#override',
+ preview.VITE_API_URL,
+ integrated.VITE_API_URL,
+])('rejects non-exact r17 integrated API %s',VITE_API_URL=>expect(()=>validate({...r17Integrated,VITE_API_URL},'build','production')).toThrow());
+
 const production={...preview,VERCEL_ENV:'production',VITE_API_URL:'https://praise-app-gray.vercel.app/api/v1',VITE_FIREBASE_PROJECT_ID:'praise-app-7a362'};
 it('accepts the independently verified Production API and Firebase project',()=>expect(()=>validate(production,'build','production')).not.toThrow());
 it.each([
