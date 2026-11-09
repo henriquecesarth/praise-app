@@ -5,7 +5,9 @@ import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_parser.d
 
 void main() {
   test('complete original reference retains chord columns, lyrics and six strings', () {
-    final source = File('../fixtures/smart-chords/m20-alignment-reference.txt').readAsStringSync();
+    final source = File('../fixtures/smart-chords/m20-alignment-reference.txt')
+        .readAsStringSync()
+        .replaceAll('\r\n', '\n');
     final draft = imageDraftFromRecognizedText(source, 'reference.png');
     expect(draft.originalKey, 'Bb');
     expect(draft.originalText, source);
