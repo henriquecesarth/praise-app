@@ -19,7 +19,9 @@ test('D2-B real API: responsive repertoire search, save/reopen, versions, links 
 
   await page.addInitScript(({ token }) => {
     localStorage.setItem('praise_auth_token', token);
-    localStorage.setItem('praise_theme', 'light');
+    if (!localStorage.getItem('praise_theme')) {
+      localStorage.setItem('praise_theme', 'light');
+    }
   }, { token: authToken! });
 
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -27,16 +29,16 @@ test('D2-B real API: responsive repertoire search, save/reopen, versions, links 
   await expect(page.getByRole('button', { name: /Nova Música/i })).toBeVisible();
 
   await page.getByRole('button', { name: /Nova Música/i }).click();
-  await expect(page.getByText('Nova Música', { exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Nova Música' })).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.activeElement?.closest('[role="dialog"]') !== null)).toBeTruthy();
   await page.keyboard.press('Escape');
-  await expect(page.getByText('Nova Música', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Nova Música' })).toHaveCount(0);
   await page.getByRole('button', { name: /Nova Música/i }).click();
-  await expect(page.getByText('Nova Música', { exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Nova Música' })).toBeVisible();
   await page.getByLabel(/Título da Música/i).fill('Browser Acceptance Song');
   await page.getByLabel(/Artista/i).fill('Fixture Artist');
   await page.getByRole('button', { name: /Salvar Música/i }).click();
-  await expect(page.getByText('Nova Música', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Nova Música' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Abrir música Browser Acceptance Song/i })).toBeVisible();
 
   await page.getByRole('button', { name: /Abrir música Browser Acceptance Song/i }).click();
@@ -78,7 +80,7 @@ test('D2-B real API: responsive repertoire search, save/reopen, versions, links 
     await page.getByLabel(/Observações Gerais/i).fill('Updated in the browser and persisted by the local API.');
     for (const viewport of viewports) {
       await page.setViewportSize(viewport);
-      await page.screenshot({ path: path.join(evidenceDir, `real-api-song-modal-${viewport.width}x${viewport.height}-${theme}.png`), fullPage: true });
+      await page.screenshot({ path: path.join(evidenceDir, `real-api-song-modal-${viewport.width}x${viewport.height}-${theme}.png`) });
     }
     if (theme === 'light') {
       await page.getByRole('button', { name: /Adicionar Versão/i }).click();
@@ -87,21 +89,23 @@ test('D2-B real API: responsive repertoire search, save/reopen, versions, links 
       await page.getByLabel(/^Tom/i).selectOption('E');
       for (const viewport of viewports) {
         await page.setViewportSize(viewport);
-        await page.screenshot({ path: path.join(evidenceDir, `real-api-version-modal-${viewport.width}x${viewport.height}-${theme}.png`), fullPage: true });
+        await page.screenshot({ path: path.join(evidenceDir, `real-api-version-modal-${viewport.width}x${viewport.height}-${theme}.png`) });
       }
       await page.getByRole('button', { name: 'Salvar Versão' }).click();
-      await expect(page.getByText('Editar Versão da Música')).toHaveCount(0);
+      await expect(page.getByRole('dialog', { name: /Editar Versão da Música/i })).toHaveCount(0);
       await page.getByRole('button', { name: /Salvar Música/i }).click();
-      await expect(page.getByText('Editar Música', { exact: true })).toHaveCount(0);
+      await expect(page.getByRole('dialog', { name: 'Editar Música' })).toHaveCount(0);
     } else {
       await page.getByRole('button', { name: /Adicionar Versão/i }).click();
       await expect(page.getByRole('dialog', { name: /Editar Versão da Música/i })).toBeVisible();
       for (const viewport of viewports) {
         await page.setViewportSize(viewport);
-        await page.screenshot({ path: path.join(evidenceDir, `real-api-version-modal-${viewport.width}x${viewport.height}-${theme}.png`), fullPage: true });
+        await page.screenshot({ path: path.join(evidenceDir, `real-api-version-modal-${viewport.width}x${viewport.height}-${theme}.png`) });
       }
       await page.getByRole('button', { name: 'Fechar edição de versão' }).click();
+      await expect(page.getByRole('dialog', { name: /Editar Versão da Música/i })).toHaveCount(0);
       await page.getByRole('button', { name: /Salvar Música/i }).click();
+      await expect(page.getByRole('dialog', { name: 'Editar Música' })).toHaveCount(0);
     }
   }
 

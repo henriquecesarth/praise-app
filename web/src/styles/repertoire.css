@@ -1008,11 +1008,13 @@
   font-size: 0.86rem;
 }
 
-.repertoire-modal-footer {
+.repertoire-modal-footer,
+.modal-content .repertoire-modal-footer {
   position: sticky;
   bottom: 0;
   z-index: 4;
   width: calc(100% + 40px);
+  max-width: calc(100% + 40px);
   margin-top: 4px;
   margin-left: -20px;
   margin-right: -20px;
@@ -1083,10 +1085,14 @@
     padding: 8px;
   }
 
-  .repertoire-modal-footer {
-    width: calc(100% + 28px);
-    margin-left: -14px;
-    margin-right: -14px;
-    padding: 12px 14px;
+  .repertoire-modal-footer,
+  .modal-content .repertoire-modal-footer,
+  .modal-content.song-form-modal .repertoire-modal-footer {
+    width: calc(100% + 28px) !important;
+    max-width: calc(100% + 28px) !important;
+    margin-left: -14px !important;
+    margin-right: -14px !important;
+    padding: 12px 14px !important;
+    background: var(--bg-surface) !important;
   }
 }
