@@ -3,7 +3,7 @@
   "branch": "feat/m21-vocal",
   "head": "29d09f1b2cf1d94aa8f5e84d77f906a6a88ae6f8",
   "humanWebAudio": "PASS (owner confirmation M21.2-R2)",
-  "archive": "C:\\Users\\henrique.hermogenes\\Documents\\p\\praise\\worktrees\\m21-vocal\\docs\\exec-plans\\evidence\\m21-2-r2\\m21-source-checkpoint.zip",
+  "archive": "<repo-root>\\docs\\exec-plans\\evidence\\m21-2-r2\\m21-source-checkpoint.zip",
   "archiveBytes": 3832598,
   "archiveSha256": "274d93a94dff2b2611875fb5abc91ae39ab961fad522dac0e14d909629bdc19f",
   "archiveIntegrity": "PASS",

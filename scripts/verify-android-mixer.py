@@ -6,7 +6,7 @@ import struct
 import wave
 from pathlib import Path
 
-REPO = Path("C:/Users/henrique.hermogenes/Documents/p/praise/worktrees/m21-vocal")
+REPO = Path(__file__).resolve().parent.parent
 AUDIO_DIR = REPO / "mobile/assets/audio/upright-kw"
 MANIFEST_PATH = AUDIO_DIR / "manifest.json"
 EVIDENCE_DIR = REPO / "docs/exec-plans/evidence/m21-2"

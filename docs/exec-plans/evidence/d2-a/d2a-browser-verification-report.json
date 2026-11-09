@@ -1,0 +1,66 @@
+{
+  "desktopLight": {
+    "library": {
+      "scrollWidth": 1366,
+      "clientWidth": 1366,
+      "hasHorizontalOverflow": false,
+      "bgApp": "rgb(245, 239, 230)"
+    }
+  },
+  "desktopDark": {
+    "reader": {
+      "scrollWidth": 1366,
+      "clientWidth": 1366,
+      "hasHorizontalOverflow": false,
+      "bgApp": "rgb(11, 25, 19)"
+    }
+  },
+  "mobileLight": {
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "hasHorizontalOverflow": false
+  },
+  "mobileDark": {
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "hasHorizontalOverflow": false
+  },
+  "chordAlignment": {
+    "monospace": {
+      "hasChordSpan": true,
+      "hasTablature": true,
+      "hasProgression": true,
+      "chordAboveSyllable": true,
+      "alignedLeft": true
+    },
+    "Arial": {
+      "hasChordSpan": true,
+      "hasTablature": true,
+      "hasProgression": true,
+      "chordAboveSyllable": true,
+      "alignedLeft": true
+    },
+    "Georgia": {
+      "hasChordSpan": true,
+      "hasTablature": true,
+      "hasProgression": true,
+      "chordAboveSyllable": true,
+      "alignedLeft": true
+    }
+  },
+  "autoScroll": {
+    "state": "playing",
+    "scrollTop": 18,
+    "pausedState": "paused"
+  },
+  "editReadSeparation": {
+    "workspaceMode": "read",
+    "editorDisplay": "none",
+    "readerDisplay": "flex",
+    "inEditMode": {
+      "workspaceMode": "edit",
+      "editorDisplay": "flex",
+      "readerDisplay": "none"
+    }
+  }
+}

@@ -11,11 +11,12 @@ class SampledPianoMixerTest {
 
     companion object {
         private lateinit var bank: PianoBank
-        private val assetDir = File("assets/audio/upright-kw").let {
-            if (it.exists()) it else File("mobile/assets/audio/upright-kw").let { f ->
-                if (f.exists()) f else File("C:/Users/henrique.hermogenes/Documents/p/praise/worktrees/m21-vocal/mobile/assets/audio/upright-kw")
-            }
-        }
+        private val assetDir = listOf(
+            File("assets/audio/upright-kw"),
+            File("../assets/audio/upright-kw"),
+            File("../../assets/audio/upright-kw"),
+            File("mobile/assets/audio/upright-kw")
+        ).firstOrNull { it.exists() } ?: File("../../assets/audio/upright-kw")
 
         @BeforeClass
         @JvmStatic

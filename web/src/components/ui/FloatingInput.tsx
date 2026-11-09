@@ -28,25 +28,25 @@ export const FloatingInput: React.FC<FloatingInputProps> = ({
         aria-invalid={Boolean(error)}
         aria-describedby={error ? errorId : props['aria-describedby']}
         style={{
-          paddingLeft: '20px',
-          paddingRight: '20px',
+          paddingLeft: '16px',
+          paddingRight: '16px',
           paddingTop: '16px',
           paddingBottom: '10px',
           boxSizing: 'border-box',
           ...style,
         }}
-        className={`w-full min-h-[54px] text-sm md:text-base leading-normal text-[var(--text-primary)] bg-[var(--surface-variant)] border border-[var(--border-color)] rounded-xl outline-none transition-all duration-200 focus:border-[var(--primary-light)] focus:bg-[var(--surface-color)] ${
-          error ? 'border-red-500' : ''
+        className={`w-full min-h-[50px] text-sm md:text-base leading-normal text-[var(--text-primary)] bg-[var(--bg-surface)] border border-[var(--border-strong)] rounded-lg outline-none transition-colors duration-150 focus:border-[var(--focus-ring)] focus:ring-2 focus:ring-[var(--focus-ring)]/20 ${
+          error ? 'border-[var(--status-danger-text)]' : ''
         } ${className}`}
         {...props}
       />
       <label
         htmlFor={inputId}
-        className="absolute pointer-events-none transition-all duration-200 ease-in-out z-10 px-1.5 rounded top-0 -translate-y-1/2 left-3.5 text-xs font-semibold text-[var(--primary-light)] bg-[var(--surface-color)]"
+        className="absolute pointer-events-none transition-all duration-150 ease-in-out z-10 px-1.5 rounded top-0 -translate-y-1/2 left-3 text-xs font-semibold text-[var(--text-secondary)] bg-[var(--bg-surface)]"
       >
         {label}
       </label>
-      {error && <span id={errorId} className="text-xs text-red-500 mt-1 block px-1">{error}</span>}
+      {error && <span id={errorId} className="text-xs text-[var(--status-danger-text)] mt-1 block px-1">{error}</span>}
     </div>
   );
 };

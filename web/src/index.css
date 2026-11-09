@@ -77,12 +77,12 @@ body,
 }
 
 :root {
-  font-family: 'Inter', 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
   color-scheme: light;
-  color: #121212;
+  color: #18221D;
   background-color: #F5EFE6;
 
   font-synthesis: none;
@@ -90,69 +90,110 @@ body,
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  /* LouvAIO Brand Base Colors */
+  /* LouvAIO Design System v1.0 Base & Semantic Tokens */
+  --brand-green: #0F2A1F;
+  --brand-terracotta: #B85A3C;
+  --brand-cream: #F5EFE6;
+
   --louvaio-green: #0F2A1F;
   --louvaio-green-dark: #0A1E16;
   --louvaio-green-light: #163B2C;
   --louvaio-green-surface: #E8EFEA;
 
   --louvaio-terracotta: #B85A3C;
-  --louvaio-terracotta-hover: #A04C31;
-  --louvaio-terracotta-light: #C96F52;
+  --louvaio-terracotta-hover: #964328;
+  --louvaio-terracotta-light: #AE5235;
   --louvaio-terracotta-surface: #F9ECE7;
 
   --louvaio-cream: #F5EFE6;
   --louvaio-cream-light: #FCF9F5;
   --louvaio-cream-surface: #FFFFFF;
-  --louvaio-cream-muted: #EAE2D5;
+  --louvaio-cream-muted: #EFE8DC;
 
-  --louvaio-black: #121212;
-  --louvaio-text-muted: #576059;
-  --louvaio-text-subtle: #7D8881;
+  --louvaio-black: #18221D;
+  --louvaio-text-muted: #46544E;
+  --louvaio-text-subtle: #5C6862;
 
-  /* Modo Claro LouvAIO */
-  --bg-main: var(--louvaio-cream);
+  /* Superfícies e Bordas — Modo Claro */
+  --bg-app: #F5EFE6;
+  --bg-main: #F5EFE6;
+  --bg-color: #F5EFE6;
+  --bg-primary: #F5EFE6;
   --bg-surface: #FFFFFF;
-  --border-color: #E2D7C7;
-  --divider-color: #ECE3D6;
-  
-  --primary-brand: var(--louvaio-terracotta);
-  --primary-hover: var(--louvaio-terracotta-hover);
-  --primary-color: var(--louvaio-terracotta);
-  --primary-light: var(--louvaio-terracotta-light);
+  --bg-surface-subtle: #EFE8DC;
+  --bg-surface-elevated: #FFFFFF;
+  --bg-sidebar: #EAE2D6;
+  --bg-overlay: rgba(15, 42, 31, 0.55);
+
+  --border-subtle: #DCD3C6;
+  --border-strong: #B8AEA0;
+  --border-color: #DCD3C6;
+  --border: #DCD3C6;
+  --divider-color: #E6DED2;
+  --focus-ring: #0F2A1F;
+
+  /* Ações e Destaques Musicais — Modo Claro (WCAG AA >= 4.5:1) */
+  --action-primary-bg: #AE5235;
+  --action-primary-hover: #964328;
+  --action-primary-subtle: #F9ECE7;
+  --chord-text: #9E4427;
+  --chord-badge-bg: #F6E6E0;
+  --chord-badge-border: #E2BFB3;
+  --structural-accent: #0F2A1F;
+  --structural-subtle: #E4ECE8;
+
+  --primary-brand: #AE5235;
+  --primary-hover: #964328;
+  --primary-color: #AE5235;
+  --primary-light: #9E4427;
   --primary-dark: #8C3E26;
-  --primary-surface: var(--louvaio-terracotta-surface);
+  --primary-surface: #F9ECE7;
 
   --accent: var(--louvaio-green);
   --accent-hover: var(--louvaio-green-light);
   --secondary-color: var(--louvaio-green);
   --secondary-light: #1E4D3B;
 
-  --text-main: var(--louvaio-black);
-  --text-muted: var(--louvaio-text-muted);
-  --text-primary: var(--text-main);
-  --text-secondary: var(--text-muted);
-  --text-tertiary: var(--louvaio-text-subtle);
+  /* Tipografia — Modo Claro (WCAG AA >= 4.95:1) */
+  --text-main: #18221D;
+  --text-muted: #5C6862;
+  --text-primary: #18221D;
+  --text-secondary: #46544E;
+  --text-tertiary: #5C6862;
 
   --surface-color: #FFFFFF;
-  --surface-variant: var(--louvaio-cream-muted);
+  --surface-variant: #EFE8DC;
   --surface-elevated: #FFFFFF;
-  --surface-sidebar: var(--louvaio-green);
-  --surface-sidebar-text: var(--louvaio-cream);
+  --surface-sidebar: #0F2A1F;
+  --surface-sidebar-text: #F5EFE6;
 
-  --success-color: #1E7E55;
-  --warning-color: #C2671A;
-  --error-color: #C53030;
-  --info-color: #26647D;
+  /* Estados Semânticos — Modo Claro */
+  --status-success-bg: #E6F4ED;
+  --status-success-text: #156545;
+  --status-success-border: #A8DABD;
+  --status-warning-bg: #FEF3E2;
+  --status-warning-text: #944D10;
+  --status-warning-border: #F3C88B;
+  --status-danger-bg: #FDECEB;
+  --status-danger-text: #A82525;
+  --status-danger-border: #F1B2B2;
+  --status-info-bg: #E6F0F5;
+  --status-info-text: #1C5368;
+  --status-info-border: #A9CFE0;
+
+  --success-color: #156545;
+  --warning-color: #944D10;
+  --error-color: #A82525;
+  --info-color: #1C5368;
 
   --glass-white: rgba(15, 42, 31, 0.04);
   --glass-border: rgba(15, 42, 31, 0.12);
-  --glass-glow: rgba(184, 90, 60, 0.15);
+  --glass-glow: rgba(174, 82, 53, 0.12);
 
-  --transition-fast: 0.2s ease;
-  --transition-medium: 0.3s ease;
-  --border-radius: 12px;
-  --border-radius-lg: 16px;
+  --transition-fast: 0.15s ease;
+  --transition-medium: 0.22s ease;
+  --border-radius: 10px;
+  --border-radius-lg: 12px;
   --border-radius-sm: 8px;
 
   /* Safe Area Insets para PWA Mobile & Notches */
@@ -163,22 +204,43 @@ body,
 }
 
 .dark {
-  /* Modo Escuro LouvAIO */
+  /* Modo Escuro LouvAIO — Design System v1.0 */
   color-scheme: dark;
   color: #F5EFE6;
   background-color: #0B1913;
 
+  --bg-app: #0B1913;
   --bg-main: #0B1913;
-  --bg-surface: #0F2A1F;
-  --border-color: #1B4534;
-  --divider-color: #16382A;
-  
-  --primary-brand: #C96F52;
-  --primary-hover: #B85A3C;
-  --primary-color: #C96F52;
-  --primary-light: #DE8E75;
-  --primary-dark: #9F472D;
-  --primary-surface: #261B16;
+  --bg-color: #0B1913;
+  --bg-primary: #0B1913;
+  --bg-surface: #11231B;
+  --bg-surface-subtle: #162C22;
+  --bg-surface-elevated: #1B362A;
+  --bg-sidebar: #08140F;
+  --bg-overlay: rgba(0, 0, 0, 0.72);
+
+  --border-subtle: #1E3D2F;
+  --border-strong: #2D5945;
+  --border-color: #1E3D2F;
+  --border: #1E3D2F;
+  --divider-color: #183226;
+  --focus-ring: #7CC4A4;
+
+  --action-primary-bg: #B85A3C;
+  --action-primary-hover: #9E472B;
+  --action-primary-subtle: #2B1B16;
+  --chord-text: #E69176;
+  --chord-badge-bg: #2B1B16;
+  --chord-badge-border: #593326;
+  --structural-accent: #7CC4A4;
+  --structural-subtle: #153326;
+
+  --primary-brand: #B85A3C;
+  --primary-hover: #9E472B;
+  --primary-color: #B85A3C;
+  --primary-light: #E69176;
+  --primary-dark: #9E472B;
+  --primary-surface: #2B1B16;
 
   --accent: #1C4836;
   --accent-hover: #265F47;
@@ -186,25 +248,38 @@ body,
   --secondary-light: #B4CFC1;
 
   --text-main: #F5EFE6;
-  --text-muted: #B4C2B9;
-  --text-primary: var(--text-main);
-  --text-secondary: var(--text-muted);
-  --text-tertiary: #7E8F84;
+  --text-muted: #8E9B94;
+  --text-primary: #F5EFE6;
+  --text-secondary: #C7C0B8;
+  --text-tertiary: #8E9B94;
 
-  --surface-color: #0F2A1F;
-  --surface-variant: #143527;
-  --surface-elevated: #184130;
+  --surface-color: #11231B;
+  --surface-variant: #162C22;
+  --surface-elevated: #1B362A;
   --surface-sidebar: #08140F;
   --surface-sidebar-text: #F5EFE6;
+
+  --status-success-bg: #113023;
+  --status-success-text: #6EE7B7;
+  --status-success-border: #1E563F;
+  --status-warning-bg: #332211;
+  --status-warning-text: #FCD34D;
+  --status-warning-border: #613F1B;
+  --status-danger-bg: #361717;
+  --status-danger-text: #FCA5A5;
+  --status-danger-border: #692828;
+  --status-info-bg: #122A36;
+  --status-info-text: #93C5FD;
+  --status-info-border: #214D63;
 
   --success-color: #27A770;
   --warning-color: #E28438;
   --error-color: #E54848;
   --info-color: #4AA1C7;
 
-  --glass-white: rgba(245, 239, 230, 0.05);
+  --glass-white: rgba(245, 239, 230, 0.04);
   --glass-border: rgba(245, 239, 230, 0.1);
-  --glass-glow: rgba(201, 111, 82, 0.2);
+  --glass-glow: rgba(184, 90, 60, 0.15);
 }
 
 * {
@@ -216,7 +291,7 @@ body,
 body {
   margin: 0;
   min-height: 100vh;
-  background-color: var(--bg-color);
+  background-color: var(--bg-app);
   color: var(--text-primary);
 }
 
@@ -843,22 +918,24 @@ label {
   color: var(--text-secondary);
 }
 
-.input-field, .select-field, .textarea-field {
+.input-field, .select-field, .textarea-field, .form-control {
   width: 100%;
-  padding: 12px 16px;
+  padding: 10px 14px;
+  min-height: 40px;
   box-sizing: border-box;
-  background-color: var(--surface-variant);
-  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-strong);
   border-radius: var(--border-radius-sm);
   color: var(--text-primary);
   font-family: inherit;
-  font-size: 0.95rem;
-  transition: var(--transition-fast);
+  font-size: 0.9375rem;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast);
 }
-.input-field:focus, .select-field:focus, .textarea-field:focus {
+.input-field:focus, .select-field:focus, .textarea-field:focus, .form-control:focus {
   outline: none;
-  border-color: var(--primary-color);
-  background-color: var(--surface-elevated);
+  border-color: var(--focus-ring);
+  background-color: var(--bg-surface);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus-ring) 16%, transparent);
 }
 
 .textarea-field {
@@ -881,40 +958,43 @@ button {
   background: none;
   user-select: none;
 }
-button:focus-visible {
-  outline: 2px solid var(--primary-light);
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
 .btn {
-  padding: 10px 20px;
+  padding: 8px 16px;
+  min-height: 40px;
   border-radius: var(--border-radius-sm);
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: 0.875rem;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   line-height: 1.25;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
   white-space: nowrap;
   text-decoration: none;
 }
 .btn:active {
-  transform: scale(0.98);
+  transform: translateY(0.5px);
 }
 
 .btn-primary {
-  background-color: var(--primary-color);
-  color: #FFFFFF;
+  background-color: var(--action-primary-bg);
+  color: var(--text-on-accent);
   border: 1px solid transparent;
-  box-shadow: 0 4px 14px rgba(184, 90, 60, 0.28);
+  box-shadow: 0 1px 2px rgba(15, 42, 31, 0.12);
 }
 .btn-primary:hover {
-  background-color: var(--primary-hover);
-  box-shadow: 0 6px 20px rgba(184, 90, 60, 0.4);
-  transform: translateY(-1px);
+  background-color: var(--action-primary-hover);
+  box-shadow: 0 2px 6px rgba(15, 42, 31, 0.18);
 }
 .btn-primary:disabled {
   opacity: 0.55;
@@ -924,31 +1004,50 @@ button:focus-visible {
 }
 
 .btn-secondary {
-  background-color: var(--surface-variant);
+  background-color: var(--bg-surface);
   color: var(--text-primary);
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-strong);
 }
 .btn-secondary:hover {
-  background-color: var(--surface-variant);
+  background-color: var(--bg-surface-subtle);
   border-color: var(--text-secondary);
   color: var(--text-primary);
 }
 
+.btn-ghost {
+  background-color: transparent;
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+}
+.btn-ghost:hover {
+  background-color: var(--bg-surface-subtle);
+  color: var(--text-primary);
+}
+
+.btn-success {
+  background-color: var(--status-success-text);
+  color: #FFFFFF;
+  border: 1px solid transparent;
+}
+.dark .btn-success {
+  background-color: #1E7E55;
+  color: #FFFFFF;
+}
+
 .btn-danger {
-  background-color: rgba(220, 38, 38, 0.08);
-  color: #DC2626;
-  border: 1px solid rgba(220, 38, 38, 0.25);
+  background-color: var(--status-danger-bg);
+  color: var(--status-danger-text);
+  border: 1px solid var(--status-danger-border);
 }
 .btn-danger:hover {
-  background-color: rgba(220, 38, 38, 0.18);
-  color: #B91C1C;
-  border-color: rgba(220, 38, 38, 0.4);
+  background-color: color-mix(in srgb, var(--status-danger-bg) 80%, var(--status-danger-text));
+  color: var(--status-danger-text);
 }
 
 .dark .btn-danger {
-  background-color: rgba(239, 68, 68, 0.15);
-  color: #FCA5A5;
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  background-color: var(--status-danger-bg);
+  color: var(--status-danger-text);
+  border: 1px solid var(--status-danger-border);
 }
 .dark .btn-danger:hover {
   background-color: rgba(239, 68, 68, 0.25);
@@ -957,30 +1056,29 @@ button:focus-visible {
 }
 
 .icon-btn {
-  background-color: var(--surface-color);
-  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--border-radius-sm);
   color: var(--text-primary);
-  padding: 10px;
+  padding: 8px;
   min-width: 40px;
   min-height: 40px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
   position: relative;
 }
 .icon-btn:hover {
-  background-color: var(--surface-variant);
-  border-color: var(--primary-light);
+  background-color: var(--bg-surface-subtle);
+  border-color: var(--border-strong);
   color: var(--text-primary);
 }
 .icon-btn.active {
-  background-color: var(--primary-surface);
-  border-color: var(--primary-color);
-  color: var(--primary-light);
-  box-shadow: 0 0 12px var(--glass-glow);
+  background-color: var(--action-primary-subtle);
+  border-color: var(--action-primary-bg);
+  color: var(--chord-text);
 }
 
 /* Song / Folder Detail Screen Styling (Sub-views) */

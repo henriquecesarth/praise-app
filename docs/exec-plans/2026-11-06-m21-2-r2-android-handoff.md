@@ -3,7 +3,7 @@
 ## Estado confirmado em 2026-11-06
 Proprietario aprovou FreePats Upright KW em Arpejo maior80BPM e controles: **HUMAN_WEB_AUDIO=PASS**, piano agradavel, estalos/distorcao nao percebidos. WEB_OFFLINE=PASS e testes11/11PASS conforme R1. Nao repetir audicao nem alterar timbre Web. Android sampled ainda NAO implementado/homologado. Nenhum build/install nesta rodada.
 
-Workspace: `C:/Users/henrique.hermogenes/Documents/p/praise/worktrees/m21-vocal`; branch `feat/m21-vocal`; HEAD `29d09f1b2cf1d94aa8f5e84d77f906a6a88ae6f8`. Baseline Web/Backend certificado: esse mesmo29d09f1. Baseline Flutter certificado: `11b57976b56130d79ecbe032f8b442358fc8f796`. Original WIP: `praise-app`, HEAD452a255, branch feat/m20-phase-2a-android-share; nao tocar. Releases e PRs21/22/23 preservados.
+Workspace: `<repo-root>`; branch `feat/m21-vocal`; HEAD `29d09f1b2cf1d94aa8f5e84d77f906a6a88ae6f8`. Baseline Web/Backend certificado: esse mesmo29d09f1. Baseline Flutter certificado: `11b57976b56130d79ecbe032f8b442358fc8f796`. Original WIP: `praise-app`, HEAD452a255, branch feat/m20-phase-2a-android-share; nao tocar. Releases e PRs21/22/23 preservados.
 
 ## Gate Git: commit INTERROMPIDO pela condicao do proprietario
 O worktree NAO contem apenas M21: mobile foi restaurado de11b5797 sobre29d09f1. Ha79arquivos rastreados de baseline e arquivos M20 novos relativos ao HEAD, alem de M21. Exemplos fora de M21: auth_repository, SmartChords, Firebase options e testes M20. `git diff` bruto nao e um patch M21 limpo. Index permaneceu intocado; nenhum commit criado.
@@ -64,7 +64,7 @@ Livre R2~3.52GB; alvo8-10GB antes do build. Inventario delimitado anterior: work
 Original `praise-app/mobile/build` contem APKs e evidencias: nao remover. `web/node_modules` e junction para o original: excluir do plano. AAB certificado e keystores intocados. Mesmo recuperar todo candidato isolado rende apenas~1GB, insuficiente para8-10GB. Solicitar mais espaco ou outro disco LOCAL com folga para diretorio de build; nao mover para drive de rede nem limpar caches globais por conta propria. Conservar caches ate escolher estrategia para nao aumentar recompilacao.
 
 ## Prompt pronto para Gemini (aciona a proxima etapa, nao este R2 documental)
-Voce implementara Android sampled piano no LouvAIO. Trabalhe APENAS em C:/Users/henrique.hermogenes/Documents/p/praise/worktrees/m21-vocal, branch feat/m21-vocal. Leia este handoff e AGENTS.md uma vez; nao reinicie investigacao geral. O proprietario APROVOU o Web FreePats KW, sem estalos; Web esta congelado pelos hashes acima. Nao altere timbre,30exercicios, modelo MIDI ou regras de transposicao.
+Voce implementara Android sampled piano no LouvAIO. Trabalhe APENAS em <repo-root>, branch feat/m21-vocal. Leia este handoff e AGENTS.md uma vez; nao reinicie investigacao geral. O proprietario APROVOU o Web FreePats KW, sem estalos; Web esta congelado pelos hashes acima. Nao altere timbre,30exercicios, modelo MIDI ou regras de transposicao.
 
 Implemente a decisao Android numerada acima nos arquivos delimitados: mesmos14WAV CC0 com hashes identicos, mixer PCM puro deterministico e AudioTrack streaming, transporte existente com posicao/geracao, release e fades seguros. Reutilize progression Flutter e assets compartilhados. Nao use IA/microfone, editor/rotinas/favoritos, outra biblioteca sonora ou dependencias pagas. Sem subagentes nesta retomada curta. Nao tocar workspace original, Production, Firebase/Vercel, PRs21/22/23; sem push/merge/deploy e sem commit enquanto mistura de baseline nao estiver resolvida/autorizada.
 

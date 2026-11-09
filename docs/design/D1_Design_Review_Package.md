@@ -7,20 +7,20 @@
 
 ## 1. Documentos e Protótipos Isolados Gerados no Workspace de Design
 
-1. **[D1_Auditoria_Visual_e_Inventario.md](file:///C:/Users/henrique.hermogenes/Documents/p/praise/worktrees/m21-vocal/docs/design/D1_Auditoria_Visual_e_Inventario.md)**
+1. **[D1_Auditoria_Visual_e_Inventario.md](./D1_Auditoria_Visual_e_Inventario.md)**
    - Inventário completo das 25 rotas e seções da Web (`routing.ts`) e das 14 telas/fluxos do Flutter (`app_router.dart` e `app_shell.dart`).
    - Mapeamento de todos os componentes de `web/src/components/`, tokens CSS (`louvaio-brand.css`, `index.css`, `workspace.css`) e estilos inline.
    - Matriz de Preservação Funcional por tela (Versões musicais, Cifras Inteligentes, PDF A4, Escalas, Liturgias, Ministério/Assinatura e M21 Vocal).
    - Matriz de Paridade Web R16 vs. Flutter M20/M21 e Auditoria de Contraste WCAG 2.1 AA.
-2. **[LouvAIO_Design_System_v1_0.md](file:///C:/Users/henrique.hermogenes/Documents/p/praise/worktrees/m21-vocal/docs/design/LouvAIO_Design_System_v1_0.md)**
-   - Evolução do [LouvAIO_Design_System_v0_1.md](file:///C:/Users/henrique.hermogenes/Documents/p/praise/worktrees/m21-vocal/docs/design/LouvAIO_Design_System_v0_1.md) preservando a marca **LouvAIO** (sem `"2.0"`), Verde Profundo (`#0F2A1F`), Terracota (`#B85A3C`) e Creme (`#F5EFE6`).
+2. **[LouvAIO_Design_System_v1_0.md](./LouvAIO_Design_System_v1_0.md)**
+   - Evolução do [LouvAIO_Design_System_v0_1.md](./LouvAIO_Design_System_v0_1.md) preservando a marca **LouvAIO** (sem `"2.0"`), Verde Profundo (`#0F2A1F`), Terracota (`#B85A3C`) e Creme (`#F5EFE6`).
    - Resolução da inversão entre `--brand-primary` e `--primary-brand` e correção das variáveis quebradas (`--bg-color`, `--bg-primary`, `--border`, `#7C3AED`).
    - Tokens Modo Claro e Modo Escuro com aprovação matemática no WCAG 2.1 AA.
-3. **[D1_Especificacao_Repertorio_e_Cifras.md](file:///C:/Users/henrique.hermogenes/Documents/p/praise/worktrees/m21-vocal/docs/design/D1_Especificacao_Repertorio_e_Cifras.md)**
+3. **[D1_Especificacao_Repertorio_e_Cifras.md](./D1_Especificacao_Repertorio_e_Cifras.md)**
    - Especificação completa Desktop e Mobile dos fluxos de **Repertório** e **Cifras Inteligentes**, com tabela comparativa **Antes (R16) vs. Depois (D1)** justificando cada alteração.
 4. **Protótipos Visuais Interativos (HTML/CSS Autônomos com Alternador Desktop/Mobile e Claro/Escuro):**
-   - **[repertorio-desktop-mobile.html](file:///C:/Users/henrique.hermogenes/Documents/p/praise/worktrees/m21-vocal/docs/design/prototypes/repertorio-desktop-mobile.html)**: Lista de Repertório de alta densidade (`Músicas`, `Pastas`, `Artistas`, `FilterPopover`), Detalhe da Música (`Music Stand Bar`, seletor de versões, Cifra Inteligente vinculada, transposição, tablatura, progressão, ficha da versão e links) e Modal de Música/Versões (`Sticky Header/Footer`).
-   - **[cifras-inteligentes-desktop-mobile.html](file:///C:/Users/henrique.hermogenes/Documents/p/praise/worktrees/m21-vocal/docs/design/prototypes/cifras-inteligentes-desktop-mobile.html)**: Biblioteca Pessoal (`Minhas Cifras`), Workspace com alternância estritamente exclusiva **`Editar` / `Visualizar`** (`data-workspace-mode="edit" | "read"`), Leitor com edição inline de acordes e sugestões do Campo Harmônico, Modal de Importação tokenizado (4 abas) e Preview PDF A4.
+   - **[repertorio-desktop-mobile.html](./prototypes/repertorio-desktop-mobile.html)**: Lista de Repertório de alta densidade (`Músicas`, `Pastas`, `Artistas`, `FilterPopover`), Detalhe da Música (`Music Stand Bar`, seletor de versões, Cifra Inteligente vinculada, transposição, tablatura, progressão, ficha da versão e links) e Modal de Música/Versões (`Sticky Header/Footer`).
+   - **[cifras-inteligentes-desktop-mobile.html](./prototypes/cifras-inteligentes-desktop-mobile.html)**: Biblioteca Pessoal (`Minhas Cifras`), Workspace com alternância estritamente exclusiva **`Editar` / `Visualizar`** (`data-workspace-mode="edit" | "read"`), Leitor com edição inline de acordes e sugestões do Campo Harmônico, Modal de Importação tokenizado (4 abas) e Preview PDF A4.
 
 ---
 
