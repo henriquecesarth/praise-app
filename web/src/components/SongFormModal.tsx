@@ -12,6 +12,7 @@ interface SongFormModalProps {
 
 export const SongFormModal: React.FC<SongFormModalProps> = ({
   song,
+  artists,
   classifications,
   onSave,
   onClose,
@@ -19,6 +20,7 @@ export const SongFormModal: React.FC<SongFormModalProps> = ({
   return (
     <CreateSongModal
       song={song}
+      artists={artists}
       classifications={classifications}
       onSave={onSave}
       onClose={onClose}

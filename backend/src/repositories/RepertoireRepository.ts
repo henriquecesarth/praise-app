@@ -32,8 +32,24 @@ export function decodeSongCursor(token: string, expectedMinistryId: string): Son
   }
 }
 
+function stripUndefinedDeep<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => stripUndefinedDeep(item)) as unknown as T;
+  }
+  if (value && typeof value === 'object') {
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(value as Record<string, any>)) {
+      if (v !== undefined) {
+        out[k] = stripUndefinedDeep(v);
+      }
+    }
+    return out as T;
+  }
+  return value;
+}
+
 export function mapToSongSummary(raw: any): SongSummary {
-  return {
+  const summary: SongSummary = {
     id: raw.id,
     ministry_id: raw.ministry_id,
     user_id: raw.user_id || null,
@@ -45,12 +61,21 @@ export function mapToSongSummary(raw: any): SongSummary {
     duration: raw.duration || null,
     youtube_url: raw.youtube_url || null,
     audio_url: raw.audio_url || null,
+    chord_sheet_url: raw.chord_sheet_url || null,
+    external_links: raw.external_links,
     has_youtube: Boolean(raw.youtube_url),
     created_at: raw.created_at,
     updated_at: raw.updated_at || raw.created_at,
-    artist: raw.artist || null,
+    artist: raw.artist || raw.artist_name || null,
     classification: raw.classification || null,
   };
+  if (raw.versions !== undefined) {
+    (summary as any).versions = raw.versions;
+  }
+  if (raw.notes !== undefined) {
+    (summary as any).notes = raw.notes;
+  }
+  return summary;
 }
 
 export class RepertoireRepository {
@@ -65,6 +90,30 @@ export class RepertoireRepository {
       throw new AppError(400, 'ID do ministério inválido.');
     }
     return ministryId;
+  }
+
+  private async validateVersionClassifications(
+    ministryId: string,
+    versions: any,
+    alreadyCheckedId?: string | null
+  ) {
+    if (!Array.isArray(versions)) return;
+    const extraClassIds = new Set<string>();
+    for (const ver of versions) {
+      if (Array.isArray(ver?.classificationIds)) {
+        for (const cid of ver.classificationIds) {
+          if (typeof cid === 'string' && cid.trim() !== '' && cid !== alreadyCheckedId) {
+            extraClassIds.add(cid);
+          }
+        }
+      }
+    }
+    for (const cid of extraClassIds) {
+      const classDoc = await this.classificationsCol.doc(cid).get();
+      if (!classDoc.exists || classDoc.data()?.ministry_id !== ministryId) {
+        throw new AppError(404, 'Classificação não encontrada.');
+      }
+    }
   }
 
   async getCounts(ministryId: string) {
@@ -205,6 +254,7 @@ export class RepertoireRepository {
         'title',
         'artist_id',
         'artist',
+        'artist_name',
         'classification_id',
         'classification',
         'original_key',
@@ -212,6 +262,10 @@ export class RepertoireRepository {
         'duration',
         'youtube_url',
         'audio_url',
+        'chord_sheet_url',
+        'external_links',
+        'versions',
+        'notes',
         'created_at',
         'updated_at'
       )
@@ -317,7 +371,6 @@ export class RepertoireRepository {
 
   async createSong(ministryId: string, userId: string, data: any) {
     ministryId = this.validateMinistryId(ministryId);
-    const now = new Date().toISOString();
 
     let artistObj: any = null;
     let classificationObj: any = null;
@@ -328,6 +381,10 @@ export class RepertoireRepository {
         throw new AppError(404, 'Artista não encontrado.');
       }
       artistObj = { id: artDoc.id, ...artDoc.data() };
+    } else if (typeof data.artist === 'string' && data.artist.trim() !== '') {
+      artistObj = data.artist.trim();
+    } else if (typeof data.artist_name === 'string' && data.artist_name.trim() !== '') {
+      artistObj = data.artist_name.trim();
     }
 
     if (data.classification_id) {
@@ -338,27 +395,38 @@ export class RepertoireRepository {
       classificationObj = { id: classDoc.id, ...classDoc.data() };
     }
 
+    await this.validateVersionClassifications(ministryId, data.versions, data.classification_id);
+
     const { SubscriptionRepository } = await import('./SubscriptionRepository');
     const subRepo = new SubscriptionRepository();
 
+    const songData: Record<string, any> = {
+      user_id: userId,
+      title: data.title,
+      artist_id: data.artist_id || null,
+      artist: artistObj,
+      classification_id: data.classification_id || null,
+      classification: classificationObj,
+      original_key: data.original_key || null,
+      bpm: data.bpm || null,
+      duration: data.duration || null,
+      lyrics: data.lyrics ?? null,
+      chord_sheet_url: data.chord_sheet_url || null,
+      youtube_url: data.youtube_url || null,
+      audio_url: data.audio_url || null,
+      external_links: data.external_links || {},
+    };
+
+    if (data.notes !== undefined) {
+      songData.notes = data.notes;
+    }
+    if (Array.isArray(data.versions)) {
+      songData.versions = stripUndefinedDeep(data.versions);
+    }
+
     const { song } = await subRepo.createSongTransactional({
       ministryId,
-      songData: {
-        user_id: userId,
-        title: data.title,
-        artist_id: data.artist_id || null,
-        artist: artistObj,
-        classification_id: data.classification_id || null,
-        classification: classificationObj,
-        original_key: data.original_key || null,
-        bpm: data.bpm || null,
-        duration: data.duration || null,
-        lyrics: data.lyrics || null,
-        chord_sheet_url: data.chord_sheet_url || null,
-        youtube_url: data.youtube_url || null,
-        audio_url: data.audio_url || null,
-        external_links: data.external_links || {},
-      },
+      songData,
     });
 
     return song;
@@ -369,7 +437,7 @@ export class RepertoireRepository {
 
     const docRef = this.songsCol.doc(songId);
     const now = new Date().toISOString();
-    const updateData: any = { ...data, updated_at: now };
+    const updateData: any = stripUndefinedDeep({ ...data, updated_at: now });
 
     // Mass assignment guard
     delete updateData.id;
@@ -384,9 +452,24 @@ export class RepertoireRepository {
         }
         updateData.artist = { id: artDoc.id, ...artDoc.data() };
       } else {
-        updateData.artist = null;
+        const freeArtist =
+          typeof data.artist === 'string' && data.artist.trim() !== ''
+            ? data.artist.trim()
+            : typeof data.artist_name === 'string' && data.artist_name.trim() !== ''
+              ? data.artist_name.trim()
+              : null;
+        updateData.artist = freeArtist;
         updateData.artist_id = null;
       }
+    } else if (data.artist !== undefined || data.artist_name !== undefined) {
+      const freeArtist =
+        typeof data.artist === 'string'
+          ? data.artist.trim()
+          : typeof data.artist_name === 'string'
+            ? data.artist_name.trim()
+            : '';
+      updateData.artist = freeArtist || null;
+      updateData.artist_name = freeArtist || null;
     }
 
     if (data.classification_id !== undefined) {
@@ -401,6 +484,8 @@ export class RepertoireRepository {
         updateData.classification_id = null;
       }
     }
+
+    await this.validateVersionClassifications(ministryId, data.versions, data.classification_id);
 
     await docRef.update(updateData);
     const updatedDoc = await docRef.get();
@@ -677,4 +762,3 @@ export class RepertoireRepository {
     await this.folderSongsCol.doc(`${folderId}_${songId}`).delete();
   }
 }
-

@@ -11,7 +11,7 @@ const viewports = [
 
 export default defineConfig({
   testDir: './e2e',
-  outputDir: './test-results',
+  outputDir: './test-results/playwright-output',
   fullyParallel: false,
   workers: 1,
   retries: 0,

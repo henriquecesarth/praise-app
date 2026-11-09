@@ -28,8 +28,12 @@ async function expectNoHorizontalOverflow(page: Page) {
         && Number(style.opacity) !== 0
         && rect.width > 0
         && rect.height > 0;
+      const closedDetails = htmlElement.closest('details:not([open])');
+      const isClosedDetailsContent = closedDetails !== null
+        && !htmlElement.matches('summary')
+        && !htmlElement.closest('summary');
       const isDecorative = htmlElement.closest('[aria-hidden="true"]') !== null;
-      if (!isRendered || isDecorative || (rect.left >= -1 && rect.right <= viewportWidth + 1)) return [];
+      if (!isRendered || isClosedDetailsContent || isDecorative || (rect.left >= -1 && rect.right <= viewportWidth + 1)) return [];
 
       const localScroller = htmlElement.closest('.tab-bar, .schedule-tabs-wrapper, .lyrics-box');
       if (localScroller) {
@@ -116,8 +120,14 @@ test('login, navigation, details, forms, history, and ministry remain usable', a
   await page.goto('/cifras');
   await expect(page.getByRole('button', { name: 'Criar Cifra' })).toBeVisible();
   await page.getByRole('button', { name: 'Criar Cifra' }).click();
-  await expect(page.getByText('Visualização Reativa')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Diminuir tamanho da fonte' })).toBeVisible();
+  const chordWorkspace = page.locator('.smart-chords-workspace');
+  await expect(chordWorkspace).toHaveAttribute('data-workspace-mode', 'edit');
+  await expect(chordWorkspace).toHaveAttribute('data-has-selection', 'true');
+  await expect(page.getByRole('button', { name: 'Visualizar' })).toBeVisible();
+  await page.getByRole('button', { name: 'Visualizar' }).click();
+  await expect(chordWorkspace).toHaveAttribute('data-workspace-mode', 'read');
+  await expect(page.locator('.printable-area-container')).toBeVisible();
+  await expect(page.locator('.smart-chords-editor')).toBeHidden();
   await capture(page, testInfo, 'smart-chords');
 
   await page.goto('/escalas');

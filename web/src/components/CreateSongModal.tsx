@@ -1,73 +1,146 @@
-import React, { useState, useEffect } from 'react';
-import { ChevronLeft, X, Plus, Edit2, Copy, Trash2, Music, Gauge, Clock } from 'lucide-react';
-import { Song, SongVersion, Classification } from '../types';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import {
+  ChevronLeft,
+  X,
+  Plus,
+  Edit2,
+  Copy,
+  Trash2,
+  Music,
+  Gauge,
+  Clock,
+  Link2,
+  AlertCircle,
+  CheckCircle2,
+} from 'lucide-react';
+import { Song, SongVersion, Artist, Classification } from '../types';
 import { VersionEditModal } from './VersionEditModal';
-import { FloatingInput } from './ui/FloatingInput';
-import { FloatingTextarea } from './ui/FloatingTextarea';
+import { useRepertoireDialog } from './useRepertoireDialog';
 
 interface CreateSongModalProps {
   song?: Song | null;
+  artists?: Artist[];
   classifications: Classification[];
   onSave: (songData: Partial<Song>) => Promise<void>;
   onClose: () => void;
 }
 
+let versionSeq = 0;
+const createUniqueVersionId = () => {
+  versionSeq += 1;
+  return `v_${Date.now()}_${versionSeq}_${Math.random().toString(36).slice(2, 6)}`;
+};
+
+const createDefaultVersion = (): SongVersion => ({
+  id: createUniqueVersionId(),
+  name: 'Original',
+  classificationIds: [],
+  notes: '',
+  key: 'G',
+  bpm: '',
+  duration: '',
+  links: [
+    { label: 'Letra', url: '' },
+    { label: 'Cifra', url: '' },
+    { label: 'Áudio', url: '' },
+    { label: 'Vídeo', url: '' },
+  ],
+});
+
+const cloneVersionList = (list: SongVersion[]): SongVersion[] =>
+  list.map((v) => ({
+    ...v,
+    ...(Array.isArray(v.classificationIds) ? { classificationIds: [...v.classificationIds] } : {}),
+    ...(Array.isArray(v.links) ? { links: v.links.map((l) => ({ ...l })) } : {}),
+  }));
+
 export const CreateSongModal: React.FC<CreateSongModalProps> = ({
   song,
+  artists = [],
   classifications,
   onSave,
   onClose,
 }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const isMountedRef = useRef(true);
 
-  // Top-level fields
   const [title, setTitle] = useState('');
   const [artist, setArtist] = useState('');
   const [notes, setNotes] = useState('');
-
-  // Default initial version
-  const createDefaultVersion = (): SongVersion => ({
-    id: `v_${Date.now()}_1`,
-    name: 'Original',
-    classificationIds: [],
-    notes: '',
-    key: 'G',
-    bpm: '',
-    duration: '',
-    links: [
-      { label: 'Letra', url: '' },
-      { label: 'Cifra', url: '' },
-      { label: 'Áudio', url: '' },
-      { label: 'Vídeo', url: '' },
-    ],
-  });
-
-  const [versions, setVersions] = useState<SongVersion[]>([createDefaultVersion()]);
+  const [versions, setVersions] = useState<SongVersion[]>(() => [createDefaultVersion()]);
   const [editingVersionIndex, setEditingVersionIndex] = useState<number | null>(null);
+  const [initialSnapshot, setInitialSnapshot] = useState<string>('');
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useRepertoireDialog(dialogRef, editingVersionIndex === null, () => { if (!loading) onClose(); });
+  useEffect(() => {
+    dialogRef.current?.toggleAttribute('inert', editingVersionIndex !== null);
+  }, [editingVersionIndex]);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (song) {
-      setTitle(song.title || '');
-      setArtist(song.artist || song.artistName || '');
-      setNotes(song.notes || song.lyrics || '');
-      if (song.versions && song.versions.length > 0) {
-        setVersions(song.versions);
-      } else {
-        setVersions([createDefaultVersion()]);
-      }
+      const initTitle = song.title || '';
+      const initArtist = song.artist || song.artistName || '';
+      const initNotes = song.notes ?? song.lyrics ?? '';
+      const initVersions =
+        song.versions && song.versions.length > 0
+          ? cloneVersionList(song.versions)
+          : [createDefaultVersion()];
+
+      setTitle(initTitle);
+      setArtist(initArtist);
+      setNotes(initNotes);
+      setVersions(initVersions);
+      setInitialSnapshot(
+        JSON.stringify({
+          title: initTitle,
+          artist: initArtist,
+          notes: initNotes,
+          versions: initVersions,
+        })
+      );
     } else {
+      const defVersions = [createDefaultVersion()];
       setTitle('');
       setArtist('');
       setNotes('');
-      setVersions([createDefaultVersion()]);
+      setVersions(defVersions);
+      setInitialSnapshot(
+        JSON.stringify({
+          title: '',
+          artist: '',
+          notes: '',
+          versions: defVersions,
+        })
+      );
     }
+    setError(null);
+    setSaveSuccess(false);
   }, [song]);
+
+  const isDirty = useMemo(() => {
+    if (!initialSnapshot) return false;
+    const currentSnapshot = JSON.stringify({
+      title,
+      artist,
+      notes,
+      versions,
+    });
+    return currentSnapshot !== initialSnapshot;
+  }, [title, artist, notes, versions, initialSnapshot]);
 
   const handleAddVersion = () => {
     const newVersionIndex = versions.length;
     const newVersion: SongVersion = {
-      id: `v_${Date.now()}_${newVersionIndex + 1}`,
+      id: createUniqueVersionId(),
       name: `Versão ${newVersionIndex + 1}`,
       classificationIds: [],
       notes: '',
@@ -90,7 +163,7 @@ export const CreateSongModal: React.FC<CreateSongModalProps> = ({
     if (!target) return;
     const cloned: SongVersion = {
       ...target,
-      id: `v_${Date.now()}_${versions.length + 1}`,
+      id: createUniqueVersionId(),
       name: `Cópia de ${target.name}`,
       classificationIds: [...(target.classificationIds || [])],
       links: target.links ? target.links.map((l) => ({ ...l })) : [],
@@ -116,6 +189,8 @@ export const CreateSongModal: React.FC<CreateSongModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return;
+
     if (!title.trim()) {
       setError('O título da música é obrigatório.');
       return;
@@ -128,20 +203,43 @@ export const CreateSongModal: React.FC<CreateSongModalProps> = ({
 
     setLoading(true);
     setError(null);
+    setSaveSuccess(false);
+
+    const trimmedArtist = artist.trim();
+    const matchedArtist = artists.find(
+      (a) => a.name.trim().toLowerCase() === trimmedArtist.toLowerCase()
+    );
 
     const songData: Partial<Song> = {
       title: title.trim(),
-      artist: artist.trim(),
-      notes: notes.trim() || undefined,
+      artist: trimmedArtist,
       versions,
     };
+    if (!song ? notes.trim() !== '' : notes !== (song.notes ?? song.lyrics ?? '')) {
+      songData.notes = notes.trim();
+    }
+
+    if (matchedArtist) {
+      songData.artistId = matchedArtist.id;
+    } else if (song?.artistId && trimmedArtist === (song.artist || song.artistName || '').trim()) {
+      songData.artistId = song.artistId;
+    } else if (song?.artistId && trimmedArtist !== (song.artist || song.artistName || '').trim()) {
+      songData.artistId = undefined;
+    }
 
     try {
       await onSave(songData);
+      if (isMountedRef.current) {
+        setSaveSuccess(true);
+      }
     } catch (err: any) {
-      setError(err.message || 'Ocorreu um erro ao salvar a música.');
+      if (isMountedRef.current) {
+        setError(err.message || 'Ocorreu um erro ao salvar a música.');
+      }
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -152,368 +250,270 @@ export const CreateSongModal: React.FC<CreateSongModalProps> = ({
       .filter((c): c is Classification => !!c);
   };
 
+  const countActiveLinks = (ver: SongVersion): number => {
+    if (!Array.isArray(ver.links)) return 0;
+    return ver.links.filter((l) => Boolean(l?.url && l.url.trim())).length;
+  };
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div
         className="modal-content large song-form-modal mobile-fullscreen-view"
+        ref={dialogRef}
+        tabIndex={-1}
+        aria-hidden={editingVersionIndex !== null || undefined}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="song-form-modal-title"
         onClick={(e) => e.stopPropagation()}
-        style={{
-          maxHeight: '92vh',
-          display: 'flex',
-          flexDirection: 'column',
-          backgroundColor: 'var(--surface-color)',
-          borderColor: 'var(--border-color)',
-          padding: '24px',
-        }}
       >
-        {/* Header */}
-        <div
-          className="modal-header"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingBottom: '16px',
-            borderBottom: '1px solid var(--border-color)',
-            marginBottom: '16px',
-          }}
-        >
+        {/* Cabeçalho Fixo */}
+        <header className="modal-header repertoire-modal-header">
           <button
             type="button"
-            className="action-icon-btn"
+            className="action-icon-btn repertoire-modal-icon-btn"
             onClick={onClose}
             title="Fechar"
             aria-label="Fechar formulário de música"
-            style={{
-              width: '44px',
-              height: '44px',
-              minWidth: '44px',
-              minHeight: '44px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderRadius: '10px',
-            }}
           >
-            <ChevronLeft size={22} className="mobile-only" />
-            <X size={20} className="desktop-only" />
+            <ChevronLeft size={20} className="mobile-only" />
+            <X size={18} className="desktop-only" />
           </button>
 
-          <div
-            className="modal-title"
-            style={{
-              flex: 1,
-              textAlign: 'center',
-              margin: 0,
-              fontSize: '1.1rem',
-              fontWeight: 700,
-              color: 'var(--text-primary)',
-            }}
-          >
-            {song ? 'Editar Música' : 'Nova Música'}
+          <div className="repertoire-modal-title-wrap">
+            <div id="song-form-modal-title" className="modal-title repertoire-modal-title">
+              {song ? 'Editar Música' : 'Nova Música'}
+            </div>
+            {isDirty && (
+              <span className="repertoire-unsaved-badge" role="status">
+                Alterações não salvas
+              </span>
+            )}
           </div>
 
           <div className="schedule-modal-header-spacer" aria-hidden="true" />
-        </div>
+        </header>
 
-        {/* Body */}
-        <form onSubmit={handleSubmit} style={{ flex: 1, overflowY: 'auto', padding: '4px 6px' }}>
+        {/* Corpo do Formulário */}
+        <form onSubmit={handleSubmit} className="repertoire-modal-body" noValidate>
           {error && (
-            <div
-              style={{
-                color: 'var(--error-color)',
-                backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                padding: '12px',
-                borderRadius: 'var(--border-radius-sm)',
-                marginBottom: '16px',
-                fontSize: '0.9rem',
-                fontWeight: 500,
-              }}
-            >
-              {error}
+            <div className="repertoire-form-alert error" role="alert">
+              <AlertCircle size={16} />
+              <span>{error}</span>
             </div>
           )}
 
-          {/* Section 1: Top Main Fields */}
-          <div style={{ marginBottom: '24px' }}>
-            <div
-              style={{
-                fontSize: '1rem',
-                fontWeight: 700,
-                color: 'var(--primary-light)',
-                marginBottom: '12px',
-                borderBottom: '1px solid var(--divider-color)',
-                paddingBottom: '4px',
-              }}
-            >
-              Dados da Música
+          {saveSuccess && (
+            <div className="repertoire-form-alert success" role="status">
+              <CheckCircle2 size={16} />
+              <span>Música salva com sucesso.</span>
+            </div>
+          )}
+
+          {/* Bloco 1: Dados Gerais da Música */}
+          <section className="repertoire-form-section" aria-labelledby="song-general-section-title">
+            <div className="repertoire-section-header">
+              <h3 id="song-general-section-title" className="repertoire-section-title">
+                Dados da Música
+              </h3>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '12px' }}>
-              <FloatingInput
-                label="Título da Música *"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                required
-              />
-
-              <FloatingInput
-                label="Artista / Compositor"
-                value={artist}
-                onChange={(e) => setArtist(e.target.value)}
-              />
-
-              <FloatingTextarea
-                label="Observações Gerais"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-              />
-            </div>
-          </div>
-
-          {/* Section 2: Versions Cards */}
-          <div>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                marginBottom: '14px',
-                borderBottom: '1px solid var(--divider-color)',
-                paddingBottom: '8px',
-              }}
-            >
-              <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--primary-light)' }}>
-                Versões ({versions.length})
+            <div className="repertoire-form-stack">
+              <div className="repertoire-field">
+                <label className="repertoire-form-label" htmlFor="song-title-input">
+                  Título da Música *
+                </label>
+                <input
+                  id="song-title-input"
+                  type="text"
+                  className="repertoire-input"
+                  value={title}
+                  onChange={(e) => {
+                    setTitle(e.target.value);
+                    if (error) setError(null);
+                  }}
+                  placeholder="Ex: Santo Pra Sempre, Bondade de Deus..."
+                  required
+                />
               </div>
+
+              <div className="repertoire-field">
+                <label className="repertoire-form-label" htmlFor="song-artist-input">
+                  Artista / Compositor
+                </label>
+                <input
+                  id="song-artist-input"
+                  type="text"
+                  list={artists.length > 0 ? 'song-artists-datalist' : undefined}
+                  className="repertoire-input"
+                  value={artist}
+                  onChange={(e) => setArtist(e.target.value)}
+                  placeholder="Ex: Gabriel Guedes, Fernandinho, Hillsong..."
+                />
+                {artists.length > 0 && (
+                  <datalist id="song-artists-datalist">
+                    {artists.map((a) => (
+                      <option key={a.id} value={a.name} />
+                    ))}
+                  </datalist>
+                )}
+              </div>
+
+              <div className="repertoire-field">
+                <label className="repertoire-form-label" htmlFor="song-notes-input">
+                  Observações Gerais
+                </label>
+                <textarea
+                  id="song-notes-input"
+                  className="repertoire-textarea"
+                  rows={3}
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Anotações gerais da música, dinâmica ou referências para o ministério..."
+                />
+              </div>
+            </div>
+          </section>
+
+          {/* Bloco 2: Versões */}
+          <section className="repertoire-form-section" aria-labelledby="song-versions-section-title">
+            <div className="repertoire-section-header with-action">
+              <h3 id="song-versions-section-title" className="repertoire-section-title">
+                Versões ({versions.length})
+              </h3>
               <button
                 type="button"
-                className="btn btn-secondary"
+                className="btn btn-secondary repertoire-add-version-btn"
                 onClick={handleAddVersion}
-                style={{
-                  minHeight: '44px',
-                  padding: '0 16px',
-                  borderRadius: '10px',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  fontSize: '0.88rem',
-                  fontWeight: 600,
-                }}
               >
-                <Plus size={18} />
-                Adicionar Versão
+                <Plus size={16} />
+                <span>Adicionar Versão</span>
               </button>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div className="repertoire-versions-list">
               {versions.map((ver, idx) => {
                 const classObjects = getClassificationNames(ver.classificationIds);
+                const activeLinksCount = countActiveLinks(ver);
+                const isPrimary = idx === 0;
 
                 return (
                   <div
                     key={ver.id || idx}
-                    className="version-card"
-                    style={{
-                      backgroundColor: 'var(--surface-variant)',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: 'var(--border-radius)',
-                      padding: '16px',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '10px',
-                    }}
+                    className={`version-card repertoire-version-card ${isPrimary ? 'is-primary' : ''}`}
                   >
-                    {/* Card Title & Actions */}
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <div style={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--text-primary)' }}>
-                        {ver.name}
+                    <div className="repertoire-version-card-top">
+                      <div className="repertoire-version-name-group">
+                        <span className="repertoire-version-name">{ver.name}</span>
+                        {isPrimary && (
+                          <span className="repertoire-version-primary-badge">Principal</span>
+                        )}
                       </div>
 
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <div className="repertoire-version-actions">
                         <button
                           type="button"
-                          className="action-icon-btn"
+                          className="action-icon-btn repertoire-version-action-btn"
                           onClick={() => setEditingVersionIndex(idx)}
                           title="Editar Versão"
-                          style={{
-                            width: '44px',
-                            height: '44px',
-                            minWidth: '44px',
-                            minHeight: '44px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            borderRadius: '10px',
-                            color: 'var(--primary-light)',
-                          }}
+                          aria-label={`Editar versão ${ver.name}`}
                         >
-                          <Edit2 size={18} />
+                          <Edit2 size={16} />
+                          <span className="repertoire-version-action-label">Editar</span>
                         </button>
 
                         <button
                           type="button"
-                          className="action-icon-btn"
+                          className="action-icon-btn repertoire-version-action-btn"
                           onClick={() => handleCloneVersion(idx)}
                           title="Clonar Versão"
-                          style={{
-                            width: '44px',
-                            height: '44px',
-                            minWidth: '44px',
-                            minHeight: '44px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            borderRadius: '10px',
-                            color: 'var(--text-secondary)',
-                          }}
+                          aria-label={`Clonar versão ${ver.name}`}
                         >
-                          <Copy size={18} />
+                          <Copy size={16} />
+                          <span className="repertoire-version-action-label">Clonar</span>
                         </button>
 
                         {versions.length > 1 && (
                           <button
                             type="button"
-                            className="action-icon-btn danger"
+                            className="action-icon-btn danger repertoire-version-action-btn"
                             onClick={() => handleDeleteVersion(idx)}
                             title="Excluir Versão"
-                            style={{
-                              width: '44px',
-                              height: '44px',
-                              minWidth: '44px',
-                              minHeight: '44px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              borderRadius: '10px',
-                              color: 'var(--error-color)',
-                            }}
+                            aria-label={`Excluir versão ${ver.name}`}
                           >
-                            <Trash2 size={18} />
+                            <Trash2 size={16} />
+                            <span className="repertoire-version-action-label">Excluir</span>
                           </button>
                         )}
                       </div>
                     </div>
 
-                    {/* Card Summary: Classifications, Key, BPM, Duration */}
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
-                      {classObjects.map((c) => (
-                        <span
-                          key={c.id}
-                          className="badge"
-                          style={{
-                            backgroundColor: c.color ? `${c.color}20` : 'var(--primary-surface)',
-                            color: c.color || 'var(--primary-color)',
-                            border: `1px solid ${c.color ? `${c.color}40` : 'var(--border-color)'}`,
-                            fontSize: '0.75rem',
-                            fontWeight: 700,
-                            padding: '3px 9px',
-                            borderRadius: '6px',
-                          }}
-                        >
-                          {c.name}
-                        </span>
-                      ))}
-
+                    <div className="repertoire-version-meta-row">
                       {ver.key && (
-                        <span
-                          className="chip"
-                          style={{
-                            fontSize: '0.76rem',
-                            padding: '3px 8px',
-                            borderRadius: '6px',
-                            background: 'var(--surface-color)',
-                            color: 'var(--text-secondary)',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            border: '1px solid var(--border-color)',
-                          }}
-                        >
+                        <span className="repertoire-version-chip key">
                           <Music size={12} />
                           <span>Tom: {ver.key}</span>
                         </span>
                       )}
 
                       {ver.bpm && (
-                        <span
-                          className="chip"
-                          style={{
-                            fontSize: '0.76rem',
-                            padding: '3px 8px',
-                            borderRadius: '6px',
-                            background: 'var(--surface-color)',
-                            color: 'var(--text-secondary)',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            border: '1px solid var(--border-color)',
-                          }}
-                        >
+                        <span className="repertoire-version-chip">
                           <Gauge size={12} />
                           <span>{ver.bpm} BPM</span>
                         </span>
                       )}
 
                       {ver.duration && (
-                        <span
-                          className="chip"
-                          style={{
-                            fontSize: '0.76rem',
-                            padding: '3px 8px',
-                            borderRadius: '6px',
-                            background: 'var(--surface-color)',
-                            color: 'var(--text-secondary)',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            border: '1px solid var(--border-color)',
-                          }}
-                        >
+                        <span className="repertoire-version-chip">
                           <Clock size={12} />
                           <span>{ver.duration.replace(/^00:/, '')}</span>
                         </span>
                       )}
+
+                      <span className="repertoire-version-chip links">
+                        <Link2 size={12} />
+                        <span>
+                          {activeLinksCount} {activeLinksCount === 1 ? 'link' : 'links'}
+                        </span>
+                      </span>
+
+                      {classObjects.map((c) => (
+                        <span key={c.id} className="repertoire-version-classification-badge">
+                          {c.name}
+                        </span>
+                      ))}
                     </div>
+
+                    {ver.notes && ver.notes.trim() !== '' && (
+                      <p className="repertoire-version-notes-preview">{ver.notes}</p>
+                    )}
                   </div>
                 );
               })}
             </div>
-          </div>
+          </section>
 
-          {/* Form Actions */}
-          <div
-            className="form-actions"
-            style={{
-              padding: '16px 0 8px 0',
-              display: 'flex',
-              gap: '12px',
-              marginTop: '24px',
-              borderTop: '1px solid var(--border-color)',
-            }}
-          >
+          {/* Rodapé Fixo */}
+          <footer className="form-actions repertoire-modal-footer">
             <button
               type="button"
-              className="btn btn-secondary"
+              className="btn btn-secondary repertoire-footer-btn"
               onClick={onClose}
               disabled={loading}
-              style={{ minHeight: '44px', flex: 1 }}
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="btn btn-primary"
+              className="btn btn-primary repertoire-footer-btn"
               disabled={loading}
-              style={{ minHeight: '44px', flex: 1 }}
             >
-              {loading ? 'Salvando...' : 'Salvar música'}
+              {loading ? 'Salvando...' : 'Salvar Música'}
             </button>
-          </div>
+          </footer>
         </form>
       </div>
 
-      {/* Sub-modal for editing specific version */}
       {editingVersionIndex !== null && versions[editingVersionIndex] && (
         <VersionEditModal
           version={versions[editingVersionIndex]}

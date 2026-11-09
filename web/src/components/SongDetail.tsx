@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Song, SongVersion, SmartChord } from '../types';
+import { Song, SongVersion, SmartChord, Classification } from '../types';
 import { api } from '../api';
 import {
   transposeChord,
@@ -29,7 +29,7 @@ import {
   X,
   RefreshCw,
 } from 'lucide-react';
-import { Header } from './Header';
+import '../styles/repertoire.css';
 
 function resolveEffectiveFont(preferred?: string): string {
   if (preferred && CHORD_FONT_FAMILIES.some((f) => f.value === preferred)) {
@@ -69,6 +69,7 @@ interface SongDetailProps {
   song: Song;
   ministryId?: string;
   chordFontFamily?: string;
+  classifications?: Classification[];
   onBack: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
@@ -79,6 +80,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
   song,
   ministryId,
   chordFontFamily,
+  classifications = [],
   onBack,
   onEdit,
   onDelete,
@@ -149,6 +151,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
   const [chordsError, setChordsError] = useState<string | null>(null);
   const [chordsRetryNonce, setChordsRetryNonce] = useState(0);
   const [selectedChordIndex, setSelectedChordIndex] = useState(0);
+  const [selectedVersionIndex, setSelectedVersionIndex] = useState(0);
 
   // Link Modal State
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
@@ -157,7 +160,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
   const [availableChordsError, setAvailableChordsError] = useState<string | null>(null);
   const [selectedChordToLink, setSelectedChordToLink] = useState<SmartChord | null>(null);
   const [isLinking, setIsLinking] = useState(false);
-  const [linkingError, setLinkingError] = useState<string | null>(null);
+  const [linkingError, setLinkingError] = useState(null as string | null);
 
   // Unlink State
   const [isUnlinking, setIsUnlinking] = useState(false);
@@ -260,6 +263,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
     // Immediately clear loaded chords, active selection and errors upon context switch
     setLinkedChords([]);
     setSelectedChordIndex(0);
+    setSelectedVersionIndex(0);
     setChordsError(null);
     setSemitones(0);
 
@@ -467,6 +471,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
           key: song.originalKey || 'C',
           bpm: song.bpm,
           duration: song.duration,
+          notes: song.notes,
           links: [
             { label: 'Letra', url: song.externalLinks?.letras || '' },
             { label: 'Cifra', url: song.chordSheetUrl || '' },
@@ -476,65 +481,84 @@ export const SongDetail: React.FC<SongDetailProps> = ({
         },
       ];
 
-  const [selectedVersionIndex, setSelectedVersionIndex] = useState(0);
-  const activeVersion = versions[selectedVersionIndex] || versions[0];
+  const safeVersionIndex = selectedVersionIndex < versions.length ? selectedVersionIndex : 0;
+  const activeVersion = versions[safeVersionIndex] || versions[0];
+
+  const displayKey = activeVersion.key || (safeVersionIndex === 0 ? song.originalKey : '') || '';
+  const displayBpm = activeVersion.bpm ?? (safeVersionIndex === 0 ? song.bpm : undefined);
+  const displayDuration = activeVersion.duration || (safeVersionIndex === 0 ? song.duration : '') || '';
+  const displayVersionNotes =
+    activeVersion.notes !== undefined
+      ? activeVersion.notes
+      : safeVersionIndex === 0
+      ? song.notes
+      : undefined;
+
+  const activeClassificationIds: string[] =
+    activeVersion.classificationIds && activeVersion.classificationIds.length > 0
+      ? activeVersion.classificationIds
+      : safeVersionIndex === 0 && song.classificationId
+      ? [song.classificationId]
+      : [];
+
+  const activeClassificationLabels: string[] = activeClassificationIds
+    .map((id: string) => classifications.find((c) => c.id === id)?.name || id)
+    .filter(Boolean);
 
   const extLinks = song.externalLinks || {};
   const activeVersionLinks = activeVersion.links?.filter((l) => l.url && l.url.trim() !== '') || [];
+  const allowRootLinkFallback = safeVersionIndex === 0 && activeVersionLinks.length === 0;
+  const hasFallbackRootLinks =
+    allowRootLinkFallback &&
+    Boolean(
+      song.chordSheetUrl ||
+        song.youtubeUrl ||
+        song.audioUrl ||
+        Object.values(extLinks).some((v) => v && v.trim() !== '')
+    );
 
-  const hasLinks = !!(
-    activeVersionLinks.length > 0 ||
-    song.chordSheetUrl ||
-    song.youtubeUrl ||
-    song.audioUrl ||
-    Object.keys(extLinks).length > 0
-  );
+  const hasLinks = activeVersionLinks.length > 0 || hasFallbackRootLinks;
 
   const getLinkTileDetails = (label: string, url: string) => {
     let title = label || 'Link Externo';
     let subtitle = 'Acessar recurso';
-    let color = 'var(--primary-color)';
+    let color = 'var(--structural-accent)';
     let icon = <Globe size={18} />;
 
     const lower = label.toLowerCase();
     if (lower.includes('cifra')) {
       title = label || 'Cifra';
       subtitle = 'Abrir arquivo de cifra';
-      color = 'var(--success-color)';
+      color = 'var(--chord-text)';
       icon = <FileText size={18} />;
       if (url.includes('cifraclub.com.br')) {
         title = 'Cifra Club';
-        color = '#FF6600';
       } else if (url.includes('drive.google.com')) {
         title = 'Cifra (Google Drive)';
-        color = '#4285F4';
       }
     } else if (lower.includes('vídeo') || lower.includes('video') || url.includes('youtube.com') || url.includes('youtu.be')) {
       title = label || 'Vídeo';
       subtitle = 'Assistir vídeo de referência';
-      color = '#EF4444';
+      color = 'var(--status-danger-text)';
       icon = <Play size={18} />;
     } else if (lower.includes('áudio') || lower.includes('audio')) {
       title = label || 'Áudio';
       subtitle = 'Ouvir áudio de referência';
-      color = 'var(--secondary-color)';
+      color = 'var(--structural-accent)';
       icon = <Headphones size={18} />;
     } else if (url.includes('spotify.com')) {
       title = label || 'Spotify';
       subtitle = 'Ouvir no Spotify';
-      color = '#1DB954';
+      color = 'var(--status-success-text)';
     } else if (url.includes('deezer.com')) {
       title = label || 'Deezer';
       subtitle = 'Ouvir no Deezer';
-      color = '#FEAA2D';
     } else if (url.includes('apple.com')) {
       title = label || 'Apple Music';
       subtitle = 'Ouvir no Apple Music';
-      color = '#FA243C';
     } else if (lower.includes('letra')) {
       title = label || 'Letra';
       subtitle = 'Ver letra completa';
-      color = '#2563EB';
     }
 
     return { title, subtitle, color, icon };
@@ -556,25 +580,14 @@ export const SongDetail: React.FC<SongDetailProps> = ({
         href={formattedUrl}
         target="_blank"
         rel="noopener noreferrer"
-        className="link-tile"
-        style={{
-          backgroundColor: `${color}0D`,
-          borderColor: `${color}33`,
-          minHeight: '48px',
-          padding: '10px 14px',
-          borderRadius: '10px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          minWidth: 0,
-          maxWidth: '100%',
-        }}
+        className="link-tile song-detail-link-tile"
       >
         <div className="link-tile-info" style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, flex: 1 }}>
           <div
             className="link-tile-icon-wrapper"
             style={{
-              backgroundColor: `${color}26`,
+              backgroundColor: 'var(--bg-surface)',
+              border: '1px solid var(--border-subtle)',
               color: color,
               width: '36px',
               height: '36px',
@@ -588,25 +601,37 @@ export const SongDetail: React.FC<SongDetailProps> = ({
             {icon}
           </div>
           <div style={{ minWidth: 0, flex: 1 }}>
-            <div className="link-tile-title" style={{ fontWeight: 600, fontSize: '0.9rem', minWidth: 0, overflowWrap: 'anywhere' }}>
+            <div className="link-tile-title" style={{ fontWeight: 600, fontSize: '0.875rem', minWidth: 0, overflowWrap: 'anywhere' }}>
               {title}
             </div>
-            <div className="link-tile-subtitle" style={{ fontSize: '0.75rem', opacity: 0.8, minWidth: 0, overflowWrap: 'anywhere' }}>
+            <div className="link-tile-subtitle" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', minWidth: 0, overflowWrap: 'anywhere' }}>
               {subtitle}
             </div>
           </div>
         </div>
-        <ExternalLink size={16} style={{ color: color, opacity: 0.8, flexShrink: 0 }} />
+        <ExternalLink size={16} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} />
       </a>
     );
   };
 
-  const originalKey = activeChord?.originalKey || activeVersion.key || song.originalKey || 'C';
+  const originalKey = activeChord?.originalKey || displayKey || song.originalKey || 'C';
   const currentKeyTransposed = transposeChord(originalKey, semitones);
   const rawLines = activeChord ? activeChord.content.split(/\r\n|\n|\r/) : [];
   const detailNotation = parseNotation(activeChord?.content ?? '');
   const detailInstructions = extractMusicalInstructions(detailNotation);
   const artistText = (typeof song.artist === 'string' ? song.artist : (song.artist as any)?.name) || song.artistName || 'Artista não especificado';
+
+  const cleanLyricsFromActiveChord = activeChord
+    ? rawLines
+        .filter((lineText, idx) => {
+          if (detailNotation.lines[idx]?.kind === 'annotation') return false;
+          if (isTablatureLine(lineText) || hasBarProgression(lineText)) return false;
+          return true;
+        })
+        .map((lineText) => rawToVisual(lineText).cleanText)
+        .join('\n')
+        .trim()
+    : '';
 
   return (
     <div
@@ -620,274 +645,249 @@ export const SongDetail: React.FC<SongDetailProps> = ({
         paddingBottom: 'max(24px, var(--safe-area-bottom))',
       }}
     >
-      <Header
-        leftAction={
+      {/* 1. Cabeçalho Compacto de Palco */}
+      <header className="song-detail-stage-header no-print">
+        <div className="song-detail-stage-header__left">
           <button
             type="button"
-            className="action-icon-btn"
+            className="btn btn-secondary song-detail-back-btn"
             onClick={onBack}
             title="Voltar para músicas"
             aria-label="Voltar para músicas"
-            style={{
-              width: '44px',
-              height: '44px',
-              minWidth: '44px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderRadius: '10px',
-            }}
           >
-            <ArrowLeft size={20} />
+            <ArrowLeft size={18} aria-hidden="true" />
+            <span className="song-detail-back-label">Repertório</span>
           </button>
-        }
-        title={song.title}
-        subtitle={artistText}
-        rightActions={
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div className="song-detail-stage-header__titles">
+            <h1 className="song-detail-stage-title" title={song.title}>
+              {song.title}
+            </h1>
+            <div className="song-detail-stage-artist" title={artistText}>
+              {artistText}
+            </div>
+          </div>
+        </div>
+
+        {(onEdit || onDelete) && (
+          <div className="song-detail-stage-header__actions">
             {onEdit && (
               <button
                 type="button"
-                className="btn btn-primary"
+                className="btn btn-secondary"
                 onClick={onEdit}
                 title="Editar Música"
                 aria-label={`Editar música ${song.title}`}
-                style={{
-                  minHeight: '44px',
-                  padding: '8px 16px',
-                  fontSize: '0.88rem',
-                  borderRadius: '10px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                }}
               >
-                <Edit2 size={16} />
+                <Edit2 size={16} aria-hidden="true" />
                 <span className="desktop-only">Editar</span>
               </button>
             )}
             {onDelete && (
               <button
                 type="button"
-                className="btn btn-secondary icon-btn-text"
-                style={{
-                  width: '44px',
-                  height: '44px',
-                  minWidth: '44px',
-                  padding: 0,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: '#EF4444',
-                  borderColor: 'rgba(239, 68, 68, 0.3)',
-                  backgroundColor: 'rgba(239, 68, 68, 0.08)',
-                  borderRadius: '10px',
-                }}
+                className="btn btn-danger"
                 onClick={onDelete}
                 title="Excluir Música"
                 aria-label={`Excluir música ${song.title}`}
               >
-                <Trash2 size={18} />
+                <Trash2 size={16} aria-hidden="true" />
+                <span className="desktop-only">Excluir</span>
               </button>
             )}
           </div>
-        }
-      />
+        )}
+      </header>
 
-      {/* Tabs de Versões (se houver mais de 1 versão) */}
-      {versions.length > 1 && (
-        <div
-          className="tab-bar"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            marginBottom: '16px',
-            overflowX: 'auto',
-            paddingBottom: '4px',
-            width: '100%',
-            maxWidth: '100%',
-            minWidth: 0,
-          }}
-        >
-          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', gap: '4px', marginRight: '4px' }}>
-            <Layers size={16} /> Versão:
-          </span>
-          {versions.map((ver, idx) => (
-            <button
-              key={ver.id || idx}
-              type="button"
-              className={`tab-btn ${selectedVersionIndex === idx ? 'active' : ''}`}
-              onClick={() => {
-                setSelectedVersionIndex(idx);
-                setSemitones(0);
-              }}
-              style={{
-                minHeight: '44px',
-                padding: '0 14px',
-                borderRadius: '20px',
-                fontSize: '0.85rem',
-                fontWeight: 600,
-              }}
-            >
-              {ver.name}
-            </button>
-          ))}
-        </div>
-      )}
-
-      <div className="detail-content-layout">
-        <div className="detail-main-content">
-          {/* Error banners */}
-          {chordsError && (
+      {/* 2. Barra Contextual Musical Unificada (Music Stand Bar) */}
+      <section
+        className="music-stand-bar no-print"
+        aria-label="Barra contextual musical"
+        data-testid="music-stand-bar"
+      >
+        {/* Faixa 1: Seletor de Versões e Classificações */}
+        <div className="music-stand-bar__row music-stand-bar__versions">
+          <div className="music-stand-bar__versions-left">
+            <span className="music-stand-bar__label">
+              <Layers size={15} aria-hidden="true" />
+              Versão:
+            </span>
             <div
-              role="alert"
-              style={{
-                backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                border: '1px solid rgba(239, 68, 68, 0.3)',
-                borderRadius: '10px',
-                padding: '12px 16px',
-                marginBottom: '16px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: '12px',
-                color: '#EF4444',
-              }}
+              className="music-stand-bar__version-tabs"
+              role="tablist"
+              aria-label="Versões da música"
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <AlertCircle size={18} />
-                <span>{chordsError}</span>
-              </div>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setChordsRetryNonce((n) => n + 1)}
-                style={{ minHeight: '36px', padding: '6px 14px', fontSize: '0.82rem' }}
-              >
-                Tentar novamente
-              </button>
+              {versions.map((ver, idx) => {
+                const isSelected = safeVersionIndex === idx;
+                const verKey = ver.key || (idx === 0 ? song.originalKey : '');
+                return (
+                  <button
+                    key={ver.id || idx}
+                    type="button"
+                    role="tab"
+                    aria-selected={isSelected}
+                    className={`version-pill ${isSelected ? 'active' : ''}`}
+                    onClick={() => {
+                      setSelectedVersionIndex(idx);
+                      setSemitones(0);
+                    }}
+                  >
+                    <span>{ver.name}</span>
+                    {verKey && <span className="version-pill__key">{verKey}</span>}
+                  </button>
+                );
+              })}
             </div>
-          )}
+          </div>
 
-          {unlinkError && (
-            <div
-              role="alert"
-              style={{
-                backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                border: '1px solid rgba(239, 68, 68, 0.3)',
-                borderRadius: '10px',
-                padding: '12px 16px',
-                marginBottom: '16px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: '12px',
-                color: '#EF4444',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <AlertCircle size={18} />
-                <span>{unlinkError}</span>
-              </div>
-              <button
-                type="button"
-                className="action-icon-btn"
-                onClick={() => setUnlinkError(null)}
-                style={{ width: '32px', height: '32px' }}
-                aria-label="Fechar aviso"
-              >
-                <X size={16} />
-              </button>
-            </div>
-          )}
-
-          {/* Smart Chords Toolbar */}
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              flexWrap: 'wrap',
-              gap: '12px',
-              marginBottom: '16px',
-            }}
-          >
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-              {loadingChords && (
-                <span
-                  style={{
-                    fontSize: '0.82rem',
-                    color: 'var(--text-secondary)',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    padding: '6px 10px',
-                  }}
-                >
-                  <RefreshCw size={14} className="spin" />
-                  Carregando cifras...
+          {activeClassificationLabels.length > 0 && (
+            <div className="music-stand-bar__classifications" aria-label="Classificações da versão">
+              {activeClassificationLabels.map((label) => (
+                <span key={label} className="music-stand-bar__badge">
+                  {label}
                 </span>
-              )}
-              {hasSmartChord && (
-                <>
-                  <button
-                    type="button"
-                    className={`btn ${activeView === 'cifra' ? 'btn-primary' : 'btn-secondary'}`}
-                    style={{
-                      minHeight: '44px',
-                      padding: '10px 18px',
-                      fontSize: '0.88rem',
-                      borderRadius: '10px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                    }}
-                    onClick={() => setActiveView('cifra')}
-                  >
-                    <Music size={18} />
-                    Cifra Inteligente
-                  </button>
-                  <button
-                    type="button"
-                    className={`btn ${activeView === 'lyrics' ? 'btn-primary' : 'btn-secondary'}`}
-                    style={{
-                      minHeight: '44px',
-                      padding: '10px 18px',
-                      fontSize: '0.88rem',
-                      borderRadius: '10px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                    }}
-                    onClick={() => setActiveView('lyrics')}
-                  >
-                    <FileText size={18} />
-                    Apenas Letra
-                  </button>
-                </>
-              )}
+              ))}
             </div>
+          )}
+        </div>
 
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+        {/* Faixa 2: Modo de Leitura, Cifras Pessoais Vinculadas, Transposição e Ações */}
+        <div className="music-stand-bar__row music-stand-bar__reading">
+          <div className="music-stand-bar__reading-left">
+            {loadingChords && (
+              <span className="music-stand-bar__badge" role="status">
+                <RefreshCw size={13} className="spin" style={{ marginRight: '6px' }} />
+                Carregando cifras...
+              </span>
+            )}
+
+            {hasSmartChord ? (
+              <div
+                className="music-stand-bar__segmented"
+                role="group"
+                aria-label="Modo de leitura"
+              >
+                <button
+                  type="button"
+                  className={`music-stand-bar__seg-btn ${activeView === 'cifra' ? 'active' : ''}`}
+                  aria-pressed={activeView === 'cifra'}
+                  onClick={() => setActiveView('cifra')}
+                >
+                  <Music size={15} aria-hidden="true" />
+                  <span>Cifra Inteligente</span>
+                </button>
+                <button
+                  type="button"
+                  className={`music-stand-bar__seg-btn ${activeView === 'lyrics' ? 'active' : ''}`}
+                  aria-pressed={activeView === 'lyrics'}
+                  onClick={() => setActiveView('lyrics')}
+                >
+                  <FileText size={15} aria-hidden="true" />
+                  <span>Apenas Letra</span>
+                </button>
+              </div>
+            ) : (
+              !loadingChords && (
+                <span className="music-stand-bar__badge">
+                  <FileText size={13} style={{ marginRight: '6px' }} aria-hidden="true" />
+                  Apenas Letra
+                </span>
+              )
+            )}
+
+            {linkedChords.length > 1 && (
+              <div
+                className="music-stand-bar__chord-tabs"
+                role="tablist"
+                aria-label="Cifras pessoais vinculadas"
+              >
+                {linkedChords.map((chord, idx) => {
+                  const isSelected = selectedChordIndex === idx;
+                  return (
+                    <button
+                      key={chord.id || idx}
+                      type="button"
+                      role="tab"
+                      aria-selected={isSelected}
+                      className={`chord-pill ${isSelected ? 'active' : ''}`}
+                      onClick={() => {
+                        setSelectedChordIndex(idx);
+                        setSemitones(0);
+                      }}
+                    >
+                      <span>{chord.title || `Cifra ${idx + 1}`}</span>
+                      <span className="version-pill__key">{chord.originalKey}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {linkedChords.length === 1 && activeChord && (
+              <span className="music-stand-bar__badge" title={activeChord.title}>
+                Minha cifra: <strong style={{ marginLeft: '4px' }}>{activeChord.title}</strong> ({activeChord.originalKey})
+              </span>
+            )}
+          </div>
+
+          <div className="music-stand-bar__reading-right">
+            {activeView === 'cifra' && hasSmartChord && (
+              <div
+                className="music-stand-bar__transposition"
+                role="group"
+                aria-label="Controles de transposição"
+                data-testid="music-stand-transposition"
+              >
+                <div className="music-stand-bar__keys" data-testid="song-detail-key-readout">
+                  <span>
+                    Tom Original: <strong className="key-readout-value">{originalKey}</strong>
+                  </span>
+                  <span>
+                    Tom Atual:{' '}
+                    <strong className={`key-readout-value ${semitones !== 0 ? 'is-transposed' : ''}`}>
+                      {currentKeyTransposed}
+                      {semitones !== 0 ? ` (${semitones > 0 ? `+${semitones}` : semitones})` : ''}
+                    </strong>
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  className="btn btn-secondary transposition-btn"
+                  onClick={() => setSemitones((s) => s - 1)}
+                >
+                  -1 Semitom
+                </button>
+
+                {semitones !== 0 && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary transposition-btn"
+                    onClick={() => setSemitones(0)}
+                  >
+                    Resetar
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  className="btn btn-secondary transposition-btn"
+                  onClick={() => setSemitones((s) => s + 1)}
+                >
+                  +1 Semitom
+                </button>
+              </div>
+            )}
+
+            <div className="music-stand-bar__actions">
               {effectiveMinistryId && (
                 <button
                   type="button"
                   className="btn btn-secondary"
                   onClick={handleOpenLinkModal}
-                  style={{
-                    minHeight: '44px',
-                    padding: '8px 14px',
-                    borderRadius: '10px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    fontSize: '0.85rem',
-                  }}
                   title="Vincular Cifra Inteligente"
                   aria-label="Vincular Cifra Inteligente"
                 >
-                  <Link size={16} />
+                  <Link size={15} aria-hidden="true" />
                   <span>{linkedChords.length > 0 ? 'Vincular Outra Cifra' : 'Vincular Cifra'}</span>
                 </button>
               )}
@@ -897,19 +897,10 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                   type="button"
                   className="btn btn-secondary"
                   onClick={() => onOpenSmartChord(activeChord.id)}
-                  style={{
-                    minHeight: '44px',
-                    padding: '8px 14px',
-                    borderRadius: '10px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    fontSize: '0.85rem',
-                  }}
                   title="Abrir no Cifrador"
                   aria-label="Abrir no Cifrador"
                 >
-                  <ExternalLink size={16} />
+                  <ExternalLink size={15} aria-hidden="true" />
                   <span>Abrir no Cifrador</span>
                 </button>
               )}
@@ -917,86 +908,63 @@ export const SongDetail: React.FC<SongDetailProps> = ({
               {activeChord?.id && linkedChords.some((c) => c.id === activeChord.id) && (
                 <button
                   type="button"
-                  className="btn btn-secondary"
+                  className="btn btn-danger"
                   onClick={() => handleUnlinkChord(activeChord.id)}
                   disabled={isUnlinking}
-                  style={{
-                    minHeight: '44px',
-                    padding: '8px 14px',
-                    borderRadius: '10px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    fontSize: '0.85rem',
-                    color: '#EF4444',
-                    borderColor: 'rgba(239, 68, 68, 0.3)',
-                    backgroundColor: 'rgba(239, 68, 68, 0.08)',
-                  }}
                   title={isUnlinking ? 'Desvinculando...' : 'Desvincular Cifra'}
                   aria-label={isUnlinking ? 'Desvinculando...' : 'Desvincular Cifra'}
                 >
-                  <Unlink size={16} />
+                  <Unlink size={15} aria-hidden="true" />
                   <span>{isUnlinking ? 'Desvinculando...' : 'Desvincular'}</span>
                 </button>
               )}
             </div>
           </div>
+        </div>
 
-          {/* Multiple linked chords tabs */}
-          {linkedChords.length > 1 && (
-            <div
-              className="tab-bar"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                marginBottom: '16px',
-                overflowX: 'auto',
-                paddingBottom: '4px',
-                width: '100%',
-                maxWidth: '100%',
-                minWidth: 0,
-              }}
-            >
-              <span
-                style={{
-                  fontSize: '0.85rem',
-                  fontWeight: 600,
-                  color: 'var(--text-secondary)',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  marginRight: '4px',
-                }}
-              >
-                <Music size={16} /> Cifras:
-              </span>
-              {linkedChords.map((chord, idx) => (
-                <button
-                  key={chord.id || idx}
-                  type="button"
-                  className={`tab-btn ${selectedChordIndex === idx ? 'active' : ''}`}
-                  onClick={() => {
-                    setSelectedChordIndex(idx);
-                    setSemitones(0);
-                  }}
-                  style={{
-                    minHeight: '40px',
-                    padding: '0 14px',
-                    borderRadius: '20px',
-                    fontSize: '0.85rem',
-                    fontWeight: 600,
-                  }}
-                >
-                  {chord.title || `Cifra ${idx + 1}`} ({chord.originalKey})
-                </button>
-              ))}
+        {/* Alertas de erro na Music Stand Bar */}
+        {chordsError && (
+          <div className="music-stand-bar__alert" role="alert">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <AlertCircle size={16} aria-hidden="true" />
+              <span>{chordsError}</span>
             </div>
-          )}
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setChordsRetryNonce((n) => n + 1)}
+              style={{ minHeight: '36px', padding: '4px 12px', fontSize: '0.78rem' }}
+            >
+              Tentar novamente
+            </button>
+          </div>
+        )}
 
+        {unlinkError && (
+          <div className="music-stand-bar__alert" role="alert">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <AlertCircle size={16} aria-hidden="true" />
+              <span>{unlinkError}</span>
+            </div>
+            <button
+              type="button"
+              className="action-icon-btn"
+              onClick={() => setUnlinkError(null)}
+              style={{ width: '32px', height: '32px' }}
+              aria-label="Fechar aviso"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
+      </section>
+
+      {/* 3. Folha Musical e Ficha Técnica (Assimetria 2.2fr / 1fr no Desktop, Empilhado no Mobile) */}
+      <div className="detail-content-layout song-detail-layout">
+        <div className="detail-main-content">
           {activeView === 'cifra' && hasSmartChord ? (
             <div
-              className="lyrics-box"
+              className="lyrics-box song-detail-sheet"
               data-testid="song-detail-chord-sheet"
               style={{
                 fontFamily: activeFontFamilyCss,
@@ -1006,81 +974,6 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                 boxSizing: 'border-box',
               }}
             >
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  flexWrap: 'wrap',
-                  gap: '12px',
-                  marginBottom: '16px',
-                  paddingBottom: '12px',
-                  borderBottom: '1px solid var(--border-color)',
-                  minWidth: 0,
-                  maxWidth: '100%',
-                }}
-              >
-                <div>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Tom Original: </span>
-                  <strong style={{ color: 'var(--primary-light)' }}>{originalKey}</strong>
-                  {semitones !== 0 && (
-                    <span style={{ marginLeft: '12px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                      Tom Atual:{' '}
-                      <strong style={{ color: 'var(--success-color)' }}>{currentKeyTransposed}</strong>
-                    </span>
-                  )}
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                  <button
-                    type="button"
-                    className="btn btn-secondary transposition-btn"
-                    style={{
-                      minHeight: '44px',
-                      minWidth: '44px',
-                      padding: '8px 14px',
-                      fontSize: '0.85rem',
-                      borderRadius: '10px',
-                    }}
-                    onClick={() => setSemitones(semitones - 1)}
-                  >
-                    -1 Semitom
-                  </button>
-
-                  {semitones !== 0 && (
-                    <button
-                      type="button"
-                      className="btn btn-secondary transposition-btn"
-                      style={{
-                        minHeight: '44px',
-                        minWidth: '44px',
-                        padding: '8px 14px',
-                        fontSize: '0.85rem',
-                        borderRadius: '10px',
-                      }}
-                      onClick={() => setSemitones(0)}
-                    >
-                      Resetar
-                    </button>
-                  )}
-
-                  <button
-                    type="button"
-                    className="btn btn-secondary transposition-btn"
-                    style={{
-                      minHeight: '44px',
-                      minWidth: '44px',
-                      padding: '8px 14px',
-                      fontSize: '0.85rem',
-                      borderRadius: '10px',
-                    }}
-                    onClick={() => setSemitones(semitones + 1)}
-                  >
-                    +1 Semitom
-                  </button>
-                </div>
-              </div>
-
               <div style={{ display: 'flex', flexDirection: 'column', gap: `${lineSpacingPx}px` }}>
                 {rawLines.map((lineText, lineIdx) => {
                   const lineInstructions = detailInstructions.filter(item => item.line === lineIdx);
@@ -1124,13 +1017,13 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                       <div
                         key={lineIdx}
                         role="group"
-                          data-musical-progression
+                        data-musical-progression
                         aria-label={lineText || 'Linha de compassos'}
                         style={{
                           display: 'flex',
                           flexWrap: 'nowrap',
-                            whiteSpace: 'pre',
-                            overflowX: 'auto',
+                          whiteSpace: 'pre',
+                          overflowX: 'auto',
                           alignItems: 'baseline',
                           rowGap: '20px',
                           fontFamily: activeFontFamilyCss,
@@ -1150,9 +1043,9 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                                 data-chord-display
                                 data-bar-chord-idx={token.chordIndex}
                                 style={{
-                                  color: 'var(--primary-light)',
+                                  color: 'var(--chord-text)',
                                   fontWeight: 'bold',
-                                  textDecoration: 'underline 2px solid var(--primary-light)',
+                                  textDecoration: 'underline 2px solid var(--chord-text)',
                                   padding: '0 1px',
                                   position: 'relative',
                                 }}
@@ -1168,7 +1061,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                               <span
                                 key={tokenIdx}
                                 style={{
-                                  color: token.value === '%' ? 'var(--primary-light)' : 'var(--text-secondary)',
+                                  color: token.value === '%' ? 'var(--chord-text)' : 'var(--text-secondary)',
                                   fontWeight: 'bold',
                                   userSelect: 'none',
                                 }}
@@ -1196,14 +1089,14 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                             </span>
                           );
                         })}
-                          {lineInstructions.filter(item => item.placement !== 'above-next-chord' || !item.target).map((item, idx) => <span key={`instruction-${idx}`} data-notation-annotation data-annotation-kind={item.kind} data-annotation-placement={item.placement}>{item.displayText}</span>)}
+                        {lineInstructions.filter(item => item.placement !== 'above-next-chord' || !item.target).map((item, idx) => <span key={`instruction-${idx}`} data-notation-annotation data-annotation-kind={item.kind} data-annotation-placement={item.placement}>{item.displayText}</span>)}
                       </div>
                     );
                   }
 
                   const visual = rawToVisual(lineText);
                   const text = visual.cleanText;
-                    const visualChordIndexes = Object.keys(visual.chords).map(Number);
+                  const visualChordIndexes = Object.keys(visual.chords).map(Number);
 
                   if (!text && Object.keys(visual.chords).length === 0) {
                     return <div key={lineIdx} style={{ height: '1.4em' }} />;
@@ -1213,7 +1106,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                     <div
                       key={lineIdx}
                       role="group"
-                          data-musical-progression
+                      data-musical-progression
                       aria-label={lineText || 'Linha vazia'}
                       style={{
                         display: 'flex',
@@ -1222,7 +1115,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                         fontFamily: activeFontFamilyCss,
                         fontSize: '14px',
                         lineHeight: '1.4',
-                        paddingTop: '16px',
+                        paddingTop: anchoredInstructions.length > 0 ? '28px' : '16px',
                       }}
                     >
                       {/* Accessible clean lyric line for screen readers and text matchers */}
@@ -1275,7 +1168,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                                   position: 'absolute',
                                   bottom: '100%',
                                   left: 0,
-                                  color: 'var(--primary-light)',
+                                  color: 'var(--chord-text)',
                                   fontWeight: 'bold',
                                   fontSize: '12px',
                                   whiteSpace: 'nowrap',
@@ -1329,7 +1222,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                                 position: 'absolute',
                                 bottom: '100%',
                                 left: 0,
-                                color: 'var(--primary-light)',
+                                color: 'var(--chord-text)',
                                 fontWeight: 'bold',
                                 fontSize: '12px',
                                 whiteSpace: 'nowrap',
@@ -1349,22 +1242,93 @@ export const SongDetail: React.FC<SongDetailProps> = ({
               </div>
             </div>
           ) : (
-            <div className="lyrics-box" style={{ overflowX: 'auto', whiteSpace: 'pre-wrap', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' }}>
-              {song.notes || song.lyrics || 'Nenhuma observação ou letra cadastrada para esta música.'}
+            <div
+              className="lyrics-box song-detail-sheet"
+              data-testid="song-detail-lyrics-sheet"
+              style={{
+                overflowX: 'auto',
+                whiteSpace: 'pre-wrap',
+                minWidth: 0,
+                maxWidth: '100%',
+                boxSizing: 'border-box',
+              }}
+            >
+              {song.lyrics ||
+                cleanLyricsFromActiveChord ||
+                displayVersionNotes ||
+                song.notes ||
+                'Nenhuma observação ou letra cadastrada para esta música.'}
             </div>
           )}
         </div>
 
-        <div className="detail-sidebar">
+        {/* Painel Lateral: Ficha da Versão Ativa + Links Realmente Disponíveis */}
+        <aside className="detail-sidebar">
+          <div className="song-detail-sidebar-card" data-testid="version-info-card">
+            <h2 className="song-detail-sidebar-title">
+              <span>Informações da Versão ({activeVersion.name})</span>
+            </h2>
+
+            <div className="version-meta-grid">
+              <div className="version-meta-item">
+                <span className="version-meta-label">Tom</span>
+                <div className="version-meta-value version-meta-value--key">
+                  {displayKey || 'Não informado'}
+                </div>
+              </div>
+
+              <div className="version-meta-item">
+                <span className="version-meta-label">Andamento (BPM)</span>
+                <div className="version-meta-value">
+                  {displayBpm ? `${displayBpm} BPM` : 'Não informado'}
+                </div>
+              </div>
+
+              <div className="version-meta-item">
+                <span className="version-meta-label">Duração</span>
+                <div className="version-meta-value">
+                  {displayDuration ? String(displayDuration).replace(/^00:/, '') : 'Não informada'}
+                </div>
+              </div>
+
+              {activeClassificationLabels.length > 0 && (
+                <div className="version-meta-item version-meta-item--full">
+                  <span className="version-meta-label">Classificações</span>
+                  <div
+                    style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '4px' }}
+                    data-testid="version-classifications"
+                  >
+                    {activeClassificationLabels.map((label) => (
+                      <span key={label} className="music-stand-bar__badge">
+                        {label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {displayVersionNotes && (
+              <div className="version-notes-callout" data-testid="version-notes">
+                <div className="version-meta-label" style={{ marginBottom: '4px' }}>
+                  Observações da Versão
+                </div>
+                <div>{displayVersionNotes}</div>
+              </div>
+            )}
+          </div>
+
           {hasLinks && (
-            <div style={{ marginBottom: '24px' }}>
-              <h2 className="detail-section-title">Links & Arquivos</h2>
+            <div className="song-detail-sidebar-card" data-testid="version-links-card">
+              <h2 className="song-detail-sidebar-title">
+                <span>Links & Arquivos</span>
+              </h2>
               <div className="links-grid" style={{ display: 'grid', gap: '8px' }}>
                 {activeVersionLinks.map((link, idx) =>
                   renderLinkTile(`vlink_${idx}`, link.label, link.url)
                 )}
 
-                {activeVersionLinks.length === 0 && (
+                {allowRootLinkFallback && (
                   <>
                     {renderLinkTile('chordSheet', 'Cifra', song.chordSheetUrl)}
                     {renderLinkTile('youtube', 'Vídeo', song.youtubeUrl)}
@@ -1377,56 +1341,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
               </div>
             </div>
           )}
-
-          <div>
-            <h2 className="detail-section-title">Informações da Versão ({activeVersion.name})</h2>
-            <div
-              style={{
-                backgroundColor: 'var(--surface-color)',
-                border: '1px solid var(--border-color)',
-                borderRadius: 'var(--border-radius)',
-                padding: '16px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '12px',
-                minWidth: 0,
-                maxWidth: '100%',
-                boxSizing: 'border-box',
-              }}
-            >
-              {activeVersion.key && (
-                <div>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Tom</span>
-                  <div style={{ fontWeight: 600, marginTop: '2px' }}>{activeVersion.key}</div>
-                </div>
-              )}
-              {activeVersion.bpm && (
-                <div>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Andamento (BPM)</span>
-                  <div style={{ fontWeight: 600, marginTop: '2px' }}>{activeVersion.bpm} BPM</div>
-                </div>
-              )}
-              {activeVersion.duration && (
-                <div>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Duração</span>
-                  <div style={{ fontWeight: 600, marginTop: '2px' }}>
-                    {String(activeVersion.duration).replace(/^00:/, '')}
-                  </div>
-                </div>
-              )}
-              {activeVersion.notes && (
-                <div>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                    Observações da Versão
-                  </span>
-                  <div style={{ fontSize: '0.88rem', marginTop: '2px', whiteSpace: 'pre-wrap' }}>
-                    {activeVersion.notes}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+        </aside>
       </div>
 
       {/* Modal Vincular Cifra Inteligente */}
@@ -1457,9 +1372,9 @@ export const SongDetail: React.FC<SongDetailProps> = ({
             className="modal-content"
             onClick={(e) => e.stopPropagation()}
             style={{
-              backgroundColor: 'var(--surface-color)',
-              borderRadius: 'var(--border-radius)',
-              border: '1px solid var(--border-color)',
+              backgroundColor: 'var(--bg-surface)',
+              borderRadius: '12px',
+              border: '1px solid var(--border-subtle)',
               maxWidth: '520px',
               width: '100%',
               maxHeight: '90vh',
@@ -1475,14 +1390,14 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 padding: '16px 20px',
-                borderBottom: '1px solid var(--border-color)',
+                borderBottom: '1px solid var(--border-subtle)',
               }}
             >
               <h2
                 id="link-chord-modal-title"
-                style={{ fontSize: '1.15rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}
+                style={{ fontSize: '1.125rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}
               >
-                <Link size={20} style={{ color: 'var(--primary-color)' }} />
+                <Link size={18} style={{ color: 'var(--action-primary-bg)' }} />
                 Vincular Cifra Inteligente
               </h2>
               <button
@@ -1498,7 +1413,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
             </div>
 
             <div style={{ padding: '20px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
+              <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
                 Selecione uma de suas cifras inteligentes pessoais para vincular à música{' '}
                 <strong>{song.title}</strong> neste ministério.
               </p>
@@ -1506,44 +1421,26 @@ export const SongDetail: React.FC<SongDetailProps> = ({
               {linkingError && (
                 <div
                   role="alert"
-                  style={{
-                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                    border: '1px solid rgba(239, 68, 68, 0.3)',
-                    borderRadius: '8px',
-                    padding: '10px 14px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    color: '#EF4444',
-                    fontSize: '0.85rem',
-                  }}
+                  className="music-stand-bar__alert"
                 >
-                  <AlertCircle size={16} />
-                  <span>{linkingError}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <AlertCircle size={16} />
+                    <span>{linkingError}</span>
+                  </div>
                 </div>
               )}
 
               {loadingAvailableChords ? (
                 <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '32px 0' }}>
-                  <RefreshCw size={24} className="spin" style={{ color: 'var(--primary-color)' }} />
-                  <span style={{ marginLeft: '10px', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                  <RefreshCw size={22} className="spin" style={{ color: 'var(--action-primary-bg)' }} />
+                  <span style={{ marginLeft: '10px', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
                     Carregando suas cifras...
                   </span>
                 </div>
               ) : availableChordsError ? (
                 <div
                   role="alert"
-                  style={{
-                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                    border: '1px solid rgba(239, 68, 68, 0.3)',
-                    borderRadius: '8px',
-                    padding: '12px',
-                    color: '#EF4444',
-                    fontSize: '0.85rem',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
+                  className="music-stand-bar__alert"
                 >
                   <span>{availableChordsError}</span>
                   <button
@@ -1560,13 +1457,13 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                   style={{
                     textAlign: 'center',
                     padding: '28px 16px',
-                    backgroundColor: 'var(--surface-color-secondary, rgba(0,0,0,0.02))',
+                    backgroundColor: 'var(--bg-surface-subtle)',
                     borderRadius: '8px',
-                    border: '1px dashed var(--border-color)',
+                    border: '1px dashed var(--border-subtle)',
                   }}
                 >
                   <Music size={32} style={{ opacity: 0.4, marginBottom: '8px' }} />
-                  <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
+                  <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
                     Você não possui cifras inteligentes cadastradas neste ministério.
                   </p>
                 </div>
@@ -1588,11 +1485,11 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                           padding: '12px 14px',
                           borderRadius: '10px',
                           border: isSelected
-                            ? '2px solid var(--primary-color)'
-                            : '1px solid var(--border-color)',
+                            ? '2px solid var(--action-primary-bg)'
+                            : '1px solid var(--border-subtle)',
                           backgroundColor: isSelected
-                            ? 'rgba(var(--primary-rgb, 15, 42, 31), 0.08)'
-                            : 'var(--surface-color)',
+                            ? 'var(--action-primary-subtle)'
+                            : 'var(--bg-surface)',
                           cursor: isAlreadyLinked ? 'default' : 'pointer',
                           opacity: isAlreadyLinked ? 0.6 : 1,
                           display: 'flex',
@@ -1603,7 +1500,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                         }}
                       >
                         <div style={{ minWidth: 0, flex: 1 }}>
-                          <div style={{ fontWeight: 600, fontSize: '0.92rem' }}>{chord.title}</div>
+                          <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{chord.title}</div>
                           <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
                             Tom Original: <strong>{chord.originalKey}</strong>
                             {chord.artistName && ` • ${chord.artistName}`}
@@ -1628,8 +1525,8 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                 justifyContent: 'flex-end',
                 gap: '10px',
                 padding: '16px 20px',
-                borderTop: '1px solid var(--border-color)',
-                backgroundColor: 'var(--surface-color)',
+                borderTop: '1px solid var(--border-subtle)',
+                backgroundColor: 'var(--bg-surface)',
               }}
             >
               <button
@@ -1637,7 +1534,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                 className="btn btn-secondary"
                 onClick={handleCloseLinkModal}
                 disabled={isLinking}
-                style={{ minHeight: '44px', padding: '0 18px', borderRadius: '10px' }}
+                style={{ minHeight: '44px', padding: '0 18px', borderRadius: '8px' }}
               >
                 Cancelar
               </button>
@@ -1649,7 +1546,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                 style={{
                   minHeight: '44px',
                   padding: '0 20px',
-                  borderRadius: '10px',
+                  borderRadius: '8px',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '8px',

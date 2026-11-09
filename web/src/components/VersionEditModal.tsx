@@ -1,9 +1,7 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
+import { useRepertoireDialog } from './useRepertoireDialog';
 import { X, Plus, Trash2, Check, ChevronLeft } from 'lucide-react';
 import { SongVersion, SongLink, Classification } from '../types';
-import { FloatingInput } from './ui/FloatingInput';
-import { FloatingTextarea } from './ui/FloatingTextarea';
-import { FloatingSelect } from './ui/FloatingSelect';
 
 interface VersionEditModalProps {
   version: SongVersion;
@@ -12,12 +10,18 @@ interface VersionEditModalProps {
   onClose: () => void;
 }
 
-const MUSICAL_KEYS = [
+export const MUSICAL_KEYS = [
   'C', 'C#', 'Db', 'D', 'D#', 'Eb', 'E', 'F',
   'F#', 'Gb', 'G', 'G#', 'Ab', 'A', 'A#', 'Bb', 'B',
   'Cm', 'C#m', 'Dm', 'D#m', 'Ebm', 'Em', 'Fm',
-  'F#m', 'Gm', 'G#m', 'Am', 'Bbm', 'Bm'
+  'F#m', 'Gm', 'G#m', 'Am', 'Bbm', 'Bm',
 ];
+
+let customLinkSeq = 0;
+const nextCustomLinkId = () => {
+  customLinkSeq += 1;
+  return `custom_${Date.now()}_${customLinkSeq}`;
+};
 
 export const VersionEditModal: React.FC<VersionEditModalProps> = ({
   version,
@@ -25,22 +29,27 @@ export const VersionEditModal: React.FC<VersionEditModalProps> = ({
   onSave,
   onClose,
 }) => {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useRepertoireDialog(dialogRef, true, onClose);
   const [name, setName] = useState(version.name || 'Original');
   const [selectedClassificationIds, setSelectedClassificationIds] = useState<string[]>(
-    version.classificationIds || []
+    Array.isArray(version.classificationIds) ? [...version.classificationIds] : []
   );
-  const [notes, setNotes] = useState(version.notes || '');
+  const [notes, setNotes] = useState(version.notes ?? '');
   const [key, setKey] = useState(version.key || 'C');
-  const [bpm, setBpm] = useState(version.bpm !== undefined ? String(version.bpm) : '');
+  const [bpm, setBpm] = useState(
+    version.bpm !== undefined && version.bpm !== null ? String(version.bpm) : ''
+  );
+  const [formError, setFormError] = useState<string | null>(null);
 
-  // Parse duration into Hours, Minutes, Seconds
   const parseDurationParts = (durString?: string) => {
     if (!durString) return { hours: '', minutes: '', seconds: '' };
     const clean = String(durString).trim();
     const parts = clean.split(':');
     if (parts.length === 3) {
       return { hours: parts[0], minutes: parts[1], seconds: parts[2] };
-    } else if (parts.length === 2) {
+    }
+    if (parts.length === 2) {
       return { hours: '00', minutes: parts[0], seconds: parts[1] };
     }
     return { hours: '', minutes: '', seconds: '' };
@@ -51,22 +60,22 @@ export const VersionEditModal: React.FC<VersionEditModalProps> = ({
   const [durationMinutes, setDurationMinutes] = useState(initialDuration.minutes);
   const [durationSeconds, setDurationSeconds] = useState(initialDuration.seconds);
 
-  // Extract initial standard links (Letra, Cifra, Áudio, Vídeo)
   const findLink = (labelName: string) =>
-    version.links?.find((l) => l.label.toLowerCase() === labelName.toLowerCase())?.url || '';
+    version.links?.find((l) => !l.isCustom && l.label.toLowerCase() === labelName.toLowerCase())?.url || '';
 
   const [letraUrl, setLetraUrl] = useState(findLink('Letra'));
   const [cifraUrl, setCifraUrl] = useState(findLink('Cifra'));
   const [audioUrl, setAudioUrl] = useState(findLink('Áudio') || findLink('Audio'));
   const [videoUrl, setVideoUrl] = useState(findLink('Vídeo') || findLink('Video'));
 
-  // Custom links
   const initialCustomLinks: SongLink[] =
-    version.links?.filter(
-      (l) =>
-        l.isCustom ||
-        !['letra', 'cifra', 'áudio', 'audio', 'vídeo', 'video'].includes(l.label.toLowerCase())
-    ) || [];
+    version.links
+      ?.filter(
+        (l) =>
+          l.isCustom ||
+          !['letra', 'cifra', 'áudio', 'audio', 'vídeo', 'video'].includes(l.label.toLowerCase())
+      )
+      .map((l) => ({ ...l, isCustom: true })) || [];
 
   const [customLinks, setCustomLinks] = useState<SongLink[]>(initialCustomLinks);
 
@@ -79,7 +88,7 @@ export const VersionEditModal: React.FC<VersionEditModalProps> = ({
   const handleAddCustomLink = () => {
     setCustomLinks((prev) => [
       ...prev,
-      { id: `custom_${Date.now()}`, label: '', url: '', isCustom: true },
+      { id: nextCustomLinkId(), label: '', url: '', isCustom: true },
     ]);
   };
 
@@ -97,8 +106,11 @@ export const VersionEditModal: React.FC<VersionEditModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!name.trim()) {
+      setFormError('Informe o nome da versão.');
+      return;
+    }
 
-    // Format duration to HH:MM:SS
     let formattedDuration: string | undefined = undefined;
     if (durationHours.trim() || durationMinutes.trim() || durationSeconds.trim()) {
       const h = durationHours.trim() ? durationHours.trim().padStart(2, '0') : '00';
@@ -109,304 +121,383 @@ export const VersionEditModal: React.FC<VersionEditModalProps> = ({
       }
     }
 
-    const allLinks: SongLink[] = [
-      { label: 'Letra', url: letraUrl.trim() },
-      { label: 'Cifra', url: cifraUrl.trim() },
-      { label: 'Áudio', url: audioUrl.trim() },
-      { label: 'Vídeo', url: videoUrl.trim() },
-      ...customLinks
-        .filter((l) => l.label.trim() && l.url.trim())
-        .map((l) => ({ ...l, label: l.label.trim(), url: l.url.trim(), isCustom: true })),
-    ];
+    const trimmedBpm = bpm.trim();
+    const normalizedBpm =
+      trimmedBpm !== ''
+        ? typeof version.bpm === 'number' && !Number.isNaN(Number(trimmedBpm))
+          ? Number(trimmedBpm)
+          : trimmedBpm
+        : undefined;
 
-    const updatedVersion: SongVersion = {
-      ...version,
-      name: name.trim() || 'Original',
-      classificationIds: selectedClassificationIds,
-      notes: notes.trim() || undefined,
-      key: key.trim() || 'C',
-      bpm: bpm ? bpm.trim() : undefined,
-      duration: formattedDuration || undefined,
-      links: allLinks,
-    };
+    // Only replace fields the user changed; legacy null/absent values are distinct.
+    const updatedVersion: SongVersion = { ...version, id: version.id, name: name.trim() };
+    if (JSON.stringify(selectedClassificationIds) !== JSON.stringify(version.classificationIds || [])) {
+      updatedVersion.classificationIds = selectedClassificationIds;
+    }
+    if (notes !== (version.notes ?? '')) updatedVersion.notes = notes.trim();
+    if (key !== (version.key || 'C')) updatedVersion.key = key.trim() || 'C';
+    if (bpm !== (version.bpm == null ? '' : String(version.bpm))) updatedVersion.bpm = normalizedBpm;
+    if (durationHours !== initialDuration.hours || durationMinutes !== initialDuration.minutes || durationSeconds !== initialDuration.seconds) {
+      updatedVersion.duration = formattedDuration;
+    }
+    const linksChanged = letraUrl !== findLink('Letra') || cifraUrl !== findLink('Cifra') ||
+      audioUrl !== (findLink('Áudio') || findLink('Audio')) || videoUrl !== (findLink('Vídeo') || findLink('Video')) ||
+      JSON.stringify(customLinks) !== JSON.stringify(initialCustomLinks);
+    if (linksChanged) {
+      const standardFields = [
+        { label: 'Letra', aliases: ['letra'], value: letraUrl, initial: findLink('Letra') },
+        { label: 'Cifra', aliases: ['cifra'], value: cifraUrl, initial: findLink('Cifra') },
+        { label: 'Áudio', aliases: ['áudio', 'audio'], value: audioUrl, initial: findLink('Áudio') || findLink('Audio') },
+        { label: 'Vídeo', aliases: ['vídeo', 'video'], value: videoUrl, initial: findLink('Vídeo') || findLink('Video') },
+      ];
+      const standardLinks = (version.links || []).filter((link) => !link.isCustom &&
+        standardFields.some((field) => field.aliases.includes(link.label.toLowerCase())));
+      updatedVersion.links = standardLinks.map((link) => {
+        const field = standardFields.find((item) => item.aliases.includes(link.label.toLowerCase()))!;
+        const editedLink = standardLinks.find((item) => field.aliases.includes(item.label.toLowerCase()) && item.url === field.initial);
+        return field.value === field.initial || link !== editedLink ? link : { ...link, url: field.value.trim() };
+      });
+      for (const field of standardFields) {
+        if (field.value.trim() && !standardLinks.some((link) => field.aliases.includes(link.label.toLowerCase()))) {
+          updatedVersion.links.push({ label: field.label, url: field.value.trim() });
+        }
+      }
+      updatedVersion.links.push(...customLinks.filter((link) => link.label.trim() && link.url.trim()));
+    }
 
     onSave(updatedVersion);
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay version-modal-overlay" onClick={(event) => { event.stopPropagation(); onClose(); }}>
       <div
-        className="modal-content large mobile-fullscreen-view"
+        className="modal-content large song-form-modal version-edit-modal mobile-fullscreen-view"
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="version-edit-modal-title"
         onClick={(e) => e.stopPropagation()}
-        style={{
-          maxHeight: '92vh',
-          display: 'flex',
-          flexDirection: 'column',
-          backgroundColor: 'var(--surface-color)',
-          borderColor: 'var(--border-color)',
-          padding: '24px',
-        }}
       >
-        {/* Header */}
-        <div
-          className="modal-header"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingBottom: '16px',
-            borderBottom: '1px solid var(--border-color)',
-            marginBottom: '16px',
-          }}
-        >
+        {/* Cabeçalho Fixo */}
+        <header className="modal-header repertoire-modal-header">
           <button
             type="button"
-            className="action-icon-btn"
+            className="action-icon-btn repertoire-modal-icon-btn"
             onClick={onClose}
             title="Voltar"
-            style={{
-              width: '44px',
-              height: '44px',
-              minWidth: '44px',
-              minHeight: '44px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderRadius: '10px',
-            }}
+            aria-label="Fechar edição de versão"
           >
-            <ChevronLeft size={22} className="mobile-only" />
-            <X size={20} className="desktop-only" />
+            <ChevronLeft size={20} className="mobile-only" />
+            <X size={18} className="desktop-only" />
           </button>
 
-          <div
-            className="modal-title"
-            style={{
-              flex: 1,
-              textAlign: 'center',
-              margin: 0,
-              fontSize: '1.1rem',
-              fontWeight: 700,
-              color: 'var(--text-primary)',
-            }}
-          >
-            Editar Versão da Música
+          <div className="repertoire-modal-title-wrap">
+            <h2 id="version-edit-modal-title" className="modal-title repertoire-modal-title">
+              Editar Versão da Música
+            </h2>
+            <span className="repertoire-version-subtitle">{name.trim() || 'Original'}</span>
           </div>
 
           <button
             type="button"
-            className="action-icon-btn"
+            className="action-icon-btn repertoire-modal-icon-btn confirm"
             onClick={handleSubmit}
             title="Concluir Versão"
-            style={{
-              width: '44px',
-              height: '44px',
-              minWidth: '44px',
-              minHeight: '44px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderRadius: '10px',
-              color: 'var(--primary-light)',
-            }}
+            aria-label="Concluir edição da versão"
           >
-            <Check size={20} />
+            <Check size={18} />
           </button>
-        </div>
+        </header>
 
-        {/* Form Body com Floating Labels */}
-        <form onSubmit={handleSubmit} style={{ flex: 1, overflowY: 'auto', padding: '4px 6px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <FloatingInput
-            label="Nome da Versão (ex: Original, Acústico) *"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-          />
+        {/* Corpo com 3 Grupos Estruturados */}
+        <form id="version-edit-form" onSubmit={handleSubmit} className="repertoire-modal-body" noValidate>
+          {formError && (
+            <div className="repertoire-form-alert error" role="alert">
+              {formError}
+            </div>
+          )}
 
-          {/* Classificações (Chips / Multi-Select) */}
-          <div>
-            <label style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '8px', display: 'block' }}>
-              Classificações
-            </label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', padding: '2px 0' }}>
-              {classifications.map((c) => {
-                const isSelected = selectedClassificationIds.includes(c.id);
-                return (
-                  <button
-                    type="button"
-                    key={c.id}
-                    onClick={() => toggleClassification(c.id)}
-                    style={{
-                      minHeight: '44px',
-                      padding: '6px 14px',
-                      borderRadius: '20px',
-                      fontSize: '0.82rem',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      border: `1px solid ${isSelected ? c.color || 'var(--primary-color)' : 'var(--border-color)'}`,
-                      backgroundColor: isSelected ? `${c.color || 'var(--primary-color)'}25` : 'var(--surface-variant)',
-                      color: isSelected ? c.color || 'var(--primary-light)' : 'var(--text-secondary)',
-                      transition: 'all 0.15s ease',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                    }}
+          {/* Grupo 1: Identificação e Andamento */}
+          <section className="repertoire-form-section" aria-labelledby="version-group-identity">
+            <div className="repertoire-section-header">
+              <h3 id="version-group-identity" className="repertoire-section-title">
+                1. Identificação e Andamento
+              </h3>
+            </div>
+
+            <div className="repertoire-form-stack">
+              <div className="repertoire-field">
+                <label className="repertoire-form-label" htmlFor="version-name-input">
+                  Nome da Versão (ex: Original, Acústico) *
+                </label>
+                <input
+                  id="version-name-input"
+                  type="text"
+                  className="repertoire-input"
+                  value={name}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    if (formError) setFormError(null);
+                  }}
+                  placeholder="Ex: Original, Acústica, Ao Vivo..."
+                  required
+                />
+              </div>
+
+              <div className="repertoire-form-grid-2">
+                <div className="repertoire-field">
+                  <label className="repertoire-form-label" htmlFor="version-key-select">
+                    Tom *
+                  </label>
+                  <select
+                    id="version-key-select"
+                    className="repertoire-select"
+                    value={key}
+                    onChange={(e) => setKey(e.target.value)}
                   >
-                    {isSelected && <Check size={14} />}
-                    {c.name}
-                  </button>
-                );
-              })}
-              {classifications.length === 0 && (
-                <span style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
-                  Nenhuma classificação cadastrada no ministério.
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Observações da Versão */}
-          <FloatingTextarea
-            label="Observações da Versão (ex: ponte repetida 2x)"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
-
-          {/* Tom & BPM */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-            <FloatingSelect
-              label="Tom *"
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-            >
-              {MUSICAL_KEYS.map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
-            </FloatingSelect>
-
-            <FloatingInput
-              label="BPM (ex: 120)"
-              type="number"
-              value={bpm}
-              onChange={(e) => setBpm(e.target.value)}
-            />
-          </div>
-
-          {/* Duração em 3 Campos com Floating Label (Horas, Minutos e Segundos) */}
-          <div>
-            <label style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '8px', display: 'block' }}>
-              Duração
-            </label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
-              <FloatingInput
-                label="Horas (HH)"
-                type="number"
-                min={0}
-                max={23}
-                value={durationHours}
-                onChange={(e) => setDurationHours(e.target.value)}
-                className="text-center font-semibold"
-              />
-              <FloatingInput
-                label="Minutos (MM)"
-                type="number"
-                min={0}
-                max={59}
-                value={durationMinutes}
-                onChange={(e) => setDurationMinutes(e.target.value)}
-                className="text-center font-semibold"
-              />
-              <FloatingInput
-                label="Segundos (SS)"
-                type="number"
-                min={0}
-                max={59}
-                value={durationSeconds}
-                onChange={(e) => setDurationSeconds(e.target.value)}
-                className="text-center font-semibold"
-              />
-            </div>
-          </div>
-
-          {/* Seção de Links */}
-          <div style={{ marginTop: '12px', borderTop: '1px solid var(--border-color)', paddingTop: '18px' }}>
-            <div style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--primary-light)', marginBottom: '14px' }}>
-              Links & Recursos da Versão
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: '14px' }}>
-              <FloatingInput
-                label="Letra (ex: https://...)"
-                value={letraUrl}
-                onChange={(e) => setLetraUrl(e.target.value)}
-              />
-
-              <FloatingInput
-                label="Cifra (ex: CifraClub, Drive)"
-                value={cifraUrl}
-                onChange={(e) => setCifraUrl(e.target.value)}
-              />
-
-              <FloatingInput
-                label="Áudio (ex: Spotify, Drive)"
-                value={audioUrl}
-                onChange={(e) => setAudioUrl(e.target.value)}
-              />
-
-              <FloatingInput
-                label="Vídeo (ex: YouTube)"
-                value={videoUrl}
-                onChange={(e) => setVideoUrl(e.target.value)}
-              />
-            </div>
-
-            {/* Links Customizados */}
-            {customLinks.length > 0 && (
-              <div style={{ marginTop: '18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                  Links Customizados
+                    {MUSICAL_KEYS.map((k) => (
+                      <option key={k} value={k}>
+                        {k}
+                      </option>
+                    ))}
+                  </select>
                 </div>
+
+                <div className="repertoire-field">
+                  <label className="repertoire-form-label" htmlFor="version-bpm-input">
+                    BPM (ex: 120)
+                  </label>
+                  <input
+                    id="version-bpm-input"
+                    type="number"
+                    min={1}
+                    max={999}
+                    className="repertoire-input mono"
+                    value={bpm}
+                    onChange={(e) => setBpm(e.target.value)}
+                    placeholder="Ex: 72"
+                  />
+                </div>
+              </div>
+
+              <div className="repertoire-field">
+                <span className="repertoire-form-label">Duração</span>
+                <div className="repertoire-duration-grid">
+                  <div className="repertoire-field">
+                    <label className="repertoire-form-sublabel" htmlFor="version-duration-hh">
+                      Horas (HH)
+                    </label>
+                    <input
+                      id="version-duration-hh"
+                      type="number"
+                      min={0}
+                      max={23}
+                      className="repertoire-input mono text-center"
+                      value={durationHours}
+                      onChange={(e) => setDurationHours(e.target.value)}
+                      placeholder="00"
+                    />
+                  </div>
+
+                  <div className="repertoire-field">
+                    <label className="repertoire-form-sublabel" htmlFor="version-duration-mm">
+                      Minutos (MM)
+                    </label>
+                    <input
+                      id="version-duration-mm"
+                      type="number"
+                      min={0}
+                      max={59}
+                      className="repertoire-input mono text-center"
+                      value={durationMinutes}
+                      onChange={(e) => setDurationMinutes(e.target.value)}
+                      placeholder="05"
+                    />
+                  </div>
+
+                  <div className="repertoire-field">
+                    <label className="repertoire-form-sublabel" htmlFor="version-duration-ss">
+                      Segundos (SS)
+                    </label>
+                    <input
+                      id="version-duration-ss"
+                      type="number"
+                      min={0}
+                      max={59}
+                      className="repertoire-input mono text-center"
+                      value={durationSeconds}
+                      onChange={(e) => setDurationSeconds(e.target.value)}
+                      placeholder="30"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Grupo 2: Classificações e Observações */}
+          <section className="repertoire-form-section" aria-labelledby="version-group-classifications">
+            <div className="repertoire-section-header">
+              <h3 id="version-group-classifications" className="repertoire-section-title">
+                2. Classificações e Observações
+              </h3>
+            </div>
+
+            <div className="repertoire-form-stack">
+              <div className="repertoire-field">
+                <span className="repertoire-form-label">Classificações</span>
+                <div className="repertoire-classification-chips" role="group" aria-label="Classificações da versão">
+                  {classifications.map((c) => {
+                    const isSelected = selectedClassificationIds.includes(c.id);
+                    return (
+                      <button
+                        type="button"
+                        key={c.id}
+                        aria-pressed={isSelected}
+                        onClick={() => toggleClassification(c.id)}
+                        className={`repertoire-classification-chip ${isSelected ? 'selected' : ''}`}
+                      >
+                        {isSelected && <Check size={14} />}
+                        <span>{c.name}</span>
+                      </button>
+                    );
+                  })}
+                  {classifications.length === 0 && (
+                    <span className="repertoire-empty-hint">
+                      Nenhuma classificação cadastrada no ministério.
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="repertoire-field">
+                <label className="repertoire-form-label" htmlFor="version-notes-textarea">
+                  Observações da Versão (ex: ponte repetida 2x)
+                </label>
+                <textarea
+                  id="version-notes-textarea"
+                  className="repertoire-textarea"
+                  rows={3}
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Ex: Ponte repetida 2x, entrar apenas piano e voz..."
+                />
+              </div>
+            </div>
+          </section>
+
+          {/* Grupo 3: Links e Recursos */}
+          <section className="repertoire-form-section" aria-labelledby="version-group-links">
+            <div className="repertoire-section-header">
+              <h3 id="version-group-links" className="repertoire-section-title">
+                3. Links & Recursos da Versão
+              </h3>
+            </div>
+
+            <div className="repertoire-links-grid">
+              <div className="repertoire-field">
+                <label className="repertoire-form-label" htmlFor="version-link-letra">
+                  Letra (ex: https://...)
+                </label>
+                <input
+                  id="version-link-letra"
+                  type="url"
+                  className="repertoire-input"
+                  value={letraUrl}
+                  onChange={(e) => setLetraUrl(e.target.value)}
+                  placeholder="https://letras.mus.br/..."
+                />
+              </div>
+
+              <div className="repertoire-field">
+                <label className="repertoire-form-label" htmlFor="version-link-cifra">
+                  Cifra (ex: CifraClub, Drive)
+                </label>
+                <input
+                  id="version-link-cifra"
+                  type="url"
+                  className="repertoire-input"
+                  value={cifraUrl}
+                  onChange={(e) => setCifraUrl(e.target.value)}
+                  placeholder="https://cifraclub.com.br/..."
+                />
+              </div>
+
+              <div className="repertoire-field">
+                <label className="repertoire-form-label" htmlFor="version-link-audio">
+                  Áudio (ex: Spotify, Drive)
+                </label>
+                <input
+                  id="version-link-audio"
+                  type="url"
+                  className="repertoire-input"
+                  value={audioUrl}
+                  onChange={(e) => setAudioUrl(e.target.value)}
+                  placeholder="https://open.spotify.com/..."
+                />
+              </div>
+
+              <div className="repertoire-field">
+                <label className="repertoire-form-label" htmlFor="version-link-video">
+                  Vídeo (ex: YouTube)
+                </label>
+                <input
+                  id="version-link-video"
+                  type="url"
+                  className="repertoire-input"
+                  value={videoUrl}
+                  onChange={(e) => setVideoUrl(e.target.value)}
+                  placeholder="https://youtube.com/watch?v=..."
+                />
+              </div>
+            </div>
+
+            {customLinks.length > 0 && (
+              <div className="repertoire-custom-links-list">
+                <span className="repertoire-form-label">Links Customizados</span>
                 {customLinks.map((link, idx) => (
-                  <div
-                    key={link.id || idx}
-                    style={{
-                      display: 'flex',
-                      gap: '10px',
-                      alignItems: 'center',
-                    }}
-                  >
-                    <div style={{ flex: 1 }}>
-                      <FloatingInput
-                        label="Rótulo (ex: Partitura)"
+                  <div key={link.id || idx} className="repertoire-custom-link-row">
+                    <div className="repertoire-field custom-label-col">
+                      <label
+                        className="repertoire-form-sublabel"
+                        htmlFor={`custom-link-label-${idx}`}
+                      >
+                        Rótulo (ex: Partitura)
+                      </label>
+                      <input
+                        id={`custom-link-label-${idx}`}
+                        type="text"
+                        className="repertoire-input"
                         value={link.label}
                         onChange={(e) => handleUpdateCustomLink(idx, 'label', e.target.value)}
+                        placeholder="Ex: Multitrack, VS, Mapa..."
                       />
                     </div>
-                    <div style={{ flex: 2 }}>
-                      <FloatingInput
-                        label="URL (ex: https://...)"
+
+                    <div className="repertoire-field custom-url-col">
+                      <label
+                        className="repertoire-form-sublabel"
+                        htmlFor={`custom-link-url-${idx}`}
+                      >
+                        URL (ex: https://...)
+                      </label>
+                      <input
+                        id={`custom-link-url-${idx}`}
+                        type="url"
+                        className="repertoire-input"
                         value={link.url}
                         onChange={(e) => handleUpdateCustomLink(idx, 'url', e.target.value)}
+                        placeholder="https://..."
                       />
                     </div>
+
                     <button
                       type="button"
-                      className="action-icon-btn danger"
+                      className="action-icon-btn danger repertoire-custom-link-remove"
                       onClick={() => handleRemoveCustomLink(idx)}
                       title="Remover Link"
-                      style={{
-                        width: '52px',
-                        height: '52px',
-                        minWidth: '52px',
-                        minHeight: '52px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        borderRadius: '10px',
-                        color: 'var(--error-color)',
-                      }}
+                      aria-label={`Remover link personalizado ${link.label || idx + 1}`}
                     >
                       <Trash2 size={18} />
                     </button>
@@ -417,52 +508,30 @@ export const VersionEditModal: React.FC<VersionEditModalProps> = ({
 
             <button
               type="button"
-              className="btn btn-secondary"
+              className="btn btn-secondary repertoire-add-custom-link-btn"
               onClick={handleAddCustomLink}
-              style={{
-                marginTop: '18px',
-                width: '100%',
-                minHeight: '52px',
-                borderRadius: '12px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                fontWeight: 600,
-                fontSize: '0.88rem',
-              }}
             >
-              <Plus size={18} />
-              Adicionar Link Customizado
+              <Plus size={16} />
+              <span>Adicionar Link Customizado</span>
             </button>
-          </div>
+          </section>
 
-          <div
-            className="form-actions"
-            style={{
-              marginTop: '28px',
-              paddingTop: '16px',
-              borderTop: '1px solid var(--border-color)',
-              display: 'flex',
-              gap: '12px',
-            }}
-          >
+          {/* Rodapé Fixo */}
+          <footer className="form-actions repertoire-modal-footer">
             <button
               type="button"
-              className="btn btn-secondary"
+              className="btn btn-secondary repertoire-footer-btn"
               onClick={onClose}
-              style={{ flex: 1, minHeight: '52px' }}
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="btn btn-primary"
-              style={{ flex: 1, minHeight: '52px' }}
+              className="btn btn-primary repertoire-footer-btn"
             >
               Salvar Versão
             </button>
-          </div>
+          </footer>
         </form>
       </div>
     </div>

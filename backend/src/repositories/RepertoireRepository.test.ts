@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { RepertoireRepository, encodeSongCursor, decodeSongCursor } from './RepertoireRepository';
+import { createSongSchema, updateSongSchema } from '../features/repertoire/repertoire.types';
 import { AppError } from '../middleware/error-handler';
+import { SubscriptionRepository } from './SubscriptionRepository';
 
 describe('RepertoireRepository Hardened Cursor Pagination & Performance', () => {
   let repo: RepertoireRepository;
@@ -145,6 +147,7 @@ describe('RepertoireRepository Hardened Cursor Pagination & Performance', () => 
         'title',
         'artist_id',
         'artist',
+        'artist_name',
         'classification_id',
         'classification',
         'original_key',
@@ -152,6 +155,10 @@ describe('RepertoireRepository Hardened Cursor Pagination & Performance', () => 
         'duration',
         'youtube_url',
         'audio_url',
+        'chord_sheet_url',
+        'external_links',
+        'versions',
+        'notes',
         'created_at',
         'updated_at'
       );
@@ -342,6 +349,202 @@ describe('RepertoireRepository Hardened Cursor Pagination & Performance', () => 
           classification_id: 'tag-from-beta',
         })
       ).rejects.toThrow(AppError);
+    });
+
+    it('updateSong deve REJEITAR classificationIds em versions pertencente a outro ministério com 404', async () => {
+      (repo as any).songsCol = {
+        doc: vi.fn().mockReturnValue({
+          get: vi.fn().mockResolvedValue({
+            exists: true,
+            id: 'song-1',
+            data: () => ({ ministry_id: 'min-alpha', title: 'Minha Música' }),
+          }),
+          update: vi.fn(),
+        }),
+      };
+
+      (repo as any).classificationsCol = {
+        doc: vi.fn().mockImplementation((id: string) => ({
+          get: vi.fn().mockResolvedValue({
+            exists: true,
+            data: () => ({
+              ministry_id: id === 'tag-foreign' ? 'min-beta' : 'min-alpha',
+              name: 'Tag',
+            }),
+          }),
+        })),
+      };
+
+      await expect(
+        repo.updateSong('song-1', 'min-alpha', {
+          versions: [
+            {
+              id: 'ver-1',
+              name: 'Original',
+              key: 'G',
+              classificationIds: ['tag-foreign'],
+            },
+          ],
+        })
+      ).rejects.toThrow(AppError);
+    });
+  });
+
+  describe('Multi-Version Persistence Lifecycle (D2-B Delivery 3)', () => {
+    it('executa ciclo completo: criar música multi-versão, buscar, editar 1 versão, clonar, excluir versão e reabrir preservando IDs e campos opcionais', async () => {
+      const store = new Map<string, any>();
+
+      (repo as any).songsCol = {
+        doc: vi.fn().mockImplementation((id: string) => ({
+          get: vi.fn().mockImplementation(async () => {
+            const found = store.get(id);
+            return {
+              exists: Boolean(found),
+              id,
+              data: () => (found ? { ...found } : undefined),
+            };
+          }),
+          update: vi.fn().mockImplementation(async (patch: any) => {
+            const current = store.get(id);
+            if (!current) throw new Error('Document not found');
+            store.set(id, { ...current, ...patch });
+          }),
+        })),
+      };
+
+      (repo as any).classificationsCol = {
+        doc: vi.fn().mockImplementation((id: string) => ({
+          get: vi.fn().mockResolvedValue({
+            exists: true,
+            id,
+            data: () => ({ ministry_id: 'min-alpha', name: id === 'cls-1' ? 'Adoração' : 'Celebração' }),
+          }),
+        })),
+      };
+
+      const createTransactionalSpy = vi
+        .spyOn(SubscriptionRepository.prototype, 'createSongTransactional')
+        .mockImplementation(async ({ ministryId, songData }) => {
+          const created = {
+            id: 'song-multi-1',
+            ministry_id: ministryId,
+            ...songData,
+            created_at: '2026-11-09T12:00:00.000Z',
+            updated_at: '2026-11-09T12:00:00.000Z',
+          };
+          store.set(created.id, created);
+          return { song: created, usage: { currentSongs: 1 } as any };
+        });
+
+      try {
+        // 1. Validar schema de criação com múltiplas versões, notas e links customizados
+        const createPayload = createSongSchema.parse({
+          title: 'Santo Pra Sempre',
+          artist: 'Gabriel Guedes',
+          artist_name: 'Gabriel Guedes',
+          notes: 'Subir dinâmica no refrão final.',
+          original_key: 'G',
+          bpm: 72,
+          duration: '05:40',
+          classification_id: 'cls-1',
+          youtube_url: 'https://youtube.com/watch?v=santo1',
+          external_links: { letras: 'https://letras.mus.br/santo', Multitrack: 'https://loops.com/santo' },
+          versions: [
+            {
+              id: 'ver-orig-1',
+              name: 'Original (Estúdio)',
+              key: 'G',
+              bpm: 72,
+              duration: '05:40',
+              notes: 'Arranjo base com piano',
+              classificationIds: ['cls-1'],
+              links: [
+                { label: 'Letra', url: 'https://letras.mus.br/santo' },
+                { label: 'Cifra', url: '' },
+                { label: 'Áudio', url: '' },
+                { label: 'Vídeo', url: 'https://youtube.com/watch?v=santo1' },
+                { label: 'Multitrack', url: 'https://loops.com/santo', isCustom: true },
+              ],
+            },
+            {
+              id: 'ver-acust-2',
+              name: 'Acústica Jovens',
+              key: 'E',
+              bpm: 68,
+              duration: '04:30',
+              classificationIds: ['cls-2'],
+              links: [
+                { label: 'Letra', url: '' },
+                { label: 'Cifra', url: 'https://cifraclub.com.br/santo-acustico' },
+                { label: 'Áudio', url: '' },
+                { label: 'Vídeo', url: '' },
+              ],
+            },
+          ],
+        });
+
+        const created = await repo.createSong('min-alpha', 'user-leader-1', createPayload);
+        expect(created.id).toBe('song-multi-1');
+        expect(created.versions).toHaveLength(2);
+        expect(created.versions[0].id).toBe('ver-orig-1');
+        expect(created.versions[1].id).toBe('ver-acust-2');
+
+        // 2. Buscar pela API/Repositório e verificar integridade
+        const fetched1 = await repo.getSongById('song-multi-1', 'min-alpha');
+        expect(fetched1.title).toBe('Santo Pra Sempre');
+        expect(fetched1.notes).toBe('Subir dinâmica no refrão final.');
+        expect(fetched1.versions).toHaveLength(2);
+
+        // 3. Editar apenas a versão 2 e clonar a versão 1 em uma versão 3
+        const clonedVersion = {
+          ...fetched1.versions[0],
+          id: 'ver-clone-3',
+          name: 'Original (Estúdio) (Cópia)',
+          key: 'F',
+        };
+        const editedVersion2 = {
+          ...fetched1.versions[1],
+          bpm: 70,
+          notes: 'Violão com capotraste na 2ª casa',
+        };
+
+        const updatePayload1 = updateSongSchema.parse({
+          versions: [fetched1.versions[0], editedVersion2, clonedVersion],
+        });
+
+        await repo.updateSong('song-multi-1', 'min-alpha', updatePayload1);
+
+        const fetched2 = await repo.getSongById('song-multi-1', 'min-alpha');
+        expect(fetched2.versions).toHaveLength(3);
+        // Versão 1 intacta com mesmo ID
+        expect(fetched2.versions[0].id).toBe('ver-orig-1');
+        expect(fetched2.versions[0].key).toBe('G');
+        expect(fetched2.versions[0].notes).toBe('Arranjo base com piano');
+        // Versão 2 atualizada com mesmo ID
+        expect(fetched2.versions[1].id).toBe('ver-acust-2');
+        expect(fetched2.versions[1].bpm).toBe(70);
+        expect(fetched2.versions[1].notes).toBe('Violão com capotraste na 2ª casa');
+        // Versão 3 clonada com novo ID único
+        expect(fetched2.versions[2].id).toBe('ver-clone-3');
+        expect(fetched2.versions[2].name).toBe('Original (Estúdio) (Cópia)');
+        expect(fetched2.versions[2].key).toBe('F');
+
+        // 4. Excluir a versão 2 mantendo as versões 1 e 3 e a música intacta
+        const updatePayload2 = updateSongSchema.parse({
+          versions: [fetched2.versions[0], fetched2.versions[2]],
+        });
+        await repo.updateSong('song-multi-1', 'min-alpha', updatePayload2);
+
+        // 5. Reabrir a música e confirmar estado persistido
+        const reopened = await repo.getSongById('song-multi-1', 'min-alpha');
+        expect(reopened.title).toBe('Santo Pra Sempre');
+        expect(reopened.notes).toBe('Subir dinâmica no refrão final.');
+        expect(reopened.versions).toHaveLength(2);
+        expect(reopened.versions.map((v: any) => v.id)).toEqual(['ver-orig-1', 'ver-clone-3']);
+        expect(reopened.versions[0].links).toHaveLength(5);
+      } finally {
+        createTransactionalSpy.mockRestore();
+      }
     });
   });
 });

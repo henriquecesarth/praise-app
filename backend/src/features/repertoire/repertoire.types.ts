@@ -4,18 +4,43 @@ import { z } from 'zod';
 // Validation Schemas
 // ============================================================
 
+export const songLinkSchema = z
+  .object({
+    label: z.string(),
+    url: z.string(),
+    isCustom: z.boolean().optional(),
+  })
+  .passthrough();
+
+export const songVersionSchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string().min(1).max(255),
+    key: z.string().max(10).nullable().optional(),
+    bpm: z.union([z.number().positive().max(999), z.string()]).nullable().optional(),
+    duration: z.string().nullable().optional(),
+    notes: z.string().nullable().optional(),
+    classificationIds: z.array(z.string()).optional(),
+    links: z.array(songLinkSchema).optional(),
+  })
+  .passthrough();
+
 export const createSongSchema = z.object({
   title: z.string().min(1, 'Título é obrigatório.').max(255),
   artist_id: z.string().nullable().optional(),
+  artist: z.string().max(255).nullable().optional(),
+  artist_name: z.string().max(255).nullable().optional(),
   classification_id: z.string().nullable().optional(),
   original_key: z
     .string()
-    .max(5)
+    .max(10)
     .nullable()
     .optional(),
   bpm: z.number().positive().max(999).nullable().optional(),
   duration: z.string().nullable().optional(),
   lyrics: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  versions: z.array(songVersionSchema).optional(),
   chord_sheet_url: z.string().url().nullable().optional().or(z.literal('')),
   youtube_url: z.string().url().nullable().optional().or(z.literal('')),
   audio_url: z.string().url().nullable().optional().or(z.literal('')),
@@ -25,11 +50,15 @@ export const createSongSchema = z.object({
 export const updateSongSchema = z.object({
   title: z.string().min(1, 'Título é obrigatório.').max(255).optional(),
   artist_id: z.string().nullable().optional(),
+  artist: z.string().max(255).nullable().optional(),
+  artist_name: z.string().max(255).nullable().optional(),
   classification_id: z.string().nullable().optional(),
-  original_key: z.string().max(5).nullable().optional(),
+  original_key: z.string().max(10).nullable().optional(),
   bpm: z.number().positive().max(999).nullable().optional(),
   duration: z.string().nullable().optional(),
   lyrics: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  versions: z.array(songVersionSchema).optional(),
   chord_sheet_url: z.string().url().nullable().optional().or(z.literal('')),
   youtube_url: z.string().url().nullable().optional().or(z.literal('')),
   audio_url: z.string().url().nullable().optional().or(z.literal('')),
@@ -99,6 +128,8 @@ export interface SongSummary {
   duration: string | null;
   youtube_url: string | null;
   audio_url: string | null;
+  chord_sheet_url?: string | null;
+  external_links?: Record<string, string>;
   has_youtube?: boolean;
   created_at: string;
   updated_at: string;

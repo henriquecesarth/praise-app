@@ -5,6 +5,7 @@ import { bootstrapAuth } from './auth-bootstrap';
 import { MODULE_PATHS, parseAppRoute, pathForFolder, pathForSchedule, pathForSong, shouldBootstrapSession, type MainModuleType } from './routing';
 import { Song, Artist, Folder, Classification, RepertoireCounts, SongFilters, Group, GroupRole, MinistrySubscriptionSummary } from './types';
 import { SongCard } from './components/SongCard';
+import './styles/repertoire.css';
 import { FolderCard } from './components/FolderCard';
 import { ArtistCard } from './components/ArtistCard';
 import { FilterPopover } from './components/FilterPopover';
@@ -126,6 +127,7 @@ export default function App() {
   // Data States
   const [counts, setCounts] = useState<RepertoireCounts>({ songs: 0, folders: 0, artists: 0 });
   const [songs, setSongs] = useState<Song[]>([]);
+  const [songsError, setSongsError] = useState<string | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [artists, setArtists] = useState<Artist[]>([]);
   const [classifications, setClassifications] = useState<Classification[]>([]);
@@ -205,6 +207,15 @@ export default function App() {
   // Reload data when activeGroup changes
   useEffect(() => {
     setSelectedSmartChordId(null);
+    setShowSongModal(false);
+    setSongToEdit(null);
+    if (searchTimeoutRef.current) {
+      window.clearTimeout(searchTimeoutRef.current);
+      searchTimeoutRef.current = null;
+    }
+    setSongsError(null);
+    setClassifications([]);
+    setFilters((prev) => (prev.classificationId ? { ...prev, classificationId: null } : prev));
     if (activeGroup) {
       loadSubscription(activeGroup.id);
     } else {
@@ -228,6 +239,9 @@ export default function App() {
         loadCounts();
         loadClassifications();
       } else {
+        ++songRequestRef.current;
+        setSongsError(null);
+        setClassifications([]);
         setSongs([]);
         setFolders([]);
         setArtists([]);
@@ -268,6 +282,7 @@ export default function App() {
     }
 
     setLoadingSongs(true);
+    ++songRequestRef.current;
     searchTimeoutRef.current = window.setTimeout(() => {
       loadSongs();
     }, 300);
@@ -321,6 +336,9 @@ export default function App() {
     setFolders([]);
     setArtists([]);
     setSchedules([]);
+    setClassifications([]);
+    setSongsError(null);
+    setFilters({ originalKey: null, hasYoutube: null, classificationId: null });
     setCounts({ songs: 0, folders: 0, artists: 0 });
     clearDetailSelection();
     navigate('/');
@@ -391,17 +409,20 @@ export default function App() {
     const requestedGroupId = groupId;
     const requestId = ++songRequestRef.current;
     setLoadingSongs(true);
+    setSongsError(null);
     try {
       const result = await api.getSongs(requestedGroupId, {
         search,
         originalKey: filters.originalKey || undefined,
         hasYoutube: filters.hasYoutube || undefined,
+        classificationId: filters.classificationId || undefined,
       });
       if (activeGroupIdRef.current !== requestedGroupId || songRequestRef.current !== requestId) return;
       setSongs(result.songs);
       setCounts((prev) => ({ ...prev, songs: result.totalCount }));
     } catch (err: any) {
-      showToast(err.message || 'Erro ao carregar músicas.', 'error');
+      if (activeGroupIdRef.current !== requestedGroupId || songRequestRef.current !== requestId) return;
+      setSongsError(err.message || 'Erro ao carregar músicas.');
     } finally {
       if (activeGroupIdRef.current === requestedGroupId && songRequestRef.current === requestId) {
         setLoadingSongs(false);
@@ -451,15 +472,18 @@ export default function App() {
 
   const handleSaveSong = async (songData: Partial<Song>) => {
     if (!groupId) return;
+    const requestedGroupId = groupId;
     try {
       if (songToEdit) {
         const updated = await api.updateSong(songToEdit.id, songData, groupId);
+        if (activeGroupIdRef.current !== requestedGroupId) return;
         showToast('Música atualizada com sucesso!');
         if (selectedSong && selectedSong.id === songToEdit.id) {
           setSelectedSong(updated);
         }
       } else {
         await api.createSong(songData, groupId);
+        if (activeGroupIdRef.current !== requestedGroupId) return;
         showToast('Música criada com sucesso!');
       }
       setShowSongModal(false);
@@ -638,6 +662,8 @@ export default function App() {
 
   const handleSelectSong = async (song: Song) => {
     if (!groupId) return;
+    setDetailLoading(true);
+    setDetailError(null);
     setSelectedSong(song);
     navigate(pathForSong(song.id));
   };
@@ -719,7 +745,8 @@ export default function App() {
     }
   }, [groupId, loadingSchedules, routeState.scheduleId, schedules]);
 
-  const hasActiveFilters = filters.originalKey !== null || filters.hasYoutube !== null;
+  const activeFilterCount = Number(Boolean(filters.originalKey)) + Number(Boolean(filters.hasYoutube)) + Number(Boolean(filters.classificationId));
+  const hasActiveFilters = activeFilterCount > 0;
 
   if (routeState.isPrivacy) {
     return (
@@ -1167,11 +1194,12 @@ export default function App() {
             </div>
           )}
 
-          {selectedSong && (
+          {selectedSong && !detailLoading && !detailError && (
             <SongDetail
               song={selectedSong}
               ministryId={activeGroup?.id || selectedSong.ministryId || groupId}
               chordFontFamily={currentUser?.preferences?.chordFontFamily}
+              classifications={classifications}
               onBack={handleBackToMain}
               onEdit={userRole === 'admin' ? () => {
                 setSongToEdit(selectedSong);
@@ -1250,6 +1278,7 @@ export default function App() {
               )}
               {mainModule === 'repertoire' && (
                 <div className="repertoire-subnav-bar">
+                  <div className="repertoire-heading"><h1>Repertório</h1><span>{activeGroup?.name}</span></div>
                   <nav className="tab-bar">
                     <button
                       className={`tab-btn ${activeTab === 'songs' ? 'active' : ''}`}
@@ -1300,28 +1329,35 @@ export default function App() {
                         aria-label="Abrir filtros do repertório"
                       >
                         <SlidersHorizontal size={20} />
-                        {hasActiveFilters && <span className="active-dot" />}
+                        {hasActiveFilters && <span className="repertoire-filter-count">{activeFilterCount}</span>}
                       </button>
                       {showFilters && (
                         <FilterPopover
                           filters={filters}
-                          onApply={(newFilters) => setFilters(newFilters)}
+                          onApply={(newFilters) => setFilters(prev => ({ ...prev, ...newFilters }))}
                           onClose={() => setShowFilters(false)}
                         />
                       )}
                     </div>
                   </div>
 
+                  <div className="repertoire-filter-chips" aria-label="Filtros ativos">
+                    {filters.originalKey && <button type="button" aria-pressed="true" onClick={() => setFilters(prev => ({ ...prev, originalKey: null }))}>Tom: {filters.originalKey} ×</button>}
+                    {filters.hasYoutube && <button type="button" aria-pressed="true" onClick={() => setFilters(prev => ({ ...prev, hasYoutube: null }))}>Com YouTube ×</button>}
+                    {classifications.map(item => <button type="button" key={item.id} aria-pressed={filters.classificationId === item.id} onClick={() => setFilters(prev => ({ ...prev, classificationId: prev.classificationId === item.id ? null : item.id }))}>{item.name}</button>)}
+                  </div>
                   {loadingSongs ? (
                     <div className="songs-list">
                       <div className="shimmer song-card-shimmer" />
                       <div className="shimmer song-card-shimmer" />
                       <div className="shimmer song-card-shimmer" />
                     </div>
+                  ) : songsError ? (
+                    <div className="empty-state" role="alert"><p>{songsError}</p><button className="btn btn-secondary" onClick={() => loadSongs()}>Tentar novamente</button></div>
                   ) : songs.length > 0 ? (
                     <div className="songs-list">
                       {songs.map((song) => (
-                        <SongCard key={song.id} song={song} onTap={() => handleSelectSong(song)} />
+                        <SongCard key={song.id} song={song} classifications={classifications} onTap={() => handleSelectSong(song)} />
                       ))}
                     </div>
                   ) : (

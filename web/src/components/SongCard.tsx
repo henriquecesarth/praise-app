@@ -1,194 +1,85 @@
 import React from 'react';
-import { Song } from '../types';
-import { Music, Gauge, Clock, Layers } from 'lucide-react';
+import { Clock3, ExternalLink, FileText, Gauge, Headphones, Layers3, Music2, Youtube } from 'lucide-react';
+import { Classification, Song } from '../types';
+import './SongCard.css';
 
 interface SongCardProps {
   song: Song;
   onTap: () => void;
+  classifications?: Classification[];
 }
 
-export const SongCard: React.FC<SongCardProps> = ({ song, onTap }) => {
-  const avatarLetter = song.title ? song.title.charAt(0).toUpperCase() : '?';
+const formatDuration = (duration?: string): string | undefined => {
+  if (!duration) return undefined;
+  return duration.replace(/^00:/, '');
+};
 
-  const artistText = song.artist || song.artistName || 'Artista não especificado';
-  const primaryVersion = song.versions && song.versions.length > 0 ? song.versions[0] : null;
-
-  const displayKey = primaryVersion?.key || song.originalKey;
-  const displayBpm = primaryVersion?.bpm || song.bpm;
-  const displayDuration = primaryVersion?.duration || song.duration;
-  const classificationName = song.classificationName;
-  const versionCount = song.versions?.length || 1;
+export const SongCard: React.FC<SongCardProps> = ({ song, onTap, classifications = [] }) => {
+  const artist = song.artist || song.artistName || 'Artista não especificado';
+  const primaryVersion = song.versions?.[0];
+  const key = primaryVersion?.key || song.originalKey;
+  const bpm = primaryVersion?.bpm ?? song.bpm;
+  const duration = formatDuration(primaryVersion?.duration || song.duration);
+  const versions = song.versions?.length ?? 0;
+  const links = primaryVersion?.links ?? [];
+  const activeLinks = links.filter(link => Boolean(link.url?.trim()));
+  const classificationIds = primaryVersion?.classificationIds ?? [];
+  const classificationBadges = classificationIds
+    .map(id => classifications.find(classification => classification.id === id))
+    .filter((classification): classification is Classification => Boolean(classification));
+  if (classificationBadges.length === 0 && song.classificationName) {
+    classificationBadges.push({
+      id: song.classificationId || song.classificationName,
+      ministryId: song.ministryId || '',
+      name: song.classificationName,
+      color: song.classificationColor,
+      createdAt: '',
+      updatedAt: '',
+    });
+  }
+  const hasYoutube = Boolean(song.youtubeUrl?.trim()) || activeLinks.some(link => /youtube|youtu\.be|vídeo|video/i.test(`${link.label} ${link.url}`));
+  const hasAudio = Boolean(song.audioUrl?.trim()) || activeLinks.some(link => /áudio|audio|spotify|deezer/i.test(`${link.label} ${link.url}`));
+  const hasChordResource = Boolean(song.chordSheetUrl?.trim()) || activeLinks.some(link => /cifra/i.test(`${link.label} ${link.url}`));
+  const hasLyricsResource = Boolean(song.externalLinks?.letras?.trim()) || activeLinks.some(link => /letra/i.test(`${link.label} ${link.url}`));
 
   return (
     <button
       type="button"
-      className="song-card"
+      className="louvaio-song-row"
       onClick={onTap}
-      aria-label={`Abrir música ${song.title}, ${artistText}`}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '14px',
-        padding: '14px 16px',
-        borderRadius: '12px',
-        background: 'var(--surface-color)',
-        border: '1px solid var(--border-color)',
-        minHeight: '64px',
-        cursor: 'pointer',
-        transition: 'all 0.2s ease',
-        width: '100%',
-        color: 'inherit',
-        textAlign: 'left',
-      }}
+      aria-label={`Abrir música ${song.title}, ${artist}`}
     >
-      <div
-        className="song-avatar"
-        style={{
-          width: '44px',
-          height: '44px',
-          minWidth: '44px',
-          minHeight: '44px',
-          borderRadius: '10px',
-          background: 'var(--primary-surface)',
-          color: 'var(--primary-light)',
-          fontSize: '1.2rem',
-          fontWeight: 700,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexShrink: 0,
-        }}
-      >
-        {avatarLetter}
-      </div>
-      <div className="song-info" style={{ flex: 1, minWidth: 0 }}>
-        <div className="song-title-row">
+      <span className="louvaio-song-row__main">
+        <span className="louvaio-song-row__title" title={song.title}>{song.title}</span>
+        <span className="louvaio-song-row__artist" title={artist}>{artist}</span>
+      </span>
+
+      {versions > 1 && (
+        <span className="louvaio-song-row__versions" title={song.versions.map(version => version.name).join(', ')}>
+          <Layers3 aria-hidden="true" size={14} />
+          {versions} versões
+        </span>
+      )}
+
+      <span className="louvaio-song-row__meta">
+        {key && <span className="louvaio-song-row__key"><Music2 aria-hidden="true" size={13} />{key}</span>}
+        {bpm !== undefined && bpm !== null && bpm !== '' && <span className="louvaio-song-row__detail"><Gauge aria-hidden="true" size={13} />{bpm} BPM</span>}
+        {duration && <span className="louvaio-song-row__detail"><Clock3 aria-hidden="true" size={13} />{duration}</span>}
+        {classificationBadges.map(classification => (
           <span
-            className="song-card-title"
-            style={{
-              fontWeight: 700,
-              fontSize: '0.98rem',
-              color: 'var(--text-primary)',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              display: 'block',
-            }}
-          >
-            {song.title}
-          </span>
-        </div>
+            key={classification.id}
+            className="louvaio-song-row__classification"
+            style={classification.color ? { '--song-classification-color': classification.color } as React.CSSProperties : undefined}
+          >{classification.name}</span>
+        ))}
+      </span>
 
-        <div
-          className="song-card-artist"
-          style={{
-            fontSize: '0.83rem',
-            color: 'var(--text-secondary)',
-            marginTop: '2px',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {artistText}
-        </div>
-
-        <div className="song-meta-chips" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
-          {classificationName && (
-            <span
-              className="badge"
-              style={{
-                backgroundColor: song.classificationColor ? `${song.classificationColor}20` : 'var(--primary-surface)',
-                color: song.classificationColor || 'var(--primary-color)',
-                border: `1px solid ${song.classificationColor ? `${song.classificationColor}40` : 'var(--border-color)'}`,
-                fontSize: '0.74rem',
-                fontWeight: 700,
-                padding: '2px 8px',
-                borderRadius: '6px',
-              }}
-            >
-              {classificationName}
-            </span>
-          )}
-
-          {displayKey && (
-            <span
-              className="chip"
-              style={{
-                fontSize: '0.74rem',
-                padding: '2px 8px',
-                borderRadius: '6px',
-                background: 'var(--surface-variant)',
-                color: 'var(--text-secondary)',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '4px',
-              }}
-            >
-              <Music size={12} />
-              <span>Tom: {displayKey}</span>
-            </span>
-          )}
-
-          {displayBpm && (
-            <span
-              className="chip"
-              style={{
-                fontSize: '0.74rem',
-                padding: '2px 8px',
-                borderRadius: '6px',
-                background: 'var(--surface-variant)',
-                color: 'var(--text-secondary)',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '4px',
-              }}
-            >
-              <Gauge size={12} />
-              <span>{displayBpm} BPM</span>
-            </span>
-          )}
-
-          {displayDuration && (
-            <span
-              className="chip"
-              style={{
-                fontSize: '0.74rem',
-                padding: '2px 8px',
-                borderRadius: '6px',
-                background: 'var(--surface-variant)',
-                color: 'var(--text-secondary)',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '4px',
-              }}
-            >
-              <Clock size={12} />
-              <span>{String(displayDuration).replace(/^00:/, '')}</span>
-            </span>
-          )}
-
-          {versionCount > 1 && (
-            <span
-              className="chip"
-              style={{
-                fontSize: '0.74rem',
-                padding: '2px 8px',
-                borderRadius: '6px',
-                background: 'var(--primary-surface)',
-                color: 'var(--primary-light)',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '4px',
-                fontWeight: 700,
-              }}
-            >
-              <Layers size={12} />
-              <span>{versionCount} versões</span>
-            </span>
-          )}
-        </div>
-      </div>
+      <span className="louvaio-song-row__resources" aria-label="Recursos disponíveis">
+        {hasYoutube && <span title="YouTube" aria-label="YouTube"><Youtube aria-hidden="true" size={15} /></span>}
+        {hasAudio && <span title="Áudio" aria-label="Áudio"><Headphones aria-hidden="true" size={14} /></span>}
+        {hasLyricsResource && <span title="Letra" aria-label="Letra"><FileText aria-hidden="true" size={14} /></span>}
+        {hasChordResource && <span title="Cifra externa" aria-label="Cifra externa"><ExternalLink aria-hidden="true" size={14} /></span>}
+      </span>
     </button>
   );
 };

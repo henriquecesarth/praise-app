@@ -4,6 +4,7 @@ import { requireMinistryRole } from './rbac';
 import { AppError } from './error-handler';
 import { UserRepository } from '../repositories/UserRepository';
 import { MinistryRepository } from '../repositories/MinistryRepository';
+import { AccountDeletionRepository } from '../repositories/AccountDeletionRepository';
 import jwt from 'jsonwebtoken';
 import { config } from '../config/unifiedConfig';
 
@@ -13,6 +14,8 @@ describe('Security Hardening: Auth & RBAC Middlewares', () => {
   let mockNext: any;
 
   beforeEach(() => {
+    // Auth unit tests must not query a Firestore emulator for the unrelated deletion guard.
+    vi.spyOn(AccountDeletionRepository.prototype, 'isDeletionPending').mockResolvedValue(false);
     mockReq = {
       headers: {},
       params: {},
