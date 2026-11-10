@@ -64,3 +64,16 @@
   - Matriz contratual `bpm-contract-matrix.json` incluída em `mobile/test/features/repertoire/data/fixtures/`.
   - Todos os 158 testes automatizados da suíte `test/features/repertoire` executados e aprovados (`PASS`).
 - **Próximo passo:** Executar Fase D (Smart Chords R17 — Paridade 1:1 com os 34 casos de referência de `smart_chord_reference_cases.ts`, acidentes Unicode e semântica de anotações `{{...}}`).
+
+### Fase D — Smart Chords R17 (Notação Avançada, Acidentes Unicode e Semântica de Anotações)
+- **Status:** `COMPLETED`
+- **Resumo:**
+  - `SmartChordParser` expandido com suporte integral aos 34 casos canônicos de `web/src/utils/fixtures/smart_chord_reference_cases.ts`:
+    - Acidentes Unicode (`♭`, `♯`, `♮`) com preservação de grafia na transposição (`B♭maj7 -> Cmaj7`, `F♯m -> G♯m`, `E♮ -> F♯`, `D♭m -> E♭m`, `F♯/C♯ -> G♯/D♯`).
+    - Acordes opcionais entre parênteses `(Am)` e adjacentes `C(Am) -> D(Bm)`.
+    - Extensões entre parênteses com baixo invertido `C(add9)/E -> D(add9)/F#` e extensões compostas `A7M/9 -> B7M/9`.
+    - Símbolos `N.C.`, contagens de repetição `2x`, hífens em compassos `| C | Am - | F | G |` sem falso-positivo de tablatura, e preservação de texto entre parênteses não-acorde `(livre)`.
+    - Semântica de instruções musicais (`{{...}}` e `{{^...}}`: `entry`, `exit`, `dynamics`, `technique`, `note`) via `SmartChordParser.interpretAnnotation` e `SmartChordParser.extractMusicalInstructions`.
+  - `MusicalProgressionLine` atualizado para estilizar tokens de anotação `{{...}}` sem alterar o texto plano subjacente.
+  - Suíte `smart_chord_r17_reference_parity_test.dart` (35 testes) + suítes `domain` e `widgets` de Smart Chords executadas e aprovadas (`130/130 PASS`).
+- **Próximo passo:** Executar Fase E & F (Revisão Independente, `flutter analyze`, suíte completa de testes Flutter + Android Kotlin JVM, build do Debug APK Staging e Plano de Homologação Física).

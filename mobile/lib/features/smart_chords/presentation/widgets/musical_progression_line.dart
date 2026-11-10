@@ -28,9 +28,15 @@ class MusicalProgressionLine extends StatelessWidget {
         TextSpan(children: tokens.map((token) => TextSpan(
           text: token.text,
           style: TextStyle(
-            color: token.isChord || token.text == '%' ? theme.colorScheme.primary :
-              token.isDelimiter ? theme.colorScheme.onSurfaceVariant : theme.colorScheme.onSurface,
+            color: token.isChord || token.text == '%'
+                ? theme.colorScheme.primary
+                : token.isAnnotation
+                    ? theme.colorScheme.secondary
+                    : token.isDelimiter
+                        ? theme.colorScheme.onSurfaceVariant
+                        : theme.colorScheme.onSurface,
             fontWeight: token.isChord || token.isDelimiter ? FontWeight.bold : FontWeight.normal,
+            fontStyle: token.isAnnotation ? FontStyle.italic : FontStyle.normal,
           ),
         )).toList()),
         softWrap: false,
