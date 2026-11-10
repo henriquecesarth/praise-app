@@ -36,10 +36,30 @@ export const updatePreferencesSchema = z
     chord_line_spacing_px: z.number().int().min(0).max(24).refine(value => value % 2 === 0, {
       message: 'O espaçamento deve ser um número par entre 0 e 24.',
     }).optional(),
+    vocal_min_midi: z.number().int().min(48, 'Nota mínima suportada é Dó3 (MIDI 48).').max(88, 'Nota máxima suportada é Mi6 (MIDI 88).').optional(),
+    vocal_max_midi: z.number().int().min(48, 'Nota mínima suportada é Dó3 (MIDI 48).').max(88, 'Nota máxima suportada é Mi6 (MIDI 88).').optional(),
   })
-  .refine(value => value.chord_font_family !== undefined || value.chord_line_spacing_px !== undefined, {
-    message: 'Informe ao menos uma preferência para atualizar.',
-  })
+  .refine(
+    value =>
+      value.chord_font_family !== undefined ||
+      value.chord_line_spacing_px !== undefined ||
+      value.vocal_min_midi !== undefined ||
+      value.vocal_max_midi !== undefined,
+    {
+      message: 'Informe ao menos uma preferência para atualizar.',
+    }
+  )
+  .refine(
+    value => {
+      if (value.vocal_min_midi !== undefined && value.vocal_max_midi !== undefined) {
+        return value.vocal_min_midi < value.vocal_max_midi;
+      }
+      return true;
+    },
+    {
+      message: 'A nota mais grave deve ser inferior à nota mais aguda.',
+    }
+  )
   .strict();
 
 export type UpdatePreferencesInput = z.infer<typeof updatePreferencesSchema>;

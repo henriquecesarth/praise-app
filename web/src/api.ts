@@ -60,6 +60,7 @@ import type {
   AccountDeletionResult,
 } from './types';
 import { COMPLIANCE_CONFIG } from './config/compliance.config';
+import type { VocalExercise } from './vocal-exercises';
 
 export type {
   SmartChord,
@@ -626,17 +627,30 @@ export const api = {
       preferences: {
         chordFontFamily: result.preferences?.chord_font_family || 'monospace',
         chordLineSpacingPx: result.preferences?.chord_line_spacing_px ?? 0,
+        vocalMinMidi: typeof result.preferences?.vocal_min_midi === 'number' ? result.preferences.vocal_min_midi : undefined,
+        vocalMaxMidi: typeof result.preferences?.vocal_max_midi === 'number' ? result.preferences.vocal_max_midi : undefined,
       },
     };
   },
 
-  updateUserPreferences: async (preferences: { chordFontFamily?: string; chordLineSpacingPx?: number }): Promise<{ preferences: UserPreferences }> => {
+  updateUserPreferences: async (preferences: {
+    chordFontFamily?: string;
+    chordLineSpacingPx?: number;
+    vocalMinMidi?: number;
+    vocalMaxMidi?: number;
+  }): Promise<{ preferences: UserPreferences }> => {
     const payload: Record<string, any> = {};
     if (preferences.chordFontFamily !== undefined) {
       payload.chord_font_family = preferences.chordFontFamily;
     }
     if (preferences.chordLineSpacingPx !== undefined) {
       payload.chord_line_spacing_px = preferences.chordLineSpacingPx;
+    }
+    if (preferences.vocalMinMidi !== undefined) {
+      payload.vocal_min_midi = preferences.vocalMinMidi;
+    }
+    if (preferences.vocalMaxMidi !== undefined) {
+      payload.vocal_max_midi = preferences.vocalMaxMidi;
     }
     const response = await fetch(`${API_URL}/auth/me/preferences`, {
       method: 'PATCH',
@@ -648,6 +662,8 @@ export const api = {
       preferences: {
         chordFontFamily: result.preferences?.chord_font_family || 'monospace',
         chordLineSpacingPx: result.preferences?.chord_line_spacing_px ?? 0,
+        vocalMinMidi: typeof result.preferences?.vocal_min_midi === 'number' ? result.preferences.vocal_min_midi : undefined,
+        vocalMaxMidi: typeof result.preferences?.vocal_max_midi === 'number' ? result.preferences.vocal_max_midi : undefined,
       },
     };
   },
@@ -2161,6 +2177,94 @@ export const api = {
       headers: getHeaders(),
     });
     return handleResponse<{ job: AccountDeletionJobRecord | null }>(response);
+  },
+
+  // Exercícios Vocais Personalizados
+  getCustomVocalExercises: async (): Promise<VocalExercise[]> => {
+    const response = await fetch(`${API_URL}/vocal-exercises/custom`, {
+      headers: getHeaders(),
+    });
+    const result = await handleResponse<{ exercises: any[] }>(response);
+    return (result.exercises || []).map((e: any) => ({
+      id: e.id,
+      title: e.title,
+      description: e.description || '',
+      notes: e.notes || [],
+      noteDurations: e.noteDurations || [],
+      minTranspose: typeof e.minTranspose === 'number' ? e.minTranspose : -12,
+      maxTranspose: typeof e.maxTranspose === 'number' ? e.maxTranspose : 12,
+      category: e.category || 'misto',
+      isCustom: true,
+    }));
+  },
+
+  createCustomVocalExercise: async (data: {
+    title: string;
+    description?: string;
+    notes: number[];
+    noteDurations: number[];
+    minTranspose?: number;
+    maxTranspose?: number;
+    category?: string;
+  }): Promise<VocalExercise> => {
+    const response = await fetch(`${API_URL}/vocal-exercises/custom`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(data),
+    });
+    const result = await handleResponse<{ exercise: any }>(response);
+    const e = result.exercise;
+    return {
+      id: e.id,
+      title: e.title,
+      description: e.description || '',
+      notes: e.notes || [],
+      noteDurations: e.noteDurations || [],
+      minTranspose: typeof e.minTranspose === 'number' ? e.minTranspose : -12,
+      maxTranspose: typeof e.maxTranspose === 'number' ? e.maxTranspose : 12,
+      category: e.category || 'misto',
+      isCustom: true,
+    };
+  },
+
+  updateCustomVocalExercise: async (
+    id: string,
+    patch: {
+      title?: string;
+      description?: string;
+      notes?: number[];
+      noteDurations?: number[];
+      minTranspose?: number;
+      maxTranspose?: number;
+      category?: string;
+    }
+  ): Promise<VocalExercise> => {
+    const response = await fetch(`${API_URL}/vocal-exercises/custom/${id}`, {
+      method: 'PATCH',
+      headers: getHeaders(),
+      body: JSON.stringify(patch),
+    });
+    const result = await handleResponse<{ exercise: any }>(response);
+    const e = result.exercise;
+    return {
+      id: e.id,
+      title: e.title,
+      description: e.description || '',
+      notes: e.notes || [],
+      noteDurations: e.noteDurations || [],
+      minTranspose: typeof e.minTranspose === 'number' ? e.minTranspose : -12,
+      maxTranspose: typeof e.maxTranspose === 'number' ? e.maxTranspose : 12,
+      category: e.category || 'misto',
+      isCustom: true,
+    };
+  },
+
+  deleteCustomVocalExercise: async (id: string): Promise<void> => {
+    const response = await fetch(`${API_URL}/vocal-exercises/custom/${id}`, {
+      method: 'DELETE',
+      headers: getHeaders(),
+    });
+    await handleResponse<{ success: boolean }>(response);
   },
 };
 

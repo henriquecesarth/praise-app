@@ -18,6 +18,7 @@ import billingRoutes, { webhookRouter, platformAdminRouter, billingPublicRouter 
 import organizationRoutes from './features/organizations/organization.routes';
 import internalWhatsAppRoutes from './features/whatsapp/internal-whatsapp.routes';
 import publicWhatsAppRoutes from './features/whatsapp/public-whatsapp.routes';
+import vocalExerciseRoutes from './features/vocal-exercises/vocal-exercise.routes';
 import { errorHandler } from './middleware/error-handler';
 import { config } from './config/unifiedConfig';
 
@@ -102,6 +103,7 @@ app.use('/api/v1/groups/:groupId/smart-chords', smartChordMinistryRoutes);
 app.use('/api/v1/ministries/:ministryId', repertoireRoutes);
 app.use('/api/v1/groups/:groupId', repertoireRoutes);
 app.use('/api/v1/smart-chords', smartChordRoutes);
+app.use('/api/v1/vocal-exercises', vocalExerciseRoutes);
 
 // ─── Error Handler (must be last) ───────────────────────────
 app.use(errorHandler);

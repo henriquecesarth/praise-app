@@ -6,6 +6,8 @@ import jwt from 'jsonwebtoken';
 export interface UserPreferences {
   chord_font_family?: string;
   chord_line_spacing_px?: number;
+  vocal_min_midi?: number;
+  vocal_max_midi?: number;
   [key: string]: unknown;
 }
 

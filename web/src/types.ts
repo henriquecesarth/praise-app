@@ -582,6 +582,8 @@ export interface AccountDeletionResult {
 export interface UserPreferences {
   chordFontFamily?: string;
   chordLineSpacingPx?: number;
+  vocalMinMidi?: number;
+  vocalMaxMidi?: number;
 }
 
 export interface AuthenticatedUser {
