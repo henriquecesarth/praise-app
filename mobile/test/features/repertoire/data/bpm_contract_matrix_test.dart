@@ -7,6 +7,8 @@ import 'package:louvaio_mobile/features/repertoire/domain/song_summary.dart';
 
 File _findMatrixFile() {
   final candidates = [
+    File('test/features/repertoire/data/fixtures/bpm-contract-matrix.json'),
+    File('mobile/test/features/repertoire/data/fixtures/bpm-contract-matrix.json'),
     File('../backend/src/features/repertoire/__fixtures__/bpm-contract-matrix.json'),
     File('backend/src/features/repertoire/__fixtures__/bpm-contract-matrix.json'),
     File('../../backend/src/features/repertoire/__fixtures__/bpm-contract-matrix.json'),

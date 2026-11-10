@@ -50,3 +50,17 @@
   - Atalho para Exercícios Vocais adicionado também na aba `Perfil` (`AppShell`).
   - 32 testes automatizados executados e aprovados (`app_environment_test.dart`, `vocal_player_test.dart`, `vocal_custom_and_preferences_test.dart`, `auth_repository_test.dart`).
 - **Próximo passo:** Executar Fase C (Repertório R17 — Estante Musical D1 em `SongDetailView` e indicador de versões em `SongCard`).
+
+### Fase C — Repertório R17 (Estante Musical D1 + Indicadores de Múltiplas Versões)
+- **Status:** `COMPLETED`
+- **Resumo:**
+  - `SongDetailView` atualizado com a **Estante Musical D1** (`song_detail_music_stand_bar`):
+    - Alternância inline entre `Cifra Inteligente` e `Apenas Letra`.
+    - Seletor em pílulas (`song_detail_chord_pill_<id>`) quando há mais de uma cifra inteligente pessoal vinculada.
+    - Controles inline de transposição (`-1 Semitom`, `+1 Semitom`, `Resetar`) e indicador de `Tom Original` e `Tom Atual`.
+    - Renderização inline da cifra inteligente (`song_detail_inline_chord_sheet`) usando `MusicalProgressionLine` e `ChordLyricLine` com as preferências tipográficas do usuário.
+    - Ações diretas `Abrir no Cifrador` e `Desvincular` com diálogo de confirmação.
+  - `SongCard` atualizado para exibir badge `<N> versões` quando a música possui múltiplas versões cadastradas.
+  - Matriz contratual `bpm-contract-matrix.json` incluída em `mobile/test/features/repertoire/data/fixtures/`.
+  - Todos os 158 testes automatizados da suíte `test/features/repertoire` executados e aprovados (`PASS`).
+- **Próximo passo:** Executar Fase D (Smart Chords R17 — Paridade 1:1 com os 34 casos de referência de `smart_chord_reference_cases.ts`, acidentes Unicode e semântica de anotações `{{...}}`).
