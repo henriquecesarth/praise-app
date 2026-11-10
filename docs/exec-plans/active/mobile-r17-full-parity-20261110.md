@@ -76,4 +76,66 @@
     - Semântica de instruções musicais (`{{...}}` e `{{^...}}`: `entry`, `exit`, `dynamics`, `technique`, `note`) via `SmartChordParser.interpretAnnotation` e `SmartChordParser.extractMusicalInstructions`.
   - `MusicalProgressionLine` atualizado para estilizar tokens de anotação `{{...}}` sem alterar o texto plano subjacente.
   - Suíte `smart_chord_r17_reference_parity_test.dart` (35 testes) + suítes `domain` e `widgets` de Smart Chords executadas e aprovadas (`130/130 PASS`).
-- **Próximo passo:** Executar Fase E & F (Revisão Independente, `flutter analyze`, suíte completa de testes Flutter + Android Kotlin JVM, build do Debug APK Staging e Plano de Homologação Física).
+- **Fase E — Revisão Independente, Qualidade Estática, Testes Completos e APK Staging: `COMPLETED`**
+  - **Revisão independente (`feature-reviewer`):** `PASS` (0 CRITICAL, 0 HIGH, 0 MEDIUM). Os 2 itens LOW de teste apontados pelo revisor (`profile_account_deletion_test.dart` viewport scroll e `image_import_draft_test.dart` CRLF regex) foram corrigidos e revalidados (`11/11 PASS`).
+  - **`flutter analyze`:** `No issues found! (0 warnings, 0 errors)` -> **`PASS`**.
+  - **Suíte completa de testes Flutter (`flutter test`):** **`1194/1194 PASS`** (100% verde).
+  - **Testes unitários Kotlin JVM Android (`.\gradlew.bat :app:testProductionDebugUnitTest --tests "com.louvaio.louvaio_mobile.vocal.SampledPianoMixerTest"`):** **`7/7 PASS`** (`0.564s`, incluindo `testDescendingExerciseAndExtendedDurationHeadroom`).
+  - **Build Android Debug APK (Staging):** **`PASS`**
+    - Caminho: `C:/Users/henrique.hermogenes/Documents/p/praise/worktrees/mobile-r17-full-parity-20261110/mobile/build/app/outputs/flutter-apk/app-staging-debug.apk`
+    - Comando: `flutter build apk --debug --flavor staging --dart-define=APP_ENV=staging --dart-define=FIREBASE_ENV=staging --dart-define=FIREBASE_STAGING_PROJECT_ID=louvaio-staging --dart-define=API_BASE_URL=https://louvaio-r17-api-staging.vercel.app/api/v1 --target-platform android-arm64 --no-pub`
+    - Tamanho: `129915273` bytes (~123.9 MB)
+    - SHA-256: `BDF2A56238252651055A9065DCEB7F0BE9FA1F0149C1AFAB2735E5D78735B9F9`
+    - Versões de ferramentas: Flutter `3.47.5` (stable, rev `6a19cca564`), Dart `3.13.4`, OpenJDK `21.0.12.1` (Temurin LTS).
+- **Fase F — Preparação para Homologação Física (Amanhã): `COMPLETED`**
+  - Roteiro de 10 passos pronto na seção 3 abaixo para execução no tablet físico **Lenovo Tab P11 Plus (Android 12 / API 31)**.
+
+---
+
+## 3. Plano Objetivo de Homologação Física (Amanhã — Lenovo Tab P11 Plus, Android 12 / API 31)
+
+### 3.1. Pré-requisitos e Instalação do APK Staging
+1. Conectar o **Lenovo Tab P11 Plus** via USB com Depuração USB ativa:
+   ```powershell
+   adb devices -l
+   ```
+2. Instalar o APK de Debug Staging gerado nesta execução:
+   ```powershell
+   adb install -r "C:/Users/henrique.hermogenes/Documents/p/praise/worktrees/mobile-r17-full-parity-20261110/mobile/build/app/outputs/flutter-apk/app-staging-debug.apk"
+   ```
+   *(Nota: caso as chaves públicas `FIREBASE_STAGING_API_KEY` / `FIREBASE_STAGING_APP_ID` / `FIREBASE_STAGING_MESSAGING_SENDER_ID` / `FIREBASE_STAGING_STORAGE_BUCKET` sejam injetadas no momento da execução em dispositivo físico, rodar com `flutter run -d <DEVICE_ID> --flavor staging --dart-define=APP_ENV=staging --dart-define=FIREBASE_ENV=staging --dart-define=FIREBASE_STAGING_PROJECT_ID=louvaio-staging --dart-define=FIREBASE_STAGING_API_KEY=... --dart-define=API_BASE_URL=https://louvaio-r17-api-staging.vercel.app/api/v1`)*
+
+### 3.2. Roteiro de Homologação Física (10 Passos)
+1. **Login e Ambiente Staging:**
+   - Autenticar com conta de teste em `louvaio-staging`.
+   - Confirmar que o banner/ambiente aponta para `louvaio-r17-api-staging.vercel.app` sem tocar em dados de produção.
+2. **Acesso ao Módulo M21 (Exercícios Vocais):**
+   - Acessar **Exercícios Vocais** tanto pelo card da aba **Início (Dashboard)** quanto pelo atalho na aba **Perfil**.
+3. **Catálogo de 40 Exercícios e Biblioteca Recolhível (M21-UX1):**
+   - Verificar que a biblioteca inicia expandida exibindo **40 exercícios disponíveis**.
+   - Filtrar por `Ascendentes`, `Descendentes` (conferindo os 10 novos exercícios `vocal-31`..`vocal-40`), `Mistos` e pesquisar por texto.
+   - Tocar em um exercício descendente (ex.: `vocal-31 — Escala maior descendente`): confirmar que a biblioteca recolhe automaticamente exibindo o resumo compacto e o botão **Trocar exercício**.
+   - Reabrir com **Trocar exercício** e confirmar que o filtro, busca e posição de rolagem foram preservados.
+4. **Extensão Vocal por Notas Musicais e Persistência no Perfil:**
+   - Verificar seletores `Mais grave` e `Mais aguda` em notas musicais (`Dó3` a `Mi6`, sem números MIDI crus).
+   - Testar os presets `Voz Grave`, `Voz Média`, `Voz Aguda` e `Padrão`.
+   - Clicar em **Salvar minha extensão**, fechar/reabrir o app e confirmar que a extensão vocal permanece salva no perfil sem alterar a fonte/espaçamento do Smart Chords.
+5. **Áudio Acústico Amostrado, BPM, Metrônomo e Teclado Sincronizado:**
+   - Ativar **Mostrar teclado** (`Dó3`..`Mi6`).
+   - Testar presets rápidos de BPM (`60`, `72`, `80`, `96`, `120`) e alternar o switch de **Metrônomo**.
+   - Iniciar reprodução (**Iniciar**), confirmar timbre do piano acústico amostrado, ausência de cliques/distorção, sincronização visual da tecla ativa com o som real, **Pausar**, **Continuar** e **Parar**.
+   - Minimizar o app ou voltar de tela durante a reprodução e confirmar parada imediata do áudio.
+6. **Exercícios Personalizados (CRUD + Isolamento de Conta):**
+   - Tocar em **Novo exercício**, definir nome, descrição, direção melódica e sequência de notas/durações, testar **Ouvir prévia** e salvar.
+   - Verificar listagem na aba **Meus exercícios**, editar o exercício criado, duplicar um exercício do catálogo e excluir com confirmação.
+   - Fazer logout e login com segunda conta de teste: confirmar que exercícios personalizados e extensão vocal da primeira conta não aparecem na segunda.
+7. **Repertório R17 e Estante Musical D1 (`SongDetailView`):**
+   - Abrir uma música com múltiplas versões: confirmar badge `<N> versões` na listagem e troca de versão (`Original`, `Acústico`, etc.) atualizando tom, BPM, duração, observações e links.
+   - Em uma música com Cifra Inteligente vinculada, validar a **Estante Musical D1**: alternar entre **Cifra Inteligente** e **Apenas Letra**, transpor inline (`-1 Semitom`, `+1 Semitom`, `Resetar`), trocar entre múltiplas cifras vinculadas, testar **Abrir no Cifrador** e **Desvincular**.
+8. **Smart Chords R17 (Notação Avançada, Acidentes Unicode e Leitor/Folha):**
+   - Abrir/criar cifra contendo compassos `||: C | Am(G) | C(add9)/E :|| 2x`, acidentes `B♭maj7`, `F♯m` e instruções `{{^Entrada: baixo}}` / `{{Dinâmica: suave}}`.
+   - Transpor `+2` semitons, alternar fontes/espaçamento, testar **Modo Edição de Toque**, **Folha / PDF** com marcador e rolagem automática.
+9. **Importação Universal e Android Share Intent:**
+   - Testar importação de PDF, texto colado, URL/captura assistida e imagem com OCR, além do compartilhamento externo via menu **Compartilhar** do Android para o LouvAIO.
+10. **iOS (Quando Mac/Xcode e iPhone/iPad estiverem disponíveis):**
+    - Executar `flutter build ios` e validar o motor nativo `AVAudioEngine` em `ios/Runner/AppDelegate.swift` em dispositivo físico iOS.

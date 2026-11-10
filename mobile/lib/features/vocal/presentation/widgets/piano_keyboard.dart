@@ -56,7 +56,7 @@ class _PianoKeyboardState extends State<PianoKeyboard> {
     final keyX = _xOffsetForMidi(midi);
     final keyW = _isBlackKey(midi) ? _blackKeyWidth : _whiteKeyWidth;
     final currentOffset = _scrollController.offset;
-    final margin = 52.0;
+    const margin = 52.0;
 
     if (keyX >= currentOffset + margin &&
         keyX + keyW <= currentOffset + viewport - margin) {

@@ -233,6 +233,8 @@ void main() {
         200,
         scrollable: find.byType(Scrollable).first,
       );
+      await tester.ensureVisible(find.text('Excluir minha conta'));
+      await tester.pumpAndSettle();
 
       // Tap Excluir minha conta tile
       await tester.tap(find.text('Excluir minha conta'));
@@ -267,6 +269,8 @@ void main() {
         200,
         scrollable: find.byType(Scrollable).first,
       );
+      await tester.ensureVisible(find.text('Excluir minha conta'));
+      await tester.pumpAndSettle();
 
       await tester.tap(find.text('Excluir minha conta'));
       await tester.pumpAndSettle();

@@ -379,9 +379,11 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
       final err =
           ref.read(smartChordRepertoireLinkNotifierProvider).errorMessage ??
               'Não foi possível desvincular a cifra.';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(err)),
-      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(err)),
+        );
+      }
     }
   }
 

@@ -96,10 +96,14 @@ android {
     }
 }
 
-// Local WebView investigation has no Firebase configuration or initialization.
+// Local WebView investigation and dart-define-configured staging/qa flavors
+// allow building without a flavor-specific google-services.json when absent.
 tasks.configureEach {
     if ((name.startsWith("processCifraProbe") || name.startsWith("processVocal")) && name.endsWith("GoogleServices")) {
         enabled = false
+    }
+    if (name.startsWith("processStaging") && name.endsWith("GoogleServices")) {
+        enabled = file("src/staging/google-services.json").exists()
     }
 }
 
@@ -132,6 +136,8 @@ flutter {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20231013")
     // Match integration_test's runtime versions (AGP consistent resolution).
     androidTestImplementation("androidx.test:runner:1.3.0")
     androidTestImplementation("androidx.test:rules:1.2.0")
