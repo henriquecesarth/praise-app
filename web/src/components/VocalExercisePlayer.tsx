@@ -563,25 +563,19 @@ export function VocalExercisePlayer() {
       )}
 
       {/* Library of Exercises */}
-      <div className="vocal-card vocal-library-card">
-        <h2 className="vocal-card-title">
-          <Music2 size={18} className="vocal-card-icon" aria-hidden="true" />
-          Biblioteca de Exercícios Vocais
-        </h2>
-        <ExerciseLibrary
-          exercises={allExercises}
-          selectedExerciseId={exerciseId}
-          onSelectExercise={(ex) => {
-            stop();
-            setExerciseId(ex.id);
-          }}
-          onNewExercise={handleCreateExercise}
-          onEditExercise={handleEditExercise}
-          onDuplicateExercise={handleDuplicateExercise}
-          onDeleteExercise={handleDeleteExercise}
-          disabled={playing || loading}
-        />
-      </div>
+      <ExerciseLibrary
+        exercises={allExercises}
+        selectedExerciseId={exerciseId}
+        onSelectExercise={(ex) => {
+          stop();
+          setExerciseId(ex.id);
+        }}
+        onNewExercise={handleCreateExercise}
+        onEditExercise={handleEditExercise}
+        onDuplicateExercise={handleDuplicateExercise}
+        onDeleteExercise={handleDeleteExercise}
+        disabled={playing || loading}
+      />
 
       {/* Settings Grid */}
       <div className="vocal-settings-grid">

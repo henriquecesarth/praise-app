@@ -215,3 +215,133 @@ describe('M21-FINAL: Player Component & Interactive Features', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });
+
+describe('M21-UX1: Collapsible Exercise Library & UX', () => {
+  it('starts with exercise library expanded by default', () => {
+    render(
+      <MemoryRouter>
+        <VocalExercisePlayer />
+      </MemoryRouter>
+    );
+
+    const collapseBtn = screen.getByRole('button', { name: /recolher/i });
+    expect(collapseBtn).toBeInTheDocument();
+    expect(collapseBtn).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByPlaceholderText(/buscar exercício/i)).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /todos/i })).toBeInTheDocument();
+  });
+
+  it('automatically collapses library upon selecting an exercise and displays compact summary', async () => {
+    render(
+      <MemoryRouter>
+        <VocalExercisePlayer />
+      </MemoryRouter>
+    );
+
+    // Initial state: expanded
+    expect(screen.getByRole('button', { name: /recolher/i })).toBeInTheDocument();
+
+    // Find and click an exercise card (e.g. Arpejo maior)
+    const heading = screen.getByRole('heading', { name: /^arpejo maior$/i });
+    const exerciseCard = heading.closest('.vocal-exercise-card')!;
+    fireEvent.click(exerciseCard);
+
+    // After selection, library should auto-collapse
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /recolher/i })).not.toBeInTheDocument();
+      const changeBtn = screen.getByRole('button', { name: /trocar exercício/i });
+      expect(changeBtn).toBeInTheDocument();
+      expect(changeBtn).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    // Content container is hidden
+    const contentRegion = screen.getByLabelText('Catálogo de exercícios vocais');
+    expect(contentRegion).toHaveAttribute('hidden');
+
+    // Compact summary displays the selected exercise title, category and notes
+    expect(screen.getByText('Exercício selecionado:')).toBeInTheDocument();
+    expect(document.querySelector('.vocal-compact-title')?.textContent).toBe('Arpejo maior');
+    expect(document.querySelector('.vocal-badge-direction')?.textContent).toContain('Misto');
+    expect(document.querySelector('.vocal-compact-notes-count')?.textContent).toBe('7 notas');
+  });
+
+  it('allows manual collapse and manual expansion via toggle button', async () => {
+    render(
+      <MemoryRouter>
+        <VocalExercisePlayer />
+      </MemoryRouter>
+    );
+
+    // 1. Manual collapse
+    const collapseBtn = screen.getByRole('button', { name: /recolher/i });
+    fireEvent.click(collapseBtn);
+
+    expect(screen.queryByRole('button', { name: /recolher/i })).not.toBeInTheDocument();
+    const changeBtn = screen.getByRole('button', { name: /trocar exercício/i });
+    expect(changeBtn).toBeInTheDocument();
+    expect(changeBtn).toHaveAttribute('aria-expanded', 'false');
+
+    // 2. Manual expand
+    fireEvent.click(changeBtn);
+
+    expect(screen.getByRole('button', { name: /recolher/i })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/buscar exercício/i)).toBeInTheDocument();
+    expect(screen.getByLabelText('Catálogo de exercícios vocais')).not.toHaveAttribute('hidden');
+  });
+
+  it('preserves search query, category filter and selection across collapse and re-expansion', async () => {
+    render(
+      <MemoryRouter>
+        <VocalExercisePlayer />
+      </MemoryRouter>
+    );
+
+    // 1. Enter search term
+    const searchInput = screen.getByPlaceholderText(/buscar exercício/i) as HTMLInputElement;
+    fireEvent.change(searchInput, { target: { value: 'Arpejo' } });
+    expect(searchInput.value).toBe('Arpejo');
+
+    // 2. Click category tab "Ascendentes"
+    const tabAsc = screen.getByRole('tab', { name: /ascendentes/i });
+    fireEvent.click(tabAsc);
+    expect(tabAsc).toHaveAttribute('aria-selected', 'true');
+
+    // 3. Manually collapse
+    fireEvent.click(screen.getByRole('button', { name: /recolher/i }));
+    expect(screen.getByRole('button', { name: /trocar exercício/i })).toBeInTheDocument();
+
+    // 4. Re-expand
+    fireEvent.click(screen.getByRole('button', { name: /trocar exercício/i }));
+
+    // 5. Assert search term and tab are preserved
+    const reSearchInput = screen.getByPlaceholderText(/buscar exercício/i) as HTMLInputElement;
+    expect(reSearchInput.value).toBe('Arpejo');
+    const reTabAsc = screen.getByRole('tab', { name: /ascendentes/i });
+    expect(reTabAsc).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('supports keyboard navigation (Enter/Space) to toggle and select', async () => {
+    const { container } = render(
+      <MemoryRouter>
+        <VocalExercisePlayer />
+      </MemoryRouter>
+    );
+
+    // Toggle collapse with Enter
+    const collapseBtn = screen.getByRole('button', { name: /recolher/i });
+    fireEvent.keyDown(collapseBtn, { key: 'Enter', code: 'Enter' });
+
+    // Toggle expand with Space
+    const changeBtn = screen.getByRole('button', { name: /trocar exercício/i });
+    fireEvent.keyDown(changeBtn, { key: ' ', code: 'Space' });
+
+    // Select card with Enter key
+    const card = container.querySelectorAll('.vocal-exercise-card')[1] as HTMLElement;
+    fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /trocar exercício/i })).toBeInTheDocument();
+      expect(document.querySelector('.vocal-compact-title')).toBeInTheDocument();
+    });
+  });
+});
