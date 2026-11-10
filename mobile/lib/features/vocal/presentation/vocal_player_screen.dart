@@ -1,500 +1,988 @@
 import 'dart:async';
-
-import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
-
-import '../domain/vocal_exercise.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../app/providers.dart';
+import '../../../core/errors/app_failure.dart';
+import '../../auth/presentation/controllers/auth_controller.dart';
+import '../data/vocal_exercise_repository.dart';
 import '../domain/vocal_catalog.dart';
+import '../domain/vocal_exercise.dart';
+import 'controllers/vocal_exercise_controller.dart';
+import 'widgets/custom_exercise_editor_sheet.dart';
+import 'widgets/piano_keyboard.dart';
+import 'widgets/vocal_exercise_library.dart';
 
-/// Offline exercise player with tempo, metronome, and tessitura transposition.
-class VocalPlayerScreen extends StatefulWidget {
+class VocalPlayerScreen extends StatelessWidget {
   const VocalPlayerScreen({super.key});
+
   @override
-  State<VocalPlayerScreen> createState() => _VocalPlayerScreenState();
+  Widget build(BuildContext context) {
+    final hasProviderScope =
+        context.findAncestorWidgetOfExactType<UncontrolledProviderScope>() !=
+        null;
+    if (hasProviderScope) {
+      return const _VocalPlayerScreenContent();
+    }
+    return const ProviderScope(child: _VocalPlayerScreenContent());
+  }
 }
 
-class _VocalPlayerScreenState extends State<VocalPlayerScreen>
+class _VocalPlayerScreenContent extends ConsumerStatefulWidget {
+  const _VocalPlayerScreenContent();
+
+  @override
+  ConsumerState<_VocalPlayerScreenContent> createState() =>
+      _VocalPlayerScreenContentState();
+}
+
+class _VocalPlayerScreenContentState
+    extends ConsumerState<_VocalPlayerScreenContent>
     with WidgetsBindingObserver {
-  VocalExercise exercise = vocalExercises.first;
-  int bpm = 80, beat = 0;
-  double midiLow = 48, midiHigh = 84;
-  bool descending = false;
-  bool playing = false, metronome = true;
-  bool audioReady = false;
-  bool paused = false;
-  int currentNoteIndex = 0;
-  List<int> _activeNotes = const [];
-  List<double> _activeDurations = const [];
-  Stopwatch? _clock;
-  double _totalBeats = 0;
-  Timer? timer;
-  Timer? completionTimer;
-  Timer? positionTimer;
-  static const audio = MethodChannel('com.louvaio.mobile/vocal_audio');
-  int _generation = 0;
+  static const _audio = MethodChannel('com.louvaio.mobile/vocal_audio');
+  static const List<int> _bpmPresets = [60, 72, 80, 96, 120];
+
+  String _selectedExerciseId = vocalExercises.first.id;
+  int _bpm = 80;
+  bool _metronome = true;
+  bool _ascending = true;
+  int _midiLow = defaultVocalMinMidi;
+  int _midiHigh = defaultVocalMaxMidi;
+  int _stepTranspose = 0;
+  int? _activeNote;
+  bool _playing = false;
+  bool _paused = false;
+  bool _ready = false;
+  bool _showKeyboard = false;
+  int _runId = 0;
+  Timer? _positionTimer;
+
+  List<int> _currentProgNotes = const [];
+  List<double> _currentProgDurations = const [];
+  List<int> _currentProgSteps = const [];
+
+  String? _hydratedUserId;
+  int? _lastAppliedUserMinMidi;
+  int? _lastAppliedUserMaxMidi;
+  bool _isSavingRange = false;
+  String? _rangeFeedbackMessage;
+  bool _rangeFeedbackIsError = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _syncWithAuthState(ref.read(authNotifierProvider));
+    });
+  }
+
+  void _syncWithAuthState(AuthState authState) {
+    final user = authState.user;
+    final userId = user?.id;
+
+    if (userId != _hydratedUserId) {
+      _hydratedUserId = userId;
+      _lastAppliedUserMinMidi = user?.vocalMinMidi;
+      _lastAppliedUserMaxMidi = user?.vocalMaxMidi;
+      _rangeFeedbackMessage = null;
+
+      if (userId != null && userId.isNotEmpty) {
+        if (user?.vocalMinMidi != null &&
+            user?.vocalMaxMidi != null &&
+            user!.vocalMinMidi! < user.vocalMaxMidi!) {
+          setState(() {
+            _midiLow = user.vocalMinMidi!;
+            _midiHigh = user.vocalMaxMidi!;
+          });
+        } else {
+          setState(() {
+            _midiLow = defaultVocalMinMidi;
+            _midiHigh = defaultVocalMaxMidi;
+          });
+        }
+        ref
+            .read(customVocalExercisesNotifierProvider.notifier)
+            .loadForUser(userId);
+      } else {
+        // Logged out or unauthenticated: clear custom selection and reset range
+        ref.read(customVocalExercisesNotifierProvider.notifier).reset();
+        setState(() {
+          _midiLow = defaultVocalMinMidi;
+          _midiHigh = defaultVocalMaxMidi;
+          if (!vocalExercises.any((e) => e.id == _selectedExerciseId)) {
+            _selectedExerciseId = vocalExercises.first.id;
+          }
+        });
+      }
+      return;
+    }
+
+    if (user != null &&
+        user.vocalMinMidi != null &&
+        user.vocalMaxMidi != null &&
+        (user.vocalMinMidi != _lastAppliedUserMinMidi ||
+            user.vocalMaxMidi != _lastAppliedUserMaxMidi)) {
+      _lastAppliedUserMinMidi = user.vocalMinMidi;
+      _lastAppliedUserMaxMidi = user.vocalMaxMidi;
+      if (user.vocalMinMidi! < user.vocalMaxMidi!) {
+        setState(() {
+          _midiLow = user.vocalMinMidi!;
+          _midiHigh = user.vocalMaxMidi!;
+        });
+      }
+    }
+  }
+
+  List<VocalExercise> _allAvailableExercises(
+    CustomVocalExercisesState customState,
+  ) {
+    return [...vocalExercises, ...customState.exercises];
+  }
+
+  VocalExercise _resolveSelectedExercise(
+    CustomVocalExercisesState customState,
+  ) {
+    final all = _allAvailableExercises(customState);
+    for (final ex in all) {
+      if (ex.id == _selectedExerciseId) return ex;
+    }
+    return vocalExercises.first;
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed && playing) stop();
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _stop(notifyUi: mounted);
+    }
   }
 
-  List<int> get displayNotes {
-    final (minimum, maximum) = exercise.transposeBounds(
-      midiLow: midiLow.round(),
-      midiHigh: midiHigh.round(),
+  Future<void> _play(VocalExercise exercise) async {
+    final runId = ++_runId;
+    _positionTimer?.cancel();
+    await _invoke('stop');
+    if (!mounted || runId != _runId) return;
+
+    final prog = exercise.progression(
+      midiLow: _midiLow,
+      midiHigh: _midiHigh,
+      ascending: _ascending,
     );
-    if (minimum > maximum) return const [];
-    return exercise.notesAt(
-      0.clamp(minimum, maximum),
-      midiLow: midiLow.round(),
-      midiHigh: midiHigh.round(),
-    );
+    _currentProgNotes = prog.notes;
+    _currentProgDurations = prog.durations;
+    _currentProgSteps = prog.steps;
+
+    setState(() {
+      _playing = true;
+      _paused = false;
+      _ready = false;
+      _stepTranspose = prog.steps.first;
+      _activeNote = null;
+    });
+
+    try {
+      await _invoke('playSequence', {
+        'sessionId': runId,
+        'notes': prog.notes,
+        'durations': prog.durations,
+        'bpm': _bpm,
+        'metronome': _metronome,
+      });
+    } catch (_) {
+      if (mounted && runId == _runId) {
+        setState(() {
+          _playing = false;
+          _paused = false;
+          _ready = false;
+          _activeNote = null;
+        });
+      }
+      return;
+    }
+    if (!mounted || runId != _runId || !_playing) return;
+    setState(() {
+      _ready = true;
+      if (!_paused && _currentProgNotes.isNotEmpty) {
+        _activeNote = _currentProgNotes.first;
+      }
+    });
+    _startPositionPolling(runId);
   }
 
-  bool get canPlay {
-    final (minimum, maximum) = exercise.transposeBounds(
-      midiLow: midiLow.round(),
-      midiHigh: midiHigh.round(),
-    );
-    return minimum <= maximum;
+  Future<void> _previewCustomPattern(
+    List<int> notes,
+    List<double> durations,
+  ) async {
+    final runId = ++_runId;
+    _positionTimer?.cancel();
+    await _invoke('stop');
+    await _invoke('playSequence', {
+      'sessionId': runId,
+      'notes': notes,
+      'durations': durations,
+      'bpm': _bpm,
+      'metronome': false,
+    });
   }
 
-  void start() {
-    if (!canPlay) return;
-    timer?.cancel();
-    completionTimer?.cancel();
-    final generation = ++_generation;
-    final selected = exercise;
-    final selectedBpm = bpm;
-    final timeline = selected.progression(
-      ascending: !descending,
-      midiLow: midiLow.round(),
-      midiHigh: midiHigh.round(),
-    );
-    final totalBeats = timeline.durations.fold<double>(0, (a, b) => a + b);
-    _activeNotes = timeline.notes;
-    _activeDurations = timeline.durations;
-    _totalBeats = totalBeats;
-    final duration = Duration(
-      milliseconds: (totalBeats * 60000 / selectedBpm).round(),
-    );
-    if (duration.inSeconds > 900) {
+  void _startPositionPolling(int runId) {
+    _positionTimer?.cancel();
+    _positionTimer = Timer.periodic(const Duration(milliseconds: 50), (
+      timer,
+    ) async {
+      if (!mounted || runId != _runId || !_playing) {
+        timer.cancel();
+        return;
+      }
+      if (_paused) return;
+
+      final pos = await _invokeMap('position', {'sessionId': runId});
+      if (!mounted || runId != _runId || !_playing || pos == null) return;
+
+      final state = pos['state'] as String?;
+      final playedFrames = (pos['playedFrames'] as num?)?.toInt() ?? 0;
+      final sampleRate = (pos['sampleRate'] as num?)?.toInt() ?? 44100;
+
+      if (state == 'completed' || state == 'stopped' || state == 'error') {
+        timer.cancel();
+        setState(() {
+          _playing = false;
+          _paused = false;
+          _ready = false;
+          _activeNote = null;
+          _stepTranspose = 0;
+        });
+        return;
+      }
+
+      if (sampleRate > 0) {
+        final seconds = playedFrames / sampleRate;
+        _updateActiveFromSeconds(seconds);
+      }
+    });
+  }
+
+  void _updateActiveFromSeconds(double seconds) {
+    if (_currentProgDurations.isEmpty) return;
+    final beatSeconds = 60.0 / _bpm;
+    var elapsed = 0.0;
+    for (var i = 0; i < _currentProgDurations.length; i++) {
+      final stepDur = _currentProgDurations[i] * beatSeconds;
+      if (seconds < elapsed + stepDur) {
+        final newStep = _currentProgSteps[i];
+        final newNote = _currentProgNotes[i];
+        if (newStep != _stepTranspose || newNote != _activeNote) {
+          setState(() {
+            _stepTranspose = newStep;
+            _activeNote = newNote;
+          });
+        }
+        return;
+      }
+      elapsed += stepDur;
+    }
+  }
+
+  Future<void> _pause() async {
+    if (!_playing || !_ready || _paused) return;
+    setState(() => _paused = true);
+    await _invoke('pause', {'sessionId': _runId});
+  }
+
+  Future<void> _resume() async {
+    if (!_playing || !_ready || !_paused) return;
+    setState(() => _paused = false);
+    await _invoke('resume', {'sessionId': _runId});
+  }
+
+  Future<void> _stop({bool notifyUi = true}) async {
+    final prevRunId = _runId;
+    _runId++;
+    _positionTimer?.cancel();
+    _positionTimer = null;
+    if (notifyUi && mounted) {
       setState(() {
-        audioError = true;
-        playing = false;
+        _playing = false;
+        _paused = false;
+        _ready = false;
+        _activeNote = null;
+        _stepTranspose = 0;
+      });
+    }
+    await _invoke('stop', {'sessionId': prevRunId});
+  }
+
+  Future<void> _invoke(String method, [Map<String, Object?>? args]) async {
+    try {
+      await _audio.invokeMethod<void>(method, args);
+    } on MissingPluginException {
+      // Widget tests without native audio plugin still verify UI state.
+    }
+  }
+
+  Future<Map<Object?, Object?>?> _invokeMap(
+    String method, [
+    Map<String, Object?>? args,
+  ]) async {
+    try {
+      return await _audio.invokeMethod<Map<Object?, Object?>>(method, args);
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
+  Future<void> _saveVocalRange() async {
+    if (_midiLow >= _midiHigh) {
+      setState(() {
+        _rangeFeedbackMessage =
+            'A nota mais grave deve ser menor que a nota mais aguda.';
+        _rangeFeedbackIsError = true;
       });
       return;
     }
-    setState(() => audioError = false);
     setState(() {
-      playing = true;
-      audioReady = false;
-      paused = false;
-      beat = 0;
+      _isSavingRange = true;
+      _rangeFeedbackMessage = null;
+      _rangeFeedbackIsError = false;
     });
-    audio
-        .invokeMethod<dynamic>('playSequence', {
-          'sessionId': generation,
-          'notes': timeline.notes,
-          'durations': timeline.durations,
-          'bpm': selectedBpm,
-          'metronome': metronome,
-        })
-        .then((_) {
-          if (!mounted || generation != _generation) return;
-          setState(() {
-            audioReady = true;
-            beat = 0;
-            currentNoteIndex = 0;
-          });
-          final clock = Stopwatch()..start();
-          _clock = clock;
+    try {
+      final confirmed = await ref
+          .read(authNotifierProvider.notifier)
+          .updateVocalRangePreference(minMidi: _midiLow, maxMidi: _midiHigh);
+      if (!mounted) return;
+      setState(() {
+        _isSavingRange = false;
+        _midiLow = confirmed.$1;
+        _midiHigh = confirmed.$2;
+        _lastAppliedUserMinMidi = confirmed.$1;
+        _lastAppliedUserMaxMidi = confirmed.$2;
+        _rangeFeedbackMessage = 'Extensão salva no seu perfil!';
+        _rangeFeedbackIsError = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isSavingRange = false;
+        _rangeFeedbackMessage = e is AppFailure
+            ? e.message
+            : 'Não foi possível salvar sua extensão vocal.';
+        _rangeFeedbackIsError = true;
+      });
+    }
+  }
 
-          positionTimer?.cancel();
-          positionTimer = Timer.periodic(
-            const Duration(milliseconds: 100),
-            (t) async {
-              if (!mounted || generation != _generation || !playing || paused) return;
-              try {
-                final pos = await audio.invokeMapMethod<String, dynamic>(
-                  'position',
-                  {'sessionId': generation},
-                );
-                if (!mounted || generation != _generation || pos == null) return;
-                final state = pos['state'] as String?;
-                if (state == 'completed') {
-                  t.cancel();
-                  stop();
-                  return;
-                }
-                if (state == 'error') {
-                  t.cancel();
-                  setState(() {
-                    audioError = true;
-                    playing = false;
-                    audioReady = false;
-                    paused = false;
-                  });
-                  return;
-                }
-                final playedFrames = (pos['playedFrames'] as num?)?.toInt();
-                final sampleRate = (pos['sampleRate'] as num?)?.toInt() ?? 44100;
-                if (playedFrames != null && playedFrames > 0) {
-                  final elapsedSeconds = playedFrames / sampleRate.toDouble();
-                  final elapsedBeats = elapsedSeconds * selectedBpm / 60.0;
-                  var noteAtBeat = 0;
-                  var noteBoundary = 0.0;
-                  for (var i = 0; i < timeline.durations.length; i++) {
-                    noteAtBeat = i;
-                    noteBoundary += timeline.durations[i];
-                    if (elapsedBeats < noteBoundary) break;
-                  }
-                  setState(() {
-                    beat = elapsedBeats.floor().clamp(0, totalBeats.ceil());
-                    currentNoteIndex = noteAtBeat;
-                  });
-                }
-              } catch (_) {}
-            },
+  Future<void> _openCustomModal(
+    CustomExerciseEditorMode mode, [
+    VocalExercise? source,
+  ]) async {
+    if (_playing || _ready || _paused || _positionTimer != null) {
+      await _stop();
+    }
+    if (!mounted) return;
+    await CustomExerciseEditorSheet.show(
+      context,
+      mode: mode,
+      initialExercise: source,
+      onPreviewPattern: _previewCustomPattern,
+      onStopPreview: () => _stop(notifyUi: false),
+      onSave: (draft) async {
+        final notifier = ref.read(
+          customVocalExercisesNotifierProvider.notifier,
+        );
+        if (mode == CustomExerciseEditorMode.edit && source != null) {
+          final updated = await notifier.updateExercise(
+            source.id,
+            CustomVocalExercisePatch(
+              title: draft.title,
+              description: draft.description,
+              notes: draft.notes,
+              noteDurations: draft.noteDurations,
+              minTranspose: draft.minTranspose,
+              maxTranspose: draft.maxTranspose,
+              category: draft.category,
+            ),
           );
-
-          completionTimer = Timer(duration, () {
-            if (!mounted || generation != _generation) return;
-            timer?.cancel();
-            setState(() {
-              playing = false;
-              audioReady = false;
-              paused = false;
-              beat = totalBeats.ceil();
-              currentNoteIndex = timeline.notes.length - 1;
-            });
-          });
-          void tick() {
-            if (!mounted || generation != _generation) return;
-            final currentBeat =
-                (clock.elapsedMilliseconds * selectedBpm / 60000).floor();
-            final elapsedBeats =
-                clock.elapsedMilliseconds * selectedBpm / 60000;
-            var noteAtBeat = 0;
-            var noteBoundary = 0.0;
-            for (var i = 0; i < timeline.durations.length; i++) {
-              noteAtBeat = i;
-              noteBoundary += timeline.durations[i];
-              if (elapsedBeats < noteBoundary) break;
-            }
-            setState(() {
-              beat = currentBeat.clamp(0, totalBeats.ceil());
-              currentNoteIndex = noteAtBeat;
-            });
-            if (beat >= totalBeats.ceil()) return;
-            final nextBoundary = ((beat + 1) * 60000 / selectedBpm).round();
-            final delay = nextBoundary - clock.elapsedMilliseconds;
-            timer = Timer(Duration(milliseconds: delay > 0 ? delay : 1), tick);
+          if (mounted) {
+            setState(() => _selectedExerciseId = updated.id);
           }
-
-          tick();
-        })
-        .catchError((Object _) {
-          if (mounted && generation == _generation) {
-            timer?.cancel();
-            completionTimer?.cancel();
-            setState(() {
-              audioError = true;
-              playing = false;
-              audioReady = false;
-              paused = false;
-            });
+        } else {
+          final created = await notifier.createExercise(draft);
+          if (mounted) {
+            setState(() => _selectedExerciseId = created.id);
           }
-        });
-  }
-
-  bool audioError = false;
-
-  Future<void> pause() async {
-    if (!playing || !audioReady || paused) return;
-    final generation = _generation;
-    try {
-      await audio.invokeMethod<void>('pause', {'sessionId': generation});
-    } catch (_) {
-      if (mounted && generation == _generation) {
-        setState(() => audioError = true);
-      }
-      return;
-    }
-    if (!mounted || generation != _generation) return;
-    timer?.cancel();
-    completionTimer?.cancel();
-    _clock?.stop();
-    if (mounted) setState(() => paused = true);
-  }
-
-  Future<void> resume() async {
-    if (!playing || !paused) return;
-    final generation = _generation;
-    final clock = _clock;
-    if (clock == null) return;
-    final elapsed = clock.elapsed;
-    final remainingMs =
-        (_totalBeats * 60000 / bpm).round() - elapsed.inMilliseconds;
-    try {
-      await audio.invokeMethod<void>('resume', {'sessionId': generation});
-    } catch (_) {
-      if (mounted && generation == _generation) {
-        setState(() => audioError = true);
-      }
-      return;
-    }
-    if (!mounted || generation != _generation) return;
-    clock.start();
-    setState(() => paused = false);
-    completionTimer = Timer(
-      Duration(milliseconds: remainingMs.clamp(0, 900000)),
-      () {
-        if (!mounted) return;
-        timer?.cancel();
-        setState(() {
-          playing = false;
-          paused = false;
-          beat = _totalBeats.ceil();
-        });
+        }
       },
     );
-    _scheduleProgressTick();
   }
 
-  void _scheduleProgressTick() {
-    final clock = _clock;
-    if (clock == null || !playing || paused) return;
-    final elapsedBeats = clock.elapsedMilliseconds * bpm / 60000;
-    var boundary = 0.0;
-    var index = 0;
-    for (var i = 0; i < _activeDurations.length; i++) {
-      index = i;
-      boundary += _activeDurations[i];
-      if (elapsedBeats < boundary) break;
+  Future<void> _confirmDeleteCustomExercise(VocalExercise exercise) async {
+    if (!exercise.isCustom) return;
+    if (_playing || _ready || _paused || _positionTimer != null) {
+      await _stop();
     }
-    setState(() {
-      beat = elapsedBeats.floor().clamp(0, _totalBeats.ceil());
-      currentNoteIndex = index;
-    });
-    if (beat >= _totalBeats.ceil()) return;
-    final nextBoundary = ((beat + 1) * 60000 / bpm).round();
-    final delay = nextBoundary - clock.elapsedMilliseconds;
-    timer = Timer(
-      Duration(milliseconds: delay > 0 ? delay : 1),
-      _scheduleProgressTick,
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Excluir exercício personalizado'),
+        content: Text(
+          'Deseja excluir "${exercise.title}"? Esta ação não pode ser desfeita.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
     );
-  }
-
-  void stop() {
-    final generation = ++_generation;
-    timer?.cancel();
-    completionTimer?.cancel();
-    positionTimer?.cancel();
-    _clock?.stop();
-    _clock = null;
-    audio
-        .invokeMethod<void>('stop', {'sessionId': generation})
-        .catchError((Object _) {});
-    if (mounted) {
-      setState(() {
-        playing = false;
-        audioReady = false;
-        paused = false;
-        beat = 0;
-        currentNoteIndex = 0;
-      });
+    if (confirmed != true || !mounted) return;
+    try {
+      await ref
+          .read(customVocalExercisesNotifierProvider.notifier)
+          .deleteExercise(exercise.id);
+      if (mounted && _selectedExerciseId == exercise.id) {
+        setState(() => _selectedExerciseId = vocalExercises.first.id);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              e is AppFailure
+                  ? e.message
+                  : 'Não foi possível excluir o exercício.',
+            ),
+          ),
+        );
+      }
     }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    final generation = ++_generation;
-    timer?.cancel();
-    completionTimer?.cancel();
-    positionTimer?.cancel();
-    audio
-        .invokeMethod<void>('stop', {'sessionId': generation})
-        .catchError((Object _) {});
+    _stop(notifyUi: false);
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Aquecimento vocal')),
-    body: ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        DropdownButtonFormField<VocalExercise>(
-          initialValue: exercise,
-          decoration: const InputDecoration(labelText: 'Exercício'),
-          items: vocalExercises
-              .map((e) => DropdownMenuItem(value: e, child: Text(e.title)))
-              .toList(),
-          onChanged: (e) {
-            if (e != null) {
-              if (playing) stop();
-              setState(() {
-                exercise = e;
-                beat = 0;
-              });
-            }
-          },
-        ),
-        const SizedBox(height: 12),
-        Text(exercise.description),
-        DropdownButtonFormField<bool>(
-          initialValue: descending,
-          decoration: const InputDecoration(labelText: 'Direção da progressão'),
-          items: const [
-            DropdownMenuItem(
-              value: false,
-              child: Text('Subir semitom a semitom'),
+  Widget build(BuildContext context) {
+    ref.listen<AuthState>(authNotifierProvider, (_, next) {
+      _syncWithAuthState(next);
+    });
+
+    final theme = Theme.of(context);
+    final authState = ref.watch(authNotifierProvider);
+    final customState = ref.watch(customVocalExercisesNotifierProvider);
+    final exercise = _resolveSelectedExercise(customState);
+    final (minT, maxT) = exercise.transposeBounds(
+      midiLow: _midiLow,
+      midiHigh: _midiHigh,
+    );
+    final fitsSelectedRange = exercise.fitsRange(
+      midiLow: _midiLow,
+      midiHigh: _midiHigh,
+    );
+    final activeNotes = exercise.notesAt(_stepTranspose);
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Aquecimento vocal')),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+          // 1. Collapsible Visual Exercise Library (M21-UX1)
+          VocalExerciseLibrary(
+            catalogExercises: vocalExercises,
+            customExercises: customState.exercises,
+            selectedExerciseId: exercise.id,
+            isAuthenticated: authState.isAuthenticated,
+            isLoadingCustom: customState.isLoading,
+            customErrorMessage: customState.failure?.message,
+            onRetryLoadCustom: authState.user?.id != null
+                ? () => ref
+                      .read(customVocalExercisesNotifierProvider.notifier)
+                      .loadForUser(authState.user!.id, force: true)
+                : null,
+            onSelectExercise: (selected) {
+              _stop();
+              setState(() => _selectedExerciseId = selected.id);
+            },
+            onCreateCustom: () =>
+                _openCustomModal(CustomExerciseEditorMode.create),
+            onEditCustom: (target) =>
+                _openCustomModal(CustomExerciseEditorMode.edit, target),
+            onDuplicateExercise: (target) =>
+                _openCustomModal(CustomExerciseEditorMode.duplicate, target),
+            onDeleteCustom: _confirmDeleteCustomExercise,
+          ),
+          const SizedBox(height: 12),
+
+          // 2. Monitor & Current Step Card
+          Card(
+            key: const ValueKey('vocal_monitor_card'),
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(
+                color: theme.dividerColor.withValues(alpha: 0.25),
+              ),
             ),
-            DropdownMenuItem(
-              value: true,
-              child: Text('Descer semitom a semitom'),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          exercise.title,
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      OutlinedButton.icon(
+                        key: const ValueKey('vocal_toggle_keyboard_button'),
+                        onPressed: () {
+                          setState(() => _showKeyboard = !_showKeyboard);
+                        },
+                        icon: Icon(
+                          _showKeyboard ? Icons.piano_off : Icons.piano,
+                          size: 16,
+                        ),
+                        label: Text(
+                          _showKeyboard
+                              ? 'Ocultar teclado'
+                              : 'Mostrar teclado',
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (exercise.description.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      exercise.description,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 6,
+                    children: [
+                      Text(
+                        'Tom atual: ${midiLabel(60 + _stepTranspose)} (${_stepTranspose >= 0 ? '+$_stepTranspose' : '$_stepTranspose'} st)',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Text(
+                        'Nota atual: ${_activeNote == null
+                            ? '-'
+                            : _activeNote! < 0
+                            ? 'Pausa'
+                            : midiLabel(_activeNote!)}',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (var i = 0; i < activeNotes.length; i++)
+                        Chip(
+                          backgroundColor: _activeNote == activeNotes[i]
+                              ? theme.colorScheme.primaryContainer
+                              : null,
+                          label: Text(
+                            '${midiLabel(activeNotes[i])} (${exercise.noteDurations[i]}t)',
+                            style: TextStyle(
+                              fontWeight: _activeNote == activeNotes[i]
+                                  ? FontWeight.w800
+                                  : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          if (_showKeyboard) ...[
+            const SizedBox(height: 12),
+            PianoKeyboard(
+              activeNote: _activeNote != null && _activeNote! >= 0
+                  ? _activeNote
+                  : null,
+              minMidi: supportedPianoMinMidi,
+              maxMidi: supportedPianoMaxMidi,
+              initialFocusMidi: activeNotes.isNotEmpty ? activeNotes.first : 60,
             ),
           ],
-          onChanged: (value) {
-            if (value != null) {
-              if (playing) stop();
-              setState(() => descending = value);
-            }
-          },
-        ),
-        Text('Tessitura MIDI: ${midiLow.round()}–${midiHigh.round()}'),
-        RangeSlider(
-          min: 48,
-          max: 84,
-          divisions: 36,
-          values: RangeValues(midiLow, midiHigh),
-          labels: RangeLabels('${midiLow.round()}', '${midiHigh.round()}'),
-          onChanged: (range) {
-            final low = range.start;
-            final high = range.end;
-            if (playing) stop();
-            setState(() {
-              midiLow = low;
-              midiHigh = high;
-            });
-          },
-        ),
-        const SizedBox(height: 24),
-        Text('Andamento: $bpm BPM'),
-        Slider(
-          min: 40,
-          max: 180,
-          divisions: 140,
-          value: bpm.toDouble(),
-          onChanged: (v) {
-            if (playing) stop();
-            setState(() => bpm = v.round());
-          },
-        ),
-        SwitchListTile(
-          title: const Text('Metrônomo'),
-          value: metronome,
-          onChanged: (v) {
-            if (playing) stop();
-            setState(() => metronome = v);
-          },
-        ),
-        if (audioError)
-          const Text(
-            'Falha ao iniciar áudio neste dispositivo.',
-            style: TextStyle(color: Colors.red),
-          ),
-        if (!canPlay)
-          const Text(
-            'A tessitura escolhida nÃ£o comporta este exercÃ­cio.',
-            style: TextStyle(color: Colors.red),
-          ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: displayNotes.asMap().entries.map((entry) {
-            final midi = entry.value;
-            final pc = midi % 12;
-            final octave = midi ~/ 12 - 1;
-            const names = [
-              'Dó',
-              'Dó♯',
-              'Ré',
-              'Ré♯',
-              'Mi',
-              'Fá',
-              'Fá♯',
-              'Sol',
-              'Sol♯',
-              'Lá',
-              'Lá♯',
-              'Si',
-            ];
-            return Chip(
-              label: Text(
-                '${names[pc]}$octave · ${exercise.noteDurations[entry.key]}t',
+
+          const SizedBox(height: 12),
+
+          // 3. Tempo (BPM) & Metronome Card
+          Card(
+            key: const ValueKey('vocal_tempo_card'),
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(
+                color: theme.dividerColor.withValues(alpha: 0.25),
               ),
-            );
-          }).toList(),
-        ),
-        const SizedBox(height: 24),
-        if (playing && currentNoteIndex < _activeNotes.length)
-          Text('Nota atual: ${_noteName(_activeNotes[currentNoteIndex])}'),
-        if (playing)
-          Row(
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Andamento: $_bpm BPM',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final preset in _bpmPresets)
+                        ChoiceChip(
+                          key: ValueKey('vocal_bpm_preset_$preset'),
+                          label: Text('$preset BPM'),
+                          selected: _bpm == preset,
+                          onSelected: _playing
+                              ? null
+                              : (_) => setState(() => _bpm = preset),
+                        ),
+                    ],
+                  ),
+                  Slider(
+                    min: 40,
+                    max: 160,
+                    divisions: 24,
+                    value: _bpm.toDouble(),
+                    label: '$_bpm BPM',
+                    onChanged: _playing
+                        ? null
+                        : (value) => setState(() => _bpm = value.round()),
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Metrônomo'),
+                    value: _metronome,
+                    onChanged: _playing
+                        ? null
+                        : (value) => setState(() => _metronome = value),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // 4. Vocal Range (Musical Notes) & Persistence Card
+          Card(
+            key: const ValueKey('vocal_range_card'),
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(
+                color: theme.dividerColor.withValues(alpha: 0.25),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Extensão vocal: ${midiLabel(_midiLow)} a ${midiLabel(_midiHigh)}',
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            Text(
+                              'Selecione a nota mais grave e a nota mais aguda confortável.',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (authState.isAuthenticated)
+                        FilledButton.tonalIcon(
+                          key: const ValueKey('vocal_save_range_button'),
+                          onPressed: _isSavingRange ? null : _saveVocalRange,
+                          icon: const Icon(Icons.bookmark_added_outlined, size: 16),
+                          label: Text(
+                            _isSavingRange
+                                ? 'Salvando...'
+                                : 'Salvar minha extensão',
+                          ),
+                          style: FilledButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ),
+                    ],
+                  ),
+                  if (_rangeFeedbackMessage != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _rangeFeedbackMessage!,
+                      key: const ValueKey('vocal_range_feedback_text'),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: _rangeFeedbackIsError
+                            ? theme.colorScheme.error
+                            : theme.colorScheme.primary,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final preset in vocalRangePresets)
+                        ChoiceChip(
+                          key: ValueKey('vocal_range_preset_${preset.id}'),
+                          label: Text('${preset.label} (${preset.subtitle})'),
+                          selected:
+                              _midiLow == preset.minMidi &&
+                              _midiHigh == preset.maxMidi,
+                          onSelected: _playing
+                              ? null
+                              : (_) {
+                                  setState(() {
+                                    _midiLow = preset.minMidi;
+                                    _midiHigh = preset.maxMidi;
+                                    _rangeFeedbackMessage = null;
+                                  });
+                                },
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          key: const ValueKey('vocal_min_note_dropdown'),
+                          initialValue: _midiLow,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Mais grave',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          items: [
+                            for (final note in selectableVocalNotes)
+                              if (note.midi < supportedPianoMaxMidi)
+                                DropdownMenuItem(
+                                  value: note.midi,
+                                  child: Text(note.label),
+                                ),
+                          ],
+                          onChanged: _playing
+                              ? null
+                              : (val) {
+                                  if (val == null) return;
+                                  setState(() {
+                                    _midiLow = val;
+                                    if (_midiHigh <= val) {
+                                      _midiHigh = (val + 1).clamp(
+                                        supportedPianoMinMidi + 1,
+                                        supportedPianoMaxMidi,
+                                      );
+                                    }
+                                    _rangeFeedbackMessage = null;
+                                  });
+                                },
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          key: const ValueKey('vocal_max_note_dropdown'),
+                          initialValue: _midiHigh,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Mais aguda',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          items: [
+                            for (final note in selectableVocalNotes)
+                              if (note.midi > supportedPianoMinMidi)
+                                DropdownMenuItem(
+                                  value: note.midi,
+                                  child: Text(note.label),
+                                ),
+                          ],
+                          onChanged: _playing
+                              ? null
+                              : (val) {
+                                  if (val == null) return;
+                                  setState(() {
+                                    _midiHigh = val;
+                                    if (_midiLow >= val) {
+                                      _midiLow = (val - 1).clamp(
+                                        supportedPianoMinMidi,
+                                        supportedPianoMaxMidi - 1,
+                                      );
+                                    }
+                                    _rangeFeedbackMessage = null;
+                                  });
+                                },
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (!fitsSelectedRange) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      key: const ValueKey('vocal_range_warning_banner'),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.withValues(alpha: 0.16),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: Colors.amber.shade700.withValues(alpha: 0.5),
+                        ),
+                      ),
+                      child: Text(
+                        'A extensão selecionada (${midiLabel(_midiLow)}–${midiLabel(_midiHigh)}) é estreita demais para este exercício. Tocando apenas no tom central (Dó4).',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: theme.brightness == Brightness.dark
+                              ? Colors.amber.shade200
+                              : Colors.amber.shade900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // 5. Progression Direction Card
+          Card(
+            key: const ValueKey('vocal_progression_card'),
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(
+                color: theme.dividerColor.withValues(alpha: 0.25),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Progressão por semitons (faixa efetiva: ${midiLabel(60 + minT)} a ${midiLabel(60 + maxT)})',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SegmentedButton<bool>(
+                    segments: const [
+                      ButtonSegment(
+                        value: true,
+                        label: Text('Subir semitom a semitom'),
+                      ),
+                      ButtonSegment(
+                        value: false,
+                        label: Text('Descer semitom a semitom'),
+                      ),
+                    ],
+                    selected: {_ascending},
+                    onSelectionChanged: _playing
+                        ? null
+                        : (values) => setState(() => _ascending = values.first),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // 6. Transport Controls
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
             children: [
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: audioReady ? (paused ? resume : pause) : null,
-                  icon: Icon(paused ? Icons.play_arrow : Icons.pause),
-                  label: Text(paused ? 'Retomar' : 'Pausar'),
+              FilledButton.icon(
+                key: const ValueKey('vocal_start_button'),
+                onPressed: _playing ? null : () => _play(exercise),
+                icon: const Icon(Icons.play_arrow),
+                label: Text(
+                  _playing
+                      ? (_paused ? 'Em pausa' : 'Tocando...')
+                      : 'Iniciar exercício',
                 ),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: stop,
-                  icon: const Icon(Icons.stop),
-                  label: const Text('Parar'),
-                ),
+              FilledButton.tonalIcon(
+                key: const ValueKey('vocal_pause_resume_button'),
+                onPressed: _playing && _ready
+                    ? (_paused ? _resume : _pause)
+                    : null,
+                icon: Icon(_paused ? Icons.play_arrow : Icons.pause),
+                label: Text(_paused ? 'Retomar' : 'Pausar'),
+              ),
+              OutlinedButton.icon(
+                key: const ValueKey('vocal_stop_button'),
+                onPressed: _playing ? () => _stop() : null,
+                icon: const Icon(Icons.stop),
+                label: const Text('Parar'),
               ),
             ],
-          )
-        else
-          FilledButton.icon(
-            onPressed: canPlay ? start : null,
-            icon: const Icon(Icons.play_arrow),
-            label: Text(playing ? 'Parar' : 'Iniciar exercício'),
           ),
-      ],
-    ),
-  );
-
-  String _noteName(int midi) {
-    if (midi < 0) return 'Pausa';
-    const names = [
-      'Dó',
-      'Dó♯',
-      'Ré',
-      'Ré♯',
-      'Mi',
-      'Fá',
-      'Fá♯',
-      'Sol',
-      'Sol♯',
-      'Lá',
-      'Lá♯',
-      'Si',
-    ];
-    return '${names[midi % 12]}${midi ~/ 12 - 1}';
+          ],
+        ),
+      ),
+    );
   }
 }

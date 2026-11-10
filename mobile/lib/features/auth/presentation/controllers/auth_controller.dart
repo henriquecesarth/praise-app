@@ -57,6 +57,8 @@ class AuthState {
       user?.chordFontFamily ?? AuthUser.defaultChordFont;
   int get chordLineSpacingPx =>
       user?.chordLineSpacingPx ?? AuthUser.defaultChordLineSpacingPx;
+  int? get vocalMinMidi => user?.vocalMinMidi;
+  int? get vocalMaxMidi => user?.vocalMaxMidi;
 
   AuthState copyWith({
     AuthStatus? status,
@@ -90,8 +92,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
   int _authOpId = 0;
   int _fontPreferenceOpId = 0;
   int _spacingPreferenceOpId = 0;
+  int _vocalRangePreferenceOpId = 0;
   int _confirmedFontPreferenceOpId = 0;
   int _confirmedSpacingPreferenceOpId = 0;
+  int _confirmedVocalRangePreferenceOpId = 0;
   int? _credentialOpId;
 
   AuthNotifier(this._repository, {Future<void> Function()? onBeforeSignOut})
@@ -111,8 +115,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
       if (firebaseUser == null) {
         ++_fontPreferenceOpId;
         ++_spacingPreferenceOpId;
+        ++_vocalRangePreferenceOpId;
         ++_confirmedFontPreferenceOpId;
         ++_confirmedSpacingPreferenceOpId;
+        ++_confirmedVocalRangePreferenceOpId;
         if (!state.isUnauthenticated) {
           state = const AuthState.unauthenticated();
         }
@@ -129,6 +135,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
     final opId = expectedOpId ?? ++_authOpId;
     final confirmedFontIdAtStart = _confirmedFontPreferenceOpId;
     final confirmedSpacingIdAtStart = _confirmedSpacingPreferenceOpId;
+    final confirmedVocalIdAtStart = _confirmedVocalRangePreferenceOpId;
     try {
       final authUser = await _repository.getMe();
       if (opId == _authOpId) {
@@ -139,6 +146,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
         final hasNewerSpacing =
             isSameUser &&
             confirmedSpacingIdAtStart != _confirmedSpacingPreferenceOpId;
+        final hasNewerVocal =
+            isSameUser &&
+            confirmedVocalIdAtStart != _confirmedVocalRangePreferenceOpId;
 
         final effectiveFont = hasNewerFont
             ? currentUser.chordFontFamily
@@ -146,11 +156,19 @@ class AuthNotifier extends StateNotifier<AuthState> {
         final effectiveSpacing = hasNewerSpacing
             ? currentUser.chordLineSpacingPx
             : authUser.chordLineSpacingPx;
+        final effectiveVocalMin = hasNewerVocal
+            ? currentUser.vocalMinMidi
+            : authUser.vocalMinMidi;
+        final effectiveVocalMax = hasNewerVocal
+            ? currentUser.vocalMaxMidi
+            : authUser.vocalMaxMidi;
 
         state = AuthState.authenticated(
           authUser.copyWith(
             chordFontFamily: effectiveFont,
             chordLineSpacingPx: effectiveSpacing,
+            vocalMinMidi: effectiveVocalMin,
+            vocalMaxMidi: effectiveVocalMax,
           ),
         );
       }
@@ -305,6 +323,41 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
+  Future<(int, int)> updateVocalRangePreference({
+    required int minMidi,
+    required int maxMidi,
+  }) async {
+    final currentUser = state.user;
+    if (currentUser == null) {
+      throw const AppFailure(
+        message: 'Faça login para salvar sua extensão vocal.',
+        statusCode: 401,
+        code: 'UNAUTHENTICATED',
+      );
+    }
+    final opId = ++_vocalRangePreferenceOpId;
+    try {
+      final confirmed = await _repository.updateVocalRangePreference(
+        minMidi: minMidi,
+        maxMidi: maxMidi,
+      );
+      if (opId == _vocalRangePreferenceOpId &&
+          state.isAuthenticated &&
+          state.user?.id == currentUser.id) {
+        ++_confirmedVocalRangePreferenceOpId;
+        state = state.copyWith(
+          user: state.user!.copyWith(
+            vocalMinMidi: confirmed.$1,
+            vocalMaxMidi: confirmed.$2,
+          ),
+        );
+      }
+      return confirmed;
+    } catch (_) {
+      rethrow;
+    }
+  }
+
   Future<void> logout() async {
     final opId = ++_authOpId;
     // Invalidate a non-cancellable native sign-in before awaiting push cleanup.
@@ -315,8 +368,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
     _credentialOpId = opId;
     ++_fontPreferenceOpId;
     ++_spacingPreferenceOpId;
+    ++_vocalRangePreferenceOpId;
     ++_confirmedFontPreferenceOpId;
     ++_confirmedSpacingPreferenceOpId;
+    ++_confirmedVocalRangePreferenceOpId;
     state = const AuthState.unauthenticated();
     if (_onBeforeSignOut != null) {
       try {

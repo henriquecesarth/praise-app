@@ -110,7 +110,7 @@ class MainActivity : FlutterActivity() {
 
 
 
-                    if (notes.isEmpty() || notes.size != durations.size || notes.any { it != -1 && it !in 24..108 } || durations.any { !it.isFinite() || it <= 0 || it > 8 }) {
+                    if (notes.isEmpty() || notes.size != durations.size || notes.any { it != -1 && it !in 24..108 } || durations.any { !it.isFinite() || it <= 0 || it > 16 }) {
 
                         result.error("INVALID_SEQUENCE", "Invalid vocal exercise sequence", null)
 

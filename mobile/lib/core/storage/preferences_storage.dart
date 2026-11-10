@@ -34,6 +34,12 @@ abstract class UserPdfMarkerPreferencesStorage {
   bool getUserPdfMarkerEnabled(String userId);
 }
 
+/// Capability interface for local storage supporting user-scoped vocal range preference caching.
+abstract class UserVocalRangePreferencesStorage {
+  Future<void> setUserVocalRange(String userId, int? minMidi, int? maxMidi);
+  (int, int)? getUserVocalRange(String userId);
+}
+
 /// Optional capability for keeping ministry context preferences per account.
 abstract class UserMinistrySelectionStorage {
   Future<void> setSelectedMinistryIdForUser(String userId, String? ministryId);
@@ -110,6 +116,27 @@ extension UserChordFontPreferencesStorageExtension on PreferencesStorage {
     }
     return false;
   }
+
+  Future<void> setUserVocalRange(
+    String userId,
+    int? minMidi,
+    int? maxMidi,
+  ) async {
+    final self = this;
+    if (self is UserVocalRangePreferencesStorage) {
+      final storage = self as UserVocalRangePreferencesStorage;
+      await storage.setUserVocalRange(userId, minMidi, maxMidi);
+    }
+  }
+
+  (int, int)? getUserVocalRange(String userId) {
+    final self = this;
+    if (self is UserVocalRangePreferencesStorage) {
+      final storage = self as UserVocalRangePreferencesStorage;
+      return storage.getUserVocalRange(userId);
+    }
+    return null;
+  }
 }
 
 /// SharedPreferences implementation of [PreferencesStorage].
@@ -119,6 +146,7 @@ class SharedPreferencesStorage
         UserChordFontPreferencesStorage,
         UserChordLineSpacingPreferencesStorage,
         UserPdfMarkerPreferencesStorage,
+        UserVocalRangePreferencesStorage,
         UserMinistrySelectionStorage {
   final SharedPreferences _prefs;
 
@@ -132,6 +160,10 @@ class SharedPreferencesStorage
       'louvaio_pdf_marker_user_$userId';
   static String _keyUserPdfMarkerEnabled(String userId) =>
       'louvaio_pdf_marker_enabled_user_$userId';
+  static String _keyUserVocalMinMidi(String userId) =>
+      'louvaio_vocal_min_midi_user_$userId';
+  static String _keyUserVocalMaxMidi(String userId) =>
+      'louvaio_vocal_max_midi_user_$userId';
   static String _keyUserSelectedMinistry(String userId) =>
       'louvaio_selected_ministry_user_$userId';
 
@@ -233,6 +265,31 @@ class SharedPreferencesStorage
   @override
   bool getUserPdfMarkerEnabled(String userId) {
     return _prefs.getBool(_keyUserPdfMarkerEnabled(userId)) ?? false;
+  }
+
+  @override
+  Future<void> setUserVocalRange(
+    String userId,
+    int? minMidi,
+    int? maxMidi,
+  ) async {
+    final minKey = _keyUserVocalMinMidi(userId);
+    final maxKey = _keyUserVocalMaxMidi(userId);
+    if (minMidi == null || maxMidi == null) {
+      await _prefs.remove(minKey);
+      await _prefs.remove(maxKey);
+    } else {
+      await _prefs.setInt(minKey, minMidi);
+      await _prefs.setInt(maxKey, maxMidi);
+    }
+  }
+
+  @override
+  (int, int)? getUserVocalRange(String userId) {
+    final minVal = _prefs.getInt(_keyUserVocalMinMidi(userId));
+    final maxVal = _prefs.getInt(_keyUserVocalMaxMidi(userId));
+    if (minVal == null || maxVal == null) return null;
+    return (minVal, maxVal);
   }
 
   @override

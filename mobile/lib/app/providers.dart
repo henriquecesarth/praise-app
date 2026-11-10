@@ -25,6 +25,7 @@ import '../features/ministry_context/presentation/controllers/create_ministry_co
 import '../features/ministry_context/presentation/controllers/join_ministry_controller.dart';
 import '../features/members/presentation/controllers/invite_code_controller.dart';
 import '../features/teams/presentation/controllers/teams_providers.dart';
+import '../features/vocal/presentation/controllers/vocal_providers.dart';
 export '../features/schedules/presentation/controllers/schedule_providers.dart';
 export '../features/repertoire/presentation/controllers/repertoire_providers.dart';
 export '../features/availability/presentation/controllers/availability_providers.dart';
@@ -36,6 +37,7 @@ export '../features/ministry_context/presentation/controllers/create_ministry_co
 export '../features/ministry_context/presentation/controllers/join_ministry_controller.dart';
 export '../features/members/presentation/controllers/invite_code_controller.dart';
 export '../features/teams/presentation/controllers/teams_providers.dart';
+export '../features/vocal/presentation/controllers/vocal_providers.dart';
 
 /// Clears all authenticated feature caches from memory upon logout or user change.
 /// Accepts either [Ref] or [ProviderContainer].
@@ -147,6 +149,9 @@ void resetAuthenticatedFeatures(
   try {
     container.read(songFormNotifierProvider.notifier).reset();
   } catch (_) {}
+  try {
+    container.read(customVocalExercisesNotifierProvider.notifier).reset();
+  } catch (_) {}
 
   container.invalidate(createMinistryNotifierProvider);
   container.invalidate(joinMinistryNotifierProvider);
@@ -173,6 +178,7 @@ void resetAuthenticatedFeatures(
   container.invalidate(smartChordRepertoireLinkNotifierProvider);
   container.invalidate(smartChordDetailNotifierProvider);
   container.invalidate(smartChordFormNotifierProvider);
+  container.invalidate(customVocalExercisesNotifierProvider);
 
   container.invalidate(unreadNotificationCountProvider);
   container.invalidate(notificationListProvider);
@@ -209,6 +215,7 @@ class InMemoryPreferencesStorage
         UserChordFontPreferencesStorage,
         UserChordLineSpacingPreferencesStorage,
         UserPdfMarkerPreferencesStorage,
+        UserVocalRangePreferencesStorage,
         UserMinistrySelectionStorage {
   final Map<String, String> _data = {};
   final Map<String, int> _intData = {};
@@ -304,6 +311,31 @@ class InMemoryPreferencesStorage
   @override
   bool getUserPdfMarkerEnabled(String userId) =>
       _boolData['louvaio_pdf_marker_enabled_user_$userId'] ?? false;
+
+  @override
+  Future<void> setUserVocalRange(
+    String userId,
+    int? minMidi,
+    int? maxMidi,
+  ) async {
+    final minKey = 'louvaio_vocal_min_midi_user_$userId';
+    final maxKey = 'louvaio_vocal_max_midi_user_$userId';
+    if (minMidi == null || maxMidi == null) {
+      _intData.remove(minKey);
+      _intData.remove(maxKey);
+    } else {
+      _intData[minKey] = minMidi;
+      _intData[maxKey] = maxMidi;
+    }
+  }
+
+  @override
+  (int, int)? getUserVocalRange(String userId) {
+    final minVal = _intData['louvaio_vocal_min_midi_user_$userId'];
+    final maxVal = _intData['louvaio_vocal_max_midi_user_$userId'];
+    if (minVal == null || maxVal == null) return null;
+    return (minVal, maxVal);
+  }
 
   @override
   Future<void> clear() async {

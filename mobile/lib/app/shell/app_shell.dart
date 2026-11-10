@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../features/availability/presentation/views/my_availability_screen.dart';
 import '../../features/availability/presentation/views/admin_availability_screen.dart';
 import '../../features/dashboard/presentation/dashboard_view.dart';
@@ -612,6 +613,21 @@ class _ProfileView extends ConsumerWidget {
                   ),
                 );
               },
+            ),
+            const Divider(),
+            ListTile(
+              key: const ValueKey('profile_vocal_exercises_tile'),
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                Icons.mic_outlined,
+                color: theme.colorScheme.primary,
+              ),
+              title: const Text('Exercícios Vocais'),
+              subtitle: const Text(
+                'Aquecimento vocal, extensão e exercícios personalizados',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => GoRouter.of(context).push('/vocal'),
             ),
             const Divider(),
           ],

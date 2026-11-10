@@ -40,6 +40,13 @@ abstract class ChordLineSpacingPreferenceUpdater {
   Future<int> updateChordLineSpacingPreference({required int spacingPx});
 }
 
+abstract class VocalRangePreferenceUpdater {
+  Future<(int, int)> updateVocalRangePreference({
+    required int minMidi,
+    required int maxMidi,
+  });
+}
+
 extension AuthRepositoryChordLineSpacingExtension on AuthRepository {
   Future<int> updateChordLineSpacingPreference({required int spacingPx}) async {
     final self = this;
@@ -48,6 +55,22 @@ extension AuthRepositoryChordLineSpacingExtension on AuthRepository {
           .updateChordLineSpacingPreference(spacingPx: spacingPx);
     }
     return AuthUser.defaultChordLineSpacingPx;
+  }
+}
+
+extension AuthRepositoryVocalRangeExtension on AuthRepository {
+  Future<(int, int)> updateVocalRangePreference({
+    required int minMidi,
+    required int maxMidi,
+  }) async {
+    final self = this;
+    if (self is VocalRangePreferenceUpdater) {
+      return (self as VocalRangePreferenceUpdater).updateVocalRangePreference(
+        minMidi: minMidi,
+        maxMidi: maxMidi,
+      );
+    }
+    return (minMidi, maxMidi);
   }
 }
 
@@ -73,6 +96,7 @@ class FirebaseAuthRepository
         AuthRepository,
         ChordFontPreferenceUpdater,
         ChordLineSpacingPreferenceUpdater,
+        VocalRangePreferenceUpdater,
         AuthAttemptInvalidator {
   final FirebaseAuth _firebaseAuth;
   final ApiClient _apiClient;
@@ -80,6 +104,7 @@ class FirebaseAuthRepository
 
   int _preferenceMutationGeneration = 0;
   Future<void> _spacingPreferenceTail = Future<void>.value();
+  Future<void> _vocalRangePreferenceTail = Future<void>.value();
   int _sessionGeneration = 0;
   String? _activeSessionUid;
   StreamSubscription<User?>? _authStateSub;
@@ -319,16 +344,40 @@ class FirebaseAuthRepository
           statusCode: 500,
         );
       }
-      final user = AuthUser.fromJson(data);
-      if (user.id.isNotEmpty && genAtStart == _preferenceMutationGeneration) {
-        await _preferencesStorage.setUserChordFontFamily(
-          user.id,
-          user.chordFontFamily,
-        );
-        await _preferencesStorage.setUserChordLineSpacingPx(
-          user.id,
-          user.chordLineSpacingPx,
-        );
+      var user = AuthUser.fromJson(data);
+      if (user.id.isNotEmpty) {
+        if (user.vocalMinMidi == null || user.vocalMaxMidi == null) {
+          final cachedVocal = _preferencesStorage.getUserVocalRange(user.id);
+          if (cachedVocal != null) {
+            final (normMin, normMax) = AuthUser.normalizeVocalRange(
+              cachedVocal.$1,
+              cachedVocal.$2,
+            );
+            if (normMin != null && normMax != null) {
+              user = user.copyWith(
+                vocalMinMidi: normMin,
+                vocalMaxMidi: normMax,
+              );
+            }
+          }
+        }
+        if (genAtStart == _preferenceMutationGeneration) {
+          await _preferencesStorage.setUserChordFontFamily(
+            user.id,
+            user.chordFontFamily,
+          );
+          await _preferencesStorage.setUserChordLineSpacingPx(
+            user.id,
+            user.chordLineSpacingPx,
+          );
+          if (user.vocalMinMidi != null && user.vocalMaxMidi != null) {
+            await _preferencesStorage.setUserVocalRange(
+              user.id,
+              user.vocalMinMidi,
+              user.vocalMaxMidi,
+            );
+          }
+        }
       }
       return user;
     } on DioException catch (e) {
@@ -455,6 +504,99 @@ class FirebaseAuthRepository
         message: 'Resposta inválida ao salvar espaçamento das cifras.',
         statusCode: 500,
       );
+    } on DioException catch (e) {
+      throw _apiClient.mapDioException(e);
+    } catch (e) {
+      throw AuthFailureNormalizer.normalize(e);
+    } finally {
+      completer.complete();
+    }
+  }
+
+  @override
+  Future<(int, int)> updateVocalRangePreference({
+    required int minMidi,
+    required int maxMidi,
+  }) {
+    final previous = _vocalRangePreferenceTail;
+    final completer = Completer<void>();
+    _vocalRangePreferenceTail = completer.future;
+    return _updateVocalRangePreferenceAfter(
+      previous,
+      completer,
+      minMidi,
+      maxMidi,
+    );
+  }
+
+  Future<(int, int)> _updateVocalRangePreferenceAfter(
+    Future<void> previous,
+    Completer<void> completer,
+    int minMidi,
+    int maxMidi,
+  ) async {
+    final (normalizedMin, normalizedMax) = AuthUser.normalizeVocalRange(
+      minMidi,
+      maxMidi,
+    );
+    if (normalizedMin == null || normalizedMax == null) {
+      completer.complete();
+      throw const AppFailure(
+        message: 'A nota mais grave deve ser menor que a nota mais aguda.',
+        statusCode: 400,
+        code: 'VALIDATION_ERROR',
+      );
+    }
+    final session = currentSessionContext;
+    final initiatingUid = session?.userId ?? _firebaseAuth.currentUser?.uid;
+    final initiatingSessionGen =
+        session?.sessionGeneration ?? _sessionGeneration;
+    ++_preferenceMutationGeneration;
+    try {
+      await previous;
+      final activeSession = currentSessionContext;
+      if ((activeSession?.userId ?? _firebaseAuth.currentUser?.uid) !=
+              initiatingUid ||
+          (activeSession?.sessionGeneration ?? _sessionGeneration) !=
+              initiatingSessionGen) {
+        throw _sessionChanged;
+      }
+      final response = await _apiClient.dio.patch<Map<String, dynamic>>(
+        '/auth/me/preferences',
+        data: {
+          'vocal_min_midi': normalizedMin,
+          'vocal_max_midi': normalizedMax,
+        },
+        options: Options(
+          extra: {
+            if (initiatingUid != null)
+              AuthInterceptor.sessionUserIdKey: initiatingUid,
+            if (initiatingSessionGen > 0)
+              AuthInterceptor.sessionGenerationKey: initiatingSessionGen,
+          },
+        ),
+      );
+      final prefs = response.data?['preferences'];
+      var confirmedMin = normalizedMin;
+      var confirmedMax = normalizedMax;
+      if (prefs is Map) {
+        final (respMin, respMax) = AuthUser.normalizeVocalRange(
+          prefs['vocal_min_midi'] ?? prefs['vocalMinMidi'],
+          prefs['vocal_max_midi'] ?? prefs['vocalMaxMidi'],
+        );
+        if (respMin != null && respMax != null) {
+          confirmedMin = respMin;
+          confirmedMax = respMax;
+        }
+      }
+      if (initiatingUid != null && initiatingUid.isNotEmpty) {
+        await _preferencesStorage.setUserVocalRange(
+          initiatingUid,
+          confirmedMin,
+          confirmedMax,
+        );
+      }
+      return (confirmedMin, confirmedMax);
     } on DioException catch (e) {
       throw _apiClient.mapDioException(e);
     } catch (e) {

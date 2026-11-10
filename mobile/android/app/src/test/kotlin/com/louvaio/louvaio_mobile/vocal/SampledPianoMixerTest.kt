@@ -174,4 +174,29 @@ class SampledPianoMixerTest {
 
         assertEquals("Audio must fade to absolute zero", 0, finalSample)
     }
+
+    @Test
+    fun testDescendingExerciseAndExtendedDurationHeadroom() {
+        // Descending pattern (e.g., vocal-40 cascade + custom 16-beat sustained note)
+        val notes = listOf(72, 69, 67, 65, 64, 62, 60, -1, 88)
+        val durations = listOf(1.25, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 1.0, 16.0)
+        val mixer = SampledPianoMixer(
+            bank = bank,
+            notes = notes,
+            durations = durations,
+            bpm = 96,
+            metronomeEnabled = true
+        )
+
+        val buffer = ShortArray(SampledPianoMixer.BLOCK_SIZE)
+        var totalRendered = 0L
+        while (!mixer.isFinished) {
+            val rendered = mixer.renderBlock(buffer, 0, SampledPianoMixer.BLOCK_SIZE)
+            if (rendered == 0) break
+            totalRendered += rendered
+        }
+
+        assertTrue("Must render full descending + extended sequence", totalRendered >= mixer.totalFrames)
+        assertEquals("Zero clipped samples on descending/extended sequence", 0L, mixer.clippedSamplesCount)
+    }
 }
