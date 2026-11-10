@@ -42,6 +42,27 @@ class AppEnvironment {
   /// Default API base URL for local development on Android emulator.
   static const String defaultDevApiBaseUrl = 'http://10.0.2.2:3000/api/v1';
 
+  /// Checks whether [url] is an authorized HTTPS Staging `/api/v1` base URL.
+  static bool isAuthorizedStagingApiBaseUrl(String url) {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty || !trimmed.startsWith('https://')) {
+      return false;
+    }
+    final uri = Uri.tryParse(trimmed);
+    final host = uri?.host ?? '';
+    final isAuthorizedHost =
+        host == 'louvaio-r17-api-staging.vercel.app' ||
+        host == 'louvaio-m20-c14-api-staging.vercel.app' ||
+        host.endsWith('-henriquecesarths-projects.vercel.app');
+    return uri != null &&
+        isAuthorizedHost &&
+        uri.userInfo.isEmpty &&
+        !uri.hasPort &&
+        !uri.hasQuery &&
+        !uri.hasFragment &&
+        uri.path == '/api/v1';
+  }
+
   /// Loads configuration from compile-time `--dart-define` parameters.
   factory AppEnvironment.fromDartDefines() {
     const rawEnv =
@@ -55,18 +76,7 @@ class AppEnvironment {
           'Staging requires an explicit HTTPS Preview API_BASE_URL.',
         );
       }
-      final uri = Uri.tryParse(rawApiBaseUrl);
-      final host = uri?.host ?? '';
-      final isAuthorizedHost =
-          host == 'louvaio-m20-c14-api-staging.vercel.app' ||
-          host.endsWith('-henriquecesarths-projects.vercel.app');
-      if (uri == null ||
-          !isAuthorizedHost ||
-          uri.userInfo.isNotEmpty ||
-          uri.hasPort ||
-          uri.hasQuery ||
-          uri.hasFragment ||
-          uri.path != '/api/v1') {
+      if (!isAuthorizedStagingApiBaseUrl(rawApiBaseUrl)) {
         throw ArgumentError(
           'Staging API must be an authorized HTTPS Staging /api/v1 URL.',
         );
