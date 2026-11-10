@@ -1,0 +1,562 @@
+/* =========================================================================
+   LouvAIO — Exercícios Vocais M21 (Design System v1.0 / D1)
+   ========================================================================= */
+
+.vocal-exercise-container {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  box-sizing: border-box;
+}
+
+/* Header & Back Button */
+.vocal-header {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.vocal-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 14px;
+  background-color: var(--bg-surface-subtle, var(--surface-variant));
+  border: 1px solid var(--border-subtle, var(--border-color));
+  border-radius: var(--border-radius-sm, 8px);
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: none;
+  width: fit-content;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.vocal-back-btn:hover {
+  background-color: var(--bg-surface, var(--surface-color));
+  border-color: var(--border-strong, #b8aea0);
+}
+
+.vocal-title-area {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vocal-title {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vocal-title-icon {
+  color: var(--action-primary-bg, var(--primary-color));
+}
+
+.vocal-subtitle {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.vocal-badge-offline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background-color: var(--bg-surface-subtle, var(--surface-variant));
+  border: 1px solid var(--border-subtle, var(--border-color));
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  width: fit-content;
+  margin-top: 4px;
+}
+
+/* Tuner / Monitor Display Card */
+.vocal-monitor-card {
+  background-color: var(--bg-surface, var(--surface-color));
+  border: 1px solid var(--border-subtle, var(--border-color));
+  border-radius: var(--border-radius-lg, 12px);
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: 0 2px 8px rgba(15, 42, 31, 0.04);
+}
+
+.vocal-monitor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.vocal-monitor-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 9999px;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background-color: var(--bg-surface-subtle, var(--surface-variant));
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle, var(--border-color));
+}
+
+.vocal-monitor-status-pill.is-playing {
+  background-color: var(--status-success-bg, rgba(43, 158, 107, 0.18));
+  color: var(--status-success-text, #145a3a);
+  border-color: var(--status-success-text, #145a3a);
+}
+
+.vocal-monitor-status-pill.is-paused {
+  background-color: var(--status-warning-bg, rgba(217, 119, 6, 0.2));
+  color: var(--status-warning-text, #92400e);
+  border-color: var(--status-warning-text, #92400e);
+}
+
+.vocal-monitor-status-pill.is-loading {
+  background-color: var(--action-primary-subtle, rgba(184, 90, 60, 0.12));
+  color: var(--action-primary-bg, var(--primary-color));
+  border-color: var(--action-primary-bg, var(--primary-color));
+}
+
+.vocal-pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: currentColor;
+  animation: vocalPulse 1.2s infinite ease-in-out;
+}
+
+@keyframes vocalPulse {
+  0% { transform: scale(0.9); opacity: 0.6; }
+  50% { transform: scale(1.3); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0.6; }
+}
+
+.vocal-monitor-display {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100px;
+  padding: 16px;
+  border-radius: 10px;
+  background-color: var(--bg-surface-subtle, var(--surface-variant));
+  border: 1px solid var(--border-subtle, var(--border-color));
+  text-align: center;
+}
+
+.vocal-note-active-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.vocal-active-note-name {
+  font-size: 3rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--chord-text, #9e4427);
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+}
+
+.vocal-active-midi-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  background-color: var(--bg-surface, var(--surface-color));
+  border: 1px solid var(--border-strong, #b8aea0);
+  color: var(--text-primary);
+}
+
+.vocal-note-idle-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+}
+
+.vocal-idle-icon {
+  opacity: 0.4;
+}
+
+.vocal-idle-text {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.vocal-live-status-line {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* Transport Controls Bar */
+.vocal-transport-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+}
+
+.vocal-transport-bar .btn {
+  min-height: 48px;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.1s ease, border-color 0.15s ease;
+}
+
+.vocal-transport-bar .btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.vocal-btn-play {
+  background-color: var(--action-primary-bg, var(--primary-color)) !important;
+  color: #ffffff !important;
+  border: 1px solid transparent !important;
+  min-width: 180px;
+}
+
+.vocal-btn-play:hover:not(:disabled) {
+  background-color: var(--action-primary-hover, var(--primary-hover)) !important;
+}
+
+.vocal-btn-pause {
+  min-width: 120px;
+}
+
+.vocal-btn-stop {
+  min-width: 100px;
+}
+
+/* Settings Grid */
+.vocal-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.vocal-card {
+  background-color: var(--bg-surface, var(--surface-color));
+  border: 1px solid var(--border-subtle, var(--border-color));
+  border-radius: var(--border-radius-lg, 12px);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: 0 1px 4px rgba(15, 42, 31, 0.02);
+}
+
+.vocal-card-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vocal-card-icon {
+  color: var(--text-secondary);
+}
+
+.vocal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vocal-field-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.vocal-select {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 14px;
+  background-color: var(--bg-surface-subtle, var(--surface-variant));
+  border: 1px solid var(--border-strong, #b8aea0);
+  border-radius: var(--border-radius-sm, 6px);
+  color: var(--text-primary);
+  font-size: 0.9375rem;
+  font-family: inherit;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.vocal-select:focus {
+  outline: 2px solid var(--focus-ring, var(--action-primary-bg));
+  outline-offset: 2px;
+}
+
+.vocal-desc-box {
+  padding: 10px 12px;
+  border-radius: 6px;
+  background-color: var(--bg-surface-subtle, var(--surface-variant));
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  border-left: 3px solid var(--action-primary-bg, var(--primary-color));
+}
+
+/* Tempo / BPM Controls */
+.vocal-bpm-display {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.vocal-bpm-val {
+  font-size: 1.25rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+.vocal-range-slider {
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg-surface-subtle, var(--surface-variant));
+  outline: none;
+  cursor: pointer;
+  accent-color: var(--action-primary-bg, var(--primary-color));
+  margin: 6px 0;
+}
+
+.vocal-bpm-presets {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.vocal-preset-chip {
+  min-height: 32px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle, var(--border-color));
+  background-color: var(--bg-surface-subtle, var(--surface-variant));
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.vocal-preset-chip:hover {
+  border-color: var(--border-strong, #b8aea0);
+  color: var(--text-primary);
+}
+
+.vocal-preset-chip.active {
+  background-color: var(--action-primary-subtle, rgba(184, 90, 60, 0.12));
+  border-color: var(--action-primary-bg, var(--primary-color));
+  color: var(--action-primary-bg, var(--primary-color));
+  font-weight: 700;
+}
+
+.vocal-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.vocal-checkbox-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--action-primary-bg, var(--primary-color));
+  cursor: pointer;
+}
+
+/* Tessitura Vocal */
+.vocal-fieldset {
+  margin: 0;
+  padding: 0;
+  border: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.vocal-legend {
+  padding: 0;
+  margin-bottom: 4px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.vocal-tessitura-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.vocal-midi-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background-color: var(--bg-surface-subtle, var(--surface-variant));
+  border: 1px solid var(--border-subtle, var(--border-color));
+}
+
+.vocal-midi-field-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.vocal-midi-note-badge {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--chord-text, #9e4427);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+.vocal-midi-input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong, #b8aea0);
+  background-color: var(--bg-surface, var(--surface-color));
+  color: var(--text-primary);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  box-sizing: border-box;
+}
+
+.vocal-range-summary {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Alert Banners */
+.vocal-alert-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.vocal-alert-banner.is-warning {
+  background-color: var(--status-warning-bg, #fef3c7);
+  color: var(--status-warning-text, #92400e);
+  border: 1px solid var(--status-warning-text, #92400e);
+}
+
+.vocal-alert-banner.is-danger {
+  background-color: var(--status-danger-bg, #fee2e2);
+  color: var(--status-danger-text, #991b1b);
+  border: 1px solid var(--status-danger-text, #991b1b);
+}
+
+.vocal-alert-banner button {
+  margin-left: auto;
+  min-height: 36px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background-color: currentColor;
+  color: var(--bg-surface, #ffffff);
+  border: none;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Mobile Responsiveness */
+@media (max-width: 767px) {
+  .vocal-exercise-container {
+    padding: 16px 12px;
+    gap: 16px;
+  }
+
+  .vocal-title {
+    font-size: 1.375rem;
+  }
+
+  .vocal-settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .vocal-card {
+    padding: 14px 16px;
+  }
+
+  .vocal-monitor-card {
+    padding: 16px;
+  }
+
+  .vocal-active-note-name {
+    font-size: 2.25rem;
+  }
+
+  .vocal-transport-bar {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .vocal-transport-bar .btn {
+    width: 100%;
+    min-height: 48px;
+  }
+
+  .vocal-tessitura-grid {
+    grid-template-columns: 1fr;
+  }
+}

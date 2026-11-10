@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { ArrowLeft, Play, Pause, Square, Music2, Activity, Sliders, Volume2, WifiOff, AlertCircle } from 'lucide-react';
 import { VOCAL_EXERCISES } from '../vocal-exercises';
 import { SampledPiano, type MusicalRenderer } from '../audio/sampled-piano';
+import '../styles/vocal-exercise.css';
 
 export function buildExerciseTimeline(notes: number[], durations: number[], bpm: number, transpose: number, startAt: number) {
   if (notes.length === 0 || notes.length !== durations.length || !Number.isFinite(bpm) || bpm < 40 || bpm > 180 || !Number.isInteger(transpose) || !Number.isFinite(startAt)) {
@@ -59,18 +61,18 @@ export function VocalExercisePlayer() {
     const onVisibilityChange = () => { if (document.visibilityState !== 'visible') stop(); };
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
-    generation.current += 1;
-    if (frame.current !== undefined) cancelAnimationFrame(frame.current);
-    window.clearTimeout(timer.current);
-    renderer.current?.stop();
-    oscillators.current.forEach((oscillator) => { try { oscillator.stop((context.current?.currentTime ?? 0) + 0.02); } catch { /* already stopped */ } });
-    document.removeEventListener('visibilitychange', onVisibilityChange);
-    const audio = context.current;
-    if (audio) {
-      const fade = audio.state === 'running' && renderer.current ? renderer.current.fadeOut() : Promise.resolve();
-      void fade.catch(() => undefined).then(() => audio.close()).catch(() => undefined);
-    }
-  };
+      generation.current += 1;
+      if (frame.current !== undefined) cancelAnimationFrame(frame.current);
+      window.clearTimeout(timer.current);
+      renderer.current?.stop();
+      oscillators.current.forEach((oscillator) => { try { oscillator.stop((context.current?.currentTime ?? 0) + 0.02); } catch { /* already stopped */ } });
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      const audio = context.current;
+      if (audio) {
+        const fade = audio.state === 'running' && renderer.current ? renderer.current.fadeOut() : Promise.resolve();
+        void fade.catch(() => undefined).then(() => audio.close()).catch(() => undefined);
+      }
+    };
   }, []);
 
   const stop = () => {
@@ -174,46 +176,286 @@ export function VocalExercisePlayer() {
     }
   };
 
-  return <section aria-labelledby="vocal-title" style={{ maxWidth: 920, margin: '0 auto', padding: 24 }}>
-    <Link to="/" style={{ display: 'inline-flex', alignItems: 'center', minHeight: 44 }}>Voltar ao LouvAIO</Link>
-    <h1 id="vocal-title">Exercícios vocais</h1>
-    <p>Exercícios originais com andamento e metrônomo opcional. A progressão percorre toda a faixa válida em semitons, com uma semínima de pausa entre repetições. Disponível offline após primeiro acesso online. Piano acústico gravado: FreePats Upright KW.</p>
-    <label style={{ display: 'grid', gap: 8, margin: '20px 0' }}>Exercício
-      <select value={exerciseId} disabled={playing || loading} onChange={(event) => { stop(); setExerciseId(event.target.value); }}>
-        {VOCAL_EXERCISES.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
-      </select>
-    </label>
-    <p>{exercise.description}</p>
-    <label style={{ display: 'grid', gap: 8, margin: '20px 0' }}>Andamento: {bpm} BPM
-      <input aria-label="Andamento BPM" disabled={playing || loading} type="range" min="40" max="180" value={bpm} onChange={(event) => setBpm(Number(event.target.value))} />
-    </label>
-    <label style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 44 }}>
-      <input aria-label="Ativar metrônomo" type="checkbox" disabled={playing || loading} checked={metronomeEnabled} onChange={(event) => setMetronomeEnabled(event.target.checked)} />
-      Usar metrônomo
-    </label>
-    <fieldset disabled={playing || loading} style={{ display: 'flex', gap: 16, flexWrap: 'wrap', margin: '20px 0' }}>
-      <legend>Tessitura vocal (notas MIDI)</legend>
-      <label>Mais grave
-        <input aria-label="Nota MIDI mais grave" type="number" min="0" max={tessituraMax - 1} value={tessituraMin} onChange={(event) => setTessituraMin(Math.min(tessituraMax - 1, clampMidi(Number(event.target.value))))} />
-      </label>
-      <label>Mais aguda
-        <input aria-label="Nota MIDI mais aguda" type="number" min={tessituraMin + 1} max="127" value={tessituraMax} onChange={(event) => setTessituraMax(Math.max(tessituraMin + 1, clampMidi(Number(event.target.value))))} />
-      </label>
-    </fieldset>
-    <label style={{ display: 'grid', gap: 8, margin: '20px 0' }}>Direção da progressão
-      <select aria-label="Direção da progressão" disabled={playing || loading} value={progressionDirection} onChange={(event) => setProgressionDirection(Number(event.target.value) as -1 | 1)}>
-        <option value={1}>Subir semitom a semitom</option><option value={-1}>Descer semitom a semitom</option>
-      </select>
-    </label>
-    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-      <button type="button" disabled={playing || loading || minTranspose > maxTranspose} onClick={() => void start()} style={{ minHeight: 44 }}>{loading ? 'Carregando piano…' : playing ? 'Reproduzindo…' : 'Tocar progressão'}</button>
-      <button type="button" disabled={!playing && !loading} onClick={stop} style={{ minHeight: 44 }}>Parar</button>
-      <button type="button" disabled={!playing} onClick={() => void togglePause()} style={{ minHeight: 44 }}>{paused ? 'Retomar' : 'Pausar'}</button>
-    </div>
-    {minTranspose > maxTranspose && <p role="alert">Este exercício não cabe na tessitura selecionada. Ajuste os limites de MIDI.</p>}
-    {error && <p role="alert">{error} <button type="button" disabled={minTranspose > maxTranspose} onClick={() => void start()}>Tentar novamente</button></p>}
-    <p role="status">{loading ? 'Carregando piano acústico…' : paused ? 'Pausado' : currentMidi === null ? (playing ? 'Pausa musical' : 'Pronto para começar.') : `Nota atual: ${midiLabel(currentMidi)} · MIDI ${currentMidi}`}</p>
-  </section>;
+  const statusLabel = loading ? 'Carregando piano acústico…' : paused ? 'Pausado' : currentMidi === null ? (playing ? 'Pausa musical' : 'Pronto para começar.') : `Nota atual: ${midiLabel(currentMidi)} · MIDI ${currentMidi}`;
+
+  return (
+    <section aria-labelledby="vocal-title" className="vocal-exercise-container">
+      {/* Header & Back Navigation */}
+      <header className="vocal-header">
+        <Link to="/" className="vocal-back-btn">
+          <ArrowLeft size={16} aria-hidden="true" />
+          <span>Voltar ao LouvAIO</span>
+        </Link>
+        <div className="vocal-title-area">
+          <h1 id="vocal-title" className="vocal-title">
+            <Music2 size={28} className="vocal-title-icon" aria-hidden="true" />
+            Exercícios vocais
+          </h1>
+          <p className="vocal-subtitle">
+            Exercícios originais com andamento e metrônomo opcional. A progressão percorre toda a faixa válida em semitons, com uma semínima de pausa entre repetições. Disponível offline após primeiro acesso online. Piano acústico gravado: FreePats Upright KW.
+          </p>
+          <div className="vocal-badge-offline">
+            <WifiOff size={14} aria-hidden="true" />
+            <span>Suporte offline ativo · Amostras PCM gravadas</span>
+          </div>
+        </div>
+      </header>
+
+      {/* Monitor Display & Transport Bar */}
+      <div className="vocal-monitor-card">
+        <div className="vocal-monitor-header">
+          <div className={`vocal-monitor-status-pill ${loading ? 'is-loading' : playing ? (paused ? 'is-paused' : 'is-playing') : ''}`}>
+            {(playing || loading) && <span className="vocal-pulse-dot" aria-hidden="true" />}
+            <span>{loading ? 'Carregando' : paused ? 'Em pausa' : playing ? 'Reproduzindo' : 'Aguardando início'}</span>
+          </div>
+          <span className="vocal-range-summary">
+            {exercise.title} · {bpm} BPM
+          </span>
+        </div>
+
+        <div className="vocal-monitor-display">
+          {currentMidi !== null ? (
+            <div className="vocal-note-active-box">
+              <span className="vocal-active-note-name">{midiLabel(currentMidi)}</span>
+              <span className="vocal-active-midi-badge">MIDI {currentMidi}</span>
+            </div>
+          ) : (
+            <div className="vocal-note-idle-box">
+              <Activity size={32} className="vocal-idle-icon" aria-hidden="true" />
+              <span className="vocal-idle-text">
+                {loading ? 'Carregando piano acústico…' : paused ? 'Reprodução pausada' : playing ? 'Pausa musical' : 'Toque em "Tocar progressão" para iniciar'}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Live status line for screen readers & vitest assertions */}
+        <p role="status" className="vocal-live-status-line">
+          {statusLabel}
+        </p>
+
+        {/* Transport Toolbar */}
+        <div className="vocal-transport-bar">
+          <button
+            type="button"
+            className="btn btn-primary vocal-btn-play"
+            disabled={playing || loading || minTranspose > maxTranspose}
+            onClick={() => void start()}
+            style={{ minHeight: 44 }}
+          >
+            <Play size={18} aria-hidden="true" />
+            <span>{loading ? 'Carregando piano…' : playing ? 'Reproduzindo…' : 'Tocar progressão'}</span>
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary vocal-btn-pause"
+            disabled={!playing}
+            onClick={() => void togglePause()}
+            style={{ minHeight: 44 }}
+          >
+            {paused ? <Play size={18} aria-hidden="true" /> : <Pause size={18} aria-hidden="true" />}
+            <span>{paused ? 'Retomar' : 'Pausar'}</span>
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary vocal-btn-stop"
+            disabled={!playing && !loading}
+            onClick={stop}
+            style={{ minHeight: 44 }}
+          >
+            <Square size={18} aria-hidden="true" />
+            <span>Parar</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Alerts */}
+      {minTranspose > maxTranspose && (
+        <div role="alert" className="vocal-alert-banner is-warning">
+          <AlertCircle size={20} aria-hidden="true" />
+          <span>Este exercício não cabe na tessitura selecionada. Ajuste os limites de MIDI.</span>
+        </div>
+      )}
+      {error && (
+        <div role="alert" className="vocal-alert-banner is-danger">
+          <AlertCircle size={20} aria-hidden="true" />
+          <span>{error}</span>
+          <button type="button" disabled={minTranspose > maxTranspose} onClick={() => void start()}>
+            Tentar novamente
+          </button>
+        </div>
+      )}
+
+      {/* Settings Grid */}
+      <div className="vocal-settings-grid">
+        {/* Card 1: Exercício */}
+        <div className="vocal-card">
+          <h2 className="vocal-card-title">
+            <Music2 size={18} className="vocal-card-icon" aria-hidden="true" />
+            Padrão Melódico
+          </h2>
+          <label className="vocal-field">
+            <span className="vocal-field-label">Exercício</span>
+            <select
+              className="vocal-select"
+              value={exerciseId}
+              disabled={playing || loading}
+              onChange={(event) => { stop(); setExerciseId(event.target.value); }}
+            >
+              {VOCAL_EXERCISES.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.title}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="vocal-desc-box">
+            {exercise.description}
+          </div>
+        </div>
+
+        {/* Card 2: Andamento & Metrônomo */}
+        <div className="vocal-card">
+          <h2 className="vocal-card-title">
+            <Sliders size={18} className="vocal-card-icon" aria-hidden="true" />
+            Tempo e Metrônomo
+          </h2>
+          <label className="vocal-field">
+            <div className="vocal-bpm-display">
+              <span className="vocal-field-label">Andamento:</span>
+              <span className="vocal-bpm-val">{bpm} BPM</span>
+            </div>
+            <input
+              aria-label="Andamento BPM"
+              disabled={playing || loading}
+              type="range"
+              min="40"
+              max="180"
+              value={bpm}
+              className="vocal-range-slider"
+              onChange={(event) => setBpm(Number(event.target.value))}
+            />
+          </label>
+          <div className="vocal-bpm-presets">
+            {[60, 72, 80, 96, 120].map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                disabled={playing || loading}
+                className={`vocal-preset-chip ${bpm === preset ? 'active' : ''}`}
+                onClick={() => setBpm(preset)}
+              >
+                {preset} BPM
+              </button>
+            ))}
+          </div>
+          <label className="vocal-checkbox-row">
+            <input
+              aria-label="Ativar metrônomo"
+              type="checkbox"
+              disabled={playing || loading}
+              checked={metronomeEnabled}
+              onChange={(event) => setMetronomeEnabled(event.target.checked)}
+            />
+            <span>Usar metrônomo (click sonoro a cada tempo)</span>
+          </label>
+        </div>
+
+        {/* Card 3: Tessitura Vocal */}
+        <div className="vocal-card">
+          <h2 className="vocal-card-title">
+            <Volume2 size={18} className="vocal-card-icon" aria-hidden="true" />
+            Extensão Vocal
+          </h2>
+          <fieldset disabled={playing || loading} className="vocal-fieldset">
+            <legend className="vocal-legend">Tessitura vocal (notas MIDI)</legend>
+            <div className="vocal-tessitura-grid">
+              <div className="vocal-midi-field">
+                <div className="vocal-midi-field-top">
+                  <span className="vocal-field-label">Mais grave</span>
+                  <span className="vocal-midi-note-badge">{midiLabel(tessituraMin)}</span>
+                </div>
+                <input
+                  aria-label="Nota MIDI mais grave"
+                  type="number"
+                  min="0"
+                  max={tessituraMax - 1}
+                  value={tessituraMin}
+                  className="vocal-midi-input"
+                  onChange={(event) => setTessituraMin(Math.min(tessituraMax - 1, clampMidi(Number(event.target.value))))}
+                />
+              </div>
+              <div className="vocal-midi-field">
+                <div className="vocal-midi-field-top">
+                  <span className="vocal-field-label">Mais aguda</span>
+                  <span className="vocal-midi-note-badge">{midiLabel(tessituraMax)}</span>
+                </div>
+                <input
+                  aria-label="Nota MIDI mais aguda"
+                  type="number"
+                  min={tessituraMin + 1}
+                  max="127"
+                  value={tessituraMax}
+                  className="vocal-midi-input"
+                  onChange={(event) => setTessituraMax(Math.max(tessituraMin + 1, clampMidi(Number(event.target.value))))}
+                />
+              </div>
+            </div>
+          </fieldset>
+          <div className="vocal-bpm-presets">
+            <button
+              type="button"
+              disabled={playing || loading}
+              className={`vocal-preset-chip ${tessituraMin === 48 && tessituraMax === 72 ? 'active' : ''}`}
+              onClick={() => { setTessituraMin(48); setTessituraMax(72); }}
+            >
+              Voz Grave (C2–C4)
+            </button>
+            <button
+              type="button"
+              disabled={playing || loading}
+              className={`vocal-preset-chip ${tessituraMin === 57 && tessituraMax === 84 ? 'active' : ''}`}
+              onClick={() => { setTessituraMin(57); setTessituraMax(84); }}
+            >
+              Voz Aguda (A3–C5)
+            </button>
+            <button
+              type="button"
+              disabled={playing || loading}
+              className={`vocal-preset-chip ${tessituraMin === 48 && tessituraMax === 84 ? 'active' : ''}`}
+              onClick={() => { setTessituraMin(48); setTessituraMax(84); }}
+            >
+              Padrão (C2–C5)
+            </button>
+          </div>
+        </div>
+
+        {/* Card 4: Direção da Progressão */}
+        <div className="vocal-card">
+          <h2 className="vocal-card-title">
+            <Activity size={18} className="vocal-card-icon" aria-hidden="true" />
+            Direção da Progressão
+          </h2>
+          <label className="vocal-field">
+            <span className="vocal-field-label">Direção da progressão</span>
+            <select
+              aria-label="Direção da progressão"
+              disabled={playing || loading}
+              value={progressionDirection}
+              className="vocal-select"
+              onChange={(event) => setProgressionDirection(Number(event.target.value) as -1 | 1)}
+            >
+              <option value={1}>Subir semitom a semitom (Grave → Agudo)</option>
+              <option value={-1}>Descer semitom a semitom (Agudo → Grave)</option>
+            </select>
+          </label>
+          <div className="vocal-desc-box">
+            A progressão modulará semitom a semitom com pausa de 1 tempo entre cada repetição.
+          </div>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function midiLabel(midi: number) {

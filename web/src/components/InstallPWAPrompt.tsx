@@ -36,7 +36,12 @@ export const InstallPWAPrompt: React.FC = () => {
       setUpdateSW(() => customEvent.detail.updateSW);
       setNotice('update');
     };
-    const handleOfflineReady = () => setNotice('offline');
+    const handleOfflineReady = () => {
+      if (!sessionStorage.getItem('praise_offline_notified')) {
+        sessionStorage.setItem('praise_offline_notified', 'true');
+        setNotice('offline');
+      }
+    };
 
     window.addEventListener(PWA_UPDATE_EVENT, handleUpdate);
     window.addEventListener(PWA_OFFLINE_READY_EVENT, handleOfflineReady);
@@ -45,6 +50,15 @@ export const InstallPWAPrompt: React.FC = () => {
       window.removeEventListener(PWA_OFFLINE_READY_EVENT, handleOfflineReady);
     };
   }, []);
+
+  useEffect(() => {
+    if (notice === 'offline') {
+      const timer = setTimeout(() => {
+        setNotice(null);
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [notice]);
 
   const handleInstallClick = async () => {
     if (!deferredPrompt) return;
@@ -94,7 +108,7 @@ export const InstallPWAPrompt: React.FC = () => {
       : 'Instale o app para acesso rápido e prático ao LouvAIO.';
 
   return (
-    <div className="pwa-install-banner">
+    <div className={`pwa-install-banner ${notice === 'offline' ? 'pwa-toast-offline' : ''}`}>
       <div className="pwa-install-content">
         <div className="pwa-install-icon">
           {notice === 'update' ? <RefreshCw size={20} /> : notice === 'offline' ? <WifiOff size={20} /> : <Sparkles size={20} />}

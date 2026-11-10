@@ -854,8 +854,11 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                   type="button"
                   className="btn btn-secondary transposition-btn"
                   onClick={() => setSemitones((s) => s - 1)}
+                  aria-label="-1 Semitom"
+                  title="Diminuir 1 semitom"
                 >
-                  -1 Semitom
+                  <span className="transposition-btn__label-full">-1 Semitom</span>
+                  <span className="transposition-btn__label-compact" aria-hidden="true">−1</span>
                 </button>
 
                 {semitones !== 0 && (
@@ -863,6 +866,8 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                     type="button"
                     className="btn btn-secondary transposition-btn"
                     onClick={() => setSemitones(0)}
+                    aria-label="Resetar"
+                    title="Restaurar tom original"
                   >
                     Resetar
                   </button>
@@ -872,8 +877,11 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                   type="button"
                   className="btn btn-secondary transposition-btn"
                   onClick={() => setSemitones((s) => s + 1)}
+                  aria-label="+1 Semitom"
+                  title="Aumentar 1 semitom"
                 >
-                  +1 Semitom
+                  <span className="transposition-btn__label-full">+1 Semitom</span>
+                  <span className="transposition-btn__label-compact" aria-hidden="true">+1</span>
                 </button>
               </div>
             )}

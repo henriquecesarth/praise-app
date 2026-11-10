@@ -76,5 +76,15 @@ define: { 'globalThis.__LOUVAIO_VERIFIED_API__': JSON.stringify(['preview','prod
   ],
   server: {
     port: 5173,
+    proxy: process.env.VITE_PROXY_TARGET ? {
+      '/api/v1': {
+        target: process.env.VITE_PROXY_TARGET,
+        changeOrigin: true,
+        secure: true,
+        headers: process.env.VERCEL_PROTECTION_BYPASS ? {
+          'x-vercel-protection-bypass': process.env.VERCEL_PROTECTION_BYPASS,
+        } : undefined,
+      },
+    } : undefined,
   },
 }; });

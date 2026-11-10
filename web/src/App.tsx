@@ -1309,7 +1309,7 @@ export default function App() {
                       <input
                         type="text"
                         aria-label="Buscar músicas"
-                        placeholder="Buscar músicas por título, artista ou letra..."
+                        placeholder="Buscar músicas..."
                         className="search-input"
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}

@@ -6000,6 +6000,59 @@ button,
   }
 }
 
+/* Offline Ready Toast (Non-obstructive) */
+.pwa-install-banner.pwa-toast-offline {
+  top: max(20px, var(--safe-area-top));
+  bottom: auto;
+  right: 20px;
+  width: 400px;
+  max-width: calc(100% - 32px);
+  z-index: 1050;
+  padding: 10px 14px;
+  border-radius: var(--border-radius-lg, 12px);
+  border: 1px solid var(--border-subtle, var(--border-color));
+  background: var(--bg-surface, var(--surface-color));
+  box-shadow: 0 4px 16px rgba(15, 42, 31, 0.12);
+  animation: slideDownToast 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.pwa-install-banner.pwa-toast-offline .pwa-install-icon {
+  color: var(--action-primary-bg, var(--primary-color));
+}
+
+@media (max-width: 767px) {
+  .pwa-install-banner.pwa-toast-offline {
+    top: max(12px, var(--safe-area-top)) !important;
+    bottom: auto !important;
+    left: 12px !important;
+    right: 12px !important;
+    width: auto !important;
+    max-width: none !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    padding: 10px 12px !important;
+    gap: 10px !important;
+  }
+
+  .pwa-install-banner.pwa-toast-offline .pwa-install-desc {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+}
+
+@keyframes slideDownToast {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
 .pwa-install-content {
   display: flex;
   align-items: center;
@@ -7556,7 +7609,7 @@ a:focus-visible {
     padding: 12px 0 max(16px, calc(12px + var(--safe-area-bottom))) !important;
   }
 
-  .pwa-install-banner {
+  .pwa-install-banner:not(.pwa-toast-offline) {
     align-items: stretch;
     flex-direction: column;
   }
