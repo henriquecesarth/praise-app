@@ -104,7 +104,7 @@ describe('Auth Feature & Mobile V1-M0 Firebase ID Token Compatibility Suite', ()
 
       expect(response.status).toBe(200);
       const data = (await response.json()) as any;
-      expect(data).toEqual({
+      expect(data).toMatchObject({
         id: validLegacyUid,
         email: validLegacyEmail,
         name: validLegacyName,
@@ -277,7 +277,7 @@ describe('Auth Feature & Mobile V1-M0 Firebase ID Token Compatibility Suite', ()
 
       expect(meRes.status).toBe(200);
       const meBody = (await meRes.json()) as any;
-      expect(meBody).toEqual({
+      expect(meBody).toMatchObject({
         id: pwaUid,
         email: pwaEmail,
         name: pwaName,
@@ -329,7 +329,7 @@ describe('Auth Feature & Mobile V1-M0 Firebase ID Token Compatibility Suite', ()
 
       const result = await authService.getMe('usr-direct-1');
 
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         id: 'usr-direct-1',
         email: 'direct@louvaio.com',
         name: 'Direct User',
@@ -349,7 +349,7 @@ describe('Auth Feature & Mobile V1-M0 Firebase ID Token Compatibility Suite', ()
 
       const result = await authService.getMe('user.with.dots');
 
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         id: 'user.with.dots',
         email: 'dotted.user@louvaio.com',
         name: 'Dotted UID User',

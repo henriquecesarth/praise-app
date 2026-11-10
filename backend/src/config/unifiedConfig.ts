@@ -19,6 +19,7 @@ const configSchema = z.object({
   nodeEnv: z.enum(['development', 'production', 'test']).default('development'),
   jwtSecret: z.string().default(DEFAULT_DEV_JWT_SECRET),
   firebaseWebApiKey: z.string().optional(),
+  previewAllowedUids: z.string().optional(),
   corsOrigin: z.string().optional(),
   firebase: z.object({
     projectId: z.string().optional(),
@@ -65,6 +66,7 @@ const rawConfig = {
   nodeEnv: process.env.NODE_ENV,
   jwtSecret: process.env.JWT_SECRET,
   firebaseWebApiKey: firebaseEnvironment.apiKey,
+  previewAllowedUids: process.env.PREVIEW_ALLOWED_UIDS,
   corsOrigin: resolveStagingCorsOrigin(process.env),
   firebase: {
     projectId: firebaseEnvironment.projectId,
@@ -97,6 +99,45 @@ const rawConfig = {
 };
 
 export const config = configSchema.parse(rawConfig);
+
+export function isPreviewEnvironment(): boolean {
+  const vercelEnv = process.env.VERCEL_ENV;
+  const isPreviewModeExplicit = process.env.PREVIEW_MODE === 'true' || process.env.PREVIEW_MODE === '1';
+
+  if (vercelEnv === 'production' && isPreviewModeExplicit) {
+    throw new AppError(
+      500,
+      'CONFIG_CONFLICT: VERCEL_ENV=production cannot be combined with PREVIEW_MODE=true.',
+      { code: 'CONFIG_CONFLICT' }
+    );
+  }
+
+  if (vercelEnv === 'production') {
+    return false;
+  }
+
+  if (vercelEnv === 'preview') {
+    return true;
+  }
+
+  if (isPreviewModeExplicit) {
+    return true;
+  }
+
+  return false;
+}
+
+export function assertPreviewUidAllowed(uid: string): void {
+  if (!isPreviewEnvironment()) return;
+  const rawList = config?.previewAllowedUids ?? process.env.PREVIEW_ALLOWED_UIDS ?? '';
+  const allowed = rawList
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (!allowed.length || !allowed.includes(uid)) {
+    throw new AppError(403, 'Acesso restrito no ambiente de Preview.', { code: 'PREVIEW_UID_NOT_ALLOWED' });
+  }
+}
 
 export const ZERNIO_DEFAULT_BASE_URL = 'https://zernio.com/api/v1';
 
