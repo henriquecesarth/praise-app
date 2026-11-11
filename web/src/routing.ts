@@ -12,8 +12,8 @@ export interface AppRouteState {
   isKnown: boolean;
 }
 
-export function shouldBootstrapSession(module: MainModuleType, authReady: boolean) {
-  return module !== 'vocal' && !authReady;
+export function shouldBootstrapSession(authReady: boolean) {
+  return !authReady;
 }
 
 export const MODULE_PATHS: Record<MainModuleType, string> = {

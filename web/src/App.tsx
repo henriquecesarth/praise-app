@@ -182,9 +182,7 @@ export default function App() {
 
   // Check initial user authentication session
   useEffect(() => {
-    // The public exercise player is self-contained and must not invalidate an
-    // authenticated session merely because its offline visit cannot reach API.
-    if (!shouldBootstrapSession(mainModule, authReady)) return;
+    if (!shouldBootstrapSession(authReady)) return;
     let active = true;
     void checkCurrentUser(() => active);
     return () => { active = false; };
@@ -757,9 +755,6 @@ export default function App() {
     );
   }
 
-  // The exercise player has no account or ministry data and is available offline.
-  if (routeState.module === 'vocal') return <VocalExercisePlayer />;
-
   if (!authReady) {
     return (
       <div className="auth-loading-screen" role="status" aria-live="polite">
@@ -812,6 +807,9 @@ export default function App() {
       />
     );
   }
+
+  // Preserve offline exercises within a session already validated by the API.
+  if (routeState.module === 'vocal') return <VocalExercisePlayer />;
 
   return (
     <div className="app-shell" style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--bg-color)' }}>
