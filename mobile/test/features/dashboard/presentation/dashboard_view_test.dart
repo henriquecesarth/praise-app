@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:louvaio_mobile/app/theme/app_theme.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/app/environment/app_environment.dart';
@@ -107,6 +108,7 @@ void main() {
     bool hasMultiple = true,
     ValueChanged<int>? onNavigateToTab,
     Size size = const Size(400, 800),
+    bool dark = false,
   }) {
     final authRepo = FakeAuthRepo();
     final authNotifier = AuthNotifier(authRepo)
@@ -125,6 +127,7 @@ void main() {
         dashboardRepositoryProvider.overrideWithValue(repo),
       ],
       child: MaterialApp(
+        theme: dark ? AppTheme.darkTheme : AppTheme.lightTheme,
         home: MediaQuery(
           data: MediaQueryData(size: size),
           child: Scaffold(
@@ -432,6 +435,29 @@ void main() {
 
       addTearDown(tester.view.resetPhysicalSize);
     });
+    for (final dark in [false, true]) {
+      for (final size in [
+        const Size(390, 844),
+        const Size(800, 1280),
+        const Size(1333, 800),
+      ]) {
+        testWidgets('dashboard real layout $size dark=$dark', (tester) async {
+          tester.view.physicalSize = size;
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          await tester.pumpWidget(
+            createWidget(repo: FakeDashboardRepo(), size: size, dark: dark),
+          );
+          await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull);
+          expect(find.textContaining('Henrique'), findsWidgets);
+          expect(
+            find.byKey(const ValueKey('dashboard_members_button')),
+            findsOneWidget,
+          );
+        });
+      }
+    }
   });
 }
-

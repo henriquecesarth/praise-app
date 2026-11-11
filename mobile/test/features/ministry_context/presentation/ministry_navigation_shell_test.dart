@@ -387,10 +387,11 @@ void main() {
       expect(find.text('ADMINISTRADOR'), findsOneWidget);
     });
 
+    for (final width in [800.0, 1333.0]) {
     testWidgets(
-        'N. AppShell renders tablet layout with side NavigationRail and navigation works',
+        'N. AppShell tablet rail navigation width=$width',
         (tester) async {
-      tester.view.physicalSize = const Size(1024, 768);
+      tester.view.physicalSize = Size(width, 768);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
 
@@ -435,6 +436,8 @@ void main() {
 
       // Tablet renders NavigationRail, NOT NavigationBar
       expect(find.byType(NavigationRail), findsOneWidget);
+      expect(tester.widget<NavigationRail>(find.byType(NavigationRail)).extended, width >= 1200);
+      expect(tester.takeException(), isNull);
       expect(find.byType(NavigationBar), findsNothing);
 
       // Navigate to Escalas tab
@@ -468,9 +471,12 @@ void main() {
       expect(find.textContaining('usr_secret_uid_123'), findsNothing);
 
       // P. Tapping Sair da Conta calls auth logout
+      await tester.ensureVisible(find.text('Sair da Conta'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Sair da Conta'));
       await tester.pump();
       verify(() => authRepo.signOut()).called(1);
     });
+    }
   });
 }

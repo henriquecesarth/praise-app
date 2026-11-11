@@ -285,11 +285,17 @@ class _AppShellState extends ConsumerState<AppShell> {
         body: Row(
           children: [
             NavigationRail(
+              extended: width >= 1200,
+              minExtendedWidth: 168,
+              groupAlignment: -1.0,
+              indicatorColor: theme.colorScheme.secondaryContainer,
               selectedIndex: currentIndex,
               onDestinationSelected: (index) {
                 ref.read(appShellTabProvider.notifier).state = index;
               },
-              labelType: NavigationRailLabelType.all,
+              labelType: width >= 1200
+                  ? NavigationRailLabelType.none
+                  : NavigationRailLabelType.all,
               destinations: const [
                 NavigationRailDestination(
                   icon: Icon(Icons.home_outlined),
@@ -327,6 +333,8 @@ class _AppShellState extends ConsumerState<AppShell> {
       appBar: appBar,
       body: views[currentIndex],
       bottomNavigationBar: NavigationBar(
+        height: 72,
+        indicatorColor: theme.colorScheme.secondaryContainer,
         selectedIndex: currentIndex,
         onDestinationSelected: (index) {
           ref.read(appShellTabProvider.notifier).state = index;

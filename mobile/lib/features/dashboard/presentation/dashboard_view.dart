@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../app/providers.dart';
+import '../../../app/theme/app_theme.dart';
 import '../../ministry_context/domain/ministry.dart';
 import '../../ministry_context/presentation/widgets/ministry_switcher_sheet.dart';
 import '../domain/announcement.dart';
@@ -82,7 +83,9 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
         ? dashboardState.announcements
         : const <Announcement>[];
 
-    final isWide = MediaQuery.of(context).size.width >= 600;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final railWidth = screenWidth >= 1200 ? 168 : (screenWidth >= 600 ? 80 : 0);
+    final isWide = screenWidth - railWidth >= 840;
 
     return SafeArea(
       child: RefreshIndicator(
@@ -94,16 +97,6 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
             // 1. Header & Greeting
             _buildHeader(context, userName, isDark),
             const SizedBox(height: 16),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: FilledButton.tonalIcon(
-                onPressed: () => context.push('/vocal'),
-                icon: const Icon(Icons.mic),
-                label: const Text('Aquecimento vocal'),
-              ),
-            ),
-            const SizedBox(height: 16),
-
             // 2. Active Ministry Card
             if (widget.selectedMinistry != null) ...[
               _buildMinistryBanner(context, widget.selectedMinistry!, isDark),
@@ -117,7 +110,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                 children: [
                   // Left Column: Upcoming Schedules
                   Expanded(
-                    flex: 1,
+                    flex: 3,
                     child: _buildSchedulesSection(
                       context,
                       dashboardState,
@@ -129,7 +122,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                   const SizedBox(width: 24),
                   // Right Column: Announcements
                   Expanded(
-                    flex: 1,
+                    flex: 2,
                     child: _buildAnnouncementsSection(
                       context,
                       dashboardState,
@@ -158,6 +151,17 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                 isAdmin: isAdmin,
               ),
             ],
+            const SizedBox(height: 24),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.tonalIcon(
+                onPressed: () => context.push('/vocal'),
+                icon: const Icon(Icons.mic),
+                label: const Text('Aquecimento vocal'),
+              ),
+            ),
+            const SizedBox(height: 16),
+
             const SizedBox(height: 32),
           ],
         ),
@@ -168,46 +172,41 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
   Widget _buildHeader(BuildContext context, String userName, bool isDark) {
     final theme = Theme.of(context);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(
-              Icons.auto_awesome,
-              size: 16,
-              color: theme.colorScheme.primary,
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppColors.green,
+        borderRadius: BorderRadius.circular(16),
+        border: Border(
+          left: BorderSide(color: theme.colorScheme.secondary, width: 4),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'PAINEL DO INTEGRANTE',
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: AppColors.cream,
+              letterSpacing: 1.2,
             ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(
-                'PAINEL DO INTEGRANTE',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.labelSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.8,
-                  color: theme.colorScheme.primary,
-                ),
-              ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Olá, $userName!',
+            style: theme.textTheme.headlineSmall?.copyWith(
+              color: AppColors.cream,
+              fontWeight: FontWeight.w700,
             ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Text(
-          'Olá, $userName! 👋',
-          style: theme.textTheme.headlineSmall?.copyWith(
-            fontWeight: FontWeight.bold,
           ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          'Confira suas escalas e os comunicados da sua equipe.',
-          style: theme.textTheme.bodyMedium?.copyWith(
-            color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+          const SizedBox(height: 6),
+          Text(
+            'Confira suas escalas e os comunicados da sua equipe.',
+            style: theme.textTheme.bodyMedium?.copyWith(color: AppColors.cream),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -241,10 +240,9 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
     );
 
     final actionButtons = <Widget>[
-      IconButton(
+      TextButton.icon(
+        label: const Text('Liturgias'),
         key: const ValueKey('dashboard_liturgies_button'),
-        tooltip: 'Liturgias',
-        visualDensity: VisualDensity.compact,
         icon: const Icon(Icons.menu_book_outlined, size: 20),
         onPressed: () {
           Navigator.of(context).push(
@@ -257,10 +255,9 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
           );
         },
       ),
-      IconButton(
+      TextButton.icon(
+        label: const Text('Integrantes'),
         key: const ValueKey('dashboard_members_button'),
-        tooltip: 'Integrantes',
-        visualDensity: VisualDensity.compact,
         icon: const Icon(Icons.people_outline, size: 20),
         onPressed: () {
           Navigator.of(context).push(
@@ -298,7 +295,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final isCompactWidth = constraints.maxWidth < 400;
+          final isCompactWidth = constraints.maxWidth < 560;
 
           if (isCompactWidth) {
             return Column(
@@ -518,7 +515,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                   Icon(
                     Icons.campaign_outlined,
                     size: 20,
-                    color: Colors.amber.shade700,
+                    color: theme.colorScheme.secondary,
                   ),
                   const SizedBox(width: 8),
                   Flexible(
@@ -619,7 +616,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 28),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
         borderRadius: BorderRadius.circular(16),
@@ -629,7 +626,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
         children: [
           Icon(
             icon,
-            size: 40,
+            size: 24,
             color: theme.colorScheme.onSurface.withValues(alpha: 0.35),
           ),
           const SizedBox(height: 10),
