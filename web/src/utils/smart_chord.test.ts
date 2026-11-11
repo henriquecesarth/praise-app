@@ -522,3 +522,22 @@ describe('M20-C4 web tablature and bracketed annotation preservation', () => {
     expect(updateBarProgressionChord('| C {{[G]nota}} | Am |', 1, 'D')).toBe('| C {{[G]nota}} | D |');
   });
 });
+
+describe('tablet alternative notation compatibility', () => {
+  it('transposes alternatives in semantic lyric and progression tokens', () => {
+    expect(transposeChord('Am(G)', 1)).toBe('A#m(G#)');
+    expect(transposeSmartChord('[||: C | Am(G) | C(add9)/E :|| 2x]', 1)).toBe('[||: C# | A#m(G#) | C#(add9)/F :|| 2x]');
+    expect(parseSmartChord('[Am(G)]letra')[0].segments[0].chord).toBe('Am(G)');
+  });
+});
+
+it('keeps alternative notation strict and restores original source at zero', () => {
+  for (const text of ['Am(cresce marcando)', 'Am(Dedilhado)', 'Am(G)(C)', 'Am()', '(cresce marcando)', 'Baixo', 'Dedilhado']) {
+    expect(isMusicalChord(text)).toBe(false);
+    expect(transposeChord(text, 1)).toBe(text);
+  }
+  const source = '[C]Amanhece [Am(G)]em luz de[C(add9)/E] ensaio';
+  expect(transposeSmartChord(source, 1)).toBe('[C#]Amanhece [A#m(G#)]em luz de[C#(add9)/F] ensaio');
+  expect(transposeSmartChord(source, 0)).toBe(source);
+  expect(transposeChord('A#m(G#)', -1)).toBe('Am(G)');
+});

@@ -317,10 +317,18 @@ class SmartChordParser {
 
   /// Validates whether a token is a legitimate musical chord and not a word or annotation
   /// (e.g. Baixo, Corte, Dedilhado, Fim).
+  // Only independently valid chords form a terminal alternative, e.g. Am(G).
+  static RegExpMatch? _alternativeChordParts(String token) {
+    final match = RegExp(r'^([^()\s]+)\(([^()\s]+)\)$').firstMatch(token);
+    return match != null && isMusicalChord(match.group(1)!) &&
+        isMusicalChord(match.group(2)!) ? match : null;
+  }
+
   static bool isMusicalChord(String token) {
     if (token.isEmpty) return false;
     final trimmed = _normalizeUnicodeAccidentals(token.trim());
     if (trimmed.isEmpty) return false;
+    if (_alternativeChordParts(trimmed) != null) return true;
 
     final slashParts = trimmed.split('/');
     if (slashParts.length > 2) return false;
@@ -379,6 +387,12 @@ class SmartChordParser {
   static String transposeChord(String chord, int semitones) {
     if (chord.isEmpty) return '';
     if (semitones == 0) return chord;
+    final alternative = _alternativeChordParts(chord);
+    if (alternative != null) {
+      return '${transposeChord(alternative.group(1)!, semitones)}'
+          '(${transposeChord(alternative.group(2)!, semitones)})';
+    }
+
 
     if (chord.contains('|') || chord.contains('%')) {
       return progressionTokens('[$chord]', semitones)!

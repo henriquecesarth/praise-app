@@ -55,6 +55,37 @@ describe('Smart Chord Normalizer & Chord Grammar Test Suite', () => {
     });
   });
 
+  it('recognizes alternatives and projects the exact tablet chord row', () => {
+    expect(isMusicalChord('Am(G)')).toBe(true);
+    expect(isMusicalChord('C(add9)/E')).toBe(true);
+    expect(transposeChordSafe('Am(G)', 1)).toBe('A#m(G#)');
+    const source = 'C        Am(G)    C(add9)/E\nAmanhece em luz de ensaio';
+    const draft = normalizeChordText(source);
+    expect(draft.content).toBe('[C]Amanhece [Am(G)]em luz de[C(add9)/E] ensaio');
+    expect(draft.original_text).toBe(source);
+  });
+
+  it('keeps the full source while normalizing only recognized musical structure', () => {
+    const source = ['QA M20 - Original sheet', 'C        Am(G)    C(add9)/E',
+      'Amanhece em luz de ensaio', '||: C | Am(G) | C(add9)/E :|| 2x',
+      'B\u266dmaj7        F\u266fm E\u266e', '{{^Entrada: baixo}}',
+      '{{Din\u00e2mica: suave}}', 'e|--0--2--|', 'B|--1--3--|', 'G|--0--2--|'].join('\n');
+    const expected = source.replace('C        Am(G)    C(add9)/E\nAmanhece em luz de ensaio',
+      '[C]Amanhece [Am(G)]em luz de[C(add9)/E] ensaio')
+      .replace('||: C | Am(G) | C(add9)/E :|| 2x', '[||: C | Am(G) | C(add9)/E :|| 2x]');
+    const draft = normalizeChordText(source);
+    expect(draft.content).toBe(expected);
+    expect(draft.original_text).toBe(source);
+    expect(transposeChordSafe('A#m(G#)', -1)).toBe('Am(G)');
+    expect(transposeChordSafe('Am(G)', 0)).toBe('Am(G)');
+    expect(transposeChordSafe('C(add9)/E', 1)).toBe('C#(add9)/F');
+    for (const text of ['(cresce marcando)', 'Am(cresce marcando)', 'Am(Dedilhado)',
+      'Am(G)(C)', 'Am()', 'Baixo', 'Dedilhado', 'e|--0--2--|']) {
+      expect(isMusicalChord(text)).toBe(false);
+      expect(transposeChordSafe(text, 1)).toBe(text);
+    }
+  });
+
   describe('2. Transposition Safety Suite', () => {
     it('transposes valid chords correctly', () => {
       expect(transposeChordSafe('A', 2)).toBe('B');
