@@ -111,6 +111,33 @@ describe('Smart Chord Normalizer & Chord Grammar Test Suite', () => {
       expect(draft.content).toContain('[||: A9 | A7M/9 | D9 | % :||]');
     });
 
+    it('keeps a bar progression separate from a following unrecognized chord line', () => {
+      const input = [
+        'Titulo: QA M20',
+        'C        Am(G)    C(add9)/E',
+        'Amanhece em luz de ensaio',
+        '||: C | Am(G) | C(add9)/E :|| 2x',
+        'B♭maj7        F♯m',
+      ].join('\n');
+      const draft = normalizeChordText(input);
+
+      expect(draft.content).toContain('[||: C | Am(G) | C(add9)/E :|| 2x]');
+      expect(draft.content).toContain('B♭maj7        F♯m');
+      expect(draft.content).not.toContain('B♭ma[C]j7');
+    });
+
+    it('preserves notation, instructions and tablature next to chord lines', () => {
+      const lines = ['B\u266dmaj7 F\u266fm E\u266e', '{{^Entrada: baixo}}', '{{Dinamica: suave}}', 'e|--0--2--|', 'B|--1--3--|', 'G|--0--2--|'];
+      for (const line of lines) {
+        expect(normalizeChordText('C G\n' + line).content.split('\n')).toContain(line);
+      }
+      const input = ['C        Am(G)    C(add9)/E', 'Amanhece em luz de ensaio', '||: C | Am(G) | C(add9)/E :|| 2x', 'A7M/9', ...lines].join('\n');
+      const content = normalizeChordText(input).content;
+      for (const token of ['Am(G)', 'C(add9)/E', 'A7M/9', ...lines]) expect(content).toContain(token);
+      expect(content).toContain('[||: C | Am(G) | C(add9)/E :|| 2x]');
+      expect(content).not.toContain('G|--0--2--|o');
+    });
+
     it('preserves parenthetical performance annotations without bracket corruption', () => {
       const input = '(violão/pad)\nA9           A7M/9\nGraças Te dou';
       const draft = normalizeChordText(input);

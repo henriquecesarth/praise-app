@@ -255,12 +255,21 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
 
       // Check if current line is a chord line
       if (isChordLine(currentLine)) {
-        const nextLine = (i + 1 < rawLines.length) ? rawLines[i + 1] : null;
+        const currentTokens = tokenizeLine(currentLine);
+        const hasBarlines = currentTokens.some(t => ['|', '||', '||:', ':||', '%'].includes(t.text));
+        // A bar-delimited progression is a complete musical line. Never project
+        // its chords into the following text line, which may itself contain
+        // unrecognized chord notation (for example Unicode accidentals).
+        const nextLine =
+            !hasBarlines && i + 1 < rawLines.length ? rawLines[i + 1] : null;
         const nextTrimmed = nextLine ? nextLine.trim() : '';
 
         // If next line exists, is non-empty, and is NOT another chord line, section header, or annotation:
         if (
           nextLine !== null &&
+          currentTokens.every(t => t.isChord) &&
+          !/[\u266d\u266f\u266e]/.test(nextLine) &&
+          !/^\s*(?:\{\{|[eBGDAE]\|)/.test(nextLine) &&
           nextTrimmed !== '' &&
           !isChordLine(nextLine) &&
           !SECTION_HEADER_REGEX.test(nextTrimmed) &&
@@ -287,8 +296,7 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
           continue;
         } else {
           // Instrumental progression line without lyrics (e.g. Intro progression or solo)
-          const tokens = tokenizeLine(currentLine);
-          const hasBarlines = tokens.some(t => ['|', '||', '||:', ':||', '%'].includes(t.text));
+          const tokens = currentTokens;
 
           if (!hasBarlines) {
             const formattedParts = tokens.map(t => {
