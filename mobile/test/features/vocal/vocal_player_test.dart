@@ -199,6 +199,96 @@ void main() {
     },
   );
 
+  group('VocalExerciseLibrary responsive layout (M21-UX2)', () {
+    testWidgets(
+      'tablet in landscape renders 2 cards per row without overflow in light and dark themes',
+      (tester) async {
+        for (final themeMode in [ThemeMode.light, ThemeMode.dark]) {
+          await tester.pumpWidget(
+            MediaQuery(
+              data: const MediaQueryData(size: Size(1024, 768)),
+              child: MaterialApp(
+                theme: ThemeData.light(useMaterial3: true),
+                darkTheme: ThemeData.dark(useMaterial3: true),
+                themeMode: themeMode,
+                home: const VocalPlayerScreen(),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull);
+
+          final card1 = find.byKey(const ValueKey('vocal_exercise_card_vocal-01'));
+          final card2 = find.byKey(const ValueKey('vocal_exercise_card_vocal-02'));
+          expect(card1, findsOneWidget);
+          expect(card2, findsOneWidget);
+
+          final rect1 = tester.getRect(card1);
+          final rect2 = tester.getRect(card2);
+          // Same row: same top coordinate, card2 to the right of card1
+          expect(rect1.top, closeTo(rect2.top, 0.5));
+          expect(rect2.left, greaterThan(rect1.right));
+        }
+      },
+    );
+
+    testWidgets(
+      'tablet in portrait renders 1 card per row',
+      (tester) async {
+        await tester.pumpWidget(
+          const MediaQuery(
+            data: MediaQueryData(size: Size(768, 1024)),
+            child: MaterialApp(home: VocalPlayerScreen()),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+
+        final card1 = find.byKey(const ValueKey('vocal_exercise_card_vocal-01'));
+        final card2 = find.byKey(const ValueKey('vocal_exercise_card_vocal-02'));
+        expect(card1, findsOneWidget);
+        expect(card2, findsOneWidget);
+
+        final rect1 = tester.getRect(card1);
+        final rect2 = tester.getRect(card2);
+        // Stacked vertically: same left coordinate, card2 below card1
+        expect(rect1.left, closeTo(rect2.left, 0.5));
+        expect(rect2.top, greaterThan(rect1.bottom));
+      },
+    );
+
+    testWidgets(
+      'phone in portrait and landscape keeps 1 card per row',
+      (tester) async {
+        for (final size in [const Size(390, 844), const Size(844, 390)]) {
+          await tester.pumpWidget(
+            MediaQuery(
+              data: MediaQueryData(size: size),
+              child: const MaterialApp(home: VocalPlayerScreen()),
+            ),
+          );
+          await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull);
+
+          final card1 = find.byKey(
+            const ValueKey('vocal_exercise_card_vocal-01'),
+          );
+          final card2 = find.byKey(
+            const ValueKey('vocal_exercise_card_vocal-02'),
+          );
+          expect(card1, findsOneWidget);
+          expect(card2, findsOneWidget);
+
+          final rect1 = tester.getRect(card1);
+          final rect2 = tester.getRect(card2);
+          // Stacked vertically: same left coordinate, card2 below card1
+          expect(rect1.left, closeTo(rect2.left, 0.5));
+          expect(rect2.top, greaterThan(rect1.bottom));
+        }
+      },
+    );
+  });
+
   testWidgets(
     'player exposes tempo, musical vocal range, optional piano keyboard, and stops audio on exit',
     (tester) async {

@@ -185,6 +185,11 @@ class _VocalExerciseLibraryState extends State<VocalExerciseLibrary> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final screenSize = MediaQuery.sizeOf(context);
+    final orientation = MediaQuery.orientationOf(context);
+    final isTabletLandscape =
+        screenSize.shortestSide >= 600 && orientation == Orientation.landscape;
+    final columnsCount = isTabletLandscape ? 2 : 1;
     final selected = _selectedExercise;
     final counts = _counts;
     final filtered = _filteredExercises;
@@ -343,14 +348,48 @@ class _VocalExerciseLibraryState extends State<VocalExerciseLibrary> {
                     key: const PageStorageKey<String>('vocal_library_scroll'),
                     controller: _listScrollController,
                     shrinkWrap: true,
-                    itemCount: filtered.length,
+                    itemCount: (filtered.length + columnsCount - 1) ~/
+                        columnsCount,
                     separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemBuilder: (context, index) {
-                      final exercise = filtered[index];
-                      return _buildExerciseCard(
-                        context,
-                        exercise: exercise,
-                        isSelected: exercise.id == widget.selectedExerciseId,
+                    itemBuilder: (context, rowIndex) {
+                      if (columnsCount == 1) {
+                        final exercise = filtered[rowIndex];
+                        return _buildExerciseCard(
+                          context,
+                          exercise: exercise,
+                          isSelected: exercise.id == widget.selectedExerciseId,
+                        );
+                      }
+                      final leftIndex = rowIndex * 2;
+                      final rightIndex = leftIndex + 1;
+                      final leftExercise = filtered[leftIndex];
+                      final rightExercise = rightIndex < filtered.length
+                          ? filtered[rightIndex]
+                          : null;
+                      return Row(
+                        key: ValueKey('vocal_library_row_$rowIndex'),
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: _buildExerciseCard(
+                              context,
+                              exercise: leftExercise,
+                              isSelected:
+                                  leftExercise.id == widget.selectedExerciseId,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: rightExercise != null
+                                ? _buildExerciseCard(
+                                    context,
+                                    exercise: rightExercise,
+                                    isSelected: rightExercise.id ==
+                                        widget.selectedExerciseId,
+                                  )
+                                : const SizedBox.shrink(),
+                          ),
+                        ],
                       );
                     },
                   ),
