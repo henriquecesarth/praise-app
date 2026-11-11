@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import '../../../app/theme/app_theme.dart';
 import '../../../app/providers.dart';
 
@@ -370,11 +369,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-                    ),
-                    TextButton.icon(
-                      onPressed: () => context.push('/vocal'),
-                      icon: const Icon(Icons.mic),
-                      label: const Text('Exercícios vocais offline'),
                     ),
                   ],
                 ),

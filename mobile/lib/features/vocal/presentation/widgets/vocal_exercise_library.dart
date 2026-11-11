@@ -343,14 +343,17 @@ class _VocalExerciseLibraryState extends State<VocalExerciseLibrary> {
                 _buildEmptyState(context)
               else
                 ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 290),
+                  constraints: BoxConstraints(
+                    maxHeight: isTabletLandscape ? 380 : 290,
+                  ),
                   child: ListView.separated(
                     key: const PageStorageKey<String>('vocal_library_scroll'),
                     controller: _listScrollController,
                     shrinkWrap: true,
                     itemCount: (filtered.length + columnsCount - 1) ~/
                         columnsCount,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    separatorBuilder: (_, __) =>
+                        SizedBox(height: isTabletLandscape ? 10 : 8),
                     itemBuilder: (context, rowIndex) {
                       if (columnsCount == 1) {
                         final exercise = filtered[rowIndex];
@@ -378,7 +381,7 @@ class _VocalExerciseLibraryState extends State<VocalExerciseLibrary> {
                                   leftExercise.id == widget.selectedExerciseId,
                             ),
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 14),
                           Expanded(
                             child: rightExercise != null
                                 ? _buildExerciseCard(
@@ -520,17 +523,17 @@ class _VocalExerciseLibraryState extends State<VocalExerciseLibrary> {
         borderRadius: BorderRadius.circular(12),
         onTap: () => _handleSelectExercise(exercise),
         child: Container(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           decoration: BoxDecoration(
             color: isSelected
-                ? theme.colorScheme.primary.withValues(alpha: 0.10)
+                ? theme.colorScheme.primary.withValues(alpha: 0.12)
                 : theme.colorScheme.surfaceContainerLow,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: isSelected
                   ? theme.colorScheme.primary
-                  : theme.dividerColor.withValues(alpha: 0.25),
-              width: isSelected ? 1.8 : 1.0,
+                  : theme.colorScheme.outlineVariant.withValues(alpha: 0.7),
+              width: isSelected ? 2.0 : 1.0,
             ),
           ),
           child: Column(

@@ -28,14 +28,12 @@ GoRouter createRouter(Ref ref) {
       final auth = ref.read(authNotifierProvider);
       final ministry = ref.read(ministryContextNotifierProvider);
       final loc = state.matchedLocation;
-      // This route contains only bundled public exercises and works offline.
-      if (loc == '/vocal') return null;
       final isLoggingIn = loc == '/login';
       final isNoMinistry = loc == '/no-ministry';
       final isSelectMinistry = loc == '/select-ministry';
 
       if (auth.isInitializing) {
-        return null;
+        return loc == '/' ? null : '/';
       }
 
       if (auth.hasBootstrapError) {
@@ -45,6 +43,9 @@ GoRouter createRouter(Ref ref) {
       if (!auth.isAuthenticated) {
         return isLoggingIn ? null : '/login';
       }
+
+      // Authenticated users can access the vocal module offline or online.
+      if (loc == '/vocal') return null;
 
       // Authenticated users should not be on /login
       if (isLoggingIn) {
@@ -133,11 +134,6 @@ GoRouter createRouter(Ref ref) {
                         },
                         icon: const Icon(Icons.refresh),
                         label: const Text('Tentar novamente'),
-                      ),
-                      TextButton.icon(
-                        onPressed: () => GoRouter.of(context).push('/vocal'),
-                        icon: const Icon(Icons.mic),
-                        label: const Text('Exercícios vocais offline'),
                       ),
                       const SizedBox(height: 12),
                       OutlinedButton(
