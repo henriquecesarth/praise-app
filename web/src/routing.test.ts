@@ -27,9 +27,8 @@ describe('application routes', () => {
     expect(parseAppRoute('/nao-existe').isKnown).toBe(false);
   });
 
-  it('skips private session bootstrap on the self-contained vocal route', () => {
-    expect(shouldBootstrapSession('vocal', false)).toBe(false);
-    expect(shouldBootstrapSession('dashboard', false)).toBe(true);
-    expect(shouldBootstrapSession('vocal', true)).toBe(false);
+  it('requires session bootstrap for direct vocal access until the session is verified', () => {
+    expect(shouldBootstrapSession(false)).toBe(true);
+    expect(shouldBootstrapSession(true)).toBe(false);
   });
 });
