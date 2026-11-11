@@ -186,6 +186,15 @@ describe('Smart Chord Normalizer & Chord Grammar Test Suite', () => {
       expect(isChordLine('A9 (cresce marcando D9')).toBe(false);
     });
 
+    it('keeps annotations and chords at their lyric columns', () => {
+      for (const annotation of ['(cresce marcando)', '(viol\u00e3o solo)']) {
+        const chordLine = 'A9          ' + annotation.padEnd(26) + 'D9';
+        const lyric = 'Eu sei que tudo vais fazer';
+        const expected = '[A9]' + lyric.slice(0, 12) + annotation + lyric.slice(12) + ' '.repeat(38 - lyric.length) + '[D9]';
+        expect(normalizeChordText(chordLine + '\n' + lyric).content).toBe(expected);
+      }
+    });
+
     it('preserves multi-word annotations on chord-over-lyric lines during plain text import', () => {
       const input = 'A9          (cresce marcando)          D9\nEu sei que tudo vais fazer';
       const draft = normalizeChordText(input);

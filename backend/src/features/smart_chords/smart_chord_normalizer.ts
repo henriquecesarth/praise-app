@@ -267,7 +267,7 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
         // If next line exists, is non-empty, and is NOT another chord line, section header, or annotation:
         if (
           nextLine !== null &&
-          currentTokens.every(t => t.isChord) &&
+          currentTokens.every(t => t.isChord || /^\([^()]*\)$/.test(t.text)) &&
           !/[\u266d\u266f\u266e]/.test(nextLine) &&
           !/^\s*(?:\{\{|[eBGDAE]\|)/.test(nextLine) &&
           nextTrimmed !== '' &&
@@ -277,13 +277,13 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
           !/^\s*\(.*?\)\s*$/.test(nextTrimmed)
         ) {
           // Project chords into the lyric line below
-          const tokens = tokenizeLine(currentLine).filter(t => t.isChord);
+          const tokens = [...currentTokens];
           // Insert in descending order of column index
           tokens.sort((a, b) => b.index - a.index);
 
           let combined = nextLine;
           for (const t of tokens) {
-            const chordBracket = '[' + t.text + ']';
+            const chordBracket = t.isChord ? '[' + t.text + ']' : t.text;
             if (t.index >= combined.length) {
               const padding = ' '.repeat(t.index - combined.length);
               combined = combined + padding + chordBracket;
