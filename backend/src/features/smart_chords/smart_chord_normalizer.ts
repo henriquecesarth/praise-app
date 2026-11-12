@@ -20,9 +20,9 @@ export const FLAT_MAP: Record<string, string> = {
  * Validates if a token is a musical chord (e.g. A9, A7M/9, D/F#, F#m)
  * and distinguishes it from non-chord text (e.g. Baixo, Corte, Dedilhado, Fim).
  */
-// Am(G) means Am with alternative G; performance text is never an alternative.
+// Am(G) or Am (G) means Am with alternative G; performance text is never an alternative.
 function alternativeChordParts(token: string): RegExpMatchArray | null {
-  const match = token.match(/^([^()\s]+)\(([^()\s]+)\)$/);
+  const match = token.match(/^([^()\s]+)\s*\(([^()\s]+)\)$/);
   return match && isMusicalChord(match[1]) && isMusicalChord(match[2]) ? match : null;
 }
 
@@ -30,6 +30,12 @@ export function isMusicalChord(token: string): boolean {
   if (!token || typeof token !== 'string') return false;
   const trimmed = token.trim();
   if (!trimmed) return false;
+
+  if (trimmed.startsWith('(') && trimmed.endsWith(')') && trimmed.length > 2) {
+    const inner = trimmed.slice(1, -1).trim();
+    if (isMusicalChord(inner)) return true;
+  }
+
   if (alternativeChordParts(trimmed)) return true;
 
   const slashParts = trimmed.split('/');
@@ -86,9 +92,26 @@ function transposeSingleChordRoot(part: string, semitones: number): string {
  */
 export function transposeChordSafe(chord: string, semitones: number): string {
   if (!chord || semitones === 0) return chord;
+
+  const trimmed = chord.trim();
+  if (trimmed.startsWith('(') && trimmed.endsWith(')') && trimmed.length > 2) {
+    const inner = trimmed.slice(1, -1).trim();
+    if (isMusicalChord(inner)) {
+      const openIdx = chord.indexOf('(');
+      const closeIdx = chord.lastIndexOf(')');
+      const prefix = chord.slice(0, openIdx);
+      const suffix = chord.slice(closeIdx + 1);
+      return `${prefix}(${transposeChordSafe(inner, semitones)})${suffix}`;
+    }
+  }
+
   const alternative = alternativeChordParts(chord);
   if (alternative) {
-    return transposeChordSafe(alternative[1], semitones) + '(' + transposeChordSafe(alternative[2], semitones) + ')';
+    const part1 = alternative[1];
+    const part2 = alternative[2];
+    const openParenIndex = chord.indexOf('(');
+    const sep = chord.slice(chord.indexOf(part1) + part1.length, openParenIndex);
+    return transposeChordSafe(part1, semitones) + sep + '(' + transposeChordSafe(part2, semitones) + ')';
   }
 
   if (chord.includes('|') || chord.includes('%')) {
@@ -141,7 +164,7 @@ export function isChordLine(line: string): boolean {
     return false;
   }
   // If line is a single parenthesized annotation, it's an annotation line, not a chord line
-  if (/^\s*\([^()]*\)\s*$/.test(line.trim())) {
+  if (/^\s*\([^()]*\)\s*$/.test(line.trim()) && !isMusicalChord(line.trim())) {
     return false;
   }
 
@@ -151,7 +174,7 @@ export function isChordLine(line: string): boolean {
   let chordCount = 0;
   let nonAnnotationCount = 0;
   for (const t of tokens) {
-    if (/^\([^()]*\)$/.test(t.text) || /^\[[^[\]]*\]$/.test(t.text)) {
+    if ((/^\([^()]*\)$/.test(t.text) || /^\[[^[\]]*\]$/.test(t.text)) && !t.isChord) {
       continue;
     }
     nonAnnotationCount++;
@@ -258,7 +281,7 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
       }
 
       // Check for parenthetical performance annotation e.g. (violão/pad)
-      if (/^\s*\(.*?\)\s*$/.test(trimmed)) {
+      if (/^\s*\(.*?\)\s*$/.test(trimmed) && !isMusicalChord(trimmed)) {
         contentLines.push(trimmed);
         i++;
         continue;

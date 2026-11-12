@@ -317,9 +317,9 @@ class SmartChordParser {
 
   /// Validates whether a token is a legitimate musical chord and not a word or annotation
   /// (e.g. Baixo, Corte, Dedilhado, Fim).
-  // Only independently valid chords form a terminal alternative, e.g. Am(G).
+  // Only independently valid chords form a terminal alternative, e.g. Am(G) or Am (G).
   static RegExpMatch? _alternativeChordParts(String token) {
-    final match = RegExp(r'^([^()\s]+)\(([^()\s]+)\)$').firstMatch(token);
+    final match = RegExp(r'^([^()\s]+)\s*\(([^()\s]+)\)$').firstMatch(token);
     return match != null && isMusicalChord(match.group(1)!) &&
         isMusicalChord(match.group(2)!) ? match : null;
   }
@@ -328,6 +328,12 @@ class SmartChordParser {
     if (token.isEmpty) return false;
     final trimmed = _normalizeUnicodeAccidentals(token.trim());
     if (trimmed.isEmpty) return false;
+
+    if (trimmed.startsWith('(') && trimmed.endsWith(')') && trimmed.length > 2) {
+      final inner = trimmed.substring(1, trimmed.length - 1).trim();
+      if (isMusicalChord(inner)) return true;
+    }
+
     if (_alternativeChordParts(trimmed) != null) return true;
 
     final slashParts = trimmed.split('/');
@@ -387,10 +393,25 @@ class SmartChordParser {
   static String transposeChord(String chord, int semitones) {
     if (chord.isEmpty) return '';
     if (semitones == 0) return chord;
+
+    final trimmed = chord.trim();
+    if (trimmed.startsWith('(') && trimmed.endsWith(')') && trimmed.length > 2) {
+      final inner = trimmed.substring(1, trimmed.length - 1).trim();
+      if (isMusicalChord(inner)) {
+        final prefix = chord.substring(0, chord.indexOf('('));
+        final suffix = chord.substring(chord.lastIndexOf(')') + 1);
+        return '$prefix(${transposeChord(inner, semitones)})$suffix';
+      }
+    }
+
     final alternative = _alternativeChordParts(chord);
     if (alternative != null) {
-      return '${transposeChord(alternative.group(1)!, semitones)}'
-          '(${transposeChord(alternative.group(2)!, semitones)})';
+      final part1 = alternative.group(1)!;
+      final part2 = alternative.group(2)!;
+      final openParenIndex = chord.indexOf('(');
+      final sep = chord.substring(chord.indexOf(part1) + part1.length, openParenIndex);
+      return '${transposeChord(part1, semitones)}$sep'
+          '(${transposeChord(part2, semitones)})';
     }
 
 
@@ -601,7 +622,8 @@ class SmartChordParser {
     final groups = RegExp(r'\[([^\[\]]*)\]').allMatches(line).toList();
     final tokenPattern = RegExp(r'\([^()]*\)|\|\|:|:\|\||\|:|:\||\|\||[|%]|\s+|[^\s|%:]+|:');
     bool isBlock(String inner) => inner.contains('|') || inner.contains('%') ||
-        tokenPattern.allMatches(inner).where((m) => isMusicalChord(m.group(0)!)).length >= 2;
+        (!isMusicalChord(inner.trim()) &&
+            tokenPattern.allMatches(inner).where((m) => isMusicalChord(m.group(0)!)).length >= 2);
     if (!groups.any((group) => isBlock(group.group(1)!))) return null;
     final result = <MusicalProgressionToken>[];
     int end = 0;

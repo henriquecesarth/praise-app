@@ -57,12 +57,21 @@ describe('Smart Chord Normalizer & Chord Grammar Test Suite', () => {
 
   it('recognizes alternatives and projects the exact tablet chord row', () => {
     expect(isMusicalChord('Am(G)')).toBe(true);
+    expect(isMusicalChord('Am (G)')).toBe(true);
+    expect(isMusicalChord('(G)')).toBe(true);
+    expect(isMusicalChord('(Am)')).toBe(true);
     expect(isMusicalChord('C(add9)/E')).toBe(true);
     expect(transposeChordSafe('Am(G)', 1)).toBe('A#m(G#)');
+    expect(transposeChordSafe('Am (G)', 1)).toBe('A#m (G#)');
+    expect(transposeChordSafe('(G)', 2)).toBe('(A)');
     const source = 'C        Am(G)    C(add9)/E\nAmanhece em luz de ensaio';
     const draft = normalizeChordText(source);
     expect(draft.content).toBe('[C]Amanhece [Am(G)]em luz de[C(add9)/E] ensaio');
     expect(draft.original_text).toBe(source);
+
+    const source2 = 'C        Am (G)    (G)\nAmanhece em luz de ensaio';
+    const draft2 = normalizeChordText(source2);
+    expect(draft2.content).toBe('[C]Amanhece [Am]em [(G)]luz de [(G)]ensaio');
   });
 
   it('keeps the full source while normalizing only recognized musical structure', () => {

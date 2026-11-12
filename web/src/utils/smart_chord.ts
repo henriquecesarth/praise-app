@@ -89,9 +89,9 @@ export function isTablatureLine(line: string): boolean {
 export const ROOT_REGEX = /^([A-G][#b]?)(.*)$/i;
 export const EXT_REGEX = /^(m|min|maj|M|dim|aug|sus[24]?|add[249]?|[0-9]+|\+|\-|\((b5|#5|b9|#9|9|11|#11|13|b13|5-|5\+)\)|b5|#5|b9|#9|b13|#11|alt|7M|M7)*$/;
 
-// Am(G) means Am with alternative G; performance text is never an alternative.
+// Am(G) or Am (G) means Am with alternative G; performance text is never an alternative.
 function alternativeChordParts(token: string): RegExpMatchArray | null {
-  const match = token.match(/^([^()\s]+)\(([^()\s]+)\)$/);
+  const match = token.match(/^([^()\s]+)\s*\(([^()\s]+)\)$/);
   return match && isMusicalChord(match[1]) && isMusicalChord(match[2]) ? match : null;
 }
 
@@ -99,6 +99,12 @@ export function isMusicalChord(token: string): boolean {
   if (!token || typeof token !== 'string') return false;
   const trimmed = token.trim().replace(/♭/g, 'b').replace(/♯/g, '#').replace(/♮/g, '').replace(/\(add([249])\)/g, 'add$1');
   if (!trimmed) return false;
+
+  if (trimmed.startsWith('(') && trimmed.endsWith(')') && trimmed.length > 2) {
+    const inner = trimmed.slice(1, -1).trim();
+    if (isMusicalChord(inner)) return true;
+  }
+
   if (alternativeChordParts(trimmed)) return true;
 
   const slashParts = trimmed.split('/');
@@ -137,9 +143,26 @@ function transposeChordSingle(chord: string, semitones: number): string {
  */
 export function transposeChord(chord: string, semitones: number): string {
   if (!chord || semitones === 0) return chord;
+
+  const trimmed = chord.trim();
+  if (trimmed.startsWith('(') && trimmed.endsWith(')') && trimmed.length > 2) {
+    const inner = trimmed.slice(1, -1).trim();
+    if (isMusicalChord(inner)) {
+      const openIdx = chord.indexOf('(');
+      const closeIdx = chord.lastIndexOf(')');
+      const prefix = chord.slice(0, openIdx);
+      const suffix = chord.slice(closeIdx + 1);
+      return `${prefix}(${transposeChord(inner, semitones)})${suffix}`;
+    }
+  }
+
   const alternative = alternativeChordParts(chord);
   if (alternative) {
-    return transposeChord(alternative[1], semitones) + '(' + transposeChord(alternative[2], semitones) + ')';
+    const part1 = alternative[1];
+    const part2 = alternative[2];
+    const openParenIndex = chord.indexOf('(');
+    const sep = chord.slice(chord.indexOf(part1) + part1.length, openParenIndex);
+    return transposeChord(part1, semitones) + sep + '(' + transposeChord(part2, semitones) + ')';
   }
 
   if (/[♭♯♮]/.test(chord)) {

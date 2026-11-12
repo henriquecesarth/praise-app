@@ -76,7 +76,24 @@ function transposeChordSingle(chord: string, semitones: number): string {
 }
 
 export function transposeChord(chord: string, semitones: number): string {
-  if (!chord) return '';
+  if (!chord || semitones === 0) return chord;
+  const trimmed = chord.trim();
+  if (trimmed.startsWith('(') && trimmed.endsWith(')') && trimmed.length > 2) {
+    const inner = trimmed.slice(1, -1).trim();
+    const openIdx = chord.indexOf('(');
+    const closeIdx = chord.lastIndexOf(')');
+    const prefix = chord.slice(0, openIdx);
+    const suffix = chord.slice(closeIdx + 1);
+    return `${prefix}(${transposeChord(inner, semitones)})${suffix}`;
+  }
+  const alt = chord.match(/^([^()\s]+)\s*\(([^()\s]+)\)$/);
+  if (alt) {
+    const part1 = alt[1];
+    const part2 = alt[2];
+    const openParenIndex = chord.indexOf('(');
+    const sep = chord.slice(chord.indexOf(part1) + part1.length, openParenIndex);
+    return transposeChord(part1, semitones) + sep + '(' + transposeChord(part2, semitones) + ')';
+  }
   if (chord.includes('/')) {
     return chord
       .split('/')

@@ -41,6 +41,10 @@ describe('Web Smart Chord Utility Test Suite', () => {
       expect(isMusicalChord('Bb')).toBe(true);
       expect(isMusicalChord('Gadd9')).toBe(true);
       expect(isMusicalChord('Dsus4')).toBe(true);
+      expect(isMusicalChord('(G)')).toBe(true);
+      expect(isMusicalChord('(Am)')).toBe(true);
+      expect(isMusicalChord('Am(G)')).toBe(true);
+      expect(isMusicalChord('Am (G)')).toBe(true);
     });
 
     it('rejects plain text words and descriptive text', () => {
@@ -51,6 +55,10 @@ describe('Web Smart Chord Utility Test Suite', () => {
       expect(isMusicalChord('Fim')).toBe(false);
       expect(isMusicalChord('Solo')).toBe(false);
       expect(isMusicalChord('Intro')).toBe(false);
+      expect(isMusicalChord('(marca/corte)')).toBe(false);
+      expect(isMusicalChord('(Baixo)')).toBe(false);
+      expect(isMusicalChord('(Dedilhado)')).toBe(false);
+      expect(isMusicalChord('(Fim)')).toBe(false);
     });
   });
 
@@ -68,6 +76,9 @@ describe('Web Smart Chord Utility Test Suite', () => {
       expect(transposeChord('A7M/9', 2)).toBe('B7M/9');
       expect(transposeChord('D/F#', 2)).toBe('E/G#');
       expect(transposeChord('C#m7', 1)).toBe('Dm7');
+      expect(transposeChord('(G)', 2)).toBe('(A)');
+      expect(transposeChord('Am (G)', 2)).toBe('Bm (A)');
+      expect(transposeChord('Am(G)', 2)).toBe('Bm(A)');
     });
 
     it('transposes bracketed bar expressions preserving barlines, repeat signs and percentage marks', () => {
