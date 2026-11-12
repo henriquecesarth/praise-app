@@ -651,6 +651,7 @@ export async function extractSmartChordDraftFromPdf(buffer: Buffer): Promise<Sma
             nextVLine &&
             yDiff < 35 &&
             nextLineText &&
+            !/^\s*(?:\{\{|[eBGDAE]\|)/.test(nextLineText) &&
             !isChordLine(nextLineText) &&
             !SECTION_HEADER_REGEX.test(nextLineText) &&
             !BRACKETED_SECTION_REGEX.test(nextLineText) &&

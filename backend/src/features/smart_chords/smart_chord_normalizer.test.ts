@@ -55,6 +55,37 @@ describe('Smart Chord Normalizer & Chord Grammar Test Suite', () => {
     });
   });
 
+  it('recognizes alternatives and projects the exact tablet chord row', () => {
+    expect(isMusicalChord('Am(G)')).toBe(true);
+    expect(isMusicalChord('C(add9)/E')).toBe(true);
+    expect(transposeChordSafe('Am(G)', 1)).toBe('A#m(G#)');
+    const source = 'C        Am(G)    C(add9)/E\nAmanhece em luz de ensaio';
+    const draft = normalizeChordText(source);
+    expect(draft.content).toBe('[C]Amanhece [Am(G)]em luz de[C(add9)/E] ensaio');
+    expect(draft.original_text).toBe(source);
+  });
+
+  it('keeps the full source while normalizing only recognized musical structure', () => {
+    const source = ['QA M20 - Original sheet', 'C        Am(G)    C(add9)/E',
+      'Amanhece em luz de ensaio', '||: C | Am(G) | C(add9)/E :|| 2x',
+      'B\u266dmaj7        F\u266fm E\u266e', '{{^Entrada: baixo}}',
+      '{{Din\u00e2mica: suave}}', 'e|--0--2--|', 'B|--1--3--|', 'G|--0--2--|'].join('\n');
+    const expected = source.replace('C        Am(G)    C(add9)/E\nAmanhece em luz de ensaio',
+      '[C]Amanhece [Am(G)]em luz de[C(add9)/E] ensaio')
+      .replace('||: C | Am(G) | C(add9)/E :|| 2x', '[||: C | Am(G) | C(add9)/E :|| 2x]');
+    const draft = normalizeChordText(source);
+    expect(draft.content).toBe(expected);
+    expect(draft.original_text).toBe(source);
+    expect(transposeChordSafe('A#m(G#)', -1)).toBe('Am(G)');
+    expect(transposeChordSafe('Am(G)', 0)).toBe('Am(G)');
+    expect(transposeChordSafe('C(add9)/E', 1)).toBe('C#(add9)/F');
+    for (const text of ['(cresce marcando)', 'Am(cresce marcando)', 'Am(Dedilhado)',
+      'Am(G)(C)', 'Am()', 'Baixo', 'Dedilhado', 'e|--0--2--|']) {
+      expect(isMusicalChord(text)).toBe(false);
+      expect(transposeChordSafe(text, 1)).toBe(text);
+    }
+  });
+
   describe('2. Transposition Safety Suite', () => {
     it('transposes valid chords correctly', () => {
       expect(transposeChordSafe('A', 2)).toBe('B');
@@ -111,6 +142,33 @@ describe('Smart Chord Normalizer & Chord Grammar Test Suite', () => {
       expect(draft.content).toContain('[||: A9 | A7M/9 | D9 | % :||]');
     });
 
+    it('keeps a bar progression separate from a following unrecognized chord line', () => {
+      const input = [
+        'Titulo: QA M20',
+        'C        Am(G)    C(add9)/E',
+        'Amanhece em luz de ensaio',
+        '||: C | Am(G) | C(add9)/E :|| 2x',
+        'B♭maj7        F♯m',
+      ].join('\n');
+      const draft = normalizeChordText(input);
+
+      expect(draft.content).toContain('[||: C | Am(G) | C(add9)/E :|| 2x]');
+      expect(draft.content).toContain('B♭maj7        F♯m');
+      expect(draft.content).not.toContain('B♭ma[C]j7');
+    });
+
+    it('preserves notation, instructions and tablature next to chord lines', () => {
+      const lines = ['B\u266dmaj7 F\u266fm E\u266e', '{{^Entrada: baixo}}', '{{Dinamica: suave}}', 'e|--0--2--|', 'B|--1--3--|', 'G|--0--2--|'];
+      for (const line of lines) {
+        expect(normalizeChordText('C G\n' + line).content.split('\n')).toContain(line);
+      }
+      const input = ['C        Am(G)    C(add9)/E', 'Amanhece em luz de ensaio', '||: C | Am(G) | C(add9)/E :|| 2x', 'A7M/9', ...lines].join('\n');
+      const content = normalizeChordText(input).content;
+      for (const token of ['Am(G)', 'C(add9)/E', 'A7M/9', ...lines]) expect(content).toContain(token);
+      expect(content).toContain('[||: C | Am(G) | C(add9)/E :|| 2x]');
+      expect(content).not.toContain('G|--0--2--|o');
+    });
+
     it('preserves parenthetical performance annotations without bracket corruption', () => {
       const input = '(violão/pad)\nA9           A7M/9\nGraças Te dou';
       const draft = normalizeChordText(input);
@@ -157,6 +215,15 @@ describe('Smart Chord Normalizer & Chord Grammar Test Suite', () => {
 
     it('handles incomplete or malformed parentheses safely without silent crash', () => {
       expect(isChordLine('A9 (cresce marcando D9')).toBe(false);
+    });
+
+    it('keeps annotations and chords at their lyric columns', () => {
+      for (const annotation of ['(cresce marcando)', '(viol\u00e3o solo)']) {
+        const chordLine = 'A9          ' + annotation.padEnd(26) + 'D9';
+        const lyric = 'Eu sei que tudo vais fazer';
+        const expected = '[A9]' + lyric.slice(0, 12) + annotation + lyric.slice(12) + ' '.repeat(38 - lyric.length) + '[D9]';
+        expect(normalizeChordText(chordLine + '\n' + lyric).content).toBe(expected);
+      }
     });
 
     it('preserves multi-word annotations on chord-over-lyric lines during plain text import', () => {

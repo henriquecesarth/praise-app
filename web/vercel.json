@@ -1,4 +1,9 @@
 {
+  "git": {
+    "deploymentEnabled": {
+      "integration/m20-r17-split-20261112": false
+    }
+  },
   "rewrites": [
     {
       "source": "/(.*)",

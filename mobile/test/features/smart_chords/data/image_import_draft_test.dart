@@ -52,7 +52,7 @@ void main() {
       'Dm',
       'Cm',
     ]) {
-      final sourceWithoutKey = source.replaceFirst(RegExp(r'^Tom:.*\n'), '');
+      final sourceWithoutKey = source.replaceFirst(RegExp(r'^Tom:.*\r?\n'), '');
       final occurrences = RegExp(
         '(?<![A-Za-z0-9/#])${RegExp.escape(chord)}(?![A-Za-z0-9/#])',
       ).allMatches(sourceWithoutKey).length;

@@ -1,7 +1,7 @@
 import { SmartChordImportDraft, ImportWarning } from './smart_chord_import.types';
 
 export const ROOT_REGEX = /^([A-G][#b]?)(.*)$/i;
-export const EXT_REGEX = /^(m|min|maj|M|dim|aug|sus[24]?|add[249]?|[0-9]+|\+|\-|\((b5|#5|b9|#9|9|11|#11|13|b13|5-|5\+)\)|b5|#5|b9|#9|b13|#11|alt|7M|M7)*$/;
+export const EXT_REGEX = /^(m|min|maj|M|dim|aug|sus[24]?|add[249]?|[0-9]+|\+|\-|\((b5|#5|b9|#9|9|11|#11|13|b13|5-|5\+|add[249])\)|b5|#5|b9|#9|b13|#11|alt|7M|M7)*$/;
 
 export const SECTION_HEADER_REGEX = /^(Intro|Verso|Pré-refrão|Pre-refrao|Refrão|Refrao|Coro|Ponte|Solo|Interlúdio|Interludio|Instrumental|Final|Coda|Tag)(\s+\d+)?[:\s]*$/i;
 export const BRACKETED_SECTION_REGEX = /^\[(Intro|Verso|Pré-refrão|Pre-refrao|Refrão|Refrao|Coro|Ponte|Solo|Interlúdio|Interludio|Instrumental|Final|Coda|Tag)(\s+\d+)?\]$/i;
@@ -20,10 +20,17 @@ export const FLAT_MAP: Record<string, string> = {
  * Validates if a token is a musical chord (e.g. A9, A7M/9, D/F#, F#m)
  * and distinguishes it from non-chord text (e.g. Baixo, Corte, Dedilhado, Fim).
  */
+// Am(G) means Am with alternative G; performance text is never an alternative.
+function alternativeChordParts(token: string): RegExpMatchArray | null {
+  const match = token.match(/^([^()\s]+)\(([^()\s]+)\)$/);
+  return match && isMusicalChord(match[1]) && isMusicalChord(match[2]) ? match : null;
+}
+
 export function isMusicalChord(token: string): boolean {
   if (!token || typeof token !== 'string') return false;
   const trimmed = token.trim();
   if (!trimmed) return false;
+  if (alternativeChordParts(trimmed)) return true;
 
   const slashParts = trimmed.split('/');
   if (slashParts.length > 2) return false;
@@ -79,6 +86,10 @@ function transposeSingleChordRoot(part: string, semitones: number): string {
  */
 export function transposeChordSafe(chord: string, semitones: number): string {
   if (!chord || semitones === 0) return chord;
+  const alternative = alternativeChordParts(chord);
+  if (alternative) {
+    return transposeChordSafe(alternative[1], semitones) + '(' + transposeChordSafe(alternative[2], semitones) + ')';
+  }
 
   if (chord.includes('|') || chord.includes('%')) {
     return chord.replace(/([A-G][#b]?(?:[^\s|%:]*))/g, (match) => {
@@ -255,12 +266,21 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
 
       // Check if current line is a chord line
       if (isChordLine(currentLine)) {
-        const nextLine = (i + 1 < rawLines.length) ? rawLines[i + 1] : null;
+        const currentTokens = tokenizeLine(currentLine);
+        const hasBarlines = currentTokens.some(t => ['|', '||', '||:', ':||', '%'].includes(t.text));
+        // A bar-delimited progression is a complete musical line. Never project
+        // its chords into the following text line, which may itself contain
+        // unrecognized chord notation (for example Unicode accidentals).
+        const nextLine =
+            !hasBarlines && i + 1 < rawLines.length ? rawLines[i + 1] : null;
         const nextTrimmed = nextLine ? nextLine.trim() : '';
 
         // If next line exists, is non-empty, and is NOT another chord line, section header, or annotation:
         if (
           nextLine !== null &&
+          currentTokens.every(t => t.isChord || /^\([^()]*\)$/.test(t.text)) &&
+          !/[\u266d\u266f\u266e]/.test(nextLine) &&
+          !/^\s*(?:\{\{|[eBGDAE]\|)/.test(nextLine) &&
           nextTrimmed !== '' &&
           !isChordLine(nextLine) &&
           !SECTION_HEADER_REGEX.test(nextTrimmed) &&
@@ -268,13 +288,13 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
           !/^\s*\(.*?\)\s*$/.test(nextTrimmed)
         ) {
           // Project chords into the lyric line below
-          const tokens = tokenizeLine(currentLine).filter(t => t.isChord);
+          const tokens = [...currentTokens];
           // Insert in descending order of column index
           tokens.sort((a, b) => b.index - a.index);
 
           let combined = nextLine;
           for (const t of tokens) {
-            const chordBracket = '[' + t.text + ']';
+            const chordBracket = t.isChord ? '[' + t.text + ']' : t.text;
             if (t.index >= combined.length) {
               const padding = ' '.repeat(t.index - combined.length);
               combined = combined + padding + chordBracket;
@@ -287,8 +307,7 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
           continue;
         } else {
           // Instrumental progression line without lyrics (e.g. Intro progression or solo)
-          const tokens = tokenizeLine(currentLine);
-          const hasBarlines = tokens.some(t => ['|', '||', '||:', ':||', '%'].includes(t.text));
+          const tokens = currentTokens;
 
           if (!hasBarlines) {
             const formattedParts = tokens.map(t => {
@@ -373,5 +392,6 @@ export function normalizeChordText(rawText: string): SmartChordImportDraft {
     content: finalContent,
     warnings,
     source_type: 'text',
+    original_text: rawText,
   };
 }

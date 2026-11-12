@@ -3,7 +3,41 @@ class MusicalProgressionToken {
   final String text;
   final bool isChord;
   final bool isDelimiter;
-  const MusicalProgressionToken(this.text, {this.isChord = false, this.isDelimiter = false});
+  final bool isAnnotation;
+  const MusicalProgressionToken(
+    this.text, {
+    this.isChord = false,
+    this.isDelimiter = false,
+    this.isAnnotation = false,
+  });
+}
+
+enum AnnotationKind { entry, exit, dynamics, technique, note }
+
+enum AnnotationPlacement { line, inline, aboveNextChord }
+
+class MusicalInstruction {
+  final int line;
+  final int token;
+  final String text;
+  final String displayText;
+  final String sourceRaw;
+  final AnnotationKind kind;
+  final AnnotationPlacement placement;
+  final ({int line, int token})? target;
+  final double fontScale;
+
+  const MusicalInstruction({
+    required this.line,
+    required this.token,
+    required this.text,
+    required this.displayText,
+    required this.sourceRaw,
+    required this.kind,
+    required this.placement,
+    this.target,
+    this.fontScale = 0.8,
+  });
 }
 
 /// A segment of lyrics with an optional chord placed immediately before or above it.
@@ -194,7 +228,7 @@ class SmartChordParser {
 
   static final RegExp _chordRegex = RegExp(r'\[(.*?)\]');
   static final RegExp _rootSuffixRegex =
-      RegExp(r'^([A-G][#b]?)(.*)$', caseSensitive: false);
+      RegExp(r'^([A-G][#b♯♭♮]?)(.*)$', caseSensitive: false);
 
   /// Parses raw text with bracketed chords (e.g. "Amanhã [G]será outro [Am]dia") into lines and segments.
   static List<SmartChordLine> parse(String? smartChordText) {
@@ -271,15 +305,30 @@ class SmartChordParser {
   static final RegExp rootRegex =
       RegExp(r'^([A-G][#b]?)(.*)$', caseSensitive: false);
   static final RegExp extRegex = RegExp(
-    r'^(m|min|maj|M|dim|aug|sus[24]?|add[249]?|[0-9]+|\+|\-|\((b5|#5|b9|#9|9|11|#11|13|b13|5-|5\+)\)|b5|#5|b9|#9|b13|#11|alt|7M|M7)*$',
+    r'^(m|min|maj|M|dim|aug|sus[24]?|add[249]?|[0-9]+|\+|\-|\((b5|#5|b9|#9|9|11|#11|13|b13|5-|5\+|add[249]?)\)|b5|#5|b9|#9|b13|#11|alt|7M|M7)*$',
   );
+
+  static String _normalizeUnicodeAccidentals(String token) {
+    return token
+        .replaceAll('♭', 'b')
+        .replaceAll('♯', '#')
+        .replaceAll('♮', '');
+  }
 
   /// Validates whether a token is a legitimate musical chord and not a word or annotation
   /// (e.g. Baixo, Corte, Dedilhado, Fim).
+  // Only independently valid chords form a terminal alternative, e.g. Am(G).
+  static RegExpMatch? _alternativeChordParts(String token) {
+    final match = RegExp(r'^([^()\s]+)\(([^()\s]+)\)$').firstMatch(token);
+    return match != null && isMusicalChord(match.group(1)!) &&
+        isMusicalChord(match.group(2)!) ? match : null;
+  }
+
   static bool isMusicalChord(String token) {
     if (token.isEmpty) return false;
-    final trimmed = token.trim();
+    final trimmed = _normalizeUnicodeAccidentals(token.trim());
     if (trimmed.isEmpty) return false;
+    if (_alternativeChordParts(trimmed) != null) return true;
 
     final slashParts = trimmed.split('/');
     if (slashParts.length > 2) return false;
@@ -295,7 +344,8 @@ class SmartChordParser {
       final bassPart = slashParts[1];
       if (bassPart.isEmpty) return false;
       final bassMatch = rootRegex.firstMatch(bassPart);
-      final isBassRoot = bassMatch != null && extRegex.hasMatch(bassMatch.group(2) ?? '');
+      final isBassRoot =
+          bassMatch != null && extRegex.hasMatch(bassMatch.group(2) ?? '');
       final isNumericExtension = RegExp(r'^[0-9]+$').hasMatch(bassPart);
       if (!isBassRoot && !isNumericExtension) return false;
     }
@@ -319,13 +369,52 @@ class SmartChordParser {
     return newRoot + suffix;
   }
 
-  /// Transposes a chord string (e.g. "C#m7", "C/E", "F#m7(b5)") by [semitones].
+  static String _styleUnicodeNote(String note, String original) {
+    const sharpToUnicodeFlat = <String, String>{
+      'C#': 'D♭',
+      'D#': 'E♭',
+      'F#': 'G♭',
+      'G#': 'A♭',
+      'A#': 'B♭',
+    };
+    final mapped = original.contains('♭')
+        ? (sharpToUnicodeFlat[note] ?? note)
+        : note;
+    return mapped.replaceAll('#', '♯').replaceAll('b', '♭');
+  }
+
+  /// Transposes a chord string (e.g. "C#m7", "C/E", "F#m7(b5)", "B♭maj7") by [semitones].
   static String transposeChord(String chord, int semitones) {
     if (chord.isEmpty) return '';
     if (semitones == 0) return chord;
+    final alternative = _alternativeChordParts(chord);
+    if (alternative != null) {
+      return '${transposeChord(alternative.group(1)!, semitones)}'
+          '(${transposeChord(alternative.group(2)!, semitones)})';
+    }
+
 
     if (chord.contains('|') || chord.contains('%')) {
-      return progressionTokens('[$chord]', semitones)!.map((token) => token.text).join();
+      return progressionTokens('[$chord]', semitones)!
+          .map((token) => token.text)
+          .join();
+    }
+
+    if (RegExp(r'[♭♯♮]').hasMatch(chord)) {
+      final normalized = _normalizeUnicodeAccidentals(chord);
+      if (!isMusicalChord(normalized)) return chord;
+      final transposed = transposeChord(normalized, semitones);
+      final target =
+          RegExp(r'^([A-G][#b]?)(.*?)(?:\/([A-G][#b]?))?$').firstMatch(transposed);
+      final source =
+          RegExp(r'^([A-G][#b♯♭♮]?)(.*?)(?:\/([A-G][#b♯♭♮]?))?$').firstMatch(chord);
+      if (target == null || source == null) return chord;
+      final rootStyled = _styleUnicodeNote(target.group(1)!, source.group(1)!);
+      final ext = target.group(2) ?? '';
+      final bassStyled = (target.group(3) != null && source.group(3) != null)
+          ? '/${_styleUnicodeNote(target.group(3)!, source.group(3)!)}'
+          : '';
+      return '$rootStyled$ext$bassStyled';
     }
 
     if (!isMusicalChord(chord)) return chord;
@@ -356,9 +445,130 @@ class SmartChordParser {
     return transposeNote(root, semitones) + suffix;
   }
 
+  static const List<String> _barlineSymbols = [
+    '||:',
+    ':||',
+    '|:',
+    ':|',
+    '||',
+    '|',
+  ];
+
+  static bool isUnbracketedBarProgression(String raw) {
+    if (isTablatureLine(raw)) return false;
+    var rest = raw.trimLeft();
+    while (rest.startsWith('{{')) {
+      final close = rest.indexOf('}}', 2);
+      if (close < 0) break;
+      rest = rest.substring(close + 2).trimLeft();
+    }
+    return RegExp(r'^(?:\|\|:|\|:|\|)').hasMatch(rest);
+  }
+
+  static bool hasBarProgression(String line) => progressionTokens(line) != null;
+
+  static List<MusicalProgressionToken> _tokenizeBarProgression(
+    String raw,
+    int semitones,
+  ) {
+    final tokens = <MusicalProgressionToken>[];
+    int i = 0;
+    while (i < raw.length) {
+      if (raw.startsWith('{{', i)) {
+        final close = raw.indexOf('}}', i + 2);
+        if (close != -1) {
+          tokens.add(
+            MusicalProgressionToken(
+              raw.substring(i, close + 2),
+              isAnnotation: true,
+            ),
+          );
+          i = close + 2;
+          continue;
+        }
+      }
+      String? matchedBar;
+      for (final symbol in _barlineSymbols) {
+        if (raw.startsWith(symbol, i)) {
+          matchedBar = symbol;
+          break;
+        }
+      }
+      if (matchedBar != null) {
+        tokens.add(MusicalProgressionToken(matchedBar, isDelimiter: true));
+        i += matchedBar.length;
+        continue;
+      }
+      if (RegExp(r'\s').hasMatch(raw[i])) {
+        var end = i + 1;
+        while (end < raw.length && RegExp(r'\s').hasMatch(raw[end])) {
+          end++;
+        }
+        tokens.add(MusicalProgressionToken(raw.substring(i, end)));
+        i = end;
+        continue;
+      }
+      if (raw[i] == '(') {
+        final end = raw.indexOf(')', i + 1);
+        if (end != -1) {
+          final inner = raw.substring(i + 1, end);
+          if (isMusicalChord(inner)) {
+            tokens.add(
+              MusicalProgressionToken(
+                '(${transposeChord(inner, semitones)})',
+                isChord: true,
+              ),
+            );
+            i = end + 1;
+            continue;
+          }
+        }
+      }
+      if (raw[i] == '%') {
+        tokens.add(const MusicalProgressionToken('%', isDelimiter: true));
+        i++;
+        continue;
+      }
+      var end = i + 1;
+      while (
+          end < raw.length && !RegExp(r'[\s|%\[\]{}]').hasMatch(raw[end])) {
+        end++;
+      }
+      final candidate = raw.substring(i, end);
+      if (isMusicalChord(candidate)) {
+        tokens.add(
+          MusicalProgressionToken(
+            transposeChord(candidate, semitones),
+            isChord: true,
+          ),
+        );
+        i = end;
+        continue;
+      }
+      final opening = candidate.indexOf('(');
+      if (opening > 0 && isMusicalChord(candidate.substring(0, opening))) {
+        final prefix = candidate.substring(0, opening);
+        tokens.add(
+          MusicalProgressionToken(
+            transposeChord(prefix, semitones),
+            isChord: true,
+          ),
+        );
+        i += opening;
+        continue;
+      }
+      tokens.add(MusicalProgressionToken(candidate));
+      i = end;
+    }
+    return tokens;
+  }
+
   /// Dedicated representation for a progression: never split its label into a lyric row.
   static List<MusicalProgressionToken>? progressionTokens(String line, [int semitones = 0]) {
     if (isTablatureLine(line)) return null;
+    if (isUnbracketedBarProgression(line)) {
+      return _tokenizeBarProgression(line, semitones);
+    }
     // Own-line chords occupy their printed width. Brackets are syntax only;
     // removing the chord width would collapse every subsequent column.
     final row = line.replaceAllMapped(_chordRegex, (m) =>
@@ -423,27 +633,127 @@ class SmartChordParser {
     // Parsing for syllabic layout trims chord payloads. Transform the original
     // bracket spans instead, retaining canonical block padding and authored EOLs.
     return smartChordText.splitMapJoin(RegExp(r'[^\r\n]+'), onMatch: (line) {
-      if (isTablatureLine(line.group(0)!)) return line.group(0)!;
-      if (!_chordRegex.allMatches(line.group(0)!).any((m) =>
+      final rawLine = line.group(0)!;
+      if (isTablatureLine(rawLine)) return rawLine;
+      if (isUnbracketedBarProgression(rawLine)) {
+        return _tokenizeBarProgression(rawLine, semitones)
+            .map((t) => t.text)
+            .join();
+      }
+      if (!_chordRegex.allMatches(rawLine).any((m) =>
           isMusicalChord(m.group(1)!) ||
           m.group(1)!.contains('|') || m.group(1)!.contains('%') ||
           m.group(1)!.split(RegExp(r'\s+')).where(isMusicalChord).length >= 2)) {
-        final row = progressionTokens(line.group(0)!, semitones);
+        final row = progressionTokens(rawLine, semitones);
         if (row != null) return row.map((t) => t.text).join();
       }
-      return line.group(0)!.replaceAllMapped(_chordRegex, (match) {
-      final original = match.group(1)!;
-      final trimmed = original.trim();
-      final transposed = original.contains('|') || original.contains('%')
-          ? transposeChord(original, semitones)
-          : trimmed.isEmpty ? original : original.replaceFirst(trimmed, transposeChord(trimmed, semitones));
-      return '[$transposed]';
+      return rawLine.replaceAllMapped(_chordRegex, (match) {
+        final original = match.group(1)!;
+        final trimmed = original.trim();
+        final transposed = original.contains('|') || original.contains('%')
+            ? transposeChord(original, semitones)
+            : trimmed.isEmpty
+                ? original
+                : original.replaceFirst(trimmed, transposeChord(trimmed, semitones));
+        return '[$transposed]';
       });
     });
   }
 
-  static bool isTablatureLine(String line) =>
-      RegExp(r'^\s*(?:[eEBGDA]\s*)?[|:].*[-─]').hasMatch(line);
+  static bool isTablatureLine(String line) {
+    if (!RegExp(r'^\s*(?:[eEBGDA]\s*)?[|:].*[-─]').hasMatch(line)) {
+      return false;
+    }
+    if (RegExp(r'^\s*[eEBGDA]\s*[|:].*[-─]').hasMatch(line)) {
+      return true;
+    }
+    return RegExp(r'^\s*[|:]\s*(?:[-─]{2,}|\d[-─hHpP/])').hasMatch(line);
+  }
+
+  static const Map<String, AnnotationKind> _annotationCategories = {
+    'entrada': AnnotationKind.entry,
+    'entra': AnnotationKind.entry,
+    'entry': AnnotationKind.entry,
+    'saida': AnnotationKind.exit,
+    'sai': AnnotationKind.exit,
+    'exit': AnnotationKind.exit,
+    'dinamica': AnnotationKind.dynamics,
+    'dynamics': AnnotationKind.dynamics,
+    'execucao': AnnotationKind.technique,
+    'tecnica': AnnotationKind.technique,
+    'technique': AnnotationKind.technique,
+    'observacao': AnnotationKind.note,
+    'nota': AnnotationKind.note,
+    'note': AnnotationKind.note,
+  };
+
+  static String _normalizeAccents(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll(RegExp(r'[áàâã]'), 'a')
+        .replaceAll(RegExp(r'[éê]'), 'e')
+        .replaceAll(RegExp(r'[í]'), 'i')
+        .replaceAll(RegExp(r'[óôõ]'), 'o')
+        .replaceAll(RegExp(r'[ú]'), 'u')
+        .replaceAll('ç', 'c');
+  }
+
+  static ({AnnotationKind kind, String displayText}) interpretAnnotation(
+    String rawText,
+  ) {
+    final colon = rawText.indexOf(':');
+    if (colon < 0) return (kind: AnnotationKind.note, displayText: rawText);
+    final key = _normalizeAccents(rawText.substring(0, colon).trim());
+    final category = _annotationCategories[key];
+    if (category == null) {
+      return (kind: AnnotationKind.note, displayText: rawText);
+    }
+    return (
+      kind: category,
+      displayText: rawText.substring(colon + 1).trim(),
+    );
+  }
+
+  static List<MusicalInstruction> extractMusicalInstructions(String source) {
+    final lines = source.split(RegExp(r'\r\n|\n|\r'));
+    final instructions = <MusicalInstruction>[];
+    for (int l = 0; l < lines.length; l++) {
+      final line = lines[l];
+      int i = 0;
+      int tokenIdx = 0;
+      final onlyAnnotations =
+          RegExp(r'^\s*(?:\{\{[^}]*\}\}\s*)+$').hasMatch(line);
+      while (i < line.length) {
+        final start = line.indexOf('{{', i);
+        if (start < 0) break;
+        final close = line.indexOf('}}', start + 2);
+        if (close < 0) break;
+        final rawToken = line.substring(start, close + 2);
+        final body = line.substring(start + 2, close);
+        final above = body.startsWith('^');
+        final text = above ? body.substring(1) : body;
+        final placement = above
+            ? AnnotationPlacement.aboveNextChord
+            : (onlyAnnotations
+                ? AnnotationPlacement.line
+                : AnnotationPlacement.inline);
+        final interpreted = interpretAnnotation(text);
+        instructions.add(
+          MusicalInstruction(
+            line: l,
+            token: tokenIdx++,
+            text: text,
+            displayText: interpreted.displayText,
+            sourceRaw: rawToken,
+            kind: interpreted.kind,
+            placement: placement,
+          ),
+        );
+        i = close + 2;
+      }
+    }
+    return instructions;
+  }
 
   /// Renders a single bracket-format line into an aligned chord line and lyrics line.
   static TransposedLine renderLine(String? lineText, int semitones) {

@@ -2,6 +2,33 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_parser.dart';
 
 void main() {
+  test('tablet alternatives transpose in progressions and lyric segments', () {
+    expect(SmartChordParser.isMusicalChord('Am(G)'), isTrue);
+    expect(SmartChordParser.transposeChord('Am(G)', 1), 'A#m(G#)');
+    const source = '[||: C | Am(G) | C(add9)/E :|| 2x]';
+    expect(SmartChordParser.transposeSmartChord(source, 1),
+        '[||: C# | A#m(G#) | C#(add9)/F :|| 2x]');
+    expect(SmartChordParser.transposeSmartChord(source, 0), source);
+    final segments = SmartChordParser.parse('[C]Amanhece [Am(G)]em luz de[C(add9)/E] ensaio').single.segments;
+    expect(segments.map((s) => s.chord).toList(), ['C', 'Am(G)', 'C(add9)/E']);
+    expect(segments.map((s) => s.text).join(), 'Amanhece em luz de ensaio');
+  });
+  test('alternatives preserve instructions, Unicode and TAB and reject text', () {
+    for (final text in ['(cresce marcando)', 'Am(cresce marcando)',
+      'Am(Dedilhado)', 'Am(G)(C)', 'Am()', 'Baixo', 'Dedilhado', 'e|--0--2--|']) {
+      expect(SmartChordParser.isMusicalChord(text), isFalse);
+      expect(SmartChordParser.transposeChord(text, 1), text);
+    }
+    const source = '[Am(G)]letra\n{{^Entrada: baixo}}\n{{Dinamica: suave}}\ne|--0--2--|\nB|--1--3--|\nG|--0--2--|';
+    expect(SmartChordParser.transposeSmartChord(source, 1),
+      source.replaceFirst('[Am(G)]', '[A#m(G#)]'));
+    expect(SmartChordParser.transposeSmartChord(source, 0), source);
+    expect(SmartChordParser.transposeChord('A#m(G#)', -1), 'Am(G)');
+    expect(SmartChordParser.transposeChord('B\u266dmaj7', 0), 'B\u266dmaj7');
+    expect(SmartChordParser.transposeChord('F\u266fm', 1), 'Gm');
+    expect(SmartChordParser.transposeChord('E\u266e', 1), 'F');
+    expect(SmartChordParser.transposeChord('Am(F\u266fm)', 1), 'A#m(Gm)');
+  });
   group('SmartChordParser - Transposition Safety & Musical Token Recognition', () {
     test('isMusicalChord recognizes valid chords and compound slash notations', () {
       expect(SmartChordParser.isMusicalChord('A'), isTrue);

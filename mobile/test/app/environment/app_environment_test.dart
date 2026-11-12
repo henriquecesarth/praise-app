@@ -43,12 +43,29 @@ void main() {
     test('reports correct booleans for staging', () {
       const env = AppEnvironment(
         env: AppEnv.staging,
-        apiBaseUrl: 'https://staging-api.louvaio.com.br/api/v1',
+        apiBaseUrl: 'https://louvaio-r17-api-staging.vercel.app/api/v1',
       );
 
       expect(env.isDevelopment, false);
       expect(env.isStaging, true);
       expect(env.isProduction, false);
+      expect(
+        AppEnvironment.isAuthorizedStagingApiBaseUrl(env.apiBaseUrl),
+        true,
+      );
+    });
+
+    test('rejects unauthorized staging apiBaseUrl', () {
+      const env = AppEnvironment(
+        env: AppEnv.staging,
+        apiBaseUrl: 'https://staging-api.louvaio.com.br/api/v1',
+      );
+
+      expect(env.isStaging, true);
+      expect(
+        AppEnvironment.isAuthorizedStagingApiBaseUrl(env.apiBaseUrl),
+        false,
+      );
     });
 
     test('reports correct booleans for production', () {

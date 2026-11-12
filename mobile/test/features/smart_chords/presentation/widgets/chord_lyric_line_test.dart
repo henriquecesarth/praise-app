@@ -6,6 +6,24 @@ import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/chord_
 import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/musical_progression_line.dart';
 
 void main() {
+  testWidgets('imported alternative stays associated with lyric during +1 and Original', (tester) async {
+    const source = '[C]Amanhece [Am(G)]em luz de[C(add9)/E] ensaio';
+    for (final offset in [1, 0]) {
+      await tester.pumpWidget(MaterialApp(home: Scaffold(body: ChordLyricLine(
+        line: source, semitones: offset, fontSize: 16, fontFamily: 'Georgia',
+        fontFamilyFallback: const ['serif'], monospace: false,
+      ))));
+      final chord = find.text(offset == 1 ? 'A#m(G#)' : 'Am(G)');
+      expect(chord, findsOneWidget);
+      final fragment = find.ancestor(of: chord, matching: find.byType(Column)).first;
+      final lyric = find.descendant(of: fragment, matching: find.text('em '));
+      expect(lyric, findsOneWidget);
+      expect(tester.getTopLeft(chord).dx, closeTo(tester.getTopLeft(lyric).dx, 0.1));
+      expect(tester.getBottomLeft(chord).dy, lessThanOrEqualTo(tester.getTopLeft(lyric).dy));
+      expect(find.text(offset == 1 ? 'C#(add9)/F' : 'C(add9)/E'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    }
+  });
   for (final spacing in [0.0, 8.0, 24.0]) {
     for (final width in [360.0, 768.0]) {
       testWidgets('spacing $spacing keeps transposed chord blocks on width $width', (tester) async {

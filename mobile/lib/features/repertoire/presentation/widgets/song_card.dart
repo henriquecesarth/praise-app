@@ -95,13 +95,35 @@ class SongCard extends StatelessWidget {
                       ),
                       if (classification != null ||
                           song.bpm != null ||
-                          song.hasYoutube) ...[
+                          song.hasYoutube ||
+                          song.versions.length > 1) ...[
                         const SizedBox(height: 6),
                         Wrap(
                           spacing: 6,
                           runSpacing: 4,
                           crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
+                            if (song.versions.length > 1)
+                              Container(
+                                key: ValueKey('song_card_versions_badge_${song.id}'),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 7,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.secondaryContainer
+                                      .withValues(alpha: 0.5),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  '${song.versions.length} versões',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: theme.colorScheme.onSecondaryContainer,
+                                  ),
+                                ),
+                              ),
                             if (classification != null)
                               Container(
                                 padding: const EdgeInsets.symmetric(

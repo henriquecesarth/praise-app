@@ -12,6 +12,21 @@ async function createSyntheticPdf(builder: (doc: PDFDocument, font: any) => Prom
 }
 
 describe('Smart Chord PDF Extractor Test Suite (Synthetic Fixtures)', () => {
+  it('does not project chord rows into instructions or tablature', async () => {
+    for (const following of ['{{^Entrada: baixo}}', '{{Dinamica: suave}}', 'e|--0--2--|']) {
+      const buffer = await createSyntheticPdf(async (doc, font) => {
+        const page = doc.addPage([595, 842]);
+        page.drawText('Titulo: QA M20 PDF', {x: 40, y: 800, size: 14, font});
+        page.drawText('Bbmaj7        F#m', {x: 40, y: 756, size: 14, font});
+        page.drawText(following, {x: 40, y: 734, size: 14, font});
+      });
+      const draft = await extractSmartChordDraftFromPdf(buffer);
+      expect(draft.content.split('\n')).toContain(following);
+      expect(draft.content).toContain('[Bbmaj7]');
+      expect(draft.content).toContain('[F#m]');
+    }
+  });
+
   it('1. Golden One-Page Chord-over-Lyric & Annotations & Progressions PDF', async () => {
     const pdfBuffer = await createSyntheticPdf(async (doc, font) => {
       const page = doc.addPage([595, 842]); // A4

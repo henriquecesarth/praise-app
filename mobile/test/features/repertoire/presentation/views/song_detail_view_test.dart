@@ -20,6 +20,12 @@ import 'package:louvaio_mobile/features/repertoire/domain/song_detail.dart';
 import 'package:louvaio_mobile/features/repertoire/domain/song_form_data.dart';
 import 'package:louvaio_mobile/features/repertoire/presentation/controllers/song_detail_controller.dart';
 import 'package:louvaio_mobile/features/repertoire/presentation/views/song_detail_view.dart';
+import 'package:louvaio_mobile/features/smart_chords/data/smart_chord_repertoire_link_repository.dart';
+import 'package:louvaio_mobile/features/smart_chords/data/smart_chord_repository.dart';
+import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord.dart';
+import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_repertoire_link.dart';
+import 'package:louvaio_mobile/features/smart_chords/presentation/controllers/smart_chord_repertoire_link_controller.dart';
+import 'package:louvaio_mobile/features/smart_chords/presentation/controllers/song_smart_chords_controller.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/views/smart_chord_form_screen.dart';
 
 class _FakeAuthRepo implements AuthRepository {
@@ -482,5 +488,217 @@ void main() {
       );
       expect(formScreen.prefillKey, isNull);
     });
+
+    testWidgets(
+        'D1 Music Stand Bar: renders linked Smart Chords inline with toggle, transposition (-1/+1/Resetar), multi-chord switching and unlink',
+        (tester) async {
+      final linkedChords = <SmartChord>[
+        const SmartChord(
+          id: 'sc_1',
+          userId: 'member_user',
+          title: 'Em Teus Braços (Violão)',
+          artistName: 'Laura Souguellis',
+          originalKey: 'E',
+          content: '| E | A9 |\n[E]Seguro estou nos [A9]braços',
+          createdAt: '2026-11-10T00:00:00Z',
+          updatedAt: '2026-11-10T00:00:00Z',
+        ),
+        const SmartChord(
+          id: 'sc_2',
+          userId: 'member_user',
+          title: 'Em Teus Braços (Capo 2)',
+          artistName: 'Laura Souguellis',
+          originalKey: 'D',
+          content: '[D]Seguro estou nos [G]braços',
+          createdAt: '2026-11-10T00:00:00Z',
+          updatedAt: '2026-11-10T00:00:00Z',
+        ),
+      ];
+      String? lastUnlinkedChordId;
+      final fakeLinkRepo = _FakeLinkRepo(
+        onGetChordsForSong: () async => List<SmartChord>.from(linkedChords),
+        onRemoveLink: (ministryId, chordId) async {
+          lastUnlinkedChordId = chordId;
+          linkedChords.removeWhere((c) => c.id == chordId);
+        },
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appEnvironmentProvider.overrideWithValue(
+              const AppEnvironment(
+                env: AppEnv.development,
+                apiBaseUrl: 'http://localhost:3000/api/v1',
+              ),
+            ),
+            repertoireRepositoryProvider.overrideWithValue(fakeRepo),
+            songDetailNotifierProvider.overrideWith((ref) {
+              return SongDetailNotifier(repository: fakeRepo);
+            }),
+            ministryContextNotifierProvider
+                .overrideWith((ref) => FakeMinistryContextNotifier()),
+            authNotifierProvider.overrideWith((ref) => _FakeAuthNotifier()),
+            smartChordRepertoireLinkRepositoryProvider
+                .overrideWithValue(fakeLinkRepo),
+            songSmartChordsNotifierProvider.overrideWith(
+              (ref) => SongSmartChordsNotifier(
+                repository: _NoopSmartChordRepo(),
+                linkRepository: fakeLinkRepo,
+              ),
+            ),
+            smartChordRepertoireLinkNotifierProvider.overrideWith(
+              (ref) => SmartChordRepertoireLinkNotifier(
+                repository: fakeLinkRepo,
+              ),
+            ),
+          ],
+          child: const MaterialApp(
+            home: SongDetailView(
+              ministryId: 'min_1',
+              songId: 'song_1',
+              initialTitle: 'Em Teus Braços',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Music Stand Bar and inline sheet are active by default when linked chords exist
+      expect(
+        find.byKey(const ValueKey('song_detail_music_stand_bar')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('song_detail_inline_chord_sheet')),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Tom Original: E • Tom Atual: E'),
+        findsOneWidget,
+      );
+
+      // Transpose +1 semitone (E -> F)
+      final upBtn = find.byKey(
+        const ValueKey('song_detail_transpose_up_button'),
+      );
+      await tester.ensureVisible(upBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(upBtn);
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Tom Original: E • Tom Atual: F (+1)'),
+        findsOneWidget,
+      );
+
+      // Reset transposition
+      final resetBtn = find.byKey(
+        const ValueKey('song_detail_transpose_reset_button'),
+      );
+      await tester.tap(resetBtn);
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Tom Original: E • Tom Atual: E'),
+        findsOneWidget,
+      );
+
+      // Switch to Apenas Letra mode and back to Cifra Inteligente
+      final lyricsModeChip = find.byKey(
+        const ValueKey('song_detail_view_mode_lyrics'),
+      );
+      await tester.ensureVisible(lyricsModeChip);
+      await tester.pumpAndSettle();
+      await tester.tap(lyricsModeChip);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('song_detail_inline_chord_sheet')),
+        findsNothing,
+      );
+      final chordModeChip = find.byKey(
+        const ValueKey('song_detail_view_mode_chord'),
+      );
+      await tester.ensureVisible(chordModeChip);
+      await tester.pumpAndSettle();
+      await tester.tap(chordModeChip);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('song_detail_inline_chord_sheet')),
+        findsOneWidget,
+      );
+
+      // Switch to second linked Smart Chord (sc_2, Key D)
+      final pill2 = find.byKey(const ValueKey('song_detail_chord_pill_sc_2'));
+      await tester.ensureVisible(pill2);
+      await tester.pumpAndSettle();
+      await tester.tap(pill2);
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Tom Original: D • Tom Atual: D'),
+        findsOneWidget,
+      );
+
+      // Unlink sc_2
+      final unlinkBtn = find.byKey(
+        const ValueKey('song_detail_unlink_smart_chord_button'),
+      );
+      await tester.ensureVisible(unlinkBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(unlinkBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('confirm_unlink_smart_chord_button')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(lastUnlinkedChordId, 'sc_2');
+      expect(
+        find.text('Minha cifra: Em Teus Braços (Violão) (E)'),
+        findsOneWidget,
+      );
+    });
   });
+}
+
+class _NoopSmartChordRepo implements SmartChordRepository {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakeLinkRepo implements SmartChordRepertoireLinkRepository {
+  final Future<List<SmartChord>> Function() onGetChordsForSong;
+  final Future<void> Function(String ministryId, String chordId) onRemoveLink;
+
+  _FakeLinkRepo({
+    required this.onGetChordsForSong,
+    required this.onRemoveLink,
+  });
+
+  @override
+  Future<List<SmartChord>> getMySmartChordsForSong({
+    required String ministryId,
+    required String songId,
+  }) =>
+      onGetChordsForSong();
+
+  @override
+  Future<void> removeRepertoireLink({
+    required String ministryId,
+    required String chordId,
+  }) =>
+      onRemoveLink(ministryId, chordId);
+
+  @override
+  Future<SmartChordRepertoireLink> getRepertoireLink({
+    required String ministryId,
+    required String chordId,
+  }) async =>
+      const SmartChordRepertoireLink.unlinked();
+
+  @override
+  Future<SmartChordRepertoireLink> setRepertoireLink({
+    required String ministryId,
+    required String chordId,
+    required String songId,
+  }) =>
+      throw UnimplementedError();
 }
