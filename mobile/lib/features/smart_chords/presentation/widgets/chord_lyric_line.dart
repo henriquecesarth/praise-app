@@ -30,8 +30,13 @@ class ChordLyricLine extends StatelessWidget {
       fontSize: fontSize, color: theme.colorScheme.onSurface, height: 1.3);
     final chordStyle = lyricStyle.copyWith(fontWeight: FontWeight.bold,
       color: theme.colorScheme.primary, height: 1.2);
+    final commentStyle = chordStyle.copyWith(
+      fontSize: fontSize * 0.8,
+      fontWeight: FontWeight.bold,
+      color: theme.colorScheme.primary,
+    );
     final segments = SmartChordParser.parse(line).first.segments;
-    if (!segments.any((segment) => segment.hasChord)) {
+    if (!segments.any((segment) => segment.hasChord || segment.hasComment)) {
       return SelectableText(line, style: lyricStyle);
     }
     final scale = MediaQuery.textScalerOf(context);
@@ -43,6 +48,46 @@ class ChordLyricLine extends StatelessWidget {
       return measured;
     }
 
+    Widget buildChordTier(SmartChordSegment fragment) {
+      final hasChord = fragment.hasChord;
+      final hasComment = fragment.hasComment;
+      if (!hasChord && !hasComment) {
+        return Text(' ', style: chordStyle.copyWith(color: Colors.transparent), softWrap: false);
+      }
+      final chord = hasChord ? SmartChordParser.transposeChord(fragment.chord, semitones) : '';
+      final comment = fragment.comment;
+
+      if (hasChord && hasComment) {
+        return Text.rich(
+          TextSpan(children: [
+            TextSpan(text: chord, style: chordStyle),
+            const TextSpan(text: ' '),
+            TextSpan(text: comment, style: commentStyle),
+          ]),
+          softWrap: false,
+        );
+      } else if (hasChord) {
+        return Text(chord, style: chordStyle, softWrap: false);
+      } else {
+        return Text(comment, style: commentStyle, softWrap: false);
+      }
+    }
+
+    double chordTierWidth(SmartChordSegment fragment) {
+      final hasChord = fragment.hasChord;
+      final hasComment = fragment.hasComment;
+      if (!hasChord && !hasComment) return 0.0;
+      final chord = hasChord ? SmartChordParser.transposeChord(fragment.chord, semitones) : '';
+      final comment = fragment.comment;
+      if (hasChord && hasComment) {
+        return width(chord, chordStyle) + width(' $comment', commentStyle) + 6;
+      } else if (hasChord) {
+        return width(chord, chordStyle) + 6;
+      } else {
+        return width(comment, commentStyle) + 6;
+      }
+    }
+
     // Group all fragments of one word, even when chords split its syllables.
     final words = <List<SmartChordSegment>>[];
     var word = <SmartChordSegment>[];
@@ -50,7 +95,11 @@ class ChordLyricLine extends StatelessWidget {
       final pieces = RegExp(r'\S+\s*|\s+').allMatches(segment.text).map((m) => m.group(0)!).toList();
       if (pieces.isEmpty) pieces.add('');
       for (int i = 0; i < pieces.length; i++) {
-        word.add(SmartChordSegment(chord: i == 0 ? segment.chord : '', text: pieces[i]));
+        word.add(SmartChordSegment(
+          chord: i == 0 ? segment.chord : '',
+          comment: i == 0 ? segment.comment : '',
+          text: pieces[i],
+        ));
         if (RegExp(r'\s$').hasMatch(pieces[i])) {
           words.add(word);
           word = [];
@@ -84,10 +133,7 @@ class ChordLyricLine extends StatelessWidget {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Padding(padding: const EdgeInsets.only(right: 7),
-                                child: Text(fragment.hasChord
-                                  ? SmartChordParser.transposeChord(fragment.chord, semitones) : ' ',
-                                  style: chordStyle.copyWith(color: fragment.hasChord
-                                    ? chordStyle.color : Colors.transparent), softWrap: false)),
+                                child: buildChordTier(fragment)),
                               Text(fragment.text.isEmpty ? ' ' : fragment.text,
                                 style: lyricStyle, softWrap: false),
                             ]),
@@ -104,20 +150,15 @@ class ChordLyricLine extends StatelessWidget {
         final fragments = <Widget>[];
         double wordWidth = 0;
         for (final fragment in words[wordIndex]) {
-          final chord = SmartChordParser.transposeChord(fragment.chord, semitones);
-          final fragmentWidth = math.max(width(fragment.text, lyricStyle),
-            chord.isEmpty ? 0.0 : width(chord, chordStyle) + 6) + 1;
+          final cWidth = chordTierWidth(fragment);
+          final fragmentWidth = math.max(width(fragment.text, lyricStyle), cWidth) + 1;
           wordWidth += fragmentWidth;
-          Widget tier(String value, TextStyle style) => monospace
-            ? SelectableText(value, style: style)
-            : Text(value, style: style, softWrap: false);
           fragments.add(SizedBox(width: fragmentWidth,
             child: Column(key: ValueKey('reader-fragment-${fragmentIndex++}'),
               crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min,
               children: [
-                tier(chord.isEmpty ? ' ' : chord, chordStyle.copyWith(
-                  color: chord.isEmpty ? Colors.transparent : chordStyle.color)),
-                tier(fragment.text.isEmpty ? ' ' : fragment.text, lyricStyle),
+                buildChordTier(fragment),
+                Text(fragment.text.isEmpty ? ' ' : fragment.text, style: lyricStyle, softWrap: false),
               ])));
         }
         final row = Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end,

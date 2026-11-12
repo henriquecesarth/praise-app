@@ -40,17 +40,21 @@ class MusicalInstruction {
   });
 }
 
-/// A segment of lyrics with an optional chord placed immediately before or above it.
+/// A segment of lyrics with an optional chord and/or comment placed immediately before or above it.
 class SmartChordSegment {
   final String chord;
   final String text;
+  final String comment;
 
   const SmartChordSegment({
     required this.chord,
     required this.text,
+    this.comment = '',
   });
 
   bool get hasChord => chord.trim().isNotEmpty;
+  bool get hasComment => comment.trim().isNotEmpty;
+  bool get hasContent => hasChord || hasComment;
 
   @override
   bool operator ==(Object other) =>
@@ -58,13 +62,15 @@ class SmartChordSegment {
       other is SmartChordSegment &&
           runtimeType == other.runtimeType &&
           chord == other.chord &&
-          text == other.text;
+          text == other.text &&
+          comment == other.comment;
 
   @override
-  int get hashCode => Object.hash(chord, text);
+  int get hashCode => Object.hash(chord, text, comment);
 
   @override
-  String toString() => 'SmartChordSegment(chord: "$chord", text: "$text")';
+  String toString() =>
+      'SmartChordSegment(chord: "$chord", comment: "$comment", text: "$text")';
 }
 
 /// A parsed line of a smart chord sheet containing an index and a list of segments.
@@ -227,10 +233,30 @@ class SmartChordParser {
   ];
 
   static final RegExp _chordRegex = RegExp(r'\[(.*?)\]');
+  static final RegExp _tokenRegex = RegExp(r'\[(.*?)\]|\{\{(.*?)\}\}');
   static final RegExp _rootSuffixRegex =
       RegExp(r'^([A-G][#b♯♭♮]?)(.*)$', caseSensitive: false);
 
-  /// Parses raw text with bracketed chords (e.g. "Amanhã [G]será outro [Am]dia") into lines and segments.
+  /// Cleans and formats an annotation or comment for display on the chord line.
+  static String formatComment(String raw) {
+    var text = raw.trim();
+    if (text.startsWith('^')) {
+      text = text.substring(1).trim();
+    }
+    final colon = text.indexOf(':');
+    if (colon >= 0) {
+      final cat = text.substring(0, colon).trim().toLowerCase();
+      if (['dinamica', 'dinâmica', 'entrada', 'saida', 'saída', 'execucao', 'execução', 'tecnica', 'técnica'].contains(cat)) {
+        text = text.substring(colon + 1).trim();
+      }
+    }
+    if (!text.startsWith('(') && !text.endsWith(')')) {
+      text = '($text)';
+    }
+    return text;
+  }
+
+  /// Parses raw text with bracketed chords and annotations into lines and segments.
   static List<SmartChordLine> parse(String? smartChordText) {
     if (smartChordText == null || smartChordText.isEmpty) {
       return const [];
@@ -248,15 +274,56 @@ class SmartChordParser {
         continue;
       }
 
+      if (isTablatureLine(lineText)) {
+        result.add(SmartChordLine(
+          line: index + 1,
+          segments: [SmartChordSegment(chord: '', text: lineText)],
+        ));
+        continue;
+      }
+
+      final isSectionHeader = RegExp(
+        r'^\s*\[(?:Verso|Refrão|Refrao|Coro|Ponte|Intro|Interlúdio|Interludio|Final|Strophe|Chorus|Bridge)\]\s*$',
+        caseSensitive: false,
+      ).hasMatch(lineText);
+      if (isSectionHeader) {
+        result.add(SmartChordLine(
+          line: index + 1,
+          segments: [SmartChordSegment(chord: '', text: lineText)],
+        ));
+        continue;
+      }
+
+      final annotationLineMatch =
+          RegExp(r'^\s*(?:\{\{(.*?)\}\})\s*$').firstMatch(lineText);
+      if (annotationLineMatch != null) {
+        final body = annotationLineMatch.group(1) ?? '';
+        result.add(SmartChordLine(
+          line: index + 1,
+          segments: [
+            SmartChordSegment(chord: '', text: '', comment: formatComment(body)),
+          ],
+        ));
+        continue;
+      }
+
+      final matches = _tokenRegex.allMatches(lineText).toList();
       final segments = <SmartChordSegment>[];
-      final matches = isTablatureLine(lineText)
-          ? <RegExpMatch>[]
-          : _chordRegex.allMatches(lineText).where((m) => isMusicalChord(m.group(1)!)).toList();
 
       if (matches.isEmpty) {
-        segments.add(SmartChordSegment(chord: '', text: lineText));
+        final trailingParenMatch =
+            RegExp(r'^(.*?)\s*(\([^\)]+\))\s*$').firstMatch(lineText);
+        if (trailingParenMatch != null &&
+            !isMusicalChord(trailingParenMatch.group(2)!)) {
+          segments.add(SmartChordSegment(
+            chord: '',
+            text: trailingParenMatch.group(1)!,
+            comment: trailingParenMatch.group(2)!,
+          ));
+        } else {
+          segments.add(SmartChordSegment(chord: '', text: lineText));
+        }
       } else {
-        // Initial text before first bracket
         final firstMatch = matches.first;
         if (firstMatch.start > 0) {
           segments.add(SmartChordSegment(
@@ -267,15 +334,51 @@ class SmartChordParser {
 
         for (int i = 0; i < matches.length; i++) {
           final match = matches[i];
-          final rawChord = match.group(1) ?? '';
+          final rawToken = match.group(0)!;
+          String chord = '';
+          String comment = '';
+
+          if (rawToken.startsWith('{{')) {
+            comment = formatComment(match.group(2) ?? '');
+          } else {
+            final inner = (match.group(1) ?? '').trim();
+            if (isMusicalChord(inner)) {
+              chord = inner;
+            } else {
+              final splitMatch = RegExp(
+                r'^([A-G][#b♯♭♮]?[^\s()]*)\s+(\(?[a-zA-Z0-9_\-\s]+\)?)$',
+              ).firstMatch(inner);
+              if (splitMatch != null && isMusicalChord(splitMatch.group(1)!)) {
+                chord = splitMatch.group(1)!;
+                comment = formatComment(splitMatch.group(2)!);
+              } else {
+                comment = formatComment(inner);
+              }
+            }
+          }
+
           final textStart = match.end;
           final textEnd =
               (i + 1 < matches.length) ? matches[i + 1].start : lineText.length;
-          final nextText = lineText.substring(textStart, textEnd);
+          var nextText = lineText.substring(textStart, textEnd);
+
+          if (comment.isEmpty) {
+            final commentMatch =
+                RegExp(r'^(.*?)\s*(\([^\)]+\))\s*$').firstMatch(nextText);
+            if (commentMatch != null) {
+              final paren = commentMatch.group(2)!;
+              if (!isMusicalChord(paren)) {
+                comment = paren;
+                nextText = commentMatch.group(1)! +
+                    (nextText.endsWith(' ') ? ' ' : '');
+              }
+            }
+          }
 
           segments.add(SmartChordSegment(
-            chord: rawChord.trim(),
+            chord: chord.trim(),
             text: nextText,
+            comment: comment.trim(),
           ));
         }
       }
@@ -791,42 +894,45 @@ class SmartChordParser {
       return TransposedLine(chordLine: '', lyricsLine: row.map((t) => t.text).join());
     }
 
+    final parsed = parse(lineText);
+    if (parsed.isEmpty) {
+      return const TransposedLine(chordLine: '', lyricsLine: '');
+    }
+
+    final line = parsed.first;
+    if (!line.segments.any((s) => s.hasChord || s.hasComment)) {
+      return TransposedLine(chordLine: '', lyricsLine: lineText);
+    }
+
     final chordChars = <String>[];
     final cleanTextBuffer = StringBuffer();
     int cleanIndex = 0;
-    int lastIndex = 0;
 
-    for (final match in _chordRegex.allMatches(lineText).where((m) => isMusicalChord(m.group(1)!))) {
-      final textBetween = lineText.substring(lastIndex, match.start);
-      cleanTextBuffer.write(textBetween);
-      cleanIndex += textBetween.length;
+    for (final seg in line.segments) {
+      final segChord = seg.hasChord ? transposeChord(seg.chord, semitones) : '';
+      final segComment = seg.comment;
+      final fullChordTier = segChord.isNotEmpty && segComment.isNotEmpty
+          ? '$segChord $segComment'
+          : (segChord.isNotEmpty ? segChord : segComment);
 
-      final originalChord = match.group(1) ?? '';
-      final transposedChord = transposeChord(originalChord.trim(), semitones);
-
-      // Find first available index to avoid overlapping
-      int writeIndex = cleanIndex;
-      while (writeIndex < chordChars.length && chordChars[writeIndex] != ' ') {
-        writeIndex++;
+      if (fullChordTier.isNotEmpty) {
+        int writeIndex = cleanIndex;
+        while (writeIndex < chordChars.length && chordChars[writeIndex] != ' ') {
+          writeIndex++;
+        }
+        while (chordChars.length < writeIndex + fullChordTier.length) {
+          chordChars.add(' ');
+        }
+        for (int i = 0; i < fullChordTier.length; i++) {
+          chordChars[writeIndex + i] = fullChordTier[i];
+        }
       }
 
-      // Pad array with spaces if needed
-      while (chordChars.length < writeIndex + transposedChord.length) {
-        chordChars.add(' ');
-      }
-
-      // Write chord characters
-      for (int i = 0; i < transposedChord.length; i++) {
-        chordChars[writeIndex + i] = transposedChord[i];
-      }
-
-      lastIndex = match.end;
+      cleanTextBuffer.write(seg.text);
+      cleanIndex += seg.text.length;
     }
 
-    final remainingText = lineText.substring(lastIndex);
-    cleanTextBuffer.write(remainingText);
     final cleanText = cleanTextBuffer.toString();
-
     while (chordChars.length < cleanText.length) {
       chordChars.add(' ');
     }
