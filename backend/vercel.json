@@ -1,5 +1,11 @@
 {
   "version": 2,
+  "git": {
+    "deploymentEnabled": {
+      "integration/louvaio-unified-20261112": false,
+      "integration/m20-r17-split-20261112": false
+    }
+  },
   "functions": {
     "src/app.ts": {
       "maxDuration": 60
