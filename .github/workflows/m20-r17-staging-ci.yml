@@ -76,7 +76,30 @@ jobs:
           os.makedirs(os.path.dirname(out), exist_ok=True)
           with open(out, 'w', encoding='utf-8') as f:
               json.dump(config, f)
-          print('Staging Firebase configuration validated and written to android/app/src/staging/google-services.json.')
+
+          client = staging_clients[0]
+          app_id = client.get('client_info', {}).get('mobilesdk_app_id', '')
+          api_keys = [k.get('current_key', '') for k in client.get('api_key', [])]
+          api_key = api_keys[0] if api_keys else ''
+          sender_id = str(info.get('project_number', ''))
+          storage_bucket = info.get('storage_bucket', '')
+
+          if not (app_id and api_key and sender_id and storage_bucket):
+              raise SystemExit('Incomplete Firebase configuration in google-services.json.')
+
+          # Mask sensitive API key in runner output
+          print(f'::add-mask::{api_key}')
+
+          github_env = os.environ.get('GITHUB_ENV')
+          if github_env:
+              with open(github_env, 'a', encoding='utf-8') as env_file:
+                  env_file.write(f'FIREBASE_STAGING_PROJECT_ID={project_id}\n')
+                  env_file.write(f'FIREBASE_STAGING_API_KEY={api_key}\n')
+                  env_file.write(f'FIREBASE_STAGING_APP_ID={app_id}\n')
+                  env_file.write(f'FIREBASE_STAGING_MESSAGING_SENDER_ID={sender_id}\n')
+                  env_file.write(f'FIREBASE_STAGING_STORAGE_BUCKET={storage_bucket}\n')
+
+          print('Staging Firebase configuration validated, written to android/app/src/staging/google-services.json and exported to GITHUB_ENV.')
           PY
 
       - name: Verify Flutter & Dart environment
@@ -96,11 +119,18 @@ jobs:
 
       - name: Build staging debug APK
         run: |
+          set -euo pipefail
           flutter build apk --debug \
             --flavor staging \
             --target lib/main.dart \
             --dart-define=APP_ENV=staging \
-            --dart-define=API_BASE_URL=https://louvaio-r17-api-staging.vercel.app/api/v1
+            --dart-define=FIREBASE_ENV=staging \
+            --dart-define=API_BASE_URL=https://louvaio-r17-api-staging.vercel.app/api/v1 \
+            --dart-define=FIREBASE_STAGING_PROJECT_ID="$FIREBASE_STAGING_PROJECT_ID" \
+            --dart-define=FIREBASE_STAGING_API_KEY="$FIREBASE_STAGING_API_KEY" \
+            --dart-define=FIREBASE_STAGING_APP_ID="$FIREBASE_STAGING_APP_ID" \
+            --dart-define=FIREBASE_STAGING_MESSAGING_SENDER_ID="$FIREBASE_STAGING_MESSAGING_SENDER_ID" \
+            --dart-define=FIREBASE_STAGING_STORAGE_BUCKET="$FIREBASE_STAGING_STORAGE_BUCKET"
           test -s build/app/outputs/flutter-apk/app-staging-debug.apk
           sha256sum build/app/outputs/flutter-apk/app-staging-debug.apk > build/app/outputs/flutter-apk/apk-sha256.txt
 
