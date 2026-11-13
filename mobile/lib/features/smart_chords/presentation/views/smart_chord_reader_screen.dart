@@ -10,6 +10,7 @@ import '../../../auth/domain/auth_user.dart';
 import '../../../repertoire/presentation/views/song_detail_view.dart';
 import '../../domain/smart_chord.dart';
 import '../../domain/smart_chord_parser.dart';
+import '../../services/smart_chord_pdf_exporter.dart';
 import '../controllers/smart_chord_form_controller.dart';
 import '../controllers/smart_chord_repertoire_link_controller.dart';
 import '../widgets/song_link_picker_modal.dart';
@@ -362,6 +363,9 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
       if (nextMinId != null && nextMinId.isNotEmpty && nextMinId != previous?.selectedMinistry?.id) {
         Future.microtask(() {
           if (!mounted) return;
+          if (ref.read(ministryContextNotifierProvider).selectedMinistry?.id != nextMinId) {
+            return;
+          }
           ref.read(smartChordRepertoireLinkNotifierProvider.notifier).load(
                 ministryId: nextMinId,
                 chordId: widget.chordId,
@@ -1035,16 +1039,13 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
   }) async {
     final userId = _boundUserId ?? '';
     final prefs = ref.read(preferencesStorageProvider);
+    final exporter = ref.read(smartChordPdfExporterProvider);
     final savedMarkerText =
         userId.isNotEmpty ? (prefs.getUserPdfMarkerText(userId) ?? '') : '';
     final savedMarkerEnabled = userId.isNotEmpty
         ? (prefs.getUserPdfMarkerEnabled(userId) ||
             savedMarkerText.trim().isNotEmpty)
         : false;
-
-    final markerController = TextEditingController(text: savedMarkerText);
-    var markerEnabled = savedMarkerEnabled;
-    var pageIndex = 0;
 
     final rawLines = chord.content
         .replaceAll('\r\n', '\n')
@@ -1057,300 +1058,438 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (context, updateSheet) {
-            final theme = Theme.of(context);
-            final safePageIndex = pageIndex.clamp(0, pages.length - 1);
-            final activePageLines = pages[safePageIndex];
-            final markerText = markerController.text.trim();
+      builder: (_) => _SmartChordPdfPreviewSheet(
+        chord: chord,
+        semitones: semitones,
+        currentKey: currentKey,
+        chordFont: chordFont,
+        fontSizePt: (_fontSize * 0.78).clamp(9.0, 18.0),
+        lineSpacing: lineSpacing,
+        rawLines: rawLines,
+        pages: pages,
+        exporter: exporter,
+        initialMarkerText: savedMarkerText,
+        initialMarkerEnabled: savedMarkerEnabled,
+        onPersistMarkerEnabled: userId.isEmpty
+            ? null
+            : (val) => prefs.setUserPdfMarkerEnabled(userId, val),
+        onPersistMarkerText: userId.isEmpty
+            ? null
+            : (val) => prefs.setUserPdfMarkerText(userId, val),
+        buildRenderedLine: (line, alignedLyrics) => _buildRenderedLine(
+          line,
+          semitones,
+          Theme.of(context),
+          fontConfig,
+          spacingPx: lineSpacing.toDouble(),
+          alignedLyrics: alignedLyrics,
+        ),
+      ),
+    );
+  }
+}
 
-            final pageWidgets = <Widget>[];
-            for (int i = 0; i < activePageLines.length; i++) {
-              final line = activePageLines[i];
-              pageWidgets.add(
-                _buildRenderedLine(
-                  line,
-                  semitones,
-                  theme,
-                  fontConfig,
-                  spacingPx: lineSpacing.toDouble(),
-                  alignedLyrics: i > 0 &&
-                      SmartChordParser.progressionTokens(
-                            activePageLines[i - 1],
-                          ) !=
-                          null,
+class _SmartChordPdfPreviewSheet extends StatefulWidget {
+  final SmartChord chord;
+  final int semitones;
+  final String currentKey;
+  final String chordFont;
+  final double fontSizePt;
+  final int lineSpacing;
+  final List<String> rawLines;
+  final List<List<String>> pages;
+  final SmartChordPdfExporter exporter;
+  final String initialMarkerText;
+  final bool initialMarkerEnabled;
+  final Future<void> Function(bool)? onPersistMarkerEnabled;
+  final Future<void> Function(String?)? onPersistMarkerText;
+  final Widget Function(String line, bool alignedLyrics) buildRenderedLine;
+
+  const _SmartChordPdfPreviewSheet({
+    required this.chord,
+    required this.semitones,
+    required this.currentKey,
+    required this.chordFont,
+    required this.fontSizePt,
+    required this.lineSpacing,
+    required this.rawLines,
+    required this.pages,
+    required this.exporter,
+    required this.initialMarkerText,
+    required this.initialMarkerEnabled,
+    required this.onPersistMarkerEnabled,
+    required this.onPersistMarkerText,
+    required this.buildRenderedLine,
+  });
+
+  @override
+  State<_SmartChordPdfPreviewSheet> createState() =>
+      _SmartChordPdfPreviewSheetState();
+}
+
+class _SmartChordPdfPreviewSheetState extends State<_SmartChordPdfPreviewSheet> {
+  late final TextEditingController _markerController;
+  late bool _markerEnabled;
+  int _pageIndex = 0;
+  bool _isExporting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _markerController = TextEditingController(text: widget.initialMarkerText);
+    _markerEnabled = widget.initialMarkerEnabled;
+  }
+
+  @override
+  void dispose() {
+    _markerController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _exportPdf({required bool printMode}) async {
+    if (_isExporting) return;
+    setState(() => _isExporting = true);
+    try {
+      final bytes = SmartChordPdfBuilder.build(
+        SmartChordPdfDocumentOptions(
+          chord: widget.chord,
+          semitones: widget.semitones,
+          currentKey: widget.currentKey,
+          chordFont: widget.chordFont,
+          fontSizePt: widget.fontSizePt,
+          lineSpacingPx: widget.lineSpacing,
+          markerEnabled: _markerEnabled,
+          markerText: _markerController.text.trim(),
+        ),
+      );
+      final fileName =
+          SmartChordPdfExporter.buildPdfFileName(widget.chord.title);
+      if (printMode) {
+        await widget.exporter.printPdf(
+          bytes: bytes,
+          jobName: '${widget.chord.title} (${widget.currentKey})',
+        );
+      } else {
+        await widget.exporter.sharePdf(
+          bytes: bytes,
+          fileName: fileName,
+          title: '${widget.chord.title} - Tom ${widget.currentKey}',
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              printMode
+                  ? 'Não foi possível iniciar a impressão do PDF neste dispositivo.'
+                  : 'Não foi possível exportar/compartilhar o arquivo PDF.',
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isExporting = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final pages = widget.pages;
+    final safePageIndex = _pageIndex.clamp(0, pages.length - 1);
+    final activePageLines = pages[safePageIndex];
+    final markerText = _markerController.text.trim();
+
+    final pageWidgets = <Widget>[];
+    for (int i = 0; i < activePageLines.length; i++) {
+      final line = activePageLines[i];
+      pageWidgets.add(
+        widget.buildRenderedLine(
+          line,
+          i > 0 && SmartChordParser.progressionTokens(activePageLines[i - 1]) != null,
+        ),
+      );
+      pageWidgets.add(SizedBox(height: widget.lineSpacing.toDouble()));
+    }
+
+    return Padding(
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.picture_as_pdf_outlined,
+                  color: theme.colorScheme.primary,
                 ),
-              );
-              pageWidgets.add(SizedBox(height: lineSpacing.toDouble()));
-            }
-
-            return Padding(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(context).viewInsets.bottom,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.picture_as_pdf_outlined,
-                          color: theme.colorScheme.primary,
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Visualização de Folha / PDF',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Fechar visualização',
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  key: const ValueKey('pdf_share_button'),
+                  onPressed: _isExporting ? null : () => _exportPdf(printMode: false),
+                  icon: _isExporting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.ios_share_rounded, size: 16),
+                  label: const Text('Compartilhar PDF'),
+                ),
+                OutlinedButton.icon(
+                  key: const ValueKey('pdf_print_button'),
+                  onPressed: _isExporting ? null : () => _exportPdf(printMode: true),
+                  icon: const Icon(Icons.print_outlined, size: 16),
+                  label: const Text('Imprimir PDF'),
+                ),
+                TextButton.icon(
+                  key: const ValueKey('pdf_copy_sheet_button'),
+                  onPressed: () async {
+                    final buffer = StringBuffer();
+                    if (_markerEnabled && markerText.isNotEmpty) {
+                      buffer.writeln('[$markerText]');
+                    }
+                    buffer.writeln(widget.chord.title);
+                    if (widget.chord.artistName != null &&
+                        widget.chord.artistName!.trim().isNotEmpty) {
+                      buffer.writeln(widget.chord.artistName!.trim());
+                    }
+                    buffer.writeln('Tom: ${widget.currentKey}');
+                    if (widget.chord.capo != null && widget.chord.capo! > 0) {
+                      buffer.writeln('Capo: ${widget.chord.capo}ª casa');
+                    }
+                    buffer.writeln('');
+                    for (final l in widget.rawLines) {
+                      final rendered =
+                          SmartChordParser.renderLine(l, widget.semitones);
+                      if (rendered.hasChords) {
+                        buffer.writeln(rendered.chordLine);
+                      }
+                      buffer.writeln(rendered.lyricsLine);
+                    }
+                    await Clipboard.setData(
+                      ClipboardData(text: buffer.toString()),
+                    );
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Folha copiada para a área de transferência.',
+                          ),
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Visualização de Folha / PDF',
-                            style: theme.textTheme.titleMedium?.copyWith(
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.copy, size: 16),
+                  label: const Text('Copiar folha'),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 8,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Switch(
+                      key: const ValueKey('pdf_marker_toggle'),
+                      value: _markerEnabled,
+                      onChanged: (val) {
+                        setState(() => _markerEnabled = val);
+                        widget.onPersistMarkerEnabled?.call(val);
+                      },
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        key: const ValueKey('pdf_marker_input'),
+                        controller: _markerController,
+                        maxLength: 40,
+                        decoration: const InputDecoration(
+                          labelText: 'Marcador no topo da 1ª página',
+                          hintText: 'Ex: Culto de Domingo / Ensaio',
+                          isDense: true,
+                          counterText: '',
+                          border: OutlineInputBorder(),
+                        ),
+                        onChanged: (val) {
+                          final trimmed = val.trim();
+                          setState(() {
+                            if (trimmed.isNotEmpty && !_markerEnabled) {
+                              _markerEnabled = true;
+                            }
+                          });
+                          widget.onPersistMarkerText
+                              ?.call(trimmed.isEmpty ? null : trimmed);
+                          if (trimmed.isNotEmpty) {
+                            widget.onPersistMarkerEnabled?.call(true);
+                          }
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      key: const ValueKey('pdf_prev_page_button'),
+                      tooltip: 'Página anterior',
+                      onPressed: safePageIndex > 0
+                          ? () => setState(() => _pageIndex--)
+                          : null,
+                      icon: const Icon(Icons.chevron_left),
+                    ),
+                    Text(
+                      'Página ${safePageIndex + 1} de ${pages.length}',
+                      key: const ValueKey('pdf_page_indicator'),
+                      style: theme.textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    IconButton(
+                      key: const ValueKey('pdf_next_page_button'),
+                      tooltip: 'Próxima página',
+                      onPressed: safePageIndex < pages.length - 1
+                          ? () => setState(() => _pageIndex++)
+                          : null,
+                      icon: const Icon(Icons.chevron_right),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Container(
+                key: ValueKey('pdf_sheet_page_${safePageIndex + 1}'),
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surface,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: theme.dividerColor.withValues(alpha: 0.4),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (safePageIndex == 0) ...[
+                      if (_markerEnabled && markerText.isNotEmpty)
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: Container(
+                            key: const ValueKey('pdf_top_marker_badge'),
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              markerText,
+                              style: theme.textTheme.labelMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                color: theme.colorScheme.onPrimaryContainer,
+                              ),
+                            ),
+                          ),
+                        ),
+                      Text(
+                        widget.chord.title,
+                        style: theme.textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      if (widget.chord.artistName != null &&
+                          widget.chord.artistName!.trim().isNotEmpty)
+                        Text(
+                          widget.chord.artistName!.trim(),
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 12,
+                        children: [
+                          Text(
+                            'Tom: ${widget.currentKey}',
+                            style: theme.textTheme.labelMedium?.copyWith(
                               fontWeight: FontWeight.bold,
+                              color: theme.colorScheme.primary,
                             ),
                           ),
-                        ),
-                        TextButton.icon(
-                          key: const ValueKey('pdf_copy_sheet_button'),
-                          onPressed: () async {
-                            final buffer = StringBuffer();
-                            if (markerEnabled && markerText.isNotEmpty) {
-                              buffer.writeln('[$markerText]');
-                            }
-                            buffer.writeln(chord.title);
-                            if (chord.artistName != null &&
-                                chord.artistName!.trim().isNotEmpty) {
-                              buffer.writeln(chord.artistName!.trim());
-                            }
-                            buffer.writeln('Tom: $currentKey');
-                            if (chord.capo != null && chord.capo! > 0) {
-                              buffer.writeln('Capo: ${chord.capo}ª casa');
-                            }
-                            buffer.writeln('');
-                            for (final l in rawLines) {
-                              final rendered =
-                                  SmartChordParser.renderLine(l, semitones);
-                              if (rendered.hasChords) {
-                                buffer.writeln(rendered.chordLine);
-                              }
-                              buffer.writeln(rendered.lyricsLine);
-                            }
-                            await Clipboard.setData(
-                              ClipboardData(text: buffer.toString()),
-                            );
-                            if (sheetContext.mounted) {
-                              ScaffoldMessenger.of(sheetContext).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'Folha copiada para a área de transferência.',
-                                  ),
-                                ),
-                              );
-                            }
-                          },
-                          icon: const Icon(Icons.copy, size: 16),
-                          label: const Text('Copiar folha'),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.close),
-                          onPressed: () => Navigator.of(sheetContext).pop(),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Divider(height: 1),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(
-                          children: [
-                            Switch(
-                              key: const ValueKey('pdf_marker_toggle'),
-                              value: markerEnabled,
-                              onChanged: (val) {
-                                updateSheet(() {
-                                  markerEnabled = val;
-                                });
-                                if (userId.isNotEmpty) {
-                                  prefs.setUserPdfMarkerEnabled(
-                                    userId,
-                                    val,
-                                  );
-                                }
-                              },
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: TextField(
-                                key: const ValueKey('pdf_marker_input'),
-                                controller: markerController,
-                                maxLength: 40,
-                                decoration: const InputDecoration(
-                                  labelText: 'Marcador no topo da 1ª página',
-                                  hintText: 'Ex: Culto de Domingo / Ensaio',
-                                  isDense: true,
-                                  counterText: '',
-                                  border: OutlineInputBorder(),
-                                ),
-                                onChanged: (val) {
-                                  final trimmed = val.trim();
-                                  updateSheet(() {
-                                    if (trimmed.isNotEmpty && !markerEnabled) {
-                                      markerEnabled = true;
-                                    }
-                                  });
-                                  if (userId.isNotEmpty) {
-                                    prefs.setUserPdfMarkerText(
-                                      userId,
-                                      trimmed.isEmpty ? null : trimmed,
-                                    );
-                                    if (trimmed.isNotEmpty) {
-                                      prefs.setUserPdfMarkerEnabled(
-                                        userId,
-                                        true,
-                                      );
-                                    }
-                                  }
-                                },
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            IconButton(
-                              key: const ValueKey('pdf_prev_page_button'),
-                              tooltip: 'Página anterior',
-                              onPressed: safePageIndex > 0
-                                  ? () => updateSheet(() => pageIndex--)
-                                  : null,
-                              icon: const Icon(Icons.chevron_left),
-                            ),
+                          if (widget.chord.capo != null &&
+                              widget.chord.capo! > 0)
                             Text(
-                              'Página ${safePageIndex + 1} de ${pages.length}',
-                              key: const ValueKey('pdf_page_indicator'),
-                              style: theme.textTheme.labelLarge?.copyWith(
-                                fontWeight: FontWeight.w600,
-                              ),
+                              'Capo: ${widget.chord.capo}ª casa',
+                              style: theme.textTheme.labelMedium,
                             ),
-                            IconButton(
-                              key: const ValueKey('pdf_next_page_button'),
-                              tooltip: 'Próxima página',
-                              onPressed: safePageIndex < pages.length - 1
-                                  ? () => updateSheet(() => pageIndex++)
-                                  : null,
-                              icon: const Icon(Icons.chevron_right),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Divider(height: 1),
-                  Expanded(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.all(16),
-                      child: Container(
-                        key: ValueKey('pdf_sheet_page_${safePageIndex + 1}'),
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.surface,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: theme.dividerColor.withValues(alpha: 0.4),
-                          ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            if (safePageIndex == 0) ...[
-                              if (markerEnabled && markerText.isNotEmpty)
-                                Align(
-                                  alignment: Alignment.centerRight,
-                                  child: Container(
-                                    key: const ValueKey('pdf_top_marker_badge'),
-                                    margin: const EdgeInsets.only(bottom: 8),
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 4,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: theme.colorScheme.primaryContainer,
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
-                                    child: Text(
-                                      markerText,
-                                      style:
-                                          theme.textTheme.labelMedium?.copyWith(
-                                        fontWeight: FontWeight.bold,
-                                        color: theme
-                                            .colorScheme.onPrimaryContainer,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              Text(
-                                chord.title,
-                                style: theme.textTheme.titleLarge?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              if (chord.artistName != null &&
-                                  chord.artistName!.trim().isNotEmpty)
-                                Text(
-                                  chord.artistName!.trim(),
-                                  style: theme.textTheme.bodyMedium?.copyWith(
-                                    color: theme.colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                              const SizedBox(height: 4),
-                              Wrap(
-                                spacing: 12,
-                                children: [
-                                  Text(
-                                    'Tom: $currentKey',
-                                    style: theme.textTheme.labelMedium?.copyWith(
-                                      fontWeight: FontWeight.bold,
-                                      color: theme.colorScheme.primary,
-                                    ),
-                                  ),
-                                  if (chord.capo != null && chord.capo! > 0)
-                                    Text(
-                                      'Capo: ${chord.capo}ª casa',
-                                      style: theme.textTheme.labelMedium,
-                                    ),
-                                ],
-                              ),
-                              const Divider(height: 20),
-                            ],
-                            ...pageWidgets,
-                            const SizedBox(height: 16),
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: Text(
-                                'Página ${safePageIndex + 1} / ${pages.length}',
-                                style: theme.textTheme.labelSmall?.copyWith(
-                                  color: theme.colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                            ),
-                          ],
+                        ],
+                      ),
+                      const Divider(height: 20),
+                    ],
+                    ...pageWidgets,
+                    const SizedBox(height: 16),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        'Página ${safePageIndex + 1} / ${pages.length}',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
                         ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            );
-          },
-        );
-      },
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

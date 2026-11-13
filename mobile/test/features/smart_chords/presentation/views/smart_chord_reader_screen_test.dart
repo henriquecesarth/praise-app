@@ -1,8 +1,8 @@
-import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/musical_progression_line.dart';
 import 'dart:async';
-import 'package:flutter/rendering.dart';
-import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/chord_lyric_line.dart';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/app/providers.dart';
@@ -17,6 +17,9 @@ import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord.dart';
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_import.dart';
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_repertoire_link.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/views/smart_chord_reader_screen.dart';
+import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/chord_lyric_line.dart';
+import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/musical_progression_line.dart';
+import 'package:louvaio_mobile/features/smart_chords/services/smart_chord_pdf_exporter.dart';
 
 import 'package:firebase_auth/firebase_auth.dart' hide AuthProvider;
 import 'package:louvaio_mobile/core/storage/preferences_storage.dart';
@@ -283,6 +286,7 @@ void main() {
     SmartChord? initialChord,
     String? chordFontOverride,
     double textScale = 1,
+    SmartChordPdfExporter? pdfExporterOverride,
   }) {
     return ProviderScope(
       overrides: [
@@ -292,6 +296,8 @@ void main() {
         ministryContextNotifierProvider.overrideWith((ref) => ministryNotifier),
         if (chordFontOverride != null)
           chordFontPreferenceProvider.overrideWithValue(chordFontOverride),
+        if (pdfExporterOverride != null)
+          smartChordPdfExporterProvider.overrideWithValue(pdfExporterOverride),
       ],
       child: MaterialApp(
         builder: (context, child) => MediaQuery(
@@ -1100,4 +1106,94 @@ void main() {
     expect(find.text('Página 2 de 2'), findsOneWidget);
     expect(find.byKey(const ValueKey('pdf_top_marker_badge')), findsNothing);
   });
+
+  testWidgets(
+    'PDF share and print buttons export real PDF bytes, handle failures, and dispose marker controller safely',
+    (tester) async {
+      const testChannel = MethodChannel('com.louvaio.mobile/pdf_export_widget_test');
+      final recordedCalls = <MethodCall>[];
+      var shouldFail = false;
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(testChannel, (call) async {
+        recordedCalls.add(call);
+        if (shouldFail) {
+          throw PlatformException(code: 'PDF_ERROR', message: 'Falha simulada');
+        }
+        return {'status': 'ok'};
+      });
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(testChannel, null);
+      });
+
+      final chord = sampleChord.copyWith(
+        originalKey: 'G',
+        content: '[G]Tu és [D/F#]Deus',
+      );
+      repo.chord = chord;
+
+      await tester.pumpWidget(
+        buildApp(
+          chordId: chord.id,
+          initialChord: chord,
+          pdfExporterOverride: const SmartChordPdfExporter(channel: testChannel),
+        ),
+      );
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+
+      // Transpose +2 semitones (G -> A) before opening PDF preview
+      await tester.tap(find.byTooltip('Meio tom acima (+1)'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Meio tom acima (+1)'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('smart_chord_pdf_preview_button')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const ValueKey('pdf_marker_input')), 'Vigilia');
+      await tester.pumpAndSettle();
+
+      // Share real PDF
+      await tester.tap(find.byKey(const ValueKey('pdf_share_button')));
+      await tester.pumpAndSettle();
+
+      expect(recordedCalls, hasLength(1));
+      expect(recordedCalls[0].method, 'sharePdf');
+      expect(recordedCalls[0].arguments['fileName'], 'Oceanos.pdf');
+      final sharedBytes = recordedCalls[0].arguments['bytes'] as Uint8List;
+      final sharedPdfText = latin1.decode(sharedBytes);
+      expect(sharedPdfText, startsWith('%PDF-1.4'));
+      expect(sharedPdfText, contains('%%EOF'));
+      expect(sharedPdfText, contains('(Vigilia) Tj'));
+      expect(sharedPdfText, contains('(Tom: A) Tj'));
+      expect(sharedPdfText, contains('(A) Tj'));
+
+      // Print real PDF
+      await tester.tap(find.byKey(const ValueKey('pdf_print_button')));
+      await tester.pumpAndSettle();
+
+      expect(recordedCalls, hasLength(2));
+      expect(recordedCalls[1].method, 'printPdf');
+      expect(recordedCalls[1].arguments['jobName'], 'Oceanos (A)');
+
+      // Error handling displays SnackBar cleanly without crashing
+      shouldFail = true;
+      await tester.tap(find.byKey(const ValueKey('pdf_share_button')));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Não foi possível exportar/compartilhar o arquivo PDF.'),
+        findsOneWidget,
+      );
+
+      // Close sheet and reopen to verify markerController.dispose() does not leak or crash
+      await tester.tap(find.byTooltip('Fechar visualização'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('smart_chord_pdf_preview_button')));
+      await tester.pumpAndSettle();
+      expect(find.text('Visualização de Folha / PDF'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

@@ -65,7 +65,57 @@ const scheduleTemplates = [{
 interface MockApiOptions {
   songListMode?: 'success' | 'empty' | 'error';
   songListDelayMs?: number;
+  includeLongSmartChords?: boolean;
 }
+
+const longSongWithVersionsAndChords = {
+  ...longSong,
+  versions: [
+    {
+      id: 'version-long-1',
+      name: 'Versão Especial Extraordinariamente Longa Para Celebrações Comunitárias',
+      classificationIds: ['class-long'],
+      key: 'F#',
+      bpm: 128,
+      duration: '00:08:45',
+      links: [],
+    },
+    {
+      id: 'version-long-2',
+      name: 'Versão Acústica Simplificada Ministerial Com Arranjo Instrumental Extenso',
+      classificationIds: ['class-1'],
+      key: 'G',
+      bpm: 72,
+      duration: '00:05:10',
+      links: [],
+    },
+  ],
+};
+
+const longLinkedSmartChords = [
+  {
+    id: 'sc-long-1',
+    user_id: 'user-1',
+    song_id: 'song-long',
+    title: 'Cifra Violão Base Extraordinariamente Longa Sem Quebra Responsiva Para Celular Estreito',
+    artist_name: 'Equipe Local',
+    original_key: 'F#',
+    content: '[Intro]\n[F#]Graça [C#]infinita\n[D#m7]Brilha em [B]nós',
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-08-27T00:00:00.000Z',
+  },
+  {
+    id: 'sc-long-2',
+    user_id: 'user-1',
+    song_id: 'song-long',
+    title: 'Cifra Teclado Pad Ministerial Extraordinariamente Extensa Em Dispositivos Compactos',
+    artist_name: 'Equipe Local',
+    original_key: 'G',
+    content: '[G]Santo [D]Senhor [Em7]Deus [C9]Forte',
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-08-27T00:00:00.000Z',
+  },
+];
 
 function json(route: Route, body: unknown, status = 200) {
   return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -100,6 +150,9 @@ export async function installMockApi(page: Page, options: MockApiOptions = {}) {
       { id: 'folder-long', ministry_id: 'ministry-1', name: 'Pasta Com Nome Extraordinariamente Longo Para Celebrações Comunitárias', description: 'Descrição extensa com https://example.test/abcdefghijklmnopqrstuvwxyz0123456789', song_count: 1, songs: [longSong] },
     ] });
     if (path.endsWith('/songs/song-1')) return json(route, { data: mockSong });
+    if (path.endsWith('/songs/song-long')) {
+      return json(route, { data: options.includeLongSmartChords ? longSongWithVersionsAndChords : longSong });
+    }
     if (path.includes('/songs')) {
       if (options.songListDelayMs) {
         await new Promise((resolve) => setTimeout(resolve, options.songListDelayMs));
@@ -122,6 +175,9 @@ export async function installMockApi(page: Page, options: MockApiOptions = {}) {
     if (/\/schedules\/schedule-1$/.test(path) && method !== 'DELETE') return json(route, mockSchedule);
     if (path.endsWith('/schedules')) return json(route, method === 'GET' ? [mockSchedule] : mockSchedule);
     if (path.endsWith('/liturgies')) return json(route, []);
+    if (path.endsWith('/smart-chords/song/song-long') && options.includeLongSmartChords) {
+      return json(route, { data: longLinkedSmartChords });
+    }
     if (path.includes('/smart-chords')) return json(route, { data: [] });
     if (path.includes('/announcements')) return json(route, []);
     if (path === '/plans') return json(route, {

@@ -3,6 +3,7 @@ import '../../../../app/providers.dart';
 import '../../data/smart_chord_repository.dart';
 import '../../data/smart_chord_repertoire_link_repository.dart';
 import '../../services/share_intent_service.dart';
+import '../../services/smart_chord_pdf_exporter.dart';
 import 'share_intent_router.dart';
 import 'smart_chord_detail_controller.dart';
 import 'smart_chord_form_controller.dart';
@@ -85,4 +86,8 @@ final shareIntentRouterProvider = Provider<ShareIntentRouter>((ref) {
     router.dispose();
   });
   return router;
+});
+
+final smartChordPdfExporterProvider = Provider<SmartChordPdfExporter>((ref) {
+  return const SmartChordPdfExporter();
 });

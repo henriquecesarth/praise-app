@@ -194,21 +194,7 @@ export default function App() {
     return () => { active = false; };
   }, [mainModule, authReady]);
 
-  // Carregar dados específicos de módulo/aba sob demanda ao navegar
-  useEffect(() => {
-    if (!activeGroup) return;
-    if (mainModule === 'dashboard' || mainModule === 'schedules') {
-      loadSchedules();
-    } else if (mainModule === 'repertoire') {
-      if (activeTab === 'songs') loadSongs();
-      else if (activeTab === 'folders') loadFolders();
-      else if (activeTab === 'artists') loadArtists();
-    } else if (mainModule === 'liturgies') {
-      loadSongs();
-    }
-  }, [mainModule, activeTab, activeGroup]);
-
-  // Reload data when activeGroup changes
+  // Reload data when activeGroup changes (must run before module/tab loaders so refs & flags reset first)
   useEffect(() => {
     activeGroupIdRef.current = activeGroup ? activeGroup.id : '';
     ++songRequestRef.current;
@@ -247,6 +233,20 @@ export default function App() {
     }
   }, [activeGroup]);
 
+  // Carregar dados específicos de módulo/aba sob demanda ao navegar
+  useEffect(() => {
+    if (!activeGroup) return;
+    if (mainModule === 'dashboard' || mainModule === 'schedules') {
+      loadSchedules();
+    } else if (mainModule === 'repertoire') {
+      if (activeTab === 'songs') loadSongs();
+      else if (activeTab === 'folders') loadFolders();
+      else if (activeTab === 'artists') loadArtists();
+    } else if (mainModule === 'liturgies') {
+      loadSongs();
+    }
+  }, [mainModule, activeTab, activeGroup]);
+
   const loadSubscription = async (minId: string) => {
     const reqId = ++subscriptionRequestRef.current;
     try {
@@ -260,6 +260,9 @@ export default function App() {
         loadClassifications(minId);
       } else {
         ++songRequestRef.current;
+        ++schedulesRequestRef.current;
+        ++foldersRequestRef.current;
+        ++artistsRequestRef.current;
         setSongsError(null);
         setClassifications([]);
         setSongs([]);
@@ -300,7 +303,7 @@ export default function App() {
 
   // Reload songs when search or filters change
   useEffect(() => {
-    if (!activeGroup || mainModule !== 'repertoire') return;
+    if (!activeGroup || mainModule !== 'repertoire' || activeTab !== 'songs') return;
 
     if (searchTimeoutRef.current) {
       window.clearTimeout(searchTimeoutRef.current);
@@ -1403,6 +1406,7 @@ export default function App() {
                     setSelectedSchedule(null);
                     setMainModule('schedules');
                   }}
+                  onNavigateToVocal={() => setMainModule('vocal')}
                   onSelectSchedule={(schedule) => {
                     setSelectedSchedule(schedule);
                     navigate(pathForSchedule(schedule.id));
@@ -1640,6 +1644,7 @@ export default function App() {
                   section={routeState.ministrySection}
                   onNavigateSection={(section) => navigate(section ? `/ministerio/${section}` : '/ministerio')}
                   onNavigateToLiturgies={() => setMainModule('liturgies')}
+                  onNavigateToVocal={() => setMainModule('vocal')}
                 />
               )}
 
@@ -1651,8 +1656,6 @@ export default function App() {
                   showToast={showToast}
                 />
               )}
-
-              {mainModule === 'vocal' && <VocalExercisePlayer />}
 
               {mainModule === 'schedules' && (
                 selectedSchedule ? (

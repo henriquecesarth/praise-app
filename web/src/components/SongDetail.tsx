@@ -731,7 +731,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                       setSemitones(0);
                     }}
                   >
-                    <span>{ver.name}</span>
+                    <span className="version-pill__label">{ver.name}</span>
                     {verKey && <span className="version-pill__key">{verKey}</span>}
                   </button>
                 );
@@ -814,7 +814,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                         setSemitones(0);
                       }}
                     >
-                      <span>{chord.title || `Cifra ${idx + 1}`}</span>
+                      <span className="version-pill__label">{chord.title || `Cifra ${idx + 1}`}</span>
                       <span className="version-pill__key">{chord.originalKey}</span>
                     </button>
                   );

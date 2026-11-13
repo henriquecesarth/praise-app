@@ -366,4 +366,17 @@ describe('DashboardView - Persisted Announcements', () => {
     expect(screen.queryByText('Aniversariante Vazado A')).not.toBeInTheDocument();
     expect(screen.getByText('Aniversariante B')).toBeInTheDocument();
   });
+
+  it('11. Phase C (Blocker 2): exibe atalho de Exercícios vocais com ação quando callback é fornecido', async () => {
+    const user = userEvent.setup();
+    const onNavigateToVocal = vi.fn();
+
+    render(<DashboardView {...defaultProps} onNavigateToVocal={onNavigateToVocal} />);
+
+    const vocalButton = screen.getByRole('button', { name: /Exercícios vocais/i });
+    expect(vocalButton).toBeInTheDocument();
+
+    await user.click(vocalButton);
+    expect(onNavigateToVocal).toHaveBeenCalledTimes(1);
+  });
 });

@@ -341,3 +341,101 @@ test('subscription and plans page renders correctly without overflow', async ({ 
 
   await expectNoHorizontalOverflow(page);
 });
+
+test('Phase C Blocker 1: song detail long version-pill and chord-pill tabs wrap and truncate without horizontal overflow', async ({ page }, testInfo) => {
+  await installMockApi(page, { includeLongSmartChords: true });
+  await seedAuthenticatedSession(page, projectTheme(testInfo));
+
+  await page.goto('/repertorio/song-long');
+  await expect(page.locator('.chord-pill')).toHaveCount(2);
+  await expect(page.locator('.version-pill')).toHaveCount(2);
+  await expectNoHorizontalOverflow(page);
+
+  const viewportWidth = page.viewportSize()!.width;
+  for (const selector of ['.version-pill', '.chord-pill']) {
+    const count = await page.locator(selector).count();
+    for (let i = 0; i < count; i++) {
+      const pill = page.locator(selector).nth(i);
+      const box = await pill.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(-1);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(viewportWidth + 1);
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+    }
+  }
+});
+
+test('Phase C Blockers 2 & 3: M21 vocal exercises are reachable on mobile and CustomExerciseModal has readable contrast in light and dark modes', async ({ page }, testInfo) => {
+  await installMockApi(page);
+  await seedAuthenticatedSession(page, projectTheme(testInfo));
+
+  // Blocker 2 entry 1: Dashboard action button
+  await page.goto('/');
+  const dashboardVocalBtn = page.getByRole('button', { name: /Exercícios vocais/i });
+  await expect(dashboardVocalBtn).toBeVisible();
+  const dashBox = await dashboardVocalBtn.boundingBox();
+  expect(dashBox).not.toBeNull();
+  expect(dashBox!.height).toBeGreaterThanOrEqual(44);
+  await dashboardVocalBtn.click();
+  await expect(page).toHaveURL('/exercicios-vocais');
+  await expect(page.getByRole('heading', { level: 1, name: /Exercícios vocais/i })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+
+  // Blocker 2 entry 2: Ministry menu item
+  await page.goto('/ministerio');
+  const ministryVocalBtn = page.getByRole('button', { name: 'Abrir exercícios vocais' });
+  await expect(ministryVocalBtn).toBeVisible();
+  await ministryVocalBtn.click();
+  await expect(page).toHaveURL('/exercicios-vocais');
+
+  // Blocker 3: Open CustomExerciseModal and verify computed WCAG contrast on selects & icon buttons
+  await page.getByRole('button', { name: /Novo exercício/i }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+
+  const contrastResults = await page.evaluate(() => {
+    const parseRgb = (rgb: string): [number, number, number] => {
+      const m = rgb.match(/\d+(\.\d+)?/g);
+      if (!m || m.length < 3) return [0, 0, 0];
+      return [Number(m[0]), Number(m[1]), Number(m[2])];
+    };
+    const luminance = ([r, g, b]: [number, number, number]) => {
+      const conv = (v: number) => {
+        const s = v / 255;
+        return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+      };
+      return 0.2126 * conv(r) + 0.7152 * conv(g) + 0.0722 * conv(b);
+    };
+    const ratio = (bg: string, fg: string) => {
+      const l1 = luminance(parseRgb(bg));
+      const l2 = luminance(parseRgb(fg));
+      return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+    };
+    const targets = [
+      '.vocal-note-select',
+      '.vocal-duration-select',
+      '.vocal-note-remove-btn',
+    ];
+    return targets.map((sel) => {
+      const el = document.querySelector(sel) as HTMLElement | null;
+      if (!el) return { sel, found: false, bg: '', fg: '', contrast: 0 };
+      const style = window.getComputedStyle(el);
+      return {
+        sel,
+        found: true,
+        bg: style.backgroundColor,
+        fg: style.color,
+        contrast: Number(ratio(style.backgroundColor, style.color).toFixed(2)),
+      };
+    });
+  });
+
+  for (const item of contrastResults) {
+    expect(item.found, `Missing element ${item.sel}`).toBe(true);
+    expect(item.contrast, `Unreadable contrast for ${item.sel}: fg=${item.fg} on bg=${item.bg}`).toBeGreaterThanOrEqual(4.5);
+  }
+
+  await page.getByRole('button', { name: 'Fechar editor' }).click();
+  await expect(dialog).toBeHidden();
+});

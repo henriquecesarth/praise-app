@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.ViewGroup
+import com.louvaio.louvaio_mobile.pdf.SmartChordPdfHandler
 import com.louvaio.louvaio_mobile.vocal.PianoBank
 import com.louvaio.louvaio_mobile.vocal.VocalAudioPlayer
 import io.flutter.FlutterInjector
@@ -25,6 +26,7 @@ class MainActivity : FlutterActivity() {
         private const val READ_TIMEOUT_MS = 15_000L
         private const val MAX_PENDING_SHARES = 8
         private const val AUDIO_CHANNEL = "com.louvaio.mobile/vocal_audio"
+        private const val PDF_EXPORT_CHANNEL = "com.louvaio.mobile/pdf_export"
     }
 
     // Keep IO bounded even when a remote provider ignores cancellation.
@@ -41,6 +43,8 @@ class MainActivity : FlutterActivity() {
     private var nextRequestId = 0L
     private var vocalPlayer: VocalAudioPlayer? = null
     private var vocalAudioChannel: MethodChannel? = null
+    private var pdfExportChannel: MethodChannel? = null
+    private var smartChordPdfHandler: SmartChordPdfHandler? = null
 
     private class ShareRequest(
         val initial: Boolean,
@@ -211,6 +215,45 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        val pdfHandler = SmartChordPdfHandler(this)
+        smartChordPdfHandler = pdfHandler
+        val pdfChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, PDF_EXPORT_CHANNEL)
+        pdfExportChannel = pdfChannel
+        pdfChannel.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "sharePdf" -> {
+                    val bytes = call.argument<ByteArray>("bytes")
+                    val fileName = call.argument<String>("fileName")
+                    val title = call.argument<String>("title")
+                    if (bytes == null || !SmartChordPdfHandler.hasValidPdfHeader(bytes)) {
+                        result.error("INVALID_PDF", "Arquivo PDF inválido ou vazio.", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        val path = pdfHandler.sharePdf(bytes, fileName, title)
+                        result.success(mapOf("status" to "shared", "path" to path))
+                    } catch (ex: Exception) {
+                        result.error("PDF_SHARE_FAILED", ex.message ?: "Erro ao compartilhar PDF.", null)
+                    }
+                }
+                "printPdf" -> {
+                    val bytes = call.argument<ByteArray>("bytes")
+                    val jobName = call.argument<String>("jobName")
+                    if (bytes == null || !SmartChordPdfHandler.hasValidPdfHeader(bytes)) {
+                        result.error("INVALID_PDF", "Arquivo PDF inválido ou vazio.", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        val path = pdfHandler.printPdf(bytes, jobName)
+                        result.success(mapOf("status" to "printing", "path" to path))
+                    } catch (ex: Exception) {
+                        result.error("PDF_PRINT_FAILED", ex.message ?: "Erro ao iniciar impressão do PDF.", null)
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
     }
 
     override fun onStop() {
@@ -336,6 +379,9 @@ class MainActivity : FlutterActivity() {
         vocalPlayer?.release()
 
         vocalPlayer = null
+        pdfExportChannel?.setMethodCallHandler(null)
+        pdfExportChannel = null
+        smartChordPdfHandler = null
         methodChannel?.setMethodCallHandler(null)
         requests.forEach { cancelRead(it) }
         requests.clear()

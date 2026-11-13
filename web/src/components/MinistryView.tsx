@@ -16,7 +16,7 @@ import { WhatsAppFoundationView } from './WhatsAppFoundationView';
 import {
   Edit2, Check, X, UserPlus, Users, Info, Link, Shield, Tag,
   Layers, Trash2, LogOut, ChevronRight, MoreVertical, Plus, User,
-  CalendarDays, AtSign, Copy, CheckCircle, Sparkles, BookOpen, MessageSquare,
+  CalendarDays, AtSign, Copy, CheckCircle, Sparkles, BookOpen, MessageSquare, Music,
 } from 'lucide-react';
 
 interface MinistryMemberItem {
@@ -62,6 +62,7 @@ interface Props {
   section?: string;
   onNavigateSection?: (section?: string) => void;
   onNavigateToLiturgies?: () => void;
+  onNavigateToVocal?: () => void;
 }
 
 type ActiveTab = 'info' | 'members';
@@ -79,6 +80,7 @@ export function MinistryView({
   section,
   onNavigateSection,
   onNavigateToLiturgies,
+  onNavigateToVocal,
 }: Props) {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<ActiveTab>('info');
@@ -724,6 +726,30 @@ export function MinistryView({
                 <div>
                   <div className="ministry-action-title">Liturgias & Ordem de Culto</div>
                   <div className="ministry-action-desc">Ordem dos cultos e programação musical</div>
+                </div>
+              </div>
+              <ChevronRight size={16} className="ministry-chevron" />
+            </button>
+            {/* Exercícios vocais M21 — ACTIVE */}
+            <button
+              type="button"
+              className="ministry-action-row-btn"
+              onClick={() => {
+                if (onNavigateToVocal) {
+                  onNavigateToVocal();
+                } else {
+                  navigate('/exercicios-vocais');
+                }
+              }}
+              aria-label="Abrir exercícios vocais"
+            >
+              <div className="ministry-action-row-left">
+                <div className="ministry-action-icon primary">
+                  <Music size={18} aria-hidden="true" />
+                </div>
+                <div>
+                  <div className="ministry-action-title">Exercícios vocais</div>
+                  <div className="ministry-action-desc">Aquecimento vocal e treino guiado com piano</div>
                 </div>
               </div>
               <ChevronRight size={16} className="ministry-chevron" />

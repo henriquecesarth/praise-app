@@ -31,6 +31,7 @@ interface DashboardViewProps {
   onJoinGroup?: () => void;
   onNavigateToRepertoire: () => void;
   onNavigateToSchedules: () => void;
+  onNavigateToVocal?: () => void;
   onSelectSchedule: (schedule: ScheduleItem) => void;
 }
 
@@ -109,6 +110,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onJoinGroup,
   onNavigateToRepertoire,
   onNavigateToSchedules,
+  onNavigateToVocal,
   onSelectSchedule,
 }) => {
   const [showAllAnnouncements, setShowAllAnnouncements] = useState(false);
@@ -434,7 +436,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             Acompanhe seus ministérios, escalas de domingo, avisos da equipe e aniversariantes do mês.
           </p>
         </div>
-        <div className="dashboard-welcome-actions w-full md:w-auto shrink-0 mt-2 md:mt-0">
+        <div className="dashboard-welcome-actions flex flex-col sm:flex-row gap-2.5 w-full md:w-auto shrink-0 mt-2 md:mt-0">
+          {onNavigateToVocal && (
+            <button
+              type="button"
+              className="btn btn-secondary min-h-[44px] w-full md:w-auto px-4 py-2.5 rounded-xl inline-flex items-center justify-center gap-2 font-semibold"
+              onClick={onNavigateToVocal}
+            >
+              <Music size={18} aria-hidden="true" /> <span>Exercícios vocais</span>
+            </button>
+          )}
           <button
             className="btn btn-primary min-h-[44px] w-full md:w-auto px-5 py-2.5 rounded-xl inline-flex items-center justify-center gap-2 font-semibold"
             onClick={onNavigateToRepertoire}
