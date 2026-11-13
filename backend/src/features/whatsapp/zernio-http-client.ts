@@ -16,6 +16,7 @@ import {
   ZernioListAccountsParams,
   zernioDeleteAccountResponseSchema,
   ZernioDeleteAccountResponse,
+  isPositiveZernioDeleteAck,
   ZernioWhatsAppNumberInfo,
   zernioGetWhatsAppNumberInfoResponseSchema,
   zernioCreateProfileResponseSchema,
@@ -264,6 +265,14 @@ export class ZernioHttpClient {
   }
 
   async request<T>(endpoint: string, options?: ZernioHttpRequestOptions): Promise<T> {
+    const { data } = await this.requestWithStatus<T>(endpoint, options);
+    return data;
+  }
+
+  private async requestWithStatus<T>(
+    endpoint: string,
+    options?: ZernioHttpRequestOptions
+  ): Promise<{ status: number; data: T }> {
     const apiKey = this.getApiKey();
 
     if (options?.signal?.aborted) {
@@ -320,16 +329,16 @@ export class ZernioHttpClient {
       }
 
       if (res.status === 204 || res.headers.get('content-length') === '0') {
-        return undefined as T;
+        return { status: res.status, data: undefined as T };
       }
 
       const text = await res.text();
       if (!text || text.trim().length === 0) {
-        return undefined as T;
+        return { status: res.status, data: undefined as T };
       }
 
       try {
-        return JSON.parse(text) as T;
+        return { status: res.status, data: JSON.parse(text) as T };
       } catch {
         throw new ZernioError({
           statusCode: 502,
@@ -595,14 +604,54 @@ export class ZernioHttpClient {
       });
     }
 
-    const raw = await this.request<unknown>(`accounts/${encodeURIComponent(cleanId)}`, {
-      method: 'DELETE',
-      ...options,
-    });
+    const { status, data: raw } = await this.requestWithStatus<unknown>(
+      `accounts/${encodeURIComponent(cleanId)}`,
+      {
+        method: 'DELETE',
+        ...options,
+      }
+    );
+
+    if (status === 202 || (status !== 200 && status !== 204)) {
+      throw new ZernioError({
+        statusCode: 502,
+        kind: 'TRANSIENT_PROVIDER_ERROR',
+        message: `ZERNIO_PROTOCOL_ERROR: Resposta HTTP ${status} não terminal ao excluir conta no Zernio.`,
+        providerCode: status === 202 ? 'ZERNIO_DELETE_ACCEPTED_PENDING' : 'ZERNIO_UNCONFIRMED_DELETE',
+      });
+    }
+
+    // HTTP 204 No Content or empty 200 response body is valid terminal deletion acknowledgment
+    if (raw === undefined) {
+      return { success: true };
+    }
+
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new ZernioError({
+        statusCode: 502,
+        kind: 'TRANSIENT_PROVIDER_ERROR',
+        message: 'ZERNIO_PROTOCOL_ERROR: Resposta inválida do provedor Zernio ao excluir conta.',
+        providerCode: 'ZERNIO_PROTOCOL_ERROR',
+      });
+    }
 
     const parsed = zernioDeleteAccountResponseSchema.safeParse(raw);
     if (!parsed.success) {
-      return { success: true };
+      throw new ZernioError({
+        statusCode: 502,
+        kind: 'TRANSIENT_PROVIDER_ERROR',
+        message: 'ZERNIO_PROTOCOL_ERROR: Resposta malformada do provedor Zernio ao excluir conta.',
+        providerCode: 'ZERNIO_PROTOCOL_ERROR',
+      });
+    }
+
+    if (!isPositiveZernioDeleteAck(parsed.data)) {
+      throw new ZernioError({
+        statusCode: 502,
+        kind: 'TRANSIENT_PROVIDER_ERROR',
+        message: 'ZERNIO_PROTOCOL_ERROR: Resposta ambígua ou erro na exclusão de conta no Zernio.',
+        providerCode: parsed.data.success === false ? 'ZERNIO_DELETE_REJECTED' : 'ZERNIO_PROTOCOL_ERROR',
+      });
     }
 
     return parsed.data;

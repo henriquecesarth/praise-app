@@ -1,10 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import express from 'express';
+import { createServer, type Server } from 'node:http';
 import { AnnouncementRepository, AnnouncementRecord } from '../../repositories/AnnouncementRepository';
 import { AnnouncementService } from './announcement.service';
 import { AnnouncementController } from './announcement.controller';
 import announcementRouter from './announcement.routes';
 import { createAnnouncementSchema, updateAnnouncementSchema } from './announcement.types';
-import { AppError } from '../../middleware/error-handler';
+import { AppError, errorHandler } from '../../middleware/error-handler';
+import { UserRepository } from '../../repositories/UserRepository';
+import { AccountDeletionRepository } from '../../repositories/AccountDeletionRepository';
+import { MinistryRepository } from '../../repositories/MinistryRepository';
+import { SubscriptionService } from '../subscriptions/subscription.service';
 
 describe('Announcement Feature Test Suite', () => {
   let repo: AnnouncementRepository;
@@ -54,6 +60,108 @@ describe('Announcement Feature Test Suite', () => {
 
       const resultMinB = await service.getAnnouncements('min-b');
       expect(resultMinB).toHaveLength(0);
+    });
+  });
+
+  describe('H14. Commercial Suspension & Restricted Access Enforcement on Router', () => {
+    const servers: Server[] = [];
+
+    afterEach(async () => {
+      await Promise.all(
+        servers.splice(0).map((s) => {
+          s.closeAllConnections?.();
+          return new Promise<void>((resolve) => s.close(() => resolve()));
+        })
+      );
+    });
+
+    async function startServer() {
+      const app = express();
+      app.use(express.json());
+      app.use('/api/v1/ministries/:ministryId/announcements', announcementRouter);
+      app.use('/api/v1/groups/:groupId/announcements', announcementRouter);
+      app.use(errorHandler);
+      const server = createServer(app);
+      servers.push(server);
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      return `http://127.0.0.1:${(server.address() as any).port}`;
+    }
+
+    function mockAccess(accessMode: 'suspended' | 'restricted_over_limit') {
+      vi.spyOn(UserRepository.prototype, 'verifyToken').mockResolvedValue({
+        uid: 'user-admin-1',
+        email: 'admin@test.dev',
+      } as any);
+      vi.spyOn(AccountDeletionRepository.prototype, 'isDeletionPending').mockResolvedValue(false);
+      vi.spyOn(MinistryRepository.prototype, 'getMinistryById').mockResolvedValue({
+        id: 'min-1',
+        role: 'admin',
+      } as any);
+      vi.spyOn(SubscriptionService.prototype, 'getSubscriptionSummary').mockResolvedValue({
+        subscription: {
+          accessMode,
+          administrativelySuspended: accessMode === 'suspended',
+        },
+        overLimitDetails: [],
+        quotas: { members: 10, songs: 50 },
+        usage: { membersCount: 15, songsCount: 60 },
+      } as any);
+    }
+
+    it('blocks POST, PUT, DELETE announcements with 403 SUBSCRIPTION_SUSPENDED without DB writes', async () => {
+      mockAccess('suspended');
+      const createSpy = vi
+        .spyOn(AnnouncementRepository.prototype, 'createAnnouncement')
+        .mockResolvedValue({ id: 'ann-created' } as any);
+      const updateSpy = vi
+        .spyOn(AnnouncementRepository.prototype, 'updateAnnouncement')
+        .mockResolvedValue({ id: 'ann-1' } as any);
+      const deleteSpy = vi
+        .spyOn(AnnouncementRepository.prototype, 'deleteAnnouncement')
+        .mockResolvedValue(undefined);
+      const base = await startServer();
+      const headers = { authorization: 'Bearer tok', 'content-type': 'application/json', connection: 'close' };
+
+      const postRes = await fetch(`${base}/api/v1/ministries/min-1/announcements`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ title: 'Aviso', content: 'Conteúdo', important: false }),
+      });
+      const putRes = await fetch(`${base}/api/v1/groups/min-1/announcements/ann-1`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ title: 'Editado' }),
+      });
+      const delRes = await fetch(`${base}/api/v1/ministries/min-1/announcements/ann-1`, {
+        method: 'DELETE',
+        headers,
+      });
+
+      expect(postRes.status).toBe(403);
+      expect(putRes.status).toBe(403);
+      expect(delRes.status).toBe(403);
+      expect((await postRes.json() as any).error.details.code).toBe('SUBSCRIPTION_SUSPENDED');
+      expect(createSpy).not.toHaveBeenCalled();
+      expect(updateSpy).not.toHaveBeenCalled();
+      expect(deleteSpy).not.toHaveBeenCalled();
+    });
+
+    it('blocks announcement mutations with 403 SUBSCRIPTION_RESTRICTED when restricted_over_limit', async () => {
+      mockAccess('restricted_over_limit');
+      const createSpy = vi
+        .spyOn(AnnouncementRepository.prototype, 'createAnnouncement')
+        .mockResolvedValue({ id: 'ann-created' } as any);
+      const base = await startServer();
+
+      const res = await fetch(`${base}/api/v1/ministries/min-1/announcements`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json', connection: 'close' },
+        body: JSON.stringify({ title: 'Aviso', content: 'Conteúdo' }),
+      });
+
+      expect(res.status).toBe(403);
+      expect((await res.json() as any).error.details.code).toBe('SUBSCRIPTION_RESTRICTED');
+      expect(createSpy).not.toHaveBeenCalled();
     });
   });
 

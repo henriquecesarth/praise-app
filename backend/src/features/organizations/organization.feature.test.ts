@@ -827,5 +827,119 @@ describe('Organization & WhatsApp Entitlement Feature Suite (Phase 7B)', () => {
       expect(restrictedCapacity.enabled).toBe(false);
       expect(restrictedCapacity.billingAccessMode).toBe('suspended');
     });
+
+    it('24. Legacy Org Admin Revocation (H03): removeOrganizationMember deletes legacy non-canonical member docs', async () => {
+      const org = await orgRepo.lazyProvisionForMinistry(ministryId, ownerUserId);
+
+      // Simulate legacy auto-ID member document without canonical `${org.id}_${adminUserId}` key
+      const legacyDocId = 'legacy-auto-id-admin-001';
+      orgMembersStore.set(legacyDocId, {
+        id: legacyDocId,
+        organization_id: org.id,
+        user_id: adminUserId,
+        role: 'admin',
+        invited_by_user_id: ownerUserId,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      await orgRepo.removeOrganizationMember(org.id, adminUserId, ownerUserId);
+
+      expect(orgMembersStore.has(legacyDocId)).toBe(false);
+      const residual = await orgRepo.getOrganizationMember(org.id, adminUserId);
+      expect(residual).toBeNull();
+    });
+
+    it('25. Bounded pagination & chunked deletes (FR2-5): removeOrganizationMember paginates across multiple cursor pages without unbounded delete bursts', async () => {
+      const org = await orgRepo.lazyProvisionForMinistry(ministryId, ownerUserId);
+      const duplicateCount = 260;
+      for (let i = 0; i < duplicateCount; i++) {
+        const docId = `dup-mem-${String(i).padStart(4, '0')}`;
+        orgMembersStore.set(docId, {
+          id: docId,
+          organization_id: org.id,
+          user_id: adminUserId,
+          role: 'admin',
+          invited_by_user_id: ownerUserId,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      }
+
+      const observedLimits: number[] = [];
+      let orderByCalled = false;
+      let startAfterCount = 0;
+      let inFlightDeletes = 0;
+      let maxConcurrentDeletes = 0;
+
+      const buildCursorQuery = (filters: Array<{ field: string; val: any }>) => {
+        let queryLimit: number | null = null;
+        let cursorId: string | null = null;
+        const q: any = {
+          where: (f2: string, _o2: string, v2: any) => buildCursorQuery([...filters, { field: f2, val: v2 }]),
+          orderBy: () => {
+            orderByCalled = true;
+            return q;
+          },
+          limit: (n: number) => {
+            queryLimit = n;
+            observedLimits.push(n);
+            return q;
+          },
+          startAfter: (cursor: any) => {
+            startAfterCount++;
+            cursorId = typeof cursor === 'string' ? cursor : cursor.id;
+            return q;
+          },
+          get: vi.fn().mockImplementation(async () => {
+            let docs = Array.from(orgMembersStore.values())
+              .filter((item: any) => filters.every((f) => item[f.field] === f.val))
+              .sort((a: any, b: any) => String(a.id).localeCompare(String(b.id)));
+            if (cursorId !== null) {
+              const idx = docs.findIndex((d: any) => d.id === cursorId);
+              docs = idx >= 0 ? docs.slice(idx + 1) : [];
+            }
+            if (queryLimit !== null) {
+              docs = docs.slice(0, queryLimit);
+            }
+            return {
+              empty: docs.length === 0,
+              docs: docs.map((d: any) => ({
+                id: d.id,
+                data: () => d,
+              })),
+            };
+          }),
+        };
+        return q;
+      };
+
+      const membersCol = (orgRepo as any).membersCol;
+      vi.spyOn(membersCol, 'where').mockImplementation(((f: string, _op: string, v: any) =>
+        buildCursorQuery([{ field: f, val: v }])
+      ) as any);
+      const origDocFn = membersCol.doc.bind(membersCol);
+      vi.spyOn(membersCol, 'doc').mockImplementation(((id: string) => ({
+        ...origDocFn(id),
+        delete: vi.fn(async () => {
+          inFlightDeletes++;
+          maxConcurrentDeletes = Math.max(maxConcurrentDeletes, inFlightDeletes);
+          await Promise.resolve();
+          orgMembersStore.delete(id);
+          inFlightDeletes--;
+        }),
+      })) as any);
+
+      await orgRepo.removeOrganizationMember(org.id, adminUserId, ownerUserId);
+
+      expect(orderByCalled).toBe(true);
+      expect(observedLimits.length).toBeGreaterThanOrEqual(3);
+      expect(observedLimits.every((n) => n > 0 && n <= 100)).toBe(true);
+      expect(startAfterCount).toBeGreaterThanOrEqual(2);
+      expect(maxConcurrentDeletes).toBeLessThanOrEqual(25);
+      for (let i = 0; i < duplicateCount; i++) {
+        expect(orgMembersStore.has(`dup-mem-${String(i).padStart(4, '0')}`)).toBe(false);
+      }
+    });
   });
 });

@@ -456,6 +456,9 @@ export class SubscriptionService {
       plan_id: targetPlanId,
       member_addon_blocks: newAddonBlocks,
       subscription_mode: targetPlanId === 'free' ? 'free' : 'paid',
+      locked_member_quota: null,
+      locked_song_quota: null,
+      entitlement_snapshot: null,
       grace_period_expires_at: graceExpiresAt,
       updated_at: now.toISOString(),
     };
@@ -565,6 +568,9 @@ export class SubscriptionService {
     const updatedSub: MinistrySubscriptionRecord = {
       ...subscription,
       member_addon_blocks: blocks,
+      locked_member_quota: null,
+      locked_song_quota: null,
+      entitlement_snapshot: null,
       grace_period_expires_at: graceExpiresAt,
       updated_at: now.toISOString(),
     };

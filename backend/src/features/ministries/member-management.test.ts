@@ -589,4 +589,69 @@ describe('Member Management Feature Test Suite (M12A-R2)', () => {
       expect(res.json).toHaveBeenCalledWith(mockMember);
     });
   });
+
+  describe('7. Cross-Ministry Global User Isolation (H01)', () => {
+    it('does NOT mutate global users/{userId} when an admin edits a linked non-manual member in a ministry', async () => {
+      const userSetMock = vi.fn().mockResolvedValue(undefined);
+      const userUpdateMock = vi.fn().mockResolvedValue(undefined);
+      const memberUpdateMock = vi.fn().mockResolvedValue(undefined);
+
+      const { db } = await import('../../lib/firebase');
+      const originalDbCollection = db.collection.bind(db);
+      vi.spyOn(db, 'collection').mockImplementation((name: string): any => {
+        if (name === 'users') {
+          return {
+            doc: vi.fn().mockReturnValue({
+              get: vi.fn().mockResolvedValue({
+                exists: true,
+                id: 'linked-user-1',
+                data: () => ({ name: 'Global Real Name', email: 'real@louvaio.com', birth_date: '1992-03-10' }),
+              }),
+              set: userSetMock,
+              update: userUpdateMock,
+            }),
+          };
+        }
+        return originalDbCollection(name);
+      });
+
+      (repo as any).membersCol = {
+        doc: vi.fn().mockReturnValue({
+          get: vi.fn().mockResolvedValue({
+            exists: true,
+            id: 'mem-linked-1',
+            data: () => ({
+              ministry_id: 'min-1',
+              user_id: 'linked-user-1',
+              is_manual: false,
+              role: 'member',
+              name: 'Global Real Name',
+              email: 'real@louvaio.com',
+              birth_date: '1992-03-10',
+            }),
+            ref: {
+              id: 'mem-linked-1',
+              update: memberUpdateMock,
+            },
+          }),
+        }),
+      };
+
+      const updated = await repo.updateMemberDetails(
+        'min-1',
+        'mem-linked-1',
+        {
+          name: 'Tampered Name From Min A',
+          birthDate: '1970-01-01',
+          role: 'member',
+        },
+        'owner-user'
+      );
+
+      expect(updated.id).toBe('mem-linked-1');
+      expect(memberUpdateMock).toHaveBeenCalledTimes(1);
+      expect(userSetMock).not.toHaveBeenCalled();
+      expect(userUpdateMock).not.toHaveBeenCalled();
+    });
+  });
 });

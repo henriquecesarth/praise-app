@@ -17,6 +17,7 @@ import {
 } from './billing.types';
 import { config } from '../../config/unifiedConfig';
 import { AppError } from '../../middleware/error-handler';
+import { PLANS_CATALOG } from '../../config/plans.config';
 
 describe('Phase 3A.1 — Billing Transition V1 Initial Purchase Financial Boundary Hardening', () => {
   let billingService: BillingService;
@@ -2202,6 +2203,317 @@ describe('Phase 3A.1 — Billing Transition V1 Initial Purchase Financial Bounda
       // Garante que o valor original de 01/09 não foi corrompido
       const currentTx = transactionsStore.get('asaas_pay_conflict_1');
       expect(currentTx?.paid_billing_date).toBe('2026-09-01');
+    });
+
+    it('9.7 H07: initial purchase V1 invokes applyLockedEntitlementSnapshot when available', async () => {
+      (mockSubscriptionService as any).applyLockedEntitlementSnapshot = vi.fn().mockResolvedValue({
+        plan_id: 'lite',
+        locked_member_quota: 20,
+        locked_song_quota: 100,
+      });
+
+      await billingService.createCheckout('min_test_1', 'usr_admin_1', {
+        planId: 'lite',
+        interval: 'monthly',
+        addonBlocks: 0,
+      });
+      const tr = Array.from(planChangesStore.values())[0] as BillingTransitionV1Record;
+
+      mockProvider.parseWebhookEvent.mockReturnValue({
+        providerEventId: 'evt_h07_snapshot_1',
+        rawEventType: 'PAYMENT_CONFIRMED',
+        eventType: 'payment_confirmed',
+        providerCheckoutId: tr.initial_provider_checkout_id!,
+        providerSubscriptionId: 'sub_h07_snap_1',
+        providerPaymentId: 'pay_h07_snap_1',
+        providerCustomerId: 'cus_min_test_1',
+        externalReference: tr.checkout_intent_id,
+        amountCents: 1490,
+        paymentDate: '2026-09-01',
+        subscriptionNextDueDate: '2026-10-01',
+      });
+
+      await billingService.handleWebhook({}, {});
+
+      expect((mockSubscriptionService as any).applyLockedEntitlementSnapshot).toHaveBeenCalledWith(
+        'min_test_1',
+        expect.objectContaining({
+          plan_id: 'lite',
+          addon_blocks: 0,
+          effective_member_quota: 20,
+          effective_song_quota: 100,
+        })
+      );
+      expect(mockSubscriptionService.changePlan).not.toHaveBeenCalled();
+    });
+
+    it('9.8 BR2-3a: V1 webhook payment_confirmed missing amountCents (and getPayment=null) fails closed without activating or fabricating ledger amount', async () => {
+      await billingService.createCheckout('min_test_1', 'usr_admin_1', {
+        planId: 'lite',
+        interval: 'monthly',
+        addonBlocks: 0,
+      });
+      const tr = Array.from(planChangesStore.values())[0] as BillingTransitionV1Record;
+
+      mockProvider.getPayment.mockResolvedValueOnce(null);
+      mockProvider.parseWebhookEvent.mockReturnValue({
+        providerEventId: 'evt_missing_amt_1',
+        rawEventType: 'PAYMENT_CONFIRMED',
+        eventType: 'payment_confirmed',
+        providerCheckoutId: tr.initial_provider_checkout_id!,
+        providerSubscriptionId: 'sub_missing_amt_1',
+        providerPaymentId: 'pay_missing_amt_1',
+        providerCustomerId: 'cus_min_test_1',
+        externalReference: tr.checkout_intent_id,
+        paymentDate: '2026-09-01',
+        currency: 'BRL',
+      });
+
+      const res = await billingService.handleWebhook({}, {});
+      expect(res.processed).toBe(false);
+      expect(res.reason).toBe('AMOUNT_MISMATCH');
+      expect(transactionsStore.has('asaas_pay_missing_amt_1')).toBe(false);
+      expect(appSubscriptionsStore.get('min_test_1')?.plan_id).toBe('free');
+      expect(appSubscriptionsStore.get('min_test_1')?.subscription_mode).toBe('free');
+      expect(planChangesStore.get(tr.id)?.transition_status).toBe('financial_attention_required');
+    });
+
+    it('9.9 BR2-3a-replay: already_completed V1 webhook missing amountCents (with getPayment=null) does NOT fabricate expectedAmountCents in ledger', async () => {
+      await billingService.createCheckout('min_test_1', 'usr_admin_1', {
+        planId: 'lite',
+        interval: 'monthly',
+        addonBlocks: 0,
+      });
+      const tr = Array.from(planChangesStore.values())[0] as BillingTransitionV1Record;
+
+      mockProvider.parseWebhookEvent.mockReturnValueOnce({
+        providerEventId: 'evt_complete_real_1',
+        rawEventType: 'PAYMENT_CONFIRMED',
+        eventType: 'payment_confirmed',
+        providerCheckoutId: tr.initial_provider_checkout_id!,
+        providerSubscriptionId: 'sub_replay_real_1',
+        providerPaymentId: 'pay_replay_real_1',
+        providerCustomerId: 'cus_min_test_1',
+        externalReference: tr.checkout_intent_id,
+        amountCents: 1490,
+        currency: 'BRL',
+        paymentDate: '2026-09-01',
+        subscriptionNextDueDate: '2026-10-01',
+      });
+      await billingService.handleWebhook({}, {});
+
+      mockProvider.getPayment.mockResolvedValueOnce(null);
+      mockProvider.parseWebhookEvent.mockReturnValueOnce({
+        providerEventId: 'evt_replay_no_amt_2',
+        rawEventType: 'PAYMENT_RECEIVED',
+        eventType: 'payment_received',
+        providerCheckoutId: tr.initial_provider_checkout_id!,
+        providerSubscriptionId: 'sub_replay_real_1',
+        providerPaymentId: 'pay_replay_no_amt_2',
+        providerCustomerId: 'cus_min_test_1',
+        externalReference: tr.checkout_intent_id,
+        paymentDate: '2026-09-01',
+        currency: 'BRL',
+      });
+
+      const replayRes = await billingService.handleWebhook({}, {});
+      expect(replayRes.processed).toBe(false);
+      expect(transactionsStore.has('asaas_pay_replay_no_amt_2')).toBe(false);
+    });
+
+    it('9.10 BR2-3b: V1 webhook payment_confirmed missing amountCents enriches from provider.getPayment and succeeds', async () => {
+      await billingService.createCheckout('min_test_1', 'usr_admin_1', {
+        planId: 'lite',
+        interval: 'monthly',
+        addonBlocks: 0,
+      });
+      const tr = Array.from(planChangesStore.values())[0] as BillingTransitionV1Record;
+
+      mockProvider.getPayment.mockResolvedValueOnce({
+        id: 'pay_enriched_1',
+        subscriptionId: 'sub_enriched_1',
+        customerId: 'cus_min_test_1',
+        status: 'CONFIRMED',
+        dueDate: '2026-09-01',
+        amountCents: 1490,
+        paymentDate: '2026-09-01',
+      });
+      mockProvider.parseWebhookEvent.mockReturnValue({
+        providerEventId: 'evt_enriched_1',
+        rawEventType: 'PAYMENT_CONFIRMED',
+        eventType: 'payment_confirmed',
+        providerCheckoutId: tr.initial_provider_checkout_id!,
+        providerPaymentId: 'pay_enriched_1',
+        providerCustomerId: 'cus_min_test_1',
+        externalReference: tr.checkout_intent_id,
+        paymentDate: '2026-09-01',
+        subscriptionNextDueDate: '2026-10-01',
+        currency: 'BRL',
+      });
+
+      const res = await billingService.handleWebhook({}, {});
+      expect(res.processed).toBe(true);
+      expect(transactionsStore.get('asaas_pay_enriched_1')?.amount_cents).toBe(1490);
+      expect(planChangesStore.get(tr.id)?.transition_status).toBe('completed');
+    });
+
+    it('9.11 H07-real: SubscriptionService.applyLockedEntitlementSnapshot persists locked quotas through catalog drift, Free reset, and reconciler recovery', async () => {
+      const originalLiteMaxMembers = PLANS_CATALOG.lite.maxMembers;
+      const originalLiteMaxSongs = PLANS_CATALOG.lite.maxSongs;
+      const realSubRepo = {
+        getSubscription: vi.fn(async (mId: string) => appSubscriptionsStore.get(mId) || null),
+        setSubscription: vi.fn(async (sub: any) => {
+          appSubscriptionsStore.set(sub.ministry_id, sub);
+        }),
+        ensureSubscriptionAndUsage: vi.fn(async (mId: string) => {
+          const existing = appSubscriptionsStore.get(mId) || {
+            id: mId,
+            ministry_id: mId,
+            plan_id: 'free',
+            member_addon_blocks: 0,
+            billing_status: 'active',
+            subscription_mode: 'free',
+            granted_by: null,
+            granted_at: null,
+            grant_reason: null,
+            expires_at: null,
+            administratively_suspended: false,
+            suspended_at: null,
+            suspension_reason: null,
+            grace_period_expires_at: null,
+            grace_period_expires_billing_date: null,
+            current_period_start: '2026-09-01T00:00:00.000Z',
+            current_period_end: null,
+            cancel_at_period_end: false,
+            created_at: '2026-09-01T00:00:00.000Z',
+            updated_at: '2026-09-01T00:00:00.000Z',
+          };
+          appSubscriptionsStore.set(mId, existing);
+          return {
+            subscription: existing,
+            usage: {
+              id: mId,
+              ministry_id: mId,
+              members_count: 2,
+              songs_count: 5,
+              created_at: '2026-09-01T00:00:00.000Z',
+              updated_at: '2026-09-01T00:00:00.000Z',
+            },
+          };
+        }),
+        getUsage: vi.fn(async (mId: string) => ({
+          id: mId,
+          ministry_id: mId,
+          members_count: 2,
+          songs_count: 5,
+          created_at: '2026-09-01T00:00:00.000Z',
+          updated_at: '2026-09-01T00:00:00.000Z',
+        })),
+        countRealData: vi.fn(async () => ({ realMembersCount: 2, realSongsCount: 5 })),
+      };
+      const realSubService = new SubscriptionService(
+        realSubRepo as any,
+        mockBillingRepo as any,
+        {} as any,
+        mockMinistryRepo as any,
+        {} as any
+      );
+      const e2eBillingService = new BillingService(
+        mockBillingRepo as any,
+        realSubService,
+        realSubRepo as any,
+        mockMinistryRepo as any,
+        mockProvider as any,
+        { findById: vi.fn().mockResolvedValue({ id: 'usr_admin_1', name: 'Admin', email: 'admin@louvaio.local' }) } as any
+      );
+
+      try {
+        await e2eBillingService.createCheckout('min_test_1', 'usr_admin_1', {
+          planId: 'lite',
+          interval: 'monthly',
+          addonBlocks: 0,
+        });
+        const tr = Array.from(planChangesStore.values())[0] as BillingTransitionV1Record;
+
+        // Mutate live catalog before webhook activation -> locked snapshot from checkout MUST win
+        PLANS_CATALOG.lite.maxMembers = 5;
+        PLANS_CATALOG.lite.maxSongs = 15;
+
+        mockProvider.parseWebhookEvent.mockReturnValueOnce({
+          providerEventId: 'evt_h07_real_1',
+          rawEventType: 'PAYMENT_CONFIRMED',
+          eventType: 'payment_confirmed',
+          providerCheckoutId: tr.initial_provider_checkout_id!,
+          providerSubscriptionId: 'sub_h07_real_1',
+          providerPaymentId: 'pay_h07_real_1',
+          providerCustomerId: 'cus_min_test_1',
+          externalReference: tr.checkout_intent_id,
+          amountCents: 1490,
+          currency: 'BRL',
+          paymentDate: '2026-09-01',
+          subscriptionNextDueDate: '2026-10-01',
+        });
+        const res = await e2eBillingService.handleWebhook({}, {});
+        expect(res.processed).toBe(true);
+
+        const activeSummary = await realSubService.getSubscriptionSummary('min_test_1');
+        expect(activeSummary.plan.id).toBe('lite');
+        expect(activeSummary.quotas.members).toBe(20);
+        expect(activeSummary.quotas.songs).toBe(100);
+        expect(appSubscriptionsStore.get('min_test_1')?.locked_member_quota).toBe(20);
+        expect(appSubscriptionsStore.get('min_test_1')?.locked_song_quota).toBe(100);
+
+        // Downgrade / Free cancellation clears locked quotas cleanly back to Free
+        await realSubService.changePlan('min_test_1', 'free');
+        const freeSummary = await realSubService.getSubscriptionSummary('min_test_1');
+        expect(freeSummary.plan.id).toBe('free');
+        expect(freeSummary.quotas.members).toBe(10);
+        expect(freeSummary.quotas.songs).toBe(50);
+        expect(appSubscriptionsStore.get('min_test_1')?.locked_member_quota).toBeNull();
+        expect(appSubscriptionsStore.get('min_test_1')?.locked_song_quota).toBeNull();
+
+        // Recovery path via reconcileInitialPurchaseTransition also applies locked snapshot on real SubscriptionService
+        PLANS_CATALOG.lite.maxMembers = originalLiteMaxMembers;
+        PLANS_CATALOG.lite.maxSongs = originalLiteMaxSongs;
+        planChangesStore.clear();
+        activeSlotsStore.clear();
+        transactionsStore.clear();
+        await e2eBillingService.createCheckout('min_test_1', 'usr_admin_1', {
+          planId: 'lite',
+          interval: 'monthly',
+          addonBlocks: 0,
+        });
+        PLANS_CATALOG.lite.maxMembers = 5;
+        PLANS_CATALOG.lite.maxSongs = 15;
+        const recTr = Array.from(planChangesStore.values())[0] as BillingTransitionV1Record;
+        mockProvider.findSubscriptionByExternalReference.mockResolvedValueOnce({
+          providerSubscriptionId: 'sub_h07_rec_1',
+          providerCustomerId: 'cus_min_test_1',
+          status: 'ACTIVE',
+          nextDueDate: '2026-10-01',
+        });
+        mockProvider.listSubscriptionPayments.mockResolvedValueOnce([
+          {
+            id: 'pay_h07_rec_1',
+            status: 'CONFIRMED',
+            amountCents: 1490,
+            dueDate: '2026-09-01',
+            paymentDate: '2026-09-01',
+            subscriptionId: 'sub_h07_rec_1',
+            customerId: 'cus_min_test_1',
+          },
+        ]);
+
+        const recRes = await e2eBillingService.reconcileInitialPurchaseTransition(recTr.id, 'worker_h07');
+        expect(recRes.success).toBe(true);
+        const recSummary = await realSubService.getSubscriptionSummary('min_test_1');
+        expect(recSummary.plan.id).toBe('lite');
+        expect(recSummary.quotas.members).toBe(20);
+        expect(recSummary.quotas.songs).toBe(100);
+      } finally {
+        PLANS_CATALOG.lite.maxMembers = originalLiteMaxMembers;
+        PLANS_CATALOG.lite.maxSongs = originalLiteMaxSongs;
+      }
     });
   });
 });

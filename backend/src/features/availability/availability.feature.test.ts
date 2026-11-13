@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import express from 'express';
+import { createServer, type Server } from 'node:http';
 import {
   AvailabilityRepository,
   MemberUnavailabilityRecord,
@@ -7,13 +9,18 @@ import {
 } from '../../repositories/AvailabilityRepository';
 import { AvailabilityService } from './availability.service';
 import { AvailabilityController } from './availability.controller';
+import availabilityRouter from './availability.routes';
 import {
   createUnavailabilitySchema,
   updateUnavailabilitySchema,
   listUnavailabilityQuerySchema,
   checkAvailabilityConflictsSchema,
 } from './availability.types';
-import { AppError } from '../../middleware/error-handler';
+import { AppError, errorHandler } from '../../middleware/error-handler';
+import { UserRepository } from '../../repositories/UserRepository';
+import { AccountDeletionRepository } from '../../repositories/AccountDeletionRepository';
+import { MinistryRepository } from '../../repositories/MinistryRepository';
+import { SubscriptionService } from '../subscriptions/subscription.service';
 
 describe('Member Availability Feature Test Suite (Phase 6B)', () => {
   let repo: AvailabilityRepository;
@@ -33,6 +40,132 @@ describe('Member Availability Feature Test Suite (Phase 6B)', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  describe('H14. Commercial Suspension & Restricted Access Enforcement on Router', () => {
+    const servers: Server[] = [];
+
+    afterEach(async () => {
+      await Promise.all(
+        servers.splice(0).map((s) => {
+          s.closeAllConnections?.();
+          return new Promise<void>((resolve) => s.close(() => resolve()));
+        })
+      );
+    });
+
+    async function startServer() {
+      const app = express();
+      app.use(express.json());
+      app.use('/api/v1/ministries/:ministryId/availability', availabilityRouter);
+      app.use('/api/v1/groups/:groupId/availability', availabilityRouter);
+      app.use(errorHandler);
+      const server = createServer(app);
+      servers.push(server);
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      return `http://127.0.0.1:${(server.address() as any).port}`;
+    }
+
+    function mockAccess(accessMode: 'suspended' | 'restricted_over_limit') {
+      vi.spyOn(UserRepository.prototype, 'verifyToken').mockResolvedValue({
+        uid: 'user-admin-1',
+        email: 'admin@test.dev',
+      } as any);
+      vi.spyOn(AccountDeletionRepository.prototype, 'isDeletionPending').mockResolvedValue(false);
+      vi.spyOn(MinistryRepository.prototype, 'getMinistryById').mockResolvedValue({
+        id: 'min-1',
+        role: 'admin',
+      } as any);
+      vi.spyOn(SubscriptionService.prototype, 'getSubscriptionSummary').mockResolvedValue({
+        subscription: {
+          accessMode,
+          administrativelySuspended: accessMode === 'suspended',
+        },
+        overLimitDetails: [],
+        quotas: { members: 10, songs: 50 },
+        usage: { membersCount: 15, songsCount: 60 },
+      } as any);
+    }
+
+    it('blocks all availability mutations and check-conflicts with 403 SUBSCRIPTION_SUSPENDED without DB writes', async () => {
+      mockAccess('suspended');
+      const createSpy = vi
+        .spyOn(AvailabilityService.prototype, 'createMyUnavailability')
+        .mockResolvedValue({ id: 'u1' } as any);
+      const updateSpy = vi
+        .spyOn(AvailabilityService.prototype, 'updateMyUnavailability')
+        .mockResolvedValue({ id: 'u1' } as any);
+      const deleteSpy = vi
+        .spyOn(AvailabilityService.prototype, 'deleteMyUnavailability')
+        .mockResolvedValue(undefined);
+      const createManualSpy = vi
+        .spyOn(AvailabilityService.prototype, 'createManualMemberUnavailability')
+        .mockResolvedValue({ id: 'u2' } as any);
+      const updateManualSpy = vi
+        .spyOn(AvailabilityService.prototype, 'updateManualMemberUnavailability')
+        .mockResolvedValue({ id: 'u2' } as any);
+      const deleteManualSpy = vi
+        .spyOn(AvailabilityService.prototype, 'deleteManualMemberUnavailability')
+        .mockResolvedValue(undefined);
+      const conflictSpy = vi
+        .spyOn(AvailabilityService.prototype, 'checkScheduleConflicts')
+        .mockResolvedValue({ conflicts: [] } as any);
+
+      const base = await startServer();
+      const headers = { authorization: 'Bearer tok', 'content-type': 'application/json', connection: 'close' };
+      const bodyWindow = JSON.stringify({
+        startDate: '2026-12-01',
+        endDate: '2026-12-01',
+      });
+
+      const responses = await Promise.all([
+        fetch(`${base}/api/v1/ministries/min-1/availability/check-conflicts`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ participantIds: ['m1'], date: '2026-12-01', time: '10:00' }),
+        }),
+        fetch(`${base}/api/v1/ministries/min-1/availability/my`, { method: 'POST', headers, body: bodyWindow }),
+        fetch(`${base}/api/v1/ministries/min-1/availability/my/unav-1`, { method: 'PATCH', headers, body: bodyWindow }),
+        fetch(`${base}/api/v1/ministries/min-1/availability/my/unav-1`, { method: 'DELETE', headers }),
+        fetch(`${base}/api/v1/groups/min-1/availability/members/m1`, { method: 'POST', headers, body: bodyWindow }),
+        fetch(`${base}/api/v1/ministries/min-1/availability/members/m1/unav-1`, { method: 'PATCH', headers, body: bodyWindow }),
+        fetch(`${base}/api/v1/ministries/min-1/availability/members/m1/unav-1`, { method: 'DELETE', headers }),
+      ]);
+
+      for (const r of responses) {
+        expect(r.status).toBe(403);
+        expect(((await r.json()) as any).error.details.code).toBe('SUBSCRIPTION_SUSPENDED');
+      }
+
+      expect(createSpy).not.toHaveBeenCalled();
+      expect(updateSpy).not.toHaveBeenCalled();
+      expect(deleteSpy).not.toHaveBeenCalled();
+      expect(createManualSpy).not.toHaveBeenCalled();
+      expect(updateManualSpy).not.toHaveBeenCalled();
+      expect(deleteManualSpy).not.toHaveBeenCalled();
+      expect(conflictSpy).not.toHaveBeenCalled();
+    });
+
+    it('blocks availability mutations with 403 SUBSCRIPTION_RESTRICTED when restricted_over_limit', async () => {
+      mockAccess('restricted_over_limit');
+      const createSpy = vi
+        .spyOn(AvailabilityService.prototype, 'createMyUnavailability')
+        .mockResolvedValue({ id: 'u1' } as any);
+      const base = await startServer();
+
+      const res = await fetch(`${base}/api/v1/ministries/min-1/availability/my`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json', connection: 'close' },
+        body: JSON.stringify({
+          startDate: '2026-12-01',
+          endDate: '2026-12-01',
+        }),
+      });
+
+      expect(res.status).toBe(403);
+      expect(((await res.json()) as any).error.details.code).toBe('SUBSCRIPTION_RESTRICTED');
+      expect(createSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('1. Cursor Encoding, Decoding & Anti-Tampering', () => {

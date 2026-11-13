@@ -1141,6 +1141,117 @@ describe('ZernioHttpClient Suite (Phase 7D2-D2)', () => {
           expect(err.retryAfterSeconds).toBe(45);
         }
       });
+
+      it('H12: fail-closed when HTTP 200 body is null, empty object {}, or malformed schema', async () => {
+        for (const payload of ['null', '{}', '[]', '{"success":"invalid"}']) {
+          fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            text: async () => payload,
+          } as any);
+
+          await expect(client.deleteAccount('acc_ambiguous_123')).rejects.toThrow('ZERNIO_PROTOCOL_ERROR');
+          fetchSpy.mockRestore();
+        }
+      });
+
+      it('H12: fail-closed when HTTP 200 explicitly returns success: false', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () => JSON.stringify({ success: false, message: 'Deletion refused' }),
+        } as any);
+
+        await expect(client.deleteAccount('acc_rejected_123')).rejects.toThrow('ZERNIO_PROTOCOL_ERROR');
+      });
+
+      it('H12-FR1: fail-closed on negative message, async/pending status, error field, ok:false, or ambiguous non-confirming message', async () => {
+        const deceptivePayloads = [
+          { message: 'Deletion failed', error: 'provider refused' },
+          { message: 'Account not deleted', ok: false },
+          { message: 'Operation processed' },
+          { deleted: false, message: 'Account deleted' },
+          { error: 'Unable to delete account', message: 'deleted failed' },
+          { message: 'Deletion request accepted successfully', status: 'pending' },
+          { message: 'Deletion request accepted successfully' },
+          { message: 'Account was not successfully deleted' },
+          { message: 'Account will be deleted shortly' },
+          { message: 'Account may be deleted after approval' },
+          { message: 'Account deletion scheduled' },
+          { message: 'Account deleted once you confirm' },
+          { message: 'Account deleted only after confirmation' },
+          { deleted: true, message: 'Account deleted once you confirm' },
+          { state: 'pending', deleted: true },
+          { state: { status: 'pending' }, deleted: true },
+          { status: { state: 'pending' }, deleted: true },
+          { success: true, status: 'pending', message: 'Deletion queued' },
+          { message: 'Deletion scheduled successfully', status: 'queued' },
+        ];
+        for (const payload of deceptivePayloads) {
+          fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            text: async () => JSON.stringify(payload),
+          } as any);
+
+          await expect(client.deleteAccount('acc_deceptive_123')).rejects.toThrow('ZERNIO_PROTOCOL_ERROR');
+          fetchSpy.mockRestore();
+        }
+      });
+
+      it('H12-R3: fail-closed on HTTP 202 Accepted (empty body or JSON) while accepting HTTP 204 No Content', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+          ok: true,
+          status: 202,
+          headers: new Headers({ 'content-length': '0' }),
+          text: async () => '',
+        } as any);
+        await expect(client.deleteAccount('acc_202_empty')).rejects.toMatchObject({
+          providerCode: 'ZERNIO_DELETE_ACCEPTED_PENDING',
+        });
+        fetchSpy.mockRestore();
+
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+          ok: true,
+          status: 202,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () => JSON.stringify({ message: 'Account deleted successfully', deleted: true }),
+        } as any);
+        await expect(client.deleteAccount('acc_202_json')).rejects.toMatchObject({
+          providerCode: 'ZERNIO_DELETE_ACCEPTED_PENDING',
+        });
+        fetchSpy.mockRestore();
+
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+          ok: true,
+          status: 204,
+          headers: new Headers({ 'content-length': '0' }),
+          text: async () => '',
+        } as any);
+        await expect(client.deleteAccount('acc_204_ok')).resolves.toEqual({ success: true });
+        fetchSpy.mockRestore();
+      });
+
+      it('H12-FR1b: accepts explicit terminal deletion ack payloads', async () => {
+        for (const payload of [
+          { message: 'Account deleted' },
+          { message: 'Account removed', status: 'removed' },
+          { deleted: true, status: 'deleted' },
+        ]) {
+          fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            text: async () => JSON.stringify(payload),
+          } as any);
+
+          await expect(client.deleteAccount('acc_ok_delete')).resolves.toBeTruthy();
+          fetchSpy.mockRestore();
+        }
+      });
     });
 
     describe('getWhatsAppNumberInfo', () => {

@@ -195,4 +195,199 @@ describe('ScheduleRepository Hardened Comments Pagination', () => {
       expect(updated.duration_minutes).toBe(180);
     });
   });
+
+  describe('Participant Confirmation Security & Concurrency (H02 + M01)', () => {
+    it('rejeita correspondência por substring de userId (p.id.includes(userId)) com 403', async () => {
+      const { db } = await import('../lib/firebase');
+      const scheduleStore = {
+        id: 'sched-h02-1',
+        ministry_id: 'min-1',
+        date: '2099-12-20',
+        participants: [{ id: 'u10', name: 'Outro Integrante', role: 'Baixo', confirmed: undefined }],
+      };
+
+      const docRef = {
+        id: 'sched-h02-1',
+        get: vi.fn().mockResolvedValue({ exists: true, id: 'sched-h02-1', data: () => ({ ...scheduleStore }) }),
+        update: vi.fn().mockImplementation(async (patch: any) => Object.assign(scheduleStore, patch)),
+      };
+      (repo as any).schedulesCol = { doc: vi.fn().mockReturnValue(docRef) };
+
+      const colSpy = vi.spyOn(db, 'collection').mockImplementation((name: string): any => {
+        if (name === 'ministry_members') {
+          return {
+            where: vi.fn().mockReturnThis(),
+            limit: vi.fn().mockReturnThis(),
+            get: vi.fn().mockResolvedValue({
+              empty: false,
+              docs: [{ id: 'mem-u1', data: () => ({ user_id: 'u1', status: 'active' }) }],
+            }),
+          };
+        }
+        return {
+          doc: vi.fn().mockReturnValue({
+            get: vi.fn().mockResolvedValue({ exists: true, data: () => ({ name: 'Alguem' }) }),
+          }),
+        };
+      });
+
+      const txSpy = vi.spyOn(db, 'runTransaction').mockImplementation(async (fn: any) => {
+        const tx = {
+          get: async (target: any) => target.get(),
+          update: (ref: any, data: any) => ref.update(data),
+        };
+        return fn(tx);
+      });
+
+      try {
+        await expect(
+          repo.updateParticipantConfirmation('sched-h02-1', 'min-1', 'u1', 'Alguem', true)
+        ).rejects.toMatchObject({ statusCode: 403 });
+        expect(scheduleStore.participants[0].confirmed).toBeUndefined();
+      } finally {
+        colSpy.mockRestore();
+        txSpy.mockRestore();
+      }
+    });
+
+    it('rejeita correspondência por nome parcial ou homônimo (matchName) com 403', async () => {
+      const { db } = await import('../lib/firebase');
+      const scheduleStore = {
+        id: 'sched-h02-2',
+        ministry_id: 'min-1',
+        date: '2099-12-20',
+        participants: [
+          { id: 'mem-ana-clara', name: 'Ana Clara Silva', role: 'Voz', confirmed: undefined },
+          { id: 'mem-joao-2', name: 'João Silva', role: 'Violão', confirmed: undefined },
+        ],
+      };
+
+      const docRef = {
+        id: 'sched-h02-2',
+        get: vi.fn().mockResolvedValue({ exists: true, id: 'sched-h02-2', data: () => ({ ...scheduleStore }) }),
+        update: vi.fn().mockImplementation(async (patch: any) => Object.assign(scheduleStore, patch)),
+      };
+      (repo as any).schedulesCol = { doc: vi.fn().mockReturnValue(docRef) };
+
+      const colSpy = vi.spyOn(db, 'collection').mockImplementation((name: string): any => {
+        if (name === 'ministry_members') {
+          return {
+            where: vi.fn().mockReturnThis(),
+            limit: vi.fn().mockReturnThis(),
+            get: vi.fn().mockResolvedValue({
+              empty: false,
+              docs: [{ id: 'mem-attacker', data: () => ({ user_id: 'usr-attacker', status: 'active' }) }],
+            }),
+          };
+        }
+        return {
+          doc: vi.fn().mockReturnValue({
+            get: vi.fn().mockResolvedValue({ exists: true, data: () => ({ name: 'João Silva' }) }),
+          }),
+        };
+      });
+
+      const txSpy = vi.spyOn(db, 'runTransaction').mockImplementation(async (fn: any) => {
+        const tx = {
+          get: async (target: any) => target.get(),
+          update: (ref: any, data: any) => ref.update(data),
+        };
+        return fn(tx);
+      });
+
+      try {
+        await expect(
+          repo.updateParticipantConfirmation('sched-h02-2', 'min-1', 'usr-attacker', 'Ana', true)
+        ).rejects.toMatchObject({ statusCode: 403 });
+        expect(scheduleStore.participants[0].confirmed).toBeUndefined();
+        expect(scheduleStore.participants[1].confirmed).toBeUndefined();
+      } finally {
+        colSpy.mockRestore();
+        txSpy.mockRestore();
+      }
+    });
+
+    it('preserva confirmações simultâneas de participantes distintos sem lost update (M01)', async () => {
+      const { db } = await import('../lib/firebase');
+      let persistedParticipants = [
+        { id: 'mem-1', user_id: 'u-1', name: 'Membro Um', role: 'Voz' },
+        { id: 'mem-2', user_id: 'u-2', name: 'Membro Dois', role: 'Guitarra' },
+      ];
+
+      const docRef = {
+        id: 'sched-m01',
+        get: vi.fn().mockImplementation(async () => ({
+          exists: true,
+          id: 'sched-m01',
+          data: () => ({
+            id: 'sched-m01',
+            ministry_id: 'min-1',
+            date: '2099-12-20',
+            participants: persistedParticipants.map((p) => ({ ...p })),
+          }),
+        })),
+        update: vi.fn().mockImplementation(async (patch: any) => {
+          persistedParticipants = patch.participants.map((p: any) => ({ ...p }));
+        }),
+      };
+      (repo as any).schedulesCol = { doc: vi.fn().mockReturnValue(docRef) };
+
+      let lastQueriedUser = '';
+      const colSpy = vi.spyOn(db, 'collection').mockImplementation((name: string): any => {
+        if (name === 'ministry_members') {
+          const query: any = {
+            where: vi.fn().mockImplementation((field: string, _op: string, val: string) => {
+              if (field === 'user_id') lastQueriedUser = val;
+              return query;
+            }),
+            limit: vi.fn().mockReturnThis(),
+            get: vi.fn().mockImplementation(async () => {
+              await new Promise((r) => setTimeout(r, 15));
+              const memberDocId = lastQueriedUser === 'u-1' ? 'mem-1' : 'mem-2';
+              return {
+                empty: false,
+                docs: [{ id: memberDocId, data: () => ({ user_id: lastQueriedUser, status: 'active' }) }],
+              };
+            }),
+          };
+          return query;
+        }
+        return {
+          doc: vi.fn().mockImplementation((uid: string) => ({
+            get: vi.fn().mockImplementation(async () => {
+              await new Promise((r) => setTimeout(r, 15));
+              return { exists: true, data: () => ({ name: uid === 'u-1' ? 'Membro Um' : 'Membro Dois' }) };
+            }),
+          })),
+        };
+      });
+
+      let txQueue = Promise.resolve();
+      const txSpy = vi.spyOn(db, 'runTransaction').mockImplementation((fn: any) => {
+        const next = txQueue.then(() =>
+          fn({
+            get: async (target: any) => target.get(),
+            update: (ref: any, data: any) => ref.update(data),
+          })
+        );
+        txQueue = next.then(() => undefined, () => undefined);
+        return next;
+      });
+
+      try {
+        await Promise.all([
+          repo.updateParticipantConfirmation('sched-m01', 'min-1', 'u-1', 'Membro Um', true),
+          repo.updateParticipantConfirmation('sched-m01', 'min-1', 'u-2', 'Membro Dois', false),
+        ]);
+
+        const p1 = persistedParticipants.find((p) => p.id === 'mem-1') as any;
+        const p2 = persistedParticipants.find((p) => p.id === 'mem-2') as any;
+        expect(p1.confirmed).toBe(true);
+        expect(p2.confirmed).toBe(false);
+      } finally {
+        colSpy.mockRestore();
+        txSpy.mockRestore();
+      }
+    });
+  });
 });

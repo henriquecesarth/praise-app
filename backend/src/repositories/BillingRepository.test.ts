@@ -3535,6 +3535,447 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
     });
   });
 
+  describe('Phase A Batch 2 Security Hardening (H05 & H06)', () => {
+    it('H05a: already_settled replay of older paid payment MUST NOT clear active past_due or grace period', async () => {
+      const ministryId = 'min_h05_a';
+      ministrySubscriptionsStore.set(ministryId, {
+        id: ministryId,
+        ministry_id: ministryId,
+        plan_id: 'lite',
+        subscription_mode: 'paid',
+        billing_status: 'past_due',
+        current_period_start: '2026-10-09T00:00:00.000Z',
+        current_period_end: '2026-11-09T00:00:00.000Z',
+        grace_period_expires_at: '2026-11-16T23:59:59.999Z',
+        grace_period_expires_billing_date: '2026-11-16',
+      });
+      subscriptionsStore.set(`${ministryId}_asaas`, {
+        id: `${ministryId}_asaas`,
+        ministry_id: ministryId,
+        provider: 'asaas',
+        provider_subscription_id: 'sub_h05_a',
+        plan_id: 'lite',
+        interval: 'monthly',
+        amount_cents: 1490,
+        status: 'past_due',
+        current_period_start_billing_date: '2026-10-09',
+        current_period_end_billing_date: '2026-11-09',
+      });
+      transactionsStore.set('asaas_pay_oct_old', {
+        id: 'asaas_pay_oct_old',
+        ministry_id: ministryId,
+        provider: 'asaas',
+        provider_payment_id: 'pay_oct_old',
+        provider_subscription_id: 'sub_h05_a',
+        amount_cents: 1490,
+        currency: 'BRL',
+        status: 'paid',
+        due_date: '2026-10-09',
+        transaction_type: 'recurring_payment',
+      });
+
+      const res = await repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider: 'asaas',
+        providerPaymentId: 'pay_oct_old',
+        providerSubscriptionId: 'sub_h05_a',
+        renewalBillingDate: '2026-10-09',
+        amountCents: 1490,
+        nowIso: '2026-11-10T12:00:00.000Z',
+      });
+
+      expect(res.outcome).toBe('already_settled');
+      expect(ministrySubscriptionsStore.get(ministryId).billing_status).toBe('past_due');
+      expect(ministrySubscriptionsStore.get(ministryId).grace_period_expires_billing_date).toBe('2026-11-16');
+      expect(subscriptionsStore.get(`${ministryId}_asaas`).status).toBe('past_due');
+    });
+
+    it('H05b: already_settled replay of older paid payment without grace date MUST NOT clear past_due', async () => {
+      const ministryId = 'min_h05_b';
+      ministrySubscriptionsStore.set(ministryId, {
+        id: ministryId,
+        ministry_id: ministryId,
+        plan_id: 'lite',
+        subscription_mode: 'paid',
+        billing_status: 'past_due',
+        current_period_start: '2026-10-09T00:00:00.000Z',
+        current_period_end: '2026-11-09T00:00:00.000Z',
+        grace_period_expires_at: null,
+        grace_period_expires_billing_date: null,
+      });
+      subscriptionsStore.set(`${ministryId}_asaas`, {
+        id: `${ministryId}_asaas`,
+        ministry_id: ministryId,
+        provider: 'asaas',
+        provider_subscription_id: 'sub_h05_b',
+        plan_id: 'lite',
+        interval: 'monthly',
+        amount_cents: 1490,
+        status: 'past_due',
+        current_period_start_billing_date: '2026-10-09',
+        current_period_end_billing_date: '2026-11-09',
+      });
+      transactionsStore.set('asaas_pay_sept_old', {
+        id: 'asaas_pay_sept_old',
+        ministry_id: ministryId,
+        provider: 'asaas',
+        provider_payment_id: 'pay_sept_old',
+        provider_subscription_id: 'sub_h05_b',
+        amount_cents: 1490,
+        currency: 'BRL',
+        status: 'paid',
+        due_date: '2026-09-09',
+        transaction_type: 'recurring_payment',
+      });
+
+      const res = await repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider: 'asaas',
+        providerPaymentId: 'pay_sept_old',
+        providerSubscriptionId: 'sub_h05_b',
+        renewalBillingDate: '2026-09-09',
+        amountCents: 1490,
+        nowIso: '2026-11-10T12:00:00.000Z',
+      });
+
+      expect(res.outcome).toBe('already_settled');
+      expect(ministrySubscriptionsStore.get(ministryId).billing_status).toBe('past_due');
+      expect(subscriptionsStore.get(`${ministryId}_asaas`).status).toBe('past_due');
+    });
+
+    it('H05c: Crash Window B recovery for previous cycle MUST NOT clear past_due belonging to current cycle', async () => {
+      const ministryId = 'min_h05_c';
+      ministrySubscriptionsStore.set(ministryId, {
+        id: ministryId,
+        ministry_id: ministryId,
+        plan_id: 'lite',
+        subscription_mode: 'paid',
+        billing_status: 'past_due',
+        current_period_start: '2026-10-09T00:00:00.000Z',
+        current_period_end: '2026-11-09T00:00:00.000Z',
+        grace_period_expires_at: '2026-11-16T23:59:59.999Z',
+        grace_period_expires_billing_date: '2026-11-16',
+      });
+      subscriptionsStore.set(`${ministryId}_asaas`, {
+        id: `${ministryId}_asaas`,
+        ministry_id: ministryId,
+        provider: 'asaas',
+        provider_subscription_id: 'sub_h05_c',
+        plan_id: 'lite',
+        interval: 'monthly',
+        amount_cents: 1490,
+        status: 'past_due',
+        current_period_start_billing_date: '2026-10-09',
+        current_period_end_billing_date: '2026-11-09',
+      });
+
+      const res = await repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider: 'asaas',
+        providerPaymentId: 'pay_oct_crash_b',
+        providerSubscriptionId: 'sub_h05_c',
+        renewalBillingDate: '2026-10-09',
+        amountCents: 1490,
+        nowIso: '2026-11-10T12:00:00.000Z',
+      });
+
+      expect(res.outcome).toBe('already_advanced_converged');
+      expect(transactionsStore.get('asaas_pay_oct_crash_b')?.status).toBe('paid');
+      expect(ministrySubscriptionsStore.get(ministryId).billing_status).toBe('past_due');
+      expect(ministrySubscriptionsStore.get(ministryId).grace_period_expires_billing_date).toBe('2026-11-16');
+      expect(subscriptionsStore.get(`${ministryId}_asaas`).status).toBe('past_due');
+    });
+
+    it('H05d: quota grace -> next-cycle overdue -> historical Oct 9 payment replay preserves current past_due and quota grace', async () => {
+      const ministryId = 'min_h05_d';
+      ministrySubscriptionsStore.set(ministryId, {
+        id: ministryId,
+        ministry_id: ministryId,
+        plan_id: 'lite',
+        subscription_mode: 'paid',
+        billing_status: 'active',
+        current_period_start: '2026-10-09T00:00:00.000Z',
+        current_period_end: '2026-11-09T00:00:00.000Z',
+        grace_period_expires_at: '2026-10-20T23:59:59.999Z',
+        grace_period_expires_billing_date: '2026-10-20',
+      });
+      subscriptionsStore.set(`${ministryId}_asaas`, {
+        id: `${ministryId}_asaas`,
+        ministry_id: ministryId,
+        provider: 'asaas',
+        provider_subscription_id: 'sub_h05_d',
+        plan_id: 'lite',
+        interval: 'monthly',
+        amount_cents: 1490,
+        status: 'active',
+        current_period_start: '2026-10-09T00:00:00.000Z',
+        current_period_start_billing_date: '2026-10-09',
+        current_period_end: '2026-11-09T00:00:00.000Z',
+        current_period_end_billing_date: '2026-11-09',
+      });
+      transactionsStore.set('asaas_pay_oct_paid', {
+        id: 'asaas_pay_oct_paid',
+        ministry_id: ministryId,
+        provider: 'asaas',
+        provider_payment_id: 'pay_oct_paid',
+        provider_subscription_id: 'sub_h05_d',
+        amount_cents: 1490,
+        currency: 'BRL',
+        status: 'paid',
+        due_date: '2026-10-09',
+        transaction_type: 'recurring_payment',
+      });
+
+      const overdueRes = await repo.recordOrdinaryRecurringOverdueAtomic({
+        ministryId,
+        provider: 'asaas',
+        providerSubscriptionId: 'sub_h05_d',
+        providerPaymentId: 'pay_nov_overdue',
+        overdueBillingDate: '2026-11-09',
+        now: new Date('2026-11-09T12:00:00.000Z'),
+      });
+      expect(overdueRes.success).toBe(true);
+
+      const replayRes = await repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider: 'asaas',
+        providerPaymentId: 'pay_oct_paid',
+        providerSubscriptionId: 'sub_h05_d',
+        renewalBillingDate: '2026-10-09',
+        amountCents: 1490,
+        now: new Date('2026-11-10T12:00:00.000Z'),
+      });
+
+      expect(replayRes.outcome).toBe('already_settled');
+      expect(ministrySubscriptionsStore.get(ministryId).billing_status).toBe('past_due');
+      expect(ministrySubscriptionsStore.get(ministryId).grace_period_expires_billing_date).toBe('2026-10-20');
+      expect(subscriptionsStore.get(`${ministryId}_asaas`).status).toBe('past_due');
+    });
+
+    it('H05e: quota grace -> next-cycle overdue -> Crash Window B convergence for Oct 9 preserves current past_due and quota grace', async () => {
+      const ministryId = 'min_h05_e';
+      ministrySubscriptionsStore.set(ministryId, {
+        id: ministryId,
+        ministry_id: ministryId,
+        plan_id: 'lite',
+        subscription_mode: 'paid',
+        billing_status: 'active',
+        current_period_start: '2026-10-09T00:00:00.000Z',
+        current_period_end: '2026-11-09T00:00:00.000Z',
+        grace_period_expires_at: '2026-10-20T23:59:59.999Z',
+        grace_period_expires_billing_date: '2026-10-20',
+      });
+      subscriptionsStore.set(`${ministryId}_asaas`, {
+        id: `${ministryId}_asaas`,
+        ministry_id: ministryId,
+        provider: 'asaas',
+        provider_subscription_id: 'sub_h05_e',
+        plan_id: 'lite',
+        interval: 'monthly',
+        amount_cents: 1490,
+        status: 'active',
+        current_period_start: '2026-10-09T00:00:00.000Z',
+        current_period_start_billing_date: '2026-10-09',
+        current_period_end: '2026-11-09T00:00:00.000Z',
+        current_period_end_billing_date: '2026-11-09',
+      });
+
+      const overdueRes = await repo.recordOrdinaryRecurringOverdueAtomic({
+        ministryId,
+        provider: 'asaas',
+        providerSubscriptionId: 'sub_h05_e',
+        providerPaymentId: 'pay_nov_overdue_e',
+        overdueBillingDate: '2026-11-09',
+        now: new Date('2026-11-09T12:00:00.000Z'),
+      });
+      expect(overdueRes.success).toBe(true);
+
+      const convergeRes = await repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider: 'asaas',
+        providerPaymentId: 'pay_oct_crash_e',
+        providerSubscriptionId: 'sub_h05_e',
+        renewalBillingDate: '2026-10-09',
+        amountCents: 1490,
+        now: new Date('2026-11-10T12:00:00.000Z'),
+      });
+
+      expect(convergeRes.outcome).toBe('already_advanced_converged');
+      expect(transactionsStore.get('asaas_pay_oct_crash_e')?.status).toBe('paid');
+      expect(ministrySubscriptionsStore.get(ministryId).billing_status).toBe('past_due');
+      expect(ministrySubscriptionsStore.get(ministryId).grace_period_expires_billing_date).toBe('2026-10-20');
+      expect(subscriptionsStore.get(`${ministryId}_asaas`).status).toBe('past_due');
+    });
+
+    it('H06-repo: underpaid recurring settlement is rejected fail-closed without advancing period or clearing past_due', async () => {
+      const ministryId = 'min_h06_repo';
+      ministrySubscriptionsStore.set(ministryId, {
+        id: ministryId,
+        ministry_id: ministryId,
+        plan_id: 'lite',
+        subscription_mode: 'paid',
+        billing_status: 'past_due',
+        current_period_start: '2026-09-09T00:00:00.000Z',
+        current_period_end: '2026-10-09T00:00:00.000Z',
+        grace_period_expires_at: '2026-10-16T23:59:59.999Z',
+        grace_period_expires_billing_date: '2026-10-16',
+      });
+      subscriptionsStore.set(`${ministryId}_asaas`, {
+        id: `${ministryId}_asaas`,
+        ministry_id: ministryId,
+        provider: 'asaas',
+        provider_subscription_id: 'sub_h06_repo',
+        plan_id: 'lite',
+        interval: 'monthly',
+        amount_cents: 1490,
+        status: 'past_due',
+        current_period_start_billing_date: '2026-09-09',
+        current_period_end_billing_date: '2026-10-09',
+      });
+
+      const res = await repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider: 'asaas',
+        providerPaymentId: 'pay_underpaid_100',
+        providerSubscriptionId: 'sub_h06_repo',
+        renewalBillingDate: '2026-10-09',
+        amountCents: 100,
+        nowIso: '2026-10-10T12:00:00.000Z',
+      });
+
+      expect(res.success).toBe(false);
+      expect(transactionsStore.has('asaas_pay_underpaid_100')).toBe(false);
+      expect(ministrySubscriptionsStore.get(ministryId).billing_status).toBe('past_due');
+      expect(subscriptionsStore.get(`${ministryId}_asaas`).current_period_end_billing_date).toBe('2026-10-09');
+    });
+
+    it('H05f: Crash Window B / replay for Oct 9 MUST NOT clear past_due on ambiguous legacy record lacking past_due_cycle_billing_date even if grace equals Oct 9 + 7', async () => {
+      const ministryId = 'min_h05_f';
+      ministrySubscriptionsStore.set(ministryId, {
+        id: ministryId,
+        ministry_id: ministryId,
+        plan_id: 'lite',
+        subscription_mode: 'paid',
+        billing_status: 'past_due',
+        current_period_start: '2026-10-09T00:00:00.000Z',
+        current_period_end: '2026-11-09T00:00:00.000Z',
+        grace_period_expires_at: '2026-10-16T23:59:59.999Z',
+        grace_period_expires_billing_date: '2026-10-16',
+      });
+      subscriptionsStore.set(`${ministryId}_asaas`, {
+        id: `${ministryId}_asaas`,
+        ministry_id: ministryId,
+        provider: 'asaas',
+        provider_subscription_id: 'sub_h05_f',
+        plan_id: 'lite',
+        interval: 'monthly',
+        amount_cents: 1490,
+        status: 'past_due',
+        current_period_start: '2026-10-09T00:00:00.000Z',
+        current_period_start_billing_date: '2026-10-09',
+        current_period_end: '2026-11-09T00:00:00.000Z',
+        current_period_end_billing_date: '2026-11-09',
+      });
+
+      const convergeRes = await repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider: 'asaas',
+        providerPaymentId: 'pay_oct_crash_f',
+        providerSubscriptionId: 'sub_h05_f',
+        renewalBillingDate: '2026-10-09',
+        amountCents: 1490,
+        now: new Date('2026-11-10T12:00:00.000Z'),
+      });
+
+      expect(convergeRes.outcome).toBe('already_advanced_converged');
+      expect(transactionsStore.get('asaas_pay_oct_crash_f')?.status).toBe('paid');
+      expect(ministrySubscriptionsStore.get(ministryId).billing_status).toBe('past_due');
+      expect(ministrySubscriptionsStore.get(ministryId).grace_period_expires_billing_date).toBe('2026-10-16');
+      expect(subscriptionsStore.get(`${ministryId}_asaas`).status).toBe('past_due');
+    });
+
+    it('H06-repo-missing-amount: recurring settlement fails closed when billingSub.amount_cents is missing', async () => {
+      const ministryId = 'min_h06_missing_amt';
+      ministrySubscriptionsStore.set(ministryId, {
+        id: ministryId,
+        ministry_id: ministryId,
+        plan_id: 'lite',
+        subscription_mode: 'paid',
+        billing_status: 'past_due',
+        current_period_start: '2026-09-09T00:00:00.000Z',
+        current_period_end: '2026-10-09T00:00:00.000Z',
+      });
+      subscriptionsStore.set(`${ministryId}_asaas`, {
+        id: `${ministryId}_asaas`,
+        ministry_id: ministryId,
+        provider: 'asaas',
+        provider_subscription_id: 'sub_h06_missing_amt',
+        plan_id: 'lite',
+        interval: 'monthly',
+        status: 'past_due',
+        current_period_start_billing_date: '2026-09-09',
+        current_period_end_billing_date: '2026-10-09',
+      });
+
+      const res = await repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider: 'asaas',
+        providerPaymentId: 'pay_missing_contract_amt',
+        providerSubscriptionId: 'sub_h06_missing_amt',
+        renewalBillingDate: '2026-10-09',
+        amountCents: 100,
+        nowIso: '2026-10-10T12:00:00.000Z',
+      });
+
+      expect(res.success).toBe(false);
+      expect(res.outcome).toBe('financial_conflict');
+      expect(transactionsStore.has('asaas_pay_missing_contract_amt')).toBe(false);
+      expect(ministrySubscriptionsStore.get(ministryId).billing_status).toBe('past_due');
+      expect(subscriptionsStore.get(`${ministryId}_asaas`).current_period_end_billing_date).toBe('2026-10-09');
+    });
+
+    it('H06-repo-nonpositive-amount: recurring settlement fails closed when billingSub.amount_cents <= 0', async () => {
+      const ministryId = 'min_h06_zero_amt';
+      ministrySubscriptionsStore.set(ministryId, {
+        id: ministryId,
+        ministry_id: ministryId,
+        plan_id: 'lite',
+        subscription_mode: 'paid',
+        billing_status: 'past_due',
+        current_period_start: '2026-09-09T00:00:00.000Z',
+        current_period_end: '2026-10-09T00:00:00.000Z',
+      });
+      subscriptionsStore.set(`${ministryId}_asaas`, {
+        id: `${ministryId}_asaas`,
+        ministry_id: ministryId,
+        provider: 'asaas',
+        provider_subscription_id: 'sub_h06_zero_amt',
+        plan_id: 'lite',
+        interval: 'monthly',
+        amount_cents: 0,
+        status: 'past_due',
+        current_period_start_billing_date: '2026-09-09',
+        current_period_end_billing_date: '2026-10-09',
+      });
+
+      const res = await repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider: 'asaas',
+        providerPaymentId: 'pay_zero_contract_amt',
+        providerSubscriptionId: 'sub_h06_zero_amt',
+        renewalBillingDate: '2026-10-09',
+        amountCents: 100,
+        nowIso: '2026-10-10T12:00:00.000Z',
+      });
+
+      expect(res.success).toBe(false);
+      expect(res.outcome).toBe('financial_conflict');
+      expect(transactionsStore.has('asaas_pay_zero_contract_amt')).toBe(false);
+      expect(ministrySubscriptionsStore.get(ministryId).billing_status).toBe('past_due');
+      expect(subscriptionsStore.get(`${ministryId}_asaas`).current_period_end_billing_date).toBe('2026-10-09');
+    });
+  });
+
   describe('Reconciliation Visibility — Phase 4A.4.1', () => {
     it('1. transição scheduled_cancel_to_free com cancellation_reversal_status "requested" é visível em getV1TransitionsNeedingReconciliation', async () => {
       const record = createSampleV1Record({
@@ -3768,12 +4209,14 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
       ministrySubscriptionsStore.set(ministryId, {
         ...ministrySubscriptionsStore.get(ministryId),
         billing_status: 'past_due', // lingering status
+        past_due_cycle_billing_date: '2026-10-09',
         current_period_start: '2026-10-09T00:00:00.000Z',
         current_period_end: '2026-11-09T00:00:00.000Z',
       });
       subscriptionsStore.set(`${ministryId}_${provider}`, {
         ...subscriptionsStore.get(`${ministryId}_${provider}`),
         status: 'past_due',
+        past_due_cycle_billing_date: '2026-10-09',
         current_period_start: '2026-10-09T00:00:00.000Z',
         current_period_end: '2026-11-09T00:00:00.000Z',
         current_period_end_billing_date: '2026-11-09',
@@ -3948,6 +4391,69 @@ describe('BillingRepository — Billing Transition Policy V1 Persistence Final D
       expect(retryResult.success).toBe(true);
       expect(retryResult.outcome).toBe('settled');
       expect(ministrySubscriptionsStore.get(ministryId).current_period_end).toBe('2026-11-09T00:00:00.000Z');
+    });
+
+    it('11. H05g (R3): Paid future-cycle replay (> current boundary) fails closed as future_cycle_mismatch and preserves past_due, grace, and debt markers', async () => {
+      const futurePayId = 'pay_dec_future_paid';
+      const currentDueBoundary = '2026-11-09';
+      const futureDueDate = '2026-12-09';
+
+      ministrySubscriptionsStore.set(ministryId, {
+        ...ministrySubscriptionsStore.get(ministryId),
+        billing_status: 'past_due',
+        past_due_cycle_billing_date: currentDueBoundary,
+        grace_period_expires_at: '2026-11-16T23:59:59.000Z',
+        grace_period_expires_billing_date: '2026-11-16',
+        current_period_start: '2026-10-09T00:00:00.000Z',
+        current_period_end: '2026-11-09T00:00:00.000Z',
+      });
+      subscriptionsStore.set(`${ministryId}_${provider}`, {
+        ...subscriptionsStore.get(`${ministryId}_${provider}`),
+        status: 'past_due',
+        past_due_cycle_billing_date: currentDueBoundary,
+        current_period_start: '2026-10-09T00:00:00.000Z',
+        current_period_end: '2026-11-09T00:00:00.000Z',
+        current_period_end_billing_date: currentDueBoundary,
+        amount_cents: amountCents,
+      });
+      transactionsStore.set(`${provider}_${futurePayId}`, {
+        id: `${provider}_${futurePayId}`,
+        ministry_id: ministryId,
+        provider,
+        provider_payment_id: futurePayId,
+        provider_subscription_id: providerSubId,
+        transaction_type: 'recurring_payment',
+        amount_cents: amountCents,
+        currency: 'BRL',
+        status: 'paid',
+        due_date: futureDueDate,
+        paid_at: '2026-11-09T12:00:00.000Z',
+      });
+
+      const result = await repo.settleOrdinaryRecurringRenewalAtomic({
+        ministryId,
+        provider,
+        providerPaymentId: futurePayId,
+        providerSubscriptionId: providerSubId,
+        renewalBillingDate: futureDueDate,
+        amountCents,
+        currency: 'BRL',
+        interval: 'monthly',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.outcome).toBe('future_cycle_mismatch');
+
+      const appSub = ministrySubscriptionsStore.get(ministryId);
+      expect(appSub.billing_status).toBe('past_due');
+      expect(appSub.past_due_cycle_billing_date).toBe(currentDueBoundary);
+      expect(appSub.grace_period_expires_at).toBe('2026-11-16T23:59:59.000Z');
+      expect(appSub.current_period_end).toBe('2026-11-09T00:00:00.000Z');
+
+      const billingSub = subscriptionsStore.get(`${ministryId}_${provider}`);
+      expect(billingSub.status).toBe('past_due');
+      expect(billingSub.past_due_cycle_billing_date).toBe(currentDueBoundary);
+      expect(billingSub.current_period_end_billing_date).toBe(currentDueBoundary);
     });
   });
 });

@@ -1,3 +1,4 @@
+import { FieldPath } from 'firebase-admin/firestore';
 import { db } from '../lib/firebase';
 import { AppError } from '../middleware/error-handler';
 import {
@@ -439,6 +440,193 @@ export class SubscriptionRepository {
         removed: true,
         usage: updatedUsage,
       };
+    });
+  }
+
+  /**
+   * H13 / M03: Exclusão definitiva de membro durante exclusão de conta do usuário.
+   * Diferente da remoção administrativa (soft delete), remove o documento de vínculo por completo
+   * para não reter PII residual e decrementa `members_count` atomicamente no máximo uma vez
+   * (sem engolir falhas transitórias).
+   */
+  async purgeMemberOnAccountDeletionTransactional(params: {
+    memberDocId: string;
+    userId: string;
+  }): Promise<{ purged: boolean }> {
+    const { memberDocId, userId } = params;
+
+    return await db.runTransaction(async (transaction) => {
+      const memberRef = this.membersCol.doc(memberDocId);
+      const memberDoc = await transaction.get(memberRef);
+
+      if (!memberDoc.exists) {
+        return { purged: false };
+      }
+
+      const memberData = memberDoc.data() as any;
+      if (memberData?.user_id && memberData.user_id !== userId) {
+        throw new AppError(403, 'Operação não autorizada: vínculo de membro pertence a outro usuário.');
+      }
+
+      const ministryId =
+        typeof memberData?.ministry_id === 'string' && memberData.ministry_id.trim()
+          ? memberData.ministry_id.trim()
+          : null;
+
+      let usageRef: FirebaseFirestore.DocumentReference | null = null;
+      let usageDoc: FirebaseFirestore.DocumentSnapshot | null = null;
+      let activeCountFallback = 1;
+
+      if (ministryId && memberData?.status !== 'removed') {
+        const ministryRef = this.ministriesCol.doc(ministryId);
+        usageRef = this.usageCol.doc(ministryId);
+
+        const [ministryDoc, fetchedUsageDoc] = await Promise.all([
+          transaction.get(ministryRef),
+          transaction.get(usageRef),
+        ]);
+        usageDoc = fetchedUsageDoc;
+
+        if (ministryDoc.exists && ministryDoc.data()?.owner_user_id === userId) {
+          throw new AppError(409, 'Proprietário do ministério não pode ser removido durante exclusão de conta.', {
+            code: 'MINISTRY_OWNER_CANNOT_BE_PURGED',
+            ministryId,
+          });
+        }
+
+        // Only inspect admin memberships when purging an admin, using a bounded cursor query.
+        if (memberData?.role === 'admin') {
+          let hasOtherActiveAdmin = false;
+          const adminBaseQuery: any = this.membersCol
+            .where('ministry_id', '==', ministryId)
+            .where('role', '==', 'admin');
+          const supportsAdminPagination =
+            typeof adminBaseQuery?.orderBy === 'function' &&
+            typeof adminBaseQuery?.limit === 'function' &&
+            typeof adminBaseQuery?.startAfter === 'function';
+
+          let adminCursor: any = null;
+          const seenAdminPages = new Set<string>();
+          const ADMIN_PAGE_SIZE = 25;
+
+          while (true) {
+            let adminPageQuery: any = adminBaseQuery;
+            if (supportsAdminPagination) {
+              adminPageQuery = adminBaseQuery
+                .orderBy(FieldPath.documentId(), 'asc')
+                .limit(ADMIN_PAGE_SIZE);
+              if (adminCursor) {
+                adminPageQuery = adminPageQuery.startAfter(adminCursor);
+              }
+            }
+
+            const adminSnap = await transaction.get(adminPageQuery);
+            const adminDocs = adminSnap.docs || [];
+            if (adminDocs.length === 0) {
+              break;
+            }
+
+            if (
+              adminDocs.some(
+                (d: any) =>
+                  d.id !== memberDocId &&
+                  d.data()?.user_id !== userId &&
+                  d.data()?.status !== 'removed'
+              )
+            ) {
+              hasOtherActiveAdmin = true;
+              break;
+            }
+
+            if (!supportsAdminPagination || adminDocs.length < ADMIN_PAGE_SIZE) {
+              break;
+            }
+
+            const lastDoc = adminDocs[adminDocs.length - 1];
+            const pageKey = `${adminDocs[0].id}:${lastDoc.id}:${adminDocs.length}`;
+            if (seenAdminPages.has(pageKey) || (adminCursor && lastDoc.id === adminCursor.id)) {
+              break;
+            }
+            seenAdminPages.add(pageKey);
+            adminCursor = lastDoc;
+          }
+
+          if (!hasOtherActiveAdmin) {
+            throw new AppError(409, 'Único administrador ativo do ministério não pode ser removido.', {
+              code: 'SOLE_MINISTRY_ADMIN_CANNOT_BE_PURGED',
+              ministryId,
+            });
+          }
+        }
+
+        // Only run bounded fallback count if usage doc does not exist yet
+        if (!usageDoc.exists) {
+          let fallbackCount = 0;
+          const countBaseQuery: any = this.membersCol.where('ministry_id', '==', ministryId);
+          const supportsCountPagination =
+            typeof countBaseQuery?.orderBy === 'function' &&
+            typeof countBaseQuery?.limit === 'function' &&
+            typeof countBaseQuery?.startAfter === 'function';
+
+          let countCursor: any = null;
+          const seenCountPages = new Set<string>();
+          const COUNT_PAGE_SIZE = 100;
+
+          while (true) {
+            let countPageQuery: any = countBaseQuery;
+            if (supportsCountPagination) {
+              countPageQuery = countBaseQuery
+                .orderBy(FieldPath.documentId(), 'asc')
+                .limit(COUNT_PAGE_SIZE);
+              if (countCursor) {
+                countPageQuery = countPageQuery.startAfter(countCursor);
+              }
+            }
+
+            const countSnap = await transaction.get(countPageQuery);
+            const docs = countSnap.docs || [];
+            if (docs.length === 0) {
+              break;
+            }
+
+            fallbackCount += docs.filter((d: any) => d.data()?.status !== 'removed').length;
+
+            if (!supportsCountPagination || docs.length < COUNT_PAGE_SIZE) {
+              break;
+            }
+
+            const lastDoc = docs[docs.length - 1];
+            const pageKey = `${docs[0].id}:${lastDoc.id}:${docs.length}`;
+            if (seenCountPages.has(pageKey) || (countCursor && lastDoc.id === countCursor.id)) {
+              break;
+            }
+            seenCountPages.add(pageKey);
+            countCursor = lastDoc;
+          }
+
+          activeCountFallback = fallbackCount;
+        }
+      }
+
+      const now = new Date().toISOString();
+
+      if (ministryId && usageRef && memberData?.status !== 'removed') {
+        const uData = usageDoc?.exists ? (usageDoc.data() as MinistryUsageRecord) : null;
+        const currentMembersCount = uData ? uData.members_count ?? 1 : activeCountFallback;
+        const currentSongsCount = uData ? uData.songs_count ?? 0 : 0;
+
+        transaction.set(usageRef, {
+          id: ministryId,
+          ministry_id: ministryId,
+          members_count: Math.max(0, currentMembersCount - 1),
+          songs_count: currentSongsCount,
+          created_at: uData?.created_at || now,
+          updated_at: now,
+        });
+      }
+
+      transaction.delete(memberRef);
+      return { purged: true };
     });
   }
 

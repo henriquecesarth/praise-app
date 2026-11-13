@@ -275,11 +275,20 @@ export class MinistryRepository {
         transaction.get(inviteDoc.ref),
       ]);
 
-      if (freshInviteDoc.exists) {
-        const freshInvite = freshInviteDoc.data() as MinistryInviteRecord;
-        if (freshInvite.max_uses !== null && freshInvite.uses_count >= freshInvite.max_uses) {
-          throw new AppError(400, 'Este código de convite atingiu o limite máximo de usos.');
-        }
+      if (!freshInviteDoc.exists) {
+        throw new AppError(404, 'Código de convite inválido ou não encontrado.');
+      }
+
+      const freshInvite = freshInviteDoc.data() as MinistryInviteRecord;
+      if (freshInvite.expires_at && new Date(freshInvite.expires_at) < new Date()) {
+        throw new AppError(400, 'Este código de convite expirou.');
+      }
+      if (
+        freshInvite.max_uses !== null &&
+        freshInvite.max_uses !== undefined &&
+        (freshInvite.uses_count || 0) >= freshInvite.max_uses
+      ) {
+        throw new AppError(400, 'Este código de convite atingiu o limite máximo de usos.');
       }
 
       const subData = subDoc.exists ? (subDoc.data() as any) : null;
@@ -368,9 +377,9 @@ export class MinistryRepository {
         { merge: true }
       );
 
-      // Atualizar contagem de usos do convite
+      // Atualizar contagem de usos do convite a partir do snapshot fresco da transação
       transaction.update(inviteDoc.ref, {
-        uses_count: (invite.uses_count || 0) + 1,
+        uses_count: (freshInvite.uses_count || 0) + 1,
       });
     });
 
@@ -780,7 +789,7 @@ export class MinistryRepository {
       throw new AppError(404, 'Membro não encontrado.');
     }
 
-    const { updatedMember, syncedUserId, isManual } = await db.runTransaction(async (transaction) => {
+    const { updatedMember } = await db.runTransaction(async (transaction) => {
       // 1. Leitura atômica do membro alvo no contexto da transação (R6-2)
       let targetDoc: any = null;
       try {
@@ -889,26 +898,8 @@ export class MinistryRepository {
           joined_at: merged.joined_at || merged.created_at || null,
           user_id: merged.user_id || null,
         },
-        syncedUserId: memberData.user_id,
-        isManual: memberData.is_manual,
       };
     });
-
-    // Se o membro é uma conta manual local (is_manual), sincronizar metadados locais fora da transação
-    if (syncedUserId && !isManual) {
-      try {
-        const usersCol = db.collection('users');
-        const userUpdates: any = {};
-        if (data.name) userUpdates.name = data.name.trim();
-        if (data.birthDate !== undefined) userUpdates.birth_date = data.birthDate;
-
-        if (Object.keys(userUpdates).length > 0) {
-          await usersCol.doc(syncedUserId).set(userUpdates, { merge: true });
-        }
-      } catch (err) {
-        console.warn('Nota: Erro ao sincronizar dados de usuário no Firestore:', err);
-      }
-    }
 
     return updatedMember;
   }

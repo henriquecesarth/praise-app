@@ -1960,4 +1960,120 @@ describe('BillingService & Gateway Automation Tests', () => {
       );
     });
   });
+
+  describe('7. H09: Free downgrade blocked for delinquent/non-canceled paid subscriptions', () => {
+    it('rejects createCheckout(planId=free) with 409 DELINQUENT_SUBSCRIPTION_ACTIVE when paid billing subscription is past_due', async () => {
+      mockBillingRepo.getSubscription.mockResolvedValue({
+        id: 'min-100_asaas',
+        ministry_id: 'min-100',
+        provider: 'asaas',
+        provider_subscription_id: 'sub_past_due_1',
+        plan_id: 'lite',
+        interval: 'monthly',
+        status: 'past_due',
+      });
+
+      await expect(
+        billingService.createCheckout('min-100', 'usr-1', {
+          planId: 'free',
+          interval: 'monthly',
+        })
+      ).rejects.toThrow(
+        expect.objectContaining({
+          statusCode: 409,
+          details: expect.objectContaining({ code: 'DELINQUENT_SUBSCRIPTION_ACTIVE' }),
+        })
+      );
+
+      expect(mockSubscriptionService.changePlan).not.toHaveBeenCalled();
+    });
+
+    it('rejects createCheckout(planId=free) with 409 DELINQUENT_SUBSCRIPTION_ACTIVE when paid billing subscription is pending', async () => {
+      mockBillingRepo.getSubscription.mockResolvedValue({
+        id: 'min-100_asaas',
+        ministry_id: 'min-100',
+        provider: 'asaas',
+        provider_subscription_id: 'sub_pending_1',
+        plan_id: 'essential',
+        interval: 'monthly',
+        status: 'pending',
+      });
+
+      await expect(
+        billingService.createCheckout('min-100', 'usr-1', {
+          planId: 'free',
+          interval: 'monthly',
+        })
+      ).rejects.toThrow(
+        expect.objectContaining({
+          statusCode: 409,
+          details: expect.objectContaining({ code: 'DELINQUENT_SUBSCRIPTION_ACTIVE' }),
+        })
+      );
+
+      expect(mockSubscriptionService.changePlan).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('8. H06-BR2-4: Recurring webhook uses persisted billingSub.amount_cents over drifted live catalog', () => {
+    it('accepts contracted 1490¢ ordinary renewal after live PLANS_CATALOG.lite price drifts upward', async () => {
+      const originalLitePrice = PLANS_CATALOG.lite.monthlyPriceCents;
+      PLANS_CATALOG.lite.monthlyPriceCents = 2990;
+
+      try {
+        mockBillingRepo.getSubscriptionByProviderSubscriptionId.mockResolvedValue({
+          id: 'min-100_asaas',
+          ministry_id: 'min-100',
+          provider: 'asaas',
+          provider_subscription_id: 'sub_contracted_lite',
+          plan_id: 'lite',
+          interval: 'monthly',
+          member_addon_blocks: 0,
+          amount_cents: 1490,
+          status: 'active',
+          current_period_start: '2026-08-15T00:00:00.000Z',
+          current_period_end: '2026-09-15T00:00:00.000Z',
+          current_period_end_billing_date: '2026-09-15',
+        });
+        mockSubscriptionRepo.getSubscription.mockResolvedValue({
+          id: 'min-100',
+          ministry_id: 'min-100',
+          plan_id: 'lite',
+          subscription_mode: 'paid',
+          member_addon_blocks: 0,
+          billing_status: 'active',
+          current_period_start: '2026-08-15T00:00:00.000Z',
+          current_period_end: '2026-09-15T00:00:00.000Z',
+        });
+        mockBillingRepo.settleOrdinaryRecurringRenewalAtomic = vi.fn().mockResolvedValue({
+          success: true,
+          outcome: 'settled_advanced',
+          newPeriodStartIso: '2026-09-15T00:00:00.000Z',
+          newPeriodEndIso: '2026-10-15T00:00:00.000Z',
+          newPeriodEndBillingDate: '2026-10-15',
+        });
+
+        vi.spyOn(mockProvider, 'parseWebhookEvent').mockReturnValue({
+          providerEventId: 'evt_contracted_drift_1',
+          eventType: 'payment_confirmed',
+          rawEventType: 'PAYMENT_CONFIRMED',
+          providerSubscriptionId: 'sub_contracted_lite',
+          providerPaymentId: 'pay_contracted_drift_1',
+          amountCents: 1490,
+          currency: 'BRL',
+          originalDueDate: '2026-09-15',
+        });
+
+        const res = await billingService.handleWebhook({}, {});
+        expect(res.processed).toBe(true);
+        expect(mockBillingRepo.settleOrdinaryRecurringRenewalAtomic).toHaveBeenCalledWith(
+          expect.objectContaining({
+            amountCents: 1490,
+          })
+        );
+      } finally {
+        PLANS_CATALOG.lite.monthlyPriceCents = originalLitePrice;
+      }
+    });
+  });
 });

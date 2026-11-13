@@ -756,6 +756,24 @@ export class WhatsAppConnectionService {
       if (conn.organization_id !== orgId) {
         throw new AppError(404, 'Conexão não encontrada nesta organização.');
       }
+      if (conn.status === 'disconnected' || conn.status_reason === 'USER_DISCONNECTED') {
+        throw new AppError(409, 'CONNECTION_DISCONNECTED: A conexão foi desconectada antes da conclusão.', {
+          code: 'CONNECTION_DISCONNECTED',
+        });
+      }
+      if (conn.status === 'connected') {
+        if (conn.provider_account_id === providerAccountId) {
+          return; // Idempotent replay
+        }
+        throw new AppError(409, 'CONNECTION_ALREADY_CONNECTED: A conexão já está conectada.', {
+          code: 'CONNECTION_ALREADY_CONNECTED',
+        });
+      }
+      if (conn.status !== 'pending' && conn.status !== 'connecting') {
+        throw new AppError(409, `Conexão em estado inválido para transição: ${conn.status}`, {
+          code: 'INVALID_CONNECTION_STATUS',
+        });
+      }
 
       const reconJobRef = db.collection('whatsapp_waba_reconciliation_jobs').doc(reconJobId);
       const reconJobDoc = await tx.get(reconJobRef);
@@ -2881,8 +2899,6 @@ export class WhatsAppConnectionService {
     const nowIso = now.toISOString();
 
     if (conn.provider === 'zernio') {
-      const isMaterialized = Boolean(conn.provider_account_id);
-
       await db.runTransaction(async (tx) => {
         // 1. ALL READS FIRST (Strict Firestore rule: zero reads after any writes)
         const connRef = db.collection('whatsapp_connections').doc(connectionId);
@@ -2897,6 +2913,9 @@ export class WhatsAppConnectionService {
         if (freshConn.status === 'disconnected') {
           return; // Idempotent no-op
         }
+
+        // H11: Read materialization state from freshConn inside transaction to prevent concurrent race
+        const isMaterialized = Boolean(freshConn.provider_account_id);
 
         const orgRef = db.collection('organizations').doc(orgId);
         const orgDoc = await tx.get(orgRef);

@@ -1021,7 +1021,7 @@ describe('Phase 3B.3A — Scheduled Renewal Settlement & Target Activation', () 
         );
 
         // 5. Prova com o runtime real do SubscriptionService
-        const realSubService = new RealSubscriptionService(mockSubscriptionRepo as any);
+        const realSubService = new RealSubscriptionService(mockSubscriptionRepo as any, mockBillingRepo as any);
         const appliedSub = await realSubService.applyLockedEntitlementSnapshot('min_test_1', driftTr.target_entitlement_snapshot!);
         expect(appliedSub.locked_member_quota).toBe(40);
         expect(appliedSub.locked_song_quota).toBe(200);
@@ -1094,7 +1094,7 @@ describe('Phase 3B.3A — Scheduled Renewal Settlement & Target Activation', () 
           })
         );
 
-        const realSubService = new RealSubscriptionService(mockSubscriptionRepo as any);
+        const realSubService = new RealSubscriptionService(mockSubscriptionRepo as any, mockBillingRepo as any);
         await realSubService.applyLockedEntitlementSnapshot('min_test_1', addonDriftTr.target_entitlement_snapshot!);
         const summary = await realSubService.getSubscriptionSummary('min_test_1');
         expect(summary.quotas.members).toBe(60); // 60 travados imutáveis!

@@ -140,7 +140,10 @@ describe('Phase 3C.3 — Tenant-Scoped Early Activation API, Quote Persistence &
     };
   }
 
+  const originalBillingPublicApiUrl = config.billingPublicApiUrl;
+
   beforeEach(async () => {
+    (config as any).billingPublicApiUrl = 'https://api.louvaio.com';
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-09-15T12:00:00.000Z'));
 
@@ -170,6 +173,7 @@ describe('Phase 3C.3 — Tenant-Scoped Early Activation API, Quote Persistence &
   });
 
   afterEach(() => {
+    (config as any).billingPublicApiUrl = originalBillingPublicApiUrl;
     vi.useRealTimers();
     vi.restoreAllMocks();
   });

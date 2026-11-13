@@ -1,3 +1,4 @@
+import { FieldPath } from 'firebase-admin/firestore';
 import { db } from '../lib/firebase';
 import { AppError } from '../middleware/error-handler';
 import crypto from 'crypto';
@@ -145,8 +146,70 @@ export class OrganizationRepository {
       });
     }
 
+    const PAGE_SIZE = 100;
+    const DELETE_CHUNK_SIZE = 25;
+    const baseQuery: any = this.membersCol
+      .where('organization_id', '==', orgId)
+      .where('user_id', '==', targetUserId);
+
     const docId = `${orgId}_${targetUserId}`;
-    await this.membersCol.doc(docId).delete();
+    const docIdSet = new Set<string>([docId]);
+    const supportsOrderBy = typeof baseQuery?.orderBy === 'function';
+    const supportsLimit = typeof baseQuery?.limit === 'function';
+    let cursor: FirebaseFirestore.QueryDocumentSnapshot | null = null;
+    const seenPageKeys = new Set<string>();
+
+    while (true) {
+      let pageQuery: any = baseQuery;
+      if (supportsOrderBy && supportsLimit) {
+        pageQuery = baseQuery.orderBy(FieldPath.documentId(), 'asc').limit(PAGE_SIZE);
+        if (cursor && typeof pageQuery.startAfter === 'function') {
+          pageQuery = pageQuery.startAfter(cursor);
+        }
+      } else if (supportsLimit) {
+        pageQuery = baseQuery.limit(PAGE_SIZE);
+      }
+
+      const snap = await pageQuery.get();
+      const docs = Array.isArray(snap?.docs) ? snap.docs : [];
+      if (docs.length === 0) {
+        break;
+      }
+
+      const lastDoc = docs[docs.length - 1];
+      const pageKey = `${docs[0].id}:${lastDoc.id}:${docs.length}`;
+      if (seenPageKeys.has(pageKey)) {
+        break;
+      }
+      seenPageKeys.add(pageKey);
+
+      if (docs.some((d: any) => d.data()?.role === 'owner')) {
+        throw new AppError(400, 'O proprietário da organização não pode ser removido.', {
+          code: 'OWNER_CANNOT_BE_REMOVED',
+        });
+      }
+
+      for (const d of docs) {
+        docIdSet.add(d.id);
+      }
+
+      if (
+        docs.length < PAGE_SIZE ||
+        !supportsOrderBy ||
+        !supportsLimit ||
+        typeof pageQuery.startAfter !== 'function' ||
+        (cursor && lastDoc.id === cursor.id)
+      ) {
+        break;
+      }
+      cursor = lastDoc;
+    }
+
+    const docIdsToDelete = Array.from(docIdSet);
+    for (let i = 0; i < docIdsToDelete.length; i += DELETE_CHUNK_SIZE) {
+      const chunk = docIdsToDelete.slice(i, i + DELETE_CHUNK_SIZE);
+      await Promise.all(chunk.map((id) => this.membersCol.doc(id).delete()));
+    }
   }
 
   async lazyProvisionForMinistry(

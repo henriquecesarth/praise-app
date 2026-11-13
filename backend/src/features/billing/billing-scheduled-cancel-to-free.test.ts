@@ -1136,4 +1136,71 @@ describe('Phase 3D.1 — Scheduled Cancel-to-Free V1 Domain, Persistence & Inter
       );
     });
   });
+
+  describe('37. H08: Cancel-to-free preserves canonical *_billing_date without UTC midnight shift', () => {
+    it('preserves effective_billing_date = 2026-10-01 when current_period_end is 2026-10-01T00:00:00.000Z and current_period_end_billing_date is 2026-10-01', async () => {
+      mockBillingRepo.getActiveTransitionForMinistry.mockResolvedValue(null);
+      mockBillingRepo.getSubscription.mockResolvedValue({
+        id: `${ministryId}_asaas`,
+        ministry_id: ministryId,
+        plan_id: 'essential',
+        interval: 'monthly',
+        status: 'active',
+        provider_subscription_id: 'sub_h08_tz',
+        current_period_start: '2026-09-01T00:00:00.000Z',
+        current_period_start_billing_date: '2026-09-01',
+        current_period_end: '2026-10-01T00:00:00.000Z',
+        current_period_end_billing_date: '2026-10-01',
+      });
+
+      let savedRecord: any;
+      mockBillingRepo.createTransitionAndClaimSlot.mockImplementation(async (record: any) => {
+        savedRecord = record;
+        return {
+          slot: { id: buildActiveTransitionSlotId(ministryId, providerName), plan_change_id: record.id },
+          transition: record,
+        };
+      });
+
+      const res = await billingService.prepareScheduledCancelToFreeTransition(ministryId, {
+        now: new Date('2026-09-10T12:00:00.000Z'),
+      });
+
+      expect(res.effective_billing_date).toBe('2026-10-01');
+      expect(savedRecord.effective_billing_date).toBe('2026-10-01');
+      expect(savedRecord.current_period_end_billing_date).toBe('2026-10-01');
+    });
+
+    it('preserves 2026-10-01 when current_period_end_billing_date is absent and earlier activation effective_billing_date (2026-09-01) is present', async () => {
+      mockBillingRepo.getActiveTransitionForMinistry.mockResolvedValue(null);
+      mockBillingRepo.getSubscription.mockResolvedValue({
+        id: `${ministryId}_asaas`,
+        ministry_id: ministryId,
+        plan_id: 'essential',
+        interval: 'monthly',
+        status: 'active',
+        provider_subscription_id: 'sub_h08_fallback',
+        current_period_start: '2026-09-01T00:00:00.000Z',
+        current_period_end: '2026-10-01T00:00:00.000Z',
+        effective_billing_date: '2026-09-01', // Activation date from initial purchase!
+      });
+
+      let savedRecord: any;
+      mockBillingRepo.createTransitionAndClaimSlot.mockImplementation(async (record: any) => {
+        savedRecord = record;
+        return {
+          slot: { id: buildActiveTransitionSlotId(ministryId, providerName), plan_change_id: record.id },
+          transition: record,
+        };
+      });
+
+      const res = await billingService.prepareScheduledCancelToFreeTransition(ministryId, {
+        now: new Date('2026-09-10T12:00:00.000Z'),
+      });
+
+      expect(res.effective_billing_date).toBe('2026-10-01');
+      expect(savedRecord.effective_billing_date).toBe('2026-10-01');
+      expect(savedRecord.current_period_end_billing_date).toBe('2026-10-01');
+    });
+  });
 });

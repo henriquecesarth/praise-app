@@ -36,6 +36,7 @@ export interface BillingSubscriptionRecord {
   current_period_start_billing_date?: string;
   current_period_end_billing_date?: string | null;
   effective_billing_date?: string | null;
+  past_due_cycle_billing_date?: string | null;
   cancel_at_period_end: boolean;
   checkout_url?: string | null;
   created_at: string;

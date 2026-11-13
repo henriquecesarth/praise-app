@@ -318,7 +318,17 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
         ensureSubscriptionAndUsage: vi.fn(),
         reconcileMinistryUsage: vi.fn(),
       };
-      service = new SubscriptionService(mockRepo as unknown as SubscriptionRepository);
+      service = new SubscriptionService(
+        mockRepo as unknown as SubscriptionRepository,
+        {
+          getActiveTransitionForMinistry: vi.fn().mockResolvedValue(null),
+          getSubscription: vi.fn().mockResolvedValue(null),
+          getTransactions: vi.fn().mockResolvedValue([]),
+        } as any,
+        {} as any,
+        {} as any,
+        {} as any
+      );
     });
 
     it.each(['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__'])(
@@ -494,7 +504,17 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
         ensureSubscriptionAndUsage: vi.fn(),
         reconcileMinistryUsage: vi.fn(),
       };
-      service = new SubscriptionService(mockRepo as unknown as SubscriptionRepository);
+      service = new SubscriptionService(
+        mockRepo as unknown as SubscriptionRepository,
+        {
+          getActiveTransitionForMinistry: vi.fn().mockResolvedValue(null),
+          getSubscription: vi.fn().mockResolvedValue(null),
+          getTransactions: vi.fn().mockResolvedValue([]),
+        } as any,
+        {} as any,
+        {} as any,
+        {} as any
+      );
     });
 
     it('deve ler resumo de ministério legado sem registros persistidos usando fallback seguro sem side-effects no banco', async () => {
@@ -720,7 +740,17 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
           songs_count: 60,
         }),
       };
-      const service = new SubscriptionService(mockRepo as any);
+      const service = new SubscriptionService(
+        mockRepo as any,
+        {
+          getActiveTransitionForMinistry: vi.fn().mockResolvedValue(null),
+          getSubscription: vi.fn().mockResolvedValue(null),
+          getTransactions: vi.fn().mockResolvedValue([]),
+        } as any,
+        {} as any,
+        {} as any,
+        {} as any
+      );
 
       // Período vencido no passado, mas gerenciado por transição V1:
       mockRepo.getSubscription.mockResolvedValue({
@@ -793,6 +823,79 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
         recoveryInvoiceUrl: null,
       });
       expect(summary.graceReason).toBe('none');
+    });
+
+    it('H07: completed cancel-to-free locked quotas are cleared when repurchasing Premium via applyLockedEntitlementSnapshot', async () => {
+      const store: Record<string, any> = {
+        id: 'min-h07-repurchase',
+        ministry_id: 'min-h07-repurchase',
+        plan_id: 'free',
+        member_addon_blocks: 0,
+        billing_status: 'canceled',
+        subscription_mode: 'free',
+        locked_member_quota: 10,
+        locked_song_quota: 50,
+        entitlement_snapshot: {
+          plan_id: 'free',
+          member_addon_blocks: 0,
+          member_quota: 10,
+          song_quota: 50,
+        },
+        updated_at: '2026-10-01T00:00:00.000Z',
+      };
+
+      const usageRecord = {
+        id: 'min-h07-repurchase',
+        ministry_id: 'min-h07-repurchase',
+        members_count: 15,
+        songs_count: 60,
+      };
+      const mockSubRepo = {
+        getSubscription: vi.fn().mockImplementation(async () => ({ ...store })),
+        ensureSubscriptionAndUsage: vi.fn().mockImplementation(async () => ({
+          subscription: { ...store },
+          usage: { ...usageRecord },
+        })),
+        setSubscription: vi.fn().mockImplementation(async (sub: any) => {
+          Object.assign(store, sub);
+          return { ...store };
+        }),
+        updateSubscription: vi.fn().mockImplementation(async (_mId: string, patch: any) => {
+          Object.assign(store, patch);
+          return { ...store };
+        }),
+        getUsage: vi.fn().mockResolvedValue(usageRecord),
+      };
+      const mockBillingRepo = {
+        getActiveTransitionForMinistry: vi.fn().mockResolvedValue(null),
+        getSubscription: vi.fn().mockResolvedValue({
+          id: 'min-h07-repurchase_asaas',
+          ministry_id: 'min-h07-repurchase',
+          provider: 'asaas',
+          status: 'active',
+        }),
+      };
+
+      const service = new SubscriptionService(mockSubRepo as any, mockBillingRepo as any);
+      // Before repurchase: free lock forces 10/50 and puts 15 members / 60 songs into over-limit
+      const beforeSummary = await service.getSubscriptionSummary('min-h07-repurchase');
+      expect(beforeSummary.quotas.members).toBe(10);
+      expect(beforeSummary.quotas.songs).toBe(50);
+      expect(beforeSummary.isOverLimit).toBe(true);
+
+      // Repurchase Premium completes
+      await service.applyLockedEntitlementSnapshot('min-h07-repurchase', {
+        plan_id: 'premium',
+        addon_blocks: 0,
+        interval: 'monthly',
+      });
+
+      const afterSummary = await service.getSubscriptionSummary('min-h07-repurchase');
+      expect(afterSummary.subscription.planId).toBe('premium');
+      expect(afterSummary.quotas.members).toBe(300);
+      expect(afterSummary.quotas.songs).toBe(1500);
+      expect(afterSummary.isOverLimit).toBe(false);
+      expect(afterSummary.subscription.accessMode).toBe('normal');
     });
 
     it('deve projetar pendingTransition quando existe slot ativo com transição V1 agendada', async () => {
@@ -1830,6 +1933,118 @@ describe('Subscription & Quota Engine (Backend Tests)', () => {
       expect(result.commercialState).toBe('healthy');
       expect(result.totalAllowedConnections).toBe(1);
       expect(result.canSendMessages).toBe(true);
+    });
+  });
+
+  describe('H07: changePlan & changeMemberAddonBlocks clear stale locked entitlement snapshots', () => {
+    it('changePlan clears stale locked_member_quota, locked_song_quota, and entitlement_snapshot and evaluates usage against new plan quotas', async () => {
+      const existingProSub: MinistrySubscriptionRecord = {
+        id: 'min-lock-1',
+        ministry_id: 'min-lock-1',
+        plan_id: 'pro',
+        member_addon_blocks: 0,
+        subscription_mode: 'paid',
+        billing_status: 'active',
+        locked_member_quota: 'unlimited',
+        locked_song_quota: 'unlimited',
+        entitlement_snapshot: {
+          plan_id: 'pro',
+          addon_blocks: 0,
+          interval: 'monthly',
+          effective_member_quota: 'unlimited',
+          effective_song_quota: 'unlimited',
+        },
+        grace_period_expires_at: null,
+        created_at: '2026-08-01T00:00:00.000Z',
+        updated_at: '2026-08-01T00:00:00.000Z',
+      };
+
+      const usageRecord: MinistryUsageRecord = {
+        id: 'min-lock-1',
+        ministry_id: 'min-lock-1',
+        members_count: 15, // Over Free quota (10), under Pro ('unlimited')
+        songs_count: 20,
+        created_at: '2026-08-01T00:00:00.000Z',
+        updated_at: '2026-08-01T00:00:00.000Z',
+      };
+
+      let savedSub: any = null;
+      const mockSubRepo = {
+        ensureSubscriptionAndUsage: vi.fn().mockResolvedValue({
+          subscription: existingProSub,
+          usage: usageRecord,
+        }),
+        setSubscription: vi.fn().mockImplementation(async (sub: any) => {
+          savedSub = sub;
+        }),
+      };
+      const mockBillingRepo = {
+        getActiveTransitionForMinistry: vi.fn().mockResolvedValue(null),
+      };
+
+      const svc = new SubscriptionService(mockSubRepo as any, mockBillingRepo as any);
+      const updated = await svc.changePlan('min-lock-1', 'free');
+
+      expect(updated.plan_id).toBe('free');
+      expect(updated.locked_member_quota).toBeNull();
+      expect(updated.locked_song_quota).toBeNull();
+      expect(updated.entitlement_snapshot).toBeNull();
+      expect(updated.grace_period_expires_at).not.toBeNull();
+      expect(savedSub.locked_member_quota).toBeNull();
+      expect(savedSub.locked_song_quota).toBeNull();
+      expect(savedSub.entitlement_snapshot).toBeNull();
+    });
+
+    it('changeMemberAddonBlocks clears stale locked_member_quota, locked_song_quota, and entitlement_snapshot', async () => {
+      const existingSub: MinistrySubscriptionRecord = {
+        id: 'min-lock-2',
+        ministry_id: 'min-lock-2',
+        plan_id: 'essential',
+        member_addon_blocks: 2,
+        subscription_mode: 'paid',
+        billing_status: 'active',
+        locked_member_quota: 80,
+        locked_song_quota: 200,
+        entitlement_snapshot: {
+          plan_id: 'essential',
+          addon_blocks: 2,
+          interval: 'monthly',
+          effective_member_quota: 80,
+          effective_song_quota: 200,
+        },
+        grace_period_expires_at: null,
+        created_at: '2026-08-01T00:00:00.000Z',
+        updated_at: '2026-08-01T00:00:00.000Z',
+      };
+
+      const usageRecord: MinistryUsageRecord = {
+        id: 'min-lock-2',
+        ministry_id: 'min-lock-2',
+        members_count: 50, // Over Essential 0-addon quota (40)
+        songs_count: 20,
+        created_at: '2026-08-01T00:00:00.000Z',
+        updated_at: '2026-08-01T00:00:00.000Z',
+      };
+
+      const mockSubRepo = {
+        ensureSubscriptionAndUsage: vi.fn().mockResolvedValue({
+          subscription: existingSub,
+          usage: usageRecord,
+        }),
+        setSubscription: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockBillingRepo = {
+        getActiveTransitionForMinistry: vi.fn().mockResolvedValue(null),
+      };
+
+      const svc = new SubscriptionService(mockSubRepo as any, mockBillingRepo as any);
+      const updated = await svc.changeMemberAddonBlocks('min-lock-2', 0);
+
+      expect(updated.member_addon_blocks).toBe(0);
+      expect(updated.locked_member_quota).toBeNull();
+      expect(updated.locked_song_quota).toBeNull();
+      expect(updated.entitlement_snapshot).toBeNull();
+      expect(updated.grace_period_expires_at).not.toBeNull();
     });
   });
 });

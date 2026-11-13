@@ -228,84 +228,91 @@ export class ScheduleRepository {
     scheduleId: string,
     ministryId: string,
     userId: string,
-    userName: string,
+    _userName: string,
     confirmed: boolean
   ): Promise<ScheduleRecord> {
-    const schedule = await this.getScheduleById(scheduleId, ministryId);
     const ref = this.schedulesCol.doc(scheduleId);
-
     const todayStr = new Date().toISOString().split('T')[0];
-    if (schedule.date < todayStr) {
-      throw new AppError(400, 'Não é possível alterar a confirmação de presença de uma escala que já passou.');
-    }
 
-    let memberId: string | null = null;
-    let userRealName: string = userName || '';
+    return await db.runTransaction(async (transaction) => {
+      const scheduleDoc = await transaction.get(ref);
+      if (!scheduleDoc.exists) {
+        throw new AppError(404, 'Escala não encontrada.');
+      }
 
-    // Consultar pertencimento oficial na coleção ministry_members (R4-6: membro removido não pode confirmar/recusar)
-    const memberSnap = await db.collection('ministry_members')
-      .where('ministry_id', '==', ministryId)
-      .where('user_id', '==', userId)
-      .limit(1)
-      .get();
+      const raw = scheduleDoc.data() || {};
+      const schedule = {
+        id: scheduleDoc.id,
+        ...raw,
+        duration_minutes: raw.duration_minutes,
+        durationMinutes: raw.duration_minutes !== undefined ? raw.duration_minutes : raw.durationMinutes,
+      } as ScheduleRecord;
 
-    if (!memberSnap.empty) {
-      if (memberSnap.docs[0].data()?.status === 'removed') {
+      if (schedule.ministry_id !== ministryId) {
+        throw new AppError(404, 'Escala não encontrada.');
+      }
+
+      if (schedule.date < todayStr) {
+        throw new AppError(400, 'Não é possível alterar a confirmação de presença de uma escala que já passou.');
+      }
+
+      // Consultar pertencimento oficial na coleção ministry_members (R4-6: membro removido não pode confirmar/recusar)
+      const memberQuery = db
+        .collection('ministry_members')
+        .where('ministry_id', '==', ministryId)
+        .where('user_id', '==', userId)
+        .limit(10);
+      const memberSnap = await transaction.get(memberQuery as any);
+
+      const activeMemberIds = new Set<string>();
+      for (const mDoc of memberSnap.docs || []) {
+        const mData = mDoc.data() as { status?: string } | undefined;
+        if (mData?.status !== 'removed') {
+          activeMemberIds.add(mDoc.id);
+        }
+      }
+      if (!memberSnap.empty && activeMemberIds.size === 0) {
         throw new AppError(403, 'Apenas integrantes ativos do ministério podem confirmar ou recusar presença na escala.');
       }
-      memberId = memberSnap.docs[0].id;
-    }
 
-    const userDoc = await db.collection('users').doc(userId).get();
-    if (userDoc.exists) {
-      const uData = userDoc.data();
-      if (uData?.name || uData?.displayName) {
-        userRealName = uData.name || uData.displayName;
+      let updatedCount = 0;
+      const updatedParticipants = (schedule.participants || []).map((p) => {
+        const pId = typeof p.id === 'string' ? p.id.trim() : '';
+        const pUserId = typeof (p as any).userId === 'string' ? (p as any).userId.trim() : '';
+        const pUserSnakeId = typeof (p as any).user_id === 'string' ? (p as any).user_id.trim() : '';
+
+        const matchCanonicalId =
+          (pId !== '' && (pId === userId || activeMemberIds.has(pId))) ||
+          (pUserId !== '' && pUserId === userId) ||
+          (pUserSnakeId !== '' && pUserSnakeId === userId);
+
+        if (matchCanonicalId) {
+          updatedCount++;
+          return {
+            ...p,
+            confirmed,
+          };
+        }
+        return p;
+      });
+
+      if (updatedCount === 0) {
+        throw new AppError(403, 'Você não está listado como participante desta escala.');
       }
-    }
 
-    const normName = userRealName.toLowerCase().trim();
+      const now = new Date().toISOString();
 
-    let updatedCount = 0;
-    const updatedParticipants = (schedule.participants || []).map((p) => {
-      const pId = String(p.id || '');
-      const pUserId = String((p as any).userId || (p as any).user_id || '');
-      const pNormName = (p.name || '').toLowerCase().trim();
+      transaction.update(ref, {
+        participants: updatedParticipants,
+        updated_at: now,
+      });
 
-      const matchId =
-        pId === userId ||
-        pUserId === userId ||
-        (memberId && pId === memberId) ||
-        (userId && pId.includes(userId));
-
-      const matchName =
-        pNormName &&
-        normName &&
-        (pNormName === normName || pNormName.includes(normName) || normName.includes(pNormName));
-
-      if (matchId || matchName) {
-        updatedCount++;
-        return {
-          ...p,
-          confirmed,
-        };
-      }
-      return p;
+      return {
+        ...schedule,
+        participants: updatedParticipants,
+        updated_at: now,
+      };
     });
-
-    if (updatedCount === 0) {
-      throw new AppError(403, 'Você não está listado como participante desta escala.');
-    }
-
-    const now = new Date().toISOString();
-
-    await ref.update({
-      participants: updatedParticipants,
-      updated_at: now,
-    });
-
-    const updatedDoc = await ref.get();
-    return { id: updatedDoc.id, ...updatedDoc.data() } as ScheduleRecord;
   }
 
   async getScheduleComments(

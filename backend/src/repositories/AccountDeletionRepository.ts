@@ -1,3 +1,4 @@
+import { FieldPath } from 'firebase-admin/firestore';
 import { db } from '../lib/firebase';
 import { AppError } from '../middleware/error-handler';
 import {
@@ -46,14 +47,83 @@ export async function chunkedBatchUpdate(
   }
 }
 
+export const PAGINATION_PAGE_SIZE = 100;
+
+export async function forEachQueryPageChunked(
+  baseQuery: FirebaseFirestore.Query,
+  pageSize: number,
+  onPageDocs: (docs: FirebaseFirestore.QueryDocumentSnapshot[]) => Promise<void>
+): Promise<void> {
+  const effectivePageSize = Math.max(1, pageSize);
+  const queryAny = baseQuery as any;
+  const supportsOrderBy = typeof queryAny?.orderBy === 'function';
+  const supportsLimit = typeof queryAny?.limit === 'function';
+  let cursor: FirebaseFirestore.QueryDocumentSnapshot | null = null;
+  const seenPageKeys = new Set<string>();
+
+  while (true) {
+    let pageQuery: any = queryAny;
+    if (supportsOrderBy && supportsLimit) {
+      pageQuery = queryAny.orderBy(FieldPath.documentId(), 'asc').limit(effectivePageSize);
+      if (cursor && typeof pageQuery.startAfter === 'function') {
+        pageQuery = pageQuery.startAfter(cursor);
+      }
+    } else if (supportsLimit) {
+      pageQuery = queryAny.limit(effectivePageSize);
+    }
+
+    const snap = await pageQuery.get();
+    const docs: FirebaseFirestore.QueryDocumentSnapshot[] = Array.isArray(snap?.docs) ? snap.docs : [];
+    if (docs.length === 0) {
+      break;
+    }
+
+    const nextCursor = docs[docs.length - 1];
+    const docIdKey = (d: any, idx: number) => (typeof d?.id === 'string' && d.id ? d.id : String(idx));
+    const pageKey = `${docIdKey(docs[0], 0)}:${docIdKey(nextCursor, docs.length - 1)}:${docs.length}`;
+    if (seenPageKeys.has(pageKey)) {
+      break;
+    }
+    seenPageKeys.add(pageKey);
+
+    const canContinue =
+      docs.length >= effectivePageSize &&
+      supportsOrderBy &&
+      supportsLimit &&
+      typeof pageQuery.startAfter === 'function' &&
+      (!cursor || docIdKey(nextCursor, docs.length - 1) !== docIdKey(cursor, -1));
+
+    await onPageDocs(docs);
+
+    if (!canContinue) {
+      break;
+    }
+    cursor = nextCursor;
+  }
+}
+
+export async function collectQueryDocIdsChunked(
+  baseQuery: FirebaseFirestore.Query,
+  pageSize = PAGINATION_PAGE_SIZE
+): Promise<string[]> {
+  const ids: string[] = [];
+  await forEachQueryPageChunked(baseQuery, pageSize, async (docs) => {
+    for (const d of docs) {
+      ids.push(d.id);
+    }
+  });
+  return ids;
+}
+
 export async function deleteQueryDocsChunked(
   query: FirebaseFirestore.Query,
   chunkSize = BATCH_CHUNK_SIZE
 ): Promise<void> {
-  const snap = await query.get();
-  if (snap.empty) return;
-  const refs = snap.docs.map((d) => d.ref);
-  await chunkedBatchDelete(refs, chunkSize);
+  const pageSize = Math.max(1, Math.min(chunkSize, PAGINATION_PAGE_SIZE));
+  await forEachQueryPageChunked(query, pageSize, async (docs) => {
+    const refs = docs.map((d) => d.ref);
+    await chunkedBatchDelete(refs, chunkSize);
+  });
 }
 
 export async function updateQueryDocsChunked(
@@ -61,10 +131,11 @@ export async function updateQueryDocsChunked(
   data: Record<string, any>,
   chunkSize = BATCH_CHUNK_SIZE
 ): Promise<void> {
-  const snap = await query.get();
-  if (snap.empty) return;
-  const items = snap.docs.map((d) => ({ ref: d.ref, data }));
-  await chunkedBatchUpdate(items, chunkSize);
+  const pageSize = Math.max(1, Math.min(chunkSize, PAGINATION_PAGE_SIZE));
+  await forEachQueryPageChunked(query, pageSize, async (docs) => {
+    const items = docs.map((d) => ({ ref: d.ref, data }));
+    await chunkedBatchUpdate(items, chunkSize);
+  });
 }
 
 export class AccountDeletionRepository {
@@ -308,6 +379,9 @@ export class AccountDeletionRepository {
   // --------------------------------------------------------------------------
 
   async deletePersonalData(userId: string): Promise<void> {
+    // 0. subcoleção privada users/{userId}/custom_vocal_exercises (delete de users/{id} não cascateia subcoleções)
+    await deleteQueryDocsChunked(this.usersCol.doc(userId).collection('custom_vocal_exercises'));
+
     // 1. users profile
     await this.usersCol.doc(userId).delete();
 
@@ -337,45 +411,17 @@ export class AccountDeletionRepository {
   }
 
   async detachMemberships(userId: string, manifest?: DeletionManifest | null): Promise<void> {
-    // 1. ministry_members: decrementa quota e remove documento
-    const ministryMemberDocIds = manifest?.ministry_member_doc_ids || [];
-    if (ministryMemberDocIds.length > 0) {
-      for (const docId of ministryMemberDocIds) {
-        const doc = await this.membersCol.doc(docId).get();
-        if (doc.exists) {
-          const ministryId = doc.data()?.ministry_id;
-          if (ministryId) {
-            try {
-              await this.subscriptionRepo.removeMemberTransactional({
-                ministryId,
-                memberUserIdOrDocId: doc.id,
-              });
-            } catch {
-              await doc.ref.delete().catch(() => {});
-            }
-          } else {
-            await doc.ref.delete().catch(() => {});
-          }
-        }
-      }
-    } else {
-      // Fallback dinâmico se executado sem manifesto
-      const membersSnap = await this.membersCol.where('user_id', '==', userId).get();
-      for (const doc of membersSnap.docs) {
-        const ministryId = doc.data()?.ministry_id;
-        if (ministryId) {
-          try {
-            await this.subscriptionRepo.removeMemberTransactional({
-              ministryId,
-              memberUserIdOrDocId: doc.id,
-            });
-          } catch {
-            await doc.ref.delete().catch(() => {});
-          }
-        } else {
-          await doc.ref.delete().catch(() => {});
-        }
-      }
+    // 1. ministry_members: decrementa quota atomicamente e exclui documento em definitivo (zero PII residual, sem engolir falhas)
+    const memberDocIds =
+      manifest?.ministry_member_doc_ids && manifest.ministry_member_doc_ids.length > 0
+        ? manifest.ministry_member_doc_ids
+        : await collectQueryDocIdsChunked(this.membersCol.where('user_id', '==', userId));
+
+    for (const docId of memberDocIds) {
+      await this.subscriptionRepo.purgeMemberOnAccountDeletionTransactional({
+        memberDocId: docId,
+        userId,
+      });
     }
 
     // 2. organization_members (chunked delete)
@@ -396,10 +442,10 @@ export class AccountDeletionRepository {
 
     // 4. ministry_teams: remover referências em member_ids (chunked)
     const allIdsToScrub = [userId, ...(manifest?.member_ids || [])];
-    const teamsSnap = await this.teamsCol.get();
-    const teamUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; data: Record<string, any> }> = [];
+    await forEachQueryPageChunked(this.teamsCol, PAGINATION_PAGE_SIZE, async (pageDocs) => {
+      const teamUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; data: Record<string, any> }> = [];
 
-    for (const tDoc of teamsSnap.docs) {
+      for (const tDoc of pageDocs) {
       const data = tDoc.data();
       const memberIds = Array.isArray(data?.member_ids) ? (data.member_ids as string[]) : [];
       const hasMatch = memberIds.some((id) => allIdsToScrub.includes(id));
@@ -415,7 +461,8 @@ export class AccountDeletionRepository {
       }
     }
 
-    await chunkedBatchUpdate(teamUpdates);
+      await chunkedBatchUpdate(teamUpdates);
+    });
   }
 
   async cleanFutureSchedulesAndAnonymizeHistorical(
@@ -432,10 +479,10 @@ export class AccountDeletionRepository {
       return allIds.includes(pId) || Boolean(pUserId && pUserId === userId);
     };
 
-    const snap = await this.schedulesCol.get();
-    const scheduleUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; data: Record<string, any> }> = [];
+    await forEachQueryPageChunked(this.schedulesCol, PAGINATION_PAGE_SIZE, async (pageDocs) => {
+      const scheduleUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; data: Record<string, any> }> = [];
 
-    for (const doc of snap.docs) {
+      for (const doc of pageDocs) {
       const s = doc.data() as any;
       const isFuture = (s.date || '') >= today;
       const participants = Array.isArray(s.participants) ? s.participants : [];
@@ -487,7 +534,8 @@ export class AccountDeletionRepository {
       }
     }
 
-    await chunkedBatchUpdate(scheduleUpdates);
+      await chunkedBatchUpdate(scheduleUpdates);
+    });
   }
 
   async anonymizeHistoricalSharedContent(userId: string): Promise<void> {

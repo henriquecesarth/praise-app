@@ -795,22 +795,27 @@ export function checkInitialPurchaseProviderReadiness(
     }
   }
 
-  // 6. Amount Validation Gate
-  const paidAmountCents = parsedEvent.amountCents ?? expectedAmountCents;
-  if (paidAmountCents !== expectedAmountCents) {
+  // 6. Amount Validation Gate (Fail-Closed: never substitute expectedAmountCents)
+  const paidAmountCents = parsedEvent.amountCents;
+  if (
+    typeof paidAmountCents !== 'number' ||
+    !Number.isFinite(paidAmountCents) ||
+    paidAmountCents <= 0 ||
+    paidAmountCents !== expectedAmountCents
+  ) {
     return {
       ready: false,
-      reason: `Valor pago (${paidAmountCents}¢) diverge do preço travado (${expectedAmountCents}¢)`,
+      reason: `Valor pago (${paidAmountCents}¢) ausente, inválido ou diverge do preço travado (${expectedAmountCents}¢)`,
       failureCode: 'AMOUNT_MISMATCH',
     };
   }
 
-  // 7. Currency Gate
-  const eventCurrency = parsedEvent.currency || 'BRL';
-  if (eventCurrency !== expectedCurrency || transition.currency !== expectedCurrency) {
+  // 7. Currency Gate (Fail-Closed: never default missing currency to BRL inside domain gate)
+  const eventCurrency = typeof parsedEvent.currency === 'string' ? parsedEvent.currency.trim() : '';
+  if (!eventCurrency || eventCurrency !== expectedCurrency || transition.currency !== expectedCurrency) {
     return {
       ready: false,
-      reason: `Moeda '${eventCurrency}' diverge da moeda esperada '${expectedCurrency}'`,
+      reason: `Moeda '${parsedEvent.currency}' ausente ou diverge da moeda esperada '${expectedCurrency}'`,
       failureCode: 'CURRENCY_MISMATCH',
     };
   }

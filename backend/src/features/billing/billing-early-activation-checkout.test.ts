@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BillingService } from './billing.service';
 import { AppError } from '../../middleware/error-handler';
+import { config } from '../../config/unifiedConfig';
 import { BillingEarlyActivationQuote, BillingTransitionV1Record, BillingCheckoutAttempt } from './billing.types';
 import {
   canCreateEarlyActivationCheckout,
@@ -94,7 +95,10 @@ describe('Phase 3C.2 — Early Activation Detached Checkout, Attempt Reservation
     return record;
   };
 
+  const originalBillingPublicApiUrl = config.billingPublicApiUrl;
+
   beforeEach(() => {
+    (config as any).billingPublicApiUrl = 'https://api.louvaio.com';
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-09-15T12:00:00.000Z'));
     planChangesStore.clear();
@@ -298,6 +302,7 @@ describe('Phase 3C.2 — Early Activation Detached Checkout, Attempt Reservation
   });
 
   afterEach(() => {
+    (config as any).billingPublicApiUrl = originalBillingPublicApiUrl;
     vi.useRealTimers();
   });
 

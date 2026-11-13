@@ -61,6 +61,7 @@ export interface WhatsAppProviderIdentityClaimRecord {
   provider_phone_number_id: string; // Meta Phone Number ID or provider-specific uniqueness key
   organization_id: string; // Tenant context
   connection_id: string; // Foreign key to claiming whatsapp_connections record
+  cleanup_fenced_by_job_id?: string | null; // Optional fencing marker during active D7 cleanup
   created_at: string; // ISO 8601 UTC
   updated_at: string; // ISO 8601 UTC
 }
@@ -527,7 +528,8 @@ export interface WhatsAppWabaReconciliationJobRecord {
 }
 
 export interface WhatsAppProviderCleanupJobRecord {
-  id: string; // "cleanup_conn_${connectionId}"
+  id: string; // "cleanup_conn_${connectionId}" or "cleanup_orphan_${connectionId}_${hash}"
+  cleanup_scope?: 'primary' | 'late_orphan';
   connection_id: string;
   organization_id: string;
   provider: 'meta_cloud_api' | 'meta' | 'zernio';

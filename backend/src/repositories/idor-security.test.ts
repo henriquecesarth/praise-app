@@ -120,6 +120,13 @@ describe('Security Hardening: IDOR and Tenant Isolation Repositories', () => {
         update: vi.fn(),
       });
 
+      vi.spyOn(db, 'runTransaction').mockImplementation(async (fn: any) =>
+        fn({
+          get: async (target: any) => target.get(),
+          update: (ref: any, data: any) => ref.update(data),
+        })
+      );
+
       vi.spyOn(db, 'collection').mockReturnValue({
         where: vi.fn().mockReturnThis(),
         limit: vi.fn().mockReturnThis(),

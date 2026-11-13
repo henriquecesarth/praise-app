@@ -173,6 +173,21 @@ export class AccountDeletionService {
       });
     }
 
+    if (!job.checkpoints?.memberships_detached) {
+      const preflight = await this.evaluatePreflight(userId);
+      if (!preflight.deletionAllowed) {
+        job.status = 'preflight_blocked';
+        job.step_progress = 'preflight_blocked';
+        job.blockers = preflight.blockers;
+        job.updated_at = new Date().toISOString();
+        await this.repository.saveJob(job);
+        throw new AppError(409, 'Processo de exclusão bloqueado por pré-requisitos de governança ou faturamento.', {
+          code: 'PREFLIGHT_BLOCKED',
+          blockers: job.blockers,
+        });
+      }
+    }
+
     job.status = 'cleanup_in_progress';
     job.updated_at = new Date().toISOString();
     await this.repository.saveJob(job);

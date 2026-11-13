@@ -3939,6 +3939,65 @@ export class BillingRepository {
    *      - Persiste BillingTransaction com status: 'paid', transaction_type: 'recurring_payment', due_date: boundary.
    * 3. Retorna resultado estruturado para convergência compartilhada por webhooks e reconciliador.
    */
+  private validatePaidRecurringMoney(params: {
+    currency: string;
+    amountCents: number | undefined;
+    billingSub: BillingSubscriptionRecord;
+  }): { valid: true } | { valid: false; error: string } {
+    const { currency, amountCents, billingSub } = params;
+    if (currency !== 'BRL') {
+      return { valid: false, error: `Unsupported settlement currency: ${currency}` };
+    }
+    const expectedContractAmountCents =
+      typeof billingSub.amount_cents === 'number' && billingSub.amount_cents > 0
+        ? billingSub.amount_cents
+        : null;
+    if (
+      expectedContractAmountCents === null ||
+      typeof amountCents !== 'number' ||
+      !Number.isFinite(amountCents) ||
+      amountCents <= 0 ||
+      amountCents !== expectedContractAmountCents
+    ) {
+      return {
+        valid: false,
+        error: `Payment amount (${amountCents}) is missing, invalid, or diverges from contracted subscription amount (${expectedContractAmountCents})`,
+      };
+    }
+    return { valid: true };
+  }
+
+  private shouldHealPreviousCycleDelinquency(params: {
+    settledCycleBillingDate: string;
+    currentRenewalBoundary: string;
+    appSub: MinistrySubscriptionRecord;
+    billingSub: BillingSubscriptionRecord;
+    timeZone: string;
+  }): boolean {
+    const { settledCycleBillingDate, currentRenewalBoundary, appSub, billingSub, timeZone } = params;
+    if (settledCycleBillingDate >= currentRenewalBoundary) {
+      return false;
+    }
+
+    const appPeriodStartDate = normalizeToBillingDate(appSub.current_period_start, timeZone);
+    const billingPeriodStartDate = normalizeToBillingDate(billingSub.current_period_start_billing_date, timeZone);
+    const matchesCurrentPeriodStart = Boolean(
+      (appPeriodStartDate && settledCycleBillingDate === appPeriodStartDate) ||
+        (billingPeriodStartDate && settledCycleBillingDate === billingPeriodStartDate)
+    );
+    if (!matchesCurrentPeriodStart) {
+      return false;
+    }
+
+    const recordedPastDueCycle =
+      normalizeToBillingDate(appSub.past_due_cycle_billing_date, timeZone) ||
+      normalizeToBillingDate(billingSub.past_due_cycle_billing_date, timeZone);
+
+    // If the cycle that caused past_due is explicitly recorded, require exact cycle match;
+    // ambiguous legacy records lacking past_due_cycle_billing_date stay fail-closed.
+    return recordedPastDueCycle !== null && recordedPastDueCycle === settledCycleBillingDate;
+  }
+
   async settleOrdinaryRecurringRenewalAtomic(
     input: SettleOrdinaryRecurringRenewalInput
   ): Promise<SettleOrdinaryRecurringRenewalResult> {
@@ -4052,7 +4111,7 @@ export class BillingRepository {
           existingTx.provider !== provider ||
           (existingTx.provider_subscription_id && existingTx.provider_subscription_id !== providerSubscriptionId) ||
           (existingTx.due_date && existingTx.due_date !== normPaymentRenewalDate) ||
-          (existingTx.amount_cents !== undefined && amountCents !== undefined && amountCents !== 0 && existingTx.amount_cents !== amountCents)
+          (existingTx.amount_cents !== undefined && amountCents !== undefined && existingTx.amount_cents !== amountCents)
         ) {
           return {
             success: false,
@@ -4061,28 +4120,83 @@ export class BillingRepository {
           };
         }
 
-        // Se a transação já estiver como paid: idempotência absoluta e autocura de status
+        // H06: Rejeitar divergência de moeda ou valor antes de qualquer retorno/cura idempotente
+        const paidMoneyCheck = this.validatePaidRecurringMoney({
+          currency,
+          amountCents,
+          billingSub,
+        });
+        if (!paidMoneyCheck.valid) {
+          return {
+            success: false,
+            outcome: 'financial_conflict',
+            error: paidMoneyCheck.error,
+          };
+        }
+
+        // Se a transação já estiver como paid: idempotência absoluta e autocura de status somente do ciclo correspondente
         if (existingTx.status === 'paid') {
-          if (appSub.billing_status === 'past_due' || appSub.grace_period_expires_at) {
-            t.set(
-              appSubRef,
-              {
-                billing_status: 'active',
-                grace_period_expires_at: null,
-                grace_period_expires_billing_date: null,
-                updated_at: nowIso,
-              },
-              { merge: true }
-            );
+          const settledCycleBillingDate =
+            normalizeToBillingDate(existingTx.due_date, timeZone) || normPaymentRenewalDate;
+
+          if (settledCycleBillingDate > currentRenewalBoundary) {
+            return {
+              success: false,
+              outcome: 'future_cycle_mismatch',
+              error: `Payment renewal date (${settledCycleBillingDate}) is after current renewal boundary (${currentRenewalBoundary})`,
+            };
           }
-          if (billingSub.status === 'past_due') {
-            t.set(billingSubRef, { status: 'active', updated_at: nowIso }, { merge: true });
+
+          const isCurrentCycle = settledCycleBillingDate === currentRenewalBoundary;
+          const isJustAdvancedCycleGrace = this.shouldHealPreviousCycleDelinquency({
+            settledCycleBillingDate,
+            currentRenewalBoundary,
+            appSub,
+            billingSub,
+            timeZone,
+          });
+
+          if (isCurrentCycle || isJustAdvancedCycleGrace) {
+            if (appSub.billing_status === 'past_due' || appSub.grace_period_expires_at || appSub.past_due_cycle_billing_date) {
+              t.set(
+                appSubRef,
+                {
+                  billing_status: 'active',
+                  grace_period_expires_at: null,
+                  grace_period_expires_billing_date: null,
+                  past_due_cycle_billing_date: null,
+                  updated_at: nowIso,
+                },
+                { merge: true }
+              );
+            }
+            if (billingSub.status === 'past_due' || billingSub.past_due_cycle_billing_date) {
+              t.set(
+                billingSubRef,
+                { status: 'active', past_due_cycle_billing_date: null, updated_at: nowIso },
+                { merge: true }
+              );
+            }
           }
 
           return {
             success: true,
             outcome: 'already_settled',
             transaction: existingTx,
+          };
+        }
+      } else {
+        // H06: Rejeitar divergência de moeda ou valor antes de liquidar nova transação
+        const newMoneyCheck = this.validatePaidRecurringMoney({
+          currency,
+          amountCents,
+          billingSub,
+        });
+        if (!newMoneyCheck.valid) {
+          return {
+            success: false,
+            outcome: 'financial_conflict',
+            error: newMoneyCheck.error,
           };
         }
       }
@@ -4129,21 +4243,36 @@ export class BillingRepository {
 
           t.set(txRef, transactionRecord, { merge: true });
 
-          // Se porventura billing_status ainda estava past_due ou com grace residual, limpa atomicamente
-          if (appSub.billing_status === 'past_due' || appSub.grace_period_expires_at) {
-            t.set(
-              appSubRef,
-              {
-                billing_status: 'active',
-                grace_period_expires_at: null,
-                grace_period_expires_billing_date: null,
-                updated_at: nowIso,
-              },
-              { merge: true }
-            );
-          }
-          if (billingSub.status === 'past_due') {
-            t.set(billingSubRef, { status: 'active', updated_at: nowIso }, { merge: true });
+          // H05: Somente limpar past_due/grace se a inadimplência pertencer ao ciclo recuperado (< currentRenewalBoundary)
+          const canHealPreviousCycleGrace = this.shouldHealPreviousCycleDelinquency({
+            settledCycleBillingDate: normPaymentRenewalDate,
+            currentRenewalBoundary,
+            appSub,
+            billingSub,
+            timeZone,
+          });
+
+          if (canHealPreviousCycleGrace) {
+            if (appSub.billing_status === 'past_due' || appSub.grace_period_expires_at || appSub.past_due_cycle_billing_date) {
+              t.set(
+                appSubRef,
+                {
+                  billing_status: 'active',
+                  grace_period_expires_at: null,
+                  grace_period_expires_billing_date: null,
+                  past_due_cycle_billing_date: null,
+                  updated_at: nowIso,
+                },
+                { merge: true }
+              );
+            }
+            if (billingSub.status === 'past_due' || billingSub.past_due_cycle_billing_date) {
+              t.set(
+                billingSubRef,
+                { status: 'active', past_due_cycle_billing_date: null, updated_at: nowIso },
+                { merge: true }
+              );
+            }
           }
 
           return {
@@ -4214,6 +4343,7 @@ export class BillingRepository {
           billing_status: 'active',
           grace_period_expires_at: null,
           grace_period_expires_billing_date: null,
+          past_due_cycle_billing_date: null,
           current_period_start: newPeriodStartIso,
           current_period_end: newPeriodEndIso,
           cancel_at_period_end: false,
@@ -4227,6 +4357,7 @@ export class BillingRepository {
         {
           ...billingSub,
           status: 'active',
+          past_due_cycle_billing_date: null,
           current_period_start: newPeriodStartIso,
           current_period_end: newPeriodEndIso,
           current_period_end_billing_date: newPeriodEndBillingDate,
@@ -4418,6 +4549,7 @@ export class BillingRepository {
           billing_status: 'past_due',
           grace_period_expires_at: appSub.grace_period_expires_at || graceExpiresIso,
           grace_period_expires_billing_date: appSub.grace_period_expires_billing_date || graceEndBillingDate,
+          past_due_cycle_billing_date: normOverdueBillingDate,
           updated_at: nowIso,
         },
         { merge: true }
@@ -4427,6 +4559,7 @@ export class BillingRepository {
         billingSubRef,
         {
           status: 'past_due',
+          past_due_cycle_billing_date: normOverdueBillingDate,
           updated_at: nowIso,
         },
         { merge: true }

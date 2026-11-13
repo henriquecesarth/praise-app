@@ -1002,7 +1002,18 @@ describe('Phase 3D.3 — Period-End Cancel-to-Free Cutover & Public V1 Migration
           songs_count: 20,
         }),
       };
-      realSubscriptionService = new SubscriptionService(mockSubscriptionRepo);
+      const mockSummaryBillingRepo: any = {
+        getActiveTransitionForMinistry: vi.fn().mockResolvedValue(null),
+        getSubscription: vi.fn().mockResolvedValue(null),
+        getTransactions: vi.fn().mockResolvedValue([]),
+      };
+      realSubscriptionService = new SubscriptionService(
+        mockSubscriptionRepo,
+        mockSummaryBillingRepo,
+        {} as any,
+        {} as any,
+        {} as any
+      );
     });
 
     it('H1. V1 cancel + boundary transient -> SubscriptionService remains paid (no silent Free downgrade)', async () => {

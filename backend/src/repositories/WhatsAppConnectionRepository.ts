@@ -14,6 +14,7 @@ import {
   BindZernioProfileInput,
   MaterializeZernioProviderIdentityInput,
   WhatsAppProviderIdentityClaimRecord,
+  WhatsAppProviderCleanupJobRecord,
   getMinistryAssignmentClaimId,
   parseWhatsAppCursor,
 } from '../features/whatsapp/whatsapp.types';
@@ -26,6 +27,7 @@ export class WhatsAppConnectionRepository {
   private readonly claimsCol = db.collection('whatsapp_provider_identity_claims');
   private readonly assignmentClaimsCol = db.collection('whatsapp_ministry_assignment_claims');
   private readonly secretsCol = db.collection('whatsapp_connection_secrets');
+  private readonly cleanupJobsCol = db.collection('whatsapp_provider_cleanup_jobs');
 
   async getConnectionById(connectionId: string): Promise<WhatsAppConnectionRecord | null> {
     const doc = await this.connectionsCol.doc(connectionId).get();
@@ -537,6 +539,12 @@ export class WhatsAppConnectionRepository {
         });
       }
 
+      if (conn.status === 'disconnected' || conn.status_reason === 'USER_DISCONNECTED') {
+        throw new AppError(409, 'CONNECTION_DISCONNECTED: A conexão foi desconectada.', {
+          code: 'CONNECTION_DISCONNECTED',
+        });
+      }
+
       // Idempotency: if already bound to the exact same profile ID
       if (conn.provider_profile_id === normalizedProfileId) {
         return conn;
@@ -602,10 +610,31 @@ export class WhatsAppConnectionRepository {
     // Phone canonicalization via project-wide normalizeToE164
     const canonicalPhoneNumber = normalizeToE164(phoneNumber);
 
+    let disconnectedLateAccountCleanup = false;
+
     const runInTransaction = async (tx: FirebaseFirestore.Transaction) => {
-      // 1. Read Connection
+      // 1. Read Connection, cleanup job slots, and identity claims upfront (all reads before writes)
       const connRef = this.connectionsCol.doc(connectionId);
-      const connDoc = await tx.get(connRef);
+      const cleanupJobId = `cleanup_conn_${connectionId}`;
+      const cleanupJobRef = this.cleanupJobsCol.doc(cleanupJobId);
+      const orphanHash = crypto
+        .createHash('sha256')
+        .update(`${connectionId}:${normalizedAccountId}`)
+        .digest('hex')
+        .slice(0, 12);
+      const orphanJobId = `cleanup_orphan_${connectionId}_${orphanHash}`;
+      const orphanJobRef = this.cleanupJobsCol.doc(orphanJobId);
+      const accountClaimId = getZernioAccountClaimId(normalizedAccountId);
+      const accountClaimRef = this.claimsCol.doc(accountClaimId);
+      const phoneClaimId = getZernioPhoneClaimId(canonicalPhoneNumber);
+      const phoneClaimRef = this.claimsCol.doc(phoneClaimId);
+      const [connDoc, cleanupJobDoc, orphanJobDoc, accountClaimDoc, phoneClaimDoc] = await Promise.all([
+        tx.get(connRef),
+        tx.get(cleanupJobRef),
+        tx.get(orphanJobRef),
+        tx.get(accountClaimRef),
+        tx.get(phoneClaimRef),
+      ]);
 
       if (!connDoc.exists) {
         throw new AppError(404, 'Conexão não encontrada.');
@@ -626,6 +655,139 @@ export class WhatsAppConnectionRepository {
       if (conn.provider !== 'zernio') {
         throw new AppError(400, 'Esta conexão não pertence ao provedor Zernio.', {
           code: 'INVALID_PROVIDER',
+        });
+      }
+
+      if (conn.status === 'disconnected' || conn.status_reason === 'USER_DISCONNECTED') {
+        if (existingTx) {
+          throw new AppError(409, 'CONNECTION_DISCONNECTED: A conexão foi desconectada antes da materialização.', {
+            code: 'CONNECTION_DISCONNECTED',
+          });
+        }
+        // Check identity claim ownership before scheduling ANY cleanup on a disconnected connection.
+        // If another connection/organization already owns the account or phone claim, do NOT queue
+        // or re-arm cleanup targeting a competitor's live identity.
+        const existingAccountClaim = accountClaimDoc.exists
+          ? (accountClaimDoc.data() as WhatsAppProviderIdentityClaimRecord)
+          : null;
+        const existingPhoneClaim = phoneClaimDoc.exists
+          ? (phoneClaimDoc.data() as WhatsAppProviderIdentityClaimRecord)
+          : null;
+        const accountOwnedByCompetitor = Boolean(
+          existingAccountClaim &&
+            (existingAccountClaim.connection_id !== connectionId ||
+              existingAccountClaim.organization_id !== organizationId)
+        );
+        const phoneOwnedByCompetitor = Boolean(
+          existingPhoneClaim &&
+            (existingPhoneClaim.connection_id !== connectionId ||
+              existingPhoneClaim.organization_id !== organizationId)
+        );
+
+        if (accountOwnedByCompetitor || phoneOwnedByCompetitor) {
+          disconnectedLateAccountCleanup = true;
+          return conn;
+        }
+
+        // Durably schedule D7 cleanup for late remote account without mutating existing cleanup
+        // ownership/leases or creating active identity claims on a disconnected connection.
+        const nowIso = new Date().toISOString();
+        const existingPrimary = cleanupJobDoc.exists
+          ? (cleanupJobDoc.data() as WhatsAppProviderCleanupJobRecord)
+          : null;
+        const primaryConflictsWithConn = Boolean(
+          conn.provider_account_id && conn.provider_account_id !== normalizedAccountId
+        );
+        const primaryOwnedByOtherAccount = Boolean(
+          existingPrimary?.provider_account_id &&
+            existingPrimary.provider_account_id !== normalizedAccountId
+        );
+
+        const buildJobRecord = (
+          id: string,
+          scope: 'primary' | 'late_orphan'
+        ): WhatsAppProviderCleanupJobRecord => ({
+          id,
+          cleanup_scope: scope,
+          organization_id: organizationId,
+          connection_id: conn.id,
+          provider: 'zernio',
+          provider_waba_id: null,
+          provider_phone_number_id: null,
+          provider_account_id: normalizedAccountId,
+          provider_profile_id: normalizedProfileId,
+          phone_number: canonicalPhoneNumber,
+          status: 'pending',
+          attempt_count: 0,
+          max_attempts: 5,
+          next_attempt_at: nowIso,
+          lease_token: null,
+          lease_expires_at: null,
+          last_attempt_started_at: null,
+          last_error_code: null,
+          last_error_at: null,
+          provider_cleanup_proof: null,
+          override_reason: null,
+          manual_action_by: null,
+          manual_action_at: null,
+          manual_action_reason: null,
+          created_at: nowIso,
+          updated_at: nowIso,
+          completed_at: null,
+          retention_expires_at: null,
+        });
+
+        if (!primaryConflictsWithConn && !primaryOwnedByOtherAccount) {
+          if (!existingPrimary) {
+            tx.set(cleanupJobRef, buildJobRecord(cleanupJobId, 'primary'));
+          } else if (['cancelled', 'exhausted', 'abandoned'].includes(existingPrimary.status)) {
+            // Only re-arm if previously inactive and same/unmaterialized account; never clobber processing/pending/succeeded leases.
+            tx.update(cleanupJobRef, {
+              provider_account_id: existingPrimary.provider_account_id || normalizedAccountId,
+              provider_profile_id: existingPrimary.provider_profile_id || normalizedProfileId,
+              phone_number: existingPrimary.phone_number || canonicalPhoneNumber,
+              status: 'pending',
+              attempt_count: 0,
+              next_attempt_at: nowIso,
+              lease_token: null,
+              lease_expires_at: null,
+              completed_at: null,
+              retention_expires_at: null,
+              updated_at: nowIso,
+            });
+          }
+        } else {
+          // Existing primary cleanup or conn identity targets another account (A).
+          // Preserve A's cleanup job and lease untouched; queue a separate deterministic late-orphan job for B.
+          if (!orphanJobDoc.exists) {
+            tx.set(orphanJobRef, buildJobRecord(orphanJobId, 'late_orphan'));
+          } else {
+            const existingOrphan = orphanJobDoc.data() as WhatsAppProviderCleanupJobRecord;
+            if (['cancelled', 'exhausted', 'abandoned'].includes(existingOrphan.status)) {
+              tx.update(orphanJobRef, {
+                status: 'pending',
+                attempt_count: 0,
+                next_attempt_at: nowIso,
+                lease_token: null,
+                lease_expires_at: null,
+                completed_at: null,
+                retention_expires_at: null,
+                updated_at: nowIso,
+              });
+            }
+          }
+        }
+
+        disconnectedLateAccountCleanup = true;
+        return conn;
+      }
+      if (
+        conn.status !== 'pending' &&
+        conn.status !== 'connecting' &&
+        !(conn.status === 'connected' && conn.provider_account_id === normalizedAccountId)
+      ) {
+        throw new AppError(409, `Conexão em estado inválido para materialização: ${conn.status}`, {
+          code: 'INVALID_CONNECTION_STATUS',
         });
       }
 
@@ -673,18 +835,7 @@ export class WhatsAppConnectionRepository {
         );
       }
 
-      // 2. Resolve Claim References & READ BOTH CLAIM DOCUMENTS BEFORE WRITES
-      const accountClaimId = getZernioAccountClaimId(normalizedAccountId);
-      const accountClaimRef = this.claimsCol.doc(accountClaimId);
-
-      const phoneClaimId = getZernioPhoneClaimId(canonicalPhoneNumber);
-      const phoneClaimRef = this.claimsCol.doc(phoneClaimId);
-
-      const [accountClaimDoc, phoneClaimDoc] = await Promise.all([
-        tx.get(accountClaimRef),
-        tx.get(phoneClaimRef),
-      ]);
-
+      // 2-4. Verify Account & Phone Claim Ownership (already read upfront before writes)
       // 3. Verify Account Claim Ownership
       if (accountClaimDoc.exists) {
         const existingAccClaim = accountClaimDoc.data() as WhatsAppProviderIdentityClaimRecord;
@@ -772,7 +923,13 @@ export class WhatsAppConnectionRepository {
     if (existingTx) {
       return await runInTransaction(existingTx);
     }
-    return await db.runTransaction(runInTransaction);
+    const result = await db.runTransaction(runInTransaction);
+    if (disconnectedLateAccountCleanup) {
+      throw new AppError(409, 'CONNECTION_DISCONNECTED: A conexão foi desconectada antes da materialização.', {
+        code: 'CONNECTION_DISCONNECTED',
+      });
+    }
+    return result;
   }
 
   async findByZernioProfileId(

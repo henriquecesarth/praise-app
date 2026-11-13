@@ -16,6 +16,7 @@ import {
   canCreateEarlyActivationCheckout,
   isEarlyActivationBoundarySafe,
   validateEarlyActivationCompletion,
+  checkInitialPurchaseProviderReadiness,
 } from './billing-transition-domain.service';
 import {
   SourceContractInput,
@@ -1361,6 +1362,107 @@ describe('Billing Transition Domain — Phase 2.1 Execution Strategy & Pure Enti
         const res = validateEarlyActivationCompletion(params);
         expect(res.ready).toBe(false);
         expect(res.reason).toContain('ID da tentativa');
+      });
+    });
+
+    describe('checkInitialPurchaseProviderReadiness fail-closed amount & currency gates (BR2-3)', () => {
+      const validTransition: BillingTransitionV1Record = {
+        id: 'tr_init_domain_1',
+        ministry_id: 'min_domain_1',
+        provider: 'asaas',
+        policy_version: 'billing_transition_v1',
+        execution_strategy: 'immediate_initial_purchase',
+        source_plan_id: 'free',
+        source_interval: 'monthly',
+        source_addon_blocks: 0,
+        target_plan_id: 'lite',
+        target_interval: 'monthly',
+        target_addon_blocks: 0,
+        requested_plan_id: 'lite',
+        requested_interval: 'monthly',
+        requested_addon_blocks: 0,
+        target_future_recurring_price_cents: 1490,
+        currency: 'BRL',
+        transition_status: 'pending_initial_purchase',
+        financial_safety_status: 'live',
+        early_activation_status: 'not_applicable',
+        supersede_status: 'not_applicable',
+        checkout_intent_id: 'intent_init_1',
+        initial_provider_checkout_id: 'chk_init_1',
+        initial_provider_subscription_id: 'sub_init_1',
+        provider_customer_id: 'cus_init_1',
+        requested_at: '2026-09-01T12:00:00.000Z',
+        created_at: '2026-09-01T12:00:00.000Z',
+        updated_at: '2026-09-01T12:00:00.000Z',
+      } as any;
+
+      it('rejects missing amountCents & missing currency (never defaults {})', () => {
+        const res = checkInitialPurchaseProviderReadiness({
+          transition: validTransition,
+          parsedEvent: {
+            providerEventId: 'evt_empty_money',
+            eventType: 'payment_confirmed',
+            rawEventType: 'PAYMENT_CONFIRMED',
+            providerCheckoutId: 'chk_init_1',
+            providerSubscriptionId: 'sub_init_1',
+            providerPaymentId: 'pay_init_1',
+            providerCustomerId: 'cus_init_1',
+            externalReference: 'intent_init_1',
+            status: 'CONFIRMED',
+          } as any,
+          expectedAmountCents: 1490,
+          expectedCurrency: 'BRL',
+        });
+
+        expect(res.ready).toBe(false);
+        expect(res.failureCode).toBe('AMOUNT_MISMATCH');
+      });
+
+      it('rejects non-positive amountCents (0 or negative)', () => {
+        const res = checkInitialPurchaseProviderReadiness({
+          transition: validTransition,
+          parsedEvent: {
+            providerEventId: 'evt_zero_amt',
+            eventType: 'payment_confirmed',
+            rawEventType: 'PAYMENT_CONFIRMED',
+            providerCheckoutId: 'chk_init_1',
+            providerSubscriptionId: 'sub_init_1',
+            providerPaymentId: 'pay_init_1',
+            providerCustomerId: 'cus_init_1',
+            externalReference: 'intent_init_1',
+            amountCents: 0,
+            currency: 'BRL',
+            status: 'CONFIRMED',
+          } as any,
+          expectedAmountCents: 1490,
+          expectedCurrency: 'BRL',
+        });
+
+        expect(res.ready).toBe(false);
+        expect(res.failureCode).toBe('AMOUNT_MISMATCH');
+      });
+
+      it('rejects missing currency when expectedCurrency is BRL (no || BRL default)', () => {
+        const res = checkInitialPurchaseProviderReadiness({
+          transition: validTransition,
+          parsedEvent: {
+            providerEventId: 'evt_missing_currency',
+            eventType: 'payment_confirmed',
+            rawEventType: 'PAYMENT_CONFIRMED',
+            providerCheckoutId: 'chk_init_1',
+            providerSubscriptionId: 'sub_init_1',
+            providerPaymentId: 'pay_init_1',
+            providerCustomerId: 'cus_init_1',
+            externalReference: 'intent_init_1',
+            amountCents: 1490,
+            status: 'CONFIRMED',
+          } as any,
+          expectedAmountCents: 1490,
+          expectedCurrency: 'BRL',
+        });
+
+        expect(res.ready).toBe(false);
+        expect(res.failureCode).toBe('CURRENCY_MISMATCH');
       });
     });
   });

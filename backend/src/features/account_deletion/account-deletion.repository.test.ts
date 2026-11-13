@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { FieldPath } from 'firebase-admin/firestore';
 import { db } from '../../lib/firebase';
-import { AccountDeletionRepository } from '../../repositories/AccountDeletionRepository';
+import {
+  AccountDeletionRepository,
+  deleteQueryDocsChunked,
+  updateQueryDocsChunked,
+} from '../../repositories/AccountDeletionRepository';
 
 describe('AccountDeletionRepository Persistence & Anonymization Suite', () => {
   let repository: AccountDeletionRepository;
@@ -78,9 +83,14 @@ describe('AccountDeletionRepository Persistence & Anonymization Suite', () => {
         ref: { id: 'sched_future_1' } as any,
       };
 
-      vi.spyOn((repository as any).schedulesCol, 'get').mockResolvedValue({
-        docs: [mockFutureDoc],
-      });
+      const futureScheduleChain: any = {
+        limit: vi.fn(),
+        startAfter: vi.fn(),
+        get: vi.fn().mockResolvedValue({ docs: [mockFutureDoc] }),
+      };
+      futureScheduleChain.limit.mockReturnValue(futureScheduleChain);
+      futureScheduleChain.startAfter.mockReturnValue(futureScheduleChain);
+      vi.spyOn((repository as any).schedulesCol, 'orderBy').mockReturnValue(futureScheduleChain);
 
       await repository.cleanFutureSchedulesAndAnonymizeHistorical(testUserId, ['mem_doc_1']);
 
@@ -115,9 +125,14 @@ describe('AccountDeletionRepository Persistence & Anonymization Suite', () => {
         ref: { id: 'sched_past_1' } as any,
       };
 
-      vi.spyOn((repository as any).schedulesCol, 'get').mockResolvedValue({
-        docs: [mockPastDoc],
-      });
+      const pastScheduleChain: any = {
+        limit: vi.fn(),
+        startAfter: vi.fn(),
+        get: vi.fn().mockResolvedValue({ docs: [mockPastDoc] }),
+      };
+      pastScheduleChain.limit.mockReturnValue(pastScheduleChain);
+      pastScheduleChain.startAfter.mockReturnValue(pastScheduleChain);
+      vi.spyOn((repository as any).schedulesCol, 'orderBy').mockReturnValue(pastScheduleChain);
 
       await repository.cleanFutureSchedulesAndAnonymizeHistorical(testUserId, []);
 
@@ -467,6 +482,184 @@ describe('AccountDeletionRepository Persistence & Anonymization Suite', () => {
       // 600 items with chunkSize=250 -> 3 batches (250, 250, 100)
       expect(commitCount.count).toBe(3);
       expect(mockBatch.delete).toHaveBeenCalledTimes(600);
+    });
+  });
+
+  describe('FR2-5 multi-page cursor pagination & per-page bounded writes', () => {
+    function buildCursorPaginatedQuery(initialDocs: Array<{ id: string; ref: { id: string }; data: () => Record<string, any> }>) {
+      const orderByCalls: Array<[unknown, unknown]> = [];
+      const limitCalls: number[] = [];
+      const startAfterIds: string[] = [];
+
+      const makeQuery = (state: { cursorId?: string; pageLimit?: number } = {}): any => ({
+        orderBy: vi.fn((field: unknown, dir: unknown) => {
+          orderByCalls.push([field, dir]);
+          return makeQuery(state);
+        }),
+        limit: vi.fn((limitVal: number) => {
+          limitCalls.push(limitVal);
+          return makeQuery({ ...state, pageLimit: limitVal });
+        }),
+        startAfter: vi.fn((cursorDoc: any) => {
+          startAfterIds.push(cursorDoc.id);
+          return makeQuery({ ...state, cursorId: cursorDoc.id });
+        }),
+        get: vi.fn(async () => {
+          const sorted = [...initialDocs].sort((a, b) => a.id.localeCompare(b.id));
+          const filtered = state.cursorId
+            ? sorted.filter((d) => d.id > state.cursorId!)
+            : sorted;
+          const sliced = typeof state.pageLimit === 'number'
+            ? filtered.slice(0, state.pageLimit)
+            : filtered;
+          return { docs: sliced, empty: sliced.length === 0 };
+        }),
+      });
+
+      return { query: makeQuery(), orderByCalls, limitCalls, startAfterIds };
+    }
+
+    it('paginates deleteQueryDocsChunked in bounded cursor pages <= 100', async () => {
+      const docs = Array.from({ length: 250 }, (_, i) => {
+        const id = `del_doc_${String(i).padStart(3, '0')}`;
+        return { id, ref: { id }, data: () => ({ user_id: testUserId }) };
+      });
+      const deletedIds: string[] = [];
+      const mockBatch = {
+        delete: vi.fn((ref: { id: string }) => {
+          deletedIds.push(ref.id);
+          const idx = docs.findIndex((d) => d.id === ref.id);
+          if (idx >= 0) docs.splice(idx, 1);
+        }),
+        commit: vi.fn().mockResolvedValue(undefined),
+      };
+      vi.spyOn(db, 'batch').mockReturnValue(mockBatch as any);
+
+      const tracker = buildCursorPaginatedQuery(docs);
+      await deleteQueryDocsChunked(tracker.query, 250);
+
+      expect(tracker.orderByCalls.length).toBeGreaterThanOrEqual(3);
+      expect(tracker.orderByCalls[0][0]).toEqual(FieldPath.documentId());
+      expect(tracker.limitCalls.every((n) => n <= 100)).toBe(true);
+      expect(tracker.startAfterIds).toEqual(['del_doc_099', 'del_doc_199']);
+      expect(deletedIds).toHaveLength(250);
+    });
+
+    it('paginates updateQueryDocsChunked in bounded cursor pages <= 100', async () => {
+      const docs = Array.from({ length: 250 }, (_, i) => {
+        const id = `upd_doc_${String(i).padStart(3, '0')}`;
+        return { id, ref: { id }, data: () => ({ created_by: testUserId }) };
+      });
+      const updatedIds: string[] = [];
+      const mockBatch = {
+        update: vi.fn((ref: { id: string }) => {
+          updatedIds.push(ref.id);
+        }),
+        commit: vi.fn().mockResolvedValue(undefined),
+      };
+      vi.spyOn(db, 'batch').mockReturnValue(mockBatch as any);
+
+      const tracker = buildCursorPaginatedQuery(docs);
+      await updateQueryDocsChunked(tracker.query, { created_by: 'DELETED_USER' }, 250);
+
+      expect(tracker.orderByCalls.length).toBeGreaterThanOrEqual(3);
+      expect(tracker.orderByCalls[0][0]).toEqual(FieldPath.documentId());
+      expect(tracker.limitCalls.every((n) => n <= 100)).toBe(true);
+      expect(tracker.startAfterIds).toEqual(['upd_doc_099', 'upd_doc_199']);
+      expect(updatedIds).toHaveLength(250);
+    });
+
+    it('paginates detachMemberships teamsCol across multiple cursor pages and flushes per page', async () => {
+      const teamDocs = Array.from({ length: 250 }, (_, i) => {
+        const id = `team_${String(i).padStart(3, '0')}`;
+        return {
+          id,
+          ref: { id },
+          data: () => ({ member_ids: [testUserId, 'other_user'], leader_id: 'other_user' }),
+        };
+      });
+      const updatedTeamIds: string[] = [];
+      let commitCalls = 0;
+      const mockBatch = {
+        update: vi.fn((ref: { id: string }, data: Record<string, any>) => {
+          updatedTeamIds.push(ref.id);
+          expect(data.member_ids).toEqual(['other_user']);
+        }),
+        commit: vi.fn().mockImplementation(async () => {
+          commitCalls++;
+        }),
+      };
+      vi.spyOn(db, 'batch').mockReturnValue(mockBatch as any);
+
+      vi.spyOn((repository as any).membersCol, 'where').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ docs: [] }),
+      } as any);
+      vi.spyOn((repository as any).orgMembersCol, 'where').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ docs: [] }),
+      } as any);
+      vi.spyOn((repository as any).groupMembersCol, 'where').mockReturnValue({
+        get: vi.fn().mockResolvedValue({ docs: [] }),
+      } as any);
+
+      const tracker = buildCursorPaginatedQuery(teamDocs);
+      vi.spyOn((repository as any).teamsCol, 'orderBy').mockImplementation(tracker.query.orderBy);
+      vi.spyOn((repository as any).teamsCol, 'limit').mockImplementation(tracker.query.limit);
+      vi.spyOn((repository as any).teamsCol, 'startAfter').mockImplementation(tracker.query.startAfter);
+
+      await repository.detachMemberships(testUserId, {
+        ministry_member_doc_ids: [],
+        organization_member_doc_ids: [],
+        group_member_doc_ids: [],
+        member_ids: [],
+        ministry_ids: [],
+      });
+
+      expect(tracker.orderByCalls[0][0]).toEqual(FieldPath.documentId());
+      expect(tracker.limitCalls.every((n) => n <= 100)).toBe(true);
+      expect(tracker.startAfterIds).toEqual(['team_099', 'team_199']);
+      expect(updatedTeamIds).toHaveLength(250);
+      expect(commitCalls).toBe(3);
+    });
+
+    it('paginates cleanFutureSchedulesAndAnonymizeHistorical schedulesCol across multiple cursor pages and flushes per page', async () => {
+      const futureDate = '2099-12-31';
+      const scheduleDocs = Array.from({ length: 250 }, (_, i) => {
+        const id = `sched_${String(i).padStart(3, '0')}`;
+        return {
+          id,
+          ref: { id },
+          data: () => ({
+            date: futureDate,
+            created_by: 'someone_else',
+            participants: [{ id: testUserId, userId: testUserId, name: 'Test User' }],
+          }),
+        };
+      });
+      const updatedScheduleIds: string[] = [];
+      let commitCalls = 0;
+      const mockBatch = {
+        update: vi.fn((ref: { id: string }, data: Record<string, any>) => {
+          updatedScheduleIds.push(ref.id);
+          expect(data.participants).toEqual([]);
+        }),
+        commit: vi.fn().mockImplementation(async () => {
+          commitCalls++;
+        }),
+      };
+      vi.spyOn(db, 'batch').mockReturnValue(mockBatch as any);
+
+      const tracker = buildCursorPaginatedQuery(scheduleDocs);
+      vi.spyOn((repository as any).schedulesCol, 'orderBy').mockImplementation(tracker.query.orderBy);
+      vi.spyOn((repository as any).schedulesCol, 'limit').mockImplementation(tracker.query.limit);
+      vi.spyOn((repository as any).schedulesCol, 'startAfter').mockImplementation(tracker.query.startAfter);
+
+      await repository.cleanFutureSchedulesAndAnonymizeHistorical(testUserId, []);
+
+      expect(tracker.orderByCalls[0][0]).toEqual(FieldPath.documentId());
+      expect(tracker.limitCalls.every((n) => n <= 100)).toBe(true);
+      expect(tracker.startAfterIds).toEqual(['sched_099', 'sched_199']);
+      expect(updatedScheduleIds).toHaveLength(250);
+      expect(commitCalls).toBe(3);
     });
   });
 });

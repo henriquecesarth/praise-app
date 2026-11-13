@@ -9,7 +9,7 @@ import { MetaWhatsAppProvider } from './meta-whatsapp.provider';
 import { WhatsAppProvider, WhatsAppProviderCleanupJobRecord, normalizeToE164 } from './whatsapp.types';
 import { AppError } from '../../middleware/error-handler';
 import { ZernioHttpClient } from './zernio-http-client';
-import { ZernioError, isZernioAccountProvenAbsent, ZernioAccount } from './zernio.types';
+import { ZernioError, isZernioAccountProvenAbsent, isPositiveZernioDeleteAck, ZernioAccount } from './zernio.types';
 
 import { WhatsAppExecutionDeadline } from './whatsapp-execution-deadline';
 
@@ -653,52 +653,63 @@ export class WhatsAppCleanupService {
       return 'cancelled';
     }
 
-    // Require strict equality for materialized identities
-    if (candidate.provider_account_id !== conn.provider_account_id) {
-      await this.cleanupJobRepo.recordExhaustionInTransaction(
-        candidate.id,
-        jobLeaseToken,
-        'PROVIDER_ACCOUNT_ID_MISMATCH'
-      );
-      return 'exhausted';
-    }
+    const isLateOrphanJob =
+      candidate.cleanup_scope === 'late_orphan' || candidate.id.startsWith('cleanup_orphan_');
 
-    if (candidate.provider_profile_id !== conn.provider_profile_id) {
-      await this.cleanupJobRepo.recordExhaustionInTransaction(
-        candidate.id,
-        jobLeaseToken,
-        'PROVIDER_PROFILE_ID_MISMATCH'
-      );
-      return 'exhausted';
-    }
+    // For primary jobs, enforce strict equality for any identity fields materialized on conn.
+    // For tracked late-orphan jobs, cleanup intentionally removes a secondary remote account (B)
+    // created in parallel while preserving primary connection ownership (A).
+    if (!isLateOrphanJob) {
+      if (conn.provider_account_id && candidate.provider_account_id !== conn.provider_account_id) {
+        await this.cleanupJobRepo.recordExhaustionInTransaction(
+          candidate.id,
+          jobLeaseToken,
+          'PROVIDER_ACCOUNT_ID_MISMATCH'
+        );
+        return 'exhausted';
+      }
 
-    let candPhoneCanon: string | null = null;
-    let connPhoneCanon: string | null = null;
-    if (candidate.phone_number) {
-      try {
-        candPhoneCanon = normalizeToE164(candidate.phone_number);
-      } catch {
-        candPhoneCanon = candidate.phone_number;
+      if (conn.provider_profile_id && candidate.provider_profile_id !== conn.provider_profile_id) {
+        await this.cleanupJobRepo.recordExhaustionInTransaction(
+          candidate.id,
+          jobLeaseToken,
+          'PROVIDER_PROFILE_ID_MISMATCH'
+        );
+        return 'exhausted';
+      }
+
+      let candPhoneCanon: string | null = null;
+      let connPhoneCanon: string | null = null;
+      if (candidate.phone_number) {
+        try {
+          candPhoneCanon = normalizeToE164(candidate.phone_number);
+        } catch {
+          candPhoneCanon = candidate.phone_number;
+        }
+      }
+      if (conn.phone_number) {
+        try {
+          connPhoneCanon = normalizeToE164(conn.phone_number);
+        } catch {
+          connPhoneCanon = conn.phone_number;
+        }
+      }
+      if (connPhoneCanon && candPhoneCanon !== connPhoneCanon) {
+        await this.cleanupJobRepo.recordExhaustionInTransaction(
+          candidate.id,
+          jobLeaseToken,
+          'PHONE_NUMBER_MISMATCH'
+        );
+        return 'exhausted';
       }
     }
-    if (conn.phone_number) {
-      try {
-        connPhoneCanon = normalizeToE164(conn.phone_number);
-      } catch {
-        connPhoneCanon = conn.phone_number;
-      }
-    }
-    if (candPhoneCanon !== connPhoneCanon) {
-      await this.cleanupJobRepo.recordExhaustionInTransaction(
-        candidate.id,
-        jobLeaseToken,
-        'PHONE_NUMBER_MISMATCH'
-      );
-      return 'exhausted';
-    }
 
-    const accountId = conn.provider_account_id;
-    const profileId = conn.provider_profile_id;
+    const accountId = isLateOrphanJob
+      ? candidate.provider_account_id
+      : conn.provider_account_id || candidate.provider_account_id;
+    const profileId = isLateOrphanJob
+      ? candidate.provider_profile_id || conn.provider_profile_id
+      : conn.provider_profile_id || candidate.provider_profile_id;
 
     // 3. If no provider account ID, it was never materialized remotely
     if (!accountId || !profileId) {
@@ -711,6 +722,14 @@ export class WhatsAppCleanupService {
       (m) => m.status === 'unknown_outcome'
     );
     if (hasPriorUnknown || candidate.attempt_count > 0) {
+      const authorityCheck = await this.cleanupJobRepo.assertZernioCleanupAuthorityInTransaction(
+        candidate.id,
+        jobLeaseToken
+      );
+      if (!authorityCheck.authorized) {
+        return authorityCheck.outcome || 'exhausted';
+      }
+
       let accounts: ZernioAccount[];
       try {
         accounts = await this.zernioClient.listAccounts(
@@ -763,13 +782,13 @@ export class WhatsAppCleanupService {
       }
     }
 
-    // 5. Pre-call attempt reservation
-    const reserveResult = await this.cleanupJobRepo.reserveAttemptInTransaction(
+    // 5. Atomic claim authority check, fencing, and pre-call attempt reservation BEFORE remote DELETE
+    const reserveResult = await this.cleanupJobRepo.authorizeAndReserveZernioCleanupAttemptInTransaction(
       candidate.id,
       jobLeaseToken
     );
-    if (typeof reserveResult === 'object' && !reserveResult.reserved) {
-      return 'exhausted';
+    if (!reserveResult.reserved) {
+      return reserveResult.outcome || 'exhausted';
     }
 
     // 6. Check budget after reservation
@@ -785,8 +804,16 @@ export class WhatsAppCleanupService {
 
     // 7. Execute remote DELETE /v1/accounts/{accountId}
     try {
-      await this.zernioClient.deleteAccount(accountId, { deadline: activeDeadline });
-      // HTTP 200 OK -> Confirmed cleanup proof! Strong settlement!
+      const deleteResult = await this.zernioClient.deleteAccount(accountId, { deadline: activeDeadline });
+      if (!isPositiveZernioDeleteAck(deleteResult)) {
+        throw new ZernioError({
+          statusCode: 502,
+          kind: 'TRANSIENT_PROVIDER_ERROR',
+          message: 'ZERNIO_PROTOCOL_ERROR: Resposta do Zernio sem confirmação positiva de exclusão.',
+          providerCode: 'ZERNIO_UNCONFIRMED_DELETE',
+        });
+      }
+      // Confirmed cleanup proof! Strong settlement!
       await this.cleanupJobRepo.settleZernioCleanupInTransaction(candidate.id, jobLeaseToken);
       return 'succeeded';
     } catch (err: any) {

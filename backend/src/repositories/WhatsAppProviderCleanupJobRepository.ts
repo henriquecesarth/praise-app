@@ -552,6 +552,231 @@ export class WhatsAppProviderCleanupJobRepository {
     return nextAttempt;
   }
 
+  private async evaluateZernioCleanupAuthorityInTx(
+    tx: FirebaseFirestore.Transaction,
+    jobId: string,
+    leaseToken: string,
+    reserveAttemptAndFence: boolean
+  ): Promise<{
+    reserved: boolean;
+    outcome?: 'exhausted' | 'cancelled';
+    errorCode?: string;
+    currentAttemptCount?: number;
+  }> {
+    const docRef = this.getJobRef(jobId);
+    const jobDoc = await tx.get(docRef);
+    if (!jobDoc.exists) {
+      throw new AppError(404, 'Cleanup job não encontrado.');
+    }
+
+    const job = jobDoc.data() as WhatsAppProviderCleanupJobRecord;
+    if (job.lease_token !== leaseToken) {
+      throw new AppError(409, 'CLEANUP_JOB_LEASE_LOST: Token de lease divergente.');
+    }
+
+    const connRef = db.collection('whatsapp_connections').doc(job.connection_id);
+    const connDoc = await tx.get(connRef);
+    if (!connDoc.exists) {
+      tx.update(docRef, {
+        status: 'exhausted',
+        provider_cleanup_proof: 'unproven',
+        lease_token: null,
+        lease_expires_at: null,
+        retention_expires_at: null,
+        last_error_code: 'CONNECTION_NOT_FOUND',
+        updated_at: new Date().toISOString(),
+      });
+      return { reserved: false, outcome: 'exhausted', errorCode: 'CONNECTION_NOT_FOUND' };
+    }
+
+    const conn = connDoc.data() as WhatsAppConnectionRecord;
+    if (conn.organization_id !== job.organization_id) {
+      tx.update(docRef, {
+        status: 'exhausted',
+        provider_cleanup_proof: 'unproven',
+        lease_token: null,
+        lease_expires_at: null,
+        retention_expires_at: null,
+        last_error_code: 'CROSS_TENANT_MISMATCH',
+        updated_at: new Date().toISOString(),
+      });
+      return { reserved: false, outcome: 'exhausted', errorCode: 'CROSS_TENANT_MISMATCH' };
+    }
+
+    if (conn.status !== 'disconnected') {
+      const now = new Date();
+      const nowIso = now.toISOString();
+      tx.update(docRef, {
+        status: 'cancelled',
+        provider_cleanup_proof: 'not_needed',
+        lease_token: null,
+        lease_expires_at: null,
+        retention_expires_at: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        last_error_code: null,
+        last_error_message: null,
+        updated_at: nowIso,
+      });
+      return { reserved: false, outcome: 'cancelled' };
+    }
+
+    const isLateOrphanJob =
+      job.cleanup_scope === 'late_orphan' || job.id.startsWith('cleanup_orphan_');
+    const accountId = isLateOrphanJob
+      ? job.provider_account_id
+      : conn.provider_account_id || job.provider_account_id;
+    const phoneNumber = isLateOrphanJob
+      ? job.phone_number
+      : conn.phone_number || job.phone_number;
+
+    let accountClaimRef: FirebaseFirestore.DocumentReference | null = null;
+    let accountClaimDoc: FirebaseFirestore.DocumentSnapshot | null = null;
+    if (accountId) {
+      const accountClaimId = getZernioAccountClaimId(accountId);
+      accountClaimRef = db.collection('whatsapp_provider_identity_claims').doc(accountClaimId);
+      accountClaimDoc = await tx.get(accountClaimRef);
+    }
+
+    let phoneClaimRef: FirebaseFirestore.DocumentReference | null = null;
+    let phoneClaimDoc: FirebaseFirestore.DocumentSnapshot | null = null;
+    if (phoneNumber) {
+      const phoneClaimId = getZernioPhoneClaimId(phoneNumber);
+      phoneClaimRef = db.collection('whatsapp_provider_identity_claims').doc(phoneClaimId);
+      phoneClaimDoc = await tx.get(phoneClaimRef);
+    }
+
+    const nowIso = new Date().toISOString();
+
+    if (accountClaimDoc && accountClaimDoc.exists) {
+      const claimData = accountClaimDoc.data();
+      if (
+        claimData?.organization_id !== job.organization_id ||
+        claimData?.connection_id !== job.connection_id
+      ) {
+        tx.update(docRef, {
+          status: 'exhausted',
+          provider_cleanup_proof: 'unproven',
+          lease_token: null,
+          lease_expires_at: null,
+          retention_expires_at: null,
+          last_error_code: 'CLAIM_OWNERSHIP_CONFLICT',
+          last_error_message: `Conta ${accountId} sob posse de outra conexão ativa (${claimData?.connection_id || 'unknown'}).`,
+          updated_at: nowIso,
+        });
+        return {
+          reserved: false,
+          outcome: 'exhausted',
+          errorCode: 'CLAIM_OWNERSHIP_CONFLICT',
+          currentAttemptCount: job.attempt_count,
+        };
+      }
+    }
+
+    if (phoneClaimDoc && phoneClaimDoc.exists) {
+      const claimData = phoneClaimDoc.data();
+      if (
+        claimData?.organization_id !== job.organization_id ||
+        claimData?.connection_id !== job.connection_id
+      ) {
+        tx.update(docRef, {
+          status: 'exhausted',
+          provider_cleanup_proof: 'unproven',
+          lease_token: null,
+          lease_expires_at: null,
+          retention_expires_at: null,
+          last_error_code: 'CLAIM_OWNERSHIP_CONFLICT',
+          last_error_message: `Telefone ${phoneNumber} sob posse de outra conexão ativa (${claimData?.connection_id || 'unknown'}).`,
+          updated_at: nowIso,
+        });
+        return {
+          reserved: false,
+          outcome: 'exhausted',
+          errorCode: 'CLAIM_OWNERSHIP_CONFLICT',
+          currentAttemptCount: job.attempt_count,
+        };
+      }
+    }
+
+    if (!reserveAttemptAndFence) {
+      return { reserved: true, currentAttemptCount: job.attempt_count };
+    }
+
+    if (job.attempt_count >= job.max_attempts) {
+      tx.update(docRef, {
+        status: 'exhausted',
+        lease_token: null,
+        lease_expires_at: null,
+        last_error_code: 'MAX_RETRIES_EXCEEDED',
+        retention_expires_at: null,
+        updated_at: nowIso,
+      });
+      return {
+        reserved: false,
+        outcome: 'exhausted',
+        errorCode: 'MAX_RETRIES_EXCEEDED',
+        currentAttemptCount: job.attempt_count,
+      };
+    }
+
+    // Fence unclaimed accountClaim atomically so a competing connection cannot bind this account while DELETE runs.
+    if (accountClaimRef && accountClaimDoc && !accountClaimDoc.exists && accountId) {
+      tx.set(accountClaimRef, {
+        id: accountClaimRef.id,
+        provider: 'zernio',
+        provider_phone_number_id: accountId,
+        organization_id: job.organization_id,
+        connection_id: job.connection_id,
+        cleanup_fenced_by_job_id: job.id,
+        created_at: nowIso,
+        updated_at: nowIso,
+      });
+    }
+
+    const nextAttempt = job.attempt_count + 1;
+    tx.update(docRef, {
+      attempt_count: nextAttempt,
+      last_attempt_started_at: nowIso,
+      updated_at: nowIso,
+    });
+
+    return { reserved: true, currentAttemptCount: nextAttempt };
+  }
+
+  /**
+   * Fails closed before calling any remote provider read/delete when cleanup ownership is invalid
+   * or conflicted with another active connection.
+   */
+  async assertZernioCleanupAuthorityInTransaction(
+    jobId: string,
+    leaseToken: string
+  ): Promise<{ authorized: boolean; outcome?: 'exhausted' | 'cancelled'; errorCode?: string }> {
+    const result = await db.runTransaction((tx) =>
+      this.evaluateZernioCleanupAuthorityInTx(tx, jobId, leaseToken, false)
+    );
+    return {
+      authorized: result.reserved,
+      outcome: result.outcome,
+      errorCode: result.errorCode,
+    };
+  }
+
+  /**
+   * Atomically validates claim ownership, writes an execution fence on the target account claim
+   * if unclaimed, and reserves the pre-call attempt count before invoking remote DELETE.
+   */
+  async authorizeAndReserveZernioCleanupAttemptInTransaction(
+    jobId: string,
+    leaseToken: string
+  ): Promise<{
+    reserved: boolean;
+    outcome?: 'exhausted' | 'cancelled';
+    errorCode?: string;
+    currentAttemptCount?: number;
+  }> {
+    return await db.runTransaction((tx) =>
+      this.evaluateZernioCleanupAuthorityInTx(tx, jobId, leaseToken, true)
+    );
+  }
+
   async completeJobInTransaction(
     jobId: string,
     leaseToken: string,
@@ -827,8 +1052,17 @@ export class WhatsAppProviderCleanupJobRepository {
         });
       }
 
-      // Read account claim
-      const accountId = job.provider_account_id || conn.provider_account_id;
+      const isLateOrphanJob =
+        job.cleanup_scope === 'late_orphan' || job.id.startsWith('cleanup_orphan_');
+
+      // Read account claim (late orphan never deletes primary conn.provider_account_id claim,
+      // but always validates competing ownership).
+      const accountId = isLateOrphanJob
+        ? job.provider_account_id
+        : job.provider_account_id || conn.provider_account_id;
+      const shouldDeleteAccountClaim = Boolean(
+        accountId && (!isLateOrphanJob || accountId !== conn.provider_account_id)
+      );
       let accountClaimRef: FirebaseFirestore.DocumentReference | null = null;
       let accountClaimDoc: FirebaseFirestore.DocumentSnapshot | null = null;
       if (accountId) {
@@ -837,8 +1071,14 @@ export class WhatsAppProviderCleanupJobRepository {
         accountClaimDoc = await tx.get(accountClaimRef);
       }
 
-      // Read phone claim
-      const phoneNumber = job.phone_number || conn.phone_number;
+      // Read phone claim (late orphan never deletes primary conn.phone_number claim,
+      // but always validates competing ownership).
+      const phoneNumber = isLateOrphanJob
+        ? job.phone_number
+        : job.phone_number || conn.phone_number;
+      const shouldDeletePhoneClaim = Boolean(
+        phoneNumber && (!isLateOrphanJob || phoneNumber !== conn.phone_number)
+      );
       let phoneClaimRef: FirebaseFirestore.DocumentReference | null = null;
       let phoneClaimDoc: FirebaseFirestore.DocumentSnapshot | null = null;
       if (phoneNumber) {
@@ -847,9 +1087,9 @@ export class WhatsAppProviderCleanupJobRepository {
         phoneClaimDoc = await tx.get(phoneClaimRef);
       }
 
-      // Read secret
+      // Read secret only for primary connection cleanup job
       const secretRef = db.collection('whatsapp_connection_secrets').doc(job.connection_id);
-      const secretDoc = await tx.get(secretRef);
+      const secretDoc = isLateOrphanJob ? null : await tx.get(secretRef);
 
       // 2. VALIDATION PHASE (All reads succeeded, validate invariants fail-closed)
       // HIGH 2: Account claim ownership validation
@@ -889,16 +1129,16 @@ export class WhatsAppProviderCleanupJobRepository {
       }
 
       // 3. WRITE PHASE (Zero reads executed from this point forward)
-      if (accountClaimRef && accountClaimDoc?.exists) {
+      if (shouldDeleteAccountClaim && accountClaimRef && accountClaimDoc?.exists) {
         tx.delete(accountClaimRef);
       }
 
-      if (phoneClaimRef && phoneClaimDoc?.exists) {
+      if (shouldDeletePhoneClaim && phoneClaimRef && phoneClaimDoc?.exists) {
         tx.delete(phoneClaimRef);
       }
 
-      // Delete connection secret if any remains
-      if (secretDoc.exists) {
+      // Delete connection secret if any remains (primary cleanup only)
+      if (!isLateOrphanJob && secretDoc?.exists) {
         tx.delete(secretRef);
       }
 

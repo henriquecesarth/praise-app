@@ -222,10 +222,121 @@ export const zernioDeleteAccountResponseSchema = z
   .object({
     message: z.string().optional(),
     success: z.boolean().optional(),
+    deleted: z.boolean().optional(),
+    ok: z.boolean().optional(),
+    error: z.unknown().optional(),
+    errors: z.unknown().optional(),
+    status: z.string().optional(),
+    state: z.string().optional(),
   })
   .passthrough();
 
 export type ZernioDeleteAccountResponse = z.infer<typeof zernioDeleteAccountResponseSchema>;
+
+const NEGATIVE_DELETE_ACK_PATTERN =
+  /\b(fail(?:ed|ure)?|error|refused|denied|unable|cannot|can't|couldn't|won't|wouldn't|shouldn't|mightn't|rejected|not|no|never|without|n[ãa]o|nunca|sem|ainda|invalid|unauthori[zs]ed|forbidden|pending|pendente|queued|processing|scheduled|agendad[ao]|in[\s_-]?progress|accepted|aceit[ao]|requested|solicitad[ao]|submitted|initiating|initiated|starting|started|will|shall|would|may|might|could|should|soon|shortly|later|eventually|em\s+breve|awaiting|approval|aprova[cç][ãa]o|once|after|when|if|unless|until|before|only|confirm|confirmation|confirma[cç][ãa]o|requires?|required|must|needs?|somente|apenas|ap[óo]s|depois|quando|mediante|sujeit[oa]|to\s+be\s+(?:deleted|removed|disconnected|revoked)|ser[aá]\s+(?:exclu[ií]d[ao]|removid[ao]|desconectad[ao]))\b/i;
+
+const TERMINAL_DELETE_MESSAGE_PATTERN =
+  /^(?:(?:the\s+)?(?:whatsapp\s+)?account\s+(?:was\s+|has\s+been\s+)?(?:deleted|removed|disconnected|revoked)(?:\s+(?:successfully|completely|permanently))?|(?:deletion|removal)\s+(?:completed|succeeded|finished|done)(?:\s+successfully)?|(?:deleted|removed|disconnected|revoked)(?:\s+(?:successfully|completely|permanently))?|conta\s+(?:exclu[ií]d[ao]|removid[ao]|desconectad[ao])(?:\s+com\s+sucesso)?)[!.]*$/i;
+
+const POSITIVE_DELETE_STATUS_ALLOWLIST = new Set([
+  'deleted',
+  'removed',
+  'disconnected',
+  'revoked',
+  'success',
+  'succeeded',
+  'completed',
+  'done',
+  'ok',
+]);
+
+/**
+ * Validates that a parsed JSON delete response unambiguously confirms remote deletion.
+ * Fails closed on error fields, non-terminal/structured status/state fields, false flags,
+ * conditional/future messages, or non-allowlisted messages without explicit proof.
+ */
+export function isPositiveZernioDeleteAck(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return false;
+  }
+
+  const record = payload as Record<string, unknown>;
+
+  if (
+    record.success === false ||
+    record.ok === false ||
+    record.deleted === false ||
+    record.pending === true ||
+    record.queued === true ||
+    record.scheduled === true
+  ) {
+    return false;
+  }
+
+  if (
+    record.error !== undefined &&
+    record.error !== null &&
+    record.error !== '' &&
+    record.error !== false
+  ) {
+    return false;
+  }
+
+  if (
+    record.errors !== undefined &&
+    record.errors !== null &&
+    (!Array.isArray(record.errors) || record.errors.length > 0)
+  ) {
+    return false;
+  }
+
+  // Structurally validate any status/state/phase/stage/result field present on the payload.
+  for (const fieldName of ['status', 'state', 'phase', 'stage'] as const) {
+    if (fieldName in record && record[fieldName] !== undefined && record[fieldName] !== null) {
+      const value = record[fieldName];
+      if (typeof value !== 'string') {
+        return false;
+      }
+      const normalized = value.trim().toLowerCase();
+      if (!normalized || !POSITIVE_DELETE_STATUS_ALLOWLIST.has(normalized)) {
+        return false;
+      }
+    }
+  }
+
+  if ('result' in record && record.result !== undefined && record.result !== null) {
+    if (typeof record.result === 'string') {
+      const normalizedResult = record.result.trim().toLowerCase();
+      if (!normalizedResult || !POSITIVE_DELETE_STATUS_ALLOWLIST.has(normalizedResult)) {
+        return false;
+      }
+    } else if (record.result !== true) {
+      return false;
+    }
+  }
+
+  if ('message' in record && record.message !== undefined && record.message !== null) {
+    if (typeof record.message !== 'string') {
+      return false;
+    }
+    const trimmedMessage = record.message.trim();
+    if (trimmedMessage.length > 0) {
+      if (NEGATIVE_DELETE_ACK_PATTERN.test(trimmedMessage)) {
+        return false;
+      }
+      if (!TERMINAL_DELETE_MESSAGE_PATTERN.test(trimmedMessage)) {
+        return false;
+      }
+    }
+  }
+
+  if (record.success === true || record.deleted === true || record.ok === true) {
+    return true;
+  }
+
+  return typeof record.message === 'string' && TERMINAL_DELETE_MESSAGE_PATTERN.test(record.message.trim());
+}
 
 export const zernioPhoneDetailsSchema = z
   .object({

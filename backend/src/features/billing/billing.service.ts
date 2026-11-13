@@ -608,10 +608,31 @@ export class BillingService {
     // Se o usuário selecionar Free:
     if (planId === 'free') {
       const currentBillingSub = await this.billingRepo.getSubscription(ministryId, this.provider.name);
-      if (currentBillingSub && currentBillingSub.status === 'active' && currentBillingSub.plan_id !== 'free') {
-        // Se já possui assinatura paga ativa, agenda o cancelamento para o fim do período via V1
-        await this.cancelSubscription(ministryId, { userId });
+      if (currentBillingSub && currentBillingSub.plan_id !== 'free' && currentBillingSub.status !== 'canceled') {
+        if (currentBillingSub.status === 'active') {
+          // Se já possui assinatura paga ativa, agenda o cancelamento para o fim do período via V1
+          await this.cancelSubscription(ministryId, { userId });
+        } else {
+          throw new AppError(
+            409,
+            'Não é possível mudar para o plano gratuito enquanto existir assinatura paga pendente ou inadimplente.',
+            { code: 'DELINQUENT_SUBSCRIPTION_ACTIVE', billingStatus: currentBillingSub.status }
+          );
+        }
       } else {
+        const currentAppSub = await this.subscriptionRepo.getSubscription(ministryId);
+        if (
+          currentAppSub &&
+          currentAppSub.subscription_mode === 'paid' &&
+          currentAppSub.plan_id !== 'free' &&
+          currentAppSub.billing_status === 'past_due'
+        ) {
+          throw new AppError(
+            409,
+            'Não é possível mudar para o plano gratuito com faturamento inadimplente em aberto.',
+            { code: 'DELINQUENT_SUBSCRIPTION_ACTIVE', billingStatus: currentAppSub.billing_status }
+          );
+        }
         await this.subscriptionService.changePlan(ministryId, 'free');
       }
       return {
@@ -1613,27 +1634,82 @@ export class BillingService {
         const targetAddons = planChange?.requested_addon_blocks ?? billingSub?.member_addon_blocks ?? 0;
         const targetInterval = planChange?.requested_interval || billingSub?.interval || 'monthly';
         const expectedPrice = calculatePlanPriceCents(targetPlan, targetInterval, targetAddons);
+        const contractedPriceCents =
+          !planChange && typeof billingSub?.amount_cents === 'number' && billingSub.amount_cents > 0
+            ? billingSub.amount_cents
+            : expectedPrice.totalPriceCents;
 
-        // Validação de Valor & Contrato (Amount Validation): Correspondência exata entre valor pago e plano contratado
+        // Enrichment of missing provider payment identity / amount before contract validation (fail-closed if absent)
+        let resolvedProviderSubId = parsedEvent.providerSubscriptionId || null;
+        let resolvedOriginalDueDate = parsedEvent.originalDueDate || null;
+        let resolvedInvoiceUrl = parsedEvent.invoiceUrl || null;
+        let resolvedAmountCents: number | undefined =
+          typeof parsedEvent.amountCents === 'number' && Number.isFinite(parsedEvent.amountCents)
+            ? parsedEvent.amountCents
+            : undefined;
+
+        if (
+          (!resolvedProviderSubId ||
+            !resolvedOriginalDueDate ||
+            !resolvedInvoiceUrl ||
+            resolvedAmountCents === undefined) &&
+          parsedEvent.providerPaymentId &&
+          typeof (this.provider as any).getPayment === 'function'
+        ) {
+          try {
+            const enriched = await (this.provider as any).getPayment(parsedEvent.providerPaymentId);
+            if (enriched) {
+              resolvedProviderSubId = resolvedProviderSubId || enriched.subscriptionId || null;
+              resolvedOriginalDueDate = resolvedOriginalDueDate || enriched.originalDueDate || null;
+              resolvedInvoiceUrl = resolvedInvoiceUrl || enriched.invoiceUrl || null;
+              if (
+                resolvedAmountCents === undefined &&
+                typeof enriched.amountCents === 'number' &&
+                Number.isFinite(enriched.amountCents)
+              ) {
+                resolvedAmountCents = enriched.amountCents;
+              }
+            }
+          } catch (_e) {
+            // fail-closed below if amount or identity remains missing
+          }
+        }
+
+        // H06: Validação de Valor & Contrato (Fail-closed se valor pago ausente ou divergente; nunca fabricar expectedPrice)
         if (targetPlan !== 'free') {
-          const paidAmountCents = parsedEvent.amountCents ?? planChange?.expected_amount_cents ?? billingSub?.amount_cents ?? 0;
-
-          if (paidAmountCents !== expectedPrice.totalPriceCents) {
+          if (
+            resolvedAmountCents === undefined ||
+            !Number.isFinite(resolvedAmountCents) ||
+            resolvedAmountCents <= 0
+          ) {
             console.error(
-              `[ANOMALIA DE CONTRATO/VALOR] Valor recebido (${paidAmountCents}¢) diverge do valor esperado (${expectedPrice.totalPriceCents}¢) para o plano ${targetPlan} (${targetInterval}, ${targetAddons} blocos) no ministério ${ministryId}.`
+              `[ANOMALIA DE CONTRATO/VALOR] Valor do pagamento ausente ou inválido na confirmação do evento ${parsedEvent.providerEventId} para o plano ${targetPlan} no ministério ${ministryId}.`
             );
             await this.billingRepo.markWebhookEventProcessed(
               this.provider.name,
               parsedEvent.providerEventId,
               'failed',
-              `Valor pago (${paidAmountCents}¢) diverge do esperado (${expectedPrice.totalPriceCents}¢) para o plano ${targetPlan}`
+              `Valor pago ausente ou inválido na confirmação para o plano ${targetPlan}`
+            );
+            return { status: 'ok', processed: false, reason: 'amount_validation_failed' };
+          }
+
+          if (resolvedAmountCents !== contractedPriceCents) {
+            console.error(
+              `[ANOMALIA DE CONTRATO/VALOR] Valor recebido (${resolvedAmountCents}¢) diverge do valor esperado (${contractedPriceCents}¢) para o plano ${targetPlan} (${targetInterval}, ${targetAddons} blocos) no ministério ${ministryId}.`
+            );
+            await this.billingRepo.markWebhookEventProcessed(
+              this.provider.name,
+              parsedEvent.providerEventId,
+              'failed',
+              `Valor pago (${resolvedAmountCents}¢) diverge do esperado (${contractedPriceCents}¢) para o plano ${targetPlan}`
             );
             return { status: 'ok', processed: false, reason: 'amount_validation_failed' };
           }
         }
 
         const newProviderSubId =
-          parsedEvent.providerSubscriptionId ||
+          resolvedProviderSubId ||
           planChange?.new_provider_subscription_id ||
           billingSub?.provider_subscription_id ||
           null;
@@ -1645,28 +1721,6 @@ export class BillingService {
           billingSub.provider_subscription_id !== newProviderSubId
             ? billingSub.provider_subscription_id
             : null);
-
-        // Provider subscription ID can come from parsedEvent, or via enrichment if missing
-        let resolvedProviderSubId = parsedEvent.providerSubscriptionId || null;
-        let resolvedOriginalDueDate = parsedEvent.originalDueDate || null;
-        let resolvedInvoiceUrl = parsedEvent.invoiceUrl || null;
-
-        if (
-          (!resolvedProviderSubId || !resolvedOriginalDueDate || !resolvedInvoiceUrl) &&
-          parsedEvent.providerPaymentId &&
-          typeof (this.provider as any).getPayment === 'function'
-        ) {
-          try {
-            const enriched = await (this.provider as any).getPayment(parsedEvent.providerPaymentId);
-            if (enriched) {
-              resolvedProviderSubId = resolvedProviderSubId || enriched.subscriptionId || null;
-              resolvedOriginalDueDate = resolvedOriginalDueDate || enriched.originalDueDate || null;
-              resolvedInvoiceUrl = resolvedInvoiceUrl || enriched.invoiceUrl || null;
-            }
-          } catch (_e) {
-            // best-effort enrichment
-          }
-        }
 
         const currentRenewalBoundary =
           normalizeToBillingDate(billingSub?.current_period_end_billing_date, config.billingTimezone) ||
@@ -1709,12 +1763,18 @@ export class BillingService {
             });
           }
 
-          if (!paymentRenewalDate || !parsedEvent.providerPaymentId) {
+          if (
+            !paymentRenewalDate ||
+            !parsedEvent.providerPaymentId ||
+            typeof resolvedAmountCents !== 'number' ||
+            !Number.isFinite(resolvedAmountCents) ||
+            resolvedAmountCents <= 0
+          ) {
             await this.billingRepo.markWebhookEventProcessed(
               this.provider.name,
               parsedEvent.providerEventId,
               'ignored',
-              'Data de renovação ou providerPaymentId ausente'
+              'Data de renovação, providerPaymentId ou valor do pagamento ausente'
             );
             return { status: 'ok', processed: false, reason: 'unresolvable_renewal_identity' };
           }
@@ -1725,8 +1785,8 @@ export class BillingService {
             providerPaymentId: parsedEvent.providerPaymentId,
             providerSubscriptionId: resolvedProviderSubId!,
             renewalBillingDate: paymentRenewalDate,
-            amountCents: parsedEvent.amountCents || expectedPrice.totalPriceCents,
-            currency: 'BRL',
+            amountCents: resolvedAmountCents,
+            currency: ((parsedEvent as any).currency || 'BRL') as 'BRL',
             interval: targetInterval,
             expectedCurrentPeriodEnd: currentRenewalBoundary,
             invoiceUrl: resolvedInvoiceUrl,
@@ -1789,7 +1849,7 @@ export class BillingService {
               provider: this.provider.name,
               provider_payment_id: parsedEvent.providerPaymentId,
               provider_subscription_id: newProviderSubId,
-              amount_cents: parsedEvent.amountCents || expectedPrice.totalPriceCents,
+              amount_cents: resolvedAmountCents ?? 0,
               currency: 'BRL',
               status: 'paid',
               due_date: parsedEvent.dueDate || getCurrentBillingDate(now),
@@ -2277,6 +2337,20 @@ export class BillingService {
       requestedAt: now,
       timeZone: config.billingTimezone,
     });
+
+    // H08: Preservar fronteira comercial canônica (*_billing_date) sem deslocamento por meia-noite UTC
+    const canonicalStartDate =
+      normalizeToBillingDate(currentBillingSub.current_period_start_billing_date, config.billingTimezone) ||
+      normalizeToBillingDate(currentBillingSub.current_period_start, config.billingTimezone) ||
+      commercialSnapshot.current_period_start_date;
+    const canonicalEndDate =
+      normalizeToBillingDate(currentBillingSub.current_period_end_billing_date, config.billingTimezone) ||
+      normalizeToBillingDate(currentBillingSub.current_period_end, config.billingTimezone) ||
+      commercialSnapshot.current_period_end_date;
+
+    commercialSnapshot.current_period_start_date = canonicalStartDate;
+    commercialSnapshot.current_period_end_date = canonicalEndDate;
+    commercialSnapshot.effective_billing_date = canonicalEndDate || commercialSnapshot.effective_billing_date;
 
     if (commercialSnapshot.execution_strategy !== 'scheduled_cancel_to_free') {
       throw new AppError(500, `Estratégia calculada inválida para cancelamento: ${commercialSnapshot.execution_strategy}`);
@@ -4804,13 +4878,34 @@ export class BillingService {
       // Cobrança corrente está liquidada no provedor!
       // Rota unificada: executa a liquidação pelo MESMO core canônico atômico
       const targetInterval = billingSub.interval || 'monthly';
+      const expectedAmountCents =
+        typeof billingSub.amount_cents === 'number' && billingSub.amount_cents > 0
+          ? billingSub.amount_cents
+          : calculatePlanPriceCents(billingSub.plan_id, targetInterval, billingSub.member_addon_blocks || 0)
+              .totalPriceCents;
+      const paymentCurrency = (matchedPayment as any).currency || 'BRL';
+      if (
+        paymentCurrency !== 'BRL' ||
+        typeof matchedPayment.amountCents !== 'number' ||
+        !Number.isFinite(matchedPayment.amountCents) ||
+        matchedPayment.amountCents <= 0 ||
+        matchedPayment.amountCents !== expectedAmountCents
+      ) {
+        return {
+          ministryId,
+          internalStatus: appSub?.billing_status || billingSub.status,
+          reconciled: false,
+          message: `Pagamento ${matchedPayment.id} diverge do contrato vigente (${matchedPayment.amountCents} ${paymentCurrency} vs ${expectedAmountCents} BRL).`,
+        };
+      }
+
       const settleResult = await this.billingRepo.settleOrdinaryRecurringRenewalAtomic({
         ministryId,
         provider: this.provider.name,
         providerPaymentId: matchedPayment.id,
         providerSubscriptionId: billingSub.provider_subscription_id,
         renewalBillingDate: currentRenewalBoundary,
-        amountCents: matchedPayment.amountCents || billingSub.amount_cents || 0,
+        amountCents: matchedPayment.amountCents,
         currency: 'BRL',
         interval: targetInterval,
         expectedCurrentPeriodEnd: currentRenewalBoundary,
@@ -5051,62 +5146,140 @@ export class BillingService {
     }
 
     if (parsedEvent.eventType === 'payment_confirmed' || parsedEvent.eventType === 'payment_received') {
-      if (matchedAttempt) {
-        matchedAttempt.status = 'completed';
-        matchedAttempt.completed_at = nowIso;
-        await persistUpdatedAttempts();
+      // 0. Enrich missing payment/subscription fields from authoritative gateway lookup before fail-closed checks
+      let effectiveEvent: ParsedWebhookEvent = parsedEvent;
+      const missingValidAmount =
+        typeof effectiveEvent.amountCents !== 'number' ||
+        !Number.isFinite(effectiveEvent.amountCents) ||
+        effectiveEvent.amountCents <= 0;
+      if (
+        (missingValidAmount ||
+          effectiveEvent.currency === undefined ||
+          !effectiveEvent.providerSubscriptionId ||
+          (!effectiveEvent.paymentDate && !effectiveEvent.confirmedDate)) &&
+        effectiveEvent.providerPaymentId &&
+        typeof (this.provider as any).getPayment === 'function'
+      ) {
+        try {
+          const enriched = await (this.provider as any).getPayment(effectiveEvent.providerPaymentId);
+          if (enriched) {
+            effectiveEvent = {
+              ...effectiveEvent,
+              amountCents:
+                typeof effectiveEvent.amountCents === 'number' &&
+                Number.isFinite(effectiveEvent.amountCents) &&
+                effectiveEvent.amountCents > 0
+                  ? effectiveEvent.amountCents
+                  : enriched.amountCents,
+              currency:
+                effectiveEvent.currency !== undefined
+                  ? effectiveEvent.currency
+                  : (enriched as any).currency,
+              providerSubscriptionId: effectiveEvent.providerSubscriptionId || enriched.subscriptionId,
+              dueDate: effectiveEvent.dueDate || enriched.dueDate,
+              paymentDate: effectiveEvent.paymentDate || enriched.paymentDate || enriched.clientPaymentDate,
+              confirmedDate: effectiveEvent.confirmedDate || enriched.paymentDate || enriched.clientPaymentDate,
+              invoiceUrl: effectiveEvent.invoiceUrl || enriched.invoiceUrl,
+              paymentMethod: effectiveEvent.paymentMethod || enriched.billingType,
+            };
+          }
+        } catch (_enrichErr) {
+          // Fail-closed below if money or identity remains unverified
+        }
+      }
+
+      // Gateway Asaas settle currency is BRL when omitted only on optional mock/enriched payloads
+      // (explicit blank or foreign currency like 'USD' is preserved to fail closed in readiness gate)
+      if (effectiveEvent.currency === undefined && this.provider.name === 'asaas') {
+        effectiveEvent = { ...effectiveEvent, currency: 'BRL' };
       }
 
       const expectedAmountCents = planChange.target_future_recurring_price_cents;
-      const paidAmountCents = parsedEvent.amountCents ?? expectedAmountCents;
+      const verifiedAmountCents =
+        typeof effectiveEvent.amountCents === 'number' &&
+        Number.isFinite(effectiveEvent.amountCents) &&
+        effectiveEvent.amountCents > 0
+          ? effectiveEvent.amountCents
+          : null;
 
       const providerSubId =
-        parsedEvent.providerSubscriptionId ||
+        effectiveEvent.providerSubscriptionId ||
         planChange.initial_provider_subscription_id ||
         planChange.new_provider_subscription_id ||
         `sub_init_${Date.now()}`;
 
       // 1. Idempotency Gate: se a transição já foi completada com segurança terminal
       if (planChange.transition_status === 'completed') {
-        if (parsedEvent.providerPaymentId) {
+        if (effectiveEvent.providerPaymentId) {
+          if (
+            verifiedAmountCents === null ||
+            verifiedAmountCents !== expectedAmountCents ||
+            effectiveEvent.currency !== 'BRL'
+          ) {
+            console.error(
+              `[INITIAL PURCHASE REPLAY FAIL-CLOSED] Evento ${effectiveEvent.providerEventId} com valor/moeda ausentes ou divergentes (${effectiveEvent.amountCents}, ${effectiveEvent.currency}) na transição concluída ${planChange.id}.`
+            );
+            await this.billingRepo.markWebhookEventProcessed(
+              this.provider.name,
+              effectiveEvent.providerEventId,
+              'failed',
+              verifiedAmountCents === null || verifiedAmountCents !== expectedAmountCents
+                ? 'AMOUNT_MISMATCH'
+                : 'CURRENCY_MISMATCH'
+            );
+            return {
+              status: 'ok',
+              processed: false,
+              reason:
+                verifiedAmountCents === null || verifiedAmountCents !== expectedAmountCents
+                  ? 'AMOUNT_MISMATCH'
+                  : 'CURRENCY_MISMATCH',
+            };
+          }
+
           await this.billingRepo.saveTransaction({
-            id: `${this.provider.name}_${parsedEvent.providerPaymentId}`,
+            id: `${this.provider.name}_${effectiveEvent.providerPaymentId}`,
             ministry_id: ministryId,
             provider: this.provider.name,
-            provider_payment_id: parsedEvent.providerPaymentId,
+            provider_payment_id: effectiveEvent.providerPaymentId,
             provider_subscription_id: providerSubId,
-            amount_cents: paidAmountCents,
+            amount_cents: verifiedAmountCents,
             currency: 'BRL',
             status: 'paid',
-            due_date: parsedEvent.dueDate || getBillingDate(now, config.billingTimezone),
-            paid_at: parsedEvent.confirmedDate || parsedEvent.paymentDate || nowIso,
-            paid_billing_date: getBillingDate(parsedEvent.paymentDate || parsedEvent.confirmedDate || parsedEvent.dueDate || now, config.billingTimezone),
-            payment_method: parsedEvent.paymentMethod,
-            invoice_url: parsedEvent.invoiceUrl,
+            due_date: effectiveEvent.dueDate || getBillingDate(now, config.billingTimezone),
+            paid_at: effectiveEvent.confirmedDate || effectiveEvent.paymentDate || nowIso,
+            paid_billing_date: getBillingDate(effectiveEvent.paymentDate || effectiveEvent.confirmedDate || effectiveEvent.dueDate || now, config.billingTimezone),
+            payment_method: effectiveEvent.paymentMethod,
+            invoice_url: effectiveEvent.invoiceUrl,
             created_at: nowIso,
             updated_at: nowIso,
           });
         }
-        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+        if (matchedAttempt) {
+          matchedAttempt.status = 'completed';
+          matchedAttempt.completed_at = nowIso;
+          await persistUpdatedAttempts();
+        }
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, effectiveEvent.providerEventId, 'processed');
         return { status: 'ok', processed: true, reason: 'already_completed' };
       }
 
       // OLD ATTEMPT PAYMENT SAFETY: se o pagamento pertence a uma tentativa antiga e outra tentativa também foi gerada
-      if (!isCurrentAttempt && planChange.initial_provider_payment_id && planChange.initial_provider_payment_id !== parsedEvent.providerPaymentId) {
+      if (!isCurrentAttempt && planChange.initial_provider_payment_id && planChange.initial_provider_payment_id !== effectiveEvent.providerPaymentId) {
         console.error(`[MULTIPLE ATTEMPTS PAYMENT] Pagamento recebido para tentativa antiga quando já existe pagamento registrado na transição ${planChange.id}.`);
         await this.billingRepo.updateTransition(planChange.id, ministryId, {
           financial_attention_required: true,
           financial_attention_reason: 'MULTIPLE_ATTEMPTS_WITH_PAYMENT',
           financial_safety_status: 'attention_required',
         });
-        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'failed', 'MULTIPLE_ATTEMPTS_WITH_PAYMENT');
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, effectiveEvent.providerEventId, 'failed', 'MULTIPLE_ATTEMPTS_WITH_PAYMENT');
         return { status: 'ok', processed: false, reason: 'MULTIPLE_ATTEMPTS_WITH_PAYMENT' };
       }
 
       // 2. Strong Readiness Gate: INITIAL_PURCHASE_PROVIDER_READY
       const readiness = checkInitialPurchaseProviderReadiness({
         transition: planChange,
-        parsedEvent,
+        parsedEvent: effectiveEvent,
         expectedAmountCents,
         expectedCurrency: 'BRL',
       });
@@ -5123,12 +5296,20 @@ export class BillingService {
         });
         await this.billingRepo.markWebhookEventProcessed(
           this.provider.name,
-          parsedEvent.providerEventId,
+          effectiveEvent.providerEventId,
           'failed',
           readiness.reason
         );
         return { status: 'ok', processed: false, reason: readiness.failureCode || 'provider_readiness_failed' };
       }
+
+      if (matchedAttempt) {
+        matchedAttempt.status = 'completed';
+        matchedAttempt.completed_at = nowIso;
+        await persistUpdatedAttempts();
+      }
+
+      const paidAmountCents = verifiedAmountCents as number;
 
       // 3. Temporal Authority Derivation:
       // financial_commercial_date: data comercial financeira confirmada pelo gateway (YYYY-MM-DD em America/Sao_Paulo).
@@ -5139,7 +5320,7 @@ export class BillingService {
       let effectiveBillingDate: string;
       let paymentConfirmationInstant: string;
 
-      const rawConfirmDate = parsedEvent.confirmedDate || parsedEvent.paymentDate;
+      const rawConfirmDate = effectiveEvent.confirmedDate || effectiveEvent.paymentDate;
       if (rawConfirmDate && typeof rawConfirmDate === 'string' && rawConfirmDate.trim()) {
         const trimmed = rawConfirmDate.trim();
         if (trimmed.includes('T')) {
@@ -5167,8 +5348,8 @@ export class BillingService {
       );
 
       let candidateNextDueDate: string | undefined =
-        typeof parsedEvent.subscriptionNextDueDate === 'string' && parsedEvent.subscriptionNextDueDate.trim()
-          ? parsedEvent.subscriptionNextDueDate.trim().substring(0, 10)
+        typeof effectiveEvent.subscriptionNextDueDate === 'string' && effectiveEvent.subscriptionNextDueDate.trim()
+          ? effectiveEvent.subscriptionNextDueDate.trim().substring(0, 10)
           : undefined;
 
       // Se não veio no evento ou se a data ainda aponta para o primeiro vencimento (<= effectiveBillingDate),
@@ -5211,12 +5392,26 @@ export class BillingService {
 
       // 4. Activation Saga com Failure-Injection Safety e Safe Terminal Ordering
       try {
-        // Step 4.1: Ativação de Entitlement no SubscriptionService (valores absolutos)
-        await this.subscriptionService.changePlan(ministryId, planChange.target_plan_id);
-        if (planChange.target_addon_blocks > 0) {
-          await this.subscriptionService.changeMemberAddonBlocks(ministryId, planChange.target_addon_blocks);
+        // Step 4.1: Ativação de Entitlement no SubscriptionService (H07: aplicar snapshot bloqueado canônico quando disponível)
+        const targetSnapshot = (planChange as any).target_entitlement_snapshot || {
+          plan_id: planChange.target_plan_id,
+          addon_blocks: planChange.target_addon_blocks || 0,
+          interval: (planChange as any).target_interval || 'monthly',
+          effective_member_quota: getEffectiveMemberQuota(
+            getPlanDefinition(planChange.target_plan_id),
+            planChange.target_addon_blocks || 0
+          ),
+          effective_song_quota: getEffectiveSongQuota(getPlanDefinition(planChange.target_plan_id)),
+        };
+        if (typeof (this.subscriptionService as any).applyLockedEntitlementSnapshot === 'function') {
+          await (this.subscriptionService as any).applyLockedEntitlementSnapshot(ministryId, targetSnapshot);
         } else {
-          await this.subscriptionService.changeMemberAddonBlocks(ministryId, 0);
+          await this.subscriptionService.changePlan(ministryId, planChange.target_plan_id);
+          if (planChange.target_addon_blocks > 0) {
+            await this.subscriptionService.changeMemberAddonBlocks(ministryId, planChange.target_addon_blocks);
+          } else {
+            await this.subscriptionService.changeMemberAddonBlocks(ministryId, 0);
+          }
         }
 
         // Step 4.2: Atualizar SubscriptionRepository
@@ -5246,7 +5441,7 @@ export class BillingService {
           amount_cents: expectedAmountCents,
           status: 'active',
           provider_subscription_id: providerSubId,
-          provider_customer_id: parsedEvent.providerCustomerId || planChange.provider_customer_id || null,
+          provider_customer_id: effectiveEvent.providerCustomerId || planChange.provider_customer_id || null,
           provider_checkout_id: planChange.initial_provider_checkout_id || planChange.provider_checkout_id || null,
           checkout_intent_id: planChange.initial_checkout_intent_id || planChange.checkout_intent_id || undefined,
           started_at: paymentConfirmationInstant,
@@ -5262,21 +5457,21 @@ export class BillingService {
         await this.billingRepo.setSubscription(billingSubRecord);
 
         // Step 4.4: Persistir Transação Financeira de forma IDEMPOTENTE ANTES de marcar safe_terminal
-        if (parsedEvent.providerPaymentId) {
+        if (effectiveEvent.providerPaymentId) {
           await this.billingRepo.saveTransaction({
-            id: `${this.provider.name}_${parsedEvent.providerPaymentId}`,
+            id: `${this.provider.name}_${effectiveEvent.providerPaymentId}`,
             ministry_id: ministryId,
             provider: this.provider.name,
-            provider_payment_id: parsedEvent.providerPaymentId,
+            provider_payment_id: effectiveEvent.providerPaymentId,
             provider_subscription_id: providerSubId,
             amount_cents: paidAmountCents,
             currency: 'BRL',
             status: 'paid',
-            due_date: parsedEvent.dueDate || effectiveBillingDate,
+            due_date: effectiveEvent.dueDate || effectiveBillingDate,
             paid_at: paymentConfirmationInstant,
             paid_billing_date: effectiveBillingDate,
-            payment_method: parsedEvent.paymentMethod,
-            invoice_url: parsedEvent.invoiceUrl,
+            payment_method: effectiveEvent.paymentMethod,
+            invoice_url: effectiveEvent.invoiceUrl,
             created_at: nowIso,
             updated_at: nowIso,
           });
@@ -5291,22 +5486,22 @@ export class BillingService {
           currentPeriodStartBillingDate: currentPeriodStartBillingDate,
           currentPeriodEndBillingDate: currentPeriodEndBillingDate,
           providerSubscriptionId: providerSubId,
-          providerPaymentId: parsedEvent.providerPaymentId,
-          providerCustomerId: parsedEvent.providerCustomerId || planChange.provider_customer_id,
+          providerPaymentId: effectiveEvent.providerPaymentId,
+          providerCustomerId: effectiveEvent.providerCustomerId || planChange.provider_customer_id,
           completedAt: nowIso,
         });
 
         // Step 4.6: Liberar slot determinístico ativo (APENAS APÓS safe_terminal)
         await this.billingRepo.releaseSlotIfOwnedAndSafe(ministryId, this.provider.name, planChange.id);
 
-        if (parsedEvent.providerCustomerId) {
-          await this.safeUpdateWebhookCustomer(ministryId, parsedEvent.providerCustomerId, {
+        if (effectiveEvent.providerCustomerId) {
+          await this.safeUpdateWebhookCustomer(ministryId, effectiveEvent.providerCustomerId, {
             isCurrentTransitionOrActiveSub: true,
             nowIso,
           });
         }
 
-        await this.billingRepo.markWebhookEventProcessed(this.provider.name, parsedEvent.providerEventId, 'processed');
+        await this.billingRepo.markWebhookEventProcessed(this.provider.name, effectiveEvent.providerEventId, 'processed');
         return { status: 'ok', processed: true };
       } catch (activationErr: any) {
         console.error(
@@ -5319,7 +5514,7 @@ export class BillingService {
         });
         await this.billingRepo.markWebhookEventProcessed(
           this.provider.name,
-          parsedEvent.providerEventId,
+          effectiveEvent.providerEventId,
           'failed',
           activationErr.message
         );
@@ -5413,7 +5608,7 @@ export class BillingService {
               return { success: false, reason: 'SETTLED_PAYMENT_MISSING_FINANCIAL_DATE' };
             }
 
-            // Executar ativação segura via webhook handler
+            // Executar ativação segura via webhook handler (sem fabricar amountCents ausente)
             const parsedEvent: any = {
               providerEventId: `rec_${confirmedPayment.id}_${Date.now()}`,
               eventType: 'payment_confirmed',
@@ -5422,7 +5617,10 @@ export class BillingService {
               providerPaymentId: confirmedPayment.id,
               providerCustomerId: remoteSub.providerCustomerId || confirmedPayment.customerId || claimed.provider_customer_id,
               externalReference: checkoutIntentId,
-              amountCents: confirmedPayment.amountCents || claimed.target_future_recurring_price_cents,
+              amountCents: confirmedPayment.amountCents,
+              currency:
+                (confirmedPayment as any).currency ??
+                (this.provider.name === 'asaas' ? 'BRL' : undefined),
               dueDate: confirmedPayment.dueDate,
               paymentDate: settlementDate,
               confirmedDate: settlementDate,
@@ -5432,7 +5630,16 @@ export class BillingService {
 
             const latestTr = await this.billingRepo.getTransitionById(claimed.id, ministryId);
             if (latestTr && isBillingTransitionV1(latestTr)) {
-              await this.handleV1InitialPurchaseWebhook(parsedEvent, latestTr, now);
+              const hookRes = await this.handleV1InitialPurchaseWebhook(parsedEvent, latestTr, now);
+              if (hookRes && !hookRes.processed) {
+                await this.billingRepo.releasePlanChangeLock(claimed.id);
+                const failedTr = await this.billingRepo.getTransitionById(claimed.id, ministryId);
+                return {
+                  success: false,
+                  transition: failedTr && isBillingTransitionV1(failedTr) ? failedTr : undefined,
+                  reason: hookRes.reason,
+                };
+              }
             }
           }
         }
