@@ -84,15 +84,18 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
         : const <Announcement>[];
 
     final screenWidth = MediaQuery.sizeOf(context).width;
-    final railWidth = screenWidth >= 1200 ? 168 : (screenWidth >= 600 ? 80 : 0);
+    final railWidth = screenWidth >= 1000 ? 168 : (screenWidth >= 600 ? 80 : 0);
     final isWide = screenWidth - railWidth >= 840;
 
     return SafeArea(
       child: RefreshIndicator(
         onRefresh: () => ref.read(dashboardNotifierProvider.notifier).refresh(),
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16.0),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1080),
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16.0),
           children: [
             // 1. Header & Greeting
             _buildHeader(context, userName, isDark),
@@ -164,6 +167,8 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
 
             const SizedBox(height: 32),
           ],
+            ),
+          ),
         ),
       ),
     );

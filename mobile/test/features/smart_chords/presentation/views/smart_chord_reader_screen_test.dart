@@ -1196,4 +1196,68 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets(
+    'SmartChordReaderScreen toggles auto-scroll speed and fullscreen distraction-free mode',
+    (tester) async {
+      final longLyrics = List.generate(
+        40,
+        (i) => '[G]Linha numero ${i + 1} de louvor e adoração contínua',
+      ).join('\n');
+      final chord = sampleChord.copyWith(content: longLyrics);
+      repo.chord = chord;
+
+      await tester.pumpWidget(
+        buildApp(chordId: chord.id, initialChord: chord),
+      );
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+
+      // Speed starts at 2x; increment and decrement
+      expect(find.text('2x'), findsOneWidget);
+      await tester.tap(
+        find.byKey(const ValueKey('smart_chord_autoscroll_faster_button')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('3x'), findsOneWidget);
+      await tester.tap(
+        find.byKey(const ValueKey('smart_chord_autoscroll_slower_button')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('2x'), findsOneWidget);
+
+      // Start and stop auto-scroll
+      await tester.tap(
+        find.byKey(const ValueKey('smart_chord_autoscroll_toggle_button')),
+      );
+      await tester.pump(const Duration(milliseconds: 160));
+      await tester.tap(
+        find.byKey(const ValueKey('smart_chord_autoscroll_toggle_button')),
+      );
+      await tester.pumpAndSettle();
+
+      // Enter fullscreen mode: AppBar title & toolbar hide; floating exit pill appears
+      await tester.tap(
+        find.byKey(const ValueKey('smart_chord_fullscreen_button')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('smart_chord_exit_fullscreen_button')),
+        findsOneWidget,
+      );
+      expect(find.byType(AppBar), findsNothing);
+
+      // Exit fullscreen restores AppBar & toolbar
+      await tester.tap(
+        find.byKey(const ValueKey('smart_chord_exit_fullscreen_button')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(AppBar), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('smart_chord_fullscreen_button')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

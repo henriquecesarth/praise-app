@@ -80,7 +80,7 @@ export function PianoKeyboard({ currentMidi, tessituraMin, tessituraMax }: Piano
                   width: `${whiteKeyWidth}px`,
                 }}
                 aria-label={k.label}
-                aria-pressed={isActive}
+                data-active={isActive}
               >
                 <span className="piano-key-label">{k.label}</span>
               </div>
@@ -109,7 +109,7 @@ export function PianoKeyboard({ currentMidi, tessituraMin, tessituraMax }: Piano
                   width: `${blackKeyWidth}px`,
                 }}
                 aria-label={k.label}
-                aria-pressed={isActive}
+                data-active={isActive}
               >
                 <span className="piano-key-label black-label">{k.label}</span>
               </div>

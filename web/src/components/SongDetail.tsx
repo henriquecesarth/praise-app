@@ -174,6 +174,21 @@ export const SongDetail: React.FC<SongDetailProps> = ({
 
   const [activeView, setActiveView] = useState<'lyrics' | 'cifra'>('lyrics');
   const [semitones, setSemitones] = useState(0);
+  const [chordFontSize, setChordFontSize] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem('louvaio_song_detail_chord_font_size'));
+      return Number.isFinite(saved) && saved >= 12 && saved <= 24 ? saved : 15;
+    } catch {
+      return 15;
+    }
+  });
+  const updateChordFontSize = (nextSize: number) => {
+    const clamped = Math.max(12, Math.min(24, nextSize));
+    setChordFontSize(clamped);
+    try {
+      localStorage.setItem('louvaio_song_detail_chord_font_size', String(clamped));
+    } catch { /* ignore storage errors */ }
+  };
 
   // Synchronize active view when linked chords load
   useEffect(() => {
@@ -883,6 +898,30 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                   <span className="transposition-btn__label-full">+1 Semitom</span>
                   <span className="transposition-btn__label-compact" aria-hidden="true">+1</span>
                 </button>
+                <div className="music-stand-bar__zoom" role="group" aria-label="Tamanho da fonte da cifra" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary transposition-btn"
+                    onClick={() => updateChordFontSize(chordFontSize - 1)}
+                    disabled={chordFontSize <= 12}
+                    aria-label="Diminuir fonte da cifra"
+                    title="Diminuir fonte da cifra"
+                    style={{ minWidth: '44px', minHeight: '44px' }}
+                  >
+                    A-
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary transposition-btn"
+                    onClick={() => updateChordFontSize(chordFontSize + 1)}
+                    disabled={chordFontSize >= 24}
+                    aria-label="Aumentar fonte da cifra"
+                    title="Aumentar fonte da cifra"
+                    style={{ minWidth: '44px', minHeight: '44px' }}
+                  >
+                    A+
+                  </button>
+                </div>
               </div>
             )}
 
@@ -958,7 +997,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
               type="button"
               className="action-icon-btn"
               onClick={() => setUnlinkError(null)}
-              style={{ width: '32px', height: '32px' }}
+              style={{ minWidth: '44px', minHeight: '44px', width: '44px', height: '44px' }}
               aria-label="Fechar aviso"
             >
               <X size={16} />
@@ -970,12 +1009,13 @@ export const SongDetail: React.FC<SongDetailProps> = ({
       {/* 3. Folha Musical e Ficha Técnica (Assimetria 2.2fr / 1fr no Desktop, Empilhado no Mobile) */}
       <div className="detail-content-layout song-detail-layout">
         <div className="detail-main-content">
-          {activeView === 'cifra' && hasSmartChord ? (
+          {activeView === 'cifra' && hasSmartChord && rawLines.some((l) => l.trim().length > 0) ? (
             <div
               className="lyrics-box song-detail-sheet"
               data-testid="song-detail-chord-sheet"
               style={{
                 fontFamily: activeFontFamilyCss,
+                fontSize: `${chordFontSize}px`,
                 overflowX: 'auto',
                 minWidth: 0,
                 maxWidth: '100%',
@@ -1009,7 +1049,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                           whiteSpace: 'pre',
                           overflowX: 'auto',
                           fontFamily: 'monospace, "Courier New", Courier',
-                          fontSize: '14px',
+                          fontSize: `${chordFontSize}px`,
                           lineHeight: '1.4',
                           color: 'var(--text-primary)',
                           minHeight: '1.4em',
@@ -1033,11 +1073,11 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                           whiteSpace: 'pre',
                           overflowX: 'auto',
                           alignItems: 'baseline',
-                          rowGap: '20px',
+                          rowGap: `${chordFontSize + 6}px`,
                           fontFamily: activeFontFamilyCss,
-                          fontSize: '14px',
+                          fontSize: `${chordFontSize}px`,
                           lineHeight: '1.4',
-                          paddingTop: '16px',
+                          paddingTop: anchoredInstructions.length > 0 ? `${Math.round(chordFontSize * 1.9)}px` : `${chordFontSize + 2}px`,
                         }}
                       >
                         {tokens.map((token, tokenIdx) => {
@@ -1119,11 +1159,11 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                       style={{
                         display: 'flex',
                         flexWrap: 'wrap',
-                        rowGap: '20px',
+                        rowGap: `${chordFontSize + 6}px`,
                         fontFamily: activeFontFamilyCss,
-                        fontSize: '14px',
+                        fontSize: `${chordFontSize}px`,
                         lineHeight: '1.4',
-                        paddingTop: anchoredInstructions.length > 0 ? '28px' : '16px',
+                        paddingTop: anchoredInstructions.length > 0 ? `${Math.round(chordFontSize * 1.9)}px` : `${chordFontSize + 2}px`,
                       }}
                     >
                       {/* Accessible clean lyric line for screen readers and text matchers */}
@@ -1152,7 +1192,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                         const previousChordIndex = visualChordIndexes.filter(index => index < charIdx).pop();
                         const previousChord = previousChordIndex === undefined ? '' : transposeNotationChord(visual.chords[previousChordIndex], semitones);
                         const reserveBeforeChord = hasChord && previousChordIndex !== undefined
-                          ? Math.max(0, previousChord.length - (charIdx - previousChordIndex - 1)) * 14 * 0.58 : 0;
+                          ? Math.max(0, previousChord.length - (charIdx - previousChordIndex - 1)) * chordFontSize * 0.58 : 0;
 
                         return (
                           <div
@@ -1178,7 +1218,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                                   left: 0,
                                   color: 'var(--chord-text)',
                                   fontWeight: 'bold',
-                                  fontSize: '12px',
+                                  fontSize: `${Math.round(chordFontSize * 0.86)}px`,
                                   whiteSpace: 'nowrap',
                                   padding: '0 1px',
                                 }}
@@ -1188,6 +1228,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                               </span>
                             )}
                             <span
+                              aria-hidden="true"
                               className={hasChord ? 'has-chord' : ''}
                               style={{
                                 color: 'var(--text-primary)',
@@ -1232,7 +1273,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                                 left: 0,
                                 color: 'var(--chord-text)',
                                 fontWeight: 'bold',
-                                fontSize: '12px',
+                                fontSize: `${Math.round(chordFontSize * 0.86)}px`,
                                 whiteSpace: 'nowrap',
                                 padding: '0 1px',
                               }}
@@ -1261,10 +1302,8 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                 boxSizing: 'border-box',
               }}
             >
-              {song.lyrics ||
-                cleanLyricsFromActiveChord ||
-                displayVersionNotes ||
-                song.notes ||
+              {[song.lyrics, cleanLyricsFromActiveChord, displayVersionNotes, song.notes]
+                .find((v) => typeof v === 'string' && v.trim().length > 0) ||
                 'Nenhuma observação ou letra cadastrada para esta música.'}
             </div>
           )}
@@ -1413,7 +1452,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                 className="action-icon-btn"
                 onClick={handleCloseLinkModal}
                 disabled={isLinking}
-                style={{ width: '36px', height: '36px' }}
+                style={{ minWidth: '44px', minHeight: '44px', width: '44px', height: '44px' }}
                 aria-label="Fechar"
               >
                 <X size={18} />
@@ -1455,7 +1494,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                     type="button"
                     className="btn btn-secondary"
                     onClick={handleOpenLinkModal}
-                    style={{ minHeight: '32px', padding: '4px 10px', fontSize: '0.8rem' }}
+                    style={{ minHeight: '44px', padding: '6px 12px', fontSize: '0.8rem' }}
                   >
                     Tentar novamente
                   </button>
@@ -1470,9 +1509,9 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                     border: '1px dashed var(--border-subtle)',
                   }}
                 >
-                  <Music size={32} style={{ opacity: 0.4, marginBottom: '8px' }} />
+                  <Music size={32} style={{ opacity: 0.4, marginBottom: '8px' }} aria-hidden="true" />
                   <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-                    Você não possui cifras inteligentes cadastradas neste ministério.
+                    Você não possui cifras inteligentes cadastradas na sua biblioteca pessoal.
                   </p>
                 </div>
               ) : (
@@ -1481,16 +1520,21 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                     const isSelected = selectedChordToLink?.id === chord.id;
                     const isAlreadyLinked = linkedChords.some((c) => c.id === chord.id);
                     return (
-                      <div
+                      <button
                         key={chord.id}
+                        type="button"
+                        disabled={isAlreadyLinked}
                         onClick={() => {
-                          if (!isAlreadyLinked) {
-                            setSelectedChordToLink(chord);
-                            setLinkingError(null);
-                          }
+                          setSelectedChordToLink(chord);
+                          setLinkingError(null);
                         }}
                         style={{
+                          width: '100%',
+                          textAlign: 'left',
+                          font: 'inherit',
+                          color: 'inherit',
                           padding: '12px 14px',
+                          minHeight: '44px',
                           borderRadius: '10px',
                           border: isSelected
                             ? '2px solid var(--action-primary-bg)'
@@ -1519,7 +1563,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                             Já vinculada
                           </span>
                         )}
-                      </div>
+                      </button>
                     );
                   })}
                 </div>

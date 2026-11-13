@@ -150,6 +150,12 @@ void resetAuthenticatedFeatures(
     container.read(songFormNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
+    container.read(repertoireFoldersNotifierProvider.notifier).reset();
+  } catch (_) {}
+  try {
+    container.read(repertoireArtistsNotifierProvider.notifier).reset();
+  } catch (_) {}
+  try {
     container.read(customVocalExercisesNotifierProvider.notifier).reset();
   } catch (_) {}
 
@@ -168,6 +174,8 @@ void resetAuthenticatedFeatures(
   container.invalidate(adminAvailabilityNotifierProvider);
   container.invalidate(manualMemberAvailabilityNotifierProvider);
   container.invalidate(repertoireListNotifierProvider);
+  container.invalidate(repertoireFoldersNotifierProvider);
+  container.invalidate(repertoireArtistsNotifierProvider);
   container.invalidate(songDetailNotifierProvider);
   container.invalidate(songFormNotifierProvider);
   container.invalidate(liturgyListNotifierProvider);

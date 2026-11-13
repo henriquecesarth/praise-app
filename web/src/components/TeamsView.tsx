@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import { FloatingInput } from './ui/FloatingInput';
 import { FloatingTextarea } from './ui/FloatingTextarea';
+import { useRepertoireDialog } from './useRepertoireDialog';
 import {
   Plus, MoreVertical, Edit2, Trash2, Users, ChevronLeft,
   Search, Check, UserCheck,
@@ -67,11 +68,22 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast, onModalState
 
   // Delete confirmation
   const [deletingTeam, setDeletingTeam] = useState<Team | null>(null);
+  const teamModalRef = useRef<HTMLDivElement>(null);
+  const deleteTeamModalRef = useRef<HTMLDivElement>(null);
 
   const activeMinistryIdRef = useRef<string>(ministryId);
   activeMinistryIdRef.current = ministryId;
   const loadReqRef = useRef<number>(0);
   const isMountedRef = useRef<boolean>(true);
+
+  useRepertoireDialog(teamModalRef, showModal, () => {
+    if (!saving) {
+      setShowModal(false);
+    }
+  });
+  useRepertoireDialog(deleteTeamModalRef, Boolean(deletingTeam), () => {
+    setDeletingTeam(null);
+  });
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -357,6 +369,11 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast, onModalState
       {showModal && (
         <div className="modal-overlay" onClick={closeModal}>
           <div
+            ref={teamModalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="team-modal-title"
+            tabIndex={-1}
             className="modal-content team-modal"
             onClick={(e) => e.stopPropagation()}
             style={{ maxWidth: '480px' }}
@@ -367,12 +384,13 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast, onModalState
                 className="action-icon-btn"
                 onClick={closeModal}
                 title="Voltar / Fechar"
+                aria-label="Voltar"
                 style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}
               >
                 <ChevronLeft size={22} />
               </button>
 
-              <div className="modal-title" style={{ textAlign: 'center', flex: 1, margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>
+              <div id="team-modal-title" className="modal-title" style={{ textAlign: 'center', flex: 1, margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>
                 {modalMode === 'create' ? 'Nova Equipe' : 'Editar Equipe'}
               </div>
 
@@ -437,6 +455,7 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast, onModalState
                         <button
                           type="button"
                           className="clear-search-btn"
+                          aria-label="Limpar busca"
                           onClick={() => setMemberSearch('')}
                           style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
                         >
@@ -501,13 +520,22 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast, onModalState
       {/* ── MODAL: Delete confirmation ── */}
       {deletingTeam && (
         <div className="modal-overlay" onClick={() => setDeletingTeam(null)}>
-          <div className="modal-content" style={{ maxWidth: '400px' }} onClick={(e) => e.stopPropagation()}>
+          <div
+            ref={deleteTeamModalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="team-delete-modal-title"
+            tabIndex={-1}
+            className="modal-content"
+            style={{ maxWidth: '400px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="modal-header">
-              <div className="modal-title" style={{ color: 'var(--error-color)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1.1rem', fontWeight: 700 }}>
+              <div id="team-delete-modal-title" className="modal-title" style={{ color: 'var(--error-color)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1.1rem', fontWeight: 700 }}>
                 <Trash2 size={20} />
                 Excluir Equipe
               </div>
-              <button className="action-icon-btn" onClick={() => setDeletingTeam(null)} style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+              <button type="button" className="action-icon-btn" aria-label="Fechar" onClick={() => setDeletingTeam(null)} style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
             </div>
             <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, margin: '16px 0 24px', fontSize: '0.92rem' }}>
               Tem certeza que deseja excluir a equipe{' '}

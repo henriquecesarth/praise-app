@@ -274,10 +274,16 @@ class _PianoKeyboardState extends State<PianoKeyboard> {
         padding: const EdgeInsets.only(bottom: 6),
         alignment: Alignment.bottomCenter,
         decoration: BoxDecoration(
-          color: isActive ? theme.colorScheme.tertiary : const Color(0xFF1E293B),
+          color: isActive
+              ? theme.colorScheme.tertiary
+              : (theme.brightness == Brightness.dark
+                  ? const Color(0xFF0A1610)
+                  : const Color(0xFF15261F)),
           borderRadius: const BorderRadius.vertical(bottom: Radius.circular(5)),
           border: Border.all(
-            color: isActive ? theme.colorScheme.tertiary : Colors.black87,
+            color: isActive
+                ? theme.colorScheme.tertiary
+                : theme.colorScheme.outlineVariant,
             width: isActive ? 1.5 : 1,
           ),
           boxShadow: const [
@@ -295,7 +301,7 @@ class _PianoKeyboardState extends State<PianoKeyboard> {
             fontWeight: FontWeight.w700,
             color: isActive
                 ? theme.colorScheme.onTertiary
-                : Colors.blueGrey.shade100,
+                : const Color(0xFFE6DFD3),
           ),
         ),
       ),

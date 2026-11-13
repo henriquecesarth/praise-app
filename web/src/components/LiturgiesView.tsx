@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Calendar, Plus, Music, BookOpen, Trash2, X, AlertCircle, RefreshCw } from 'lucide-react';
 import { api } from '../api';
 import { Liturgy, Song, GroupRole } from '../types';
+import { ConfirmDialog } from './ui/ConfirmDialog';
+import { useRepertoireDialog } from './useRepertoireDialog';
 
 interface LiturgiesViewProps {
   groupId: string;
@@ -16,6 +18,18 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [pendingDeleteLiturgy, setPendingDeleteLiturgy] = useState<{ id: string; title?: string } | null>(null);
+  const [deletingLiturgy, setDeletingLiturgy] = useState(false);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  useRepertoireDialog(modalRef, isModalOpen, () => {
+    if (!isSubmitting) {
+      setIsModalOpen(false);
+      setFormError(null);
+    }
+  });
 
   // Form states
   const [title, setTitle] = useState('');
@@ -39,6 +53,9 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
   // Tenant switch isolation: reset local form & state when switching ministry
   useEffect(() => {
     setIsModalOpen(false);
+    setPendingDeleteLiturgy(null);
+    setFormError(null);
+    setActionError(null);
     setTitle('');
     setDate(new Date().toISOString().split('T')[0]);
     setDescription('');
@@ -111,6 +128,7 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
       });
 
       setIsModalOpen(false);
+      setFormError(null);
       setTitle('');
       setDescription('');
       setSelectedSongIds([]);
@@ -118,29 +136,34 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
       loadLiturgies();
     } catch (err: any) {
       const msg = err?.message || 'Erro ao criar liturgia.';
-      if (showToast) {
-        showToast(msg, 'error');
-      } else {
-        alert(msg);
-      }
+      setFormError(msg);
+      showToast?.(msg, 'error');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleDeleteLiturgy = async (liturgyId: string, liturgyTitle?: string) => {
-    if (!confirm(liturgyTitle ? `Deseja remover a liturgia "${liturgyTitle}"?` : 'Deseja remover esta liturgia?')) return;
+  const handleDeleteLiturgy = (liturgyId: string, liturgyTitle?: string) => {
+    setActionError(null);
+    setPendingDeleteLiturgy({ id: liturgyId, title: liturgyTitle });
+  };
+
+  const confirmDeleteLiturgy = async () => {
+    if (!pendingDeleteLiturgy || deletingLiturgy) return;
+    setDeletingLiturgy(true);
+    setActionError(null);
     try {
-      await api.deleteLiturgy(groupId, liturgyId);
+      await api.deleteLiturgy(groupId, pendingDeleteLiturgy.id);
+      setPendingDeleteLiturgy(null);
       showToast?.('Liturgia removida com sucesso.', 'success');
       loadLiturgies();
     } catch (err: any) {
       const msg = err?.message || 'Erro ao excluir liturgia.';
-      if (showToast) {
-        showToast(msg, 'error');
-      } else {
-        alert(msg);
-      }
+      setPendingDeleteLiturgy(null);
+      setActionError(msg);
+      showToast?.(msg, 'error');
+    } finally {
+      setDeletingLiturgy(false);
     }
   };
 
@@ -191,6 +214,32 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
           </button>
         )}
       </div>
+
+      {actionError && (
+        <div
+          role="alert"
+          className="rounded-xl p-3 flex items-center justify-between gap-3 text-sm"
+          style={{
+            background: 'rgba(239, 68, 68, 0.12)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            color: 'var(--error-color)',
+          }}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
+            <span>{actionError}</span>
+          </div>
+          <button
+            type="button"
+            className="action-icon-btn rounded-lg"
+            style={{ minWidth: '44px', minHeight: '44px' }}
+            onClick={() => setActionError(null)}
+            aria-label="Fechar alerta"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="py-12 text-center" style={{ color: 'var(--text-secondary)' }}>
@@ -340,9 +389,13 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
 
       {/* Modal Criar Liturgia (Adaptado para Full-Screen View no Mobile) */}
       {isModalOpen && (
-        <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
+        <div className="modal-overlay" onClick={() => { if (!isSubmitting) { setIsModalOpen(false); setFormError(null); } }}>
           <div
+            ref={modalRef}
             className="modal-content liturgy-modal rounded-2xl shadow-2xl relative"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="liturgy-modal-title"
             onClick={(e) => e.stopPropagation()}
             style={{
               maxWidth: '520px',
@@ -354,11 +407,12 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
               className="modal-header flex items-center justify-between p-4 border-b"
               style={{ borderColor: 'var(--border-color)' }}
             >
-              <h3 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
+              <h3 id="liturgy-modal-title" className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
                 Nova Liturgia / Ordem do Culto
               </h3>
               <button
-                onClick={() => setIsModalOpen(false)}
+                type="button"
+                onClick={() => { if (!isSubmitting) { setIsModalOpen(false); setFormError(null); } }}
                 className="action-icon-btn transition-colors flex items-center justify-center rounded-lg"
                 style={{
                   width: '44px',
@@ -375,6 +429,20 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
             </div>
 
             <form onSubmit={handleCreateLiturgy} className="p-5 space-y-4">
+              {formError && (
+                <div
+                  role="alert"
+                  className="rounded-xl p-3 flex items-center gap-2 text-xs"
+                  style={{
+                    background: 'rgba(239, 68, 68, 0.12)',
+                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                    color: 'var(--error-color)',
+                  }}
+                >
+                  <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span>{formError}</span>
+                </div>
+              )}
               <div>
                 <label
                   className="block text-xs uppercase tracking-wider font-semibold mb-1.5"
@@ -516,6 +584,23 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        isOpen={Boolean(pendingDeleteLiturgy)}
+        title="Remover liturgia"
+        message={
+          pendingDeleteLiturgy?.title
+            ? `Deseja remover a liturgia "${pendingDeleteLiturgy.title}"? Esta ação não pode ser desfeita.`
+            : 'Deseja remover esta liturgia? Esta ação não pode ser desfeita.'
+        }
+        confirmLabel="Remover"
+        tone="danger"
+        busy={deletingLiturgy}
+        onConfirm={confirmDeleteLiturgy}
+        onCancel={() => {
+          if (!deletingLiturgy) setPendingDeleteLiturgy(null);
+        }}
+      />
     </div>
   );
 };

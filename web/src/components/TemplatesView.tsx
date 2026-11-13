@@ -4,6 +4,7 @@ import {
   Plus, MoreVertical, Edit2, Trash2, Layers, ChevronLeft,
   Music, ArrowUp, ArrowDown, GripVertical, Clock,
 } from 'lucide-react';
+import { useRepertoireDialog } from './useRepertoireDialog';
 
 export interface TemplateItem {
   id: string;
@@ -69,6 +70,11 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
 
   // Delete confirmation
   const [deletingTemplate, setDeletingTemplate] = useState<ScheduleTemplate | null>(null);
+  const eventModalRef = useRef<HTMLDivElement>(null);
+  const deleteModalRef = useRef<HTMLDivElement>(null);
+
+  useRepertoireDialog(eventModalRef, showEventModal, () => setShowEventModal(false));
+  useRepertoireDialog(deleteModalRef, Boolean(deletingTemplate), () => setDeletingTemplate(null));
 
   const activeMinistryIdRef = useRef<string>(ministryId);
   activeMinistryIdRef.current = ministryId;
@@ -488,12 +494,27 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
         {/* ── MODAL: Create / Edit Event ── */}
         {showEventModal && (
           <div className="modal-overlay" onClick={() => setShowEventModal(false)}>
-            <div className="modal-content template-event-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+            <div
+              ref={eventModalRef}
+              className="modal-content template-event-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="template-event-modal-title"
+              onClick={(e) => e.stopPropagation()}
+              style={{ maxWidth: '480px' }}
+            >
               <div className="modal-header">
-                <div className="modal-title" style={{ fontSize: '1.1rem', fontWeight: 700 }}>
+                <div id="template-event-modal-title" className="modal-title" style={{ fontSize: '1.1rem', fontWeight: 700 }}>
                   {editingEventIndex !== null ? 'Editar Evento' : 'Novo Evento no Roteiro'}
                 </div>
-                <button className="action-icon-btn" onClick={() => setShowEventModal(false)} title="Fechar" style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <button
+                  type="button"
+                  className="action-icon-btn"
+                  onClick={() => setShowEventModal(false)}
+                  title="Fechar"
+                  aria-label="Fechar modal de evento"
+                  style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                >
                   ✕
                 </button>
               </div>
@@ -724,13 +745,27 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
       {/* ── MODAL: Delete confirmation ── */}
       {deletingTemplate && (
         <div className="modal-overlay" onClick={() => setDeletingTemplate(null)}>
-          <div className="modal-content" style={{ maxWidth: '400px' }} onClick={(e) => e.stopPropagation()}>
+          <div
+            ref={deleteModalRef}
+            className="modal-content"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="template-delete-modal-title"
+            style={{ maxWidth: '400px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="modal-header">
-              <div className="modal-title" style={{ color: 'var(--error-color)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1.1rem', fontWeight: 700 }}>
+              <div id="template-delete-modal-title" className="modal-title" style={{ color: 'var(--error-color)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1.1rem', fontWeight: 700 }}>
                 <Trash2 size={20} />
                 Excluir Modelo
               </div>
-              <button className="action-icon-btn" onClick={() => setDeletingTemplate(null)} style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <button
+                type="button"
+                className="action-icon-btn"
+                onClick={() => setDeletingTemplate(null)}
+                aria-label="Fechar confirmação de exclusão"
+                style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
                 ✕
               </button>
             </div>

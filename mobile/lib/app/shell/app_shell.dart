@@ -79,6 +79,12 @@ class _AppShellState extends ConsumerState<AppShell> {
           ref.read(repertoireListNotifierProvider.notifier).reset();
         } catch (_) {}
         try {
+          ref.read(repertoireFoldersNotifierProvider.notifier).reset();
+        } catch (_) {}
+        try {
+          ref.read(repertoireArtistsNotifierProvider.notifier).reset();
+        } catch (_) {}
+        try {
           ref.read(songSmartChordsNotifierProvider.notifier).reset();
         } catch (_) {}
         try {
@@ -106,6 +112,8 @@ class _AppShellState extends ConsumerState<AppShell> {
         ref.invalidate(adminAvailabilityNotifierProvider);
         ref.invalidate(manualMemberAvailabilityNotifierProvider);
         ref.invalidate(repertoireListNotifierProvider);
+        ref.invalidate(repertoireFoldersNotifierProvider);
+        ref.invalidate(repertoireArtistsNotifierProvider);
         ref.invalidate(songDetailNotifierProvider);
         ref.invalidate(songFormNotifierProvider);
         ref.invalidate(songSmartChordsNotifierProvider);
@@ -322,7 +330,7 @@ class _AppShellState extends ConsumerState<AppShell> {
         body: Row(
           children: [
             NavigationRail(
-              extended: width >= 1200,
+              extended: width >= 1000,
               minExtendedWidth: 168,
               groupAlignment: -1.0,
               indicatorColor: theme.colorScheme.secondaryContainer,
@@ -330,7 +338,7 @@ class _AppShellState extends ConsumerState<AppShell> {
               onDestinationSelected: (index) {
                 ref.read(appShellTabProvider.notifier).state = index;
               },
-              labelType: width >= 1200
+              labelType: width >= 1000
                   ? NavigationRailLabelType.none
                   : NavigationRailLabelType.all,
               destinations: const [
@@ -422,8 +430,11 @@ class _ProfileView extends ConsumerWidget {
     final pushState = ref.watch(pushNotificationNotifierProvider);
 
     return SafeArea(
-      child: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 900),
+          child: ListView(
+            padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
         children: [
           // User Card
           Card(
@@ -838,6 +849,8 @@ class _ProfileView extends ConsumerWidget {
             ),
           ],
         ],
+          ),
+        ),
       ),
     );
   }

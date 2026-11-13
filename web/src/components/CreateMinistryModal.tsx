@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Plus, Building2, AlertCircle, ChevronLeft, X, Check } from 'lucide-react';
 import { api } from '../api';
 import { FloatingInput } from './ui/FloatingInput';
+import { useRepertoireDialog } from './useRepertoireDialog';
 
 interface CreateMinistryModalProps {
   onClose: () => void;
@@ -12,6 +13,11 @@ export const CreateMinistryModal: React.FC<CreateMinistryModalProps> = ({ onClos
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  useRepertoireDialog(modalRef, true, () => {
+    if (!loading) onClose();
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,22 +38,31 @@ export const CreateMinistryModal: React.FC<CreateMinistryModalProps> = ({ onClos
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content create-ministry-modal" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay" onClick={() => !loading && onClose()}>
+      <div
+        ref={modalRef}
+        className="modal-content create-ministry-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="create-ministry-modal-title"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header Responsivo em 3 Seções com Touch Targets de 44x44px */}
         <div className="modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
           <button
             type="button"
             className="action-icon-btn"
             onClick={onClose}
+            disabled={loading}
             title="Fechar"
+            aria-label="Fechar modal de novo ministério"
             style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}
           >
             <ChevronLeft size={22} className="mobile-only" />
             <X size={20} className="desktop-only" />
           </button>
 
-          <div className="modal-title" style={{ flex: 1, textAlign: 'center', margin: 0, fontSize: '1.1rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+          <div id="create-ministry-modal-title" className="modal-title" style={{ flex: 1, textAlign: 'center', margin: 0, fontSize: '1.1rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
             <Building2 size={20} style={{ color: 'var(--primary-light)' }} />
             <span>Criar Novo Ministério</span>
           </div>

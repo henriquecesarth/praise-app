@@ -27,6 +27,7 @@ import { api } from '../api';
 import { PianoKeyboard } from './vocal/PianoKeyboard';
 import { ExerciseLibrary } from './vocal/ExerciseLibrary';
 import { CustomExerciseModal } from './vocal/CustomExerciseModal';
+import { ConfirmDialog } from './ui/ConfirmDialog';
 import '../styles/vocal-exercise.css';
 
 export function buildExerciseTimeline(
@@ -119,26 +120,55 @@ export function VocalExercisePlayer() {
 
   // Custom exercises state & modal
   const [customExercises, setCustomExercises] = useState<VocalExercise[]>([]);
+  const [customLoadError, setCustomLoadError] = useState<string | null>(null);
+  const [loadingCustomExercises, setLoadingCustomExercises] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingExercise, setEditingExercise] = useState<VocalExercise | null>(null);
+  const [pendingDeleteExercise, setPendingDeleteExercise] = useState<VocalExercise | null>(null);
+  const [deletingExercise, setDeletingExercise] = useState(false);
 
   const timer = useRef<number | undefined>(undefined);
+  const rangeTimerRef = useRef<number | undefined>(undefined);
   const context = useRef<AudioContext | null>(null);
   const generation = useRef(0);
-  const oscillators = useRef<OscillatorNode[]>([]);
+  const oscillators = useRef<Set<OscillatorNode>>(new Set());
   const renderer = useRef<MusicalRenderer | null>(null);
   const pauseBusy = useRef(false);
   const frame = useRef<number | undefined>(undefined);
   const pauseRequested = useRef(false);
+  const isMountedRef = useRef(true);
+
+  const loadCustomExercises = useCallback(async (surfaceError = true) => {
+    setLoadingCustomExercises(true);
+    try {
+      const custom = await api.getCustomVocalExercises();
+      if (!isMountedRef.current) return;
+      setCustomExercises(custom);
+      setCustomLoadError(null);
+    } catch (err: any) {
+      if (!isMountedRef.current) return;
+      if (surfaceError) {
+        setCustomLoadError(err?.message || 'Não foi possível carregar os exercícios personalizados.');
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setLoadingCustomExercises(false);
+      }
+    }
+  }, []);
 
   // Load custom exercises and user preferences on mount
   useEffect(() => {
-    let isMounted = true;
+    isMountedRef.current = true;
 
     async function loadInitialData() {
+      let hasAuthenticatedUser = false;
       try {
         const user = await api.getMe().catch(() => null);
-        if (isMounted && user?.preferences) {
+        if (user) {
+          hasAuthenticatedUser = true;
+        }
+        if (isMountedRef.current && user?.preferences) {
           if (typeof user.preferences.vocalMinMidi === 'number') {
             setTessituraMin(user.preferences.vocalMinMidi);
           }
@@ -150,22 +180,15 @@ export function VocalExercisePlayer() {
         /* ignore preference load failure */
       }
 
-      try {
-        const custom = await api.getCustomVocalExercises().catch(() => []);
-        if (isMounted) {
-          setCustomExercises(custom);
-        }
-      } catch {
-        /* ignore custom exercises load failure */
-      }
+      await loadCustomExercises(hasAuthenticatedUser);
     }
 
-    loadInitialData();
+    void loadInitialData();
 
     return () => {
-      isMounted = false;
+      isMountedRef.current = false;
     };
-  }, []);
+  }, [loadCustomExercises]);
 
   const allExercises: VocalExercise[] = [...VOCAL_EXERCISES, ...customExercises];
   const exercise = allExercises.find((item) => item.id === exerciseId) || VOCAL_EXERCISES[0];
@@ -181,6 +204,7 @@ export function VocalExercisePlayer() {
       generation.current += 1;
       if (frame.current !== undefined) cancelAnimationFrame(frame.current);
       window.clearTimeout(timer.current);
+      window.clearTimeout(rangeTimerRef.current);
       renderer.current?.stop();
       oscillators.current.forEach((oscillator) => {
         try {
@@ -189,6 +213,7 @@ export function VocalExercisePlayer() {
           /* already stopped */
         }
       });
+      oscillators.current.clear();
       document.removeEventListener('visibilitychange', onVisibilityChange);
       const audio = context.current;
       if (audio) {
@@ -211,7 +236,7 @@ export function VocalExercisePlayer() {
         /* already stopped */
       }
     });
-    oscillators.current = [];
+    oscillators.current.clear();
     setPlaying(false);
     setLoading(false);
     pauseBusy.current = false;
@@ -302,9 +327,12 @@ export function VocalExercisePlayer() {
           clickGain.gain.linearRampToValueAtTime(0.07, now + 0.001);
           clickGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.035);
           clickOsc.connect(clickGain).connect(session.output);
+          clickOsc.onended = () => {
+            oscillators.current.delete(clickOsc);
+          };
           clickOsc.start(now);
           clickOsc.stop(now + 0.04);
-          oscillators.current.push(clickOsc);
+          oscillators.current.add(clickOsc);
         }
       }
       const endsAt = Math.max(
@@ -343,7 +371,8 @@ export function VocalExercisePlayer() {
         message: 'Extensão vocal salva com sucesso na sua conta!',
         type: 'success',
       });
-      setTimeout(() => setRangeFeedback(null), 4000);
+      window.clearTimeout(rangeTimerRef.current);
+      rangeTimerRef.current = window.setTimeout(() => setRangeFeedback(null), 4000);
     } catch (err: any) {
       setRangeFeedback({
         message: err?.message || 'Erro ao salvar a extensão vocal.',
@@ -377,18 +406,25 @@ export function VocalExercisePlayer() {
     setModalOpen(true);
   };
 
-  const handleDeleteExercise = async (ex: VocalExercise) => {
-    if (!window.confirm(`Deseja realmente excluir o exercício "${ex.title}"? Esta ação não pode ser desfeita.`)) {
-      return;
-    }
+  const handleDeleteExercise = (ex: VocalExercise) => {
+    setPendingDeleteExercise(ex);
+  };
+
+  const confirmDeleteExercise = async () => {
+    if (!pendingDeleteExercise || deletingExercise) return;
+    setDeletingExercise(true);
     try {
-      await api.deleteCustomVocalExercise(ex.id);
-      setCustomExercises((prev) => prev.filter((item) => item.id !== ex.id));
-      if (exerciseId === ex.id) {
+      await api.deleteCustomVocalExercise(pendingDeleteExercise.id);
+      setCustomExercises((prev) => prev.filter((item) => item.id !== pendingDeleteExercise.id));
+      if (exerciseId === pendingDeleteExercise.id) {
         setExerciseId(VOCAL_EXERCISES[0].id);
       }
+      setPendingDeleteExercise(null);
     } catch (err: any) {
       setError(err?.message || 'Erro ao excluir o exercício personalizado.');
+      setPendingDeleteExercise(null);
+    } finally {
+      setDeletingExercise(false);
     }
   };
 
@@ -552,11 +588,30 @@ export function VocalExercisePlayer() {
           <span>Este exercício não cabe na tessitura selecionada. Ajuste as notas da sua extensão vocal.</span>
         </div>
       )}
+      {customLoadError && (
+        <div role="alert" className="vocal-alert-banner is-warning">
+          <AlertCircle size={20} aria-hidden="true" />
+          <span>{customLoadError}</span>
+          <button
+            type="button"
+            disabled={loadingCustomExercises}
+            onClick={() => void loadCustomExercises(true)}
+            style={{ minHeight: '44px' }}
+          >
+            {loadingCustomExercises ? 'Recarregando...' : 'Tentar novamente'}
+          </button>
+        </div>
+      )}
       {error && (
         <div role="alert" className="vocal-alert-banner is-danger">
           <AlertCircle size={20} aria-hidden="true" />
           <span>{error}</span>
-          <button type="button" disabled={minTranspose > maxTranspose} onClick={() => void start()}>
+          <button
+            type="button"
+            disabled={minTranspose > maxTranspose}
+            style={{ minHeight: '44px' }}
+            onClick={() => void start()}
+          >
             Tentar novamente
           </button>
         </div>
@@ -746,12 +801,30 @@ export function VocalExercisePlayer() {
       {/* Custom Exercise Modal */}
       {modalOpen && (
         <CustomExerciseModal
+          key={editingExercise?.id || 'new'}
           initialExercise={editingExercise}
           isOpen={modalOpen}
           onClose={() => setModalOpen(false)}
           onSave={handleSaveModalExercise}
         />
       )}
+
+      <ConfirmDialog
+        isOpen={Boolean(pendingDeleteExercise)}
+        title="Excluir exercício personalizado"
+        message={
+          pendingDeleteExercise
+            ? `Deseja realmente excluir o exercício "${pendingDeleteExercise.title}"? Esta ação não pode ser desfeita.`
+            : ''
+        }
+        confirmLabel="Excluir"
+        tone="danger"
+        busy={deletingExercise}
+        onConfirm={confirmDeleteExercise}
+        onCancel={() => {
+          if (!deletingExercise) setPendingDeleteExercise(null);
+        }}
+      />
     </section>
   );
 }

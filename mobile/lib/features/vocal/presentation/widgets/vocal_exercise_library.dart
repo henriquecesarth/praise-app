@@ -162,22 +162,22 @@ class _VocalExerciseLibraryState extends State<VocalExerciseLibrary> {
         return (
           '↑',
           'Ascendente',
-          isDark ? const Color(0xFF064E3B) : const Color(0xFFD1FAE5),
-          isDark ? const Color(0xFF6EE7B7) : const Color(0xFF047857),
+          isDark ? const Color(0xFF1A3A2C) : const Color(0xFFE1EFE8),
+          isDark ? const Color(0xFF7CC4A4) : const Color(0xFF14533C),
         );
       case MelodicCategory.descendente:
         return (
           '↓',
           'Descendente',
-          isDark ? const Color(0xFF1E3A8A) : const Color(0xFFDBEAFE),
-          isDark ? const Color(0xFF93C5FD) : const Color(0xFF1D4ED8),
+          isDark ? const Color(0xFF3E2914) : const Color(0xFFFEF3E2),
+          isDark ? const Color(0xFFF5B874) : const Color(0xFF9A5513),
         );
       case MelodicCategory.misto:
         return (
           '↕',
           'Misto',
-          isDark ? const Color(0xFF4C1D95) : const Color(0xFFEDE9FE),
-          isDark ? const Color(0xFFC4B5FD) : const Color(0xFF6D28D9),
+          isDark ? const Color(0xFF28362F) : const Color(0xFFF1ECE4),
+          isDark ? const Color(0xFFD6CEC2) : const Color(0xFF47554E),
         );
     }
   }
@@ -189,7 +189,6 @@ class _VocalExerciseLibraryState extends State<VocalExerciseLibrary> {
     final orientation = MediaQuery.orientationOf(context);
     final isTabletLandscape =
         screenSize.shortestSide >= 600 && orientation == Orientation.landscape;
-    final columnsCount = isTabletLandscape ? 2 : 1;
     final selected = _selectedExercise;
     final counts = _counts;
     final filtered = _filteredExercises;
@@ -346,53 +345,64 @@ class _VocalExerciseLibraryState extends State<VocalExerciseLibrary> {
                   constraints: BoxConstraints(
                     maxHeight: isTabletLandscape ? 380 : 290,
                   ),
-                  child: ListView.separated(
-                    key: const PageStorageKey<String>('vocal_library_scroll'),
-                    controller: _listScrollController,
-                    shrinkWrap: true,
-                    itemCount: (filtered.length + columnsCount - 1) ~/
-                        columnsCount,
-                    separatorBuilder: (_, __) =>
-                        SizedBox(height: isTabletLandscape ? 10 : 8),
-                    itemBuilder: (context, rowIndex) {
-                      if (columnsCount == 1) {
-                        final exercise = filtered[rowIndex];
-                        return _buildExerciseCard(
-                          context,
-                          exercise: exercise,
-                          isSelected: exercise.id == widget.selectedExerciseId,
-                        );
-                      }
-                      final leftIndex = rowIndex * 2;
-                      final rightIndex = leftIndex + 1;
-                      final leftExercise = filtered[leftIndex];
-                      final rightExercise = rightIndex < filtered.length
-                          ? filtered[rightIndex]
-                          : null;
-                      return Row(
-                        key: ValueKey('vocal_library_row_$rowIndex'),
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: _buildExerciseCard(
+                  child: LayoutBuilder(
+                    builder: (context, boxConstraints) {
+                      final columnsCount =
+                          (isTabletLandscape && boxConstraints.maxWidth >= 560)
+                              ? 2
+                              : 1;
+                      return ListView.separated(
+                        key: const PageStorageKey<String>(
+                            'vocal_library_scroll'),
+                        controller: _listScrollController,
+                        shrinkWrap: true,
+                        itemCount: (filtered.length + columnsCount - 1) ~/
+                            columnsCount,
+                        separatorBuilder: (_, __) =>
+                            SizedBox(height: isTabletLandscape ? 10 : 8),
+                        itemBuilder: (context, rowIndex) {
+                          if (columnsCount == 1) {
+                            final exercise = filtered[rowIndex];
+                            return _buildExerciseCard(
                               context,
-                              exercise: leftExercise,
+                              exercise: exercise,
                               isSelected:
-                                  leftExercise.id == widget.selectedExerciseId,
-                            ),
-                          ),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: rightExercise != null
-                                ? _buildExerciseCard(
-                                    context,
-                                    exercise: rightExercise,
-                                    isSelected: rightExercise.id ==
-                                        widget.selectedExerciseId,
-                                  )
-                                : const SizedBox.shrink(),
-                          ),
-                        ],
+                                  exercise.id == widget.selectedExerciseId,
+                            );
+                          }
+                          final leftIndex = rowIndex * 2;
+                          final rightIndex = leftIndex + 1;
+                          final leftExercise = filtered[leftIndex];
+                          final rightExercise = rightIndex < filtered.length
+                              ? filtered[rightIndex]
+                              : null;
+                          return Row(
+                            key: ValueKey('vocal_library_row_$rowIndex'),
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: _buildExerciseCard(
+                                  context,
+                                  exercise: leftExercise,
+                                  isSelected:
+                                      leftExercise.id ==
+                                          widget.selectedExerciseId,
+                                ),
+                              ),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: rightExercise != null
+                                    ? _buildExerciseCard(
+                                        context,
+                                        exercise: rightExercise,
+                                        isSelected: rightExercise.id ==
+                                            widget.selectedExerciseId,
+                                      )
+                                    : const SizedBox.shrink(),
+                              ),
+                            ],
+                          );
+                        },
                       );
                     },
                   ),
@@ -467,7 +477,9 @@ class _VocalExerciseLibraryState extends State<VocalExerciseLibrary> {
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
-                      color: Colors.amber.shade800,
+                      color: theme.brightness == Brightness.dark
+                          ? Colors.amber.shade200
+                          : Colors.amber.shade900,
                     ),
                   ),
                 ),
@@ -604,7 +616,9 @@ class _VocalExerciseLibraryState extends State<VocalExerciseLibrary> {
                           '• Personalizado',
                           style: theme.textTheme.labelSmall?.copyWith(
                             fontWeight: FontWeight.w700,
-                            color: Colors.amber.shade800,
+                            color: theme.brightness == Brightness.dark
+                                ? Colors.amber.shade200
+                                : Colors.amber.shade900,
                           ),
                         ),
                       ],

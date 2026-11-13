@@ -100,7 +100,10 @@ class _SmartChordsScreenState extends ConsumerState<SmartChordsScreen> {
         icon: const Icon(Icons.add),
         label: const Text('Nova Cifra'),
       ),
-      body: Column(
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 900),
+          child: Column(
         children: [
           // Search Input Bar
           Padding(
@@ -268,6 +271,8 @@ class _SmartChordsScreenState extends ConsumerState<SmartChordsScreen> {
             ),
           ),
         ],
+          ),
+        ),
       ),
     );
   }

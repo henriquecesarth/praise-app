@@ -145,16 +145,19 @@ class AvailabilityCard extends StatelessWidget {
     }
 
     if (isCurrent) {
+      final isDark = theme.brightness == Brightness.dark;
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
         decoration: BoxDecoration(
-          color: Colors.amber.shade100,
+          color: isDark
+              ? Colors.amber.withValues(alpha: 0.22)
+              : Colors.amber.shade100,
           borderRadius: BorderRadius.circular(6),
         ),
         child: Text(
           'Em andamento',
           style: theme.textTheme.labelSmall?.copyWith(
-            color: Colors.amber.shade900,
+            color: isDark ? Colors.amber.shade200 : Colors.amber.shade900,
             fontWeight: FontWeight.bold,
           ),
         ),

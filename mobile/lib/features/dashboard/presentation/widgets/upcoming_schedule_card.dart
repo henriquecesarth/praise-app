@@ -144,7 +144,9 @@ class UpcomingScheduleCard extends StatelessWidget {
                               icon: Icons.check_circle_outline,
                               label:
                                   '${schedule.confirmedCount} confirmado${schedule.confirmedCount != 1 ? 's' : ''}',
-                              color: Colors.green.shade700,
+                              color: theme.brightness == Brightness.dark
+                                  ? const Color(0xFF7CC4A4)
+                                  : Colors.green.shade700,
                             ),
                           if (schedule.songsCount > 0)
                             _buildChip(
@@ -152,7 +154,7 @@ class UpcomingScheduleCard extends StatelessWidget {
                               icon: Icons.music_note_outlined,
                               label:
                                   '${schedule.songsCount} música${schedule.songsCount != 1 ? 's' : ''}',
-                              color: Colors.purple.shade600,
+                              color: theme.colorScheme.secondary,
                             ),
                         ],
                       ),

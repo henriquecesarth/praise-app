@@ -270,6 +270,42 @@ void main() {
     );
 
     testWidgets(
+      'tablet container width >= 840 renders two-column studio layout without overflow',
+      (tester) async {
+        tester.view.physicalSize = const Size(1024, 768);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        for (final themeMode in [ThemeMode.light, ThemeMode.dark]) {
+          await tester.pumpWidget(
+            MaterialApp(
+              theme: ThemeData.light(useMaterial3: true),
+              darkTheme: ThemeData.dark(useMaterial3: true),
+              themeMode: themeMode,
+              home: const VocalPlayerScreen(),
+            ),
+          );
+          await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull);
+          expect(
+            find.byKey(const ValueKey('vocal_tablet_two_column_layout')),
+            findsOneWidget,
+          );
+        }
+
+        tester.view.physicalSize = const Size(768, 1024);
+        await tester.pumpWidget(const MaterialApp(home: VocalPlayerScreen()));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(
+          find.byKey(const ValueKey('vocal_tablet_two_column_layout')),
+          findsNothing,
+        );
+      },
+    );
+
+    testWidgets(
       'phone in portrait and landscape keeps 1 card per row',
       (tester) async {
         for (final size in [const Size(390, 844), const Size(844, 390)]) {

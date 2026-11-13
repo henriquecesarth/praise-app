@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../widgets/chord_lyric_line.dart';
 import '../widgets/musical_progression_line.dart';
 import 'package:flutter/material.dart';
@@ -109,6 +111,12 @@ class SmartChordReaderScreen extends ConsumerStatefulWidget {
 }
 
 class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen> {
+  final ScrollController _scrollController = ScrollController();
+  Timer? _autoScrollTimer;
+  bool _isAutoScrolling = false;
+  int _autoScrollSpeed = 2; // 1x..5x
+  bool _isFullscreen = false;
+
   double _fontSize = 15.0;
   String? _boundUserId;
   bool _isDismissed = false;
@@ -116,6 +124,62 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
   int _fontSaveRequestId = 0;
   int? _lineSpacingOverride;
   int _spacingSaveRequestId = 0;
+
+  @override
+  void dispose() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _stopAutoScroll({bool updateState = true}) {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+    if (_isAutoScrolling && updateState && mounted) {
+      setState(() => _isAutoScrolling = false);
+    } else {
+      _isAutoScrolling = false;
+    }
+  }
+
+  void _toggleAutoScroll() {
+    if (_isAutoScrolling) {
+      _stopAutoScroll();
+      return;
+    }
+    setState(() => _isAutoScrolling = true);
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
+      if (!mounted || _isDismissed || !_isAutoScrolling) {
+        _stopAutoScroll();
+        return;
+      }
+      if (!_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      if (!position.hasContentDimensions) return;
+      final stepPx = 0.8 * _autoScrollSpeed;
+      final nextOffset = _scrollController.offset + stepPx;
+      if (nextOffset >= position.maxScrollExtent) {
+        _scrollController.jumpTo(position.maxScrollExtent);
+        _stopAutoScroll();
+      } else {
+        _scrollController.jumpTo(nextOffset);
+      }
+    });
+  }
+
+  void _setAutoScrollSpeed(int speed) {
+    setState(() {
+      _autoScrollSpeed = speed.clamp(1, 5);
+    });
+  }
+
+  void _toggleFullscreen() {
+    setState(() {
+      _isFullscreen = !_isFullscreen;
+    });
+  }
 
   Future<void> _setLineSpacing(int value) async {
     final spacing = value.clamp(0, 24).round();
@@ -252,6 +316,7 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
   void _dismissScreen() {
     if (_isDismissed) return;
     _isDismissed = true;
+    _stopAutoScroll(updateState: false);
     if (mounted) {
       Navigator.of(context).pop();
     }
@@ -376,7 +441,9 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
     });
 
     return Scaffold(
-      appBar: AppBar(
+      appBar: _isFullscreen
+          ? null
+          : AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -460,7 +527,7 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
         ],
       ),
       body: SafeArea(
-        top: false,
+        top: _isFullscreen,
         child: Builder(
         builder: (context) {
           if (detailState.isLoading && chord == null) {
@@ -531,185 +598,298 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
 
           return Column(
             children: [
-              _buildRepertoireLinkBanner(
-                context,
-                theme,
-                linkState,
-                activeMinistry?.id,
-                chord,
-              ),
+              if (!_isFullscreen) ...[
+                _buildRepertoireLinkBanner(
+                  context,
+                  theme,
+                  linkState,
+                  activeMinistry?.id,
+                  chord,
+                ),
 
-              // Sticky Transposition & View Controls Toolbar
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
-                  border: Border(
-                    bottom: BorderSide(
-                      color: theme.dividerColor.withValues(alpha: 0.2),
+                // Sticky Transposition & View Controls Toolbar
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+                    border: Border(
+                      bottom: BorderSide(
+                        color: theme.dividerColor.withValues(alpha: 0.2),
+                      ),
                     ),
                   ),
-                ),
-                child: LayoutBuilder(builder: (context, constraints) {
-                  final keyControls = <Widget>[
-                    // Transposed Key Indicator
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.primaryContainer,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Tom: $currentKey',
-                            style: theme.textTheme.labelMedium?.copyWith(
-                              fontWeight: FontWeight.bold,
-                              color: theme.colorScheme.onPrimaryContainer,
-                            ),
-                          ),
-                          if (semitones != 0) ...[
-                            const SizedBox(width: 4),
+                  child: LayoutBuilder(builder: (context, constraints) {
+                    final keyControls = <Widget>[
+                      // Transposed Key Indicator
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primaryContainer,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
                             Text(
-                              semitones > 0 ? '(+$semitones)' : '($semitones)',
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                color: theme.colorScheme.onPrimaryContainer.withValues(alpha: 0.8),
+                              'Tom: $currentKey',
+                              style: theme.textTheme.labelMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                color: theme.colorScheme.onPrimaryContainer,
                               ),
                             ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    // Transpose down
-                    IconButton.filledTonal(
-                      tooltip: 'Meio tom abaixo (-1)',
-                      visualDensity: VisualDensity.compact,
-                      icon: const Icon(Icons.remove, size: 18),
-                      onPressed: () {
-                        ref.read(smartChordDetailNotifierProvider.notifier).transposeBy(-1);
-                      },
-                    ),
-                    const SizedBox(width: 4),
-                    // Transpose up
-                    IconButton.filledTonal(
-                      tooltip: 'Meio tom acima (+1)',
-                      visualDensity: VisualDensity.compact,
-                      icon: const Icon(Icons.add, size: 18),
-                      onPressed: () {
-                        ref.read(smartChordDetailNotifierProvider.notifier).transposeBy(1);
-                      },
-                    ),
-                  ];
-                  final originalControls = <Widget>[
-                    if (semitones != 0) ...[
-                      const SizedBox(width: 4),
-                      TextButton(
-                        onPressed: () {
-                          ref.read(smartChordDetailNotifierProvider.notifier).resetTransposition();
-                        },
-                        child: const Text('Original'),
-                      ),
-                    ],
-                  ];
-                  final fontControls = <Widget>[
-                    // Font Family Selector
-                    PopupMenuButton<String>(
-                      tooltip: 'Fonte das cifras',
-                      initialValue: chordFont,
-                      enabled: !_isSavingFont,
-                      icon: _isSavingFont
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.text_fields_rounded, size: 20),
-                      onSelected: (newFont) => _onSelectChordFont(newFont, chordFont),
-                      itemBuilder: (context) => [
-                        for (final font in ChordFontFamilyResolver.supportedFonts)
-                          CheckedPopupMenuItem<String>(
-                            value: font,
-                            checked: font == chordFont,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  font,
-                                  style: TextStyle(
-                                    fontFamily: ChordFontFamilyResolver.resolve(font).fontFamily,
-                                    fontFamilyFallback: ChordFontFamilyResolver.resolve(font).fallback,
-                                    fontWeight: font == chordFont ? FontWeight.bold : FontWeight.normal,
-                                  ),
+                            if (semitones != 0) ...[
+                              const SizedBox(width: 4),
+                              Text(
+                                semitones > 0 ? '(+$semitones)' : '($semitones)',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: theme.colorScheme.onPrimaryContainer.withValues(alpha: 0.8),
                                 ),
-                                if (font != 'monospace')
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      // Transpose down
+                      IconButton.filledTonal(
+                        tooltip: 'Meio tom abaixo (-1)',
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.remove, size: 18),
+                        onPressed: () {
+                          ref.read(smartChordDetailNotifierProvider.notifier).transposeBy(-1);
+                        },
+                      ),
+                      const SizedBox(width: 4),
+                      // Transpose up
+                      IconButton.filledTonal(
+                        tooltip: 'Meio tom acima (+1)',
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.add, size: 18),
+                        onPressed: () {
+                          ref.read(smartChordDetailNotifierProvider.notifier).transposeBy(1);
+                        },
+                      ),
+                    ];
+                    final originalControls = <Widget>[
+                      if (semitones != 0) ...[
+                        const SizedBox(width: 4),
+                        TextButton(
+                          onPressed: () {
+                            ref.read(smartChordDetailNotifierProvider.notifier).resetTransposition();
+                          },
+                          child: const Text('Original'),
+                        ),
+                      ],
+                    ];
+                    final scrollControls = <Widget>[
+                      IconButton.filledTonal(
+                        key: const ValueKey('smart_chord_autoscroll_toggle_button'),
+                        tooltip: _isAutoScrolling ? 'Pausar rolagem' : 'Rolagem automática',
+                        visualDensity: VisualDensity.compact,
+                        icon: Icon(
+                          _isAutoScrolling ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                          size: 18,
+                        ),
+                        onPressed: _toggleAutoScroll,
+                      ),
+                      IconButton(
+                        key: const ValueKey('smart_chord_autoscroll_slower_button'),
+                        tooltip: 'Diminuir velocidade da rolagem',
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.fast_rewind_rounded, size: 18),
+                        onPressed: _autoScrollSpeed > 1
+                            ? () => _setAutoScrollSpeed(_autoScrollSpeed - 1)
+                            : null,
+                      ),
+                      Text(
+                        '${_autoScrollSpeed}x',
+                        key: const ValueKey('smart_chord_autoscroll_speed_label'),
+                        style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                      IconButton(
+                        key: const ValueKey('smart_chord_autoscroll_faster_button'),
+                        tooltip: 'Aumentar velocidade da rolagem',
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.fast_forward_rounded, size: 18),
+                        onPressed: _autoScrollSpeed < 5
+                            ? () => _setAutoScrollSpeed(_autoScrollSpeed + 1)
+                            : null,
+                      ),
+                      IconButton(
+                        key: const ValueKey('smart_chord_fullscreen_button'),
+                        tooltip: 'Tela cheia',
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.fullscreen_rounded, size: 20),
+                        onPressed: _toggleFullscreen,
+                      ),
+                    ];
+                    final fontControls = <Widget>[
+                      // Font Family Selector
+                      PopupMenuButton<String>(
+                        tooltip: 'Fonte das cifras',
+                        initialValue: chordFont,
+                        enabled: !_isSavingFont,
+                        icon: _isSavingFont
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.text_fields_rounded, size: 20),
+                        onSelected: (newFont) => _onSelectChordFont(newFont, chordFont),
+                        itemBuilder: (context) => [
+                          for (final font in ChordFontFamilyResolver.supportedFonts)
+                            CheckedPopupMenuItem<String>(
+                              value: font,
+                              checked: font == chordFont,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
                                   Text(
-                                    _getFontSubtext(font),
-                                    style: theme.textTheme.labelSmall?.copyWith(
-                                      color: theme.colorScheme.onSurfaceVariant,
-                                      fontSize: 10,
+                                    font,
+                                    style: TextStyle(
+                                      fontFamily: ChordFontFamilyResolver.resolve(font).fontFamily,
+                                      fontFamilyFallback: ChordFontFamilyResolver.resolve(font).fallback,
+                                      fontWeight: font == chordFont ? FontWeight.bold : FontWeight.normal,
                                     ),
                                   ),
-                              ],
+                                  if (font != 'monospace')
+                                    Text(
+                                      _getFontSubtext(font),
+                                      style: theme.textTheme.labelSmall?.copyWith(
+                                        color: theme.colorScheme.onSurfaceVariant,
+                                        fontSize: 10,
+                                      ),
+                                    ),
+                                ],
+                              ),
                             ),
-                          ),
+                        ],
+                      ),
+                      const SizedBox(width: 4),
+                      // Font Size Steppers
+                      IconButton(
+                        tooltip: 'Diminuir fonte',
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.text_decrease, size: 18),
+                        onPressed: _decreaseFontSize,
+                      ),
+                      IconButton(
+                        tooltip: 'Aumentar fonte',
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.text_increase, size: 18),
+                        onPressed: _increaseFontSize,
+                      ),
+                      IconButton(
+                        tooltip: 'Espaçamento entre linhas',
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.format_line_spacing, size: 18),
+                        onPressed: () => _showLineSpacingSettings(lineSpacing),
+                      ),
+                    ];
+                    if (constraints.maxWidth >= 780 * MediaQuery.textScalerOf(context).scale(1)) {
+                      return Row(children: [
+                        ...keyControls,
+                        ...originalControls,
+                        const Spacer(),
+                        ...scrollControls,
+                        const SizedBox(width: 4),
+                        ...fontControls,
+                      ]);
+                    }
+                    return Column(
+                      key: const ValueKey('reader-adaptive-toolbar'),
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(children: [Expanded(child: keyControls.first), ...originalControls]),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            ...keyControls.skip(1),
+                            const Spacer(),
+                            ...fontControls,
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: scrollControls,
+                        ),
                       ],
-                    ),
-                    const SizedBox(width: 4),
-                    // Font Size Steppers
-                    IconButton(
-                      tooltip: 'Diminuir fonte',
-                      visualDensity: VisualDensity.compact,
-                      icon: const Icon(Icons.text_decrease, size: 18),
-                      onPressed: _decreaseFontSize,
-                    ),
-                    IconButton(
-                      tooltip: 'Aumentar fonte',
-                      visualDensity: VisualDensity.compact,
-                      icon: const Icon(Icons.text_increase, size: 18),
-                      onPressed: _increaseFontSize,
-                    ),
-                    IconButton(
-                      tooltip: 'Espaçamento entre linhas',
-                      visualDensity: VisualDensity.compact,
-                      icon: const Icon(Icons.format_line_spacing, size: 18),
-                      onPressed: () => _showLineSpacingSettings(lineSpacing),
-                    ),
-                  ];
-                  if (constraints.maxWidth >= 640 * MediaQuery.textScalerOf(context).scale(1)) {
-                    return Row(children: [...keyControls, ...originalControls, const Spacer(), ...fontControls]);
-                  }
-                  return Column(
-                    key: const ValueKey('reader-adaptive-toolbar'),
-                    children: [
-                      Row(children: [Expanded(child: keyControls.first), ...originalControls]),
-                      const SizedBox(height: 4),
-                      Row(children: [...keyControls.skip(1), const Spacer(), ...fontControls]),
-                    ],
-                  );
-                }),
-              ),
+                    );
+                  }),
+                ),
+              ],
 
               // Lyrics & Chords Body
               Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      for (int i = 0; i < lines.length; i++) ...[
-                        _buildRenderedLine(lines[i], semitones, theme, fontConfig,
-                          spacingPx: lineSpacing.toDouble(),
-                          alignedLyrics: i > 0 && SmartChordParser.progressionTokens(lines[i - 1]) != null),
-                        SizedBox(height: lineSpacing.toDouble()),
-                      ],
-                      const SizedBox(height: 48),
-                    ],
-                  ),
+                child: Stack(
+                  children: [
+                    Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 900),
+                        child: SingleChildScrollView(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              for (int i = 0; i < lines.length; i++) ...[
+                                _buildRenderedLine(lines[i], semitones, theme, fontConfig,
+                                  spacingPx: lineSpacing.toDouble(),
+                                  alignedLyrics: i > 0 && SmartChordParser.progressionTokens(lines[i - 1]) != null),
+                                SizedBox(height: lineSpacing.toDouble()),
+                              ],
+                              SizedBox(height: _isFullscreen ? 88 : 48),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (_isFullscreen)
+                      Positioned(
+                        right: 16,
+                        bottom: 16,
+                        child: SafeArea(
+                          top: false,
+                          child: Material(
+                            elevation: 6,
+                            borderRadius: BorderRadius.circular(28),
+                            color: theme.colorScheme.surfaceContainerHigh,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    key: const ValueKey('smart_chord_fullscreen_autoscroll_button'),
+                                    tooltip: _isAutoScrolling ? 'Pausar rolagem' : 'Rolagem automática',
+                                    constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                                    icon: Icon(_isAutoScrolling ? Icons.pause_rounded : Icons.play_arrow_rounded),
+                                    onPressed: _toggleAutoScroll,
+                                  ),
+                                  Text(
+                                    '${_autoScrollSpeed}x',
+                                    style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  FilledButton.tonalIcon(
+                                    key: const ValueKey('smart_chord_exit_fullscreen_button'),
+                                    style: FilledButton.styleFrom(minimumSize: const Size(48, 48)),
+                                    onPressed: _toggleFullscreen,
+                                    icon: const Icon(Icons.fullscreen_exit_rounded),
+                                    label: const Text('Sair'),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
             ],

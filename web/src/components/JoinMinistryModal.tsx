@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { KeyRound, CheckCircle2, AlertCircle, ChevronLeft, X, Check } from 'lucide-react';
 import { api } from '../api';
 import { Ministry } from '../types';
 import { FloatingInput } from './ui/FloatingInput';
+import { useRepertoireDialog } from './useRepertoireDialog';
 
 interface JoinMinistryModalProps {
   isOpen: boolean;
@@ -15,6 +16,11 @@ export const JoinMinistryModal: React.FC<JoinMinistryModalProps> = ({ isOpen, on
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  useRepertoireDialog(modalRef, isOpen, () => {
+    if (!loading) onClose();
+  });
 
   if (!isOpen) return null;
 
@@ -41,22 +47,32 @@ export const JoinMinistryModal: React.FC<JoinMinistryModalProps> = ({ isOpen, on
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content join-ministry-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+    <div className="modal-overlay" onClick={() => !loading && onClose()}>
+      <div
+        ref={modalRef}
+        className="modal-content join-ministry-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="join-ministry-modal-title"
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: '440px' }}
+      >
         {/* Header Responsivo em 3 Seções com Touch Targets de 44x44px */}
         <div className="modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
           <button
             type="button"
             className="action-icon-btn"
             onClick={onClose}
+            disabled={loading}
             title="Fechar"
+            aria-label="Fechar modal de convite"
             style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}
           >
             <ChevronLeft size={22} className="mobile-only" />
             <X size={20} className="desktop-only" />
           </button>
 
-          <div className="modal-title" style={{ flex: 1, textAlign: 'center', margin: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+          <div id="join-ministry-modal-title" className="modal-title" style={{ flex: 1, textAlign: 'center', margin: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
             <KeyRound size={20} style={{ color: 'var(--primary-light)' }} />
             <span style={{ fontSize: '1.05rem', fontWeight: 700 }}>Entrar no Ministério</span>
           </div>

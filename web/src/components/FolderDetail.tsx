@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Folder, Song } from '../types';
 import { ArrowLeft, ChevronLeft, Edit2, Plus, Minus, Music, Gauge, Clock, X } from 'lucide-react';
 import { Header } from './Header';
+import { useRepertoireDialog } from './useRepertoireDialog';
 
 interface FolderDetailProps {
   folder: Folder;
@@ -25,6 +26,9 @@ export const FolderDetail: React.FC<FolderDetailProps> = ({
   const [showAddModal, setShowAddModal] = useState(false);
   const [addingId, setAddingId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const addModalRef = useRef<HTMLDivElement>(null);
+
+  useRepertoireDialog(addModalRef, showAddModal, () => setShowAddModal(false));
 
   // Filter out songs that are already in the folder
   const existingSongIds = new Set(folder.songs.map((s) => s.id));
@@ -192,20 +196,28 @@ export const FolderDetail: React.FC<FolderDetailProps> = ({
       {/* Modal Responsivo para adicionar músicas à pasta */}
       {showAddModal && (
         <div className="modal-overlay folder-add-modal" onClick={() => setShowAddModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+          <div
+            ref={addModalRef}
+            className="modal-content"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="folder-add-songs-title"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <button 
                 type="button"
                 className="action-icon-btn" 
                 onClick={() => setShowAddModal(false)}
                 title="Fechar"
+                aria-label="Fechar seleção de músicas"
                 style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}
               >
                 <ChevronLeft size={22} className="mobile-only" />
                 <X size={20} className="desktop-only" />
               </button>
 
-              <div className="modal-title" style={{ flex: 1, textAlign: 'center', margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>
+              <div id="folder-add-songs-title" className="modal-title" style={{ flex: 1, textAlign: 'center', margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>
                 Adicionar Músicas
               </div>
 

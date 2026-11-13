@@ -875,6 +875,13 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
     setIsPdfSettingsOpen(true);
   };
 
+  const handleTogglePdfSettings = () => {
+    if (!isPdfSettingsOpen) {
+      pdfModalOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    }
+    setIsPdfSettingsOpen((prev) => !prev);
+  };
+
   const closePrintModal = (restoreFocus = true) => {
     pdfPreviewGenRef.current += 1;
     pdfPreviewPromiseRef.current = null;
@@ -1217,92 +1224,12 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
 
   return (
     <div data-workspace-mode={workspaceMode} data-has-selection={Boolean(selectedChord)} className="features-container smart-chords-workspace" style={{ display: 'flex', gap: '20px', minHeight: 'calc(100vh - 120px)', color: 'var(--text-primary)' }}>
-      {/* ─── Stylesheet for Print Mode (Guarantees no blank pages) ─── */}
-      <style>{`
-        .smart-chords-workspace { flex-direction: column; min-width: 0; }
-        .smart-chords-workspace .smart-chords-sidebar { width: 100% !important; box-sizing: border-box; }
-        .smart-chords-workspace[data-has-selection="true"] .smart-chords-sidebar { display: none !important; }
-        .smart-chords-workspace[data-has-selection="false"] > .smart-chords-stage { display: none !important; }
-        .smart-chords-workspace[data-workspace-mode="read"] .smart-chords-editor { display: none !important; }
-        .smart-chords-workspace[data-workspace-mode="edit"] .printable-area-container { display: none !important; }
-        .smart-chords-workspace .smart-chords-editor, .smart-chords-workspace .printable-area-container { min-width: 0 !important; width: 100%; box-sizing: border-box; }
-        .smart-chords-editor textarea { min-height: 45vh !important; font-size: 16px !important; resize: vertical !important; }
-        .smart-chords-workbar { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px; background: var(--bg-primary, #161b28); border-bottom: 1px solid var(--border-color); }
-        .smart-chords-workbar button { min-height: 44px; }
-        .smart-chords-pdf-modal { box-sizing: border-box; }
-        .smart-chords-pdf-controls > div { flex: 1 1 220px; min-width: 0; }
-        .smart-chords-pdf-controls select { max-width: 100%; min-width: 0; }
-        .smart-chords-pdf-download { flex: 0 0 auto; }
-        .smart-chords-pdf-scroll > div { margin-inline: auto; }
-        @media (max-width: 600px) {
-          .smart-chords-pdf-modal { width: 100% !important; height: 100dvh !important; max-height: 100dvh !important; border-radius: 0 !important; padding: 12px !important; gap: 10px !important; }
-          .smart-chords-pdf-header { gap: 8px !important; }
-          .smart-chords-pdf-controls > div { flex-basis: 100%; }
-          .smart-chords-pdf-download { width: 100%; }
-        }
-        @media print {
-          body {
-            background: white !important;
-            color: black !important;
-          }
-          #root {
-            background: white !important;
-            color: black !important;
-          }
-          /* Hide all outer components with no-print class */
-          .no-print {
-            display: none !important;
-          }
-          /* Ensure wrapper matches printable document layout */
-          .features-container {
-            display: block !important;
-            height: auto !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            background: white !important;
-            color: black !important;
-          }
-          /* Ensure printable container uses full page and fits print layout */
-          .printable-area-container {
-            display: block !important;
-            width: 100% !important;
-            height: auto !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            background: white !important;
-            color: black !important;
-            border: none !important;
-            box-shadow: none !important;
-          }
-          .print-sheet-box {
-            background: white !important;
-            color: black !important;
-            border: none !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            overflow: visible !important;
-            width: 100% !important;
-          }
-          .print-sheet-box * {
-            color: black !important;
-          }
-          .print-chord-span {
-            color: black !important;
-            font-weight: bold !important;
-          }
-          .has-chord {
-            text-decoration: underline 2px solid black !important;
-            text-decoration-color: black !important;
-          }
-        }
-      `}</style>
-
       {/* ─── Web Sidebar: Saved SmartChords List ─── */}
       <SmartChordsLibrary smartChords={smartChords} artists={artists} selectedChordId={selectedChord?.id} search={search} isLoading={isLoading} relationsLoading={relationsLoading} relationsError={relationsError} onImport={() => setIsImportModalOpen(true)} onRetry={() => setRelationsRetry(value => value + 1)} handleCreateNew={handleCreateNew} handleSelectChord={handleSelectChord} handleSearchChange={handleSearchChange} />
 
       {/* ─── Web Workspace Panel ─── */}
       <div className="smart-chords-stage" style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-        {selectedChord && <SmartChordToolbar title={title} dirty={dirty} saving={isLoading} mode={workspaceMode} onModeChange={setWorkspaceMode} onBack={() => { if (onNavigate) onNavigate('/cifras'); else if (confirmLeave()) leaveEditor(); }} onSave={handleSave} onExport={handlePrint} onPdfSettings={handlePrint} pdfSettingsOpen={isPdfSettingsOpen} onDelete={selectedChord.id ? handleDelete : undefined} />}
+        {selectedChord && <SmartChordToolbar title={title} dirty={dirty} saving={isLoading} mode={workspaceMode} onModeChange={setWorkspaceMode} onBack={() => { if (onNavigate) onNavigate('/cifras'); else if (confirmLeave()) leaveEditor(); }} onSave={handleSave} onExport={handlePrint} onPdfSettings={handleTogglePdfSettings} pdfSettingsOpen={isPdfSettingsOpen} onDelete={selectedChord.id ? handleDelete : undefined} />}
 
 
         {selectedChord && <SmartChordPdfSettings open={isPdfSettingsOpen} dirty={dirty} onClose={() => setIsPdfSettingsOpen(false)} onGenerate={startPdfPreview} pdfFontFamily={pdfFontFamily} handlePdfFontFamilyChange={handlePdfFontFamilyChange} pdfFontSize={pdfFontSize} setPdfFontSize={setPdfFontSize} chordLineSpacingPx={chordLineSpacingPx} handleChordLineSpacingChange={handleChordLineSpacingChange} pdfCustomMarker={pdfCustomMarker} handlePdfCustomMarkerChange={handlePdfCustomMarkerChange} />}
@@ -1437,40 +1364,6 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
             {/* Modal Body: Scrollable Sheet Preview */}
             {pdfError && <p role="alert">{pdfError}</p>}
             <div className="smart-chords-pdf-scroll" data-testid="pdf-preview-scroll" tabIndex={0} aria-label="Pré-visualização rolável da cifra" style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 'clamp(8px, 2vw, 20px)', backgroundColor: '#111', borderRadius: '8px', overscrollBehavior: 'contain' }}>
-              {/* PDF document styles for PDF generation */}
-              <style>{`
-                .html2pdf__overlay {
-                  pointer-events: none !important;
-                }
-                #printable-sheet-pdf * {
-                  color: black !important;
-                  font-family: ${activePdfFontFamilyCss} !important;
-                }
-                #printable-sheet-pdf .print-chord-span {
-                  color: black !important;
-                  font-weight: bold !important;
-                  font-family: ${activePdfFontFamilyCss} !important;
-                  line-height: 1.1 !important;
-                }
-                #printable-sheet-pdf [data-musical-tablature] {
-                  font-family: monospace, "Courier New", Courier !important;
-                }
-                #printable-sheet-pdf .has-chord {
-                  text-decoration: none !important;
-                }
-                #printable-sheet-pdf .pdf-line-row {
-                  break-inside: avoid !important;
-                  page-break-inside: avoid !important;
-                }
-                #printable-sheet-pdf .pdf-header {
-                  break-inside: avoid !important;
-                  page-break-inside: avoid !important;
-                }
-                #printable-sheet-pdf [data-testid="pdf-sheet-lines"] > div:not(.pdf-line-row):not([data-empty-line]) {
-                  margin-bottom: -${chordLineSpacingPx}px !important;
-                }
-              `}</style>
-
               {pdfPreviewPages.length > 0 && (
                 <div
                   data-testid="pdf-preview-pages"
@@ -1531,6 +1424,8 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                 <div
                   id="printable-sheet-pdf"
                   style={{
+                    '--pdf-font-family': activePdfFontFamilyCss,
+                    '--pdf-line-spacing': `-${chordLineSpacingPx}px`,
                     background: 'white',
                     color: 'black',
                     padding: 0,
@@ -1538,8 +1433,15 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                     fontFamily: activePdfFontFamilyCss,
                     width: '190mm',
                     boxSizing: 'border-box'
-                  }}
+                  } as React.CSSProperties}
                 >
+                  <style data-pdf-styles="true">{`
+                    #printable-sheet-pdf .pdf-line-row,
+                    #printable-sheet-pdf .pdf-header {
+                      break-inside: avoid !important;
+                      page-break-inside: avoid !important;
+                    }
+                  `}</style>
                   {/* Document Header — Single Row Layout */}
                   <div
                     className="pdf-header"
@@ -1639,7 +1541,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                             whiteSpace: 'pre',
                             overflowX: 'hidden',
                             fontFamily: 'monospace, "Courier New", Courier',
-                            fontSize: `${printFontSize}px`,
+                            fontSize: `${pdfFontSize}px`,
                             lineHeight: '1.4',
                             color: 'black',
                             breakInside: 'avoid',
@@ -1661,15 +1563,14 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                           aria-label={lineText || 'Linha de compassos'}
                           style={{
                             display: 'flex',
-                            flexWrap: 'nowrap',
-                            whiteSpace: 'pre',
-                            overflowX: 'auto',
+                            flexWrap: 'wrap',
+                            whiteSpace: 'pre-wrap',
                             alignItems: 'baseline',
                             rowGap: `${pdfFontSize + 7}px`,
                             fontFamily: activePdfFontFamilyCss,
                             fontSize: `${pdfFontSize}px`,
                             lineHeight: '1.4',
-                            paddingTop: `${pdfFontSize + 4}px`,
+                            paddingTop: `${anchoredInstructions.length > 0 ? Math.round(pdfFontSize * 1.95) : pdfFontSize + 4}px`,
                             position: 'relative',
                             breakInside: 'avoid',
                             pageBreakInside: 'avoid'
@@ -1756,7 +1657,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
                           fontFamily: activePdfFontFamilyCss,
                           fontSize: `${pdfFontSize}px`,
                           lineHeight: '1.4',
-                          paddingTop: `${pdfFontSize + 4}px`,
+                          paddingTop: `${anchoredInstructions.length > 0 ? Math.round(pdfFontSize * 1.95) : pdfFontSize + 4}px`,
                           position: 'relative',
                           breakInside: 'avoid',
                           pageBreakInside: 'avoid'

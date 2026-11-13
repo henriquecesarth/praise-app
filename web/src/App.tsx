@@ -33,6 +33,8 @@ import { BottomNav } from './components/BottomNav';
 import { InstallPWAPrompt } from './components/InstallPWAPrompt';
 import { Header } from './components/Header';
 import { MobileAccountMenu } from './components/MobileAccountMenu';
+import { ConfirmDialog } from './components/ui/ConfirmDialog';
+import { useRepertoireDialog } from './components/useRepertoireDialog';
 import { louvaioTheme } from './theme/louvaioTheme';
 import { Search, SlidersHorizontal, Plus, CheckCircle, XCircle, Menu, Music, Edit3, KeyRound, UserPlus, LogOut, Building2, Home, Calendar as CalendarIcon, Sun, Moon, BookOpen } from 'lucide-react';
 
@@ -151,6 +153,18 @@ export default function App() {
   const [artistName, setArtistName] = useState('');
   const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
   const [selectedSmartChordId, setSelectedSmartChordId] = useState<string | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    onConfirm: () => Promise<void> | void;
+  } | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+
+  const folderModalRef = useRef<HTMLDivElement>(null);
+  const artistModalRef = useRef<HTMLDivElement>(null);
+  useRepertoireDialog(folderModalRef, showFolderModal, () => setShowFolderModal(false));
+  useRepertoireDialog(artistModalRef, showArtistModal, () => setShowArtistModal(false));
 
   // Loading & Feedback
   const [loadingSongs, setLoadingSongs] = useState(true);
@@ -596,20 +610,25 @@ export default function App() {
     }
   };
 
-  const handleDeleteSong = async (songId: string) => {
+  const handleDeleteSong = (songId: string) => {
     if (!groupId) return;
-    if (window.confirm('Tem certeza que deseja excluir esta música?')) {
-      try {
-        await api.deleteSong(songId, groupId);
-        showToast('Música excluída com sucesso.');
-        setSelectedSong(null);
-        navigate('/repertorio');
-        loadSongs();
-        loadCounts();
-      } catch (err: any) {
-        showToast(err.message || 'Erro ao excluir música.', 'error');
-      }
-    }
+    setPendingConfirm({
+      title: 'Excluir música',
+      message: 'Tem certeza que deseja excluir esta música?',
+      confirmLabel: 'Excluir',
+      onConfirm: async () => {
+        try {
+          await api.deleteSong(songId, groupId);
+          showToast('Música excluída com sucesso.');
+          setSelectedSong(null);
+          navigate('/repertorio');
+          loadSongs();
+          loadCounts();
+        } catch (err: any) {
+          showToast(err.message || 'Erro ao excluir música.', 'error');
+        }
+      },
+    });
   };
 
   const handleCreateFolder = async (e: React.FormEvent) => {
@@ -642,23 +661,28 @@ export default function App() {
     setShowFolderModal(true);
   };
 
-  const handleDeleteFolder = async (folderId: string, e: React.MouseEvent) => {
+  const handleDeleteFolder = (folderId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!groupId) return;
-    if (window.confirm('Tem certeza que deseja excluir esta pasta?')) {
-      try {
-        await api.deleteFolder(folderId, groupId);
-        showToast('Pasta excluída com sucesso.');
-        if (selectedFolder && selectedFolder.id === folderId) {
-          setSelectedFolder(null);
-          navigate('/repertorio');
+    setPendingConfirm({
+      title: 'Excluir pasta',
+      message: 'Tem certeza que deseja excluir esta pasta?',
+      confirmLabel: 'Excluir',
+      onConfirm: async () => {
+        try {
+          await api.deleteFolder(folderId, groupId);
+          showToast('Pasta excluída com sucesso.');
+          if (selectedFolder && selectedFolder.id === folderId) {
+            setSelectedFolder(null);
+            navigate('/repertorio');
+          }
+          loadFolders();
+          loadCounts();
+        } catch (err: any) {
+          showToast(err.message || 'Erro ao excluir pasta.', 'error');
         }
-        loadFolders();
-        loadCounts();
-      } catch (err: any) {
-        showToast(err.message || 'Erro ao excluir pasta.', 'error');
-      }
-    }
+      },
+    });
   };
 
   const handleAddSongToFolder = async (songId: string) => {
@@ -703,18 +727,23 @@ export default function App() {
     }
   };
 
-  const handleDeleteArtist = async (artistId: string) => {
+  const handleDeleteArtist = (artistId: string) => {
     if (!groupId) return;
-    if (window.confirm('Tem certeza que deseja excluir este artista?')) {
-      try {
-        await api.deleteArtist(artistId, groupId);
-        showToast('Artista excluído com sucesso.');
-        loadArtists();
-        loadCounts();
-      } catch (err: any) {
-        showToast(err.message || 'Erro ao excluir artista.', 'error');
-      }
-    }
+    setPendingConfirm({
+      title: 'Excluir artista',
+      message: 'Tem certeza que deseja excluir este artista?',
+      confirmLabel: 'Excluir',
+      onConfirm: async () => {
+        try {
+          await api.deleteArtist(artistId, groupId);
+          showToast('Artista excluído com sucesso.');
+          loadArtists();
+          loadCounts();
+        } catch (err: any) {
+          showToast(err.message || 'Erro ao excluir artista.', 'error');
+        }
+      },
+    });
   };
 
   const handleSelectFolder = async (folder: Folder) => {
@@ -1670,19 +1699,26 @@ export default function App() {
                       setScheduleToEdit(selectedSchedule);
                       setShowCreateScheduleModal(true);
                     } : undefined}
-                    onDelete={userRole === 'admin' ? async () => {
+                    onDelete={userRole === 'admin' ? () => {
                       if (!activeGroup || !selectedSchedule) return;
-                      if (window.confirm(`Tem certeza que deseja excluir a escala "${selectedSchedule.title}"? Esta ação não poderá ser desfeita.`)) {
-                        try {
-                          await api.deleteSchedule(selectedSchedule.id, activeGroup.id);
-                          showToast('Escala excluída com sucesso.');
-                          setSelectedSchedule(null);
-                          navigate('/escalas');
-                          setSchedules((prev) => prev.filter((s) => s.id !== selectedSchedule.id));
-                        } catch (err: any) {
-                          showToast(err.message || 'Erro ao excluir escala.', 'error');
-                        }
-                      }
+                      const targetSchedule = selectedSchedule;
+                      const targetGroupId = activeGroup.id;
+                      setPendingConfirm({
+                        title: 'Excluir escala',
+                        message: `Tem certeza que deseja excluir a escala "${targetSchedule.title}"? Esta ação não poderá ser desfeita.`,
+                        confirmLabel: 'Excluir',
+                        onConfirm: async () => {
+                          try {
+                            await api.deleteSchedule(targetSchedule.id, targetGroupId);
+                            showToast('Escala excluída com sucesso.');
+                            setSelectedSchedule(null);
+                            navigate('/escalas');
+                            setSchedules((prev) => prev.filter((s) => s.id !== targetSchedule.id));
+                          } catch (err: any) {
+                            showToast(err.message || 'Erro ao excluir escala.', 'error');
+                          }
+                        },
+                      });
                     } : undefined}
                     onUpdateSchedule={(updatedSchedule) => {
                       setSelectedSchedule(updatedSchedule);
@@ -1725,9 +1761,16 @@ export default function App() {
 
       {showFolderModal && (
         <div className="modal-overlay" onClick={() => setShowFolderModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+          <div
+            ref={folderModalRef}
+            className="modal-content"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="app-folder-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="modal-header">
-              <div className="modal-title">
+              <div id="app-folder-modal-title" className="modal-title">
                 {folderToEdit ? 'Editar Pasta' : 'Nova Pasta'}
               </div>
               <button type="button" aria-label="Fechar formulário de pasta" className="action-icon-btn" onClick={() => setShowFolderModal(false)}>
@@ -1770,9 +1813,16 @@ export default function App() {
 
       {showArtistModal && (
         <div className="modal-overlay" onClick={() => setShowArtistModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+          <div
+            ref={artistModalRef}
+            className="modal-content"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="app-artist-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="modal-header">
-              <div className="modal-title">Novo Artista</div>
+              <div id="app-artist-modal-title" className="modal-title">Novo Artista</div>
               <button type="button" aria-label="Fechar formulário de artista" className="action-icon-btn" onClick={() => setShowArtistModal(false)}>
                 ✕
               </button>
@@ -1867,6 +1917,28 @@ export default function App() {
           }}
         />
       )}
+
+      <ConfirmDialog
+        isOpen={Boolean(pendingConfirm)}
+        title={pendingConfirm?.title || ''}
+        message={pendingConfirm?.message || ''}
+        confirmLabel={pendingConfirm?.confirmLabel || 'Excluir'}
+        tone="danger"
+        busy={confirmBusy}
+        onConfirm={async () => {
+          if (!pendingConfirm || confirmBusy) return;
+          setConfirmBusy(true);
+          try {
+            await pendingConfirm.onConfirm();
+          } finally {
+            setConfirmBusy(false);
+            setPendingConfirm(null);
+          }
+        }}
+        onCancel={() => {
+          if (!confirmBusy) setPendingConfirm(null);
+        }}
+      />
 
       {/* Toast Notifications container */}
       {toastContainer}

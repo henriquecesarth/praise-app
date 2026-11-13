@@ -4,6 +4,7 @@ import { Song, ParticipantConflictResult } from '../types';
 import { api } from '../api';
 import { FloatingInput } from './ui/FloatingInput';
 import { FloatingTextarea } from './ui/FloatingTextarea';
+import { useRepertoireDialog } from './useRepertoireDialog';
 
 export interface ClothingPiece {
   id: string;
@@ -173,6 +174,55 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
   const membersReqRef = useRef<number>(0);
   const templatesReqRef = useRef<number>(0);
   const teamsReqRef = useRef<number>(0);
+  const modalRef = useRef<HTMLDivElement>(null);
+  const midModalRef = useRef<HTMLDivElement>(null);
+  const topModalRef = useRef<HTMLDivElement>(null);
+
+  const hasMidSubModal = Boolean(
+    showTeamSelectModal ||
+    showMemberSelectPage ||
+    showSongSelectPage ||
+    (showTemplateModal && !pendingTemplate)
+  );
+  const hasTopSubModal = Boolean(pendingTemplate || activePieceIdForColor);
+  useRepertoireDialog(modalRef, true);
+  useRepertoireDialog(midModalRef, hasMidSubModal);
+  useRepertoireDialog(topModalRef, hasTopSubModal);
+
+  React.useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      if (pendingTemplate) {
+        setPendingTemplate(null);
+      } else if (activePieceIdForColor) {
+        setActivePieceIdForColor(null);
+      } else if (showTemplateModal) {
+        setShowTemplateModal(false);
+      } else if (showTeamSelectModal) {
+        setShowTeamSelectModal(false);
+      } else if (showMemberSelectPage) {
+        setShowMemberSelectPage(false);
+      } else if (showSongSelectPage) {
+        setShowSongSelectPage(false);
+      } else if (showColorPalettePage) {
+        setShowColorPalettePage(false);
+      } else {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    pendingTemplate,
+    activePieceIdForColor,
+    showTemplateModal,
+    showTeamSelectModal,
+    showMemberSelectPage,
+    showSongSelectPage,
+    showColorPalettePage,
+    onClose,
+  ]);
 
   // Carregar membros reais do grupo e selecionar APENAS o criador da escala
   React.useEffect(() => {
@@ -671,7 +721,14 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="schedule-modal-container" onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={modalRef}
+        className="schedule-modal-container"
+        role="dialog"
+        aria-modal="true"
+        aria-label={initialSchedule?.id ? 'Editar escala' : 'Nova escala'}
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Sub-page 1: Vestimentas / Paleta de Cores Page */}
         {showColorPalettePage ? (
           <div className="schedule-subpage">
@@ -1446,7 +1503,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
         {/* Modal: Adicionar Cor (Fácil vs Avançado) */}
         {activePieceIdForColor && (
           <div className="modal-overlay" style={{ zIndex: 1200 }}>
-            <div className="modal-content schedule-submodal-content" style={{ maxWidth: '440px', maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
+            <div ref={topModalRef} className="modal-content schedule-submodal-content" role="dialog" aria-modal="true" aria-label="Adicionar cor" style={{ maxWidth: '440px', maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
               <div className="modal-header">
                 <div className="modal-title">Adicionar Cor</div>
             <button aria-label="Fechar seleção de cores" className="action-icon-btn" style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setActivePieceIdForColor(null)}>
@@ -1533,7 +1590,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
         {/* Member Selector Modal Overlay */}
         {showMemberSelectPage && (
           <div className="modal-overlay" style={{ zIndex: 1100 }}>
-            <div className="modal-content schedule-submodal-content" style={{ maxWidth: '480px' }}>
+            <div ref={midModalRef} className="modal-content schedule-submodal-content" role="dialog" aria-modal="true" aria-label="Selecionar membros" style={{ maxWidth: '480px' }}>
               <div className="modal-header">
                 <div className="modal-title">Selecionar Membros</div>
             <button aria-label="Fechar seleção de participantes" className="action-icon-btn" style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowMemberSelectPage(false)}>
@@ -1623,7 +1680,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
         {/* Song Selector Modal Overlay */}
         {showSongSelectPage && (
           <div className="modal-overlay" style={{ zIndex: 1100 }}>
-            <div className="modal-content schedule-submodal-content" style={{ maxWidth: '520px' }}>
+            <div ref={midModalRef} className="modal-content schedule-submodal-content" role="dialog" aria-modal="true" aria-label="Selecionar músicas do repertório" style={{ maxWidth: '520px' }}>
               <div className="modal-header">
                 <div className="modal-title">Selecionar Músicas do Repertório</div>
             <button aria-label="Fechar seleção de músicas" className="action-icon-btn" style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowSongSelectPage(false)}>
@@ -1664,7 +1721,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
         {/* Template Selector Modal Overlay */}
         {showTemplateModal && !pendingTemplate && (
           <div className="modal-overlay" style={{ zIndex: 1100 }} onClick={() => setShowTemplateModal(false)}>
-            <div className="modal-content schedule-submodal-content" style={{ maxWidth: '500px' }} onClick={(e) => e.stopPropagation()}>
+            <div ref={midModalRef} className="modal-content schedule-submodal-content" role="dialog" aria-modal="true" aria-label="Modelos de roteiro" style={{ maxWidth: '500px' }} onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
                 <div className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <Layers size={18} />
@@ -1741,7 +1798,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
         {/* Apply Template Confirmation Modal */}
         {pendingTemplate && (
           <div className="modal-overlay" style={{ zIndex: 1200 }} onClick={() => setPendingTemplate(null)}>
-            <div className="modal-content schedule-submodal-content" style={{ maxWidth: '420px' }} onClick={(e) => e.stopPropagation()}>
+            <div ref={topModalRef} className="modal-content schedule-submodal-content" role="dialog" aria-modal="true" aria-label={`Aplicar modelo ${pendingTemplate.name}`} style={{ maxWidth: '420px' }} onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
                 <div className="modal-title">
                   <Layers size={18} />
@@ -1820,7 +1877,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
         {/* Team Selector Modal */}
         {showTeamSelectModal && (
           <div className="modal-overlay" style={{ zIndex: 1100 }} onClick={() => setShowTeamSelectModal(false)}>
-            <div className="modal-content schedule-submodal-content" style={{ maxWidth: '460px' }} onClick={(e) => e.stopPropagation()}>
+            <div ref={midModalRef} className="modal-content schedule-submodal-content" role="dialog" aria-modal="true" aria-label="Importar equipe" style={{ maxWidth: '460px' }} onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
                 <div className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <Users size={18} />

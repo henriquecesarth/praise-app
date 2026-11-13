@@ -206,37 +206,42 @@ class _LiturgiesScreenState extends ConsumerState<LiturgiesScreen> {
           }
 
           // Success / populated list
-          return RefreshIndicator(
-            onRefresh: () async {
-              await ref
-                  .read(liturgyListNotifierProvider.notifier)
-                  .loadLiturgies(widget.ministryId, refresh: true);
-            },
-            child: ListView.builder(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              itemCount: state.liturgies.length,
-              itemBuilder: (context, index) {
-                final liturgy = state.liturgies[index];
-                return LiturgyCard(
-                  liturgy: liturgy,
-                  onTap: () async {
-                    final modified = await Navigator.of(context).push<bool>(
-                      MaterialPageRoute(
-                        builder: (_) => LiturgyDetailScreen(
-                          ministryId: widget.ministryId,
-                          liturgyId: liturgy.id,
-                        ),
-                      ),
+          return Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 900),
+              child: RefreshIndicator(
+                onRefresh: () async {
+                  await ref
+                      .read(liturgyListNotifierProvider.notifier)
+                      .loadLiturgies(widget.ministryId, refresh: true);
+                },
+                child: ListView.builder(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  itemCount: state.liturgies.length,
+                  itemBuilder: (context, index) {
+                    final liturgy = state.liturgies[index];
+                    return LiturgyCard(
+                      liturgy: liturgy,
+                      onTap: () async {
+                        final modified = await Navigator.of(context).push<bool>(
+                          MaterialPageRoute(
+                            builder: (_) => LiturgyDetailScreen(
+                              ministryId: widget.ministryId,
+                              liturgyId: liturgy.id,
+                            ),
+                          ),
+                        );
+                        if (modified == true && mounted) {
+                          ref
+                              .read(liturgyListNotifierProvider.notifier)
+                              .loadLiturgies(widget.ministryId, refresh: true);
+                        }
+                      },
                     );
-                    if (modified == true && mounted) {
-                      ref
-                          .read(liturgyListNotifierProvider.notifier)
-                          .loadLiturgies(widget.ministryId, refresh: true);
-                    }
                   },
-                );
-              },
+                ),
+              ),
             ),
           );
         },

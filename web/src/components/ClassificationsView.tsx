@@ -5,6 +5,7 @@ import { FloatingTextarea } from './ui/FloatingTextarea';
 import {
   Plus, MoreVertical, Edit2, Trash2, Tag, ChevronLeft, Check,
 } from 'lucide-react';
+import { useRepertoireDialog } from './useRepertoireDialog';
 
 interface Classification {
   id: string;
@@ -49,6 +50,15 @@ export function ClassificationsView({ ministryId, isAdmin, onBack, showToast, on
 
   // Delete confirmation state
   const [deletingItem, setDeletingItem] = useState<Classification | null>(null);
+  const editModalRef = useRef<HTMLDivElement>(null);
+  const deleteModalRef = useRef<HTMLDivElement>(null);
+
+  useRepertoireDialog(editModalRef, showModal, () => {
+    if (!saving) setShowModal(false);
+  });
+  useRepertoireDialog(deleteModalRef, Boolean(deletingItem), () => {
+    setDeletingItem(null);
+  });
 
   const activeMinistryIdRef = useRef<string>(ministryId);
   activeMinistryIdRef.current = ministryId;
@@ -276,19 +286,28 @@ export function ClassificationsView({ ministryId, isAdmin, onBack, showToast, on
       {/* ── MODAL: Create / Edit Classification ── */}
       {showModal && (
         <div className="modal-overlay" onClick={closeModal}>
-          <div className="modal-content classification-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+          <div
+            ref={editModalRef}
+            className="modal-content classification-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="classification-modal-title"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '480px' }}
+          >
             <div className="modal-header">
               <button
                 type="button"
                 className="action-icon-btn"
                 onClick={closeModal}
                 title="Voltar / Fechar"
+                aria-label="Voltar"
                 style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}
               >
                 <ChevronLeft size={22} />
               </button>
 
-              <div className="modal-title" style={{ textAlign: 'center', flex: 1, margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>
+              <div id="classification-modal-title" className="modal-title" style={{ textAlign: 'center', flex: 1, margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>
                 {modalMode === 'create' ? 'Nova Classificação' : 'Editar Classificação'}
               </div>
 
@@ -338,13 +357,27 @@ export function ClassificationsView({ ministryId, isAdmin, onBack, showToast, on
       {/* ── MODAL: Delete confirmation ── */}
       {deletingItem && (
         <div className="modal-overlay" onClick={() => setDeletingItem(null)}>
-          <div className="modal-content" style={{ maxWidth: '400px' }} onClick={(e) => e.stopPropagation()}>
+          <div
+            ref={deleteModalRef}
+            className="modal-content"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="classification-delete-modal-title"
+            style={{ maxWidth: '400px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="modal-header">
-              <div className="modal-title" style={{ color: 'var(--error-color)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1.1rem', fontWeight: 700 }}>
+              <div id="classification-delete-modal-title" className="modal-title" style={{ color: 'var(--error-color)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1.1rem', fontWeight: 700 }}>
                 <Trash2 size={20} />
                 Excluir Classificação
               </div>
-              <button className="action-icon-btn" onClick={() => setDeletingItem(null)} style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <button
+                type="button"
+                className="action-icon-btn"
+                onClick={() => setDeletingItem(null)}
+                aria-label="Fechar confirmação de exclusão"
+                style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
                 ✕
               </button>
             </div>

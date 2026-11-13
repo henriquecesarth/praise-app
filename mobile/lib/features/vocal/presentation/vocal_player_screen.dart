@@ -580,14 +580,8 @@ class _VocalPlayerScreenContentState
     );
     final activeNotes = exercise.notesAt(_stepTranspose);
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('Aquecimento vocal')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-          // 1. Collapsible Visual Exercise Library (M21-UX1)
+    final leftCards = <Widget>[
+      // 1. Collapsible Visual Exercise Library (M21-UX1)
           VocalExerciseLibrary(
             catalogExercises: vocalExercises,
             customExercises: customState.exercises,
@@ -732,7 +726,9 @@ class _VocalPlayerScreenContentState
           ],
 
           const SizedBox(height: 12),
+    ];
 
+    final rightCards = <Widget>[
           // 3. Tempo (BPM) & Metronome Card
           Card(
             key: const ValueKey('vocal_tempo_card'),
@@ -1031,40 +1027,89 @@ class _VocalPlayerScreenContentState
               ),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
+    ];
 
-          // 6. Transport Controls
-          Wrap(
-            spacing: 12,
-            runSpacing: 8,
-            children: [
-              FilledButton.icon(
-                key: const ValueKey('vocal_start_button'),
-                onPressed: _playing ? null : () => _play(exercise),
-                icon: const Icon(Icons.play_arrow),
-                label: Text(
-                  _playing
-                      ? (_paused ? 'Em pausa' : 'Tocando...')
-                      : 'Iniciar exercício',
-                ),
-              ),
-              FilledButton.tonalIcon(
-                key: const ValueKey('vocal_pause_resume_button'),
-                onPressed: _playing && _ready
-                    ? (_paused ? _resume : _pause)
-                    : null,
-                icon: Icon(_paused ? Icons.play_arrow : Icons.pause),
-                label: Text(_paused ? 'Retomar' : 'Pausar'),
-              ),
-              OutlinedButton.icon(
-                key: const ValueKey('vocal_stop_button'),
-                onPressed: _playing ? () => _stop() : null,
-                icon: const Icon(Icons.stop),
-                label: const Text('Parar'),
-              ),
-            ],
+    final transportControls = Wrap(
+      spacing: 12,
+      runSpacing: 8,
+      children: [
+        FilledButton.icon(
+          key: const ValueKey('vocal_start_button'),
+          onPressed: _playing ? null : () => _play(exercise),
+          icon: const Icon(Icons.play_arrow),
+          label: Text(
+            _playing
+                ? (_paused ? 'Em pausa' : 'Tocando...')
+                : 'Iniciar exercício',
           ),
-          ],
+        ),
+        FilledButton.tonalIcon(
+          key: const ValueKey('vocal_pause_resume_button'),
+          onPressed: _playing && _ready
+              ? (_paused ? _resume : _pause)
+              : null,
+          icon: Icon(_paused ? Icons.play_arrow : Icons.pause),
+          label: Text(_paused ? 'Retomar' : 'Pausar'),
+        ),
+        OutlinedButton.icon(
+          key: const ValueKey('vocal_stop_button'),
+          onPressed: _playing ? () => _stop() : null,
+          icon: const Icon(Icons.stop),
+          label: const Text('Parar'),
+        ),
+      ],
+    );
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Aquecimento vocal')),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1000),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final isWide = constraints.maxWidth >= 840;
+                if (isWide) {
+                  return Row(
+                    key: const ValueKey('vocal_tablet_two_column_layout'),
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        flex: 6,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            ...leftCards,
+                            const SizedBox(height: 4),
+                            transportControls,
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        flex: 5,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: rightCards,
+                        ),
+                      ),
+                    ],
+                  );
+                }
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ...leftCards,
+                    ...rightCards,
+                    const SizedBox(height: 4),
+                    transportControls,
+                  ],
+                );
+              },
+            ),
+          ),
         ),
       ),
     );

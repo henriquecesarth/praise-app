@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { Copy, Check, UserPlus, Sparkles, ChevronLeft, X } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { Copy, Check, UserPlus, Sparkles, ChevronLeft, X, AlertCircle } from 'lucide-react';
 import { api } from '../api';
+import { useRepertoireDialog } from './useRepertoireDialog';
 
 interface InviteCodeModalProps {
   isOpen: boolean;
@@ -21,20 +22,26 @@ export const InviteCodeModal: React.FC<InviteCodeModalProps> = ({
 }) => {
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   const targetId = ministryId || groupId;
   const targetName = ministryName || groupName || 'Ministério';
+  const dialogOpen = Boolean(isOpen && targetId);
 
-  if (!isOpen || !targetId) return null;
+  useRepertoireDialog(dialogRef, dialogOpen, onClose);
+
+  if (!dialogOpen) return null;
 
   const handleGenerate = async () => {
     setLoading(true);
+    setError(null);
     try {
-      const invite = await api.createInviteCode(targetId, 7);
+      const invite = await api.createInviteCode(targetId!, 7);
       setInviteCode(invite.code);
     } catch (err: any) {
-      alert(err.message || 'Erro ao gerar código de convite.');
+      setError(err?.message || 'Erro ao gerar código de convite.');
     } finally {
       setLoading(false);
     }
@@ -49,7 +56,16 @@ export const InviteCodeModal: React.FC<InviteCodeModalProps> = ({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content invite-code-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="invite-code-modal-title"
+        tabIndex={-1}
+        className="modal-content invite-code-modal"
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: '440px' }}
+      >
         {/* Header Responsivo em 3 Seções com Touch Targets 44x44px */}
         <div className="modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
           <button
@@ -57,13 +73,14 @@ export const InviteCodeModal: React.FC<InviteCodeModalProps> = ({
             className="action-icon-btn"
             onClick={onClose}
             title="Fechar"
+            aria-label="Fechar modal de convite"
             style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}
           >
             <ChevronLeft size={22} className="mobile-only" />
             <X size={20} className="desktop-only" />
           </button>
 
-          <div className="modal-title" style={{ flex: 1, textAlign: 'center', margin: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+          <div id="invite-code-modal-title" className="modal-title" style={{ flex: 1, textAlign: 'center', margin: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
             <div style={{ fontSize: '1.05rem', fontWeight: 800 }}>Convidar Integrante</div>
             <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontWeight: 400 }}>{targetName}</div>
           </div>
@@ -73,6 +90,12 @@ export const InviteCodeModal: React.FC<InviteCodeModalProps> = ({
 
         {/* Content */}
         <div className="invite-modal-body" style={{ padding: '20px 16px' }}>
+          {error && (
+            <div role="alert" className="mb-3 flex items-center gap-2 rounded-lg p-3 text-sm" style={{ backgroundColor: 'var(--status-danger-bg)', border: '1px solid var(--status-danger-border)', color: 'var(--status-danger-text)' }}>
+              <AlertCircle size={16} aria-hidden="true" />
+              <span>{error}</span>
+            </div>
+          )}
           {!inviteCode ? (
             <div className="invite-generator-box" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
               <div className="dashboard-card-icon purple" style={{ width: '48px', height: '48px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px' }}>

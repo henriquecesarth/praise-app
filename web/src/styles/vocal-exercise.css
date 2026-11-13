@@ -248,7 +248,7 @@
 
 .vocal-btn-play {
   background-color: var(--action-primary-bg, var(--primary-color)) !important;
-  color: #ffffff !important;
+  color: var(--text-on-accent, #ffffff) !important;
   border: 1px solid transparent !important;
   min-width: 180px;
 }
@@ -731,7 +731,7 @@
 }
 
 .piano-key.is-active-playing .piano-key-label {
-  color: #ffffff !important;
+  color: var(--text-on-accent, #ffffff) !important;
 }
 
 .black-label {
@@ -1162,8 +1162,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
   border: 1px solid var(--border-subtle, var(--border-color));
   background-color: var(--bg-surface, var(--surface-color));
   border-radius: 6px;
@@ -1310,7 +1312,7 @@
 
 .vocal-form-input,
 .vocal-form-select {
-  height: 40px;
+  min-height: 44px;
   padding: 8px 12px;
   border: 1px solid var(--border-subtle, #e5e7eb);
   border-radius: var(--border-radius-sm, 8px);
@@ -1319,8 +1321,14 @@
   font-size: 0.875rem;
 }
 
+.vocal-form-select option {
+  background-color: var(--bg-surface, #ffffff);
+  color: var(--text-primary, #18221d);
+}
+
 .vocal-form-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 14px;
 }
 
@@ -1460,8 +1468,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  min-width: 36px;
+  min-height: 36px;
+  width: 36px;
+  height: 36px;
   border: 1px solid var(--border-subtle, #dcd3c6);
   background-color: var(--bg-surface, #ffffff);
   border-radius: 6px;
@@ -1489,6 +1499,7 @@
 
 .vocal-modal-footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
@@ -1497,9 +1508,21 @@
   background-color: var(--bg-surface-subtle, #efe8dc);
 }
 
+@media (max-width: 767px) {
+  .vocal-card-action-btn,
+  .vocal-order-btn,
+  .vocal-note-remove-btn {
+    min-width: 44px;
+    min-height: 44px;
+    width: 44px;
+    height: 44px;
+  }
+}
+
 @media (max-width: 600px) {
   .vocal-form-row {
     flex-direction: column;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .vocal-note-row {

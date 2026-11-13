@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -308,6 +310,12 @@ class _SongDetailContent extends ConsumerStatefulWidget {
 }
 
 class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
+  final ScrollController _scrollController = ScrollController();
+  Timer? _autoScrollTimer;
+  bool _isAutoScrolling = false;
+  int _autoScrollSpeed = 2;
+  double _chordFontSize = 15.0;
+
   int _selectedVersionIndex = 0;
   int _selectedChordIndex = 0;
   int _chordSemitones = 0;
@@ -316,9 +324,52 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
   bool _isUnlinkingChord = false;
 
   @override
+  void dispose() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _stopAutoScroll({bool updateState = true}) {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+    if (_isAutoScrolling && updateState && mounted) {
+      setState(() => _isAutoScrolling = false);
+    } else {
+      _isAutoScrolling = false;
+    }
+  }
+
+  void _toggleAutoScroll() {
+    if (_isAutoScrolling) {
+      _stopAutoScroll();
+      return;
+    }
+    setState(() => _isAutoScrolling = true);
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
+      if (!mounted || !_isAutoScrolling || !_scrollController.hasClients) {
+        _stopAutoScroll();
+        return;
+      }
+      final position = _scrollController.position;
+      if (!position.hasContentDimensions) return;
+      final nextOffset = _scrollController.offset + (0.8 * _autoScrollSpeed);
+      if (nextOffset >= position.maxScrollExtent) {
+        _scrollController.jumpTo(position.maxScrollExtent);
+        _stopAutoScroll();
+      } else {
+        _scrollController.jumpTo(nextOffset);
+      }
+    });
+  }
+
+  @override
   void didUpdateWidget(covariant _SongDetailContent oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.song.id != widget.song.id) {
+      _stopAutoScroll(updateState: false);
       _selectedVersionIndex = 0;
       _selectedChordIndex = 0;
       _chordSemitones = 0;
@@ -496,9 +547,13 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
       ));
     }
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20.0),
-      child: Column(
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 900),
+        child: SingleChildScrollView(
+          controller: _scrollController,
+          padding: const EdgeInsets.all(20.0),
+          child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Header: Title & Artist
@@ -743,13 +798,16 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                         color: theme.colorScheme.primary,
                       ),
                       const SizedBox(width: 8),
-                      Text(
-                        'Minhas Cifras Inteligentes',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
+                      Expanded(
+                        child: Text(
+                          'Minhas Cifras Inteligentes',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
-                      const Spacer(),
                       IconButton(
                         tooltip: 'Vincular cifra existente',
                         icon: const Icon(Icons.link, size: 20),
@@ -1028,6 +1086,128 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                                         ),
                                         child: const Text('+1 Semitom'),
                                       ),
+                                      IconButton(
+                                        key: const ValueKey(
+                                          'song_detail_zoom_out_button',
+                                        ),
+                                        tooltip: 'Diminuir fonte',
+                                        visualDensity: VisualDensity.compact,
+                                        icon: const Icon(
+                                          Icons.text_decrease,
+                                          size: 18,
+                                        ),
+                                        onPressed: _chordFontSize > 11.0
+                                            ? () => setState(
+                                                  () => _chordFontSize =
+                                                      (_chordFontSize - 1.0)
+                                                          .clamp(11.0, 24.0),
+                                                )
+                                            : null,
+                                      ),
+                                      Text(
+                                        '${_chordFontSize.round()}px',
+                                        key: const ValueKey(
+                                          'song_detail_font_size_label',
+                                        ),
+                                        style: theme.textTheme.labelSmall
+                                            ?.copyWith(
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      IconButton(
+                                        key: const ValueKey(
+                                          'song_detail_zoom_in_button',
+                                        ),
+                                        tooltip: 'Aumentar fonte',
+                                        visualDensity: VisualDensity.compact,
+                                        icon: const Icon(
+                                          Icons.text_increase,
+                                          size: 18,
+                                        ),
+                                        onPressed: _chordFontSize < 24.0
+                                            ? () => setState(
+                                                  () => _chordFontSize =
+                                                      (_chordFontSize + 1.0)
+                                                          .clamp(11.0, 24.0),
+                                                )
+                                            : null,
+                                      ),
+                                      IconButton.filledTonal(
+                                        key: const ValueKey(
+                                          'song_detail_autoscroll_toggle_button',
+                                        ),
+                                        tooltip: _isAutoScrolling
+                                            ? 'Pausar rolagem'
+                                            : 'Rolagem automática',
+                                        visualDensity: VisualDensity.compact,
+                                        icon: Icon(
+                                          _isAutoScrolling
+                                              ? Icons.pause_rounded
+                                              : Icons.play_arrow_rounded,
+                                          size: 18,
+                                        ),
+                                        onPressed: _toggleAutoScroll,
+                                      ),
+                                      IconButton(
+                                        key: const ValueKey(
+                                          'song_detail_autoscroll_speed_button',
+                                        ),
+                                        tooltip:
+                                            'Velocidade da rolagem (${_autoScrollSpeed}x)',
+                                        visualDensity: VisualDensity.compact,
+                                        onPressed: () => setState(() {
+                                          _autoScrollSpeed =
+                                              _autoScrollSpeed >= 5
+                                                  ? 1
+                                                  : _autoScrollSpeed + 1;
+                                        }),
+                                        icon: Text(
+                                          '${_autoScrollSpeed}x',
+                                          style: theme.textTheme.labelMedium
+                                              ?.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                      IconButton(
+                                        key: const ValueKey(
+                                          'song_detail_fullscreen_button',
+                                        ),
+                                        tooltip: 'Tela cheia',
+                                        visualDensity: VisualDensity.compact,
+                                        icon: const Icon(
+                                          Icons.fullscreen_rounded,
+                                          size: 20,
+                                        ),
+                                        onPressed: () {
+                                          _stopAutoScroll();
+                                          Navigator.of(context).push<void>(
+                                            MaterialPageRoute(
+                                              fullscreenDialog: true,
+                                              builder: (_) =>
+                                                  _SongFullscreenStandScreen(
+                                                title: song.title,
+                                                chord: activeChord,
+                                                initialSemitones:
+                                                    _chordSemitones,
+                                                initialFontSize: _chordFontSize,
+                                                fontConfig: fontConfig,
+                                                lineSpacingPx: lineSpacingPx,
+                                                onSemitonesChanged: (next) {
+                                                  if (!mounted) return;
+                                                  setState(() =>
+                                                      _chordSemitones = next);
+                                                },
+                                                onFontSizeChanged: (next) {
+                                                  if (!mounted) return;
+                                                  setState(() =>
+                                                      _chordFontSize = next);
+                                                },
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                      ),
                                     ],
                                   ),
                                 ],
@@ -1050,32 +1230,51 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                             color: theme.dividerColor.withValues(alpha: 0.25),
                           ),
                         ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            for (final line
-                                in activeChord.content.split('\n'))
-                              Padding(
-                                padding: EdgeInsets.only(bottom: lineSpacingPx),
-                                child: SmartChordParser.progressionTokens(line) != null
-                                    ? MusicalProgressionLine(
-                                        line: line,
-                                        semitones: _chordSemitones,
-                                        fontSize: 15,
-                                        fontFamily: fontConfig.fontFamily,
-                                        fontFamilyFallback: fontConfig.fallback,
-                                      )
-                                    : ChordLyricLine(
-                                        line: line,
-                                        semitones: _chordSemitones,
-                                        fontSize: 15,
-                                        fontFamily: fontConfig.fontFamily,
-                                        fontFamilyFallback: fontConfig.fallback,
-                                        monospace: fontConfig.isMonospace,
-                                        spacingPx: lineSpacingPx,
-                                      ),
-                              ),
-                          ],
+                        child: Builder(
+                          builder: (_) {
+                            final inlineLines = activeChord.content
+                                .replaceAll('\r\n', '\n')
+                                .replaceAll('\r', '\n')
+                                .split('\n');
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                for (int i = 0; i < inlineLines.length; i++)
+                                  Padding(
+                                    padding:
+                                        EdgeInsets.only(bottom: lineSpacingPx),
+                                    child: SmartChordParser.progressionTokens(
+                                              inlineLines[i],
+                                            ) !=
+                                            null
+                                        ? MusicalProgressionLine(
+                                            line: inlineLines[i],
+                                            semitones: _chordSemitones,
+                                            fontSize: _chordFontSize,
+                                            fontFamily: fontConfig.fontFamily,
+                                            fontFamilyFallback:
+                                                fontConfig.fallback,
+                                          )
+                                        : ChordLyricLine(
+                                            line: inlineLines[i],
+                                            semitones: _chordSemitones,
+                                            fontSize: _chordFontSize,
+                                            fontFamily: fontConfig.fontFamily,
+                                            fontFamilyFallback:
+                                                fontConfig.fallback,
+                                            monospace: fontConfig.isMonospace,
+                                            spacingPx: lineSpacingPx,
+                                            alignedLyrics: i > 0 &&
+                                                SmartChordParser
+                                                        .progressionTokens(
+                                                      inlineLines[i - 1],
+                                                    ) !=
+                                                    null,
+                                          ),
+                                  ),
+                              ],
+                            );
+                          },
                         ),
                       ),
                     ],
@@ -1194,10 +1393,12 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                   color: theme.colorScheme.primary,
                 ),
                 const SizedBox(width: 8),
-                Text(
-                  'Letra da Música',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
+                Expanded(
+                  child: Text(
+                    'Letra da Música',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ],
@@ -1218,7 +1419,7 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                 style: theme.textTheme.bodyLarge?.copyWith(
                   height: 1.6,
                   letterSpacing: 0.2,
-                  fontSize: 15,
+                  fontSize: _chordFontSize,
                 ),
               ),
             ),
@@ -1236,7 +1437,287 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
               ),
             ),
           ],
+          const SizedBox(height: 32),
         ],
+      ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SongFullscreenStandScreen extends StatefulWidget {
+  final String title;
+  final SmartChord chord;
+  final int initialSemitones;
+  final double initialFontSize;
+  final ChordFontConfig fontConfig;
+  final double lineSpacingPx;
+  final ValueChanged<int>? onSemitonesChanged;
+  final ValueChanged<double>? onFontSizeChanged;
+
+  const _SongFullscreenStandScreen({
+    required this.title,
+    required this.chord,
+    required this.initialSemitones,
+    required this.initialFontSize,
+    required this.fontConfig,
+    required this.lineSpacingPx,
+    this.onSemitonesChanged,
+    this.onFontSizeChanged,
+  });
+
+  @override
+  State<_SongFullscreenStandScreen> createState() =>
+      _SongFullscreenStandScreenState();
+}
+
+class _SongFullscreenStandScreenState
+    extends State<_SongFullscreenStandScreen> {
+  final ScrollController _scrollController = ScrollController();
+  Timer? _autoScrollTimer;
+  bool _isAutoScrolling = false;
+  int _autoScrollSpeed = 2;
+  late double _fontSize;
+  late int _semitones;
+
+  @override
+  void initState() {
+    super.initState();
+    _fontSize = widget.initialFontSize;
+    _semitones = widget.initialSemitones;
+  }
+
+  @override
+  void dispose() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _stopAutoScroll({bool updateState = true}) {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+    if (_isAutoScrolling && updateState && mounted) {
+      setState(() => _isAutoScrolling = false);
+    } else {
+      _isAutoScrolling = false;
+    }
+  }
+
+  void _toggleAutoScroll() {
+    if (_isAutoScrolling) {
+      _stopAutoScroll();
+      return;
+    }
+    setState(() => _isAutoScrolling = true);
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
+      if (!mounted || !_isAutoScrolling || !_scrollController.hasClients) {
+        _stopAutoScroll();
+        return;
+      }
+      final pos = _scrollController.position;
+      if (!pos.hasContentDimensions) return;
+      final next = _scrollController.offset + (0.8 * _autoScrollSpeed);
+      if (next >= pos.maxScrollExtent) {
+        _scrollController.jumpTo(pos.maxScrollExtent);
+        _stopAutoScroll();
+      } else {
+        _scrollController.jumpTo(next);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final lines = widget.chord.content
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n')
+        .split('\n');
+    final currentKey =
+        SmartChordParser.transposeKey(widget.chord.originalKey, _semitones);
+
+    return Scaffold(
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 900),
+                child: SingleChildScrollView(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 128),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        '${widget.title} • Tom: $currentKey',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      for (int i = 0; i < lines.length; i++) ...[
+                        SmartChordParser.progressionTokens(lines[i]) != null
+                            ? MusicalProgressionLine(
+                                line: lines[i],
+                                semitones: _semitones,
+                                fontSize: _fontSize,
+                                fontFamily: widget.fontConfig.fontFamily,
+                                fontFamilyFallback: widget.fontConfig.fallback,
+                              )
+                            : ChordLyricLine(
+                                line: lines[i],
+                                semitones: _semitones,
+                                fontSize: _fontSize,
+                                fontFamily: widget.fontConfig.fontFamily,
+                                fontFamilyFallback: widget.fontConfig.fallback,
+                                monospace: widget.fontConfig.isMonospace,
+                                spacingPx: widget.lineSpacingPx,
+                                alignedLyrics: i > 0 &&
+                                    SmartChordParser.progressionTokens(
+                                          lines[i - 1],
+                                        ) !=
+                                        null,
+                              ),
+                        SizedBox(height: widget.lineSpacingPx),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 16,
+              child: Align(
+                alignment: Alignment.bottomRight,
+                child: Material(
+                  elevation: 6,
+                  borderRadius: BorderRadius.circular(28),
+                  color: theme.colorScheme.surfaceContainerHigh,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    child: Wrap(
+                      alignment: WrapAlignment.center,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 2,
+                      runSpacing: 4,
+                      children: [
+                        IconButton(
+                          tooltip: 'Meio tom abaixo',
+                          constraints: const BoxConstraints(
+                            minWidth: 44,
+                            minHeight: 44,
+                          ),
+                          icon: const Icon(Icons.remove),
+                          onPressed: () {
+                            setState(() => _semitones--);
+                            widget.onSemitonesChanged?.call(_semitones);
+                          },
+                        ),
+                        IconButton(
+                          tooltip: 'Meio tom acima',
+                          constraints: const BoxConstraints(
+                            minWidth: 44,
+                            minHeight: 44,
+                          ),
+                          icon: const Icon(Icons.add),
+                          onPressed: () {
+                            setState(() => _semitones++);
+                            widget.onSemitonesChanged?.call(_semitones);
+                          },
+                        ),
+                        IconButton(
+                          tooltip: 'Diminuir zoom',
+                          constraints: const BoxConstraints(
+                            minWidth: 44,
+                            minHeight: 44,
+                          ),
+                          icon: const Icon(Icons.text_decrease),
+                          onPressed: () {
+                            setState(
+                              () => _fontSize =
+                                  (_fontSize - 1.0).clamp(11.0, 24.0),
+                            );
+                            widget.onFontSizeChanged?.call(_fontSize);
+                          },
+                        ),
+                        IconButton(
+                          tooltip: 'Aumentar zoom',
+                          constraints: const BoxConstraints(
+                            minWidth: 44,
+                            minHeight: 44,
+                          ),
+                          icon: const Icon(Icons.text_increase),
+                          onPressed: () {
+                            setState(
+                              () => _fontSize =
+                                  (_fontSize + 1.0).clamp(11.0, 24.0),
+                            );
+                            widget.onFontSizeChanged?.call(_fontSize);
+                          },
+                        ),
+                        IconButton(
+                          key:
+                              const ValueKey('song_fullscreen_autoscroll_button'),
+                          tooltip: _isAutoScrolling
+                              ? 'Pausar rolagem'
+                              : 'Rolagem automática',
+                          constraints: const BoxConstraints(
+                            minWidth: 48,
+                            minHeight: 48,
+                          ),
+                          icon: Icon(
+                            _isAutoScrolling
+                                ? Icons.pause_rounded
+                                : Icons.play_arrow_rounded,
+                          ),
+                          onPressed: _toggleAutoScroll,
+                        ),
+                        IconButton(
+                          tooltip:
+                              'Alternar velocidade (${_autoScrollSpeed}x)',
+                          constraints: const BoxConstraints(
+                            minWidth: 44,
+                            minHeight: 44,
+                          ),
+                          onPressed: () => setState(() {
+                            _autoScrollSpeed = _autoScrollSpeed >= 5
+                                ? 1
+                                : _autoScrollSpeed + 1;
+                          }),
+                          icon: Text(
+                            '${_autoScrollSpeed}x',
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        FilledButton.tonalIcon(
+                          key: const ValueKey('song_fullscreen_exit_button'),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(48, 48),
+                          ),
+                          onPressed: () => Navigator.of(context).pop(),
+                          icon: const Icon(Icons.fullscreen_exit_rounded),
+                          label: const Text('Sair'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

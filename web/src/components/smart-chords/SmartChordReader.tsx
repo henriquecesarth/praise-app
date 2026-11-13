@@ -60,7 +60,6 @@ export function SmartChordReader({
   semitones,
   sheetFontFamily,
   printFontSize,
-  pdfFontSize,
   chordLineSpacingPx,
   editingCell,
   setEditingCell,
@@ -797,7 +796,7 @@ export function SmartChordReader({
                     whiteSpace: 'pre',
                     overflowX: 'auto',
                     fontFamily: 'monospace, "Courier New", Courier',
-                    fontSize: `${pdfFontSize}px`,
+                    fontSize: `${printFontSize}px`,
                     lineHeight: '1.4',
                     color: 'var(--text-primary)',
                     minHeight: '1.4em',
@@ -829,7 +828,7 @@ export function SmartChordReader({
                     fontFamily: activeFontFamilyCss,
                     fontSize: `${printFontSize}px`,
                     lineHeight: '1.4',
-                    paddingTop: `${printFontSize + 3}px`,
+                    paddingTop: `${anchoredInstructions.length > 0 ? Math.round(printFontSize * 1.95) : printFontSize + 3}px`,
                   }}
                 >
                   {tokens.map((token, tokenIdx) => {
@@ -837,54 +836,63 @@ export function SmartChordReader({
                       const targetAnnotations = anchoredInstructions.filter(item => targetChordOrdinal(item) === token.chordIndex);
                       const isEditing = editingCell && editingCell.lineIdx === lineIdx && editingCell.barChordIdx === token.chordIndex;
                       const transposedChord = transposeNotationChord(token.value, semitones);
-                      return (
-                        <div
-                          key={tokenIdx}
-                          role="button"
-                          tabIndex={0}
-                          aria-label={`Editar acorde ${transposedChord}${targetAnnotations.length ? `; ${targetAnnotations.map(item => item.displayText).join(', ')}` : ''}`}
-                          onKeyDown={(event) => {
-                            if (event.target !== event.currentTarget) return;
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault();
-                              setEditingCell({ lineIdx, barChordIdx: token.chordIndex });
-                              setEditingChordValue(token.value);
-                            }
-                          }}
-                          onClick={() => {
-                            if (!isEditing && token.chordIndex !== undefined) {
-                              setEditingCell({ lineIdx, barChordIdx: token.chordIndex });
-                              setEditingChordValue(token.value);
-                            }
-                          }}
-                          style={{
-                            position: 'relative',
-                            cursor: 'pointer',
-                            userSelect: 'none',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            minHeight: '28px',
-                          }}
+                      const barStyle = {
+                        position: 'relative' as const,
+                        cursor: 'pointer' as const,
+                        userSelect: 'none' as const,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        minHeight: '28px',
+                      };
+                      const annotationsNodes = targetAnnotations.map((item, idx) => (
+                        <span
+                          key={`anchor-${idx}`}
+                          data-notation-anchor
+                          data-notation-annotation
+                          data-annotation-placement="above-next-chord"
+                          data-annotation-target-token={item.target?.token}
+                          style={{ position: 'absolute', bottom: '100%', left: 0, whiteSpace: 'nowrap', fontSize: `${Math.round(printFontSize * item.fontScale)}px`, color: 'var(--text-secondary)' }}
                         >
-                          {targetAnnotations.map((item, idx) => <span key={`anchor-${idx}`} data-notation-anchor data-notation-annotation data-annotation-placement="above-next-chord" data-annotation-target-token={item.target?.token} style={{ position: 'absolute', bottom: '100%', left: 0, whiteSpace: 'nowrap', fontSize: `${Math.round(printFontSize * item.fontScale)}px`, color: 'var(--text-secondary)' }}>{item.displayText}</span>)}
-                          {isEditing ? (
-                            renderInlineEditor(lineIdx, undefined, token.chordIndex)
-                          ) : (
-                            <span
-                              className="has-chord"
-                              data-chord-display
-                              data-bar-chord-idx={token.chordIndex}
-                              style={{
-                                color: 'var(--chord-text)',
-                                fontWeight: 'bold',
-                                textDecoration: 'underline 2px solid var(--chord-text)',
-                                padding: '0 1px',
-                              }}
-                            >
-                              {transposedChord}
-                            </span>
-                          )}
-                        </div>
+                          {item.displayText}
+                        </span>
+                      ));
+                      if (isEditing) {
+                        return (
+                          <div key={tokenIdx} style={barStyle}>
+                            {annotationsNodes}
+                            {renderInlineEditor(lineIdx, undefined, token.chordIndex)}
+                          </div>
+                        );
+                      }
+                      return (
+                        <button
+                          key={tokenIdx}
+                          type="button"
+                          className="smart-chord-inline-btn"
+                          aria-label={`Editar acorde ${transposedChord}${targetAnnotations.length ? `; ${targetAnnotations.map(item => item.displayText).join(', ')}` : ''}`}
+                          onClick={() => {
+                            if (token.chordIndex !== undefined) {
+                              setEditingCell({ lineIdx, barChordIdx: token.chordIndex });
+                              setEditingChordValue(token.value);
+                            }
+                          }}
+                          style={barStyle}
+                        >
+                          {annotationsNodes}
+                          <span
+                            className="has-chord"
+                            data-chord-display
+                            data-bar-chord-idx={token.chordIndex}
+                            style={{
+                              color: 'var(--chord-text)',
+                              fontWeight: 'bold',
+                              textDecoration: 'underline 2px solid var(--chord-text)',
+                              padding: '0 1px',
+                            }}
+                          >
+                            {transposedChord}
+                          </span>
+                        </button>
                       );
                     }
 
@@ -932,49 +940,68 @@ export function SmartChordReader({
 
             if (!text && Object.keys(visual.chords).length === 0) {
               const isEditingEmpty = editingCell && editingCell.lineIdx === lineIdx && editingCell.charIdx === 0;
+              const emptyStyle = {
+                height: '36px',
+                margin: '4px 0',
+                borderRadius: '6px',
+                backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                border: '1px dashed var(--border-subtle)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                fontSize: '0.75rem',
+                opacity: 0.65,
+                position: 'relative' as const,
+              };
+              if (isEditingEmpty) {
+                return (
+                  <div key={lineIdx} className="smart-chords-empty-line" style={emptyStyle}>
+                    {renderInlineEditor(lineIdx, 0)}
+                  </div>
+                );
+              }
               return (
-                <div
+                <button
                   key={lineIdx}
+                  type="button"
                   className="smart-chords-empty-line"
-                  role="button"
-                  tabIndex={0}
                   aria-label={`Inserir acorde na linha vazia ${lineIdx + 1}`}
-                  onKeyDown={(event) => {
-                    if (event.target !== event.currentTarget) return;
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      setEditingCell({ lineIdx, charIdx: 0 });
-                      setEditingChordValue('');
-                    }
-                  }}
                   onClick={() => {
-                    if (!isEditingEmpty) {
-                      setEditingCell({ lineIdx, charIdx: 0 });
-                      setEditingChordValue('');
-                    }
+                    setEditingCell({ lineIdx, charIdx: 0 });
+                    setEditingChordValue('');
                   }}
-                  style={{
-                    height: '36px',
-                    margin: '4px 0',
-                    borderRadius: '6px',
-                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                    border: '1px dashed var(--border-subtle)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    cursor: 'pointer',
-                    fontSize: '0.75rem',
-                    opacity: 0.65,
-                    position: 'relative',
-                  }}
+                  style={emptyStyle}
                 >
-                  {isEditingEmpty ? (
-                    renderInlineEditor(lineIdx, 0)
-                  ) : (
-                    <span className="smart-chords-insert-hint">Linha vazia — toque para inserir acorde</span>
-                  )}
-                </div>
+                  <span className="smart-chords-insert-hint">Linha vazia — toque para inserir acorde</span>
+                </button>
               );
+            }
+
+            const segments: Array<{ kind: 'cell'; charIdx: number; char: string } | { kind: 'run'; startIdx: number; text: string }> = [];
+            let cursor = 0;
+            while (cursor < text.length) {
+              const isEditedPos = Boolean(editingCell && editingCell.lineIdx === lineIdx && editingCell.charIdx === cursor);
+              if (visual.chords[cursor] !== undefined || isEditedPos) {
+                segments.push({ kind: 'cell', charIdx: cursor, char: text[cursor] });
+                cursor += 1;
+              } else {
+                const start = cursor;
+                while (
+                  cursor < text.length
+                  && visual.chords[cursor] === undefined
+                  && !(editingCell && editingCell.lineIdx === lineIdx && editingCell.charIdx === cursor)
+                ) {
+                  cursor += 1;
+                }
+                const chunkText = text.slice(start, cursor);
+                const tokens = chunkText.match(/\S+\s*|\s+/g) || [chunkText];
+                let offset = 0;
+                for (const token of tokens) {
+                  segments.push({ kind: 'run', startIdx: start + offset, text: token });
+                  offset += token.length;
+                }
+              }
             }
 
             return (
@@ -990,10 +1017,58 @@ export function SmartChordReader({
                   fontFamily: activeFontFamilyCss,
                   fontSize: `${printFontSize}px`,
                   lineHeight: '1.4',
-                  paddingTop: `${printFontSize + 3}px`,
+                  paddingTop: `${anchoredInstructions.length > 0 ? Math.round(printFontSize * 1.95) : printFontSize + 3}px`,
                 }}
               >
-                {text.split('').map((char, charIdx) => {
+                <span className="sr-only">
+                  {anchoredInstructions.length ? `${anchoredInstructions.map(item => item.displayText).join(' ')} ` : ''}
+                  {text}
+                </span>
+                {segments.map((segment) => {
+                  if (segment.kind === 'run') {
+                    return (
+                      <span
+                        key={`run-${segment.startIdx}`}
+                        aria-hidden="true"
+                        className="smart-chord-lyric-run"
+                        onClick={(event) => {
+                          if (window.getSelection()?.toString()) return;
+                          const doc = document as Document & {
+                            caretPositionFromPoint?: (x: number, y: number) => { offset: number; offsetNode: Node } | null;
+                            caretRangeFromPoint?: (x: number, y: number) => Range | null;
+                          };
+                          let localOffset: number | null = null;
+                          const caretPos = doc.caretPositionFromPoint?.(event.clientX, event.clientY);
+                          if (caretPos && event.currentTarget.contains(caretPos.offsetNode)) {
+                            localOffset = caretPos.offset;
+                          } else {
+                            const caretRange = doc.caretRangeFromPoint?.(event.clientX, event.clientY);
+                            if (caretRange && event.currentTarget.contains(caretRange.startContainer)) {
+                              localOffset = caretRange.startOffset;
+                            }
+                          }
+                          if (localOffset === null) {
+                            const rect = event.currentTarget.getBoundingClientRect();
+                            const ratio = rect.width > 0 ? Math.max(0, Math.min(0.9999, (event.clientX - rect.left) / rect.width)) : 0;
+                            localOffset = Math.floor(ratio * segment.text.length);
+                          }
+                          const charIdx = segment.startIdx + Math.max(0, Math.min(segment.text.length - 1, localOffset));
+                          setEditingCell({ lineIdx, charIdx });
+                          setEditingChordValue(visual.chords[charIdx] || '');
+                        }}
+                        style={{
+                          whiteSpace: 'pre-wrap',
+                          color: 'var(--text-primary)',
+                          cursor: 'text',
+                          userSelect: 'text',
+                        }}
+                      >
+                        {segment.text}
+                      </span>
+                    );
+                  }
+
+                  const { charIdx, char } = segment;
                   const isEditing = editingCell && editingCell.lineIdx === lineIdx && editingCell.charIdx === charIdx;
                   const hasChord = visual.chords[charIdx] !== undefined;
                   const chord = visual.chords[charIdx] || '';
@@ -1005,74 +1080,70 @@ export function SmartChordReader({
                   const reserveBeforeChord = hasChord && previousChordIndex !== undefined
                     ? Math.max(0, previousChord.length - (charIdx - previousChordIndex - 1)) * printFontSize * 0.58
                     : 0;
-
-                  return (
-                    <div
-                      key={charIdx}
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`Editar acorde na linha ${lineIdx + 1}, posição ${charIdx + 1}${targetAnnotations.length ? `; ${targetAnnotations.map(item => item.displayText).join(', ')}` : ''}`}
-                      onKeyDown={(event) => {
-                        if (event.target !== event.currentTarget) return;
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault();
-                          setEditingCell({ lineIdx, charIdx });
-                          setEditingChordValue(chord);
-                        }
-                      }}
-                      onClick={() => {
-                        if (!isEditing) {
-                          setEditingCell({ lineIdx, charIdx });
-                          setEditingChordValue(chord);
-                        }
-                      }}
+                  const cellStyle = {
+                    display: 'flex',
+                    flexDirection: 'column' as const,
+                    position: 'relative' as const,
+                    marginLeft: reserveBeforeChord ? `${reserveBeforeChord}px` : undefined,
+                    cursor: 'pointer' as const,
+                    userSelect: 'none' as const,
+                  };
+                  const charNode = (
+                    <span
+                      aria-hidden="true"
+                      className={hasChord ? 'has-chord' : ''}
                       style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        position: 'relative',
-                        marginLeft: reserveBeforeChord ? `${reserveBeforeChord}px` : undefined,
-                        cursor: 'pointer',
-                        userSelect: 'none',
+                        textDecoration: hasChord ? 'underline 2px solid var(--chord-text)' : 'none',
+                        color: 'var(--text-primary)',
                       }}
                     >
-                      {/* Inline Input Editor */}
-                      {isEditing ? (
-                        renderInlineEditor(lineIdx, charIdx)
-                      ) : (
-                        /* Chord absolute positioned above the syllable character */
-                        hasChord && (
-                          <span
-                            aria-hidden="true"
-                            className="print-chord-span"
-                            data-chord-display
-                            style={{
-                              position: 'absolute',
-                              bottom: '100%',
-                              left: 0,
-                              color: 'var(--chord-text)',
-                              fontWeight: 'bold',
-                              fontSize: `${Math.round(printFontSize * 0.9)}px`,
-                              whiteSpace: 'nowrap',
-                              padding: '0 1px',
-                            }}
-                          >
-                            {targetAnnotations.map((item, idx) => <span key={`anchor-${idx}`} data-notation-anchor data-notation-annotation data-annotation-placement="above-next-chord" data-annotation-target-token={item.target?.token} style={{ position: 'absolute', bottom: '100%', left: 0, whiteSpace: 'nowrap', fontSize: `${Math.round(printFontSize * item.fontScale)}px`, color: 'var(--text-secondary)' }}>{item.displayText}</span>)}
-                            {transposedChord}
-                          </span>
-                        )
+                      {char === ' ' ? '\u00A0' : char}
+                    </span>
+                  );
+
+                  if (isEditing) {
+                    return (
+                      <div key={charIdx} style={cellStyle}>
+                        {renderInlineEditor(lineIdx, charIdx)}
+                        {charNode}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <button
+                      key={charIdx}
+                      type="button"
+                      className="smart-chord-char-btn"
+                      aria-label={`Editar acorde ${transposedChord} na linha ${lineIdx + 1}, posição ${charIdx + 1}${targetAnnotations.length ? `; ${targetAnnotations.map(item => item.displayText).join(', ')}` : ''}`}
+                      onClick={() => {
+                        setEditingCell({ lineIdx, charIdx });
+                        setEditingChordValue(chord);
+                      }}
+                      style={cellStyle}
+                    >
+                      {hasChord && (
+                        <span
+                          aria-hidden="true"
+                          className="print-chord-span"
+                          data-chord-display
+                          style={{
+                            position: 'absolute',
+                            bottom: '100%',
+                            left: 0,
+                            color: 'var(--chord-text)',
+                            fontWeight: 'bold',
+                            fontSize: `${Math.round(printFontSize * 0.9)}px`,
+                            whiteSpace: 'nowrap',
+                            padding: '0 1px',
+                          }}
+                        >
+                          {targetAnnotations.map((item, idx) => <span key={`anchor-${idx}`} data-notation-anchor data-notation-annotation data-annotation-placement="above-next-chord" data-annotation-target-token={item.target?.token} style={{ position: 'absolute', bottom: '100%', left: 0, whiteSpace: 'nowrap', fontSize: `${Math.round(printFontSize * item.fontScale)}px`, color: 'var(--text-secondary)' }}>{item.displayText}</span>)}
+                          {transposedChord}
+                        </span>
                       )}
-                      {/* Character */}
-                      <span
-                        aria-hidden="true"
-                        className={hasChord ? 'has-chord' : ''}
-                        style={{
-                          textDecoration: hasChord ? 'underline 2px solid var(--chord-text)' : 'none',
-                          color: 'var(--text-primary)',
-                        }}
-                      >
-                        {char === ' ' ? '\u00A0' : char}
-                      </span>
-                    </div>
+                      {charNode}
+                    </button>
                   );
                 })}
 
@@ -1083,65 +1154,66 @@ export function SmartChordReader({
                   const extraChord = visual.chords[text.length] || '';
                   const extraChordOrdinal = visualChordIndexes.indexOf(text.length);
                   const extraTargetAnnotations = anchoredInstructions.filter(item => targetChordOrdinal(item) === extraChordOrdinal);
+                  const extraStyle = {
+                    display: 'flex',
+                    flexDirection: 'column' as const,
+                    position: 'relative' as const,
+                    cursor: 'pointer' as const,
+                    userSelect: 'none' as const,
+                    marginLeft: '4px',
+                  };
+                  const plusNode = (
+                    <span
+                      className="smart-chords-insert-hint"
+                      aria-hidden="true"
+                      style={{ fontSize: `${Math.round(printFontSize * 0.8)}px`, color: 'var(--text-muted)', opacity: 0.6 }}
+                    >
+                      ➕
+                    </span>
+                  );
+
+                  if (isEditingExtra) {
+                    return (
+                      <div style={extraStyle}>
+                        {renderInlineEditor(lineIdx, text.length)}
+                        {plusNode}
+                      </div>
+                    );
+                  }
 
                   return (
-                    <div
-                      role="button"
-                      tabIndex={0}
+                    <button
+                      type="button"
+                      className="smart-chord-end-btn"
                       aria-label={`Inserir acorde ao final da linha ${lineIdx + 1}${extraTargetAnnotations.length ? `; ${extraTargetAnnotations.map(item => item.displayText).join(', ')}` : ''}`}
-                      onKeyDown={(event) => {
-                        if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
-                          event.preventDefault();
-                          event.currentTarget.click();
-                        }
-                      }}
                       onClick={() => {
-                        if (!isEditingExtra) {
-                          setEditingCell({ lineIdx, charIdx: text.length });
-                          setEditingChordValue(extraChord);
-                        }
+                        setEditingCell({ lineIdx, charIdx: text.length });
+                        setEditingChordValue(extraChord);
                       }}
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        position: 'relative',
-                        cursor: 'pointer',
-                        userSelect: 'none',
-                        marginLeft: '4px',
-                      }}
+                      style={extraStyle}
                     >
-                      {isEditingExtra ? (
-                        renderInlineEditor(lineIdx, text.length)
-                      ) : (
-                        hasExtraChord && (
-                          <span
-                            aria-hidden="true"
-                            className="print-chord-span"
-                            data-chord-display
-                            style={{
-                              position: 'absolute',
-                              bottom: '100%',
-                              left: 0,
-                              color: 'var(--chord-text)',
-                              fontWeight: 'bold',
-                              fontSize: `${Math.round(printFontSize * 0.9)}px`,
-                              whiteSpace: 'nowrap',
-                              padding: '0 1px',
-                            }}
-                          >
-                            {extraTargetAnnotations.map((item, idx) => <span key={`anchor-${idx}`} data-notation-anchor data-notation-annotation data-annotation-placement="above-next-chord" data-annotation-target-token={item.target?.token} style={{ position: 'absolute', bottom: '100%', left: 0, whiteSpace: 'nowrap', fontSize: `${Math.round(printFontSize * item.fontScale)}px`, color: 'var(--text-secondary)' }}>{item.displayText}</span>)}
-                            {transposeNotationChord(extraChord, semitones)}
-                          </span>
-                        )
+                      {hasExtraChord && (
+                        <span
+                          aria-hidden="true"
+                          className="print-chord-span"
+                          data-chord-display
+                          style={{
+                            position: 'absolute',
+                            bottom: '100%',
+                            left: 0,
+                            color: 'var(--chord-text)',
+                            fontWeight: 'bold',
+                            fontSize: `${Math.round(printFontSize * 0.9)}px`,
+                            whiteSpace: 'nowrap',
+                            padding: '0 1px',
+                          }}
+                        >
+                          {extraTargetAnnotations.map((item, idx) => <span key={`anchor-${idx}`} data-notation-anchor data-notation-annotation data-annotation-placement="above-next-chord" data-annotation-target-token={item.target?.token} style={{ position: 'absolute', bottom: '100%', left: 0, whiteSpace: 'nowrap', fontSize: `${Math.round(printFontSize * item.fontScale)}px`, color: 'var(--text-secondary)' }}>{item.displayText}</span>)}
+                          {transposeNotationChord(extraChord, semitones)}
+                        </span>
                       )}
-                      <span
-                        className="smart-chords-insert-hint"
-                        aria-hidden="true"
-                        style={{ fontSize: `${Math.round(printFontSize * 0.8)}px`, color: 'var(--text-muted)', opacity: 0.6 }}
-                      >
-                        ➕
-                      </span>
-                    </div>
+                      {plusNode}
+                    </button>
                   );
                 })()}
                 {lineInstructions.filter(item => item.placement !== 'above-next-chord' || !item.target).map((item, idx) => <span key={`instruction-${idx}`} data-notation-annotation data-annotation-kind={item.kind} data-annotation-placement={item.placement} data-annotation-target-line={item.target?.line} data-annotation-target-token={item.target?.token} style={{ fontSize: `${Math.round(printFontSize * item.fontScale)}px`, color: 'var(--text-secondary)', marginInlineStart: 8 }}>{item.displayText}</span>)}

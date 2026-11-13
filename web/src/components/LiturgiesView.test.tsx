@@ -174,7 +174,6 @@ describe('LiturgiesView Component', () => {
     getLiturgies.mockResolvedValue(mockLiturgies);
     const user = userEvent.setup();
     const showToast = vi.fn();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     render(<LiturgiesView groupId="min-1" userRole="admin" allSongs={mockSongs} showToast={showToast} />);
 
@@ -184,7 +183,10 @@ describe('LiturgiesView Component', () => {
 
     await user.click(screen.getByLabelText('Excluir liturgia Culto de Celebração - Manhã'));
 
-    expect(window.confirm).toHaveBeenCalled();
+    const dialog = screen.getByRole('dialog', { name: 'Remover liturgia' });
+    expect(dialog).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Remover' }));
+
     expect(deleteLiturgy).toHaveBeenCalledWith('min-1', 'lit-1');
     expect(showToast).toHaveBeenCalledWith('Liturgia removida com sucesso.', 'success');
   });

@@ -259,31 +259,36 @@ class _ScheduleTab extends StatelessWidget {
       );
     }
 
-    return RefreshIndicator(
-      onRefresh: onRefresh,
-      child: ListView.builder(
-        padding: EdgeInsets.symmetric(
-          horizontal: isWide ? 48 : 16,
-          vertical: 12,
-        ),
-        itemCount: schedules.length,
-        itemBuilder: (context, index) {
-          final schedule = schedules[index];
-          return ScheduleCard(
-            schedule: schedule,
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => ScheduleDetailView(
-                    ministryId: ministryId,
-                    scheduleId: schedule.id,
-                    initialTitle: schedule.title,
-                  ),
-                ),
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 900),
+        child: RefreshIndicator(
+          onRefresh: onRefresh,
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 12,
+            ),
+            itemCount: schedules.length,
+            itemBuilder: (context, index) {
+              final schedule = schedules[index];
+              return ScheduleCard(
+                schedule: schedule,
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => ScheduleDetailView(
+                        ministryId: ministryId,
+                        scheduleId: schedule.id,
+                        initialTitle: schedule.title,
+                      ),
+                    ),
+                  );
+                },
               );
             },
-          );
-        },
+          ),
+        ),
       ),
     );
   }

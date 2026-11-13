@@ -13,6 +13,8 @@ import { MemberAvailabilityView } from './MemberAvailabilityView';
 import { AdminAvailabilityView } from './AdminAvailabilityView';
 import { ManualMemberAvailabilityModal } from './ManualMemberAvailabilityModal';
 import { WhatsAppFoundationView } from './WhatsAppFoundationView';
+import { ConfirmDialog } from './ui/ConfirmDialog';
+import { useRepertoireDialog } from './useRepertoireDialog';
 import {
   Edit2, Check, X, UserPlus, Users, Info, Link, Shield, Tag,
   Layers, Trash2, LogOut, ChevronRight, MoreVertical, Plus, User,
@@ -134,6 +136,27 @@ export function MinistryView({
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [removingMember, setRemovingMember] = useState<MinistryMemberItem | null>(null);
+  const [removingMemberBusy, setRemovingMemberBusy] = useState(false);
+
+  const editModalRef = useRef<HTMLDivElement>(null);
+  const manualModalRef = useRef<HTMLDivElement>(null);
+  const leaveModalRef = useRef<HTMLDivElement>(null);
+  const deleteModalRef = useRef<HTMLDivElement>(null);
+
+  useRepertoireDialog(editModalRef, Boolean(editingMember), () => {
+    if (!savingEdit) setEditingMember(null);
+  });
+  useRepertoireDialog(manualModalRef, showAddManualModal, () => {
+    if (!savingManual) setShowAddManualModal(false);
+  });
+  useRepertoireDialog(leaveModalRef, showLeaveConfirm, () => {
+    setShowLeaveConfirm(false);
+  });
+  useRepertoireDialog(deleteModalRef, showDeleteConfirm, () => {
+    setShowDeleteConfirm(false);
+    setDeleteConfirmText('');
+  });
 
   // Manual member availability modal (Phase 6D-2)
   const [manualAvailabilityMember, setManualAvailabilityMember] = useState<MinistryMemberItem | null>(null);
@@ -279,16 +302,24 @@ export function MinistryView({
     setDeleteConfirmText('');
   };
 
-  const handleRemoveMember = async (member: MinistryMemberItem) => {
-    if (!window.confirm(`Remover "${member.name}" do ministério?`)) return;
+  const handleRemoveMember = (member: MinistryMemberItem) => {
+    setOpenMenuId(null);
+    setRemovingMember(member);
+  };
+
+  const confirmRemoveMember = async () => {
+    if (!removingMember || removingMemberBusy) return;
+    setRemovingMemberBusy(true);
     try {
-      await api.removeMember(activeMinistry.id, member.id);
-      showToast(`"${member.name}" removido(a) do ministério.`);
+      await api.removeMember(activeMinistry.id, removingMember.id);
+      showToast(`"${removingMember.name}" removido(a) do ministério.`);
+      setRemovingMember(null);
       loadMembers();
     } catch (err: any) {
       showToast(err.message || 'Erro ao remover membro.', 'error');
+    } finally {
+      setRemovingMemberBusy(false);
     }
-    setOpenMenuId(null);
   };
 
   const handleOpenEditMember = (member: MinistryMemberItem) => {
@@ -1001,11 +1032,27 @@ export function MinistryView({
 
       {/* ── MODAL: Edit member ── */}
       {editingMember && (
-        <div className="modal-overlay" onClick={() => setEditingMember(null)}>
-          <div className="modal-content" style={{ maxWidth: '480px' }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={() => !savingEdit && setEditingMember(null)}>
+          <div
+            ref={editModalRef}
+            className="modal-content"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ministry-edit-member-title"
+            style={{ maxWidth: '480px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="modal-header">
-              <div className="modal-title">Editar Membro</div>
-              <button className="action-icon-btn" onClick={() => setEditingMember(null)}>✕</button>
+              <div id="ministry-edit-member-title" className="modal-title">Editar Membro</div>
+              <button
+                type="button"
+                className="action-icon-btn"
+                onClick={() => setEditingMember(null)}
+                disabled={savingEdit}
+                aria-label="Fechar modal de edição de membro"
+              >
+                ✕
+              </button>
             </div>
             <form onSubmit={handleSaveEditMember} className="login-form" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <FloatingInput
@@ -1078,6 +1125,7 @@ export function MinistryView({
                           <button
                             type="button"
                             className="badge-remove-btn"
+                            aria-label={`Remover função ${rObj?.name || 'atribuída'}`}
                             onClick={() =>
                               setEditForm((f) => ({ ...f, roleIds: f.roleIds.filter((id) => id !== rId) }))
                             }
@@ -1176,11 +1224,27 @@ export function MinistryView({
 
       {/* ── MODAL: Add member manually ── */}
       {showAddManualModal && (
-        <div className="modal-overlay" onClick={() => setShowAddManualModal(false)}>
-          <div className="modal-content" style={{ maxWidth: '460px' }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={() => !savingManual && setShowAddManualModal(false)}>
+          <div
+            ref={manualModalRef}
+            className="modal-content"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ministry-add-manual-title"
+            style={{ maxWidth: '460px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="modal-header">
-              <div className="modal-title">Adicionar Membro Manualmente</div>
-              <button className="action-icon-btn" onClick={() => setShowAddManualModal(false)}>✕</button>
+              <div id="ministry-add-manual-title" className="modal-title">Adicionar Membro Manualmente</div>
+              <button
+                type="button"
+                className="action-icon-btn"
+                onClick={() => setShowAddManualModal(false)}
+                disabled={savingManual}
+                aria-label="Fechar modal de adicionar membro"
+              >
+                ✕
+              </button>
             </div>
             <form onSubmit={handleAddManual} className="login-form" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <FloatingInput
@@ -1237,13 +1301,28 @@ export function MinistryView({
       {/* ── MODAL: Leave confirmation ── */}
       {showLeaveConfirm && (
         <div className="modal-overlay" onClick={() => setShowLeaveConfirm(false)}>
-          <div className="modal-content" style={{ maxWidth: '400px' }} onClick={(e) => e.stopPropagation()}>
+          <div
+            ref={leaveModalRef}
+            className="modal-content"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ministry-leave-confirm-title"
+            style={{ maxWidth: '400px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="modal-header">
-              <div className="modal-title" style={{ color: 'var(--warning-color)' }}>
+              <div id="ministry-leave-confirm-title" className="modal-title" style={{ color: 'var(--warning-color)' }}>
                 <LogOut size={18} />
                 Sair do Ministério
               </div>
-              <button className="action-icon-btn" onClick={() => setShowLeaveConfirm(false)}>✕</button>
+              <button
+                type="button"
+                className="action-icon-btn"
+                onClick={() => setShowLeaveConfirm(false)}
+                aria-label="Fechar confirmação de saída"
+              >
+                ✕
+              </button>
             </div>
             <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, margin: '12px 0 24px' }}>
               Você vai sair de <strong style={{ color: 'var(--text-primary)' }}>{activeMinistry.name}</strong>.
@@ -1265,13 +1344,28 @@ export function MinistryView({
       {/* ── MODAL: Delete confirmation ── */}
       {showDeleteConfirm && (
         <div className="modal-overlay" onClick={() => { setShowDeleteConfirm(false); setDeleteConfirmText(''); }}>
-          <div className="modal-content" style={{ maxWidth: '440px' }} onClick={(e) => e.stopPropagation()}>
+          <div
+            ref={deleteModalRef}
+            className="modal-content"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ministry-delete-confirm-title"
+            style={{ maxWidth: '440px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="modal-header">
-              <div className="modal-title" style={{ color: 'var(--error-color)' }}>
+              <div id="ministry-delete-confirm-title" className="modal-title" style={{ color: 'var(--error-color)' }}>
                 <Trash2 size={18} />
                 Excluir Ministério
               </div>
-              <button className="action-icon-btn" onClick={() => { setShowDeleteConfirm(false); setDeleteConfirmText(''); }}>✕</button>
+              <button
+                type="button"
+                className="action-icon-btn"
+                onClick={() => { setShowDeleteConfirm(false); setDeleteConfirmText(''); }}
+                aria-label="Fechar confirmação de exclusão"
+              >
+                ✕
+              </button>
             </div>
             <div style={{ margin: '12px 0' }}>
               <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: '16px' }}>
@@ -1322,6 +1416,19 @@ export function MinistryView({
           showToast={showToast}
         />
       )}
+
+      <ConfirmDialog
+        isOpen={Boolean(removingMember)}
+        title="Remover membro"
+        message={removingMember ? `Remover "${removingMember.name}" do ministério?` : ''}
+        confirmLabel="Remover"
+        tone="danger"
+        busy={removingMemberBusy}
+        onConfirm={confirmRemoveMember}
+        onCancel={() => {
+          if (!removingMemberBusy) setRemovingMember(null);
+        }}
+      />
 
       {/* Close menus on outside click */}
       {(openMenuId || showAddOptions) && (

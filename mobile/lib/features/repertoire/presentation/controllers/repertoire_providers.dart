@@ -1,9 +1,17 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/providers.dart' show apiClientProvider;
+import '../../data/repertoire_folders_repository.dart';
 import '../../data/repertoire_repository.dart';
+import 'repertoire_collections_controller.dart';
 import 'repertoire_list_controller.dart';
 import 'song_detail_controller.dart';
 import 'song_form_controller.dart';
+export 'repertoire_collections_controller.dart'
+    show
+        RepertoireArtistsNotifier,
+        RepertoireArtistsState,
+        RepertoireFoldersNotifier,
+        RepertoireFoldersState;
 export 'song_form_controller.dart'
     show
         SongFormNotifier,
@@ -15,6 +23,31 @@ export 'song_form_controller.dart'
 final repertoireRepositoryProvider = Provider<RepertoireRepository>((ref) {
   return HttpRepertoireRepository(
     apiClient: ref.watch(apiClientProvider),
+  );
+});
+
+/// Provider for ministry-scoped repertoire folders & artist cleanup.
+final repertoireFoldersRepositoryProvider =
+    Provider<RepertoireFoldersRepository>((ref) {
+  return HttpRepertoireFoldersRepository(
+    apiClient: ref.watch(apiClientProvider),
+  );
+});
+
+/// Ministry-scoped repertoire folders provider.
+final repertoireFoldersNotifierProvider = StateNotifierProvider<
+    RepertoireFoldersNotifier, RepertoireFoldersState>((ref) {
+  return RepertoireFoldersNotifier(
+    foldersRepository: ref.watch(repertoireFoldersRepositoryProvider),
+  );
+});
+
+/// Ministry-scoped repertoire artists provider.
+final repertoireArtistsNotifierProvider = StateNotifierProvider<
+    RepertoireArtistsNotifier, RepertoireArtistsState>((ref) {
+  return RepertoireArtistsNotifier(
+    repertoireRepository: ref.watch(repertoireRepositoryProvider),
+    foldersRepository: ref.watch(repertoireFoldersRepositoryProvider),
   );
 });
 

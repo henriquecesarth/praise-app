@@ -140,13 +140,47 @@
   box-shadow: var(--shadow-elevated, 0 12px 32px rgb(0 0 0 / 24%));
 }
 
+.smart-chords-workspace .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .smart-chords-insert-hint { opacity: 0 !important; }
-.smart-chords-empty-line { border-color: transparent !important; background: transparent !important; }
-.smart-chords-reading-sheet :is(div:hover, div:focus-visible) > .smart-chords-insert-hint { opacity: 0.65 !important; }
+.smart-chords-empty-line {
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  border-color: transparent !important;
+  background: transparent !important;
+}
+.smart-chords-reading-sheet :is(div:hover, div:focus-visible, button:hover, button:focus-visible) > .smart-chords-insert-hint {
+  opacity: 0.65 !important;
+}
 .smart-chords-reading-sheet { width: 100%; max-width: 1120px; margin-inline: auto; box-sizing: border-box; min-width: 0; }
 .smart-chords-reading-sheet .has-chord { text-decoration: none !important; }
-.smart-chords-reading-sheet [role="button"]:hover,
-.smart-chords-reading-sheet [role="button"]:focus-visible {
+.smart-chord-inline-btn,
+.smart-chord-char-btn,
+.smart-chord-end-btn {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  line-height: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+.smart-chords-reading-sheet :is([role="button"], .smart-chord-inline-btn, .smart-chord-char-btn, .smart-chord-end-btn, .smart-chords-empty-line):hover,
+.smart-chords-reading-sheet :is([role="button"], .smart-chord-inline-btn, .smart-chord-char-btn, .smart-chord-end-btn, .smart-chords-empty-line):focus-visible {
   background: var(--bg-surface-subtle);
   outline: 2px solid var(--focus-ring);
   border-radius: 4px;
@@ -167,6 +201,64 @@
   border-color: var(--border-strong) !important;
 }
 
+.smart-chords-workspace { flex-direction: column; min-width: 0; }
+.smart-chords-workspace .smart-chords-sidebar { width: 100% !important; box-sizing: border-box; }
+.smart-chords-workspace[data-has-selection="true"] .smart-chords-sidebar { display: none !important; }
+.smart-chords-workspace[data-has-selection="false"] > .smart-chords-stage { display: none !important; }
+.smart-chords-workspace[data-workspace-mode="read"] .smart-chords-editor { display: none !important; }
+.smart-chords-workspace[data-workspace-mode="edit"] .printable-area-container { display: none !important; }
+.smart-chords-workspace .smart-chords-editor, .smart-chords-workspace .printable-area-container { min-width: 0 !important; width: 100%; box-sizing: border-box; }
+.smart-chords-editor textarea { min-height: 45vh !important; font-size: 16px !important; resize: vertical !important; }
+.smart-chords-workbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.smart-chords-workbar button { min-height: 44px; }
+.smart-chords-pdf-modal { box-sizing: border-box; }
+.smart-chords-pdf-controls > div { flex: 1 1 220px; min-width: 0; }
+.smart-chords-pdf-controls select { max-width: 100%; min-width: 0; }
+.smart-chords-pdf-download { flex: 0 0 auto; }
+.smart-chords-pdf-scroll > div { margin-inline: auto; }
+
+.html2pdf__overlay {
+  pointer-events: none !important;
+}
+#printable-sheet-pdf * {
+  color: black !important;
+  font-family: var(--pdf-font-family, monospace) !important;
+}
+#printable-sheet-pdf .print-chord-span {
+  color: black !important;
+  font-weight: bold !important;
+  font-family: var(--pdf-font-family, monospace) !important;
+  line-height: 1.1 !important;
+}
+#printable-sheet-pdf [data-musical-tablature] {
+  font-family: monospace, "Courier New", Courier !important;
+}
+#printable-sheet-pdf .has-chord {
+  text-decoration: none !important;
+}
+#printable-sheet-pdf .pdf-line-row {
+  break-inside: avoid !important;
+  page-break-inside: avoid !important;
+}
+#printable-sheet-pdf .pdf-header {
+  break-inside: avoid !important;
+  page-break-inside: avoid !important;
+}
+#printable-sheet-pdf [data-testid="pdf-sheet-lines"] > div:not(.pdf-line-row):not([data-empty-line]) {
+  margin-bottom: var(--pdf-line-spacing, 0px) !important;
+}
+
 @media (max-width: 800px) {
   .smart-chords-pdf-header > div:last-child { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
   .smart-chords-pdf-header > div:last-child button { min-width: 0 !important; width: auto !important; padding: 8px !important; font-size: .8rem !important; }
@@ -177,4 +269,64 @@
   .smart-chords-reading-sheet { padding: 14px !important; max-height: calc(100dvh - 250px) !important; }
   .smart-chords-mode { flex: 1; justify-content: center; }
   .smart-chords-mode button { flex: 1; }
+}
+
+@media (max-width: 600px) {
+  .smart-chords-pdf-modal { width: 100% !important; height: 100dvh !important; max-height: 100dvh !important; border-radius: 0 !important; padding: 12px !important; gap: 10px !important; }
+  .smart-chords-pdf-header { gap: 8px !important; }
+  .smart-chords-pdf-controls > div { flex-basis: 100%; }
+  .smart-chords-pdf-download { width: 100%; }
+}
+
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  #root {
+    background: white !important;
+    color: black !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .features-container {
+    display: block !important;
+    height: auto !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: white !important;
+    color: black !important;
+  }
+  .printable-area-container {
+    display: block !important;
+    width: 100% !important;
+    height: auto !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: white !important;
+    color: black !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+  .print-sheet-box {
+    background: white !important;
+    color: black !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    width: 100% !important;
+  }
+  .print-sheet-box * {
+    color: black !important;
+  }
+  .print-chord-span {
+    color: black !important;
+    font-weight: bold !important;
+  }
+  .has-chord {
+    text-decoration: underline 2px solid black !important;
+    text-decoration-color: black !important;
+  }
 }

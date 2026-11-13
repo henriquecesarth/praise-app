@@ -17,12 +17,14 @@ import {
   MessageSquare,
   Send,
   Trash2,
+  X,
 } from 'lucide-react';
 import { ScheduleItem } from './CreateScheduleModal';
 import { GroupRole } from '../types';
 import { Header } from './Header';
 import { formatScheduleDateTimePtBR, formatTimestampPtBR } from '../utils/locale';
 import { api } from '../api';
+import { useRepertoireDialog } from './useRepertoireDialog';
 
 interface ScheduleDetailViewProps {
   schedule: ScheduleItem;
@@ -74,6 +76,16 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
   const [showChatModal, setShowChatModal] = useState(false);
   const [newCommentText, setNewCommentText] = useState('');
   const [sendingComment, setSendingComment] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const chatModalRef = React.useRef<HTMLDivElement>(null);
+
+  useRepertoireDialog(chatModalRef, showChatModal, () => {
+    if (!sendingComment) {
+      setShowChatModal(false);
+      setChatError(null);
+    }
+  });
 
   const isParticipant = true; // Membros do grupo possuem acesso ao chat e detalhes da escala
 
@@ -120,6 +132,8 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
 
   React.useEffect(() => {
     setComments([]);
+    setActionError(null);
+    setChatError(null);
     loadComments();
     return () => {
       commentsReqRef.current += 1;
@@ -131,12 +145,13 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
     if (!newCommentText.trim() || sendingComment || !effectiveGroupId || !schedule.id) return;
 
     setSendingComment(true);
+    setChatError(null);
     try {
       await api.createScheduleComment(effectiveGroupId, schedule.id, newCommentText.trim());
       setNewCommentText('');
       loadComments();
     } catch (err: any) {
-      alert(err.message || 'Erro ao enviar comentário.');
+      setChatError(err?.message || 'Erro ao enviar comentário.');
     } finally {
       setSendingComment(false);
     }
@@ -201,6 +216,7 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
   const handleConfirmationChange = async (_memberId: string, confirmed: boolean) => {
     if (!effectiveGroupId || !schedule.id) return;
     setUpdating(true);
+    setActionError(null);
     try {
       const updatedScheduleFromApi = await api.confirmSchedulePresence(effectiveGroupId, schedule.id, confirmed);
       if (onUpdateSchedule && updatedScheduleFromApi) {
@@ -208,7 +224,7 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
       }
     } catch (err: any) {
       console.error('Erro ao atualizar confirmação:', err);
-      alert(err?.message || 'Erro ao registrar confirmação.');
+      setActionError(err?.message || 'Erro ao registrar confirmação.');
     } finally {
       setUpdating(false);
     }
@@ -352,6 +368,38 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
               </span>
             )}
           </div>
+
+          {actionError && (
+            <div
+              role="alert"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '8px',
+                padding: '10px 12px',
+                borderRadius: '10px',
+                background: 'rgba(239, 68, 68, 0.12)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                color: 'var(--error-color)',
+                fontSize: '0.85rem',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <AlertCircle size={16} aria-hidden="true" />
+                <span>{actionError}</span>
+              </div>
+              <button
+                type="button"
+                className="action-icon-btn"
+                onClick={() => setActionError(null)}
+                aria-label="Fechar erro"
+                style={{ minWidth: '44px', minHeight: '44px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
 
           <div className="confirmation-actions-row" style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
             <button
@@ -542,16 +590,20 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
 
       {/* Schedule Chat Modal (Full-Screen no Mobile < 768px com Safe Areas) */}
       {showChatModal && (
-        <div className="modal-overlay" onClick={() => setShowChatModal(false)}>
+        <div className="modal-overlay" onClick={() => { if (!sendingComment) { setShowChatModal(false); setChatError(null); } }}>
           <div
+            ref={chatModalRef}
             className="modal-content schedule-chat-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="schedule-chat-title"
             style={{ maxWidth: '540px', width: '100%', height: '85vh', display: 'flex', flexDirection: 'column', padding: 0 }}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
             <div className="modal-header-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px', borderBottom: '1px solid var(--border-color)', gap: '12px' }}>
               <div>
-                <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)' }}>
+                <h2 id="schedule-chat-title" style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)' }}>
                   <MessageSquare size={20} style={{ color: 'var(--primary-light)' }} />
                   <span>Chat da Escala</span>
                 </h2>
@@ -620,6 +672,38 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
                 </div>
 
                 {/* Footer Form Input com Touch Targets de 44px e Safe Area Bottom */}
+                {chatError && (
+                  <div
+                    role="alert"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '8px',
+                      margin: '0 16px 8px',
+                      padding: '8px 12px',
+                      borderRadius: '10px',
+                      background: 'rgba(239, 68, 68, 0.12)',
+                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                      color: 'var(--error-color)',
+                      fontSize: '0.82rem',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <AlertCircle size={15} aria-hidden="true" />
+                      <span>{chatError}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="action-icon-btn"
+                      onClick={() => setChatError(null)}
+                      aria-label="Fechar erro do chat"
+                      style={{ minWidth: '36px', minHeight: '36px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                )}
                 <form onSubmit={handleSendComment} style={{ display: 'flex', gap: '8px', padding: '12px 16px', borderTop: '1px solid var(--border-color)', background: 'var(--surface-color)' }}>
                   <input
                     type="text"

@@ -655,6 +655,139 @@ void main() {
         find.text('Minha cifra: Em Teus Braços (Violão) (E)'),
         findsOneWidget,
       );
+
+      // Zoom in & out updates font readout
+      expect(find.byKey(const ValueKey('song_detail_font_size_label')), findsOneWidget);
+      expect(find.text('15px'), findsOneWidget);
+      final zoomIn = find.byKey(const ValueKey('song_detail_zoom_in_button'));
+      await tester.ensureVisible(zoomIn);
+      await tester.tap(zoomIn);
+      await tester.pumpAndSettle();
+      expect(find.text('16px'), findsOneWidget);
+
+      // Toggle auto-scroll speed and enter fullscreen stand
+      await tester.tap(
+        find.byKey(const ValueKey('song_detail_autoscroll_speed_button')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('3x'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const ValueKey('song_detail_fullscreen_button')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('song_fullscreen_exit_button')),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('song_fullscreen_exit_button')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('song_detail_music_stand_bar')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets(
+        'fullscreen stand toolbar wraps cleanly on 320px width without overflow and syncs controls',
+        (tester) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      const chord = SmartChord(
+        id: 'sc_fs',
+        userId: 'member_user',
+        title: 'Em Teus Braços',
+        originalKey: 'E',
+        content: 'E         B/D#\nSeguro estou em Ti\n[C#m]Para sempre [A]Deus',
+        createdAt: '2026-11-10T00:00:00Z',
+        updatedAt: '2026-11-10T00:00:00Z',
+      );
+      fakeRepo.detail = const SongDetail(
+        id: 'song_fs',
+        ministryId: 'min_1',
+        title: 'Em Teus Braços',
+        artistName: 'Laura Souguellis',
+        originalKey: 'E',
+      );
+      final linkRepo = _FakeLinkRepo(
+        onGetChordsForSong: () async => const [chord],
+        onRemoveLink: (_, __) async {},
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appEnvironmentProvider.overrideWithValue(
+              const AppEnvironment(
+                env: AppEnv.development,
+                apiBaseUrl: 'http://localhost:3000/api/v1',
+              ),
+            ),
+            repertoireRepositoryProvider.overrideWithValue(fakeRepo),
+            songDetailNotifierProvider.overrideWith((ref) {
+              return SongDetailNotifier(repository: fakeRepo);
+            }),
+            ministryContextNotifierProvider
+                .overrideWith((ref) => FakeMinistryContextNotifier()),
+            authNotifierProvider.overrideWith((ref) => _FakeAuthNotifier()),
+            smartChordRepertoireLinkRepositoryProvider
+                .overrideWithValue(linkRepo),
+            songSmartChordsNotifierProvider.overrideWith(
+              (ref) => SongSmartChordsNotifier(
+                repository: _NoopSmartChordRepo(),
+                linkRepository: linkRepo,
+              ),
+            ),
+            smartChordRepertoireLinkNotifierProvider.overrideWith(
+              (ref) => SmartChordRepertoireLinkNotifier(
+                repository: linkRepo,
+              ),
+            ),
+          ],
+          child: const MaterialApp(
+            home: SongDetailView(
+              ministryId: 'min_1',
+              songId: 'song_fs',
+              initialTitle: 'Em Teus Braços',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final fullscreenBtn = find.byKey(
+        const ValueKey('song_detail_fullscreen_button'),
+      );
+      await tester.ensureVisible(fullscreenBtn);
+      await tester.tap(fullscreenBtn);
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(
+        find.byKey(const ValueKey('song_fullscreen_exit_button')),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byTooltip('Meio tom acima'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Aumentar zoom'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(
+        find.byKey(const ValueKey('song_fullscreen_exit_button')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Tom Original: E • Tom Atual: F (+1)'), findsOneWidget);
+      expect(find.text('16px'), findsOneWidget);
     });
   });
 }

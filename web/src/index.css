@@ -26,7 +26,7 @@
   --color-secondary-color: var(--secondary-color);
   --color-secondary-light: var(--secondary-light);
 
-  --color-brand-accent: #7C3AED;
+  --color-brand-accent: #B85A3C;
 
   --color-success: #047857;
   --color-warning: #B45309;
@@ -1152,7 +1152,7 @@ summary:focus-visible,
   min-width: 0;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .detail-content-layout {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1195,7 +1195,7 @@ summary:focus-visible,
   box-sizing: border-box;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .lyrics-box {
     padding: 16px 12px;
   }
@@ -1611,7 +1611,8 @@ input:checked + .switch-slider:before {
 
 .sidebar-group-select {
   width: 100%;
-  padding: 6px 10px;
+  min-height: 44px;
+  padding: 8px 10px;
   background-color: var(--surface-variant);
   border: 1px solid var(--border-color);
   border-radius: var(--border-radius-sm);
@@ -2088,7 +2089,7 @@ input:checked + .switch-slider:before {
   min-width: 0;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .dashboard-welcome-card {
     flex-direction: column;
     align-items: stretch;
@@ -2252,7 +2253,7 @@ input:checked + .switch-slider:before {
   white-space: nowrap;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .desktop-only {
     display: none !important;
   }
@@ -6000,10 +6001,10 @@ button,
   }
 }
 
-/* Offline Ready Toast (Non-obstructive) */
+/* Offline Ready Toast (Non-obstructive — never overlaps sticky .app-header) */
 .pwa-install-banner.pwa-toast-offline {
-  top: max(20px, var(--safe-area-top));
-  bottom: auto;
+  top: auto;
+  bottom: max(20px, var(--safe-area-bottom));
   right: 20px;
   width: 400px;
   max-width: calc(100% - 32px);
@@ -6022,7 +6023,7 @@ button,
 
 @media (max-width: 767px) {
   .pwa-install-banner.pwa-toast-offline {
-    top: max(12px, var(--safe-area-top)) !important;
+    top: calc(max(12px, var(--safe-area-top)) + 68px) !important;
     bottom: auto !important;
     left: 12px !important;
     right: 12px !important;
@@ -7158,7 +7159,7 @@ button,
   transition: background-color var(--transition-fast), border-color var(--transition-fast);
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .app-header {
     padding-left: 12px;
     padding-right: 12px;

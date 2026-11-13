@@ -12,10 +12,13 @@ class ChordLyricLine extends StatelessWidget {
   final List<String> fontFamilyFallback;
   final bool monospace;
   final double spacingPx;
+  final bool alignedLyrics;
 
   const ChordLyricLine({super.key, required this.line, required this.semitones,
     required this.fontSize, required this.fontFamily,
-    required this.fontFamilyFallback, required this.monospace, this.spacingPx = AuthUser.defaultChordLineSpacingPxDouble});
+    required this.fontFamilyFallback, required this.monospace,
+    this.spacingPx = AuthUser.defaultChordLineSpacingPxDouble,
+    this.alignedLyrics = false});
 
   @override
   Widget build(BuildContext context) {
@@ -37,6 +40,15 @@ class ChordLyricLine extends StatelessWidget {
     );
     final segments = SmartChordParser.parse(line).first.segments;
     if (!segments.any((segment) => segment.hasChord || segment.hasComment)) {
+      if (alignedLyrics) {
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: SelectableText(
+            line,
+            style: lyricStyle.copyWith(fontFamily: 'monospace', height: 1.4),
+          ),
+        );
+      }
       return SelectableText(line, style: lyricStyle);
     }
     final scale = MediaQuery.textScalerOf(context);

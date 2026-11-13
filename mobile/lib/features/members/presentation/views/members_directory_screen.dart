@@ -182,7 +182,10 @@ class _MembersDirectoryScreenState
         ],
       ),
       body: SafeArea(
-        child: Column(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 900),
+            child: Column(
           children: [
             // Search Bar & Filter Chips
             if (isMatchingMinistry && !state.isLoading && state.error == null) ...[
@@ -316,6 +319,8 @@ class _MembersDirectoryScreenState
               ),
             ),
           ],
+            ),
+          ),
         ),
       ),
     );

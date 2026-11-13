@@ -1181,15 +1181,26 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen>
                     margin: const EdgeInsets.only(top: 8.0, bottom: 8.0),
                     padding: const EdgeInsets.all(12.0),
                     decoration: BoxDecoration(
-                      color: Colors.amber.shade50,
+                      color: Theme.of(context).brightness == Brightness.dark
+                          ? Colors.amber.withValues(alpha: 0.16)
+                          : Colors.amber.shade50,
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.amber.shade400),
+                      border: Border.all(
+                        color: Theme.of(context).brightness == Brightness.dark
+                            ? Colors.amber.shade400
+                            : Colors.amber.shade700,
+                      ),
                     ),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(Icons.warning_amber_rounded,
-                            size: 20, color: Colors.amber.shade900),
+                        Icon(
+                          Icons.warning_amber_rounded,
+                          size: 20,
+                          color: Theme.of(context).brightness == Brightness.dark
+                              ? Colors.amber.shade200
+                              : Colors.amber.shade900,
+                        ),
                         const SizedBox(width: 10),
                         Expanded(
                           child: Column(
@@ -1202,7 +1213,10 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen>
                                 style: TextStyle(
                                   fontWeight: FontWeight.bold,
                                   fontSize: 13,
-                                  color: Colors.amber.shade900,
+                                  color: Theme.of(context).brightness ==
+                                          Brightness.dark
+                                      ? Colors.amber.shade200
+                                      : Colors.amber.shade900,
                                 ),
                               ),
                               const SizedBox(height: 2),
@@ -1210,8 +1224,11 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen>
                                 'Aviso informativo: você ainda pode salvar a escala normalmente.',
                                 style: TextStyle(
                                   fontSize: 12,
-                                  color: Colors.amber.shade900
-                                      .withValues(alpha: 0.8),
+                                  color: (Theme.of(context).brightness ==
+                                              Brightness.dark
+                                          ? Colors.amber.shade200
+                                          : Colors.amber.shade900)
+                                      .withValues(alpha: 0.85),
                                 ),
                               ),
                             ],
@@ -1288,10 +1305,17 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen>
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 6, vertical: 2),
                                 decoration: BoxDecoration(
-                                  color: Colors.amber.shade100,
+                                  color: Theme.of(context).brightness ==
+                                          Brightness.dark
+                                      ? Colors.amber.withValues(alpha: 0.22)
+                                      : Colors.amber.shade100,
                                   borderRadius: BorderRadius.circular(4),
-                                  border:
-                                      Border.all(color: Colors.amber.shade700),
+                                  border: Border.all(
+                                    color: Theme.of(context).brightness ==
+                                            Brightness.dark
+                                        ? Colors.amber.shade400
+                                        : Colors.amber.shade700,
+                                  ),
                                 ),
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
@@ -1299,7 +1323,10 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen>
                                     Icon(
                                       Icons.warning_amber_rounded,
                                       size: 12,
-                                      color: Colors.amber.shade900,
+                                      color: Theme.of(context).brightness ==
+                                              Brightness.dark
+                                          ? Colors.amber.shade200
+                                          : Colors.amber.shade900,
                                     ),
                                     const SizedBox(width: 4),
                                     Text(
@@ -1307,7 +1334,10 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen>
                                       style: TextStyle(
                                         fontSize: 11,
                                         fontWeight: FontWeight.w600,
-                                        color: Colors.amber.shade900,
+                                        color: Theme.of(context).brightness ==
+                                                Brightness.dark
+                                            ? Colors.amber.shade200
+                                            : Colors.amber.shade900,
                                       ),
                                     ),
                                   ],
@@ -2095,9 +2125,15 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen>
                         padding: const EdgeInsets.symmetric(
                             horizontal: 6, vertical: 1),
                         decoration: BoxDecoration(
-                          color: Colors.amber.shade100,
+                          color: Theme.of(context).brightness == Brightness.dark
+                              ? Colors.amber.withValues(alpha: 0.22)
+                              : Colors.amber.shade100,
                           borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.amber.shade800),
+                          border: Border.all(
+                            color: Theme.of(context).brightness == Brightness.dark
+                                ? Colors.amber.shade400
+                                : Colors.amber.shade800,
+                          ),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
@@ -2105,7 +2141,10 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen>
                             Icon(
                               Icons.warning_amber_rounded,
                               size: 12,
-                              color: Colors.amber.shade900,
+                              color: Theme.of(context).brightness ==
+                                      Brightness.dark
+                                  ? Colors.amber.shade200
+                                  : Colors.amber.shade900,
                             ),
                             const SizedBox(width: 3),
                             Text(
@@ -2113,7 +2152,10 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen>
                               style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.bold,
-                                color: Colors.amber.shade900,
+                                color: Theme.of(context).brightness ==
+                                        Brightness.dark
+                                    ? Colors.amber.shade200
+                                    : Colors.amber.shade900,
                               ),
                             ),
                           ],
@@ -2512,10 +2554,17 @@ class _MemberPickerSheetState extends ConsumerState<_MemberPickerSheet> {
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 6, vertical: 2),
                                   decoration: BoxDecoration(
-                                    color: Colors.amber.shade100,
+                                    color: Theme.of(context).brightness ==
+                                            Brightness.dark
+                                        ? Colors.amber.withValues(alpha: 0.22)
+                                        : Colors.amber.shade100,
                                     borderRadius: BorderRadius.circular(4),
                                     border: Border.all(
-                                        color: Colors.amber.shade700),
+                                      color: Theme.of(context).brightness ==
+                                              Brightness.dark
+                                          ? Colors.amber.shade400
+                                          : Colors.amber.shade700,
+                                    ),
                                   ),
                                   child: Row(
                                     mainAxisSize: MainAxisSize.min,
@@ -2523,7 +2572,10 @@ class _MemberPickerSheetState extends ConsumerState<_MemberPickerSheet> {
                                       Icon(
                                         Icons.warning_amber_rounded,
                                         size: 12,
-                                        color: Colors.amber.shade900,
+                                        color: Theme.of(context).brightness ==
+                                                Brightness.dark
+                                            ? Colors.amber.shade200
+                                            : Colors.amber.shade900,
                                       ),
                                       const SizedBox(width: 4),
                                       Text(
@@ -2531,7 +2583,10 @@ class _MemberPickerSheetState extends ConsumerState<_MemberPickerSheet> {
                                         style: TextStyle(
                                           fontSize: 11,
                                           fontWeight: FontWeight.w600,
-                                          color: Colors.amber.shade900,
+                                          color: Theme.of(context).brightness ==
+                                                  Brightness.dark
+                                              ? Colors.amber.shade200
+                                              : Colors.amber.shade900,
                                         ),
                                       ),
                                     ],

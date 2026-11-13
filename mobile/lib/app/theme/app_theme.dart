@@ -3,19 +3,20 @@ import 'package:flutter/services.dart';
 
 /// Centralized brand color tokens matching LouvAIO official identity.
 ///
-/// Precedence: Verde escuro `#0F2A1F`, Terracota `#B85A3C`, Creme `#F5EFE6`, Preto `#121212`.
+/// Precedence: Verde escuro `#0F2A1F` / Forest Dark `#0B1913`, Terracota `#B85A3C`, Creme `#F5EFE6`, Preto `#121212`.
 class AppColors {
   static const green = Color(0xFF0F2A1F);
+  static const sage = Color(0xFF7CC4A4);
   static const terracotta = Color(0xFFB85A3C);
   static const cream = Color(0xFFF5EFE6);
   static const black = Color(0xFF121212);
 
-  // Neutral / surface extensions for Material 3
+  // Neutral / surface extensions for Material 3 (LouvAIO Forest Slate dark surfaces)
   static const lightBackground = Color(0xFFFAF7F2);
   static const lightCard = Colors.white;
-  static const darkBackground = Color(0xFF121212);
-  static const darkSurface = Color(0xFF1A1A1A);
-  static const darkCard = Color(0xFF242424);
+  static const darkBackground = Color(0xFF0B1913);
+  static const darkSurface = Color(0xFF11231B);
+  static const darkCard = Color(0xFF162C22);
 
   // Status colors
   static const error = Color(0xFFBA1A1A);
@@ -96,8 +97,10 @@ class AppTheme {
     final colorScheme = ColorScheme.fromSeed(
       seedColor: AppColors.green,
       brightness: Brightness.dark,
-      primary: const Color(0xFF4E9A7B),
-      onPrimary: AppColors.black,
+      primary: AppColors.sage,
+      onPrimary: AppColors.darkBackground,
+      primaryContainer: const Color(0xFF1A3A2C),
+      onPrimaryContainer: AppColors.cream,
       secondary: AppColors.terracotta,
       onSecondary: Colors.white,
       surface: AppColors.darkSurface,

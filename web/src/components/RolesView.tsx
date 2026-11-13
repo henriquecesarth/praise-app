@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import { FloatingInput } from './ui/FloatingInput';
+import { useRepertoireDialog } from './useRepertoireDialog';
 import {
   Plus, MoreVertical, Edit2, Trash2, Shield, ChevronLeft, Check,
 } from 'lucide-react';
@@ -54,10 +55,21 @@ export function RolesView({ ministryId, isAdmin, onBack, showToast, onModalState
 
   // Delete confirmation state
   const [deletingRole, setDeletingRole] = useState<Role | null>(null);
+  const roleModalRef = useRef<HTMLDivElement>(null);
+  const deleteRoleModalRef = useRef<HTMLDivElement>(null);
 
   const activeMinistryIdRef = useRef<string>(ministryId);
   activeMinistryIdRef.current = ministryId;
   const loadReqRef = useRef<number>(0);
+
+  useRepertoireDialog(roleModalRef, showModal, () => {
+    if (!saving) {
+      setShowModal(false);
+    }
+  });
+  useRepertoireDialog(deleteRoleModalRef, Boolean(deletingRole), () => {
+    setDeletingRole(null);
+  });
   const isMountedRef = useRef<boolean>(true);
 
   useEffect(() => {
@@ -274,19 +286,29 @@ export function RolesView({ ministryId, isAdmin, onBack, showToast, onModalState
       {/* ── MODAL: Create / Edit Role ── */}
       {showModal && (
         <div className="modal-overlay" onClick={closeModal}>
-          <div className="modal-content role-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+          <div
+            ref={roleModalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="role-modal-title"
+            tabIndex={-1}
+            className="modal-content role-modal"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '480px' }}
+          >
             <div className="modal-header">
               <button
                 type="button"
                 className="action-icon-btn"
                 onClick={closeModal}
                 title="Voltar / Fechar"
+                aria-label="Voltar"
                 style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}
               >
                 <ChevronLeft size={22} />
               </button>
 
-              <div className="modal-title" style={{ textAlign: 'center', flex: 1, margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>
+              <div id="role-modal-title" className="modal-title" style={{ textAlign: 'center', flex: 1, margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>
                 {modalMode === 'create' ? 'Nova Função Musical' : 'Editar Função Musical'}
               </div>
 
@@ -347,13 +369,22 @@ export function RolesView({ ministryId, isAdmin, onBack, showToast, onModalState
       {/* ── MODAL: Delete confirmation ── */}
       {deletingRole && (
         <div className="modal-overlay" onClick={() => setDeletingRole(null)}>
-          <div className="modal-content" style={{ maxWidth: '400px' }} onClick={(e) => e.stopPropagation()}>
+          <div
+            ref={deleteRoleModalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="role-delete-modal-title"
+            tabIndex={-1}
+            className="modal-content"
+            style={{ maxWidth: '400px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="modal-header">
-              <div className="modal-title" style={{ color: 'var(--error-color)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1.1rem', fontWeight: 700 }}>
+              <div id="role-delete-modal-title" className="modal-title" style={{ color: 'var(--error-color)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1.1rem', fontWeight: 700 }}>
                 <Trash2 size={20} />
                 Excluir Função
               </div>
-              <button className="action-icon-btn" onClick={() => setDeletingRole(null)} style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <button type="button" className="action-icon-btn" aria-label="Fechar" onClick={() => setDeletingRole(null)} style={{ width: '44px', height: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 ✕
               </button>
             </div>

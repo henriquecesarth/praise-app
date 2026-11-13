@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { SongFilters } from '../types';
+import { useRepertoireDialog } from './useRepertoireDialog';
 
 interface FilterPopoverProps {
   filters: SongFilters;
@@ -15,6 +16,9 @@ const MUSICAL_KEYS = [
 export const FilterPopover: React.FC<FilterPopoverProps> = ({ filters, onApply, onClose }) => {
   const [selectedKey, setSelectedKey] = useState<string | null>(filters.originalKey || null);
   const [hasYoutube, setHasYoutube] = useState<boolean>(filters.hasYoutube || false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useRepertoireDialog(dialogRef, true, onClose);
 
   const handleKeyToggle = (key: string) => {
     if (selectedKey === key) {
@@ -55,6 +59,11 @@ export const FilterPopover: React.FC<FilterPopoverProps> = ({ filters, onApply, 
       }}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="repertoire-filter-title"
+        tabIndex={-1}
         className="filter-dropdown bottom-sheet"
         onClick={(e) => e.stopPropagation()}
         style={{
@@ -74,9 +83,11 @@ export const FilterPopover: React.FC<FilterPopoverProps> = ({ filters, onApply, 
         {/* Handle visual no topo do Bottom Sheet */}
         <div style={{ width: '40px', height: '4px', background: 'var(--border-color)', borderRadius: '2px', alignSelf: 'center', marginBottom: '4px' }} />
 
-        <div className="filter-title" style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div id="repertoire-filter-title" className="filter-title" style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span>Filtros do Repertório</span>
           <button
+            type="button"
+            aria-label="Fechar filtros"
             onClick={onClose}
             style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1.2rem' }}
           >

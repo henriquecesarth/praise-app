@@ -1,5 +1,6 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { X, Plus, Trash2, ArrowUp, ArrowDown, Play, Square, Sparkles, AlertCircle } from 'lucide-react';
+import { useRepertoireDialog } from '../useRepertoireDialog';
 import {
   type VocalExercise,
   type MelodicCategory,
@@ -36,6 +37,25 @@ const COMMON_DURATIONS = [
   { value: 4, label: '4 tempos (Semibreve)' },
 ];
 
+const DEFAULT_EDITABLE_NOTES: EditableNote[] = [
+  { id: '1', midi: 60, duration: 1 },
+  { id: '2', midi: 62, duration: 1 },
+  { id: '3', midi: 64, duration: 1 },
+  { id: '4', midi: 65, duration: 1 },
+  { id: '5', midi: 67, duration: 2 },
+];
+
+function buildInitialNotes(initialExercise?: VocalExercise | null): EditableNote[] {
+  if (initialExercise && initialExercise.notes.length > 0) {
+    return initialExercise.notes.map((midi, index) => ({
+      id: `note-${index}-${Date.now()}`,
+      midi,
+      duration: initialExercise.noteDurations[index] || 1,
+    }));
+  }
+  return DEFAULT_EDITABLE_NOTES.map((note) => ({ ...note }));
+}
+
 export function CustomExerciseModal({
   initialExercise,
   isOpen,
@@ -46,26 +66,10 @@ export function CustomExerciseModal({
   const [description, setDescription] = useState(initialExercise?.description || '');
   const [category, setCategory] = useState<MelodicCategory>(initialExercise?.category || 'misto');
   const [autoDetectCategory, setAutoDetectCategory] = useState(!initialExercise);
-  const [minTranspose] = useState(initialExercise?.minTranspose ?? -12);
-  const [maxTranspose] = useState(initialExercise?.maxTranspose ?? 12);
+  const [minTranspose, setMinTranspose] = useState(initialExercise?.minTranspose ?? -12);
+  const [maxTranspose, setMaxTranspose] = useState(initialExercise?.maxTranspose ?? 12);
 
-  const [notes, setNotes] = useState<EditableNote[]>(() => {
-    if (initialExercise && initialExercise.notes.length > 0) {
-      return initialExercise.notes.map((midi, index) => ({
-        id: `note-${index}-${Date.now()}`,
-        midi,
-        duration: initialExercise.noteDurations[index] || 1,
-      }));
-    }
-    // Default 5-note pattern (1-2-3-4-5)
-    return [
-      { id: '1', midi: 60, duration: 1 },
-      { id: '2', midi: 62, duration: 1 },
-      { id: '3', midi: 64, duration: 1 },
-      { id: '4', midi: 65, duration: 1 },
-      { id: '5', midi: 67, duration: 2 },
-    ];
-  });
+  const [notes, setNotes] = useState<EditableNote[]>(() => buildInitialNotes(initialExercise));
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -74,6 +78,48 @@ export function CustomExerciseModal({
 
   const previewAudioRef = useRef<AudioContext | null>(null);
   const previewTimerRef = useRef<number[]>([]);
+  const modalCardRef = useRef<HTMLDivElement>(null);
+
+  const stopPreview = useCallback(() => {
+    previewTimerRef.current.forEach((id) => window.clearTimeout(id));
+    previewTimerRef.current = [];
+    if (previewAudioRef.current) {
+      try {
+        previewAudioRef.current.close();
+      } catch {
+        /* ignore */
+      }
+      previewAudioRef.current = null;
+    }
+    setIsPreviewPlaying(false);
+    setPreviewActiveMidi(null);
+  }, []);
+
+  useEffect(() => {
+    stopPreview();
+    if (!isOpen) return;
+    setTitle(initialExercise?.title || '');
+    setDescription(initialExercise?.description || '');
+    setCategory(initialExercise?.category || 'misto');
+    setAutoDetectCategory(!initialExercise);
+    setMinTranspose(initialExercise?.minTranspose ?? -12);
+    setMaxTranspose(initialExercise?.maxTranspose ?? 12);
+    setNotes(buildInitialNotes(initialExercise));
+    setError('');
+  }, [initialExercise, isOpen, stopPreview]);
+
+  useEffect(() => {
+    return () => {
+      stopPreview();
+    };
+  }, [stopPreview]);
+
+  useRepertoireDialog(modalCardRef, isOpen, () => {
+    if (!saving) {
+      stopPreview();
+      onClose();
+    }
+  });
 
   if (!isOpen) return null;
 
@@ -134,20 +180,7 @@ export function CustomExerciseModal({
     return 'misto';
   };
 
-  const stopPreview = () => {
-    previewTimerRef.current.forEach((id) => window.clearTimeout(id));
-    previewTimerRef.current = [];
-    if (previewAudioRef.current) {
-      try {
-        previewAudioRef.current.close();
-      } catch {
-        /* ignore */
-      }
-      previewAudioRef.current = null;
-    }
-    setIsPreviewPlaying(false);
-    setPreviewActiveMidi(null);
-  };
+  // stopPreview defined above hooks before early return
 
   const handlePreviewSound = async () => {
     stopPreview();
@@ -244,7 +277,7 @@ export function CustomExerciseModal({
 
   return (
     <div className="vocal-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-exercise-title">
-      <div className="vocal-modal-card">
+      <div ref={modalCardRef} className="vocal-modal-card">
         <div className="vocal-modal-header">
           <div className="vocal-modal-title-wrap">
             <Sparkles size={20} className="vocal-modal-icon" aria-hidden="true" />
@@ -255,6 +288,7 @@ export function CustomExerciseModal({
           <button
             type="button"
             className="vocal-modal-close"
+            disabled={saving}
             onClick={() => {
               stopPreview();
               onClose();

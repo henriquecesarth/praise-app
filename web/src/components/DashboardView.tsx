@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Building2, Plus, Calendar, Cake, ArrowRight, CheckCircle2, Clock,
   Sparkles, Megaphone, ChevronRight, Users, XCircle, Music, Palette, CalendarDays,
@@ -8,6 +8,7 @@ import { Ministry, Announcement } from '../types';
 import { ScheduleItem } from './CreateScheduleModal';
 import { formatScheduleDateTimePtBR, formatTimestampPtBR } from '../utils/locale';
 import { api } from '../api';
+import { useRepertoireDialog } from './useRepertoireDialog';
 
 interface UserState {
   id: string;
@@ -135,6 +136,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [deletingAnnouncement, setDeletingAnnouncement] = useState<Announcement | null>(null);
   const [formSubmitting, setFormSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const formModalRef = useRef<HTMLDivElement>(null);
+  const deleteModalRef = useRef<HTMLDivElement>(null);
+
+  useRepertoireDialog(formModalRef, isCreateModalOpen, () => {
+    if (!formSubmitting) {
+      setIsCreateModalOpen(false);
+      setEditingAnnouncement(null);
+      setFormError(null);
+    }
+  });
+
+  useRepertoireDialog(deleteModalRef, Boolean(deletingAnnouncement), () => {
+    if (!formSubmitting) {
+      setDeletingAnnouncement(null);
+    }
+  });
 
   // Form fields
   const [formTitle, setFormTitle] = useState('');
@@ -600,8 +617,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           <div className="flex items-center gap-1 ml-1">
                             <button
                               type="button"
-                              className="action-icon-btn p-1.5 rounded-lg text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-variant)] transition-colors"
-                              style={{ width: '36px', height: '36px', minWidth: '36px', minHeight: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                              className="action-icon-btn min-w-[44px] min-h-[44px] md:min-w-[36px] md:min-h-[36px] flex items-center justify-center p-1.5 rounded-lg text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-variant)] transition-colors"
                               onClick={() => handleOpenEditModal(ann)}
                               title="Editar aviso"
                               aria-label={`Editar aviso ${ann.title}`}
@@ -610,8 +626,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             </button>
                             <button
                               type="button"
-                              className="action-icon-btn p-1.5 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors"
-                              style={{ width: '36px', height: '36px', minWidth: '36px', minHeight: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                              className="action-icon-btn min-w-[44px] min-h-[44px] md:min-w-[36px] md:min-h-[36px] flex items-center justify-center p-1.5 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors"
                               onClick={() => setDeletingAnnouncement(ann)}
                               title="Excluir aviso"
                               aria-label={`Excluir aviso ${ann.title}`}
@@ -815,7 +830,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           onClick={handleCloseModal}
         >
           <div
+            ref={formModalRef}
             className="modal-content rounded-2xl shadow-2xl relative w-full max-w-md p-5 sm:p-6"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="dashboard-announcement-modal-title"
             onClick={(e) => e.stopPropagation()}
             style={{
               background: 'var(--surface-color)',
@@ -825,14 +844,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <div className="modal-header flex items-center justify-between pb-3 mb-4 border-b border-[var(--divider-color)]">
               <div className="flex items-center gap-2">
                 <Megaphone size={20} className="text-amber-500" />
-                <h3 className="text-base sm:text-lg font-bold text-[var(--text-primary)]">
+                <h3 id="dashboard-announcement-modal-title" className="text-base sm:text-lg font-bold text-[var(--text-primary)]">
                   {editingAnnouncement ? 'Editar Aviso' : 'Novo Aviso'}
                 </h3>
               </div>
               <button
                 type="button"
                 className="action-icon-btn rounded-lg p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                style={{ width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                 onClick={handleCloseModal}
                 disabled={formSubmitting}
                 aria-label="Fechar modal"
@@ -949,7 +968,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           onClick={() => !formSubmitting && setDeletingAnnouncement(null)}
         >
           <div
+            ref={deleteModalRef}
             className="modal-content rounded-2xl shadow-2xl relative w-full max-w-sm p-5 sm:p-6"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="dashboard-delete-announcement-title"
             onClick={(e) => e.stopPropagation()}
             style={{
               background: 'var(--surface-color)',
@@ -960,7 +983,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <div className="w-12 h-12 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center shrink-0">
                 <Trash2 size={24} />
               </div>
-              <h3 className="text-base sm:text-lg font-bold text-[var(--text-primary)]">
+              <h3 id="dashboard-delete-announcement-title" className="text-base sm:text-lg font-bold text-[var(--text-primary)]">
                 Excluir Aviso
               </h3>
               <p className="text-xs sm:text-sm text-[var(--text-secondary)] leading-relaxed">

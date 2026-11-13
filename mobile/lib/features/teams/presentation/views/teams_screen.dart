@@ -210,7 +210,10 @@ class _TeamsScreenState extends ConsumerState<TeamsScreen> {
         label: const Text('Nova Equipe'),
       ),
       body: SafeArea(
-        child: RefreshIndicator(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 900),
+            child: RefreshIndicator(
           onRefresh: () async {
             await Future.wait([
               ref
@@ -362,6 +365,8 @@ class _TeamsScreenState extends ConsumerState<TeamsScreen> {
                         ),
                       ],
                     ),
+            ),
+          ),
         ),
       ),
     );

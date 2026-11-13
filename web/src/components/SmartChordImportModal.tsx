@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { api, SmartChord, SmartChordImportDraft, ImportWarning } from '../api';
 import { Song } from '../types';
 import { hasBarProgression, parseBarProgressionLine, isTablatureLine, renderSmartChordLine } from '../utils/smart_chord';
+import { useRepertoireDialog } from './useRepertoireDialog';
 
 interface SmartChordImportModalProps {
   isOpen: boolean;
@@ -59,6 +60,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
   const [linkError, setLinkError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const generationRef = useRef(0);
 
   // Include authoritative user identity and the canonical credential in every operation.
@@ -127,16 +129,11 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
     onClose();
   };
 
-  // Escape key handler
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen && !isSaving && !isLinking) {
-        handleSafeClose();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isSaving, isLinking, onClose]);
+  useRepertoireDialog(dialogRef, isOpen, () => {
+    if (!isSaving && !isLinking) {
+      handleSafeClose();
+    }
+  });
 
   if (!isOpen) return null;
 
@@ -443,6 +440,11 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
       }}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="smart-chord-import-modal-title"
+        tabIndex={-1}
         className="glass-panel"
         style={{
           width: '100%',
@@ -452,14 +454,15 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
           flexDirection: 'column',
           borderRadius: '12px',
           overflow: 'hidden',
-          backgroundColor: '#1e293b',
-          color: '#f8fafc',
-          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
+          backgroundColor: 'var(--bg-surface)',
+          color: 'var(--text-primary)',
+          border: '1px solid var(--border-subtle)',
+          boxShadow: 'var(--shadow-lg)',
         }}
       >
         {/* Header */}
-        <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <h3 id="smart-chord-import-modal-title" style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600, color: 'var(--text-primary)' }}>
             {step === 'link_prompt' ? 'Vincular ao Repertório' : 'Importar Cifra'}
           </h3>
           <button
@@ -467,7 +470,8 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
             className="btn btn-icon"
             onClick={handleSafeClose}
             disabled={isSaving || isLinking}
-            style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '1.2rem' }}
+            aria-label="Fechar modal de importação"
+            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '1.2rem', minWidth: '44px', minHeight: '44px' }}
           >
             ✕
           </button>
@@ -476,7 +480,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
         {/* Content Body */}
         <div style={{ padding: '20px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {errorMessage && (
-            <div style={{ padding: '12px', borderRadius: '8px', backgroundColor: 'rgba(239, 68, 68, 0.2)', border: '1px solid #ef4444', color: '#fca5a5', fontSize: '0.9rem' }}>
+            <div role="alert" style={{ padding: '12px', borderRadius: '8px', backgroundColor: 'var(--status-danger-bg)', border: '1px solid var(--status-danger-border)', color: 'var(--status-danger-text)', fontSize: '0.9rem' }}>
               {errorMessage}
             </div>
           )}
@@ -485,18 +489,18 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
           {step === 'input' && (
             <>
               {/* Source Tabs */}
-              <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.1)', gap: '8px', overflowX: 'auto' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', borderBottom: '1px solid var(--border-subtle)', gap: '8px' }}>
                 <button
                   type="button"
                   style={{
-                    padding: '8px 16px',
+                    padding: '8px 14px',
+                    minHeight: '44px',
                     border: 'none',
-                    borderBottom: activeTab === 'pdf' ? '2px solid #3b82f6' : '2px solid transparent',
+                    borderBottom: activeTab === 'pdf' ? '2px solid var(--action-primary-bg)' : '2px solid transparent',
                     background: 'none',
-                    color: activeTab === 'pdf' ? '#60a5fa' : '#94a3b8',
+                    color: activeTab === 'pdf' ? 'var(--action-primary-bg)' : 'var(--text-muted)',
                     cursor: 'pointer',
                     fontWeight: 600,
-                    whiteSpace: 'nowrap',
                   }}
                   onClick={() => handleTabSwitch('pdf')}
                 >
@@ -505,14 +509,14 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                 <button
                   type="button"
                   style={{
-                    padding: '8px 16px',
+                    padding: '8px 14px',
+                    minHeight: '44px',
                     border: 'none',
-                    borderBottom: activeTab === 'text' ? '2px solid #3b82f6' : '2px solid transparent',
+                    borderBottom: activeTab === 'text' ? '2px solid var(--action-primary-bg)' : '2px solid transparent',
                     background: 'none',
-                    color: activeTab === 'text' ? '#60a5fa' : '#94a3b8',
+                    color: activeTab === 'text' ? 'var(--action-primary-bg)' : 'var(--text-muted)',
                     cursor: 'pointer',
                     fontWeight: 600,
-                    whiteSpace: 'nowrap',
                   }}
                   onClick={() => handleTabSwitch('text')}
                 >
@@ -521,14 +525,14 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                 <button
                   type="button"
                   style={{
-                    padding: '8px 16px',
+                    padding: '8px 14px',
+                    minHeight: '44px',
                     border: 'none',
-                    borderBottom: activeTab === 'url' ? '2px solid #3b82f6' : '2px solid transparent',
+                    borderBottom: activeTab === 'url' ? '2px solid var(--action-primary-bg)' : '2px solid transparent',
                     background: 'none',
-                    color: activeTab === 'url' ? '#60a5fa' : '#94a3b8',
+                    color: activeTab === 'url' ? 'var(--action-primary-bg)' : 'var(--text-muted)',
                     cursor: 'pointer',
                     fontWeight: 600,
-                    whiteSpace: 'nowrap',
                   }}
                   onClick={() => handleTabSwitch('url')}
                 >
@@ -537,14 +541,14 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                 <button
                   type="button"
                   style={{
-                    padding: '8px 16px',
+                    padding: '8px 14px',
+                    minHeight: '44px',
                     border: 'none',
-                    borderBottom: activeTab === 'image' ? '2px solid #3b82f6' : '2px solid transparent',
+                    borderBottom: activeTab === 'image' ? '2px solid var(--action-primary-bg)' : '2px solid transparent',
                     background: 'none',
-                    color: activeTab === 'image' ? '#60a5fa' : '#94a3b8',
+                    color: activeTab === 'image' ? 'var(--action-primary-bg)' : 'var(--text-muted)',
                     cursor: 'pointer',
                     fontWeight: 600,
-                    whiteSpace: 'nowrap',
                   }}
                   onClick={() => handleTabSwitch('image')}
                 >
@@ -555,14 +559,23 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
               {activeTab === 'pdf' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', alignItems: 'center', padding: '20px 0' }}>
                   <div
+                    role="button"
+                    tabIndex={0}
+                    aria-label="Selecionar arquivo PDF da cifra"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        fileInputRef.current?.click();
+                      }
+                    }}
                     style={{
-                      border: '2px dashed rgba(255,255,255,0.2)',
+                      border: '2px dashed var(--border-strong)',
                       borderRadius: '8px',
                       padding: '32px 20px',
                       width: '100%',
                       textAlign: 'center',
                       cursor: 'pointer',
-                      backgroundColor: 'rgba(255,255,255,0.02)',
+                      backgroundColor: 'var(--bg-surface-subtle)',
                     }}
                     onClick={() => fileInputRef.current?.click()}
                   >
@@ -573,18 +586,18 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                       style={{ display: 'none' }}
                       onChange={handleFileChange}
                     />
-                    <div style={{ fontSize: '2rem', marginBottom: '8px' }}>📄</div>
+                    <div style={{ fontSize: '2rem', marginBottom: '8px' }} aria-hidden="true">📄</div>
                     {selectedFile ? (
                       <div>
-                        <div style={{ fontWeight: 600, color: '#f8fafc' }}>{selectedFile.name}</div>
-                        <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '4px' }}>
+                        <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{selectedFile.name}</div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>
                           {(selectedFile.size / 1024).toFixed(1)} KB (Máximo: 3 MB)
                         </div>
                       </div>
                     ) : (
                       <div>
-                        <div style={{ fontWeight: 500, color: '#e2e8f0' }}>Clique para selecionar um arquivo PDF</div>
-                        <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '4px' }}>
+                        <div style={{ fontWeight: 500, color: 'var(--text-primary)' }}>Clique para selecionar um arquivo PDF</div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>
                           PDF com texto digital de até 3 MB (máx. 10 páginas)
                         </div>
                       </div>
@@ -605,15 +618,15 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
 
               {activeTab === 'text' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <label style={{ fontSize: '0.9rem', color: '#cbd5e1' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                    <label style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
                       Cole o conteúdo da cifra:
                     </label>
                     <button
                       type="button"
                       className="btn btn-secondary"
                       onClick={() => handlePasteClipboard('text')}
-                      style={{ fontSize: '0.8rem', padding: '4px 10px' }}
+                      style={{ fontSize: '0.8rem', padding: '4px 10px', minHeight: '44px' }}
                     >
                       📋 Colar da Área de Transferência
                     </button>
@@ -671,15 +684,15 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
 
               {activeTab === 'url' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', padding: '12px 0' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <label style={{ fontSize: '0.9rem', color: '#cbd5e1' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                    <label style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
                       Link do Cifra Club:
                     </label>
                     <button
                       type="button"
                       className="btn btn-secondary"
                       onClick={() => handlePasteClipboard('url')}
-                      style={{ fontSize: '0.8rem', padding: '4px 10px' }}
+                      style={{ fontSize: '0.8rem', padding: '4px 10px', minHeight: '44px' }}
                     >
                       📋 Colar Link
                     </button>
@@ -691,9 +704,9 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                     value={inputUrl}
                     maxLength={1000}
                     onChange={(e) => { generationRef.current += 1; setInputUrl(e.target.value); }}
-                    style={{ minHeight: '42px', fontSize: '0.9rem' }}
+                    style={{ minHeight: '44px', fontSize: '0.9rem' }}
                   />
-                  <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                     Preenchemos título e artista a partir do link do Cifra Club. Depois, cole o texto da cifra para normalizar e revisar.
                   </div>
                   <button
@@ -719,13 +732,13 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                   />
                   <div
                     style={{
-                      border: '2px dashed rgba(255,255,255,0.2)',
+                      border: '2px dashed var(--border-strong)',
                       borderRadius: '8px',
                       padding: '32px 20px',
                       width: '100%',
                       textAlign: 'center',
                       cursor: 'pointer',
-                      backgroundColor: 'rgba(255,255,255,0.02)',
+                      backgroundColor: 'var(--bg-surface-subtle)',
                     }}
                     onClick={() => imageInputRef.current?.click()}
                     role="button"
@@ -738,25 +751,25 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                       }
                     }}
                   >
-                    <div style={{ fontSize: '2rem', marginBottom: '8px' }}>🖼️</div>
+                    <div style={{ fontSize: '2rem', marginBottom: '8px' }} aria-hidden="true">🖼️</div>
                     {selectedImageFile ? (
                       <div>
-                        <div style={{ fontWeight: 600, color: '#f8fafc' }}>{selectedImageFile.name}</div>
-                        <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '4px' }}>
+                        <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{selectedImageFile.name}</div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>
                           {(selectedImageFile.size / 1024).toFixed(1)} KB (Máximo: 5 MB)
                         </div>
                       </div>
                     ) : (
                       <div>
-                        <div style={{ fontWeight: 500, color: '#e2e8f0' }}>Clique para selecionar uma imagem da cifra</div>
-                        <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '4px' }}>
+                        <div style={{ fontWeight: 500, color: 'var(--text-primary)' }}>Clique para selecionar uma imagem da cifra</div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>
                           Formatos PNG, JPEG ou WEBP de até 5 MB
                         </div>
                       </div>
                     )}
                   </div>
 
-                  <p style={{ color: '#94a3b8', fontSize: '0.85rem' }}>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
                     A leitura automática de imagens ainda não está disponível. Transcreva ou cole o texto para revisar antes de salvar.
                   </p>
                   <button
@@ -776,8 +789,8 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
           {/* STEP 2: EXTRACTING SPINNER */}
           {step === 'extracting' && (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 0', gap: '16px' }}>
-              <div className="spinner" style={{ width: '40px', height: '40px', border: '3px solid rgba(255,255,255,0.1)', borderTopColor: '#3b82f6', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
-              <div style={{ color: '#cbd5e1', fontSize: '0.95rem' }}>Analisando estrutura harmônica e alinhamento...</div>
+              <div className="spinner" style={{ width: '40px', height: '40px', border: '3px solid var(--border-subtle)', borderTopColor: 'var(--action-primary-bg)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+              <div style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>Analisando estrutura harmônica e alinhamento...</div>
               <button
                 type="button"
                 className="btn btn-secondary"
@@ -788,11 +801,6 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                 style={{
                   minHeight: '44px',
                   padding: '8px 16px',
-                  borderRadius: '6px',
-                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                  color: '#e2e8f0',
-                  border: '1px solid rgba(255, 255, 255, 0.2)',
-                  cursor: 'pointer',
                 }}
               >
                 Cancelar Extração
@@ -804,12 +812,12 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
           {step === 'preview' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               {requiresManualPaste && (
-                <div style={{ padding: '12px', borderRadius: '8px', backgroundColor: 'rgba(59, 130, 246, 0.15)', border: '1px solid #3b82f6', color: '#93c5fd', fontSize: '0.85rem' }}>
+                <div style={{ padding: '12px', borderRadius: '8px', backgroundColor: 'var(--status-info-bg)', border: '1px solid var(--status-info-border)', color: 'var(--status-info-text)', fontSize: '0.85rem' }}>
                   <strong>Extração assistida:</strong> {sourceUrl ? 'Revise os metadados sugeridos pelo link (' + sourceUrl + '). ' : 'A leitura automática de imagens ainda não está disponível. '}Cole ou transcreva o texto da cifra no editor e normalize antes de salvar.
                 </div>
               )}
               {warnings.length > 0 && (
-                <div style={{ padding: '12px', borderRadius: '8px', backgroundColor: 'rgba(234, 179, 8, 0.15)', border: '1px solid #eab308', color: '#fef08a', fontSize: '0.85rem' }}>
+                <div style={{ padding: '12px', borderRadius: '8px', backgroundColor: 'var(--status-warning-bg)', border: '1px solid var(--status-warning-border)', color: 'var(--status-warning-text)', fontSize: '0.85rem' }}>
                   <div style={{ fontWeight: 600, marginBottom: '4px' }}>Avisos da Importação:</div>
                   <ul style={{ margin: 0, paddingLeft: '18px' }}>
                     {warnings.map((w, idx) => (
@@ -822,7 +830,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
               {/* Editable Metadata Fields */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
                 <div>
-                  <label htmlFor="import-chord-title" style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Título da Cifra *</label>
+                  <label htmlFor="import-chord-title" style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Título da Cifra *</label>
                   <input
                     id="import-chord-title"
                     type="text"
@@ -831,11 +839,11 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                     value={title}
                     disabled={isSaving || isLinking}
                     onChange={(e) => setTitle(e.target.value)}
-                    style={{ minHeight: '40px' }}
+                    style={{ minHeight: '44px' }}
                   />
                 </div>
                 <div>
-                  <label htmlFor="import-chord-artist" style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Artista / Banda</label>
+                  <label htmlFor="import-chord-artist" style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Artista / Banda</label>
                   <input
                     id="import-chord-artist"
                     type="text"
@@ -845,18 +853,18 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                     disabled={isSaving || isLinking}
                     placeholder="Opcional"
                     onChange={(e) => setArtistName(e.target.value)}
-                    style={{ minHeight: '40px' }}
+                    style={{ minHeight: '44px' }}
                   />
                 </div>
                 <div>
-                  <label style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Tom Original</label>
+                  <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Tom Original</label>
                   <select
                     className="form-control"
                     value={originalKey}
                     aria-label="Tom Original"
                     disabled={isSaving || isLinking}
                     onChange={(e) => setOriginalKey(e.target.value)}
-                    style={{ minHeight: '40px' }}
+                    style={{ minHeight: '44px' }}
                   >
                     <option value="">Tom não identificado</option>
                     {STANDARD_KEYS.map((k) => (
@@ -872,15 +880,16 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                 {displayedKey && `Tom exibido na fonte: ${displayedKey}. `}
                 {capo != null && `Capotraste: casa ${capo}.`}
               </p>}
-              <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.1)', gap: '8px' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', borderBottom: '1px solid var(--border-subtle)', gap: '8px' }}>
                 <button
                   type="button"
                   style={{
                     padding: '6px 14px',
+                    minHeight: '44px',
                     border: 'none',
-                    borderBottom: previewTab === 'edit' ? '2px solid #3b82f6' : '2px solid transparent',
+                    borderBottom: previewTab === 'edit' ? '2px solid var(--action-primary-bg)' : '2px solid transparent',
                     background: 'none',
-                    color: previewTab === 'edit' ? '#60a5fa' : '#94a3b8',
+                    color: previewTab === 'edit' ? 'var(--action-primary-bg)' : 'var(--text-muted)',
                     cursor: 'pointer',
                     fontSize: '0.9rem',
                     fontWeight: 600,
@@ -893,10 +902,11 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                   type="button"
                   style={{
                     padding: '6px 14px',
+                    minHeight: '44px',
                     border: 'none',
-                    borderBottom: previewTab === 'rendered' ? '2px solid #3b82f6' : '2px solid transparent',
+                    borderBottom: previewTab === 'rendered' ? '2px solid var(--action-primary-bg)' : '2px solid transparent',
                     background: 'none',
-                    color: previewTab === 'rendered' ? '#60a5fa' : '#94a3b8',
+                    color: previewTab === 'rendered' ? 'var(--action-primary-bg)' : 'var(--text-muted)',
                     cursor: 'pointer',
                     fontSize: '0.9rem',
                     fontWeight: 600,
@@ -943,7 +953,8 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                   style={{
                     padding: '16px',
                     borderRadius: '8px',
-                    backgroundColor: '#0f172a',
+                    backgroundColor: 'var(--bg-surface-subtle)',
+                    border: '1px solid var(--border-subtle)',
                     fontFamily: 'monospace',
                     fontSize: '0.9rem',
                     maxHeight: '300px',
@@ -955,7 +966,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                   {content.split('\n').map((lineText, idx) => {
                     if (isTablatureLine(lineText)) {
                       return (
-                        <div key={idx} style={{ color: '#e2e8f0', whiteSpace: 'pre', overflowX: 'auto', fontFamily: 'monospace', minHeight: '1.2em' }}>
+                        <div key={idx} style={{ color: 'var(--text-primary)', whiteSpace: 'pre', overflowX: 'auto', fontFamily: 'monospace', minHeight: '1.2em' }}>
                           {lineText}
                         </div>
                       );
@@ -963,14 +974,14 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                     if (hasBarProgression(lineText)) {
                       const tokens = parseBarProgressionLine(lineText);
                       return (
-                        <div key={idx} data-musical-progression style={{ marginBottom: '8px', color: '#e2e8f0', whiteSpace: 'pre', overflowX: 'auto' }}>
+                        <div key={idx} data-musical-progression style={{ marginBottom: '8px', color: 'var(--text-primary)', whiteSpace: 'pre', overflowX: 'auto' }}>
                           {tokens.map((token, tIdx) => {
                             if (token.type === 'bracket_open' || token.type === 'bracket_close') return null;
                             if (token.type === 'chord') {
-                              return <span key={tIdx} style={{ color: '#38bdf8', fontWeight: 'bold' }}>{token.value}</span>;
+                              return <span key={tIdx} style={{ color: 'var(--chord-text)', fontWeight: 'bold' }}>{token.value}</span>;
                             }
                             if (token.type === 'delimiter') {
-                              return <span key={tIdx} style={{ color: token.value === '%' ? '#38bdf8' : '#94a3b8', fontWeight: 'bold' }}>{token.value}</span>;
+                              return <span key={tIdx} style={{ color: token.value === '%' ? 'var(--chord-text)' : 'var(--text-muted)', fontWeight: 'bold' }}>{token.value}</span>;
                             }
                             if (token.type === 'whitespace') {
                               return <span key={tIdx} style={{ whiteSpace: 'pre' }}>{token.value}</span>;
@@ -982,14 +993,14 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                     }
                     const rendered = renderSmartChordLine(lineText, 0);
                     if (!rendered.chordLine.trim()) {
-                      return <div key={idx} style={{ color: '#94a3b8', minHeight: '1.2em', whiteSpace: 'pre', overflowX: 'auto', fontFamily: 'monospace' }}>{rendered.lyricsLine}</div>;
+                      return <div key={idx} style={{ color: 'var(--text-secondary)', minHeight: '1.2em', whiteSpace: 'pre', overflowX: 'auto', fontFamily: 'monospace' }}>{rendered.lyricsLine}</div>;
                     }
                     return (
                       <div key={idx} style={{ marginBottom: '8px', whiteSpace: 'pre', overflowX: 'auto', fontFamily: 'monospace' }}>
-                        <div style={{ color: '#38bdf8', fontWeight: 'bold' }}>
+                        <div style={{ color: 'var(--chord-text)', fontWeight: 'bold' }}>
                           {rendered.chordLine}
                         </div>
-                        <div style={{ color: '#e2e8f0' }}>
+                        <div style={{ color: 'var(--text-primary)' }}>
                           {rendered.lyricsLine}
                         </div>
                       </div>
@@ -1003,22 +1014,22 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
           {/* STEP 4: OPTIONAL REPERTOIRE LINK */}
           {step === 'link_prompt' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <div style={{ padding: '12px', borderRadius: '8px', backgroundColor: 'rgba(34, 197, 94, 0.15)', border: '1px solid #22c55e', color: '#86efac', fontSize: '0.9rem' }}>
+              <div style={{ padding: '12px', borderRadius: '8px', backgroundColor: 'var(--status-success-bg)', border: '1px solid var(--status-success-border)', color: 'var(--status-success-text)', fontSize: '0.9rem' }}>
                 ✓ Cifra salva com sucesso na sua biblioteca pessoal!
               </div>
 
               {linkError && (
-                <div style={{ padding: '12px', borderRadius: '8px', backgroundColor: 'rgba(239, 68, 68, 0.2)', border: '1px solid #ef4444', color: '#fca5a5', fontSize: '0.9rem' }}>
+                <div role="alert" style={{ padding: '12px', borderRadius: '8px', backgroundColor: 'var(--status-danger-bg)', border: '1px solid var(--status-danger-border)', color: 'var(--status-danger-text)', fontSize: '0.9rem' }}>
                   {linkError}
                 </div>
               )}
 
-              <p style={{ color: '#cbd5e1', fontSize: '0.95rem', margin: 0 }}>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
                 Deseja vincular esta cifra a uma música do repertório do ministério atual?
               </p>
 
               <div>
-                <label style={{ fontSize: '0.85rem', color: '#94a3b8' }}>Música do Repertório:</label>
+                <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Música do Repertório:</label>
                 <select
                   className="form-control"
                   value={selectedSongId}
@@ -1033,7 +1044,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                 </select>
               </div>
 
-              <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                 O vínculo é pessoal e privado. Os demais membros do ministério não terão acesso à sua cifra.
               </div>
             </div>
@@ -1041,9 +1052,9 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
         </div>
 
         {/* Footer Actions */}
-        <div style={{ padding: '16px 20px', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+        <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'flex-end', flexWrap: 'wrap', gap: '12px' }}>
           {step === 'input' && (
-            <button type="button" className="btn btn-secondary" onClick={handleSafeClose} style={{ minHeight: '40px' }}>
+            <button type="button" className="btn btn-secondary" onClick={handleSafeClose} style={{ minHeight: '44px' }}>
               Cancelar
             </button>
           )}
@@ -1058,7 +1069,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                   setStep('input');
                 }}
                 disabled={isSaving || isNormalizing}
-                style={{ minHeight: '40px' }}
+                style={{ minHeight: '44px' }}
               >
                 Voltar
               </button>
@@ -1067,7 +1078,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                 className="btn btn-primary"
                 onClick={handleSaveChord}
                 disabled={isSaving || isNormalizing || requiresManualPaste || !originalKey.trim()}
-                style={{ minHeight: '40px' }}
+                style={{ minHeight: '44px' }}
               >
                 {isSaving ? 'Salvando...' : 'Salvar Cifra Pessoal'}
               </button>
@@ -1081,7 +1092,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                 className="btn btn-secondary"
                 onClick={handleSkipLink}
                 disabled={isLinking}
-                style={{ minHeight: '40px' }}
+                style={{ minHeight: '44px' }}
               >
                 Concluir sem Vincular
               </button>
@@ -1090,7 +1101,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                 className="btn btn-primary"
                 onClick={handleConfirmLink}
                 disabled={isLinking || !selectedSongId}
-                style={{ minHeight: '40px' }}
+                style={{ minHeight: '44px' }}
               >
                 {isLinking ? 'Vinculando...' : 'Vincular ao Repertório'}
               </button>

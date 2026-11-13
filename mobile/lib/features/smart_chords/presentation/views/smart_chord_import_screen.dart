@@ -840,6 +840,7 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
   }
 
   Widget _buildPdfInputTab() {
+    final theme = Theme.of(context);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -853,19 +854,20 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
               decoration: BoxDecoration(
                 border: Border.all(
                   color: _fileError != null
-                      ? Colors.red
-                      : Colors.grey.withValues(alpha: 0.4),
+                      ? theme.colorScheme.error
+                      : theme.colorScheme.outlineVariant,
                   width: 2,
                 ),
                 borderRadius: BorderRadius.circular(12),
-                color: Colors.grey.withValues(alpha: 0.05),
+                color: theme.colorScheme.surfaceContainerHighest
+                    .withValues(alpha: 0.25),
               ),
               child: Column(
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.upload_file,
                     size: 54,
-                    color: Colors.blueAccent,
+                    color: theme.colorScheme.primary,
                   ),
                   const SizedBox(height: 12),
                   if (_pdfFileName != null) ...[
@@ -1142,32 +1144,39 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (draft.requiresManualPaste) ...[
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.blue.withValues(alpha: 0.15),
-                border: Border.all(color: Colors.blue.shade700),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Row(
-                children: [
-                  Icon(
-                    Icons.info_outline,
-                    color: Colors.blueAccent,
-                    size: 20,
-                  ),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Abra a origem e copie a cifra. Depois use Colar e revisar, um arquivo de texto ou uma imagem. Título e artista sugeridos pelo link podem ser corrigidos.',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.blueAccent,
-                      ),
+            Builder(
+              builder: (context) {
+                final cs = Theme.of(context).colorScheme;
+                return Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: cs.primaryContainer.withValues(alpha: 0.55),
+                    border: Border.all(
+                      color: cs.primary.withValues(alpha: 0.55),
                     ),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                ],
-              ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.info_outline,
+                        color: cs.onPrimaryContainer,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Abra a origem e copie a cifra. Depois use Colar e revisar, um arquivo de texto ou uma imagem. Título e artista sugeridos pelo link podem ser corrigidos.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: cs.onPrimaryContainer,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
             ),
             const SizedBox(height: 16),
             Wrap(
@@ -1242,50 +1251,62 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
           if (draft.sourceUrl != null) ...[
             SelectableText(
               'Fonte: ${draft.sourceUrl}',
-              style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontSize: 12,
+              ),
             ),
             const SizedBox(height: 12),
           ],
           if (draft.warnings.isNotEmpty) ...[
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.amber.withValues(alpha: 0.15),
-                border: Border.all(color: Colors.amber.shade700),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+            Builder(
+              builder: (context) {
+                final isDark = Theme.of(context).brightness == Brightness.dark;
+                final warningAccent =
+                    isDark ? const Color(0xFFFCD34D) : const Color(0xFFB45309);
+                return Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: warningAccent.withValues(alpha: 0.12),
+                    border: Border.all(
+                      color: warningAccent.withValues(alpha: 0.55),
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(
-                        Icons.warning_amber_rounded,
-                        color: Colors.amber.shade800,
-                        size: 20,
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.warning_amber_rounded,
+                            color: warningAccent,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Avisos da Importação (${draft.warnings.length}):',
+                            style: TextStyle(
+                              color: warningAccent,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Avisos da Importação (${draft.warnings.length}):',
-                        style: TextStyle(
-                          color: Colors.amber.shade900,
-                          fontWeight: FontWeight.bold,
+                      const SizedBox(height: 6),
+                      ...draft.warnings.map(
+                        (w) => Padding(
+                          padding: const EdgeInsets.only(left: 28, top: 2),
+                          child: Text(
+                            '• ${w.message}',
+                            style: const TextStyle(fontSize: 12),
+                          ),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 6),
-                  ...draft.warnings.map(
-                    (w) => Padding(
-                      padding: const EdgeInsets.only(left: 28, top: 2),
-                      child: Text(
-                        '• ${w.message}',
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+                );
+              },
             ),
             const SizedBox(height: 16),
           ],
@@ -1293,14 +1314,17 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.red.withValues(alpha: 0.15),
-                border: Border.all(color: Colors.red),
+                color: Theme.of(context)
+                    .colorScheme
+                    .error
+                    .withValues(alpha: 0.14),
+                border: Border.all(color: Theme.of(context).colorScheme.error),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
                 state.errorMessage!,
-                style: const TextStyle(
-                  color: Colors.red,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.error,
                   fontWeight: FontWeight.w500,
                 ),
               ),
@@ -1444,9 +1468,14 @@ class _SmartChordImportScreenState extends ConsumerState<SmartChordImportScreen>
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
+                border: Border.all(
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                ),
                 borderRadius: BorderRadius.circular(8),
-                color: Colors.grey.withValues(alpha: 0.05),
+                color: Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHighest
+                    .withValues(alpha: 0.35),
               ),
               constraints: const BoxConstraints(maxHeight: 300),
               child: SingleChildScrollView(
