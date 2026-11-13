@@ -13,10 +13,22 @@ O projeto possui suítes de testes automatizados no backend e no frontend:
 
 ### Backend
 
-Executar testes:
+Executar testes unitários isolados (sem dependência de emulador):
 
     cd backend
     npm test
+    # ou explicitamente:
+    npm run test:unit
+
+Executar testes de integração (requer Firestore Emulator ativo):
+
+    cd backend
+    npm run test:integration
+
+Executar suíte completa (unitária + integração com Firestore Emulator ativo):
+
+    cd backend
+    npm run test:all
 
 Compilar TypeScript:
 

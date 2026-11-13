@@ -29,9 +29,11 @@ Não é necessário reinstalar em toda tarefa quando node_modules corresponde ao
 
     cd backend
     npm run build
-    npm test
+    npm run test:unit
+    npm run test:integration   # requer Firestore Emulator ativo (ex.: 127.0.0.1:8080)
+    npm run test:all
 
-Equivalente de build: `tsc`. Executa `vitest run` para suíte unitária/integrada.
+`npm run build` executa `tsc -p tsconfig.publish.json` (build local completo de tipos com testes via `npm run build:local` / `tsc`). `npm test` (`npm run test:unit`) executa `vitest run` somente para a suíte unitária isolada (`src/**/*.test.ts`, excluindo `*.integration.test.ts`), enquanto `npm run test:integration` valida o preflight do Firestore Emulator antes de rodar `src/**/*.integration.test.ts`.
 
 ### Web build & tests
 
