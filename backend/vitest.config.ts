@@ -1,17 +1,10 @@
 import { defineConfig } from 'vitest/config';
+import { sharedTestConfig } from './vitest.shared';
 
 export default defineConfig({
   test: {
-    environment: 'node',
-    globals: true,
-    fileParallelism: false,
+    ...sharedTestConfig,
     include: ['src/**/*.test.ts'],
-    env: {
-      LOUVAIO_LOCAL_EMULATORS: '1',
-      FIREBASE_PROJECT_ID: 'demo-louvaio-unit',
-      FIREBASE_AUTH_EMULATOR_HOST: '127.0.0.1:9099',
-      FIRESTORE_EMULATOR_HOST: process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080',
-      ZERNIO_WEBHOOK_SECRET: 'test_webhook_secret_deterministic_d5_d6_key_1234567890',
-    },
+    exclude: ['src/**/*.integration.test.ts'],
   },
 });

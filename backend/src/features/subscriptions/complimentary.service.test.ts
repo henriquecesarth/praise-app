@@ -7,6 +7,10 @@ import { PLANS_CATALOG } from '../../config/plans.config';
 describe('Complimentary Plans & Platform Administrative Authority', () => {
   let subscriptionService: SubscriptionService;
   let mockSubscriptionRepo: any;
+  let mockBillingRepo: any;
+  let mockOrgRepo: any;
+  let mockMinistryRepo: any;
+  let mockConnectionRepo: any;
   let subscriptionsStore: Map<string, MinistrySubscriptionRecord>;
   let usagesStore: Map<string, MinistryUsageRecord>;
 
@@ -76,8 +80,27 @@ describe('Complimentary Plans & Platform Administrative Authority', () => {
       }),
     };
 
+    mockBillingRepo = {
+      getActiveTransitionForMinistry: vi.fn().mockResolvedValue(null),
+      getSubscription: vi.fn().mockResolvedValue(null),
+      getTransactions: vi.fn().mockResolvedValue([]),
+    };
+    mockOrgRepo = {
+      getOrganizationById: vi.fn().mockResolvedValue(null),
+    };
+    mockMinistryRepo = {
+      findById: vi.fn().mockResolvedValue(null),
+    };
+    mockConnectionRepo = {
+      countConsumingConnections: vi.fn().mockResolvedValue(0),
+    };
+
     subscriptionService = new SubscriptionService(
-      mockSubscriptionRepo as unknown as SubscriptionRepository
+      mockSubscriptionRepo as unknown as SubscriptionRepository,
+      mockBillingRepo as any,
+      mockOrgRepo as any,
+      mockMinistryRepo as any,
+      mockConnectionRepo as any
     );
   });
 

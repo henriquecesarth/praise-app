@@ -671,7 +671,21 @@ describe('Phase 3D.3 — Period-End Cancel-to-Free Cutover & Public V1 Migration
       }),
       setSubscription: vi.fn(),
     };
-    const realSubService = new SubscriptionService(fakeRepo as any);
+    const mockIsoRepo = {
+      getActiveTransitionForMinistry: vi.fn().mockResolvedValue(null),
+      getSubscription: vi.fn().mockResolvedValue(null),
+      getTransactions: vi.fn().mockResolvedValue([]),
+      getOrganizationById: vi.fn().mockResolvedValue(null),
+      findById: vi.fn().mockResolvedValue(null),
+      countConsumingConnections: vi.fn().mockResolvedValue(0),
+    };
+    const realSubService = new SubscriptionService(
+      fakeRepo as any,
+      mockIsoRepo as any,
+      mockIsoRepo as any,
+      mockIsoRepo as any,
+      mockIsoRepo as any
+    );
     const sub = await realSubService.applyLockedEntitlementSnapshot(ministryId, activeRecord.target_entitlement_snapshot!);
 
     expect(sub.plan_id).toBe('free');
