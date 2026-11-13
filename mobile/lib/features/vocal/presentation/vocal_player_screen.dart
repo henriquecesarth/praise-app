@@ -56,6 +56,8 @@ class _VocalPlayerScreenContentState
   bool _showKeyboard = false;
   int _runId = 0;
   Timer? _positionTimer;
+  Timer? _previewPollTimer;
+  Completer<void>? _previewCompleter;
 
   List<int> _currentProgNotes = const [];
   List<double> _currentProgDurations = const [];
@@ -212,13 +214,26 @@ class _VocalPlayerScreenContentState
     _startPositionPolling(runId);
   }
 
+  void _finishPreview() {
+    _previewPollTimer?.cancel();
+    _previewPollTimer = null;
+    final completer = _previewCompleter;
+    _previewCompleter = null;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete();
+    }
+  }
+
   Future<void> _previewCustomPattern(
     List<int> notes,
     List<double> durations,
   ) async {
+    _finishPreview();
     final runId = ++_runId;
     _positionTimer?.cancel();
     await _invoke('stop');
+    if (!mounted || runId != _runId) return;
+
     await _invoke('playSequence', {
       'sessionId': runId,
       'notes': notes,
@@ -226,6 +241,69 @@ class _VocalPlayerScreenContentState
       'bpm': _bpm,
       'metronome': false,
     });
+    if (!mounted || runId != _runId) return;
+
+    final firstPos = await _invokeMap('position', {'sessionId': runId});
+    if (!mounted || runId != _runId || firstPos == null) return;
+    final firstState = firstPos['state'] as String?;
+    if (firstState == 'completed' ||
+        firstState == 'stopped' ||
+        firstState == 'error' ||
+        firstState == 'idle') {
+      return;
+    }
+
+    final completer = Completer<void>();
+    _previewCompleter = completer;
+    final totalBeats = durations.fold<double>(0, (sum, d) => sum + d);
+    final maxPreviewMs = ((totalBeats * 60000 / (_bpm > 0 ? _bpm : 80)) + 15000)
+        .round()
+        .clamp(5000, 120000);
+    var elapsedMs = 0;
+    var inFlight = false;
+
+    _previewPollTimer = Timer.periodic(
+      const Duration(milliseconds: 50),
+      (timer) async {
+        elapsedMs += 50;
+        if (!mounted || runId != _runId || elapsedMs >= maxPreviewMs) {
+          if (_previewPollTimer == timer) {
+            _finishPreview();
+          } else {
+            timer.cancel();
+          }
+          return;
+        }
+        if (inFlight) return;
+        inFlight = true;
+        try {
+          final pos = await _invokeMap('position', {'sessionId': runId});
+          if (!mounted || runId != _runId || pos == null) {
+            if (_previewPollTimer == timer) {
+              _finishPreview();
+            } else {
+              timer.cancel();
+            }
+            return;
+          }
+          final state = pos['state'] as String?;
+          if (state == 'completed' ||
+              state == 'stopped' ||
+              state == 'error' ||
+              state == 'idle') {
+            if (_previewPollTimer == timer) {
+              _finishPreview();
+            } else {
+              timer.cancel();
+            }
+          }
+        } finally {
+          inFlight = false;
+        }
+      },
+    );
+
+    await completer.future;
   }
 
   void _startPositionPolling(int runId) {
@@ -245,6 +323,11 @@ class _VocalPlayerScreenContentState
       final state = pos['state'] as String?;
       final playedFrames = (pos['playedFrames'] as num?)?.toInt() ?? 0;
       final sampleRate = (pos['sampleRate'] as num?)?.toInt() ?? 44100;
+
+      if (state == 'paused' && !_paused) {
+        setState(() => _paused = true);
+        return;
+      }
 
       if (state == 'completed' || state == 'stopped' || state == 'error') {
         timer.cancel();
@@ -303,6 +386,7 @@ class _VocalPlayerScreenContentState
     _runId++;
     _positionTimer?.cancel();
     _positionTimer = null;
+    _finishPreview();
     if (notifyUi && mounted) {
       setState(() {
         _playing = false;

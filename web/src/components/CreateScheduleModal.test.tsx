@@ -8,13 +8,13 @@ const {
   getGroupMembers,
   getRoles,
   getScheduleTemplates,
-  getMinistryTeams,
+  getTeams,
   checkAvailabilityConflicts,
 } = vi.hoisted(() => ({
   getGroupMembers: vi.fn(),
   getRoles: vi.fn(),
   getScheduleTemplates: vi.fn(),
-  getMinistryTeams: vi.fn(),
+  getTeams: vi.fn(),
   checkAvailabilityConflicts: vi.fn(),
 }));
 
@@ -23,7 +23,7 @@ vi.mock('../api', () => ({
     getGroupMembers,
     getRoles,
     getScheduleTemplates,
-    getMinistryTeams,
+    getTeams,
     checkAvailabilityConflicts,
   },
 }));
@@ -47,7 +47,7 @@ describe('CreateScheduleModal — Phase 6C Duration & Availability Conflicts', (
     getGroupMembers.mockResolvedValue(mockMembers);
     getRoles.mockResolvedValue(mockRoles);
     getScheduleTemplates.mockResolvedValue([]);
-    getMinistryTeams.mockResolvedValue([]);
+    getTeams.mockResolvedValue([]);
     checkAvailabilityConflicts.mockResolvedValue({
       scheduleWindow: {
         startsAt: '2026-09-20T19:00:00',
@@ -328,6 +328,102 @@ describe('CreateScheduleModal — Phase 6C Duration & Availability Conflicts', (
       await waitFor(() => {
         expect(screen.queryByTestId('conflict-badge-user-1')).not.toBeInTheDocument();
       });
+    });
+
+    it('Phase B: não seleciona mapped[0] nem usa substring de ID quando criador não corresponde a nenhum membro', async () => {
+      getGroupMembers.mockResolvedValue([
+        { id: 'mem-10', userId: 'user-10', name: 'Carlos Dez', roleIds: [] },
+        { id: 'mem-20', userId: 'user-20', name: 'Daniela Vinte', roleIds: [] },
+      ]);
+
+      const user = userEvent.setup();
+      render(
+        <CreateScheduleModal
+          groupId="min-1"
+          allSongs={[]}
+          currentUserId="user-1"
+          currentUserName="Criador Ausente"
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+        />
+      );
+
+      await waitFor(() => {
+        expect(getGroupMembers).toHaveBeenCalledWith('min-1');
+      });
+
+      const partTab = screen.getByRole('tab', { name: /participantes/i });
+      expect(partTab).toHaveTextContent('Participantes (0)');
+      await user.click(partTab);
+
+      expect(screen.queryByRole('button', { name: /Remover participante Carlos Dez/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Remover participante Daniela Vinte/i })).not.toBeInTheDocument();
+    });
+
+    it('Phase B: seleciona membro manual sem userId pelo nome exato e descarta modelos/equipes obsoletos ao trocar groupId', async () => {
+      let resolveTemplatesA!: (v: any[]) => void;
+      let resolveTeamsA!: (v: any[]) => void;
+
+      getGroupMembers.mockImplementation((gid: string) => {
+        if (gid === 'min-a') {
+          return Promise.resolve([{ id: 'mem-manual', name: 'Ana Silva', roleIds: [] }]);
+        }
+        return Promise.resolve([{ id: 'mem-b', userId: 'user-b', name: 'Bia Lima', roleIds: [] }]);
+      });
+      getScheduleTemplates.mockImplementation((gid: string) => {
+        if (gid === 'min-a') return new Promise<any[]>((r) => { resolveTemplatesA = r; });
+        return Promise.resolve([{ id: 'tpl-b', name: 'Modelo B', items: [] }]);
+      });
+      getTeams.mockImplementation((gid: string) => {
+        if (gid === 'min-a') return new Promise<any[]>((r) => { resolveTeamsA = r; });
+        return Promise.resolve([{ id: 'team-b', name: 'Equipe B', member_ids: [] }]);
+      });
+
+      const user = userEvent.setup();
+      const { rerender } = render(
+        <CreateScheduleModal
+          groupId="min-a"
+          allSongs={[]}
+          currentUserId="user-1"
+          currentUserName="Ana Silva"
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole('tab', { name: /participantes/i })).toHaveTextContent('Participantes (1)');
+      });
+
+      rerender(
+        <CreateScheduleModal
+          groupId="min-b"
+          allSongs={[]}
+          currentUserId="user-1"
+          currentUserName="Ana Silva"
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+        />
+      );
+
+      await waitFor(() => {
+        expect(getScheduleTemplates).toHaveBeenCalledWith('min-b');
+        expect(getTeams).toHaveBeenCalledWith('min-b');
+      });
+
+      resolveTemplatesA([{ id: 'tpl-a', name: 'Modelo Vazado A', items: [] }]);
+      resolveTeamsA([{ id: 'team-a', name: 'Equipe Vazada A', member_ids: [] }]);
+
+      await user.click(screen.getByRole('tab', { name: /Roteiro/i }));
+      await user.click(screen.getByRole('button', { name: /Modelos/i }));
+      expect(await screen.findByText('Modelo B')).toBeInTheDocument();
+      expect(screen.queryByText('Modelo Vazado A')).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /Fechar modelos de roteiro/i }));
+      await user.click(screen.getByRole('tab', { name: /participantes/i }));
+      await user.click(screen.getByRole('button', { name: /Equipes/i }));
+      expect(await screen.findByText('Equipe B')).toBeInTheDocument();
+      expect(screen.queryByText('Equipe Vazada A')).not.toBeInTheDocument();
     });
   });
 });

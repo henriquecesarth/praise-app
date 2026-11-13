@@ -8,6 +8,7 @@ import '../../domain/smart_chord.dart';
 @immutable
 class SongSmartChordsState {
   final String? songId;
+  final String? ministryId;
   final bool isLoading;
   final List<SmartChord> items;
   final String? errorMessage;
@@ -15,6 +16,7 @@ class SongSmartChordsState {
 
   const SongSmartChordsState({
     this.songId,
+    this.ministryId,
     this.isLoading = false,
     this.items = const [],
     this.errorMessage,
@@ -26,6 +28,8 @@ class SongSmartChordsState {
 
   SongSmartChordsState copyWith({
     String? songId,
+    String? ministryId,
+    bool clearMinistryId = false,
     bool? isLoading,
     List<SmartChord>? items,
     String? errorMessage,
@@ -34,6 +38,7 @@ class SongSmartChordsState {
   }) {
     return SongSmartChordsState(
       songId: songId ?? this.songId,
+      ministryId: clearMinistryId ? null : (ministryId ?? this.ministryId),
       isLoading: isLoading ?? this.isLoading,
       items: items ?? this.items,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
@@ -55,13 +60,22 @@ class SongSmartChordsNotifier extends StateNotifier<SongSmartChordsState> {
         super(const SongSmartChordsState());
 
   Future<void> load(String songId, {String? ministryId, bool force = false}) async {
-    if (!force && state.songId == songId && state.items.isNotEmpty && !state.isLoading) {
+    if (!force &&
+        state.songId == songId &&
+        state.ministryId == ministryId &&
+        state.items.isNotEmpty &&
+        !state.isLoading) {
       return;
     }
 
     final generation = ++_currentGeneration;
+    final contextChanged =
+        state.songId != songId || state.ministryId != ministryId;
     state = state.copyWith(
       songId: songId,
+      ministryId: ministryId,
+      clearMinistryId: ministryId == null,
+      items: contextChanged ? const [] : state.items,
       isLoading: true,
       clearError: true,
       generation: generation,

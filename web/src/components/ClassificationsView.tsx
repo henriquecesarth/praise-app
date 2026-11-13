@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import { FloatingInput } from './ui/FloatingInput';
 import { FloatingTextarea } from './ui/FloatingTextarea';
@@ -50,19 +50,43 @@ export function ClassificationsView({ ministryId, isAdmin, onBack, showToast, on
   // Delete confirmation state
   const [deletingItem, setDeletingItem] = useState<Classification | null>(null);
 
+  const activeMinistryIdRef = useRef<string>(ministryId);
+  activeMinistryIdRef.current = ministryId;
+  const loadReqRef = useRef<number>(0);
+  const isMountedRef = useRef<boolean>(true);
+
   useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      loadReqRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    setClassifications([]);
     loadClassifications();
   }, [ministryId]);
 
   const loadClassifications = async () => {
+    const requestedMinistryId = ministryId;
+    const reqId = ++loadReqRef.current;
     setLoading(true);
     try {
-      const data = await api.getClassifications(ministryId);
+      const data = await api.getClassifications(requestedMinistryId);
+      if (!isMountedRef.current || loadReqRef.current !== reqId || activeMinistryIdRef.current !== requestedMinistryId) {
+        return;
+      }
       setClassifications(data.map(mapClassification));
     } catch (err: any) {
+      if (!isMountedRef.current || loadReqRef.current !== reqId || activeMinistryIdRef.current !== requestedMinistryId) {
+        return;
+      }
       showToast(err.message || 'Erro ao carregar classificações.', 'error');
     } finally {
-      setLoading(false);
+      if (isMountedRef.current && loadReqRef.current === reqId && activeMinistryIdRef.current === requestedMinistryId) {
+        setLoading(false);
+      }
     }
   };
 

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { X, ListOrdered, Plus, Users, Eye, EyeOff, CheckSquare, ArrowLeft, Check, LayoutTemplate, Trash2, ChevronRight, Layers, Music, Clock, AlertTriangle, GripVertical } from 'lucide-react';
 import { Song, ParticipantConflictResult } from '../types';
+import { api } from '../api';
 import { FloatingInput } from './ui/FloatingInput';
 import { FloatingTextarea } from './ui/FloatingTextarea';
 
@@ -167,95 +168,132 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
   const [dragSongIndex, setDragSongIndex] = useState<number | null>(null);
   const [dragTimelineIndex, setDragTimelineIndex] = useState<number | null>(null);
 
+  const activeGroupIdRef = useRef<string>(groupId || '');
+  activeGroupIdRef.current = groupId || '';
+  const membersReqRef = useRef<number>(0);
+  const templatesReqRef = useRef<number>(0);
+  const teamsReqRef = useRef<number>(0);
+
   // Carregar membros reais do grupo e selecionar APENAS o criador da escala
   React.useEffect(() => {
-    if (!groupId) return;
+    setGroupMembers([]);
+    if (!groupId) {
+      setLoadingMembers(false);
+      return;
+    }
+    let active = true;
+    const requestedGroupId = groupId;
+    const reqId = ++membersReqRef.current;
     setLoadingMembers(true);
-    import('../api').then(({ api }) => {
-      Promise.all([api.getGroupMembers(groupId), api.getRoles(groupId)])
-        .then(([members, roles]) => {
-          const rolesMap = new Map<string, { id: string; name: string; icon: string }>();
-          (roles || []).forEach((r: any) => rolesMap.set(r.id, r));
+    Promise.all([api.getGroupMembers(requestedGroupId), api.getRoles(requestedGroupId)])
+      .then(([members, roles]) => {
+        if (!active || membersReqRef.current !== reqId || activeGroupIdRef.current !== requestedGroupId) return;
+        const rolesMap = new Map<string, { id: string; name: string; icon: string }>();
+        (roles || []).forEach((r: any) => rolesMap.set(r.id, r));
 
-          const mapped = (members || []).map((m: any) => {
-            const assignedIds: string[] = m.roleIds || m.role_ids || [];
-            const memberRoles = assignedIds
-              .map((rId) => rolesMap.get(rId))
-              .filter(Boolean);
+        const mappedWithRawUser = (members || []).map((m: any) => {
+          const assignedIds: string[] = m.roleIds || m.role_ids || [];
+          const memberRoles = assignedIds
+            .map((rId) => rolesMap.get(rId))
+            .filter(Boolean);
 
-            const roleDisplay = memberRoles.length > 0
-              ? memberRoles.map((r) => `${r?.icon || ''} ${r?.name}`.trim()).join(' • ')
-              : 'Integrante do Louvor';
+          const roleDisplay = memberRoles.length > 0
+            ? memberRoles.map((r) => `${r?.icon || ''} ${r?.name}`.trim()).join(' • ')
+            : 'Integrante do Louvor';
 
-            const uId = m.userId || m.user_id || m.id;
-            return {
+          const explicitUserId: string | null = m.userId || m.user_id || null;
+          const uId = explicitUserId || m.id;
+          return {
+            explicitUserId,
+            participant: {
               id: uId,
               userId: uId,
               memberId: m.id,
               name: m.name,
               role: roleDisplay,
-            };
-          });
+            },
+          };
+        });
 
-          setGroupMembers(mapped);
+        const mapped = mappedWithRawUser.map((entry) => entry.participant);
+        setGroupMembers(mapped);
 
-          if (!initialSchedule && selectedParticipants.length === 0 && mapped.length > 0) {
-            const creator = mapped.find(
-              (m) =>
-                (currentUserId && (m.id === currentUserId || m.userId === currentUserId || (typeof m.id === 'string' && m.id.includes(currentUserId)))) ||
-                (currentUserName && m.name && m.name.toLowerCase().trim() === currentUserName.toLowerCase().trim())
-            ) || mapped[0];
+        if (!initialSchedule && selectedParticipants.length === 0 && mapped.length > 0) {
+          const normalizedCurrentName = currentUserName?.toLowerCase().trim();
+          const creatorById = currentUserId
+            ? mapped.find((m) => m.userId === currentUserId || m.id === currentUserId)
+            : undefined;
+          const creatorByName =
+            !creatorById && normalizedCurrentName
+              ? mappedWithRawUser.find(
+                  ({ explicitUserId, participant }) =>
+                    (!explicitUserId || !currentUserId || explicitUserId === currentUserId) &&
+                    Boolean(participant.name) &&
+                    participant.name.toLowerCase().trim() === normalizedCurrentName
+                )?.participant
+              : undefined;
+          const creator = creatorById || creatorByName;
 
+          if (creator) {
             setSelectedParticipants([creator]);
-          } else if (mapped.length > 0) {
-            // Update selected participants display role to match mapped functions
-            setSelectedParticipants((prev) =>
-              prev.map((p) => {
-                const found = mapped.find((m) => m.id === p.id);
-                if (found) {
-                  return { ...p, role: found.role };
-                }
-                return p;
-              })
-            );
           }
-        })
-        .catch((err) => {
+        } else if (mapped.length > 0) {
+          // Update selected participants display role to match mapped functions
+          setSelectedParticipants((prev) =>
+            prev.map((p) => {
+              const found = mapped.find((m) => m.id === p.id);
+              if (found) {
+                return { ...p, role: found.role };
+              }
+              return p;
+            })
+          );
+        }
+      })
+      .catch((err) => {
+        if (active && membersReqRef.current === reqId && activeGroupIdRef.current === requestedGroupId) {
           console.warn('Erro ao carregar membros do grupo:', err);
-        })
-        .finally(() => setLoadingMembers(false));
-    });
+        }
+      })
+      .finally(() => {
+        if (active && membersReqRef.current === reqId && activeGroupIdRef.current === requestedGroupId) {
+          setLoadingMembers(false);
+        }
+      });
+    return () => {
+      active = false;
+      membersReqRef.current += 1;
+    };
   }, [groupId]);
 
   // Debounced Availability Conflict Check (300ms) with Generation Token Race Safety
   useEffect(() => {
     if (!groupId || selectedParticipants.length === 0 || !date || !time) {
+      conflictGenRef.current += 1;
       setConflictsMap(new Map());
       setConflictLoading(false);
       setConflictError(null);
       return;
     }
 
+    const requestedGroupId = groupId;
     const currentGen = ++conflictGenRef.current;
     setConflictLoading(true);
     setConflictError(null);
 
     const timer = setTimeout(() => {
-      import('../api')
-        .then(({ api }) => {
-          const participantIds = Array.from(
-            new Set(selectedParticipants.map((p) => p.id).filter(Boolean))
-          ).slice(0, 50);
+      const participantIds = Array.from(
+        new Set(selectedParticipants.map((p) => p.id).filter(Boolean))
+      ).slice(0, 50);
 
-          return api.checkAvailabilityConflicts(groupId, {
-            date,
-            time,
-            durationMinutes: durationMinutes || 120,
-            participantIds,
-          });
-        })
+      api.checkAvailabilityConflicts(requestedGroupId, {
+        date,
+        time,
+        durationMinutes: durationMinutes || 120,
+        participantIds,
+      })
         .then((res) => {
-          if (conflictGenRef.current === currentGen) {
+          if (conflictGenRef.current === currentGen && activeGroupIdRef.current === requestedGroupId) {
             const map = new Map<string, ParticipantConflictResult>();
             (res.conflicts || []).forEach((c) => {
               if (c.participantId) map.set(c.participantId, c);
@@ -267,7 +305,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
           }
         })
         .catch(() => {
-          if (conflictGenRef.current === currentGen) {
+          if (conflictGenRef.current === currentGen && activeGroupIdRef.current === requestedGroupId) {
             setConflictLoading(false);
             setConflictError('Não foi possível verificar a disponibilidade dos integrantes.');
           }
@@ -276,6 +314,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
 
     return () => {
       clearTimeout(timer);
+      conflictGenRef.current += 1;
     };
   }, [groupId, date, time, durationMinutes, selectedParticipants]);
 
@@ -302,53 +341,87 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
 
   // Carregar modelos de roteiro do backend
   React.useEffect(() => {
-    if (!groupId) return;
+    setScheduleTemplates([]);
+    if (!groupId || typeof api.getScheduleTemplates !== 'function') {
+      setLoadingTemplates(false);
+      return;
+    }
+    let active = true;
+    const requestedGroupId = groupId;
+    const reqId = ++templatesReqRef.current;
     setLoadingTemplates(true);
-    import('../api').then(({ api }) => {
-      api.getScheduleTemplates(groupId)
-        .then((templates) => {
-          // Map backend response to frontend ScheduleTemplate type
-          const mapped: ScheduleTemplate[] = (templates || []).map((t: any) => ({
-            id: t.id,
-            name: t.name,
-            items: ((t.items || []) as any[]).map((it: any, idx: number) => ({
-              id: it.id || `item_${idx}`,
-              type: it.type || 'event',
-              title: it.title,
-              description: it.description,
-              durationSeconds: it.durationSeconds,
-              icon: it.icon,
-              order: it.order ?? idx,
-            })).sort((a: any, b: any) => a.order - b.order),
-          }));
-          setScheduleTemplates(mapped);
-        })
-        .catch((err) => {
+    api.getScheduleTemplates(requestedGroupId)
+      .then((templates) => {
+        if (!active || templatesReqRef.current !== reqId || activeGroupIdRef.current !== requestedGroupId) return;
+        // Map backend response to frontend ScheduleTemplate type
+        const mapped: ScheduleTemplate[] = (templates || []).map((t: any) => ({
+          id: t.id,
+          name: t.name,
+          items: ((t.items || []) as any[]).map((it: any, idx: number) => ({
+            id: it.id || `item_${idx}`,
+            type: it.type || 'event',
+            title: it.title,
+            description: it.description,
+            durationSeconds: it.durationSeconds,
+            icon: it.icon,
+            order: it.order ?? idx,
+          })).sort((a: any, b: any) => a.order - b.order),
+        }));
+        setScheduleTemplates(mapped);
+      })
+      .catch((err) => {
+        if (active && templatesReqRef.current === reqId && activeGroupIdRef.current === requestedGroupId) {
           console.warn('Erro ao carregar modelos de roteiro:', err);
-        })
-        .finally(() => setLoadingTemplates(false));
-    });
+        }
+      })
+      .finally(() => {
+        if (active && templatesReqRef.current === reqId && activeGroupIdRef.current === requestedGroupId) {
+          setLoadingTemplates(false);
+        }
+      });
+    return () => {
+      active = false;
+      templatesReqRef.current += 1;
+    };
   }, [groupId]);
 
   // Carregar equipes do ministério
   React.useEffect(() => {
-    if (!groupId) return;
+    setMinistryTeams([]);
+    if (!groupId || typeof api.getTeams !== 'function') {
+      setLoadingTeams(false);
+      return;
+    }
+    let active = true;
+    const requestedGroupId = groupId;
+    const reqId = ++teamsReqRef.current;
     setLoadingTeams(true);
-    import('../api').then(({ api }) => {
-      api.getTeams(groupId)
-        .then((teams: any[]) => {
-          setMinistryTeams(
-            (teams || []).map((t: any) => ({
-              id: t.id,
-              name: t.name,
-              description: t.description || null,
-              memberIds: t.member_ids || t.memberIds || [],
-            }))
-          );
-        })
-        .catch((err) => console.warn('Erro ao carregar equipes:', err))
-        .finally(() => setLoadingTeams(false));
-    });
+    api.getTeams(requestedGroupId)
+      .then((teams: any[]) => {
+        if (!active || teamsReqRef.current !== reqId || activeGroupIdRef.current !== requestedGroupId) return;
+        setMinistryTeams(
+          (teams || []).map((t: any) => ({
+            id: t.id,
+            name: t.name,
+            description: t.description || null,
+            memberIds: t.member_ids || t.memberIds || [],
+          }))
+        );
+      })
+      .catch((err) => {
+        if (active && teamsReqRef.current === reqId && activeGroupIdRef.current === requestedGroupId) {
+          console.warn('Erro ao carregar equipes:', err);
+        }
+      })
+      .finally(() => {
+        if (active && teamsReqRef.current === reqId && activeGroupIdRef.current === requestedGroupId) {
+          setLoadingTeams(false);
+        }
+      });
+    return () => {
+      active = false;
+      teamsReqRef.current += 1;
+    };
   }, [groupId]);
 
   /**

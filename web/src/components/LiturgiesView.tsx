@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Calendar, Plus, Music, BookOpen, Trash2, X, AlertCircle, RefreshCw } from 'lucide-react';
 import { api } from '../api';
 import { Liturgy, Song, GroupRole } from '../types';
@@ -23,6 +23,19 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
   const [description, setDescription] = useState('');
   const [selectedSongIds, setSelectedSongIds] = useState<string[]>([]);
 
+  const activeGroupIdRef = useRef<string>(groupId);
+  activeGroupIdRef.current = groupId;
+  const loadReqRef = useRef<number>(0);
+  const isMountedRef = useRef<boolean>(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      loadReqRef.current += 1;
+    };
+  }, []);
+
   // Tenant switch isolation: reset local form & state when switching ministry
   useEffect(() => {
     setIsModalOpen(false);
@@ -36,6 +49,7 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
     if (groupId) {
       loadLiturgies();
     } else {
+      loadReqRef.current += 1;
       setLoading(false);
     }
   }, [groupId]);
@@ -47,16 +61,26 @@ export const LiturgiesView: React.FC<LiturgiesViewProps> = ({ groupId, userRole,
       return;
     }
 
+    const requestedGroupId = groupId;
+    const reqId = ++loadReqRef.current;
     setLoading(true);
     setError(null);
     try {
-      const data = await api.getLiturgies(groupId);
+      const data = await api.getLiturgies(requestedGroupId);
+      if (!isMountedRef.current || loadReqRef.current !== reqId || activeGroupIdRef.current !== requestedGroupId) {
+        return;
+      }
       setLiturgies(data || []);
     } catch (err: any) {
+      if (!isMountedRef.current || loadReqRef.current !== reqId || activeGroupIdRef.current !== requestedGroupId) {
+        return;
+      }
       console.error('Erro ao carregar liturgias:', err);
       setError(err?.message || 'Erro ao carregar liturgias.');
     } finally {
-      setLoading(false);
+      if (isMountedRef.current && loadReqRef.current === reqId && activeGroupIdRef.current === requestedGroupId) {
+        setLoading(false);
+      }
     }
   };
 

@@ -389,7 +389,12 @@ export const getHeaders = () => {
   };
 };
 
-const handleResponse = async <T>(response: Response): Promise<T> => {
+export const SESSION_EXPIRED_EVENT = 'louvaio:session-expired';
+
+const handleResponse = async <T>(
+  response: Response,
+  options?: { skipSessionExpiry?: boolean }
+): Promise<T> => {
   if (response.status === 204) {
     return {} as T;
   }
@@ -408,6 +413,25 @@ const handleResponse = async <T>(response: Response): Promise<T> => {
 
   const errorMessage = body?.error?.message || `Erro desconhecido (${response.status})`;
   const details = body?.error?.details || body?.error;
+
+  if (response.status === 401 && !options?.skipSessionExpiry) {
+    const reqUrl = response.url || '';
+    const isAuthCredentialAttempt =
+      /\/auth\/(login|signup)/i.test(reqUrl) ||
+      reqUrl.includes('securetoken.googleapis.com') ||
+      reqUrl.includes('identitytoolkit.googleapis.com');
+    const hasActiveSession =
+      typeof window !== 'undefined' &&
+      Boolean(window.localStorage?.getItem('praise_auth_token'));
+    if (!isAuthCredentialAttempt && hasActiveSession && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(
+        new CustomEvent(SESSION_EXPIRED_EVENT, {
+          detail: { message: errorMessage, status: 401 },
+        })
+      );
+    }
+  }
+
   throw new ApiError(errorMessage, response.status, details);
 };
 
@@ -603,7 +627,7 @@ export const api = {
       headers: getHeaders(),
       body: JSON.stringify({ email, password }),
     });
-    return handleResponse<any>(response);
+    return handleResponse<any>(response, { skipSessionExpiry: true });
   },
 
   signUp: async (name: string, email: string, password: string): Promise<{ user: { id: string; email: string; name: string }; token: string }> => {
@@ -612,7 +636,7 @@ export const api = {
       headers: getHeaders(),
       body: JSON.stringify({ name, email, password }),
     });
-    return handleResponse<any>(response);
+    return handleResponse<any>(response, { skipSessionExpiry: true });
   },
 
   getMe: async (): Promise<AuthenticatedUser> => {
@@ -2169,14 +2193,16 @@ export const api = {
         Authorization: `Bearer ${freshIdToken}`,
       },
     });
-    return handleResponse<AccountDeletionResult>(response);
+    return handleResponse<AccountDeletionResult>(response, { skipSessionExpiry: true });
   },
 
   getAccountDeletionStatus: async (): Promise<{ job: AccountDeletionJobRecord | null }> => {
     const response = await fetch(`${API_URL}/auth/account-deletion/status`, {
       headers: getHeaders(),
     });
-    return handleResponse<{ job: AccountDeletionJobRecord | null }>(response);
+    return handleResponse<{ job: AccountDeletionJobRecord | null }>(response, {
+      skipSessionExpiry: true,
+    });
   },
 
   // Exercícios Vocais Personalizados

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import {
   Plus, MoreVertical, Edit2, Trash2, Layers, ChevronLeft,
@@ -70,19 +70,43 @@ export function TemplatesView({ ministryId, isAdmin, onBack, showToast }: Props)
   // Delete confirmation
   const [deletingTemplate, setDeletingTemplate] = useState<ScheduleTemplate | null>(null);
 
+  const activeMinistryIdRef = useRef<string>(ministryId);
+  activeMinistryIdRef.current = ministryId;
+  const loadReqRef = useRef<number>(0);
+  const isMountedRef = useRef<boolean>(true);
+
   useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      loadReqRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    setTemplates([]);
     loadTemplates();
   }, [ministryId]);
 
   const loadTemplates = async () => {
+    const requestedMinistryId = ministryId;
+    const reqId = ++loadReqRef.current;
     setLoading(true);
     try {
-      const data = await api.getScheduleTemplates(ministryId);
+      const data = await api.getScheduleTemplates(requestedMinistryId);
+      if (!isMountedRef.current || loadReqRef.current !== reqId || activeMinistryIdRef.current !== requestedMinistryId) {
+        return;
+      }
       setTemplates(data.map(mapTemplate));
     } catch (err: any) {
+      if (!isMountedRef.current || loadReqRef.current !== reqId || activeMinistryIdRef.current !== requestedMinistryId) {
+        return;
+      }
       showToast(err.message || 'Erro ao carregar modelos de roteiro.', 'error');
     } finally {
-      setLoading(false);
+      if (isMountedRef.current && loadReqRef.current === reqId && activeMinistryIdRef.current === requestedMinistryId) {
+        setLoading(false);
+      }
     }
   };
 

@@ -3,10 +3,22 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mocktail/mocktail.dart';
+import 'package:louvaio_mobile/app/providers.dart';
+import 'package:louvaio_mobile/features/auth/data/auth_repository.dart';
+import 'package:louvaio_mobile/features/auth/domain/auth_user.dart';
+import 'package:louvaio_mobile/features/auth/presentation/controllers/auth_controller.dart';
+import 'package:louvaio_mobile/features/vocal/data/vocal_exercise_repository.dart';
 import 'package:louvaio_mobile/features/vocal/domain/vocal_catalog.dart';
 import 'package:louvaio_mobile/features/vocal/domain/vocal_exercise.dart';
 import 'package:louvaio_mobile/features/vocal/presentation/vocal_player_screen.dart';
+
+class _MockPreviewAuthRepository extends Mock implements AuthRepository {}
+
+class _MockPreviewVocalExerciseRepository extends Mock
+    implements VocalExerciseRepository {}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -452,6 +464,123 @@ void main() {
       await tester.pump();
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, null);
+    },
+  );
+
+  testWidgets(
+    'custom exercise preview keeps Parar prévia active until native position reports completed and manual stop ends preview',
+    (tester) async {
+      const channel = MethodChannel('com.louvaio.mobile/vocal_audio');
+      var nativeState = 'idle';
+      var positionPolls = 0;
+      var stopCalls = 0;
+      var playCalls = 0;
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            if (call.method == 'playSequence') {
+              playCalls++;
+              nativeState = 'playing';
+              return {'started': true};
+            }
+            if (call.method == 'position') {
+              positionPolls++;
+              return {
+                'state': nativeState,
+                'sessionId': (call.arguments as Map?)?['sessionId'],
+                'playedFrames': 4410,
+                'totalFrames': 44100,
+                'sampleRate': 44100,
+              };
+            }
+            if (call.method == 'stop') {
+              stopCalls++;
+              nativeState = 'stopped';
+            }
+            return null;
+          });
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null),
+      );
+
+      final authRepo = _MockPreviewAuthRepository();
+      final vocalRepo = _MockPreviewVocalExerciseRepository();
+      when(() => authRepo.authStateChanges())
+          .thenAnswer((_) => const Stream.empty());
+      when(() => vocalRepo.listCustomExercises())
+          .thenAnswer((_) async => const []);
+
+      const user = AuthUser(
+        id: 'usr-preview',
+        email: 'cantor@louvaio.test',
+        name: 'Cantor Preview',
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authRepositoryProvider.overrideWithValue(authRepo),
+            vocalExerciseRepositoryProvider.overrideWithValue(vocalRepo),
+            authNotifierProvider.overrideWith((ref) {
+              final notifier = AuthNotifier(authRepo);
+              notifier.state = const AuthState.authenticated(user);
+              return notifier;
+            }),
+          ],
+          child: const MaterialApp(home: VocalPlayerScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final newCustomBtn = find.byKey(const ValueKey('vocal_new_custom_button'));
+      await tester.ensureVisible(newCustomBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(newCustomBtn);
+      await tester.pumpAndSettle();
+
+      final previewBtn = find.byKey(const ValueKey('custom_preview_audio_button'));
+      await tester.ensureVisible(previewBtn);
+      await tester.tap(previewBtn);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 120));
+
+      expect(playCalls, 1);
+      expect(
+        find.text('Parar prévia'),
+        findsOneWidget,
+        reason: 'Botão deve permanecer como Parar prévia enquanto áudio nativo está playing',
+      );
+      expect(find.text('Ouvir prévia'), findsNothing);
+
+      // Complete native playback -> button transitions back to Ouvir prévia
+      nativeState = 'completed';
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump();
+
+      expect(find.text('Ouvir prévia'), findsOneWidget);
+      expect(find.text('Parar prévia'), findsNothing);
+
+      // Start preview again and tap manual stop before completion
+      await tester.tap(previewBtn);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      expect(find.text('Parar prévia'), findsOneWidget);
+
+      final stopCountBeforeTap = stopCalls;
+      await tester.tap(previewBtn);
+      await tester.pump();
+      await tester.pump();
+
+      expect(stopCalls, greaterThan(stopCountBeforeTap));
+      expect(find.text('Ouvir prévia'), findsOneWidget);
+
+      final pollsAfterStop = positionPolls;
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(positionPolls, pollsAfterStop);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
     },
   );
 }

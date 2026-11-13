@@ -172,7 +172,24 @@ export function MinistryView({
     }
   };
 
+  const activeMinistryIdRef = useRef<string>(activeMinistry.id);
+  activeMinistryIdRef.current = activeMinistry.id;
+  const membersReqRef = useRef<number>(0);
+  const rolesReqRef = useRef<number>(0);
+  const isMountedRef = useRef<boolean>(true);
+
   useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      membersReqRef.current += 1;
+      rolesReqRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    setMembers([]);
+    setAvailableRoles([]);
     if (activeTab === 'members') {
       loadMembers();
       loadRoles();
@@ -180,23 +197,41 @@ export function MinistryView({
   }, [activeTab, activeMinistry.id]);
 
   const loadRoles = async () => {
+    const requestedId = activeMinistry.id;
+    const reqId = ++rolesReqRef.current;
     try {
-      const data = await api.getRoles(activeMinistry.id);
+      const data = await api.getRoles(requestedId);
+      if (!isMountedRef.current || rolesReqRef.current !== reqId || activeMinistryIdRef.current !== requestedId) {
+        return;
+      }
       setAvailableRoles(data || []);
     } catch (err) {
+      if (!isMountedRef.current || rolesReqRef.current !== reqId || activeMinistryIdRef.current !== requestedId) {
+        return;
+      }
       console.warn('Erro ao carregar funções:', err);
     }
   };
 
   const loadMembers = async () => {
+    const requestedId = activeMinistry.id;
+    const reqId = ++membersReqRef.current;
     setLoadingMembers(true);
     try {
-      const data = await api.getMinistryMembers(activeMinistry.id);
+      const data = await api.getMinistryMembers(requestedId);
+      if (!isMountedRef.current || membersReqRef.current !== reqId || activeMinistryIdRef.current !== requestedId) {
+        return;
+      }
       setMembers(data);
     } catch (err: any) {
+      if (!isMountedRef.current || membersReqRef.current !== reqId || activeMinistryIdRef.current !== requestedId) {
+        return;
+      }
       showToast(err.message || 'Erro ao carregar membros.', 'error');
     } finally {
-      setLoadingMembers(false);
+      if (isMountedRef.current && membersReqRef.current === reqId && activeMinistryIdRef.current === requestedId) {
+        setLoadingMembers(false);
+      }
     }
   };
 

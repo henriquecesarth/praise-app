@@ -76,6 +76,7 @@ class _CustomExerciseEditorSheetState extends State<CustomExerciseEditorSheet> {
   String _categoryOption = 'auto'; // 'auto' | 'ascendente' | 'descendente' | 'misto'
   bool _isSaving = false;
   bool _isPreviewing = false;
+  int _previewGeneration = 0;
   String? _errorMessage;
 
   @override
@@ -119,6 +120,7 @@ class _CustomExerciseEditorSheetState extends State<CustomExerciseEditorSheet> {
 
   @override
   void dispose() {
+    _previewGeneration++;
     if (_isPreviewing && widget.onStopPreview != null) {
       widget.onStopPreview!();
     }
@@ -167,11 +169,12 @@ class _CustomExerciseEditorSheetState extends State<CustomExerciseEditorSheet> {
 
   Future<void> _togglePreview() async {
     if (widget.onPreviewPattern == null) return;
+    final gen = ++_previewGeneration;
     if (_isPreviewing) {
       if (widget.onStopPreview != null) {
         await widget.onStopPreview!();
       }
-      if (mounted) {
+      if (mounted && gen == _previewGeneration) {
         setState(() => _isPreviewing = false);
       }
       return;
@@ -183,7 +186,7 @@ class _CustomExerciseEditorSheetState extends State<CustomExerciseEditorSheet> {
     try {
       await widget.onPreviewPattern!(_currentNotes, _currentDurations);
     } catch (e) {
-      if (mounted) {
+      if (mounted && gen == _previewGeneration) {
         setState(() {
           _errorMessage = e is AppFailure
               ? e.message
@@ -191,7 +194,7 @@ class _CustomExerciseEditorSheetState extends State<CustomExerciseEditorSheet> {
         });
       }
     } finally {
-      if (mounted) {
+      if (mounted && gen == _previewGeneration) {
         setState(() => _isPreviewing = false);
       }
     }

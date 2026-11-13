@@ -40,6 +40,7 @@ class MainActivity : FlutterActivity() {
     private var destroyed = false
     private var nextRequestId = 0L
     private var vocalPlayer: VocalAudioPlayer? = null
+    private var vocalAudioChannel: MethodChannel? = null
 
     private class ShareRequest(
         val initial: Boolean,
@@ -86,13 +87,16 @@ class MainActivity : FlutterActivity() {
 
         }
 
-        val player = VocalAudioPlayer(bank)
+        val player = VocalAudioPlayer(bank, applicationContext)
 
         vocalPlayer = player
 
 
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, AUDIO_CHANNEL).setMethodCallHandler { call, result ->
+        val vocalChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, AUDIO_CHANNEL)
+        vocalAudioChannel = vocalChannel
+
+        vocalChannel.setMethodCallHandler { call, result ->
 
             when (call.method) {
 
@@ -327,6 +331,8 @@ class MainActivity : FlutterActivity() {
     override fun onDestroy() {
         destroyed = true
 
+        vocalAudioChannel?.setMethodCallHandler(null)
+        vocalAudioChannel = null
         vocalPlayer?.release()
 
         vocalPlayer = null

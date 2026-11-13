@@ -162,7 +162,13 @@ export default function App() {
   const [detailRetryNonce, setDetailRetryNonce] = useState(0);
 
   const activeGroupIdRef = useRef<string>('');
+  const authGenerationRef = useRef<number>(0);
+  const groupsRequestRef = useRef<number>(0);
   const songRequestRef = useRef<number>(0);
+  const schedulesRequestRef = useRef<number>(0);
+  const foldersRequestRef = useRef<number>(0);
+  const artistsRequestRef = useRef<number>(0);
+  const subscriptionRequestRef = useRef<number>(0);
   const searchTimeoutRef = useRef<number | null>(null);
 
   const clearDetailSelection = () => {
@@ -204,38 +210,54 @@ export default function App() {
 
   // Reload data when activeGroup changes
   useEffect(() => {
+    activeGroupIdRef.current = activeGroup ? activeGroup.id : '';
+    ++songRequestRef.current;
+    ++schedulesRequestRef.current;
+    ++foldersRequestRef.current;
+    ++artistsRequestRef.current;
+    ++subscriptionRequestRef.current;
     setSelectedSmartChordId(null);
     setShowSongModal(false);
     setSongToEdit(null);
+    setShowCreateScheduleModal(false);
+    setScheduleToEdit(null);
+    setShowFolderModal(false);
+    setFolderToEdit(null);
+    setShowArtistModal(false);
+    setIsTeamModalOpen(false);
     if (searchTimeoutRef.current) {
       window.clearTimeout(searchTimeoutRef.current);
       searchTimeoutRef.current = null;
     }
     setSongsError(null);
     setClassifications([]);
+    setSubscriptionSummary(null);
+    setSongs([]);
+    setFolders([]);
+    setArtists([]);
+    setSchedules([]);
+    setCounts({ songs: 0, folders: 0, artists: 0 });
+    setLoadingSongs(false);
+    setLoadingFolders(false);
+    setLoadingArtists(false);
+    setLoadingSchedules(false);
     setFilters((prev) => (prev.classificationId ? { ...prev, classificationId: null } : prev));
     if (activeGroup) {
       loadSubscription(activeGroup.id);
-    } else {
-      setSubscriptionSummary(null);
-      setSongs([]);
-      setFolders([]);
-      setArtists([]);
-      setSchedules([]);
-      setCounts({ songs: 0, folders: 0, artists: 0 });
     }
   }, [activeGroup]);
 
   const loadSubscription = async (minId: string) => {
+    const reqId = ++subscriptionRequestRef.current;
     try {
       const summary = await api.getMinistrySubscription(minId);
-      if (activeGroupIdRef.current !== minId) return;
+      if (activeGroupIdRef.current !== minId || subscriptionRequestRef.current !== reqId) return;
       setSubscriptionSummary(summary);
 
       const isSuspended = summary.subscription.accessMode === 'suspended' || summary.subscription.administrativelySuspended;
       if (!isSuspended) {
-        loadCounts();
-        loadClassifications();
+        loadCounts(minId);
+        loadClassifications(minId);
       } else {
         ++songRequestRef.current;
         setSongsError(null);
@@ -251,29 +273,34 @@ export default function App() {
       }
     } catch (err) {
       console.warn('Erro ao consultar assinatura do ministério:', err);
-      loadCounts();
-      loadClassifications();
+      if (activeGroupIdRef.current !== minId || subscriptionRequestRef.current !== reqId) return;
+      loadCounts(minId);
+      loadClassifications(minId);
     }
   };
 
   const loadSchedules = async () => {
     if (!activeGroup) return;
     const requestedGroupId = activeGroup.id;
+    const reqId = ++schedulesRequestRef.current;
     setLoadingSchedules(true);
     try {
       const list = await api.getSchedules(requestedGroupId);
-      if (activeGroupIdRef.current !== requestedGroupId) return;
+      if (activeGroupIdRef.current !== requestedGroupId || schedulesRequestRef.current !== reqId) return;
       setSchedules(list);
     } catch (err) {
+      if (activeGroupIdRef.current !== requestedGroupId || schedulesRequestRef.current !== reqId) return;
       console.warn('Erro ao carregar escalas:', err);
     } finally {
-      if (activeGroupIdRef.current === requestedGroupId) setLoadingSchedules(false);
+      if (activeGroupIdRef.current === requestedGroupId && schedulesRequestRef.current === reqId) {
+        setLoadingSchedules(false);
+      }
     }
   };
 
   // Reload songs when search or filters change
   useEffect(() => {
-    if (!activeGroup) return;
+    if (!activeGroup || mainModule !== 'repertoire') return;
 
     if (searchTimeoutRef.current) {
       window.clearTimeout(searchTimeoutRef.current);
@@ -290,10 +317,63 @@ export default function App() {
     };
   }, [search, filters]);
 
+  const clearClientSession = () => {
+    ++authGenerationRef.current;
+    ++groupsRequestRef.current;
+    ++songRequestRef.current;
+    ++schedulesRequestRef.current;
+    ++foldersRequestRef.current;
+    ++artistsRequestRef.current;
+    ++subscriptionRequestRef.current;
+    activeGroupIdRef.current = '';
+    if (searchTimeoutRef.current) {
+      window.clearTimeout(searchTimeoutRef.current);
+      searchTimeoutRef.current = null;
+    }
+    localStorage.removeItem('praise_auth_token');
+    localStorage.removeItem('louvaio_last_auth_user_id');
+    localStorage.removeItem('louvaio_smart_chord_font_family');
+    preferenceWriter.reset();
+    setCurrentUser(null);
+    setActiveGroup(null);
+    setGroups([]);
+    setSubscriptionSummary(null);
+    setSongs([]);
+    setFolders([]);
+    setArtists([]);
+    setSchedules([]);
+    setClassifications([]);
+    setSongsError(null);
+    setSearch('');
+    setFilters({ originalKey: null, hasYoutube: null, classificationId: null });
+    setCounts({ songs: 0, folders: 0, artists: 0 });
+    setLoadingSongs(false);
+    setLoadingFolders(false);
+    setLoadingArtists(false);
+    setLoadingSchedules(false);
+    setShowCreateScheduleModal(false);
+    setScheduleToEdit(null);
+    setShowSongModal(false);
+    setSongToEdit(null);
+    setShowFolderModal(false);
+    setFolderToEdit(null);
+    setFolderName('');
+    setFolderDesc('');
+    setShowArtistModal(false);
+    setArtistName('');
+    setIsTeamModalOpen(false);
+    setShowJoinModal(false);
+    setShowInviteModal(false);
+    setShowCreateGroupModal(false);
+    setSelectedSmartChordId(null);
+    clearDetailSelection();
+  };
+
   const checkCurrentUser = async (isActive: () => boolean = () => true) => {
+    const authGen = ++authGenerationRef.current;
     const token = localStorage.getItem('praise_auth_token');
     const result = await bootstrapAuth(token, api);
-    if (!isActive()) return;
+    if (!isActive() || authGenerationRef.current !== authGen) return;
 
     if (!result.tokenValid) {
       if (token) localStorage.removeItem('praise_auth_token');
@@ -303,6 +383,7 @@ export default function App() {
       setCurrentUser(null);
       setGroups([]);
       setActiveGroup(null);
+      setSubscriptionSummary(null);
     } else {
       setCurrentUser(result.user);
       if (result.user?.id) {
@@ -322,30 +403,40 @@ export default function App() {
 
   const handleLogout = () => {
     if (!allowContextChange()) return;
-    localStorage.removeItem('praise_auth_token');
-    localStorage.removeItem('louvaio_last_auth_user_id');
-    localStorage.removeItem('louvaio_smart_chord_font_family');
-    preferenceWriter.reset();
-    setCurrentUser(null);
-    setActiveGroup(null);
-    setGroups([]);
-    setSubscriptionSummary(null);
-    setSongs([]);
-    setFolders([]);
-    setArtists([]);
-    setSchedules([]);
-    setClassifications([]);
-    setSongsError(null);
-    setFilters({ originalKey: null, hasYoutube: null, classificationId: null });
-    setCounts({ songs: 0, folders: 0, artists: 0 });
-    clearDetailSelection();
+    clearClientSession();
     navigate('/');
     showToast('Você saiu da sua conta.');
   };
 
+  useEffect(() => {
+    const onSessionExpired = () => {
+      const hadSession =
+        Boolean(localStorage.getItem('praise_auth_token')) ||
+        Boolean(currentUserRef.current);
+      if (!hadSession) return;
+      clearClientSession();
+      setAuthReady(true);
+      navigate('/');
+      showToast('Sua sessão expirou. Faça login novamente.', 'error');
+    };
+
+    window.addEventListener('louvaio:session-expired', onSessionExpired);
+    return () => {
+      window.removeEventListener('louvaio:session-expired', onSessionExpired);
+    };
+  }, []);
+
+  const currentUserRef = useRef(currentUser);
+  currentUserRef.current = currentUser;
+
   const loadUserGroups = async () => {
+    const reqGen = ++groupsRequestRef.current;
+    const authGen = authGenerationRef.current;
     try {
       const userGroups = await api.getMyGroups();
+      if (groupsRequestRef.current !== reqGen || authGenerationRef.current !== authGen) {
+        return;
+      }
       setGroups(userGroups);
 
       if (userGroups.length > 0) {
@@ -354,6 +445,9 @@ export default function App() {
         setActiveGroup(null);
       }
     } catch (err: any) {
+      if (groupsRequestRef.current !== reqGen || authGenerationRef.current !== authGen) {
+        return;
+      }
       console.error('Erro ao carregar grupos do usuário:', err);
       setActiveGroup(null);
     }
@@ -374,9 +468,8 @@ export default function App() {
   activeGroupIdRef.current = groupId;
   const userRole: GroupRole = activeGroup?.role || 'member';
 
-  const loadCounts = async () => {
-    if (!groupId) return;
-    const requestedGroupId = groupId;
+  const loadCounts = async (requestedGroupId: string = groupId) => {
+    if (!requestedGroupId) return;
     try {
       const data = await api.getCounts(requestedGroupId);
       if (activeGroupIdRef.current !== requestedGroupId) return;
@@ -386,9 +479,8 @@ export default function App() {
     }
   };
 
-  const loadClassifications = async () => {
-    if (!groupId) return;
-    const requestedGroupId = groupId;
+  const loadClassifications = async (requestedGroupId: string = groupId) => {
+    if (!requestedGroupId) return;
     try {
       const data = await api.getClassifications(requestedGroupId);
       if (activeGroupIdRef.current !== requestedGroupId) return;
@@ -435,16 +527,20 @@ export default function App() {
       return;
     }
     const requestedGroupId = groupId;
+    const reqId = ++foldersRequestRef.current;
     setLoadingFolders(true);
     try {
       const data = await api.getFolders(requestedGroupId);
-      if (activeGroupIdRef.current !== requestedGroupId) return;
+      if (activeGroupIdRef.current !== requestedGroupId || foldersRequestRef.current !== reqId) return;
       setFolders(data);
       setCounts((prev) => ({ ...prev, folders: data.length }));
     } catch (err: any) {
+      if (activeGroupIdRef.current !== requestedGroupId || foldersRequestRef.current !== reqId) return;
       showToast(err.message || 'Erro ao carregar pastas.', 'error');
     } finally {
-      if (activeGroupIdRef.current === requestedGroupId) setLoadingFolders(false);
+      if (activeGroupIdRef.current === requestedGroupId && foldersRequestRef.current === reqId) {
+        setLoadingFolders(false);
+      }
     }
   };
 
@@ -455,16 +551,20 @@ export default function App() {
       return;
     }
     const requestedGroupId = groupId;
+    const reqId = ++artistsRequestRef.current;
     setLoadingArtists(true);
     try {
       const data = await api.getArtists(requestedGroupId);
-      if (activeGroupIdRef.current !== requestedGroupId) return;
+      if (activeGroupIdRef.current !== requestedGroupId || artistsRequestRef.current !== reqId) return;
       setArtists(data);
       setCounts((prev) => ({ ...prev, artists: data.length }));
     } catch (err: any) {
+      if (activeGroupIdRef.current !== requestedGroupId || artistsRequestRef.current !== reqId) return;
       showToast(err.message || 'Erro ao carregar artistas.', 'error');
     } finally {
-      if (activeGroupIdRef.current === requestedGroupId) setLoadingArtists(false);
+      if (activeGroupIdRef.current === requestedGroupId && artistsRequestRef.current === reqId) {
+        setLoadingArtists(false);
+      }
     }
   };
 
@@ -746,12 +846,26 @@ export default function App() {
   const activeFilterCount = Number(Boolean(filters.originalKey)) + Number(Boolean(filters.hasYoutube)) + Number(Boolean(filters.classificationId));
   const hasActiveFilters = activeFilterCount > 0;
 
+  const toastContainer = toasts.length > 0 ? (
+    <div className="toast-container" role="status" aria-live="polite">
+      {toasts.map((toast) => (
+        <div key={toast.id} className={`toast ${toast.type}`}>
+          {toast.type === 'success' ? <CheckCircle size={18} /> : <XCircle size={18} />}
+          <span>{toast.message}</span>
+        </div>
+      ))}
+    </div>
+  ) : null;
+
   if (routeState.isPrivacy) {
     return (
-      <PrivacyPolicyView
-        onNavigateHome={() => navigate('/')}
-        onNavigateDeletion={() => navigate('/exclusao-conta')}
-      />
+      <>
+        <PrivacyPolicyView
+          onNavigateHome={() => navigate('/')}
+          onNavigateDeletion={() => navigate('/exclusao-conta')}
+        />
+        {toastContainer}
+      </>
     );
   }
 
@@ -766,50 +880,71 @@ export default function App() {
 
   if (routeState.isWhatsAppCallback) {
     return (
-      <WhatsAppCallbackPage
-        ministryId={activeGroup?.id}
-        onNavigateBack={() => navigate('/ministerio/whatsapp')}
-      />
+      <>
+        <WhatsAppCallbackPage
+          ministryId={activeGroup?.id}
+          onNavigateBack={() => navigate('/ministerio/whatsapp')}
+        />
+        {toastContainer}
+      </>
     );
   }
 
   if (routeState.isAccountDeletion) {
     if (!currentUser && showLoginForDeletion) {
       return (
-        <LoginPage
-          onLoginSuccess={(user) => {
-            setCurrentUser(user);
-            setShowLoginForDeletion(false);
-            loadUserGroups();
-            showToast(`Bem-vindo, ${user.name}!`);
-          }}
-        />
+        <>
+          <LoginPage
+            onLoginSuccess={(user) => {
+              ++authGenerationRef.current;
+              setCurrentUser(user);
+              setShowLoginForDeletion(false);
+              loadUserGroups();
+              showToast(`Bem-vindo, ${user.name}!`);
+            }}
+          />
+          {toastContainer}
+        </>
       );
     }
     return (
-      <AccountDeletionView
-        currentUser={currentUser}
-        onRequireLogin={() => setShowLoginForDeletion(true)}
-        onAccountDeleted={handleLogout}
-        onNavigateHome={() => navigate('/')}
-      />
+      <>
+        <AccountDeletionView
+          currentUser={currentUser}
+          onRequireLogin={() => setShowLoginForDeletion(true)}
+          onAccountDeleted={handleLogout}
+          onNavigateHome={() => navigate('/')}
+        />
+        {toastContainer}
+      </>
     );
   }
 
   if (!currentUser) {
     return (
-      <LoginPage
-        onLoginSuccess={(user) => {
-          setCurrentUser(user);
-          loadUserGroups();
-          showToast(`Bem-vindo, ${user.name}!`);
-        }}
-      />
+      <>
+        <LoginPage
+          onLoginSuccess={(user) => {
+            ++authGenerationRef.current;
+            setCurrentUser(user);
+            loadUserGroups();
+            showToast(`Bem-vindo, ${user.name}!`);
+          }}
+        />
+        {toastContainer}
+      </>
     );
   }
 
   // Preserve offline exercises within a session already validated by the API.
-  if (routeState.module === 'vocal') return <VocalExercisePlayer />;
+  if (routeState.module === 'vocal') {
+    return (
+      <>
+        <VocalExercisePlayer />
+        {toastContainer}
+      </>
+    );
+  }
 
   return (
     <div className="app-shell" style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--bg-color)' }}>
@@ -1697,6 +1832,7 @@ export default function App() {
 
       {showCreateScheduleModal && activeGroup && (
         <CreateScheduleModal
+          key={activeGroup.id}
           groupId={activeGroup.id}
           allSongs={songs}
           currentUserId={currentUser?.id}
@@ -1730,14 +1866,7 @@ export default function App() {
       )}
 
       {/* Toast Notifications container */}
-      <div className="toast-container">
-        {toasts.map((toast) => (
-          <div key={toast.id} className={`toast ${toast.type}`}>
-            {toast.type === 'success' ? <CheckCircle size={18} /> : <XCircle size={18} />}
-            <span>{toast.message}</span>
-          </div>
-        ))}
-      </div>
+      {toastContainer}
 
       {/* Bottom Navigation para Dispositivos Móveis (< 768px) */}
       {currentUser && !showCreateScheduleModal && !showCreateGroupModal && !showInviteModal && !showJoinModal && !selectedSchedule && !selectedSong && !selectedFolder && !isTeamModalOpen && !showSongModal && (

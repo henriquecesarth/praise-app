@@ -22,6 +22,7 @@ import { ScheduleItem } from './CreateScheduleModal';
 import { GroupRole } from '../types';
 import { Header } from './Header';
 import { formatScheduleDateTimePtBR, formatTimestampPtBR } from '../utils/locale';
+import { api } from '../api';
 
 interface ScheduleDetailViewProps {
   schedule: ScheduleItem;
@@ -76,29 +77,53 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
 
   const isParticipant = true; // Membros do grupo possuem acesso ao chat e detalhes da escala
 
+  const contextKey = `${effectiveGroupId || ''}::${schedule.id || ''}`;
+  const contextKeyRef = React.useRef(contextKey);
+  contextKeyRef.current = contextKey;
+  const effectiveGroupIdRef = React.useRef(effectiveGroupId || '');
+  effectiveGroupIdRef.current = effectiveGroupId || '';
+  const commentsReqRef = React.useRef(0);
+  const membersReqRef = React.useRef(0);
+
   const loadComments = React.useCallback(() => {
-    if (!effectiveGroupId || !schedule.id) return;
+    if (!effectiveGroupId || !schedule.id) {
+      setComments([]);
+      setLoadingComments(false);
+      return;
+    }
+    const reqId = ++commentsReqRef.current;
+    const reqContextKey = `${effectiveGroupId}::${schedule.id}`;
     setLoadingComments(true);
-    import('../api').then(({ api }) => {
-      api.getScheduleComments(effectiveGroupId, schedule.id)
-        .then((data) => {
-          setComments(
-            (data || []).map((c: any) => ({
-              id: c.id,
-              userId: c.user_id || c.userId,
-              userName: c.user_name || c.userName || 'Integrante',
-              content: c.content,
-              createdAt: c.created_at || c.createdAt,
-            }))
-          );
-        })
-        .catch((err) => console.warn('Erro ao carregar comentários:', err))
-        .finally(() => setLoadingComments(false));
-    });
+    api.getScheduleComments(effectiveGroupId, schedule.id)
+      .then((data) => {
+        if (commentsReqRef.current !== reqId || contextKeyRef.current !== reqContextKey) return;
+        setComments(
+          (data || []).map((c: any) => ({
+            id: c.id,
+            userId: c.user_id || c.userId,
+            userName: c.user_name || c.userName || 'Integrante',
+            content: c.content,
+            createdAt: c.created_at || c.createdAt,
+          }))
+        );
+      })
+      .catch((err) => {
+        if (commentsReqRef.current !== reqId || contextKeyRef.current !== reqContextKey) return;
+        console.warn('Erro ao carregar comentários:', err);
+      })
+      .finally(() => {
+        if (commentsReqRef.current === reqId && contextKeyRef.current === reqContextKey) {
+          setLoadingComments(false);
+        }
+      });
   }, [effectiveGroupId, schedule.id]);
 
   React.useEffect(() => {
+    setComments([]);
     loadComments();
+    return () => {
+      commentsReqRef.current += 1;
+    };
   }, [loadComments]);
 
   const handleSendComment = async (e: React.FormEvent) => {
@@ -107,7 +132,6 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
 
     setSendingComment(true);
     try {
-      const { api } = await import('../api');
       await api.createScheduleComment(effectiveGroupId, schedule.id, newCommentText.trim());
       setNewCommentText('');
       loadComments();
@@ -119,52 +143,65 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
   };
 
   React.useEffect(() => {
+    setMemberFunctionsMap(new Map());
     if (!effectiveGroupId) return;
-    import('../api').then(({ api }) => {
-      Promise.all([api.getGroupMembers(effectiveGroupId), api.getRoles(effectiveGroupId)])
-        .then(([members, roles]) => {
-          const rolesMap = new Map<string, { id: string; name: string; icon: string }>();
-          (roles || []).forEach((r: any) => rolesMap.set(r.id, r));
+    let active = true;
+    const reqId = ++membersReqRef.current;
+    const targetGroupId = effectiveGroupId;
+    Promise.all([api.getGroupMembers(targetGroupId), api.getRoles(targetGroupId)])
+      .then(([members, roles]) => {
+        if (!active || membersReqRef.current !== reqId || effectiveGroupIdRef.current !== targetGroupId) return;
+        const rolesMap = new Map<string, { id: string; name: string; icon: string }>();
+        (roles || []).forEach((r: any) => rolesMap.set(r.id, r));
 
-          const funcMap = new Map<string, string>();
-          (members || []).forEach((m: any) => {
-            const assignedIds: string[] = m.roleIds || m.role_ids || [];
-            const mRoles = assignedIds.map((id) => rolesMap.get(id)).filter(Boolean);
-            const display = mRoles.length > 0
-              ? mRoles.map((r) => `${r?.icon || ''} ${r?.name}`.trim()).join(' • ')
-              : '';
+        const funcMap = new Map<string, string>();
+        (members || []).forEach((m: any) => {
+          const assignedIds: string[] = m.roleIds || m.role_ids || [];
+          const mRoles = assignedIds.map((id) => rolesMap.get(id)).filter(Boolean);
+          const display = mRoles.length > 0
+            ? mRoles.map((r) => `${r?.icon || ''} ${r?.name}`.trim()).join(' • ')
+            : '';
 
-            if (m.id) funcMap.set(m.id, display);
-            if (m.userId) funcMap.set(m.userId, display);
-            if (m.user_id) funcMap.set(m.user_id, display);
-            if (m.name) funcMap.set(m.name.toLowerCase().trim(), display);
-          });
-          setMemberFunctionsMap(funcMap);
-        })
-        .catch((err) => console.warn('Erro ao carregar funções dos participantes:', err));
-    });
+          if (m.id) funcMap.set(m.id, display);
+          if (m.userId) funcMap.set(m.userId, display);
+          if (m.user_id) funcMap.set(m.user_id, display);
+          if (m.name) funcMap.set(m.name.toLowerCase().trim(), display);
+        });
+        setMemberFunctionsMap(funcMap);
+      })
+      .catch((err) => {
+        if (!active || membersReqRef.current !== reqId) return;
+        console.warn('Erro ao carregar funções dos participantes:', err);
+      });
+    return () => {
+      active = false;
+      membersReqRef.current += 1;
+    };
   }, [effectiveGroupId]);
 
-  // Encontrar participante correspondente na escala
-  const userParticipant = (schedule.participants || []).find((p) => {
-    if (currentUserId && (p.id === currentUserId || (p as any).userId === currentUserId || (typeof p.id === 'string' && p.id.includes(currentUserId)))) {
-      return true;
-    }
-    if (currentUserName && p.name) {
-      const pName = p.name.toLowerCase().trim();
-      const uName = currentUserName.toLowerCase().trim();
-      if (pName === uName || pName.includes(uName) || uName.includes(pName)) {
-        return true;
-      }
-    }
-    return false;
-  }) || (schedule.participants && schedule.participants.length === 1 ? schedule.participants[0] : (schedule.participants && schedule.participants.length > 0 ? schedule.participants[0] : null));
+  // Encontrar participante correspondente na escala por correspondência estrita de ID ou nome exato sem conflito de userId
+  const participantsList = schedule.participants || [];
+  const participantById = currentUserId
+    ? participantsList.find((p) => {
+        const pUserId = (p as any).userId ?? (p as any).user_id;
+        return pUserId === currentUserId || p.id === currentUserId;
+      }) || null
+    : null;
+  const normalizedCurrentName = currentUserName?.toLowerCase().trim() || '';
+  const participantByExactName =
+    !participantById && normalizedCurrentName
+      ? participantsList.find((p) => {
+          const pUserId = (p as any).userId ?? (p as any).user_id;
+          if (currentUserId && pUserId && pUserId !== currentUserId) return false;
+          return Boolean(p.name) && p.name.toLowerCase().trim() === normalizedCurrentName;
+        }) || null
+      : null;
+  const userParticipant = participantById || participantByExactName || null;
 
   const handleConfirmationChange = async (_memberId: string, confirmed: boolean) => {
     if (!effectiveGroupId || !schedule.id) return;
     setUpdating(true);
     try {
-      const { api } = await import('../api');
       const updatedScheduleFromApi = await api.confirmSchedulePresence(effectiveGroupId, schedule.id, confirmed);
       if (onUpdateSchedule && updatedScheduleFromApi) {
         onUpdateSchedule(updatedScheduleFromApi);

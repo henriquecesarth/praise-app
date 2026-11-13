@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { act, render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DashboardView } from './DashboardView';
@@ -318,5 +318,52 @@ describe('DashboardView - Persisted Announcements', () => {
     await waitFor(() => {
       expect(screen.queryByRole('heading', { name: 'Novo Aviso' })).not.toBeInTheDocument();
     });
+  });
+
+  it('10. Phase B: descarta aniversariantes lentos do ministério A após troca para o ministério B', async () => {
+    let resolveMembersA!: (v: any[]) => void;
+    const futureMonth = String(new Date().getMonth() + 1).padStart(2, '0');
+    const futureDay = String(new Date().getDate()).padStart(2, '0');
+
+    getMinistryMembers.mockImplementation((minId: string) => {
+      if (minId === 'min-1') {
+        return new Promise<any[]>((resolve) => { resolveMembersA = resolve; });
+      }
+      return Promise.resolve([
+        { id: 'mb-b', userId: 'ub', name: 'Aniversariante B', birthDate: `1995-${futureMonth}-${futureDay}` },
+      ]);
+    });
+
+    const { rerender } = render(<DashboardView {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(getMinistryMembers).toHaveBeenCalledWith('min-1');
+    });
+
+    const ministryB: Ministry = {
+      id: 'min-2',
+      name: 'Ministério B',
+      role: 'admin',
+      ownerUserId: 'user-admin',
+      subscriptionStatus: 'active',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    rerender(<DashboardView {...defaultProps} activeMinistry={ministryB} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Aniversariante B')).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      resolveMembersA([
+        { id: 'mb-a', userId: 'ua', name: 'Aniversariante Vazado A', birthDate: `1992-${futureMonth}-${futureDay}` },
+      ]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText('Aniversariante Vazado A')).not.toBeInTheDocument();
+    expect(screen.getByText('Aniversariante B')).toBeInTheDocument();
   });
 });

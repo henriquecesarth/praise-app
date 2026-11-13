@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import { FloatingInput } from './ui/FloatingInput';
 import { FloatingTextarea } from './ui/FloatingTextarea';
@@ -68,18 +68,39 @@ export function TeamsView({ ministryId, isAdmin, onBack, showToast, onModalState
   // Delete confirmation
   const [deletingTeam, setDeletingTeam] = useState<Team | null>(null);
 
+  const activeMinistryIdRef = useRef<string>(ministryId);
+  activeMinistryIdRef.current = ministryId;
+  const loadReqRef = useRef<number>(0);
+  const isMountedRef = useRef<boolean>(true);
+
   useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      loadReqRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    setTeams([]);
+    setMembers([]);
     loadData();
   }, [ministryId]);
 
   const loadData = async () => {
+    const requestedMinistryId = ministryId;
+    const reqId = ++loadReqRef.current;
     setLoading(true);
 
     // Load teams and members independently — a failure in one must not block the other
     const [teamsResult, membersResult] = await Promise.allSettled([
-      api.getTeams(ministryId),
-      api.getMinistryMembers(ministryId),
+      api.getTeams(requestedMinistryId),
+      api.getMinistryMembers(requestedMinistryId),
     ]);
+
+    if (!isMountedRef.current || loadReqRef.current !== reqId || activeMinistryIdRef.current !== requestedMinistryId) {
+      return;
+    }
 
     if (teamsResult.status === 'fulfilled') {
       setTeams(teamsResult.value.map(mapTeam));

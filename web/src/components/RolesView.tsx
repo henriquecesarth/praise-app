@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import { FloatingInput } from './ui/FloatingInput';
 import {
@@ -55,19 +55,43 @@ export function RolesView({ ministryId, isAdmin, onBack, showToast, onModalState
   // Delete confirmation state
   const [deletingRole, setDeletingRole] = useState<Role | null>(null);
 
+  const activeMinistryIdRef = useRef<string>(ministryId);
+  activeMinistryIdRef.current = ministryId;
+  const loadReqRef = useRef<number>(0);
+  const isMountedRef = useRef<boolean>(true);
+
   useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      loadReqRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    setRoles([]);
     loadRoles();
   }, [ministryId]);
 
   const loadRoles = async () => {
+    const requestedMinistryId = ministryId;
+    const reqId = ++loadReqRef.current;
     setLoading(true);
     try {
-      const data = await api.getRoles(ministryId);
+      const data = await api.getRoles(requestedMinistryId);
+      if (!isMountedRef.current || loadReqRef.current !== reqId || activeMinistryIdRef.current !== requestedMinistryId) {
+        return;
+      }
       setRoles(data.map(mapRole));
     } catch (err: any) {
+      if (!isMountedRef.current || loadReqRef.current !== reqId || activeMinistryIdRef.current !== requestedMinistryId) {
+        return;
+      }
       showToast(err.message || 'Erro ao carregar funções.', 'error');
     } finally {
-      setLoading(false);
+      if (isMountedRef.current && loadReqRef.current === reqId && activeMinistryIdRef.current === requestedMinistryId) {
+        setLoading(false);
+      }
     }
   };
 

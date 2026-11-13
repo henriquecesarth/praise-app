@@ -74,10 +74,14 @@ class SmartChordRepertoireLinkNotifier
     }
 
     final generation = ++_currentGeneration;
+    final contextChanged =
+        state.ministryId != ministryId || state.chordId != chordId;
     state = state.copyWith(
       ministryId: ministryId,
       chordId: chordId,
+      clearLink: contextChanged,
       isLoading: true,
+      isSaving: false,
       clearError: true,
       generation: generation,
     );
@@ -87,7 +91,11 @@ class SmartChordRepertoireLinkNotifier
         ministryId: ministryId,
         chordId: chordId,
       );
-      if (generation != _currentGeneration) return;
+      if (generation != _currentGeneration ||
+          state.ministryId != ministryId ||
+          state.chordId != chordId) {
+        return;
+      }
 
       state = state.copyWith(
         isLoading: false,
@@ -95,7 +103,11 @@ class SmartChordRepertoireLinkNotifier
         clearError: true,
       );
     } catch (e) {
-      if (generation != _currentGeneration) return;
+      if (generation != _currentGeneration ||
+          state.ministryId != ministryId ||
+          state.chordId != chordId) {
+        return;
+      }
       state = state.copyWith(
         isLoading: false,
         errorMessage: e is AppFailure ? e.message : e.toString(),
@@ -109,13 +121,28 @@ class SmartChordRepertoireLinkNotifier
     required String songId,
   }) async {
     if (state.isSaving) return false;
-    state = state.copyWith(isSaving: true, clearError: true);
+    final generation = ++_currentGeneration;
+    final contextChanged =
+        state.ministryId != ministryId || state.chordId != chordId;
+    state = state.copyWith(
+      ministryId: ministryId,
+      chordId: chordId,
+      clearLink: contextChanged,
+      isSaving: true,
+      clearError: true,
+      generation: generation,
+    );
     try {
       final link = await _repository.setRepertoireLink(
         ministryId: ministryId,
         chordId: chordId,
         songId: songId,
       );
+      if (generation != _currentGeneration ||
+          state.ministryId != ministryId ||
+          state.chordId != chordId) {
+        return false;
+      }
       state = state.copyWith(
         isSaving: false,
         link: link,
@@ -123,6 +150,11 @@ class SmartChordRepertoireLinkNotifier
       );
       return true;
     } catch (e) {
+      if (generation != _currentGeneration ||
+          state.ministryId != ministryId ||
+          state.chordId != chordId) {
+        return false;
+      }
       state = state.copyWith(
         isSaving: false,
         errorMessage: e is AppFailure ? e.message : e.toString(),
@@ -136,12 +168,27 @@ class SmartChordRepertoireLinkNotifier
     required String chordId,
   }) async {
     if (state.isSaving) return false;
-    state = state.copyWith(isSaving: true, clearError: true);
+    final generation = ++_currentGeneration;
+    final contextChanged =
+        state.ministryId != ministryId || state.chordId != chordId;
+    state = state.copyWith(
+      ministryId: ministryId,
+      chordId: chordId,
+      clearLink: contextChanged,
+      isSaving: true,
+      clearError: true,
+      generation: generation,
+    );
     try {
       await _repository.removeRepertoireLink(
         ministryId: ministryId,
         chordId: chordId,
       );
+      if (generation != _currentGeneration ||
+          state.ministryId != ministryId ||
+          state.chordId != chordId) {
+        return false;
+      }
       state = state.copyWith(
         isSaving: false,
         link: const SmartChordRepertoireLink.unlinked(),
@@ -149,6 +196,11 @@ class SmartChordRepertoireLinkNotifier
       );
       return true;
     } catch (e) {
+      if (generation != _currentGeneration ||
+          state.ministryId != ministryId ||
+          state.chordId != chordId) {
+        return false;
+      }
       state = state.copyWith(
         isSaving: false,
         errorMessage: e is AppFailure ? e.message : e.toString(),

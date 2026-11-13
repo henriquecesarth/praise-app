@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import {
   User, ChevronLeft, Search, Shield, AtSign, Check,
@@ -28,19 +28,43 @@ export function AdminsView({ ministryId, currentUserId, isAdmin, onBack, showToa
   const [search, setSearch] = useState('');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
 
+  const activeMinistryIdRef = useRef<string>(ministryId);
+  activeMinistryIdRef.current = ministryId;
+  const loadReqRef = useRef<number>(0);
+  const isMountedRef = useRef<boolean>(true);
+
   useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      loadReqRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    setMembers([]);
     loadMembers();
   }, [ministryId]);
 
   const loadMembers = async () => {
+    const requestedMinistryId = ministryId;
+    const reqId = ++loadReqRef.current;
     setLoading(true);
     try {
-      const data = await api.getMinistryMembers(ministryId);
+      const data = await api.getMinistryMembers(requestedMinistryId);
+      if (!isMountedRef.current || loadReqRef.current !== reqId || activeMinistryIdRef.current !== requestedMinistryId) {
+        return;
+      }
       setMembers(data);
     } catch (err: any) {
+      if (!isMountedRef.current || loadReqRef.current !== reqId || activeMinistryIdRef.current !== requestedMinistryId) {
+        return;
+      }
       showToast(err.message || 'Erro ao carregar membros.', 'error');
     } finally {
-      setLoading(false);
+      if (isMountedRef.current && loadReqRef.current === reqId && activeMinistryIdRef.current === requestedMinistryId) {
+        setLoading(false);
+      }
     }
   };
 

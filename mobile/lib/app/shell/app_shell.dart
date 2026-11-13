@@ -66,6 +66,36 @@ class _AppShellState extends ConsumerState<AppShell> {
         try {
           ref.read(teamsListNotifierProvider.notifier).reset();
         } catch (_) {}
+        try {
+          ref.read(songFormNotifierProvider.notifier).invalidateTenant();
+        } catch (_) {}
+        try {
+          ref.read(songFormNotifierProvider.notifier).reset();
+        } catch (_) {}
+        try {
+          ref.read(songDetailNotifierProvider.notifier).reset();
+        } catch (_) {}
+        try {
+          ref.read(repertoireListNotifierProvider.notifier).reset();
+        } catch (_) {}
+        try {
+          ref.read(songSmartChordsNotifierProvider.notifier).reset();
+        } catch (_) {}
+        try {
+          ref.read(smartChordRepertoireLinkNotifierProvider.notifier).reset();
+        } catch (_) {}
+        try {
+          ref.read(smartChordListNotifierProvider.notifier).reset();
+        } catch (_) {}
+        try {
+          ref.read(smartChordDetailNotifierProvider.notifier).reset();
+        } catch (_) {}
+        try {
+          ref.read(smartChordFormNotifierProvider.notifier).reset();
+        } catch (_) {}
+        try {
+          ref.read(smartChordImportNotifierProvider.notifier).reset();
+        } catch (_) {}
 
         ref.invalidate(dashboardNotifierProvider);
         ref.invalidate(scheduleListNotifierProvider);
@@ -77,6 +107,13 @@ class _AppShellState extends ConsumerState<AppShell> {
         ref.invalidate(manualMemberAvailabilityNotifierProvider);
         ref.invalidate(repertoireListNotifierProvider);
         ref.invalidate(songDetailNotifierProvider);
+        ref.invalidate(songFormNotifierProvider);
+        ref.invalidate(songSmartChordsNotifierProvider);
+        ref.invalidate(smartChordRepertoireLinkNotifierProvider);
+        ref.invalidate(smartChordListNotifierProvider);
+        ref.invalidate(smartChordDetailNotifierProvider);
+        ref.invalidate(smartChordFormNotifierProvider);
+        ref.invalidate(smartChordImportNotifierProvider);
         ref.invalidate(membersDirectoryNotifierProvider);
         ref.invalidate(memberDetailNotifierProvider);
         ref.invalidate(memberFormNotifierProvider);

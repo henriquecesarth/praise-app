@@ -7,6 +7,7 @@ import {
 import { Ministry, Announcement } from '../types';
 import { ScheduleItem } from './CreateScheduleModal';
 import { formatScheduleDateTimePtBR, formatTimestampPtBR } from '../utils/locale';
+import { api } from '../api';
 
 interface UserState {
   id: string;
@@ -139,9 +140,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [formAuthor, setFormAuthor] = useState('');
   const [formImportant, setFormImportant] = useState(false);
 
+  const activeGroupIdRef = React.useRef<string>(currentActive?.id || '');
+  activeGroupIdRef.current = currentActive?.id || '';
+  const announcementsReqRef = React.useRef<number>(0);
+
   // Load real announcements with tenant-switch safety
   const loadAnnouncements = React.useCallback(async () => {
-    if (!currentActive?.id) {
+    const requestedGroupId = currentActive?.id;
+    const reqId = ++announcementsReqRef.current;
+    if (!requestedGroupId) {
       setAnnouncements([]);
       setLoadingAnnouncements(false);
       return;
@@ -151,50 +158,55 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setAnnouncementsError(null);
 
     try {
-      const { api } = await import('../api');
+      if (announcementsReqRef.current !== reqId || activeGroupIdRef.current !== requestedGroupId) return;
       if (typeof api.getAnnouncements !== 'function') return;
-      const data = await api.getAnnouncements(currentActive.id);
+      const data = await api.getAnnouncements(requestedGroupId);
+      if (announcementsReqRef.current !== reqId || activeGroupIdRef.current !== requestedGroupId) return;
       setAnnouncements(data);
     } catch (err: any) {
+      if (announcementsReqRef.current !== reqId || activeGroupIdRef.current !== requestedGroupId) return;
       setAnnouncementsError(err?.message || 'Não foi possível carregar os avisos da equipe.');
     } finally {
-      setLoadingAnnouncements(false);
+      if (announcementsReqRef.current === reqId && activeGroupIdRef.current === requestedGroupId) {
+        setLoadingAnnouncements(false);
+      }
     }
   }, [currentActive?.id]);
 
   React.useEffect(() => {
     let active = true;
-    if (!currentActive?.id) {
-      setAnnouncements([]);
+    const requestedGroupId = currentActive?.id;
+    const reqId = ++announcementsReqRef.current;
+    setAnnouncements([]);
+    setAnnouncementsError(null);
+    if (!requestedGroupId) {
       setLoadingAnnouncements(false);
       return;
     }
 
     setLoadingAnnouncements(true);
-    setAnnouncementsError(null);
 
-    import('../api').then(({ api }) => {
-      if (typeof api.getAnnouncements !== 'function') {
-        if (active) setLoadingAnnouncements(false);
-        return;
-      }
-      api.getAnnouncements(currentActive.id)
-        .then((data) => {
-          if (active) {
-            setAnnouncements(data);
-            setLoadingAnnouncements(false);
-          }
-        })
-        .catch((err) => {
-          if (active) {
-            setAnnouncementsError(err?.message || 'Não foi possível carregar os avisos da equipe.');
-            setLoadingAnnouncements(false);
-          }
-        });
-    });
+    if (typeof api.getAnnouncements !== 'function') {
+      if (active && announcementsReqRef.current === reqId) setLoadingAnnouncements(false);
+      return;
+    }
+    api.getAnnouncements(requestedGroupId)
+      .then((data) => {
+        if (active && announcementsReqRef.current === reqId && activeGroupIdRef.current === requestedGroupId) {
+          setAnnouncements(data);
+          setLoadingAnnouncements(false);
+        }
+      })
+      .catch((err) => {
+        if (active && announcementsReqRef.current === reqId && activeGroupIdRef.current === requestedGroupId) {
+          setAnnouncementsError(err?.message || 'Não foi possível carregar os avisos da equipe.');
+          setLoadingAnnouncements(false);
+        }
+      });
 
     return () => {
       active = false;
+      announcementsReqRef.current += 1;
     };
   }, [currentActive?.id]);
 
@@ -242,7 +254,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setFormError(null);
 
     try {
-      const { api } = await import('../api');
       if (editingAnnouncement) {
         const updated = await api.updateAnnouncement(currentActive.id, editingAnnouncement.id, {
           title: formTitle.trim(),
@@ -275,7 +286,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     if (!currentActive?.id || !deletingAnnouncement) return;
     setFormSubmitting(true);
     try {
-      const { api } = await import('../api');
       await api.deleteAnnouncement(currentActive.id, deletingAnnouncement.id);
       setAnnouncements((prev) => prev.filter((item) => item.id !== deletingAnnouncement.id));
       setDeletingAnnouncement(null);
@@ -315,71 +325,92 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // Load real members to compute upcoming birthdays
   React.useEffect(() => {
-    if (!currentActive?.id) return;
+    const requestedGroupId = currentActive?.id;
+    setBirthdays([]);
+    if (!requestedGroupId) {
+      setLoadingBirthdays(false);
+      return;
+    }
+    let active = true;
+    if (typeof api.getMinistryMembers !== 'function') {
+      setLoadingBirthdays(false);
+      return;
+    }
     setLoadingBirthdays(true);
-    import('../api').then(({ api }) => {
-      api.getMinistryMembers(currentActive.id)
-        .then((members) => {
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const currentYear = today.getFullYear();
+    api.getMinistryMembers(requestedGroupId)
+      .then((members) => {
+        if (!active || activeGroupIdRef.current !== requestedGroupId) return;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const currentYear = today.getFullYear();
 
-          const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-          const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+        const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+        const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
-          const items: BirthdayItem[] = [];
+        const items: BirthdayItem[] = [];
 
-          (members || []).forEach((m: any) => {
-            const rawBirth = m.birthDate || m.birth_date;
-            if (!rawBirth) return;
+        (members || []).forEach((m: any) => {
+          const rawBirth = m.birthDate || m.birth_date;
+          if (!rawBirth) return;
 
-            const cleanStr = String(rawBirth).split('T')[0];
-            const parts = cleanStr.split('-');
-            if (parts.length !== 3) return;
+          const cleanStr = String(rawBirth).split('T')[0];
+          const parts = cleanStr.split('-');
+          if (parts.length !== 3) return;
 
-            const month = Number(parts[1]);
-            const day = Number(parts[2]);
-            if (!month || !day || month < 1 || month > 12 || day < 1 || day > 31) return;
+          const month = Number(parts[1]);
+          const day = Number(parts[2]);
+          if (!month || !day || month < 1 || month > 12 || day < 1 || day > 31) return;
 
-            let bdayDate = new Date(currentYear, month - 1, day);
+          let bdayDate = new Date(currentYear, month - 1, day);
+          bdayDate.setHours(23, 59, 59, 999);
+
+          if (bdayDate.getTime() < today.getTime()) {
+            bdayDate = new Date(currentYear + 1, month - 1, day);
             bdayDate.setHours(23, 59, 59, 999);
+          }
 
-            if (bdayDate.getTime() < today.getTime()) {
-              bdayDate = new Date(currentYear + 1, month - 1, day);
-              bdayDate.setHours(23, 59, 59, 999);
-            }
+          const diffTime = bdayDate.getTime() - today.getTime();
+          const daysUntil = Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
+          const isToday = (month === (today.getMonth() + 1)) && (day === today.getDate());
 
-            const diffTime = bdayDate.getTime() - today.getTime();
-            const daysUntil = Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
-            const isToday = (month === (today.getMonth() + 1)) && (day === today.getDate());
+          const dayOfWeek = dayNames[bdayDate.getDay()];
+          const monthName = monthNames[month - 1];
 
-            const dayOfWeek = dayNames[bdayDate.getDay()];
-            const monthName = monthNames[month - 1];
+          let dateDisplay = `${day} de ${monthName} (${dayOfWeek})`;
+          if (isToday) {
+            dateDisplay = `Hoje! 🎉 (${day} de ${monthName})`;
+          } else if (daysUntil === 1) {
+            dateDisplay = `Amanhã 🎂 (${day} de ${monthName})`;
+          }
 
-            let dateDisplay = `${day} de ${monthName} (${dayOfWeek})`;
-            if (isToday) {
-              dateDisplay = `Hoje! 🎉 (${day} de ${monthName})`;
-            } else if (daysUntil === 1) {
-              dateDisplay = `Amanhã 🎂 (${day} de ${monthName})`;
-            }
-
-            items.push({
-              id: m.id || m.userId,
-              name: m.name || 'Integrante',
-              avatar: (m.name || 'I').charAt(0).toUpperCase(),
-              dateDisplay,
-              daysUntil,
-              isToday,
-            });
+          items.push({
+            id: m.id || m.userId,
+            name: m.name || 'Integrante',
+            avatar: (m.name || 'I').charAt(0).toUpperCase(),
+            dateDisplay,
+            daysUntil,
+            isToday,
           });
+        });
 
-          // Sort by closest upcoming birthday first
-          items.sort((a, b) => a.daysUntil - b.daysUntil);
-          setBirthdays(items);
-        })
-        .catch((err) => console.warn('Erro ao carregar aniversariantes:', err))
-        .finally(() => setLoadingBirthdays(false));
-    });
+        // Sort by closest upcoming birthday first
+        items.sort((a, b) => a.daysUntil - b.daysUntil);
+        setBirthdays(items);
+      })
+      .catch((err) => {
+        if (active && activeGroupIdRef.current === requestedGroupId) {
+          console.warn('Erro ao carregar aniversariantes:', err);
+        }
+      })
+      .finally(() => {
+        if (active && activeGroupIdRef.current === requestedGroupId) {
+          setLoadingBirthdays(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
   }, [currentActive?.id]);
 
   // Upcoming schedules sorted by date ascending

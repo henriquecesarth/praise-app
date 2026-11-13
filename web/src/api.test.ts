@@ -916,5 +916,56 @@ describe('API Client & Structured Error Handling', () => {
       consoleErrorSpy.mockRestore();
       consoleWarnSpy.mockRestore();
     });
+
+    it('REGRESSÃO Phase B: resposta 401 com sessão ativa dispara evento louvaio:session-expired, mas login 401 não dispara', async () => {
+      const listener = vi.fn();
+      window.addEventListener('louvaio:session-expired', listener);
+
+      localStorage.setItem('praise_auth_token', 'expired-session-token');
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        url: 'http://localhost:3000/api/ministries',
+        text: vi.fn().mockResolvedValue(JSON.stringify({ error: { message: 'Token expirado' } })),
+      } as any);
+
+      await expect(api.getMyGroups()).rejects.toThrow(/Token expirado/);
+      expect(listener).toHaveBeenCalledTimes(1);
+
+      listener.mockClear();
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        url: 'http://localhost:3000/api/auth/login',
+        text: vi.fn().mockResolvedValue(JSON.stringify({ error: { message: 'Credenciais inválidas' } })),
+      } as any);
+
+      await expect(api.login('a@b.com', 'wrong')).rejects.toThrow(/Credenciais inválidas/);
+      expect(listener).not.toHaveBeenCalled();
+
+      // Account deletion endpoints handle 401 locally (REAUTHENTICATION_REQUIRED or post-deletion check)
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        url: 'http://localhost:3000/api/auth/account-deletion',
+        text: vi.fn().mockResolvedValue(
+          JSON.stringify({ error: { message: 'Reautenticação necessária', code: 'REAUTHENTICATION_REQUIRED' } })
+        ),
+      } as any);
+      await expect(api.executeAccountDeletion('fresh-token')).rejects.toThrow(/Reautenticação necessária/);
+      expect(listener).not.toHaveBeenCalled();
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        url: 'http://localhost:3000/api/auth/account-deletion/status',
+        text: vi.fn().mockResolvedValue(JSON.stringify({ error: { message: 'Conta removida' } })),
+      } as any);
+      await expect(api.getAccountDeletionStatus()).rejects.toThrow(/Conta removida/);
+      expect(listener).not.toHaveBeenCalled();
+
+      window.removeEventListener('louvaio:session-expired', listener);
+      localStorage.removeItem('praise_auth_token');
+    });
   });
 });

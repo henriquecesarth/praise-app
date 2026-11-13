@@ -360,11 +360,14 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
     ref.listen(ministryContextNotifierProvider, (previous, next) {
       final nextMinId = next.selectedMinistry?.id;
       if (nextMinId != null && nextMinId.isNotEmpty && nextMinId != previous?.selectedMinistry?.id) {
-        ref.read(smartChordRepertoireLinkNotifierProvider.notifier).load(
-              ministryId: nextMinId,
-              chordId: widget.chordId,
-              force: true,
-            );
+        Future.microtask(() {
+          if (!mounted) return;
+          ref.read(smartChordRepertoireLinkNotifierProvider.notifier).load(
+                ministryId: nextMinId,
+                chordId: widget.chordId,
+                force: true,
+              );
+        });
       }
     });
 

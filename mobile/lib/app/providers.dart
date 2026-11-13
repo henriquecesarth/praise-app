@@ -178,6 +178,7 @@ void resetAuthenticatedFeatures(
   container.invalidate(smartChordRepertoireLinkNotifierProvider);
   container.invalidate(smartChordDetailNotifierProvider);
   container.invalidate(smartChordFormNotifierProvider);
+  container.invalidate(smartChordImportNotifierProvider);
   container.invalidate(customVocalExercisesNotifierProvider);
 
   container.invalidate(unreadNotificationCountProvider);
