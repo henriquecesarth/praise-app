@@ -81,7 +81,6 @@
 ### Shared infrastructure
 
 - src/lib/firebase.ts: inicialização de Firestore e Firebase Auth.
-- src/lib/supabase.ts: stub deprecated que retorna null.
 - src/controllers/BaseController.ts: helpers de resposta.
 - src/middleware/auth.ts: valida Bearer JWT da API e Firebase ID Tokens.
 - src/middleware/rbac.ts: papéis admin/member e autorização por ministério.
@@ -107,7 +106,6 @@ Cada feature normalmente tem controller, routes, service, types e testes:
 - roles/: funções musicais e seed padrão.
 - classifications/: classificações ministeriais e seed padrão.
 - templates/: modelos de roteiro de escala.
-- groups/: módulo legado não montado diretamente.
 
 ### Repositories
 

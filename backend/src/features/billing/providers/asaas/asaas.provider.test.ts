@@ -526,14 +526,18 @@ describe('AsaasBillingProvider — Webhook Authentication & Parser Validation', 
 
       expect(result.success).toBe(true);
       expect(result.canceledAtPeriodEnd).toBe(true);
-      expect(mockFetch).toHaveBeenCalledWith('https://sandbox.asaas.com/api/v3/subscriptions/sub_old_123', {
-        method: 'PUT',
-        headers: {
-          access_token: 'test_api_key_123',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ status: 'INACTIVE' }),
-      });
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://sandbox.asaas.com/api/v3/subscriptions/sub_old_123',
+        expect.objectContaining({
+          method: 'PUT',
+          headers: {
+            access_token: 'test_api_key_123',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ status: 'INACTIVE' }),
+          signal: expect.any(AbortSignal),
+        })
+      );
 
       global.fetch = originalFetch;
     });
@@ -549,14 +553,18 @@ describe('AsaasBillingProvider — Webhook Authentication & Parser Validation', 
       const result = await provider.reactivateSubscription('sub_old_123', '2026-09-30');
 
       expect(result.success).toBe(true);
-      expect(mockFetch).toHaveBeenCalledWith('https://sandbox.asaas.com/api/v3/subscriptions/sub_old_123', {
-        method: 'PUT',
-        headers: {
-          access_token: 'test_api_key_123',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ status: 'ACTIVE', nextDueDate: '2026-09-30' }),
-      });
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://sandbox.asaas.com/api/v3/subscriptions/sub_old_123',
+        expect.objectContaining({
+          method: 'PUT',
+          headers: {
+            access_token: 'test_api_key_123',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ status: 'ACTIVE', nextDueDate: '2026-09-30' }),
+          signal: expect.any(AbortSignal),
+        })
+      );
 
       global.fetch = originalFetch;
     });
@@ -585,12 +593,16 @@ describe('AsaasBillingProvider — Webhook Authentication & Parser Validation', 
       const result = await provider.removeSubscription('sub_del_123');
 
       expect(result.success).toBe(true);
-      expect(mockFetch).toHaveBeenCalledWith('https://sandbox.asaas.com/api/v3/subscriptions/sub_del_123', {
-        method: 'DELETE',
-        headers: {
-          access_token: 'test_api_key_123',
-        },
-      });
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://sandbox.asaas.com/api/v3/subscriptions/sub_del_123',
+        expect.objectContaining({
+          method: 'DELETE',
+          headers: {
+            access_token: 'test_api_key_123',
+          },
+          signal: expect.any(AbortSignal),
+        })
+      );
 
       global.fetch = originalFetch;
     });
@@ -697,12 +709,16 @@ describe('AsaasBillingProvider — Webhook Authentication & Parser Validation', 
       const result = await provider.removePayment('pay_future_1');
 
       expect(result.success).toBe(true);
-      expect(mockFetch).toHaveBeenCalledWith('https://sandbox.asaas.com/api/v3/payments/pay_future_1', {
-        method: 'DELETE',
-        headers: {
-          access_token: 'test_api_key_123',
-        },
-      });
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://sandbox.asaas.com/api/v3/payments/pay_future_1',
+        expect.objectContaining({
+          method: 'DELETE',
+          headers: {
+            access_token: 'test_api_key_123',
+          },
+          signal: expect.any(AbortSignal),
+        })
+      );
 
       global.fetch = originalFetch;
     });
@@ -2344,6 +2360,310 @@ describe('AsaasBillingProvider — Webhook Authentication & Parser Validation', 
 
         const res = await provider.listAllSubscriptionPaymentsStrict('sub_bad');
         expect(res.outcome).toBe('MALFORMED_RESPONSE');
+      });
+    });
+
+    describe('Bounded HTTP Timeouts across all Asaas fetch calls (M06)', () => {
+      it('7. Injeta AbortSignal em todas as rotas restantes de cliente, checkout, assinatura e pagamento no Asaas', async () => {
+        const provider = new AsaasBillingProvider({
+          apiKey: 'test_api_key',
+          apiUrl: 'https://sandbox.asaas.com/api/v3',
+        });
+
+        const observedSignals: Array<AbortSignal | undefined> = [];
+        global.fetch = vi.fn(async (url: any, init?: RequestInit) => {
+          observedSignals.push(init?.signal ?? undefined);
+          const urlStr = String(url);
+          if (urlStr.includes('/checkouts')) {
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({
+                id: 'chk_1',
+                link: 'https://sandbox.asaas.com/checkoutSession/show/chk_1',
+                status: 'CANCELED',
+              }),
+            } as any;
+          }
+          if (urlStr.includes('/subscriptions/sub_ext') || urlStr.includes('externalReference=min_1')) {
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({ data: [] }),
+            } as any;
+          }
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              id: 'res_1',
+              status: 'ACTIVE',
+              value: 29.9,
+              billingType: 'CREDIT_CARD',
+              data: [],
+              hasMore: false,
+            }),
+          } as any;
+        });
+
+        await provider.createCustomer({ ministryId: 'min_1', ministryName: 'Igreja', email: 'a@b.com', taxId: '12345678909' });
+        await provider.updateCustomer('cus_1', { name: 'Igreja Atualizada', email: 'a@b.com' });
+        await provider.findCustomerByExternalReference('min_1');
+        await provider.findSubscriptionByExternalReference('min_1');
+        await provider.listPaymentsByCheckoutSession('chk_1');
+        await provider.createCheckout({
+          ministryId: 'min_1',
+          providerCustomerId: 'cus_1',
+          planId: 'essential',
+          planName: 'Essencial',
+          interval: 'monthly',
+          addonBlocks: 0,
+          amountCents: 2990,
+          successUrl: 'https://app.louvaio.com/billing/success',
+        });
+        await provider.createDetachedCheckout({
+          ministryId: 'min_1',
+          checkoutIntentId: 'intent_1',
+          providerCustomerId: 'cus_1',
+          amountCents: 2990,
+          description: 'Ajuste proporcional',
+          minutesToExpire: 30,
+          successUrl: 'https://app.louvaio.com/billing/success',
+        });
+        await provider.cancelCheckout('chk_1');
+        await provider.inactivateSubscription('sub_1');
+        await provider.inactivateSubscriptionStrict('sub_1');
+        await provider.removeSubscription('sub_1');
+        await provider.reactivateSubscription('sub_1');
+        await provider.reactivateSubscriptionStrict('sub_1');
+        await provider.listSubscriptionPayments('sub_1');
+        await provider.listAllSubscriptionPaymentsStrict('sub_1');
+        await provider.getSubscriptionState('sub_1');
+        await provider.getPayment('pay_1');
+        await provider.removePayment('pay_1');
+        await provider.getSubscription('sub_1');
+
+        expect(observedSignals).toHaveLength(19);
+        for (const sig of observedSignals) {
+          expect(sig).toBeDefined();
+          expect(sig?.aborted).toBe(false);
+        }
+      });
+
+      it('8. Aborta requisição Asaas travada (headers e body stall) após timeout configurado sem vazar timers', async () => {
+        vi.useFakeTimers();
+        try {
+          const provider = new AsaasBillingProvider({
+            apiKey: 'test_api_key',
+            apiUrl: 'https://sandbox.asaas.com/api/v3',
+          });
+          const { HTTP_DEFAULT_TIMEOUT_MS, HTTP_CREATE_CHECKOUT_TIMEOUT_MS } = await import('./asaas.provider');
+
+          // 8a. Resolução rápida deve limpar timer completamente
+          global.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: async () => ({ id: 'sub_ok', status: 'ACTIVE' }),
+          } as any);
+          const quickState = await provider.getSubscriptionState('sub_ok');
+          expect(quickState.outcome).toBe('FOUND');
+          expect(vi.getTimerCount()).toBe(0);
+
+          // 8b. Request travado antes dos headers em getSubscriptionState -> TRANSIENT_ERROR + zero timers residuais
+          global.fetch = vi.fn(
+            (_url: any, init?: RequestInit) =>
+              new Promise((_resolve, reject) => {
+                init?.signal?.addEventListener('abort', () => {
+                  reject(init.signal?.reason || new Error('TimeoutError'));
+                });
+              })
+          ) as any;
+
+          const pendingState = provider.getSubscriptionState('sub_hung');
+          await vi.advanceTimersByTimeAsync(HTTP_DEFAULT_TIMEOUT_MS + 10);
+          const result = await pendingState;
+          expect(result.outcome).toBe('TRANSIENT_ERROR');
+          expect(result.errorMessage).toContain('timed out');
+          expect(vi.getTimerCount()).toBe(0);
+
+          // 8c. Headers HTTP 200 chegam rápido, mas response.json() trava além do timeout (body stall)
+          global.fetch = vi.fn(async (_url: any, init?: RequestInit) => ({
+            ok: true,
+            status: 200,
+            json: () =>
+              new Promise((_resolve, reject) => {
+                init?.signal?.addEventListener('abort', () => {
+                  reject(init.signal?.reason || new Error('Body stalled timeout'));
+                });
+              }),
+          })) as any;
+
+          const bodyStallStatePromise = provider.getSubscriptionState('sub_body_stall');
+          await vi.advanceTimersByTimeAsync(HTTP_DEFAULT_TIMEOUT_MS + 10);
+          const bodyStallState = await bodyStallStatePromise;
+          expect(bodyStallState.outcome).toBe('TRANSIENT_ERROR');
+          expect(vi.getTimerCount()).toBe(0);
+
+          const detachedStallPromise = provider
+            .createDetachedCheckout({
+              ministryId: 'min_1',
+              checkoutIntentId: 'intent_stall',
+              amountCents: 1990,
+              description: 'Stall body test',
+              minutesToExpire: 30,
+              successUrl: 'https://app.louvaio.com/billing/success',
+            })
+            .catch((err) => err);
+          await vi.advanceTimersByTimeAsync(HTTP_CREATE_CHECKOUT_TIMEOUT_MS + 10);
+          const detachedErr = await detachedStallPromise;
+          expect(detachedErr).toBeInstanceOf(Error);
+          expect(provider.classifyErrorOutcome(detachedErr)).toBe('OUTCOME_UNCERTAIN');
+          expect(vi.getTimerCount()).toBe(0);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('9. Preserva classificação fail-closed (OUTCOME_UNCERTAIN / TRANSIENT_ERROR) em timeout dos fluxos estritos e checkouts sem retry cego', async () => {
+        vi.useFakeTimers();
+        try {
+          const provider = new AsaasBillingProvider({
+            apiKey: 'test_api_key',
+            apiUrl: 'https://sandbox.asaas.com/api/v3',
+          });
+          const { HTTP_DEFAULT_TIMEOUT_MS, HTTP_CREATE_CHECKOUT_TIMEOUT_MS } = await import('./asaas.provider');
+
+          const makeHungFetch = () =>
+            vi.fn(
+              (_url: any, init?: RequestInit) =>
+                new Promise((_resolve, reject) => {
+                  init?.signal?.addEventListener('abort', () => {
+                    reject(init.signal?.reason || new Error('TimeoutError'));
+                  });
+                })
+            ) as any;
+
+          // createCheckout
+          const createCheckoutFetch = makeHungFetch();
+          global.fetch = createCheckoutFetch;
+          const createCheckoutPromise = provider
+            .createCheckout({
+              ministryId: 'min_1',
+              planId: 'essential',
+              planName: 'Essencial',
+              interval: 'monthly',
+              addonBlocks: 0,
+              amountCents: 2990,
+              successUrl: 'https://app.louvaio.com/billing/success',
+            })
+            .catch((e) => e);
+          await vi.advanceTimersByTimeAsync(HTTP_CREATE_CHECKOUT_TIMEOUT_MS + 10);
+          const createCheckoutErr = await createCheckoutPromise;
+          expect(provider.classifyErrorOutcome(createCheckoutErr)).toBe('OUTCOME_UNCERTAIN');
+          expect(createCheckoutFetch).toHaveBeenCalledTimes(1);
+
+          // createDetachedCheckout
+          const detachedFetch = makeHungFetch();
+          global.fetch = detachedFetch;
+          const detachedPromise = provider
+            .createDetachedCheckout({
+              ministryId: 'min_1',
+              checkoutIntentId: 'intent_hung',
+              amountCents: 1990,
+              description: 'Hung test',
+              minutesToExpire: 30,
+              successUrl: 'https://app.louvaio.com/billing/success',
+            })
+            .catch((e) => e);
+          await vi.advanceTimersByTimeAsync(HTTP_CREATE_CHECKOUT_TIMEOUT_MS + 10);
+          const detachedErr = await detachedPromise;
+          expect(provider.classifyErrorOutcome(detachedErr)).toBe('OUTCOME_UNCERTAIN');
+          expect(detachedFetch).toHaveBeenCalledTimes(1);
+
+          // inactivateSubscriptionStrict
+          const inactivateFetch = makeHungFetch();
+          global.fetch = inactivateFetch;
+          const inactivatePromise = provider.inactivateSubscriptionStrict('sub_hung');
+          await vi.advanceTimersByTimeAsync(HTTP_DEFAULT_TIMEOUT_MS + 10);
+          const inactivateRes = await inactivatePromise;
+          expect(inactivateRes.outcome).toBe('TRANSIENT_ERROR');
+          expect(inactivateFetch).toHaveBeenCalledTimes(1);
+
+          // reactivateSubscriptionStrict
+          const reactivateFetch = makeHungFetch();
+          global.fetch = reactivateFetch;
+          const reactivatePromise = provider.reactivateSubscriptionStrict('sub_hung');
+          await vi.advanceTimersByTimeAsync(HTTP_DEFAULT_TIMEOUT_MS + 10);
+          const reactivateRes = await reactivatePromise;
+          expect(reactivateRes.outcome).toBe('TRANSIENT_ERROR');
+          expect(reactivateFetch).toHaveBeenCalledTimes(1);
+
+          // listAllSubscriptionPaymentsStrict
+          const listFetch = makeHungFetch();
+          global.fetch = listFetch;
+          const listPromise = provider.listAllSubscriptionPaymentsStrict('sub_hung');
+          await vi.advanceTimersByTimeAsync(HTTP_DEFAULT_TIMEOUT_MS + 10);
+          const listRes = await listPromise;
+          expect(listRes.outcome).toBe('TRANSIENT_ERROR');
+          expect(listFetch).toHaveBeenCalledTimes(1);
+
+          // classifyErrorOutcome explícito para TimeoutError e mensagem timed out
+          const timeoutNamed = new Error('Signal aborted');
+          timeoutNamed.name = 'TimeoutError';
+          expect(provider.classifyErrorOutcome(timeoutNamed)).toBe('OUTCOME_UNCERTAIN');
+          expect(provider.classifyErrorOutcome(new Error('Request timed out after 25000ms'))).toBe('OUTCOME_UNCERTAIN');
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('10. Distingue TimeoutError/ECONNRESET no response.json() (TRANSIENT_ERROR) de SyntaxError (MALFORMED_RESPONSE)', async () => {
+        const provider = new AsaasBillingProvider({
+          apiKey: 'test_api_key',
+          apiUrl: 'https://sandbox.asaas.com/api/v3',
+        });
+
+        const timeoutErr = new Error('The operation timed out');
+        timeoutErr.name = 'TimeoutError';
+        const resetErr: any = new Error('read ECONNRESET');
+        resetErr.code = 'ECONNRESET';
+        const syntaxErr = new SyntaxError('Unexpected token < in JSON at position 0');
+
+        // TimeoutError em response.json() -> TRANSIENT_ERROR
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => {
+            throw timeoutErr;
+          },
+        } as any);
+        expect((await provider.getSubscriptionState('sub_t')).outcome).toBe('TRANSIENT_ERROR');
+        expect((await provider.reactivateSubscriptionStrict('sub_t')).outcome).toBe('TRANSIENT_ERROR');
+        expect((await provider.listAllSubscriptionPaymentsStrict('sub_t')).outcome).toBe('TRANSIENT_ERROR');
+
+        // ECONNRESET em response.json() -> TRANSIENT_ERROR
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => {
+            throw resetErr;
+          },
+        } as any);
+        expect((await provider.getSubscriptionState('sub_r')).outcome).toBe('TRANSIENT_ERROR');
+        expect((await provider.reactivateSubscriptionStrict('sub_r')).outcome).toBe('TRANSIENT_ERROR');
+        expect((await provider.listAllSubscriptionPaymentsStrict('sub_r')).outcome).toBe('TRANSIENT_ERROR');
+
+        // SyntaxError real no payload -> MALFORMED_RESPONSE
+        global.fetch = vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => {
+            throw syntaxErr;
+          },
+        } as any);
+        expect((await provider.getSubscriptionState('sub_s')).outcome).toBe('MALFORMED_RESPONSE');
+        expect((await provider.reactivateSubscriptionStrict('sub_s')).outcome).toBe('MALFORMED_RESPONSE');
+        expect((await provider.listAllSubscriptionPaymentsStrict('sub_s')).outcome).toBe('MALFORMED_RESPONSE');
       });
     });
   });

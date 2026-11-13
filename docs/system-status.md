@@ -48,7 +48,7 @@ Snapshot do estado operacional e técnico do LouvAIO. Este documento separa fato
 
 | ID | Area | Inconsistency and impact | Evidence |
 | --- | --- | --- | --- |
-| INC-001 | Route aliases | O diretório features/groups implementa GroupRepository e group routes, mas app.ts não monta groupRoutes. /api/v1/groups monta ministryRoutes, portanto o módulo groups dedicado fica inalcançável e o alias usa coleções ministry_*. | backend/src/app.ts, features/groups/, MinistryRepository.ts |
+| INC-001 | Route aliases | RESOLVIDO (L02 / M04): Diretório morto `features/groups/` e `GroupRepository.ts` removidos; `/api/v1/groups` monta `ministryRoutes` e todos os controllers ativos aceitam `ministryId \|\| groupId`. | backend/src/app.ts, MinistryRepository.ts, controllers |
 | INC-005 | Smart Chords endpoints | RESOLVIDO (Fase 5B): Rotas canônicas unificadas em /api/v1/smart-chords, GET /song/:songId com precedência estrita sobre /:id, eliminação de endpoints fabricados (/smart-chords/song/:songId para mutação) e alinhamento de contratos. | web/src/api.ts, smart_chord.routes.ts, smart_chord.controller.ts |
 
 INC-002 e INC-003 foram corrigidos na implementação do sistema de planos. INC-004, INC-006, INC-007, INC-008, INC-009, INC-010, INC-011 e INC-012 foram integralmente resolvidos na fase de Authentication & Authorization Security Hardening (2026-08-29). GAP-011 (Asaas Customer Reuse) foi integralmente implementado, protegido contra concorrência e revalidado com sucesso em Sandbox (2026-09-01). GAP-004 (Liturgies navigation) foi resolvido na Fase 5A (2026-09-09), expondo LiturgiesView via rota canônica /liturgias, sidebar desktop e Ministério no mobile. INC-005 (Smart Chords endpoints) e GAP-003 (Smart Chords persistence & list) foram resolvidos na Fase 5B (2026-09-09), integrando frontend ao backend real com isolamento estrito por usuário, anti-IDOR e validação de vínculo com repertório. GAP-005 (Dashboard announcements) foi resolvido na Fase 5C (2026-09-09), substituindo mocks locais por persistência Firestore multi-tenant, RBAC (membro leitura, admin CRUD), anti-IDOR fail-closed e UX responsiva.
@@ -61,7 +61,7 @@ INC-002 e INC-003 foram corrigidos na implementação do sistema de planos. INC-
 | GAP-003 | Smart Chords list | RESOLVIDO (Fase 5B): api.getSmartChords integrado a GET /api/v1/smart-chords com persistência real Firestore, isolamento por user_id, mapeamento de campos e correção de colisão empty/error. | web/src/api.ts, SmartChordRepository.ts, SmartChordsWorkspace.tsx |
 | GAP-004 | Liturgies navigation | RESOLVIDO (Fase 5A): LiturgiesView exposto na rota /liturgias, sidebar desktop e card Ministério no mobile; RBAC e isolamento de tenant preservados. | App.tsx, LiturgiesView.tsx, routing.ts |
 | GAP-005 | Dashboard announcements | RESOLVIDO (Fase 5C): MOCK_ANNOUNCEMENTS substituído por persistência Firestore (`ministry_announcements`), rota canônica `/api/v1/ministries/:ministryId/announcements`, RBAC estrito (membro read-only, admin CRUD), anti-IDOR fail-closed, queries ordenadas/limitadas e modais acessíveis. | DashboardView.tsx, announcement.routes.ts, AnnouncementRepository.ts |
-| GAP-006 | Supabase migration residue | @supabase/supabase-js permanece como dependência; env.ts expõe campos vazios e lib/supabase.ts retorna null. | backend/package.json, config/env.ts, lib/supabase.ts |
+| GAP-006 | Supabase migration residue | RESOLVIDO (L02): Removidos `@supabase/supabase-js`, `backend/src/lib/supabase.ts` e campos `supabase*` de `backend/src/config/env.ts`. | backend/package.json, config/env.ts |
 | GAP-008 | Infrastructure | Não há CI/CD, Docker, migrations ou schema Firestore versionado. | inventário |
 | GAP-009 | Formatting | Não há formatter ou script format configurado. | package.json, inventário |
 | GAP-010 | Dependency advisories | A instalação das dependências web reportou vulnerabilidades em dependências indiretas. | saída de npm install; Unknown / Not yet verified |
@@ -72,7 +72,7 @@ INC-002 e INC-003 foram corrigidos na implementação do sistema de planos. INC-
 | Previous claim | Current evidence |
 | --- | --- |
 | O produto atual inclui mobile/ Flutter. | Não existe diretório mobile/ no checkout. |
-| A persistência ativa é Supabase/PostgreSQL. | Repositories importam Firestore; lib/supabase.ts está marcado deprecated e retorna null. |
+| A persistência ativa é Supabase/PostgreSQL. | Repositories usam Firestore; resíduos de `lib/supabase.ts` e `@supabase/supabase-js` foram removidos. |
 | Existem migrations SQL sob supabase/migrations/. | Não existe diretório supabase/. |
 | O repositório contém somente backend/mobile. | O cliente ativo está em web/ com React/Vite/PWA. |
 | O backend não tem testes. | Backend possui suíte de testes Vitest em `backend/src/`. |

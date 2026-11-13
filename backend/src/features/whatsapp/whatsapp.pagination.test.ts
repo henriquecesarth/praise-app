@@ -262,4 +262,80 @@ describe('WhatsApp Bounded Cursor Pagination Suite (Phase 7C / DEC-7C-14)', () =
       expect(item.organization_id).toBe('org-1');
     }
   });
+
+  it('9. findActivePlatformDependencies paginates across multiple pages without unbounded full scan (M08)', async () => {
+    const allDocs = Array.from({ length: 55 }, (_, i) => ({
+      id: `conn_${i}`,
+      data: () => ({
+        id: `conn_${i}`,
+        provider_waba_id: 'waba_paged',
+        status: i < 54 ? 'pending' : 'connected',
+        pending_expires_at: i < 54 ? '2020-01-01T00:00:00.000Z' : undefined,
+      }),
+    }));
+
+    const limitSpy = vi.fn().mockImplementation((limitCount: number) => {
+      const makePage = (startIdx: number): any => ({
+        startAfter: (cursor: { _idx: number }) => makePage(cursor._idx + 1),
+        get: async () => ({
+          docs: allDocs.slice(startIdx, startIdx + limitCount).map((d, offset) => ({
+            ...d,
+            _idx: startIdx + offset,
+          })),
+        }),
+      });
+      return makePage(0);
+    });
+
+    (repo as any).connectionsCol = {
+      where: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({
+          limit: limitSpy,
+        }),
+      }),
+    };
+
+    const deps = await repo.findActivePlatformDependencies('waba_paged');
+    expect(limitSpy).toHaveBeenCalledTimes(2);
+    expect(limitSpy).toHaveBeenCalledWith(50);
+    expect(deps).toHaveLength(1);
+    expect(deps[0].id).toBe('conn_54');
+  });
+
+  it('10. findActivePlatformDependencies fails closed (503 DEPENDENCY_SCAN_INCOMPLETE) if page cap truncates before finding active deps (M08)', async () => {
+    const makeFullExpiredPage = () =>
+      Array.from({ length: 50 }, (_, i) => ({
+        id: `expired_${i}`,
+        data: () => ({
+          id: `expired_${i}`,
+          provider_waba_id: 'waba_huge',
+          status: 'pending',
+          pending_expires_at: '2020-01-01T00:00:00.000Z',
+        }),
+      }));
+
+    const limitSpy = vi.fn().mockImplementation(() => {
+      const makePage = (): any => ({
+        startAfter: () => makePage(),
+        get: async () => ({
+          docs: makeFullExpiredPage(),
+        }),
+      });
+      return makePage();
+    });
+
+    (repo as any).connectionsCol = {
+      where: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({
+          limit: limitSpy,
+        }),
+      }),
+    };
+
+    await expect(repo.findActivePlatformDependencies('waba_huge')).rejects.toMatchObject({
+      statusCode: 503,
+      details: 'DEPENDENCY_SCAN_INCOMPLETE',
+    });
+    expect(limitSpy).toHaveBeenCalledTimes(20);
+  });
 });

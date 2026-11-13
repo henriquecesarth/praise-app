@@ -10,7 +10,7 @@ export class TemplateController extends BaseController {
 
   getTemplates = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const list = await this.service.getTemplates(ministryId);
       this.handleSuccess(res, list);
     } catch (err) {
@@ -20,7 +20,7 @@ export class TemplateController extends BaseController {
 
   getTemplateById = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const id = req.params.templateId as string;
       const item = await this.service.getTemplateById(id, ministryId);
       this.handleSuccess(res, item);
@@ -31,7 +31,7 @@ export class TemplateController extends BaseController {
 
   createTemplate = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const item = await this.service.createTemplate(ministryId, req.body);
       this.handleCreated(res, item);
     } catch (err) {
@@ -41,7 +41,7 @@ export class TemplateController extends BaseController {
 
   updateTemplate = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const id = req.params.templateId as string;
       const updated = await this.service.updateTemplate(id, ministryId, req.body);
       this.handleSuccess(res, updated);
@@ -52,7 +52,7 @@ export class TemplateController extends BaseController {
 
   deleteTemplate = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const id = req.params.templateId as string;
       await this.service.deleteTemplate(id, ministryId);
       this.handleSuccess(res, { message: 'Modelo de roteiro excluído com sucesso.' });

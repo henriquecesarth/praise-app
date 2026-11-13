@@ -10,7 +10,7 @@ export class TeamController extends BaseController {
 
   getTeams = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const teams = await this.teamService.getTeams(ministryId);
       this.handleSuccess(res, teams);
     } catch (err) {
@@ -20,7 +20,8 @@ export class TeamController extends BaseController {
 
   getTeamById = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const { ministryId, teamId } = req.params;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
+      const teamId = req.params.teamId as string;
       const team = await this.teamService.getTeamById(teamId as string, ministryId as string);
       this.handleSuccess(res, team);
     } catch (err) {
@@ -30,7 +31,7 @@ export class TeamController extends BaseController {
 
   createTeam = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const userId = req.user!.id;
       const team = await this.teamService.createTeam(ministryId, userId, req.body);
       this.handleCreated(res, team);
@@ -41,7 +42,7 @@ export class TeamController extends BaseController {
 
   updateTeam = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const teamId = req.params.teamId as string;
       const team = await this.teamService.updateTeam(teamId, ministryId, req.body);
       this.handleSuccess(res, team);
@@ -52,7 +53,7 @@ export class TeamController extends BaseController {
 
   deleteTeam = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const teamId = req.params.teamId as string;
       await this.teamService.deleteTeam(teamId, ministryId);
       this.handleSuccess(res, { message: 'Equipe excluída com sucesso.' });

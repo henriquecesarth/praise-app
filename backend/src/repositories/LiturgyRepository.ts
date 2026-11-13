@@ -41,37 +41,122 @@ export class LiturgyRepository {
       )
     );
 
-    for (const songId of songIds) {
-      const songDoc = await this.songsCol.doc(songId).get();
-      if (!songDoc.exists) {
-        throw new AppError(404, `Música referenciada '${songId}' não encontrada.`);
-      }
-      const songData = songDoc.data();
-      if (!this.isOwnedByTenant(songData, groupId)) {
-        throw new AppError(400, 'Uma ou mais músicas selecionadas não pertencem a este ministério.');
-      }
+    const uniqueSongIds = Array.from(new Set(songIds.filter(Boolean)));
+    const chunkSize = 10;
+    for (let i = 0; i < uniqueSongIds.length; i += chunkSize) {
+      const chunk = uniqueSongIds.slice(i, i + chunkSize);
+      const songDocs = await Promise.all(chunk.map((songId) => this.songsCol.doc(songId).get()));
+      songDocs.forEach((songDoc, idx) => {
+        const songId = chunk[idx];
+        if (!songDoc.exists) {
+          throw new AppError(404, `Música referenciada '${songId}' não encontrada.`);
+        }
+        const songData = songDoc.data();
+        if (!this.isOwnedByTenant(songData, groupId)) {
+          throw new AppError(400, 'Uma ou mais músicas selecionadas não pertencem a este ministério.');
+        }
+      });
     }
   }
 
-  async getLiturgiesByGroup(groupId: string) {
-    const snap = await this.liturgiesCol.where('group_id', '==', groupId).get();
+  private async fetchItemsByLiturgyIds(liturgyIds: string[]): Promise<Map<string, any[]>> {
+    const itemsByLiturgy = new Map<string, any[]>();
+    if (liturgyIds.length === 0) return itemsByLiturgy;
+
+    if (liturgyIds.length === 1) {
+      const liturgyId = liturgyIds[0];
+      const snap = await this.itemsCol.where('liturgy_id', '==', liturgyId).get();
+      itemsByLiturgy.set(
+        liturgyId,
+        snap.docs.map((d) => ({ id: d.id, ...d.data() } as any))
+      );
+      return itemsByLiturgy;
+    }
+
+    const chunkSize = 10;
+    const chunks: string[][] = [];
+    for (let i = 0; i < liturgyIds.length; i += chunkSize) {
+      chunks.push(liturgyIds.slice(i, i + chunkSize));
+    }
+
+    const snapshots = await Promise.all(
+      chunks.map((chunk) => this.itemsCol.where('liturgy_id', 'in', chunk).get())
+    );
+    for (const snap of snapshots) {
+      for (const d of snap.docs) {
+        const item = { id: d.id, ...d.data() } as any;
+        const ownerLiturgyId = item.liturgy_id;
+        if (!ownerLiturgyId) continue;
+        const existing = itemsByLiturgy.get(ownerLiturgyId) ?? [];
+        existing.push(item);
+        itemsByLiturgy.set(ownerLiturgyId, existing);
+      }
+    }
+    return itemsByLiturgy;
+  }
+
+  private async fetchValidatedSongsMap(songIds: string[], groupId: string): Promise<Map<string, any>> {
+    const uniqueSongIds = Array.from(new Set(songIds.filter(Boolean)));
+    const songMap = new Map<string, any>();
+    const chunkSize = 10;
+
+    for (let i = 0; i < uniqueSongIds.length; i += chunkSize) {
+      const chunk = uniqueSongIds.slice(i, i + chunkSize);
+      const songDocs = await Promise.all(chunk.map((songId) => this.songsCol.doc(songId).get()));
+      songDocs.forEach((songDoc, idx) => {
+        const songId = chunk[idx];
+        if (songDoc.exists && this.isOwnedByTenant(songDoc.data(), groupId)) {
+          songMap.set(songId, { id: songDoc.id || songId, ...songDoc.data() });
+        }
+      });
+    }
+    return songMap;
+  }
+
+  private enrichAndSortItems(items: any[], songMap: Map<string, any>): any[] {
+    for (const item of items) {
+      if (item.type === 'song' && item.song_id) {
+        const song = songMap.get(item.song_id);
+        if (song) {
+          item.song = song;
+        }
+      }
+    }
+    items.sort((a, b) => (a.position || 0) - (b.position || 0));
+    return items;
+  }
+
+  async getLiturgiesByGroup(groupId: string, options?: { limit?: number }) {
+    const rawLimit = options?.limit ?? 50;
+    const boundedLimit = Math.min(Math.max(Math.trunc(rawLimit), 1), 100);
+    const baseQuery = this.liturgiesCol.where('group_id', '==', groupId);
+    const boundedQuery =
+      typeof (baseQuery as unknown as { limit?: (n: number) => typeof baseQuery }).limit === 'function'
+        ? (baseQuery as unknown as { limit: (n: number) => typeof baseQuery }).limit(boundedLimit)
+        : baseQuery;
+
+    const snap = await boundedQuery.get();
     const rawLiturgies = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as any));
     const liturgies = rawLiturgies.filter((l) => this.isOwnedByTenant(l, groupId));
 
-    for (const liturgy of liturgies) {
-      const itemsSnap = await this.itemsCol.where('liturgy_id', '==', liturgy.id).get();
-      const items = itemsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
+    if (liturgies.length === 0) {
+      return [];
+    }
 
+    const itemsByLiturgy = await this.fetchItemsByLiturgyIds(liturgies.map((l) => l.id));
+    const allSongIds: string[] = [];
+    for (const items of itemsByLiturgy.values()) {
       for (const item of items) {
         if (item.type === 'song' && item.song_id) {
-          const songDoc = await this.songsCol.doc(item.song_id).get();
-          if (songDoc.exists && this.isOwnedByTenant(songDoc.data(), groupId)) {
-            item.song = { id: songDoc.id, ...songDoc.data() };
-          }
+          allSongIds.push(item.song_id);
         }
       }
-      items.sort((a, b) => (a.position || 0) - (b.position || 0));
-      liturgy.liturgy_items = items;
+    }
+
+    const songMap = await this.fetchValidatedSongsMap(allSongIds, groupId);
+    for (const liturgy of liturgies) {
+      const items = itemsByLiturgy.get(liturgy.id) ?? [];
+      liturgy.liturgy_items = this.enrichAndSortItems(items, songMap);
     }
 
     liturgies.sort((a, b) => ((b.date || '') > (a.date || '') ? 1 : -1));
@@ -90,17 +175,11 @@ export class LiturgyRepository {
 
     const itemsSnap = await this.itemsCol.where('liturgy_id', '==', liturgyId).get();
     const items = itemsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
-
-    for (const item of items) {
-      if (item.type === 'song' && item.song_id) {
-        const songDoc = await this.songsCol.doc(item.song_id).get();
-        if (songDoc.exists && this.isOwnedByTenant(songDoc.data(), groupId)) {
-          item.song = { id: songDoc.id, ...songDoc.data() };
-        }
-      }
-    }
-    items.sort((a, b) => (a.position || 0) - (b.position || 0));
-    liturgy.liturgy_items = items;
+    const songIds = items
+      .filter((item) => item.type === 'song' && item.song_id)
+      .map((item) => item.song_id);
+    const songMap = await this.fetchValidatedSongsMap(songIds, groupId);
+    liturgy.liturgy_items = this.enrichAndSortItems(items, songMap);
 
     return liturgy;
   }

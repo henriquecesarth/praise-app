@@ -1329,4 +1329,49 @@ describe('WhatsApp H10 / H11 / H12 Adversarial Audit Regressions', () => {
     expect(stores.whatsapp_provider_cleanup_jobs.get(secondOrphanJobId)?.status).toBe('succeeded');
     expect(stores.whatsapp_provider_identity_claims.get(phoneClaimId)?.connection_id).toBe(connC);
   });
+
+  it('L01: reconJobRepo.recordJobSuccessInTransaction preserves nextAttemptSeconds and consecutiveObservations in standalone mode', async () => {
+    const jobId = 'waba_recon_l01';
+    const leaseToken = 'lease-l01-xyz';
+    stores.whatsapp_waba_reconciliation_jobs.set(jobId, {
+      id: jobId,
+      organization_id: orgId,
+      connection_id: 'conn-l01',
+      provider_waba_id: 'waba-l01',
+      status: 'running',
+      lease_token: leaseToken,
+      lease_expires_at: '2099-01-01T00:00:00.000Z',
+      consecutive_stable_observations: 1,
+      next_attempt_at: now,
+    });
+
+    const beforeMs = Date.now();
+    await reconJobRepo.recordJobSuccessInTransaction(jobId, leaseToken, {
+      nextAttemptSeconds: 900,
+      consecutiveObservations: 7,
+    });
+
+    const updated = stores.whatsapp_waba_reconciliation_jobs.get(jobId);
+    expect(updated.status).toBe('idle');
+    expect(updated.lease_token).toBeNull();
+    expect(updated.consecutive_stable_observations).toBe(7);
+    const nextMs = new Date(updated.next_attempt_at).getTime();
+    expect(nextMs - beforeMs).toBeGreaterThanOrEqual(895_000);
+    expect(nextMs - beforeMs).toBeLessThanOrEqual(905_000);
+
+    // Also preserve legacy numeric interval overload
+    stores.whatsapp_waba_reconciliation_jobs.set(jobId, {
+      ...updated,
+      status: 'running',
+      lease_token: 'lease-l01-num',
+      consecutive_stable_observations: 2,
+    });
+    const beforeNumMs = Date.now();
+    await reconJobRepo.recordJobSuccessInTransaction(jobId, 'lease-l01-num', 60);
+    const updatedNum = stores.whatsapp_waba_reconciliation_jobs.get(jobId);
+    expect(updatedNum.consecutive_stable_observations).toBe(3);
+    const nextNumMs = new Date(updatedNum.next_attempt_at).getTime();
+    expect(nextNumMs - beforeNumMs).toBeGreaterThanOrEqual(55_000);
+    expect(nextNumMs - beforeNumMs).toBeLessThanOrEqual(65_000);
+  });
 });

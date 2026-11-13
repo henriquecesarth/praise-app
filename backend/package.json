@@ -1,7 +1,7 @@
 {
   "name": "praise-backend",
   "version": "1.0.0",
-  "description": "LouvAIO \u00e2\u20ac\u201d Backend API (Node.js + TypeScript + Firebase)",
+  "description": "LouvAIO â€” Backend API (Node.js + TypeScript + Firebase)",
   "main": "dist-publish/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -13,7 +13,6 @@
     "build:local": "tsc"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.108.2",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.3.0",
     "cors": "^2.8.6",

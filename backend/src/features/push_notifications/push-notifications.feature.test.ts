@@ -568,4 +568,63 @@ describe('Push Notifications Backend Feature Suite', () => {
       expect(deleteByIdSpy).not.toHaveBeenCalled();
     });
   });
+
+  describe('4. Concurrent Token Registration Transaction Safety (M02)', () => {
+    it('serializes concurrent same-token upsertDevice calls across users via Firestore transaction and allows only one winner', async () => {
+      const store = new Map<string, PushDeviceRecord>();
+      let txChain = Promise.resolve();
+
+      const mockFirestore = {
+        runTransaction: vi.fn(async <T>(fn: (tx: FirebaseFirestore.Transaction) => Promise<T>): Promise<T> => {
+          const prev = txChain;
+          let release!: () => void;
+          txChain = new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          await prev;
+          try {
+            const tx = {
+              get: vi.fn(async (ref: { id: string }) => {
+                await new Promise((r) => setTimeout(r, 15));
+                const existing = store.get(ref.id);
+                return existing
+                  ? { exists: true, data: () => ({ ...existing }) }
+                  : { exists: false, data: () => undefined };
+              }),
+              set: vi.fn((ref: { id: string }, data: PushDeviceRecord, opts?: { merge?: boolean }) => {
+                const current = store.get(ref.id);
+                store.set(ref.id, opts?.merge && current ? { ...current, ...data } : { ...data });
+              }),
+            } as unknown as FirebaseFirestore.Transaction;
+            return await fn(tx);
+          } finally {
+            release();
+          }
+        }),
+      };
+
+      const repo = new PushDeviceRepository();
+      (repo as any).collection = {
+        firestore: mockFirestore,
+        doc: (id: string) => ({ id }),
+      };
+
+      const sharedToken = 'fcm-shared-race-token-123456';
+      const [userAResult, userBResult] = await Promise.allSettled([
+        repo.upsertDevice('user-a', { fcm_token: sharedToken, platform: 'android' }),
+        repo.upsertDevice('user-b', { fcm_token: sharedToken, platform: 'ios' }),
+      ]);
+
+      expect(mockFirestore.runTransaction).toHaveBeenCalledTimes(2);
+      const fulfilled = [userAResult, userBResult].filter((r) => r.status === 'fulfilled');
+      const rejected = [userAResult, userBResult].filter(
+        (r): r is PromiseRejectedResult => r.status === 'rejected'
+      );
+
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect((rejected[0].reason as any).statusCode).toBe(409);
+      expect((rejected[0].reason as any).details).toBe('PUSH_TOKEN_CONFLICT');
+    });
+  });
 });

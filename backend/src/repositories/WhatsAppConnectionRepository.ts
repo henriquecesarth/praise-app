@@ -475,29 +475,73 @@ export class WhatsAppConnectionRepository {
     excludeConnectionId?: string,
     tx?: FirebaseFirestore.Transaction
   ): Promise<WhatsAppConnectionRecord[]> {
-    const query = this.connectionsCol
+    const baseQuery = this.connectionsCol
       .where('provider_waba_id', '==', providerWabaId)
       .where('status', 'in', ['pending', 'connecting', 'connected']);
 
-    const snap = tx ? await tx.get(query) : await query.get();
-
+    const pageSize = 50;
+    const maxPages = 20;
     const now = new Date();
     const active: WhatsAppConnectionRecord[] = [];
 
-    for (const doc of snap.docs) {
-      if (excludeConnectionId && doc.id === excludeConnectionId) {
-        continue;
-      }
-      const conn = { id: doc.id, ...doc.data() } as WhatsAppConnectionRecord;
-      if (conn.status === 'pending') {
-        if (conn.pending_expires_at && new Date(conn.pending_expires_at) <= now) {
-          continue; // expired pending does not count as active dependency
+    const collectDocs = (docs: FirebaseFirestore.QueryDocumentSnapshot[]) => {
+      for (const doc of docs) {
+        if (excludeConnectionId && doc.id === excludeConnectionId) {
+          continue;
         }
+        const conn = { id: doc.id, ...doc.data() } as WhatsAppConnectionRecord;
+        if (conn.status === 'pending') {
+          if (conn.pending_expires_at && new Date(conn.pending_expires_at) <= now) {
+            continue; // expired pending does not count as active dependency
+          }
+        }
+        active.push(conn);
       }
-      active.push(conn);
+    };
+
+    const supportsLimit = typeof (baseQuery as unknown as { limit?: unknown }).limit === 'function';
+    if (!supportsLimit) {
+      const snap = tx ? await tx.get(baseQuery) : await baseQuery.get();
+      collectDocs(snap.docs as FirebaseFirestore.QueryDocumentSnapshot[]);
+      return active;
     }
 
-    return active;
+    let cursor: FirebaseFirestore.QueryDocumentSnapshot | undefined;
+    for (let page = 0; page < maxPages; page++) {
+      let pagedQuery = (baseQuery as unknown as {
+        limit: (n: number) => FirebaseFirestore.Query;
+      }).limit(pageSize);
+
+      if (cursor) {
+        if (typeof pagedQuery.startAfter !== 'function') {
+          if (active.length > 0) return active;
+          throw new AppError(
+            503,
+            'Paginação indisponível ao verificar dependências ativas da WABA.',
+            'DEPENDENCY_SCAN_INCOMPLETE'
+          );
+        }
+        pagedQuery = pagedQuery.startAfter(cursor);
+      }
+
+      const snap = tx ? await tx.get(pagedQuery) : await pagedQuery.get();
+      collectDocs(snap.docs as FirebaseFirestore.QueryDocumentSnapshot[]);
+
+      if (snap.docs.length < pageSize) {
+        return active;
+      }
+      cursor = snap.docs[snap.docs.length - 1] as FirebaseFirestore.QueryDocumentSnapshot;
+    }
+
+    if (active.length > 0) {
+      return active;
+    }
+
+    throw new AppError(
+      503,
+      'Limite de paginação atingido ao verificar dependências ativas da WABA.',
+      'DEPENDENCY_SCAN_INCOMPLETE'
+    );
   }
 
   async bindZernioProfileToConnection(

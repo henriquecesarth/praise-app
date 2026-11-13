@@ -769,4 +769,63 @@ describe('Liturgy Feature & Security Test Suite (M13)', () => {
       );
     });
   });
+
+  describe('6. Bounded Query, Item Batching & Song Deduplication (M05)', () => {
+    it('bounds getLiturgiesByGroup query with limit(50), batches itemsCol with in, and deduplicates shared song_id lookups', async () => {
+      const limitMock = vi.fn().mockImplementation(() => ({
+        get: vi.fn().mockResolvedValue({
+          docs: [
+            {
+              id: 'lit-1',
+              data: () => ({ id: 'lit-1', group_id: 'min-alpha', ministry_id: 'min-alpha', title: 'Culto A', date: '2026-10-01' }),
+            },
+            {
+              id: 'lit-2',
+              data: () => ({ id: 'lit-2', group_id: 'min-alpha', ministry_id: 'min-alpha', title: 'Culto B', date: '2026-10-02' }),
+            },
+          ],
+        }),
+      }));
+
+      (repo as any).liturgiesCol = {
+        where: vi.fn().mockReturnValue({ limit: limitMock }),
+      };
+
+      const itemsWhereSpy = vi.fn().mockReturnValue({
+        get: vi.fn().mockResolvedValue({
+          docs: [
+            {
+              id: 'item-1',
+              data: () => ({ id: 'item-1', liturgy_id: 'lit-1', song_id: 'shared-song', type: 'song', position: 0 }),
+            },
+            {
+              id: 'item-2',
+              data: () => ({ id: 'item-2', liturgy_id: 'lit-2', song_id: 'shared-song', type: 'song', position: 0 }),
+            },
+          ],
+        }),
+      });
+      (repo as any).itemsCol = { where: itemsWhereSpy };
+
+      const songGetSpy = vi.fn().mockResolvedValue({
+        exists: true,
+        id: 'shared-song',
+        data: () => ({ id: 'shared-song', ministry_id: 'min-alpha', title: 'Canção Compartilhada' }),
+      });
+      const songsDocSpy = vi.fn().mockReturnValue({ get: songGetSpy });
+      (repo as any).songsCol = { doc: songsDocSpy };
+
+      const list = await repo.getLiturgiesByGroup('min-alpha');
+
+      expect(limitMock).toHaveBeenCalledWith(50);
+      expect(itemsWhereSpy).toHaveBeenCalledTimes(1);
+      expect(itemsWhereSpy).toHaveBeenCalledWith('liturgy_id', 'in', ['lit-1', 'lit-2']);
+      expect(songsDocSpy).toHaveBeenCalledTimes(1);
+      expect(songsDocSpy).toHaveBeenCalledWith('shared-song');
+      expect(list).toHaveLength(2);
+      expect(list[0].id).toBe('lit-2');
+      expect(list[0].liturgy_items[0].song?.title).toBe('Canção Compartilhada');
+      expect(list[1].liturgy_items[0].song?.title).toBe('Canção Compartilhada');
+    });
+  });
 });

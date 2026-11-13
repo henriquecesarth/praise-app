@@ -356,11 +356,16 @@ export class WhatsAppWabaReconciliationJobRepository {
       let nextIntervalSeconds = 300;
       let consecutiveObservations = (job.consecutive_stable_observations || 0) + 1;
 
-      if (!isStandalone && arg4) {
-        if (arg4.nextAttemptSeconds) nextIntervalSeconds = arg4.nextAttemptSeconds;
-        if (arg4.consecutiveObservations !== undefined) consecutiveObservations = arg4.consecutiveObservations;
-      } else if (isStandalone && typeof arg3 === 'number') {
-        nextIntervalSeconds = arg3;
+      const optionsOrSeconds = isStandalone ? arg3 : arg4;
+      if (typeof optionsOrSeconds === 'number') {
+        nextIntervalSeconds = optionsOrSeconds;
+      } else if (optionsOrSeconds && typeof optionsOrSeconds === 'object') {
+        if (optionsOrSeconds.nextAttemptSeconds !== undefined) {
+          nextIntervalSeconds = optionsOrSeconds.nextAttemptSeconds;
+        }
+        if (optionsOrSeconds.consecutiveObservations !== undefined) {
+          consecutiveObservations = optionsOrSeconds.consecutiveObservations;
+        }
       }
 
       const nextAttemptAt = new Date(now.getTime() + nextIntervalSeconds * 1000).toISOString();

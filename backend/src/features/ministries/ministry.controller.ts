@@ -42,7 +42,7 @@ export class MinistryController extends BaseController {
   updateMinistry = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
       const userId = req.user!.id;
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const updated = await this.ministryService.updateMinistry(ministryId, userId, req.body);
       this.handleSuccess(res, updated);
     } catch (err) {
@@ -53,7 +53,7 @@ export class MinistryController extends BaseController {
   deleteMinistry = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
       const userId = req.user!.id;
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       await this.ministryService.deleteMinistry(ministryId, userId);
       this.handleSuccess(res, { message: 'Ministério excluído com sucesso.' });
     } catch (err) {
@@ -108,7 +108,7 @@ export class MinistryController extends BaseController {
   removeMember = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
       const userId = req.user!.id;
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const memberId = req.params.memberId as string;
       await this.ministryService.removeMember(ministryId, memberId, userId);
       this.handleSuccess(res, { message: 'Membro removido com sucesso.' });
@@ -119,7 +119,7 @@ export class MinistryController extends BaseController {
 
   updateMemberRole = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const memberId = req.params.memberId as string;
       const requestingUserId = req.user?.id;
       const updated = await this.ministryService.updateMemberDetails(ministryId, memberId, req.body, requestingUserId);
@@ -131,7 +131,7 @@ export class MinistryController extends BaseController {
 
   addMemberManually = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const requestingUserId = req.user?.id;
       const member = await this.ministryService.addMemberManually(ministryId, req.body, requestingUserId);
       this.handleCreated(res, member);
@@ -143,7 +143,7 @@ export class MinistryController extends BaseController {
   leaveMinistry = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
       const userId = req.user!.id;
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       await this.ministryService.leaveMinistry(ministryId, userId);
       this.handleSuccess(res, { message: 'Você saiu do ministério com sucesso.' });
     } catch (err) {

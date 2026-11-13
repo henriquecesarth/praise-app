@@ -107,9 +107,9 @@ vite-plugin-pwa e Workbox geram manifest e service worker no build. O precache c
 
 ## Supabase
 
-@supabase/supabase-js ainda está em dependencies, mas backend/src/lib/supabase.ts está explicitamente deprecated e retorna null. backend/src/config/env.ts mantém nomes Supabase como strings vazias. Nenhuma chamada ativa ao cliente é realizada.
+Resíduos legados de Supabase (`@supabase/supabase-js`, `backend/src/lib/supabase.ts` e campos vazios em `backend/src/config/env.ts`) foram removidos. Persistência exclusivamente em Cloud Firestore / Firebase Auth.
 
-Status: integração legada/inativa, não é persistência atual.
+Status: removido / ausente.
 
 ## Absent Integrations
 

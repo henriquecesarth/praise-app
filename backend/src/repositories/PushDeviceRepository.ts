@@ -25,15 +25,13 @@ export class PushDeviceRepository {
    * If the token was previously registered by another user, rejects with 409 PUSH_TOKEN_CONFLICT.
    * Cross-user token hijacking is forbidden; normal account switching relies on logout token invalidation.
    */
-  async upsertDevice(
+  private buildUpsertRecord(
+    existingSnap: { exists: boolean; data(): unknown },
+    docId: string,
     userId: string,
-    input: RegisterPushDeviceInput
-  ): Promise<PushDeviceRecord> {
-    const docId = PushDeviceRepository.generateDeviceId(input.fcm_token);
-    const docRef = this.collection.doc(docId);
-    const now = new Date().toISOString();
-
-    const existingSnap = await docRef.get();
+    input: RegisterPushDeviceInput,
+    now: string
+  ): { record: PushDeviceRecord; merge: boolean } {
     if (existingSnap.exists) {
       const data = existingSnap.data() as PushDeviceRecord;
       if (data.user_id !== userId) {
@@ -52,8 +50,7 @@ export class PushDeviceRepository {
         updated_at: now,
         last_seen_at: now,
       };
-      await docRef.set(updatedRecord, { merge: true });
-      return updatedRecord;
+      return { record: updatedRecord, merge: true };
     }
 
     const newRecord: PushDeviceRecord = {
@@ -67,9 +64,45 @@ export class PushDeviceRepository {
       updated_at: now,
       last_seen_at: now,
     };
+    return { record: newRecord, merge: false };
+  }
 
-    await docRef.set(newRecord);
-    return newRecord;
+  async upsertDevice(
+    userId: string,
+    input: RegisterPushDeviceInput
+  ): Promise<PushDeviceRecord> {
+    const docId = PushDeviceRepository.generateDeviceId(input.fcm_token);
+    const docRef = this.collection.doc(docId);
+    const now = new Date().toISOString();
+
+    const txRunner = (this.collection as unknown as {
+      firestore?: {
+        runTransaction?: <T>(fn: (tx: FirebaseFirestore.Transaction) => Promise<T>) => Promise<T>;
+      };
+    })?.firestore;
+
+    if (txRunner && typeof txRunner.runTransaction === 'function') {
+      return txRunner.runTransaction(async (tx) => {
+        const existingSnap = await tx.get(docRef);
+        const { record, merge } = this.buildUpsertRecord(existingSnap, docId, userId, input, now);
+        if (merge) {
+          tx.set(docRef, record, { merge: true });
+        } else {
+          tx.set(docRef, record);
+        }
+        return record;
+      });
+    }
+
+    // Fallback only for unit test collection stubs that omit .firestore
+    const existingSnap = await docRef.get();
+    const { record, merge } = this.buildUpsertRecord(existingSnap, docId, userId, input, now);
+    if (merge) {
+      await docRef.set(record, { merge: true });
+    } else {
+      await docRef.set(record);
+    }
+    return record;
   }
 
   /**

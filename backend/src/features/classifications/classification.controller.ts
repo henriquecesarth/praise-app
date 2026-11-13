@@ -10,7 +10,7 @@ export class ClassificationController extends BaseController {
 
   getClassifications = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const list = await this.service.getClassifications(ministryId);
       this.handleSuccess(res, list);
     } catch (err) {
@@ -20,7 +20,7 @@ export class ClassificationController extends BaseController {
 
   getClassificationById = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const id = req.params.classificationId as string;
       const item = await this.service.getClassificationById(id, ministryId);
       this.handleSuccess(res, item);
@@ -31,7 +31,7 @@ export class ClassificationController extends BaseController {
 
   createClassification = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const item = await this.service.createClassification(ministryId, req.body);
       this.handleCreated(res, item);
     } catch (err) {
@@ -41,7 +41,7 @@ export class ClassificationController extends BaseController {
 
   updateClassification = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const id = req.params.classificationId as string;
       const updated = await this.service.updateClassification(id, ministryId, req.body);
       this.handleSuccess(res, updated);
@@ -52,7 +52,7 @@ export class ClassificationController extends BaseController {
 
   deleteClassification = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const id = req.params.classificationId as string;
       await this.service.deleteClassification(id, ministryId);
       this.handleSuccess(res, { message: 'Classificação excluída com sucesso.' });

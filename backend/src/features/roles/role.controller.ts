@@ -10,7 +10,7 @@ export class RoleController extends BaseController {
 
   getRoles = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const roles = await this.roleService.getRoles(ministryId);
       this.handleSuccess(res, roles);
     } catch (err) {
@@ -20,7 +20,7 @@ export class RoleController extends BaseController {
 
   getRoleById = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const roleId = req.params.roleId as string;
       const role = await this.roleService.getRoleById(roleId, ministryId);
       this.handleSuccess(res, role);
@@ -31,7 +31,7 @@ export class RoleController extends BaseController {
 
   createRole = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const role = await this.roleService.createRole(ministryId, req.body);
       this.handleCreated(res, role);
     } catch (err) {
@@ -41,7 +41,7 @@ export class RoleController extends BaseController {
 
   updateRole = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const roleId = req.params.roleId as string;
       const role = await this.roleService.updateRole(roleId, ministryId, req.body);
       this.handleSuccess(res, role);
@@ -52,7 +52,7 @@ export class RoleController extends BaseController {
 
   deleteRole = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ministryId = req.params.ministryId as string;
+      const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const roleId = req.params.roleId as string;
       await this.roleService.deleteRole(roleId, ministryId);
       this.handleSuccess(res, { message: 'Função excluída com sucesso.' });

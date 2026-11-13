@@ -24,6 +24,56 @@ import { getCurrentBillingDate } from '../../../../utils/billing-date';
 import { providerBrlDecimalToCents, centsToProviderBrlDecimal } from '../../billing-money.utils';
 
 export const HTTP_CREATE_CHECKOUT_TIMEOUT_MS = 25_000;
+export const HTTP_DEFAULT_TIMEOUT_MS = 25_000;
+
+type ReadJsonSafe = <T = any>(syntaxFallback?: T) => Promise<T>;
+
+async function withTimedFetch<T>(
+  url: string,
+  init: RequestInit,
+  onResponse: (response: Response, readJsonSafe: ReadJsonSafe) => Promise<T>,
+  timeoutMs: number = HTTP_DEFAULT_TIMEOUT_MS
+): Promise<T> {
+  const controller = new AbortController();
+  let upstreamCleanup: (() => void) | undefined;
+
+  if (init.signal) {
+    if (init.signal.aborted) {
+      controller.abort(init.signal.reason);
+    } else {
+      const onUpstreamAbort = () => controller.abort(init.signal?.reason);
+      init.signal.addEventListener('abort', onUpstreamAbort, { once: true });
+      upstreamCleanup = () => init.signal?.removeEventListener('abort', onUpstreamAbort);
+    }
+  }
+
+  const timer = setTimeout(() => {
+    const timeoutError = new Error(`Asaas HTTP request timed out after ${timeoutMs}ms`);
+    timeoutError.name = 'TimeoutError';
+    controller.abort(timeoutError);
+  }, timeoutMs);
+
+  try {
+    const response = await globalThis.fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+    const readJsonSafe: ReadJsonSafe = async <J = any>(syntaxFallback?: J): Promise<J> => {
+      try {
+        return (await response.json()) as J;
+      } catch (err: any) {
+        if (err instanceof SyntaxError && syntaxFallback !== undefined) {
+          return syntaxFallback;
+        }
+        throw err;
+      }
+    };
+    return await onResponse(response, readJsonSafe);
+  } finally {
+    clearTimeout(timer);
+    upstreamCleanup?.();
+  }
+}
 
 export function buildOfficialCheckoutUrl(checkoutId: string, isSandbox: boolean): string {
   const host = isSandbox ? 'https://sandbox.asaas.com' : 'https://asaas.com';
@@ -120,11 +170,13 @@ export class AsaasBillingProvider implements BillingProvider {
 
     // Erros de rede, timeout, socket hangup ou abort são intrinsecamente incertos
     if (
+      error.name === 'TimeoutError' ||
       code === 'etimedout' ||
       code === 'econnreset' ||
       code === 'econnaborted' ||
       code === 'enetunreach' ||
       message.includes('timeout') ||
+      message.includes('timed out') ||
       message.includes('socket hang up') ||
       message.includes('abort')
     ) {
@@ -149,31 +201,35 @@ export class AsaasBillingProvider implements BillingProvider {
     }
 
     try {
-      const response = await fetch(`${this.apiUrl}/customers`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          access_token: this.apiKey,
+      return await withTimedFetch(
+        `${this.apiUrl}/customers`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            access_token: this.apiKey,
+          },
+          body: JSON.stringify({
+            name: params.ministryName || `Ministério ${params.ministryId}`,
+            email: params.email,
+            cpfCnpj: params.taxId,
+            phone: params.phone,
+            mobilePhone: params.phone,
+            externalReference: params.ministryId,
+            notificationDisabled: false,
+          }),
         },
-        body: JSON.stringify({
-          name: params.ministryName || `Ministério ${params.ministryId}`,
-          email: params.email,
-          cpfCnpj: params.taxId,
-          phone: params.phone,
-          mobilePhone: params.phone,
-          externalReference: params.ministryId,
-          notificationDisabled: false,
-        }),
-      });
+        async (response, readJsonSafe) => {
+          if (!response.ok) {
+            const errBody = (await readJsonSafe({})) as any;
+            const message = errBody?.errors?.[0]?.description || `Erro ao criar cliente no Asaas (HTTP ${response.status})`;
+            throw new AppError(400, message);
+          }
 
-      if (!response.ok) {
-        const errBody = (await response.json().catch(() => ({}))) as any;
-        const message = errBody?.errors?.[0]?.description || `Erro ao criar cliente no Asaas (HTTP ${response.status})`;
-        throw new AppError(400, message);
-      }
-
-      const data = (await response.json()) as { id: string };
-      return { providerCustomerId: data.id };
+          const data = (await readJsonSafe()) as { id: string };
+          return { providerCustomerId: data.id };
+        }
+      );
     } catch (err: any) {
       if (err instanceof AppError) throw err;
       throw new AppError(500, `Falha de comunicação com gateway Asaas: ${err.message}`);
@@ -191,24 +247,29 @@ export class AsaasBillingProvider implements BillingProvider {
       throw new AppError(500, 'Gateway Asaas não configurado.');
     }
     try {
-      const response = await fetch(`${this.apiUrl}/customers/${providerCustomerId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          access_token: this.apiKey,
+      await withTimedFetch(
+        `${this.apiUrl}/customers/${providerCustomerId}`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            access_token: this.apiKey,
+          },
+          body: JSON.stringify({
+            ...(params.name ? { name: params.name } : {}),
+            ...(params.email ? { email: params.email } : {}),
+            ...(params.phone ? { phone: params.phone, mobilePhone: params.phone } : {}),
+            ...(params.taxId ? { cpfCnpj: params.taxId } : {}),
+          }),
         },
-        body: JSON.stringify({
-          ...(params.name ? { name: params.name } : {}),
-          ...(params.email ? { email: params.email } : {}),
-          ...(params.phone ? { phone: params.phone, mobilePhone: params.phone } : {}),
-          ...(params.taxId ? { cpfCnpj: params.taxId } : {}),
-        }),
-      });
-      if (!response.ok) {
-        const errBody = (await response.json().catch(() => ({}))) as any;
-        const message = errBody?.errors?.[0]?.description || `Erro ao atualizar cliente no Asaas (HTTP ${response.status})`;
-        throw new AppError(502, message, { code: 'ASAAS_CUSTOMER_UPDATE_FAILED' });
-      }
+        async (response, readJsonSafe) => {
+          if (!response.ok) {
+            const errBody = (await readJsonSafe({})) as any;
+            const message = errBody?.errors?.[0]?.description || `Erro ao atualizar cliente no Asaas (HTTP ${response.status})`;
+            throw new AppError(502, message, { code: 'ASAAS_CUSTOMER_UPDATE_FAILED' });
+          }
+        }
+      );
     } catch (err: any) {
       if (err instanceof AppError) throw err;
       throw new AppError(502, `Falha de comunicação ao atualizar cliente no Asaas: ${err.message}`, {
@@ -231,26 +292,30 @@ export class AsaasBillingProvider implements BillingProvider {
         limit: '5',
       });
 
-      const response = await fetch(`${this.apiUrl}/customers?${queryParams.toString()}`, {
-        headers: {
-          access_token: this.apiKey,
+      return await withTimedFetch(
+        `${this.apiUrl}/customers?${queryParams.toString()}`,
+        {
+          headers: {
+            access_token: this.apiKey,
+          },
         },
-      });
+        async (response, readJsonSafe) => {
+          if (!response.ok) {
+            if (response.status === 404) return null;
+            throw new AppError(500, `Falha ao buscar cliente por externalReference no Asaas (HTTP ${response.status})`);
+          }
 
-      if (!response.ok) {
-        if (response.status === 404) return null;
-        throw new AppError(500, `Falha ao buscar cliente por externalReference no Asaas (HTTP ${response.status})`);
-      }
+          const data = (await readJsonSafe()) as any;
+          const items = Array.isArray(data.data) ? data.data : [];
+          const validCustomer = items.find((c: any) => c.externalReference === externalReference && !c.deleted);
 
-      const data = (await response.json()) as any;
-      const items = Array.isArray(data.data) ? data.data : [];
-      const validCustomer = items.find((c: any) => c.externalReference === externalReference && !c.deleted);
+          if (validCustomer && validCustomer.id) {
+            return { providerCustomerId: validCustomer.id };
+          }
 
-      if (validCustomer && validCustomer.id) {
-        return { providerCustomerId: validCustomer.id };
-      }
-
-      return null;
+          return null;
+        }
+      );
     } catch (err: any) {
       if (err instanceof AppError) throw err;
       throw new AppError(500, `Falha de comunicação ao buscar cliente por externalReference no Asaas: ${err.message}`);
@@ -278,34 +343,38 @@ export class AsaasBillingProvider implements BillingProvider {
         limit: '5',
       });
 
-      const response = await fetch(`${this.apiUrl}/subscriptions?${queryParams.toString()}`, {
-        headers: {
-          access_token: this.apiKey,
+      return await withTimedFetch(
+        `${this.apiUrl}/subscriptions?${queryParams.toString()}`,
+        {
+          headers: {
+            access_token: this.apiKey,
+          },
         },
-      });
+        async (response, readJsonSafe) => {
+          if (!response.ok) {
+            if (response.status === 404) return null;
+            throw new AppError(500, `Falha ao buscar assinatura por externalReference no Asaas (HTTP ${response.status})`);
+          }
 
-      if (!response.ok) {
-        if (response.status === 404) return null;
-        throw new AppError(500, `Falha ao buscar assinatura por externalReference no Asaas (HTTP ${response.status})`);
-      }
+          const data = (await readJsonSafe()) as any;
+          const items = Array.isArray(data.data) ? data.data : [];
+          const validSub = items.find((s: any) => s.externalReference === externalReference && s.status !== 'DELETED');
 
-      const data = (await response.json()) as any;
-      const items = Array.isArray(data.data) ? data.data : [];
-      const validSub = items.find((s: any) => s.externalReference === externalReference && s.status !== 'DELETED');
+          if (validSub && validSub.id) {
+            const valueCents = providerBrlDecimalToCents(validSub.value);
+            return {
+              providerSubscriptionId: validSub.id,
+              providerCustomerId: validSub.customer,
+              status: validSub.status,
+              valueCents,
+              cycle: validSub.cycle,
+              nextDueDate: validSub.nextDueDate,
+            };
+          }
 
-      if (validSub && validSub.id) {
-        const valueCents = providerBrlDecimalToCents(validSub.value);
-        return {
-          providerSubscriptionId: validSub.id,
-          providerCustomerId: validSub.customer,
-          status: validSub.status,
-          valueCents,
-          cycle: validSub.cycle,
-          nextDueDate: validSub.nextDueDate,
-        };
-      }
-
-      return null;
+          return null;
+        }
+      );
     } catch (err: any) {
       if (err instanceof AppError) throw err;
       throw new AppError(500, `Falha de comunicação ao buscar assinatura por externalReference no Asaas: ${err.message}`);
@@ -334,31 +403,38 @@ export class AsaasBillingProvider implements BillingProvider {
           limit: String(limit),
         });
 
-        const response = await fetch(`${this.apiUrl}/payments?${queryParams.toString()}`, {
-          headers: {
-            access_token: this.apiKey,
+        const page = await withTimedFetch(
+          `${this.apiUrl}/payments?${queryParams.toString()}`,
+          {
+            headers: {
+              access_token: this.apiKey,
+            },
           },
-        });
+          async (response, readJsonSafe) => {
+            if (!response.ok) {
+              if (response.status === 404) return { earlyReturn: [] as ProviderPaymentRecord[] };
+              const errBody = (await readJsonSafe({})) as any;
+              const message =
+                errBody?.errors?.[0]?.description ||
+                `Falha ao listar cobranças por checkoutSession no Asaas (HTTP ${response.status})`;
+              const appErr = new AppError(response.status, message);
+              (appErr as any).statusCode = response.status;
+              (appErr as any).status = response.status;
+              (appErr as any).isProviderResponse = true;
+              (appErr as any).responseBody = errBody;
+              throw appErr;
+            }
 
-        if (!response.ok) {
-          if (response.status === 404) return [];
-          const errBody = (await response.json().catch(() => ({}))) as any;
-          const message =
-            errBody?.errors?.[0]?.description ||
-            `Falha ao listar cobranças por checkoutSession no Asaas (HTTP ${response.status})`;
-          const appErr = new AppError(response.status, message);
-          (appErr as any).statusCode = response.status;
-          (appErr as any).status = response.status;
-          (appErr as any).isProviderResponse = true;
-          (appErr as any).responseBody = errBody;
-          throw appErr;
-        }
-
-        const data = (await response.json()) as {
-          hasMore?: boolean;
-          data?: any[];
-          totalCount?: number;
-        };
+            const data = (await readJsonSafe()) as {
+              hasMore?: boolean;
+              data?: any[];
+              totalCount?: number;
+            };
+            return { data };
+          }
+        );
+        if (page.earlyReturn) return page.earlyReturn;
+        const data = page.data!;
 
         const items = Array.isArray(data.data) ? data.data : [];
         for (const item of items) {
@@ -465,29 +541,34 @@ export class AsaasBillingProvider implements BillingProvider {
         };
       }
 
-      const response = await fetch(`${this.apiUrl}/checkouts`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          access_token: this.apiKey,
+      return await withTimedFetch(
+        `${this.apiUrl}/checkouts`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            access_token: this.apiKey,
+          },
+          body: JSON.stringify(payload),
         },
-        body: JSON.stringify(payload),
-      });
+        async (response, readJsonSafe) => {
+          if (!response.ok) {
+            const errBody = (await readJsonSafe({})) as any;
+            const message = errBody?.errors?.[0]?.description || `Erro ao gerar checkout no Asaas (HTTP ${response.status})`;
+            throw new AppError(400, message);
+          }
 
-      if (!response.ok) {
-        const errBody = (await response.json().catch(() => ({}))) as any;
-        const message = errBody?.errors?.[0]?.description || `Erro ao gerar checkout no Asaas (HTTP ${response.status})`;
-        throw new AppError(400, message);
-      }
+          const data = (await readJsonSafe()) as { id: string; link?: string; url?: string };
+          const checkoutUrl = data.link || data.url || `https://sandbox.asaas.com/checkoutSession/show/${data.id}`;
 
-      const data = (await response.json()) as { id: string; link?: string; url?: string };
-      const checkoutUrl = data.link || data.url || `https://sandbox.asaas.com/checkoutSession/show/${data.id}`;
-
-      return {
-        checkoutUrl,
-        checkoutId: data.id,
-        expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-      };
+          return {
+            checkoutUrl,
+            checkoutId: data.id,
+            expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          };
+        },
+        HTTP_CREATE_CHECKOUT_TIMEOUT_MS
+      );
     } catch (err: any) {
       if (err instanceof AppError) throw err;
       throw new AppError(500, `Falha de comunicação com gateway Asaas: ${err.message}`);
@@ -566,42 +647,46 @@ export class AsaasBillingProvider implements BillingProvider {
       }
 
       const isSandbox = this.apiUrl.includes('sandbox');
-      const response = await fetch(`${this.apiUrl}/checkouts`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          access_token: this.apiKey,
+      return await withTimedFetch(
+        `${this.apiUrl}/checkouts`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            access_token: this.apiKey,
+          },
+          body: JSON.stringify(payload),
         },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(HTTP_CREATE_CHECKOUT_TIMEOUT_MS),
-      });
+        async (response, readJsonSafe) => {
+          if (!response.ok) {
+            const errBody = (await readJsonSafe({})) as any;
+            const message =
+              errBody?.errors?.[0]?.description ||
+              `Falha ao criar checkout avulso no Asaas (HTTP ${response.status})`;
+            const error = new AppError(400, message);
+            (error as any).status = response.status;
+            (error as any).statusCode = response.status;
+            (error as any).responseBody = errBody;
+            (error as any).isProviderResponse = true;
+            throw error;
+          }
 
-      if (!response.ok) {
-        const errBody = (await response.json().catch(() => ({}))) as any;
-        const message =
-          errBody?.errors?.[0]?.description ||
-          `Falha ao criar checkout avulso no Asaas (HTTP ${response.status})`;
-        const error = new AppError(400, message);
-        (error as any).status = response.status;
-        (error as any).statusCode = response.status;
-        (error as any).responseBody = errBody;
-        (error as any).isProviderResponse = true;
-        throw error;
-      }
+          const data = (await readJsonSafe({})) as {
+            id?: string;
+            link?: string;
+            expiresAt?: string;
+          };
 
-      const data = (await response.json().catch(() => ({}))) as {
-        id?: string;
-        link?: string;
-        expiresAt?: string;
-      };
+          const checkoutUrl = validateAndResolveCheckoutUrl(data, isSandbox);
 
-      const checkoutUrl = validateAndResolveCheckoutUrl(data, isSandbox);
-
-      return {
-        checkoutUrl,
-        checkoutId: data.id!,
-        expiresAt: data.expiresAt || null,
-      };
+          return {
+            checkoutUrl,
+            checkoutId: data.id!,
+            expiresAt: data.expiresAt || null,
+          };
+        },
+        HTTP_CREATE_CHECKOUT_TIMEOUT_MS
+      );
     } catch (err: any) {
       if (err instanceof AppError) throw err;
       throw new AppError(500, `Falha de comunicação com gateway Asaas: ${err.message}`);
@@ -624,33 +709,37 @@ export class AsaasBillingProvider implements BillingProvider {
     }
 
     try {
-      const response = await fetch(`${this.apiUrl}/checkouts/${cleanId}/cancel`, {
-        method: 'POST',
-        headers: {
-          access_token: this.apiKey,
-          'Content-Type': 'application/json',
+      return await withTimedFetch(
+        `${this.apiUrl}/checkouts/${cleanId}/cancel`,
+        {
+          method: 'POST',
+          headers: {
+            access_token: this.apiKey,
+            'Content-Type': 'application/json',
+          },
         },
-        signal: AbortSignal.timeout(HTTP_CREATE_CHECKOUT_TIMEOUT_MS),
-      });
+        async (response, readJsonSafe) => {
+          if (!response.ok) {
+            const errBody = (await readJsonSafe({})) as any;
+            const message =
+              errBody?.errors?.[0]?.description ||
+              `Falha ao cancelar checkout no Asaas (HTTP ${response.status})`;
+            const appErr = new AppError(response.status >= 500 ? 500 : response.status, message);
+            (appErr as any).statusCode = response.status;
+            (appErr as any).status = response.status;
+            (appErr as any).isProviderResponse = true;
+            (appErr as any).responseBody = errBody;
+            throw appErr;
+          }
 
-      if (!response.ok) {
-        const errBody = (await response.json().catch(() => ({}))) as any;
-        const message =
-          errBody?.errors?.[0]?.description ||
-          `Falha ao cancelar checkout no Asaas (HTTP ${response.status})`;
-        const appErr = new AppError(response.status >= 500 ? 500 : response.status, message);
-        (appErr as any).statusCode = response.status;
-        (appErr as any).status = response.status;
-        (appErr as any).isProviderResponse = true;
-        (appErr as any).responseBody = errBody;
-        throw appErr;
-      }
-
-      // O gateway Asaas garante HTTP 200 para sucesso de cancelamento.
-      // O adapter normaliza deterministicamente qualquer resposta HTTP 200 para
-      // { success: true, status: 'CANCELED' }, sem depender de formato específico do payload de retorno.
-      await response.json().catch(() => ({}));
-      return { success: true, status: 'CANCELED' };
+          // O gateway Asaas garante HTTP 200 para sucesso de cancelamento.
+          // O adapter normaliza deterministicamente qualquer resposta HTTP 200 para
+          // { success: true, status: 'CANCELED' }, sem depender de formato específico do payload de retorno.
+          await readJsonSafe({});
+          return { success: true, status: 'CANCELED' };
+        },
+        HTTP_CREATE_CHECKOUT_TIMEOUT_MS
+      );
     } catch (err: any) {
       if (err instanceof AppError) throw err;
       throw new AppError(500, `Falha de comunicação ao cancelar checkout no Asaas: ${err.message}`);
@@ -668,22 +757,26 @@ export class AsaasBillingProvider implements BillingProvider {
     }
 
     try {
-      const response = await fetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
-        method: 'PUT',
-        headers: {
-          access_token: this.apiKey,
-          'Content-Type': 'application/json',
+      return await withTimedFetch(
+        `${this.apiUrl}/subscriptions/${providerSubscriptionId}`,
+        {
+          method: 'PUT',
+          headers: {
+            access_token: this.apiKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ status: 'INACTIVE' }),
         },
-        body: JSON.stringify({ status: 'INACTIVE' }),
-      });
+        async (response, readJsonSafe) => {
+          if (!response.ok && response.status !== 404) {
+            const errBody = (await readJsonSafe({})) as any;
+            const message = errBody?.errors?.[0]?.description || 'Erro ao inativar assinatura no Asaas';
+            throw new AppError(400, message);
+          }
 
-      if (!response.ok && response.status !== 404) {
-        const errBody = (await response.json().catch(() => ({}))) as any;
-        const message = errBody?.errors?.[0]?.description || 'Erro ao inativar assinatura no Asaas';
-        throw new AppError(400, message);
-      }
-
-      return { success: true };
+          return { success: true };
+        }
+      );
     } catch (err: any) {
       if (err instanceof AppError) throw err;
       throw new AppError(500, `Falha de comunicação ao inativar assinatura Asaas: ${err.message}`);
@@ -707,54 +800,58 @@ export class AsaasBillingProvider implements BillingProvider {
     }
 
     try {
-      const response = await fetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
-        method: 'PUT',
-        headers: {
-          access_token: this.apiKey,
-          'Content-Type': 'application/json',
+      return await withTimedFetch(
+        `${this.apiUrl}/subscriptions/${providerSubscriptionId}`,
+        {
+          method: 'PUT',
+          headers: {
+            access_token: this.apiKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ status: 'INACTIVE' }),
         },
-        body: JSON.stringify({ status: 'INACTIVE' }),
-      });
+        async (response, readJsonSafe) => {
+          if (response.ok) {
+            return {
+              outcome: 'SUCCESS' as const,
+              httpStatus: response.status,
+            };
+          }
 
-      if (response.ok) {
-        return {
-          outcome: 'SUCCESS',
-          httpStatus: response.status,
-        };
-      }
+          if (response.status === 404) {
+            return {
+              outcome: 'NOT_FOUND' as const,
+              httpStatus: 404,
+              errorMessage: `Assinatura ${providerSubscriptionId} não encontrada para inativação no Asaas (404).`,
+            };
+          }
 
-      if (response.status === 404) {
-        return {
-          outcome: 'NOT_FOUND',
-          httpStatus: 404,
-          errorMessage: `Assinatura ${providerSubscriptionId} não encontrada para inativação no Asaas (404).`,
-        };
-      }
+          if (response.status === 401 || response.status === 403) {
+            return {
+              outcome: 'AUTH_ERROR' as const,
+              httpStatus: response.status,
+              errorMessage: `Falha de autenticação/autorização ao inativar assinatura no Asaas (HTTP ${response.status}).`,
+            };
+          }
 
-      if (response.status === 401 || response.status === 403) {
-        return {
-          outcome: 'AUTH_ERROR',
-          httpStatus: response.status,
-          errorMessage: `Falha de autenticação/autorização ao inativar assinatura no Asaas (HTTP ${response.status}).`,
-        };
-      }
+          if (response.status >= 500) {
+            return {
+              outcome: 'TRANSIENT_ERROR' as const,
+              httpStatus: response.status,
+              errorMessage: `Erro temporário no servidor do gateway Asaas (HTTP ${response.status}).`,
+            };
+          }
 
-      if (response.status >= 500) {
-        return {
-          outcome: 'TRANSIENT_ERROR',
-          httpStatus: response.status,
-          errorMessage: `Erro temporário no servidor do gateway Asaas (HTTP ${response.status}).`,
-        };
-      }
+          const errBody = (await readJsonSafe({})) as any;
+          const message = errBody?.errors?.[0]?.description || `Erro ao inativar assinatura no Asaas (HTTP ${response.status})`;
 
-      const errBody = (await response.json().catch(() => ({}))) as any;
-      const message = errBody?.errors?.[0]?.description || `Erro ao inativar assinatura no Asaas (HTTP ${response.status})`;
-
-      return {
-        outcome: 'CLIENT_ERROR',
-        httpStatus: response.status,
-        errorMessage: message,
-      };
+          return {
+            outcome: 'CLIENT_ERROR' as const,
+            httpStatus: response.status,
+            errorMessage: message,
+          };
+        }
+      );
     } catch (err: any) {
       return {
         outcome: 'TRANSIENT_ERROR',
@@ -774,20 +871,24 @@ export class AsaasBillingProvider implements BillingProvider {
     }
 
     try {
-      const response = await fetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
-        method: 'DELETE',
-        headers: {
-          access_token: this.apiKey,
+      return await withTimedFetch(
+        `${this.apiUrl}/subscriptions/${providerSubscriptionId}`,
+        {
+          method: 'DELETE',
+          headers: {
+            access_token: this.apiKey,
+          },
         },
-      });
+        async (response, readJsonSafe) => {
+          if (!response.ok && response.status !== 404) {
+            const errBody = (await readJsonSafe({})) as any;
+            const message = errBody?.errors?.[0]?.description || 'Erro ao remover assinatura no Asaas';
+            throw new AppError(400, message);
+          }
 
-      if (!response.ok && response.status !== 404) {
-        const errBody = (await response.json().catch(() => ({}))) as any;
-        const message = errBody?.errors?.[0]?.description || 'Erro ao remover assinatura no Asaas';
-        throw new AppError(400, message);
-      }
-
-      return { success: true };
+          return { success: true };
+        }
+      );
     } catch (err: any) {
       if (err instanceof AppError) throw err;
       throw new AppError(500, `Falha de comunicação ao remover assinatura Asaas: ${err.message}`);
@@ -821,22 +922,26 @@ export class AsaasBillingProvider implements BillingProvider {
         bodyPayload.nextDueDate = nextDueDate;
       }
 
-      const response = await fetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
-        method: 'PUT',
-        headers: {
-          access_token: this.apiKey,
-          'Content-Type': 'application/json',
+      return await withTimedFetch(
+        `${this.apiUrl}/subscriptions/${providerSubscriptionId}`,
+        {
+          method: 'PUT',
+          headers: {
+            access_token: this.apiKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(bodyPayload),
         },
-        body: JSON.stringify(bodyPayload),
-      });
+        async (response, readJsonSafe) => {
+          if (!response.ok) {
+            const errBody = (await readJsonSafe({})) as any;
+            const message = errBody?.errors?.[0]?.description || 'Erro ao reativar assinatura no Asaas';
+            throw new AppError(400, message);
+          }
 
-      if (!response.ok) {
-        const errBody = (await response.json().catch(() => ({}))) as any;
-        const message = errBody?.errors?.[0]?.description || 'Erro ao reativar assinatura no Asaas';
-        throw new AppError(400, message);
-      }
-
-      return { success: true };
+          return { success: true };
+        }
+      );
     } catch (err: any) {
       if (err instanceof AppError) throw err;
       throw new AppError(500, `Falha de comunicação ao reativar assinatura Asaas: ${err.message}`);
@@ -867,64 +972,68 @@ export class AsaasBillingProvider implements BillingProvider {
         bodyPayload.nextDueDate = nextDueDate;
       }
 
-      const response = await fetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
-        method: 'PUT',
-        headers: {
-          access_token: this.apiKey,
-          'Content-Type': 'application/json',
+      return await withTimedFetch(
+        `${this.apiUrl}/subscriptions/${providerSubscriptionId}`,
+        {
+          method: 'PUT',
+          headers: {
+            access_token: this.apiKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(bodyPayload),
         },
-        body: JSON.stringify(bodyPayload),
-      });
+        async (response, readJsonSafe) => {
+          if (response.ok) {
+            const data = (await readJsonSafe(null)) as any;
+            if (!data || typeof data !== 'object') {
+              return {
+                outcome: 'MALFORMED_RESPONSE' as const,
+                httpStatus: response.status,
+                errorMessage: 'Gateway Asaas retornou payload malformado ou vazio ao reativar assinatura.',
+              };
+            }
+            return {
+              outcome: 'SUCCESS' as const,
+              httpStatus: response.status,
+              status: data.status,
+              nextDueDate: data.nextDueDate || null,
+            };
+          }
 
-      if (response.ok) {
-        const data = (await response.json().catch(() => null)) as any;
-        if (!data || typeof data !== 'object') {
+          if (response.status === 404) {
+            return {
+              outcome: 'NOT_FOUND' as const,
+              httpStatus: 404,
+              errorMessage: `Assinatura ${providerSubscriptionId} não encontrada para reativação no Asaas (404).`,
+            };
+          }
+
+          if (response.status === 401 || response.status === 403) {
+            return {
+              outcome: 'AUTH_ERROR' as const,
+              httpStatus: response.status,
+              errorMessage: `Falha de autenticação/autorização ao reativar assinatura no Asaas (HTTP ${response.status}).`,
+            };
+          }
+
+          if (response.status >= 500) {
+            return {
+              outcome: 'TRANSIENT_ERROR' as const,
+              httpStatus: response.status,
+              errorMessage: `Erro temporário no servidor do gateway Asaas ao reativar assinatura (HTTP ${response.status}).`,
+            };
+          }
+
+          const errBody = (await readJsonSafe({})) as any;
+          const message = errBody?.errors?.[0]?.description || `Erro ao reativar assinatura no Asaas (HTTP ${response.status})`;
+
           return {
-            outcome: 'MALFORMED_RESPONSE',
+            outcome: 'CLIENT_ERROR' as const,
             httpStatus: response.status,
-            errorMessage: 'Gateway Asaas retornou payload malformado ou vazio ao reativar assinatura.',
+            errorMessage: message,
           };
         }
-        return {
-          outcome: 'SUCCESS',
-          httpStatus: response.status,
-          status: data.status,
-          nextDueDate: data.nextDueDate || null,
-        };
-      }
-
-      if (response.status === 404) {
-        return {
-          outcome: 'NOT_FOUND',
-          httpStatus: 404,
-          errorMessage: `Assinatura ${providerSubscriptionId} não encontrada para reativação no Asaas (404).`,
-        };
-      }
-
-      if (response.status === 401 || response.status === 403) {
-        return {
-          outcome: 'AUTH_ERROR',
-          httpStatus: response.status,
-          errorMessage: `Falha de autenticação/autorização ao reativar assinatura no Asaas (HTTP ${response.status}).`,
-        };
-      }
-
-      if (response.status >= 500) {
-        return {
-          outcome: 'TRANSIENT_ERROR',
-          httpStatus: response.status,
-          errorMessage: `Erro temporário no servidor do gateway Asaas ao reativar assinatura (HTTP ${response.status}).`,
-        };
-      }
-
-      const errBody = (await response.json().catch(() => ({}))) as any;
-      const message = errBody?.errors?.[0]?.description || `Erro ao reativar assinatura no Asaas (HTTP ${response.status})`;
-
-      return {
-        outcome: 'CLIENT_ERROR',
-        httpStatus: response.status,
-        errorMessage: message,
-      };
+      );
     } catch (err: any) {
       return {
         outcome: 'TRANSIENT_ERROR',
@@ -961,27 +1070,31 @@ export class AsaasBillingProvider implements BillingProvider {
           queryParams.set('status', statusFilter);
         }
 
-        const response = await fetch(
+        const page = await withTimedFetch(
           `${this.apiUrl}/subscriptions/${providerSubscriptionId}/payments?${queryParams.toString()}`,
           {
             headers: {
               access_token: this.apiKey,
             },
+          },
+          async (response, readJsonSafe) => {
+            if (!response.ok) {
+              if (response.status === 404) return { earlyReturn: [] as ProviderPaymentRecord[] };
+              const errBody = (await readJsonSafe({})) as any;
+              const message = errBody?.errors?.[0]?.description || `Falha ao listar cobranças da assinatura Asaas (HTTP ${response.status})`;
+              throw new AppError(400, message);
+            }
+
+            const data = (await readJsonSafe()) as {
+              hasMore?: boolean;
+              data?: any[];
+              totalCount?: number;
+            };
+            return { data };
           }
         );
-
-        if (!response.ok) {
-          if (response.status === 404) return [];
-          const errBody = (await response.json().catch(() => ({}))) as any;
-          const message = errBody?.errors?.[0]?.description || `Falha ao listar cobranças da assinatura Asaas (HTTP ${response.status})`;
-          throw new AppError(400, message);
-        }
-
-        const data = (await response.json()) as {
-          hasMore?: boolean;
-          data?: any[];
-          totalCount?: number;
-        };
+        if (page.earlyReturn) return page.earlyReturn;
+        const data = page.data!;
 
         const items = Array.isArray(data.data) ? data.data : [];
         for (const item of items) {
@@ -1058,48 +1171,60 @@ export class AsaasBillingProvider implements BillingProvider {
           limit: String(limit),
         });
 
-        const response = await fetch(
+        const page = await withTimedFetch(
           `${this.apiUrl}/subscriptions/${providerSubscriptionId}/payments?${queryParams.toString()}`,
           {
             headers: {
               access_token: this.apiKey,
             },
+          },
+          async (response, readJsonSafe) => {
+            if (response.status === 404) {
+              return {
+                exit: {
+                  outcome: 'NOT_FOUND' as const,
+                  httpStatus: 404,
+                  errorMessage: `Assinatura ${providerSubscriptionId} não encontrada ao listar cobranças (404).`,
+                },
+              };
+            }
+
+            if (response.status === 401 || response.status === 403) {
+              return {
+                exit: {
+                  outcome: 'AUTH_ERROR' as const,
+                  httpStatus: response.status,
+                  errorMessage: `Falha de autenticação/autorização ao listar cobranças no Asaas (HTTP ${response.status}).`,
+                },
+              };
+            }
+
+            if (response.status >= 500) {
+              return {
+                exit: {
+                  outcome: 'TRANSIENT_ERROR' as const,
+                  httpStatus: response.status,
+                  errorMessage: `Erro temporário no servidor do gateway Asaas (HTTP ${response.status}).`,
+                },
+              };
+            }
+
+            if (!response.ok) {
+              return {
+                exit: {
+                  outcome: 'TRANSIENT_ERROR' as const,
+                  httpStatus: response.status,
+                  errorMessage: `Resposta de erro do gateway Asaas ao listar cobranças (HTTP ${response.status}).`,
+                },
+              };
+            }
+
+            const data = (await readJsonSafe(null)) as any;
+            return { data };
           }
         );
-
-        if (response.status === 404) {
-          return {
-            outcome: 'NOT_FOUND',
-            httpStatus: 404,
-            errorMessage: `Assinatura ${providerSubscriptionId} não encontrada ao listar cobranças (404).`,
-          };
-        }
-
-        if (response.status === 401 || response.status === 403) {
-          return {
-            outcome: 'AUTH_ERROR',
-            httpStatus: response.status,
-            errorMessage: `Falha de autenticação/autorização ao listar cobranças no Asaas (HTTP ${response.status}).`,
-          };
-        }
-
-        if (response.status >= 500) {
-          return {
-            outcome: 'TRANSIENT_ERROR',
-            httpStatus: response.status,
-            errorMessage: `Erro temporário no servidor do gateway Asaas (HTTP ${response.status}).`,
-          };
-        }
-
-        if (!response.ok) {
-          return {
-            outcome: 'TRANSIENT_ERROR',
-            httpStatus: response.status,
-            errorMessage: `Resposta de erro do gateway Asaas ao listar cobranças (HTTP ${response.status}).`,
-          };
-        }
-
-        const data = (await response.json().catch(() => null)) as any;
+        if (page.exit) return page.exit;
+        const data = page.data;
         if (!data || typeof data !== 'object' || !Array.isArray(data.data)) {
           return {
             outcome: 'MALFORMED_RESPONSE',
@@ -1199,20 +1324,24 @@ export class AsaasBillingProvider implements BillingProvider {
     }
 
     try {
-      const response = await fetch(`${this.apiUrl}/payments/${providerPaymentId}`, {
-        method: 'DELETE',
-        headers: {
-          access_token: this.apiKey,
+      return await withTimedFetch(
+        `${this.apiUrl}/payments/${providerPaymentId}`,
+        {
+          method: 'DELETE',
+          headers: {
+            access_token: this.apiKey,
+          },
         },
-      });
+        async (response, readJsonSafe) => {
+          if (!response.ok && response.status !== 404) {
+            const errBody = (await readJsonSafe({})) as any;
+            const message = errBody?.errors?.[0]?.description || `Erro ao remover cobrança no Asaas (HTTP ${response.status})`;
+            throw new AppError(response.status >= 500 ? 500 : 400, message);
+          }
 
-      if (!response.ok && response.status !== 404) {
-        const errBody = (await response.json().catch(() => ({}))) as any;
-        const message = errBody?.errors?.[0]?.description || `Erro ao remover cobrança no Asaas (HTTP ${response.status})`;
-        throw new AppError(response.status >= 500 ? 500 : 400, message);
-      }
-
-      return { success: true };
+          return { success: true };
+        }
+      );
     } catch (err: any) {
       if (err instanceof AppError) throw err;
       throw new AppError(500, `Falha de comunicação ao remover cobrança Asaas: ${err.message}`);
@@ -1228,34 +1357,38 @@ export class AsaasBillingProvider implements BillingProvider {
     }
 
     try {
-      const response = await fetch(`${this.apiUrl}/payments/${providerPaymentId}`, {
-        headers: {
-          access_token: this.apiKey,
+      return await withTimedFetch(
+        `${this.apiUrl}/payments/${providerPaymentId}`,
+        {
+          headers: {
+            access_token: this.apiKey,
+          },
         },
-      });
+        async (response, readJsonSafe) => {
+          if (!response.ok) {
+            if (response.status === 404) return null;
+            throw new AppError(500, `Falha ao consultar cobrança Asaas (HTTP ${response.status})`);
+          }
 
-      if (!response.ok) {
-        if (response.status === 404) return null;
-        throw new AppError(500, `Falha ao consultar cobrança Asaas (HTTP ${response.status})`);
-      }
+          const item = (await readJsonSafe()) as any;
+          const amountCents = providerBrlDecimalToCents(item.value);
 
-      const item = (await response.json()) as any;
-      const amountCents = providerBrlDecimalToCents(item.value);
-
-      return {
-        id: item.id,
-        subscriptionId: item.subscription,
-        customerId: item.customer,
-        status: item.status,
-        dueDate: item.dueDate,
-        ...(item.originalDueDate ? { originalDueDate: item.originalDueDate } : {}),
-        amountCents,
-        billingType: item.billingType,
-        externalReference: item.externalReference,
-        ...(item.invoiceUrl ? { invoiceUrl: item.invoiceUrl } : {}),
-        ...(item.paymentDate ? { paymentDate: item.paymentDate } : {}),
-        ...(item.clientPaymentDate ? { clientPaymentDate: item.clientPaymentDate } : {}),
-      };
+          return {
+            id: item.id,
+            subscriptionId: item.subscription,
+            customerId: item.customer,
+            status: item.status,
+            dueDate: item.dueDate,
+            ...(item.originalDueDate ? { originalDueDate: item.originalDueDate } : {}),
+            amountCents,
+            billingType: item.billingType,
+            externalReference: item.externalReference,
+            ...(item.invoiceUrl ? { invoiceUrl: item.invoiceUrl } : {}),
+            ...(item.paymentDate ? { paymentDate: item.paymentDate } : {}),
+            ...(item.clientPaymentDate ? { clientPaymentDate: item.clientPaymentDate } : {}),
+          };
+        }
+      );
     } catch (err: any) {
       if (err instanceof AppError) throw err;
       throw new AppError(500, `Falha de comunicação ao consultar cobrança Asaas: ${err.message}`);
@@ -1276,24 +1409,28 @@ export class AsaasBillingProvider implements BillingProvider {
     }
 
     try {
-      const response = await fetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
-        headers: {
-          access_token: this.apiKey,
+      return await withTimedFetch(
+        `${this.apiUrl}/subscriptions/${providerSubscriptionId}`,
+        {
+          headers: {
+            access_token: this.apiKey,
+          },
         },
-      });
+        async (response, readJsonSafe) => {
+          if (!response.ok) {
+            if (response.status === 404) return null;
+            throw new AppError(500, `Falha ao consultar assinatura Asaas (HTTP ${response.status})`);
+          }
 
-      if (!response.ok) {
-        if (response.status === 404) return null;
-        throw new AppError(500, `Falha ao consultar assinatura Asaas (HTTP ${response.status})`);
-      }
-
-      const data = (await response.json()) as any;
-      return {
-        status: data.status,
-        value: data.value,
-        cycle: data.cycle,
-        nextDueDate: data.nextDueDate,
-      };
+          const data = (await readJsonSafe()) as any;
+          return {
+            status: data.status,
+            value: data.value,
+            cycle: data.cycle,
+            nextDueDate: data.nextDueDate,
+          };
+        }
+      );
     } catch (err: any) {
       if (err instanceof AppError) throw err;
       throw new AppError(500, `Falha de comunicação com gateway Asaas: ${err.message}`);
@@ -1315,69 +1452,73 @@ export class AsaasBillingProvider implements BillingProvider {
     }
 
     try {
-      const response = await fetch(`${this.apiUrl}/subscriptions/${providerSubscriptionId}`, {
-        headers: {
-          access_token: this.apiKey,
+      return await withTimedFetch(
+        `${this.apiUrl}/subscriptions/${providerSubscriptionId}`,
+        {
+          headers: {
+            access_token: this.apiKey,
+          },
         },
-      });
+        async (response, readJsonSafe) => {
+          if (response.status === 404) {
+            return {
+              outcome: 'NOT_FOUND' as const,
+              httpStatus: 404,
+              errorMessage: `Assinatura ${providerSubscriptionId} não encontrada no Asaas (404).`,
+            };
+          }
 
-      if (response.status === 404) {
-        return {
-          outcome: 'NOT_FOUND',
-          httpStatus: 404,
-          errorMessage: `Assinatura ${providerSubscriptionId} não encontrada no Asaas (404).`,
-        };
-      }
+          if (response.status === 401 || response.status === 403) {
+            return {
+              outcome: 'AUTH_ERROR' as const,
+              httpStatus: response.status,
+              errorMessage: `Falha de autenticação/autorização no gateway Asaas (HTTP ${response.status}).`,
+            };
+          }
 
-      if (response.status === 401 || response.status === 403) {
-        return {
-          outcome: 'AUTH_ERROR',
-          httpStatus: response.status,
-          errorMessage: `Falha de autenticação/autorização no gateway Asaas (HTTP ${response.status}).`,
-        };
-      }
+          if (response.status >= 500) {
+            return {
+              outcome: 'TRANSIENT_ERROR' as const,
+              httpStatus: response.status,
+              errorMessage: `Erro temporário no servidor do gateway Asaas (HTTP ${response.status}).`,
+            };
+          }
 
-      if (response.status >= 500) {
-        return {
-          outcome: 'TRANSIENT_ERROR',
-          httpStatus: response.status,
-          errorMessage: `Erro temporário no servidor do gateway Asaas (HTTP ${response.status}).`,
-        };
-      }
+          if (!response.ok) {
+            return {
+              outcome: 'TRANSIENT_ERROR' as const,
+              httpStatus: response.status,
+              errorMessage: `Resposta de erro do gateway Asaas (HTTP ${response.status}).`,
+            };
+          }
 
-      if (!response.ok) {
-        return {
-          outcome: 'TRANSIENT_ERROR',
-          httpStatus: response.status,
-          errorMessage: `Resposta de erro do gateway Asaas (HTTP ${response.status}).`,
-        };
-      }
+          const data = (await readJsonSafe(null)) as any;
+          if (!data || typeof data !== 'object' || typeof data.status !== 'string' || !data.status.trim()) {
+            return {
+              outcome: 'MALFORMED_RESPONSE' as const,
+              httpStatus: 200,
+              errorMessage: 'Gateway Asaas retornou payload malformado para consulta de assinatura.',
+            };
+          }
 
-      const data = (await response.json().catch(() => null)) as any;
-      if (!data || typeof data !== 'object' || typeof data.status !== 'string' || !data.status.trim()) {
-        return {
-          outcome: 'MALFORMED_RESPONSE',
-          httpStatus: 200,
-          errorMessage: 'Gateway Asaas retornou payload malformado para consulta de assinatura.',
-        };
-      }
+          const rawValue = data.value !== undefined ? data.value : undefined;
+          const valueCents = rawValue !== undefined ? providerBrlDecimalToCents(rawValue) : undefined;
 
-      const rawValue = data.value !== undefined ? data.value : undefined;
-      const valueCents = rawValue !== undefined ? providerBrlDecimalToCents(rawValue) : undefined;
-
-      return {
-        outcome: 'FOUND',
-        status: data.status,
-        rawSubscription: {
-          status: data.status,
-          value: data.value,
-          valueCents,
-          cycle: data.cycle,
-          nextDueDate: data.nextDueDate,
-          customer: data.customer,
-        },
-        httpStatus: 200,
-      };
+          return {
+            outcome: 'FOUND' as const,
+            status: data.status,
+            rawSubscription: {
+              status: data.status,
+              value: data.value,
+              valueCents,
+              cycle: data.cycle,
+              nextDueDate: data.nextDueDate,
+              customer: data.customer,
+            },
+            httpStatus: 200,
+          };
+        }
+      );
     } catch (err: any) {
       return {
         outcome: 'TRANSIENT_ERROR',
