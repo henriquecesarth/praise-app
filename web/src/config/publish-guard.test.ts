@@ -1,6 +1,6 @@
 import {it,expect} from 'vitest';
 import {validatePublishEnvironment as validate} from './publish-guard';
-const preview={FIREBASE_STAGING_PROJECT_ID:'louvaio-staging',FIREBASE_STAGING_WEB_API_KEY:'fixture-only',VERCEL_ENV:'preview',VITE_API_URL:'https://praise-qvjml6wfi-henriquecesarths-projects.vercel.app/api/v1',VITE_FIREBASE_PROJECT_ID:'louvaio-staging',VITE_FIREBASE_API_KEY:'fixture-only',VITE_PUBLIC_SUPPORT_EMAIL:'fixture@example.test',VITE_CONTROLLER_DISPLAY_NAME:'Fixture'};
+const preview={FIREBASE_STAGING_PROJECT_ID:'louvaio-staging',FIREBASE_STAGING_WEB_API_KEY:'fixture-only',VERCEL_ENV:'preview',VITE_API_URL:'https://louvaio-staging-api.vercel.app/api/v1',VITE_FIREBASE_PROJECT_ID:'louvaio-staging',VITE_FIREBASE_API_KEY:'fixture-only',VITE_PUBLIC_SUPPORT_EMAIL:'fixture@example.test',VITE_CONTROLLER_DISPLAY_NAME:'Fixture'};
 it('accepts complete Preview fixture',()=>expect(()=>validate(preview,'build','production')).not.toThrow());
 it.each(Object.keys(preview))('rejects missing %s',key=>expect(()=>validate({...preview,[key]:undefined},'build','production')).toThrow());
 it('rejects Production API in Preview',()=>expect(()=>validate({...preview,VITE_API_URL:'https://production.example.test/api/v1'},'build','production')).toThrow());

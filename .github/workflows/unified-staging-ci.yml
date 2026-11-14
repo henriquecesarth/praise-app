@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - 'integration/louvaio-unified-20261112'
+      - 'fix/louvaio-audit-remediation-20261113'
     paths:
       - 'mobile/**'
       - '.github/workflows/unified-staging-ci.yml'
@@ -125,7 +126,7 @@ jobs:
             --target lib/main.dart \
             --dart-define=APP_ENV=staging \
             --dart-define=FIREBASE_ENV=staging \
-            --dart-define=API_BASE_URL=https://louvaio-r17-api-staging.vercel.app/api/v1 \
+            --dart-define=API_BASE_URL=https://louvaio-staging-api.vercel.app/api/v1 \
             --dart-define=FIREBASE_STAGING_PROJECT_ID="$FIREBASE_STAGING_PROJECT_ID" \
             --dart-define=FIREBASE_STAGING_API_KEY="$FIREBASE_STAGING_API_KEY" \
             --dart-define=FIREBASE_STAGING_APP_ID="$FIREBASE_STAGING_APP_ID" \

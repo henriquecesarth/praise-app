@@ -12,7 +12,7 @@ export function validatePublishEnvironment(env: Record<string,string|undefined>,
    ? 'https://louvaio-m20-c14-api-staging.vercel.app/api/v1'
    : integrated === 'r17'
    ? 'https://louvaio-r17-api-staging.vercel.app/api/v1'
-   : 'https://praise-qvjml6wfi-henriquecesarths-projects.vercel.app/api/v1';
+   : 'https://louvaio-staging-api.vercel.app/api/v1';
   if (env.VITE_FIREBASE_PROJECT_ID !== 'louvaio-staging' || env.VITE_API_URL !== expectedApi) throw new Error('Preview API/Firebase destination mismatch');
  } else {
   let api: URL;
