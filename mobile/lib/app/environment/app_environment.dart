@@ -61,7 +61,8 @@ class AppEnvironment {
         !uri.hasPort &&
         !uri.hasQuery &&
         !uri.hasFragment &&
-        uri.path == '/api/v1';
+        uri.path == '/api/v1' &&
+        trimmed == 'https://$host/api/v1';
   }
 
   /// Loads configuration from compile-time `--dart-define` parameters.
