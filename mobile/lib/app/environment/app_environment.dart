@@ -51,6 +51,7 @@ class AppEnvironment {
     final uri = Uri.tryParse(trimmed);
     final host = uri?.host ?? '';
     final isAuthorizedHost =
+        host == 'louvaio-staging-api.vercel.app' ||
         host == 'louvaio-r17-api-staging.vercel.app' ||
         host == 'louvaio-m20-c14-api-staging.vercel.app' ||
         host.endsWith('-henriquecesarths-projects.vercel.app');

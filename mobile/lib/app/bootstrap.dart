@@ -1,4 +1,5 @@
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -50,7 +51,20 @@ Future<void> bootstrap() async {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
-  } catch (_) {
+  } on ArgumentError catch (error) {
+    debugPrint('[Bootstrap][ConfigError] ${error.runtimeType}: ${error.message}');
+    runApp(const FirebaseInitErrorApp(isConfigurationError: true));
+    return;
+  } on StateError catch (error) {
+    debugPrint('[Bootstrap][ConfigError] ${error.runtimeType}: ${error.message}');
+    runApp(const FirebaseInitErrorApp(isConfigurationError: true));
+    return;
+  } on FirebaseException catch (error) {
+    debugPrint('[Bootstrap][FirebaseError] code=${error.code}');
+    runApp(const FirebaseInitErrorApp());
+    return;
+  } catch (error) {
+    debugPrint('[Bootstrap][InitError] ${error.runtimeType}');
     runApp(const FirebaseInitErrorApp());
     return;
   }
@@ -68,26 +82,35 @@ Future<void> bootstrap() async {
   );
 }
 
-/// Safe startup failure state rendered when Firebase fails to initialize.
+/// Safe startup failure state rendered when configuration or Firebase fails to initialize.
 class FirebaseInitErrorApp extends StatelessWidget {
-  const FirebaseInitErrorApp({super.key});
+  final bool isConfigurationError;
+
+  const FirebaseInitErrorApp({
+    super.key,
+    this.isConfigurationError = false,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final description = isConfigurationError
+        ? 'Não foi possível inicializar os serviços do LouvAIO devido a uma configuração de ambiente inválida.'
+        : 'Não foi possível inicializar os serviços do LouvAIO. Verifique sua conexão e tente reiniciar o aplicativo.';
+
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
-      home: const Scaffold(
+      home: Scaffold(
         body: SafeArea(
           child: Center(
             child: Padding(
-              padding: EdgeInsets.all(24.0),
+              padding: const EdgeInsets.all(24.0),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.error_outline, size: 56, color: AppColors.error),
-                  SizedBox(height: 16),
-                  Text(
+                  const Icon(Icons.error_outline, size: 56, color: AppColors.error),
+                  const SizedBox(height: 16),
+                  const Text(
                     'Falha na Inicialização',
                     style: TextStyle(
                       fontSize: 20,
@@ -95,11 +118,11 @@ class FirebaseInitErrorApp extends StatelessWidget {
                       color: AppColors.green,
                     ),
                   ),
-                  SizedBox(height: 8),
+                  const SizedBox(height: 8),
                   Text(
-                    'Não foi possível inicializar os serviços do LouvAIO. Verifique sua conexão e tente reiniciar o aplicativo.',
+                    description,
                     textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 14),
+                    style: const TextStyle(fontSize: 14),
                   ),
                 ],
               ),
