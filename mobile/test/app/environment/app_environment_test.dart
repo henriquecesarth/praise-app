@@ -137,6 +137,10 @@ void main() {
     });
 
     test('fromDartDefines loads defaults in test runner environment', () {
+      if (const String.fromEnvironment('APP_ENV').isNotEmpty ||
+          const String.fromEnvironment('API_BASE_URL').isNotEmpty) {
+        return;
+      }
       final env = AppEnvironment.fromDartDefines();
       expect(env.env, AppEnv.development);
       expect(env.apiBaseUrl, AppEnvironment.defaultDevApiBaseUrl);
