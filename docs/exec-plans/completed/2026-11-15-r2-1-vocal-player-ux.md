@@ -40,5 +40,26 @@ Transformar a tela de Exercícios Vocais Android (`VocalPlayerScreen`) em uma ex
 - [x] Refatorar `vocal_player_screen.dart` (monitor simplificado, rebuild escopado, rodapé fixo `SafeArea`/`viewInsets` com volume + transport únicos, cartões de configuração responsivos e acessíveis)
 - [x] Adicionar e atualizar suíte de testes Widget em `mobile/test/features/vocal/vocal_player_test.dart`
 - [x] Executar revisão independente com Codex e corrigir eventuais apontamentos (Verdict: `APPROVE` após 3 rodadas)
-- [ ] Commitar, enviar para `fix/louvaio-audit-remediation-20261113`, acompanhar GitHub Actions e validar novo APK Staging
-- [ ] Finalizar ExecPlan e mover para `docs/exec-plans/completed/`
+- [x] Commitar, enviar para `fix/louvaio-audit-remediation-20261113`, acompanhar GitHub Actions e validar novo APK Staging (`43740134924`)
+- [x] Corrigir overflows estreitos revelados pela nova suíte responsiva no CI (`_LockedSettingBadge` sob escala 1.5x e `CustomExerciseEditorSheet` dropdown/botões em 393dp)
+- [x] Finalizar ExecPlan e mover para `docs/exec-plans/completed/`
+
+## Resultados Finais e Evidências
+
+- **Commits de código e validação CI:**
+  - `b6736253f0878e4105f10546137486755bae2a1d` — refatoração UX R2.1 (`vocal_player_screen.dart`, `piano_keyboard.dart`, `vocal_player_test.dart`, ExecPlan ativo)
+  - `e60d171e22212340b64b6b5459e87e168aeb9539` — correção de overflows estreitos no `_LockedSettingBadge` e `custom_exercise_editor_sheet.dart` (build alvo do APK Staging aprovado)
+- **Revisão independente Codex:** 3 rodadas executadas sobre implementação e testes, culminando em **`Verdict: APPROVE`**.
+- **GitHub Actions CI (`LouvAIO Unified Staging CI & APK Build`):**
+  - Run: [`43740134924`](https://github.com/henriquecesarth/praise-app/actions/runs/43740134924) — **success** no commit `e60d171e22212340b64b6b5459e87e168aeb9539`
+  - `Validate isolated staging configuration`: **PASS**
+  - `flutter analyze` (`Run static analysis`): **PASS** (`No issues found! (ran in 11.7s)`)
+  - `flutter test` (`Run Flutter test suite`): **PASS** (`01:55 +1226: All tests passed!`)
+  - `Verify staging build consistency gate` (`app_environment_test.dart`): **PASS** (`12 tests passed.`)
+  - `Run Android Kotlin unit tests` (`testStagingDebugUnitTest`): **PASS** (`BUILD SUCCESSFUL in 23s`)
+- **Artefato APK Staging (`louvaio-unified-staging-debug`):**
+  - Artifact ID: `14171778380` (`size_in_bytes: 104291145`)
+  - Download URL: `https://github.com/henriquecesarth/praise-app/actions/runs/43740134924/artifacts/14171778380`
+  - Archive ZIP digest: `sha256:8a0ca1a71a9f7dba80bbdf0c606a047c5025e30a2cb50780bc4d58bee42cdd3a`
+  - SHA256 interno (`build/app/outputs/flutter-apk/app-staging-debug.apk`): `4625add5d211e401ffd45b4dff593589f3ca7efc09cb308e96469aac15a4ba04`
+- **Limitação explícita / homologação física:** **`PHYSICAL_VALIDATION_PENDING`** — validação visual, tátil, foco de áudio e ergonomia em dispositivo Android físico real permanece pendente de execução pelo usuário com o novo APK gerado.
