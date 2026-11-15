@@ -48,4 +48,12 @@
 - [x] Fase 4 concluída e validada (com revisão Codex — descontinuação controlada das Liturgias autônomas: `410 Gone`, redirect `/liturgias -> /escalas`, preservação integral no Firestore)
 - [x] Fase 5 concluída e validada (contraste `#FFFFFF`/`--text-on-accent` Web Light/Dark >= 4.5:1, alinhamento do modal de escalas, wrap do banner de classificação pendente)
 - [x] Fase 6 revisões e suítes completas aprovadas (Backend build + Vitest 91/91 arquivos, 2.604/2.604 testes; Web `tsc --noEmit` + Vitest serializado 44/44 arquivos, 775/775 testes; Playwright 60+9 cenários validados nas regressões)
-- [ ] Fase 7 pushes, Vercel Staging e APK Staging entregues
+- [x] Fase 7 pushes, Vercel Staging e APK Staging entregues
+
+## Resultados Finais e Evidências
+
+- **Vercel Backend Preview (`praise-app`, `louvaio-staging`)**: `https://praise-hbxuv6mc1-henriquecesarths-projects.vercel.app` (alias `https://louvaio-staging-api.vercel.app`), deploy no commit `8956e4bb462bfad6475873fe0f2408a914cd8936` (sem alterações em `backend/` posteriormente). Health `200`, CORS `204` estrito para `https://louvaio-staging-web.vercel.app`, acesso anônimo a rotas protegidas bloqueado (`401`).
+- **Vercel Web Preview (`praise-app-m7tn`)**: `https://praise-app-m7tn-p5i04mktt-henriquecesarths-projects.vercel.app` (alias `https://louvaio-staging-web.vercel.app`), bundle `assets/index-l8vKH6tb.js` (configurado com `louvaio-staging` e `louvaio-staging-api.vercel.app`, redirect `/liturgias -> /escalas`).
+- **GitHub Actions CI (`LouvAIO Unified Staging CI & APK Build`)**: Run `43732169409` (`https://github.com/henriquecesarth/praise-app/actions/runs/43732169409`) — **success** no commit `93c8f98067f799ab7fe364014109262fc575a5d4` (`flutter analyze`, `flutter test` 1.222/1.222 aprovados, gate de consistência staging, build `app-staging-debug.apk`, `testStagingDebugUnitTest` Kotlin, upload de artefato).
+- **Artefato APK Staging**: `louvaio-unified-staging-debug` (Artifact ID `14168903740`, `size_in_bytes: 104257645`, archive digest `sha256:4d60ff1bbe6a37219e011e836f5f3975e7d73adcc3d1a719a73f58fb576e985e`; SHA256 interno de `app-staging-debug.apk`: `4da030370e65e393432286cffbd2d34c975ebca582abec495621288794c49870`; `apiBaseUrl`: `https://louvaio-staging-api.vercel.app/api/v1`).
+- **Limitação explícita de hardware físico Android**: validação em aparelho Android físico real (volume acústico percebido no alto-falante/fone e acionamento do botão físico de volume até o máximo durante diálogo de aviso de volume) permanece **`PENDENTE DE HOMOLOGAÇÃO FÍSICA`**.
