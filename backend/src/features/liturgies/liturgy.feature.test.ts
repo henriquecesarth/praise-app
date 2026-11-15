@@ -1,12 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import express from 'express';
+import { createServer, Server } from 'node:http';
 import { LiturgyRepository } from '../../repositories/LiturgyRepository';
 import { LiturgyService } from './liturgy.service';
-import { LiturgyController } from './liturgy.controller';
+import {
+  LiturgyController,
+  STANDALONE_LITURGY_MODULE_DISCONTINUED_CODE,
+} from './liturgy.controller';
+import liturgyRoutes from './liturgy.routes';
 import { createLiturgySchema, updateLiturgySchema, liturgyItemSchema } from './liturgy.types';
-import { AppError } from '../../middleware/error-handler';
+import { AppError, errorHandler } from '../../middleware/error-handler';
 import { db } from '../../lib/firebase';
 import { requireMinistryRole } from '../../middleware/rbac';
 import { MinistryRepository } from '../../repositories/MinistryRepository';
+import { UserRepository } from '../../repositories/UserRepository';
+import { AccountDeletionRepository } from '../../repositories/AccountDeletionRepository';
 
 describe('Liturgy Feature & Security Test Suite (M13)', () => {
   let repo: LiturgyRepository;
@@ -826,6 +834,175 @@ describe('Liturgy Feature & Security Test Suite (M13)', () => {
       expect(list[0].id).toBe('lit-2');
       expect(list[0].liturgy_items[0].song?.title).toBe('Canção Compartilhada');
       expect(list[1].liturgy_items[0].song?.title).toBe('Canção Compartilhada');
+    });
+  });
+
+  describe('8. Discontinued Standalone HTTP Endpoints (410 Gone, Fail-Closed & Firestore Preservation)', () => {
+    const servers: Server[] = [];
+
+    afterEach(async () => {
+      await Promise.all(
+        servers.splice(0).map((s) => {
+          s.closeAllConnections?.();
+          return new Promise<void>((resolve) => s.close(() => resolve()));
+        })
+      );
+    });
+
+    async function startServer() {
+      const app = express();
+      app.use(express.json());
+      app.use('/api/v1/ministries/:ministryId/liturgies', liturgyRoutes);
+      app.use('/api/v1/groups/:groupId/liturgies', liturgyRoutes);
+      app.use(errorHandler);
+      const server = createServer(app);
+      servers.push(server);
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      return `http://127.0.0.1:${(server.address() as any).port}`;
+    }
+
+    function spyOnAllLiturgyRepoMethods() {
+      return {
+        getLiturgiesByGroup: vi.spyOn(LiturgyRepository.prototype, 'getLiturgiesByGroup'),
+        getLiturgyById: vi.spyOn(LiturgyRepository.prototype, 'getLiturgyById'),
+        createLiturgy: vi.spyOn(LiturgyRepository.prototype, 'createLiturgy'),
+        updateLiturgy: vi.spyOn(LiturgyRepository.prototype, 'updateLiturgy'),
+        deleteLiturgy: vi.spyOn(LiturgyRepository.prototype, 'deleteLiturgy'),
+      };
+    }
+
+    function mockAuthenticatedUser(uid: string, role: 'member' | 'admin' | 'non_member') {
+      vi.spyOn(UserRepository.prototype, 'verifyToken').mockResolvedValue({
+        uid,
+        email: `${uid}@test.dev`,
+      } as any);
+      vi.spyOn(AccountDeletionRepository.prototype, 'isDeletionPending').mockResolvedValue(false);
+      if (role === 'non_member') {
+        vi.spyOn(MinistryRepository.prototype, 'getMinistryById').mockRejectedValue(
+          new AppError(403, 'Acesso negado. Você não é integrante deste ministério.', {
+            code: 'MINISTRY_ACCESS_DENIED',
+            ministryId: 'min-alpha',
+          })
+        );
+      } else {
+        vi.spyOn(MinistryRepository.prototype, 'getMinistryById').mockResolvedValue({
+          id: 'min-alpha',
+          name: 'Alpha Ministry',
+          role,
+        } as any);
+      }
+    }
+
+    it('fails closed with 401 when unauthenticated without exposing discontinuation or touching Firestore', async () => {
+      const repoSpies = spyOnAllLiturgyRepoMethods();
+      const baseUrl = await startServer();
+
+      const resMin = await fetch(`${baseUrl}/api/v1/ministries/min-alpha/liturgies`);
+      const resGroup = await fetch(`${baseUrl}/api/v1/groups/min-alpha/liturgies`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Culto' }),
+      });
+
+      expect(resMin.status).toBe(401);
+      expect(resGroup.status).toBe(401);
+      Object.values(repoSpies).forEach((spy) => expect(spy).not.toHaveBeenCalled());
+    });
+
+    it('fails closed with 403 MINISTRY_ACCESS_DENIED for non-member before returning 410', async () => {
+      mockAuthenticatedUser('usr-outsider', 'non_member');
+      const repoSpies = spyOnAllLiturgyRepoMethods();
+      const baseUrl = await startServer();
+
+      const res = await fetch(`${baseUrl}/api/v1/ministries/min-alpha/liturgies`, {
+        headers: { Authorization: 'Bearer valid-token' },
+      });
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(403);
+      expect(body.error?.details?.code).toBe('MINISTRY_ACCESS_DENIED');
+      Object.values(repoSpies).forEach((spy) => expect(spy).not.toHaveBeenCalled());
+    });
+
+    it('returns 410 Gone to ministry member on GET and keeps 403 RBAC on mutation routes', async () => {
+      mockAuthenticatedUser('usr-member', 'member');
+      const repoSpies = spyOnAllLiturgyRepoMethods();
+      const baseUrl = await startServer();
+
+      const getList = await fetch(`${baseUrl}/api/v1/ministries/min-alpha/liturgies`, {
+        headers: { Authorization: 'Bearer valid-token' },
+      });
+      const getListBody = (await getList.json()) as any;
+      expect(getList.status).toBe(410);
+      expect(getListBody.error?.details).toEqual({
+        code: STANDALONE_LITURGY_MODULE_DISCONTINUED_CODE,
+        module: 'liturgies',
+        status: 'discontinued',
+        firestoreDataPreserved: true,
+        replacements: {
+          schedulesPath: '/escalas',
+          scheduleTemplatesPath: '/schedule-templates',
+        },
+      });
+
+      const getAliasDetail = await fetch(`${baseUrl}/api/v1/groups/min-alpha/liturgies/lit-1`, {
+        headers: { Authorization: 'Bearer valid-token' },
+      });
+      expect(getAliasDetail.status).toBe(410);
+
+      const postAsMember = await fetch(`${baseUrl}/api/v1/ministries/min-alpha/liturgies`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Tentativa' }),
+      });
+      expect(postAsMember.status).toBe(403);
+      Object.values(repoSpies).forEach((spy) => expect(spy).not.toHaveBeenCalled());
+    });
+
+    it('returns 410 Gone for admin across GET/POST/PUT/DELETE/PATCH and never deletes or writes Firestore', async () => {
+      mockAuthenticatedUser('usr-admin', 'admin');
+      const repoSpies = spyOnAllLiturgyRepoMethods();
+      const batchSpy = vi.spyOn(db, 'batch');
+      const baseUrl = await startServer();
+
+      const requests = [
+        fetch(`${baseUrl}/api/v1/ministries/min-alpha/liturgies`, {
+          headers: { Authorization: 'Bearer valid-token' },
+        }),
+        fetch(`${baseUrl}/api/v1/ministries/min-alpha/liturgies/lit-1`, {
+          headers: { Authorization: 'Bearer valid-token' },
+        }),
+        fetch(`${baseUrl}/api/v1/ministries/min-alpha/liturgies`, {
+          method: 'POST',
+          headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: 'Culto', date: '2026-11-15' }),
+        }),
+        fetch(`${baseUrl}/api/v1/ministries/min-alpha/liturgies/lit-1`, {
+          method: 'PUT',
+          headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: 'Editado' }),
+        }),
+        fetch(`${baseUrl}/api/v1/ministries/min-alpha/liturgies/lit-1`, {
+          method: 'DELETE',
+          headers: { Authorization: 'Bearer valid-token' },
+        }),
+        fetch(`${baseUrl}/api/v1/groups/min-alpha/liturgies/lit-1/items`, {
+          method: 'PATCH',
+          headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        }),
+      ];
+
+      const responses = await Promise.all(requests);
+      for (const res of responses) {
+        const body = (await res.json()) as any;
+        expect(res.status).toBe(410);
+        expect(body.error?.details?.code).toBe(STANDALONE_LITURGY_MODULE_DISCONTINUED_CODE);
+        expect(body.error?.details?.firestoreDataPreserved).toBe(true);
+      }
+
+      expect(batchSpy).not.toHaveBeenCalled();
+      Object.values(repoSpies).forEach((spy) => expect(spy).not.toHaveBeenCalled());
     });
   });
 });

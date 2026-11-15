@@ -11,7 +11,6 @@ import '../../features/repertoire/presentation/views/repertoire_view.dart';
 import '../../features/schedules/presentation/views/schedules_view.dart';
 import '../../features/notifications/presentation/controllers/notification_providers.dart';
 import '../../features/notifications/presentation/views/notification_center_screen.dart';
-import '../../features/liturgies/presentation/views/liturgies_screen.dart';
 import '../../features/smart_chords/presentation/views/smart_chords_screen.dart';
 import '../../features/teams/presentation/views/teams_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -50,9 +49,6 @@ class _AppShellState extends ConsumerState<AppShell> {
         } catch (_) {}
         try {
           ref.read(manualMemberAvailabilityNotifierProvider.notifier).invalidateTenant();
-        } catch (_) {}
-        try {
-          ref.read(liturgyFormNotifierProvider.notifier).invalidateTenant();
         } catch (_) {}
         try {
           ref.read(inviteCodeNotifierProvider.notifier).reset();
@@ -125,9 +121,6 @@ class _AppShellState extends ConsumerState<AppShell> {
         ref.invalidate(membersDirectoryNotifierProvider);
         ref.invalidate(memberDetailNotifierProvider);
         ref.invalidate(memberFormNotifierProvider);
-        ref.invalidate(liturgyListNotifierProvider);
-        ref.invalidate(liturgyDetailNotifierProvider);
-        ref.invalidate(liturgyFormNotifierProvider);
         ref.invalidate(teamsListNotifierProvider);
         ref.invalidate(teamFormNotifierProvider);
         ref.invalidate(inviteCodeNotifierProvider);
@@ -628,29 +621,6 @@ class _ProfileView extends ConsumerWidget {
               ),
               const Divider(),
             ],
-            ListTile(
-              key: const ValueKey('profile_liturgies_tile'),
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(
-                Icons.menu_book_outlined,
-                color: theme.colorScheme.primary,
-              ),
-              title: const Text('Liturgias & Roteiros'),
-              subtitle: const Text(
-                  'Ordem de culto, momentos, leituras e repertório'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => LiturgiesScreen(
-                      ministryId: selectedMinistry!.id,
-                      ministryName: selectedMinistry!.name,
-                    ),
-                  ),
-                );
-              },
-            ),
-            const Divider(),
             ListTile(
               key: const ValueKey('profile_smart_chords_tile'),
               contentPadding: EdgeInsets.zero,

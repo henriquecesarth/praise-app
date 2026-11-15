@@ -74,7 +74,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
           <p className="text-sm text-gray-400 mt-1">
             {mode === 'login'
               ? 'Acesse sua conta para gerenciar seu ministério de louvor'
-              : 'Cadastre-se e comece a organizar seus louvores e liturgias'}
+              : 'Cadastre-se e comece a organizar seus louvores, roteiros e escalas'}
           </p>
         </div>
 

@@ -1,69 +1,50 @@
 import { Response, NextFunction } from 'express';
 import { BaseController } from '../../controllers/BaseController';
 import { AuthenticatedRequest } from '../../middleware/auth';
+import { AppError } from '../../middleware/error-handler';
 import { LiturgyService } from './liturgy.service';
 
+export const STANDALONE_LITURGY_MODULE_DISCONTINUED_CODE =
+  'STANDALONE_LITURGY_MODULE_DISCONTINUED';
+
+export const STANDALONE_LITURGY_DISCONTINUED_MESSAGE =
+  'O módulo independente de Liturgias foi descontinuado. Utilize o Roteiro dentro de Escalas e os Modelos de Roteiro. Os registros históricos permanecem preservados.';
+
 export class LiturgyController extends BaseController {
-  constructor(private readonly liturgyService: LiturgyService = new LiturgyService()) {
+  constructor(_liturgyService?: LiturgyService) {
     super();
   }
 
-  listLiturgies = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const groupId = (req.params.groupId || req.params.ministryId) as string;
-      const liturgies = await this.liturgyService.listLiturgies(groupId);
-      this.handleSuccess(res, liturgies);
-    } catch (err) {
-      this.handleError(err, res, next);
-    }
+  private buildDiscontinuedError(): AppError {
+    return new AppError(410, STANDALONE_LITURGY_DISCONTINUED_MESSAGE, {
+      code: STANDALONE_LITURGY_MODULE_DISCONTINUED_CODE,
+      module: 'liturgies',
+      status: 'discontinued',
+      firestoreDataPreserved: true,
+      replacements: {
+        schedulesPath: '/escalas',
+        scheduleTemplatesPath: '/schedule-templates',
+      },
+    });
+  }
+
+  discontinued = async (
+    _req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    this.handleError(this.buildDiscontinuedError(), res, next);
   };
 
-  getLiturgyById = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const groupId = (req.params.groupId || req.params.ministryId) as string;
-      const liturgyId = req.params.liturgyId as string;
-      const liturgy = await this.liturgyService.getLiturgyById(groupId, liturgyId);
-      this.handleSuccess(res, liturgy);
-    } catch (err) {
-      this.handleError(err, res, next);
-    }
-  };
-
-  createLiturgy = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const groupId = (req.params.groupId || req.params.ministryId) as string;
-      const userId = req.user!.id;
-      const liturgy = await this.liturgyService.createLiturgy(groupId, userId, req.body);
-      this.handleCreated(res, liturgy);
-    } catch (err) {
-      this.handleError(err, res, next);
-    }
-  };
-
-  updateLiturgy = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const groupId = (req.params.groupId || req.params.ministryId) as string;
-      const liturgyId = req.params.liturgyId as string;
-      const liturgy = await this.liturgyService.updateLiturgy(groupId, liturgyId, req.body);
-      this.handleSuccess(res, liturgy);
-    } catch (err) {
-      this.handleError(err, res, next);
-    }
-  };
-
-  deleteLiturgy = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const groupId = (req.params.groupId || req.params.ministryId) as string;
-      const liturgyId = req.params.liturgyId as string;
-      const result = await this.liturgyService.deleteLiturgy(groupId, liturgyId);
-      this.handleSuccess(res, result);
-    } catch (err) {
-      this.handleError(err, res, next);
-    }
-  };
+  listLiturgies = this.discontinued;
+  getLiturgyById = this.discontinued;
+  createLiturgy = this.discontinued;
+  updateLiturgy = this.discontinued;
+  deleteLiturgy = this.discontinued;
 }
 
 const litInstance = new LiturgyController();
+export const discontinued = litInstance.discontinued;
 export const listLiturgies = litInstance.listLiturgies;
 export const getLiturgyById = litInstance.getLiturgyById;
 export const createLiturgy = litInstance.createLiturgy;

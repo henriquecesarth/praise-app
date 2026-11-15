@@ -65,7 +65,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
           />
         </div>
         <div className="login-header-badge">
-          Plataforma de Louvor & Liturgias
+          Plataforma de Louvor & Escalas
         </div>
       </header>
 
@@ -85,7 +85,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
             </h1>
 
             <p className="login-desc">
-              Tudo o que sua equipe precisa em um só lugar: repertórios completos, transposição de cifras em tempo real, agendamento de liturgias e escalas com facilidade para todos os músicos.
+              Tudo o que sua equipe precisa em um só lugar: repertórios completos, transposição de cifras em tempo real, roteiros de culto e escalas com facilidade para todos os músicos.
             </p>
 
             {/* Feature Cards Grid */}
@@ -102,8 +102,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 <div className="login-feature-icon" style={{ backgroundColor: 'var(--structural-subtle)', color: 'var(--structural-accent)', width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px' }}>
                   <BookOpen size={20} aria-hidden="true" />
                 </div>
-                <div className="login-feature-title">Ordens do Culto</div>
-                <div className="login-feature-desc">Monte escalas e sequências da liturgia semanal.</div>
+                <div className="login-feature-title">Roteiros & Escalas</div>
+                <div className="login-feature-desc">Monte escalas e roteiros completos para cada celebração.</div>
               </div>
 
               <div className="login-feature-card">

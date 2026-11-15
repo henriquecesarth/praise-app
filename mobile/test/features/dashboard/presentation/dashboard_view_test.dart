@@ -456,6 +456,10 @@ void main() {
             find.byKey(const ValueKey('dashboard_members_button')),
             findsOneWidget,
           );
+          expect(
+            find.byKey(const ValueKey('dashboard_liturgies_button')),
+            findsNothing,
+          );
         });
       }
     }

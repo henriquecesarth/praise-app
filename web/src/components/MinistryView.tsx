@@ -18,7 +18,7 @@ import { useRepertoireDialog } from './useRepertoireDialog';
 import {
   Edit2, Check, X, UserPlus, Users, Info, Link, Shield, Tag,
   Layers, Trash2, LogOut, ChevronRight, MoreVertical, Plus, User,
-  CalendarDays, AtSign, Copy, CheckCircle, Sparkles, BookOpen, MessageSquare, Music,
+  CalendarDays, AtSign, Copy, CheckCircle, Sparkles, MessageSquare, Music,
 } from 'lucide-react';
 
 interface MinistryMemberItem {
@@ -63,7 +63,6 @@ interface Props {
   onTeamModalStateChange?: (isOpen: boolean) => void;
   section?: string;
   onNavigateSection?: (section?: string) => void;
-  onNavigateToLiturgies?: () => void;
   onNavigateToVocal?: () => void;
 }
 
@@ -81,7 +80,6 @@ export function MinistryView({
   onTeamModalStateChange,
   section,
   onNavigateSection,
-  onNavigateToLiturgies,
   onNavigateToVocal,
 }: Props) {
   const navigate = useNavigate();
@@ -738,29 +736,6 @@ export function MinistryView({
               </div>
               <ChevronRight size={16} className="ministry-chevron" />
             </button>
-            {/* Liturgias & Ordem de Culto — ACTIVE */}
-            <button
-              className="ministry-action-row-btn"
-              onClick={() => {
-                if (onNavigateToLiturgies) {
-                  onNavigateToLiturgies();
-                } else {
-                  navigate('/liturgias');
-                }
-              }}
-              aria-label="Abrir liturgias e ordem de culto"
-            >
-              <div className="ministry-action-row-left">
-                <div className="ministry-action-icon primary">
-                  <BookOpen size={18} />
-                </div>
-                <div>
-                  <div className="ministry-action-title">Liturgias & Ordem de Culto</div>
-                  <div className="ministry-action-desc">Ordem dos cultos e programação musical</div>
-                </div>
-              </div>
-              <ChevronRight size={16} className="ministry-chevron" />
-            </button>
             {/* Exercícios vocais M21 — ACTIVE */}
             <button
               type="button"
@@ -1326,7 +1301,7 @@ export function MinistryView({
             </div>
             <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, margin: '12px 0 24px' }}>
               Você vai sair de <strong style={{ color: 'var(--text-primary)' }}>{activeMinistry.name}</strong>.
-              Você perderá o acesso ao repertório, escalas e liturgias deste ministério.
+              Você perderá o acesso ao repertório e escalas deste ministério.
               Para voltar, precisará de um novo convite.
             </p>
             <div className="form-actions">

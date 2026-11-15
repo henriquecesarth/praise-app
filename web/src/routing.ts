@@ -1,11 +1,14 @@
-export type MainModuleType = 'dashboard' | 'repertoire' | 'cifrador' | 'schedules' | 'ministry' | 'liturgies' | 'vocal';
+export type MainModuleType = 'dashboard' | 'repertoire' | 'cifrador' | 'schedules' | 'ministry' | 'vocal';
 
 export interface AppRouteState {
   module: MainModuleType;
   songId?: string;
+  songVersionId?: string;
+  fromScheduleId?: string;
   folderId?: string;
   scheduleId?: string;
   ministrySection?: string;
+  redirectTo?: string;
   isWhatsAppCallback?: boolean;
   isPrivacy?: boolean;
   isAccountDeletion?: boolean;
@@ -22,7 +25,6 @@ export const MODULE_PATHS: Record<MainModuleType, string> = {
   repertoire: '/repertorio',
   cifrador: '/cifras',
   ministry: '/ministerio',
-  liturgies: '/liturgias',
   vocal: '/exercicios-vocais',
 };
 
@@ -35,8 +37,11 @@ const decodeSegment = (value: string | undefined) => {
   }
 };
 
-export function parseAppRoute(pathname: string): AppRouteState {
+export function parseAppRoute(pathname: string, search: string = ''): AppRouteState {
   const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+  const searchParams = new URLSearchParams(
+    search ? (search.startsWith('?') ? search : `?${search}`) : ''
+  );
 
   if (normalized === '/') return { module: 'dashboard', isKnown: true };
   if (normalized === '/escalas') return { module: 'schedules', isKnown: true };
@@ -44,7 +49,9 @@ export function parseAppRoute(pathname: string): AppRouteState {
   if (/^\/cifras\/(nova|[^/]+\/editar)$/.test(normalized)) return { module: 'cifrador', isKnown: true };
   if (normalized === '/cifras') return { module: 'cifrador', isKnown: true };
   if (normalized === '/ministerio') return { module: 'ministry', isKnown: true };
-  if (normalized === '/liturgias') return { module: 'liturgies', isKnown: true };
+  if (normalized === '/liturgias' || normalized.startsWith('/liturgias/')) {
+    return { module: 'schedules', redirectTo: '/escalas', isKnown: true };
+  }
   if (normalized === '/exercicios-vocais') return { module: 'vocal', isKnown: true };
   if (normalized === '/privacidade') return { module: 'dashboard', isPrivacy: true, isKnown: true };
   if (normalized === '/exclusao-conta') return { module: 'dashboard', isAccountDeletion: true, isKnown: true };
@@ -64,7 +71,15 @@ export function parseAppRoute(pathname: string): AppRouteState {
 
   const songMatch = normalized.match(/^\/repertorio\/([^/]+)$/);
   if (songMatch) {
-    return { module: 'repertoire', songId: decodeSegment(songMatch[1]), isKnown: true };
+    const songVersionId = searchParams.get('version')?.trim() || undefined;
+    const fromScheduleId = searchParams.get('fromSchedule')?.trim() || undefined;
+    return {
+      module: 'repertoire',
+      songId: decodeSegment(songMatch[1]),
+      songVersionId,
+      fromScheduleId,
+      isKnown: true,
+    };
   }
 
   const ministryMatch = normalized.match(/^\/ministerio\/([^/]+)$/);
@@ -75,8 +90,20 @@ export function parseAppRoute(pathname: string): AppRouteState {
   return { module: 'dashboard', isKnown: false };
 }
 
-export function pathForSong(songId: string) {
-  return `/repertorio/${encodeURIComponent(songId)}`;
+export function pathForSong(
+  songId: string,
+  options?: { versionId?: string; fromScheduleId?: string }
+) {
+  const base = `/repertorio/${encodeURIComponent(songId)}`;
+  const params = new URLSearchParams();
+  if (options?.versionId?.trim()) {
+    params.set('version', options.versionId.trim());
+  }
+  if (options?.fromScheduleId?.trim()) {
+    params.set('fromSchedule', options.fromScheduleId.trim());
+  }
+  const query = params.toString();
+  return query ? `${base}?${query}` : base;
 }
 
 export function pathForFolder(folderId: string) {
@@ -89,10 +116,6 @@ export function pathForSchedule(scheduleId: string) {
 
 export function pathForMinistrySection(section?: string) {
   return section ? `/ministerio/${encodeURIComponent(section)}` : '/ministerio';
-}
-
-export function pathForLiturgies() {
-  return '/liturgias';
 }
 
 export function pathForPrivacy() {

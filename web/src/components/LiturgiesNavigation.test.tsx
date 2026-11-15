@@ -1,5 +1,4 @@
-﻿import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { MODULE_PATHS, parseAppRoute } from '../routing';
 import { BottomNav } from './BottomNav';
@@ -16,14 +15,17 @@ const mockMinistry = {
   updatedAt: '2026-01-01',
 };
 
-describe('Liturgies Navigation & Placement Matrix', () => {
-  it('exposes canonical /liturgias route in MODULE_PATHS and parseAppRoute', () => {
-    expect(MODULE_PATHS.liturgies).toBe('/liturgias');
-    const parsed = parseAppRoute('/liturgias');
-    expect(parsed).toEqual({ module: 'liturgies', isKnown: true });
+describe('Liturgies Discontinuation & Navigation Matrix', () => {
+  it('removes /liturgias from MODULE_PATHS and redirects legacy liturgy deep links to /escalas', () => {
+    expect('liturgies' in MODULE_PATHS).toBe(false);
+    expect(parseAppRoute('/liturgias')).toEqual({
+      module: 'schedules',
+      redirectTo: '/escalas',
+      isKnown: true,
+    });
   });
 
-  it('keeps BottomNav with exactly 5 primary mobile destinations without adding a 6th cramped item', async () => {
+  it('keeps BottomNav with 5 primary destinations: Início, Escalas, Repertório, Cifras, Ministério', () => {
     const onSelectModule = vi.fn();
     render(<BottomNav currentModule="dashboard" onSelectModule={onSelectModule} />);
 
@@ -36,10 +38,7 @@ describe('Liturgies Navigation & Placement Matrix', () => {
     expect(screen.getByRole('button', { name: 'Ministério' })).toBeInTheDocument();
   });
 
-  it('exposes Liturgias & Ordem de Culto inside MinistryView for mobile and desktop access', async () => {
-    const user = userEvent.setup();
-    const onNavigateToLiturgies = vi.fn();
-
+  it('removes standalone Liturgias entry from MinistryView while keeping Modelos de Roteiro and Exercícios vocais', () => {
     render(
       <MemoryRouter>
         <MinistryView
@@ -51,17 +50,13 @@ describe('Liturgies Navigation & Placement Matrix', () => {
           onMinistryDeleted={vi.fn()}
           onGenerateInvite={vi.fn()}
           showToast={vi.fn()}
-          onNavigateToLiturgies={onNavigateToLiturgies}
         />
       </MemoryRouter>
     );
 
-    const liturgyBtn = screen.getByRole('button', { name: /Abrir liturgias e ordem de culto/i });
-    expect(liturgyBtn).toBeInTheDocument();
-    expect(screen.getByText('Liturgias & Ordem de Culto')).toBeInTheDocument();
-    expect(screen.getByText('Ordem dos cultos e programação musical')).toBeInTheDocument();
-
-    await user.click(liturgyBtn);
-    expect(onNavigateToLiturgies).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('button', { name: /Abrir liturgias e ordem de culto/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('Liturgias & Ordem de Culto')).not.toBeInTheDocument();
+    expect(screen.getByText('Modelos de Roteiro')).toBeInTheDocument();
+    expect(screen.getByText('Exercícios vocais')).toBeInTheDocument();
   });
 });

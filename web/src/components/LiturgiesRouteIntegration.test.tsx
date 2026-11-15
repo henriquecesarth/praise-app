@@ -1,7 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import App from '../App';
 import { api } from '../api';
 
@@ -15,19 +14,6 @@ const mockMinistry = {
   createdAt: '2026-01-01',
   updatedAt: '2026-01-01',
 };
-const mockLiturgies = [
-  {
-    id: 'lit-1',
-    ministryId: 'min-alpha',
-    title: 'Culto de Domingo Noite',
-    date: '2026-09-20T19:00:00.000Z',
-    description: 'Culto de Celebração e Adoração',
-    createdBy: 'user-1',
-    items: [],
-    createdAt: '2026-09-01',
-    updatedAt: '2026-09-01',
-  },
-];
 
 vi.mock('../api', () => ({
   api: {
@@ -35,7 +21,6 @@ vi.mock('../api', () => ({
     getMyGroups: vi.fn(),
     getMyMinistries: vi.fn(),
     getMinistrySubscription: vi.fn(),
-    getLiturgies: vi.fn(),
     getSongs: vi.fn(),
     getFolders: vi.fn(),
     getArtists: vi.fn(),
@@ -47,7 +32,12 @@ vi.mock('../api', () => ({
   },
 }));
 
-describe('Liturgies Direct Route & App Integration', () => {
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="current-pathname">{location.pathname}</div>;
+}
+
+describe('Liturgies Legacy Route Redirect & Discontinuation Integration', () => {
   beforeEach(() => {
     localStorage.setItem('praise_auth_token', 'mock-token');
     vi.mocked(api.getMe).mockResolvedValue(mockUser);
@@ -58,7 +48,6 @@ describe('Liturgies Direct Route & App Integration', () => {
       usage: { membersCount: 5, songsCount: 20 },
       limits: { maxMembers: 100, maxSongs: 500 },
     } as any);
-    vi.mocked(api.getLiturgies).mockResolvedValue(mockLiturgies);
     vi.mocked(api.getSongs).mockResolvedValue({ songs: [], totalCount: 0 });
     vi.mocked(api.getFolders).mockResolvedValue([]);
     vi.mocked(api.getArtists).mockResolvedValue([]);
@@ -69,27 +58,25 @@ describe('Liturgies Direct Route & App Integration', () => {
     vi.mocked(api.getAnnouncements).mockResolvedValue([]);
   });
 
-  it('directly renders LiturgiesView when accessing /liturgias deep link without redirecting to dashboard', async () => {
+  it('redirects legacy /liturgias deep link directly to /escalas and renders Escalas do Louvor', async () => {
     render(
       <MemoryRouter initialEntries={['/liturgias']}>
         <App />
+        <LocationProbe />
       </MemoryRouter>
     );
 
-    // Wait for session and ministry to load
     await waitFor(() => {
-      expect(screen.getByText('Liturgias & Ordem de Culto')).toBeInTheDocument();
-      expect(screen.getByText('Culto de Domingo Noite')).toBeInTheDocument();
+      expect(screen.getByTestId('current-pathname')).toHaveTextContent('/escalas');
+      expect(screen.getByText('Escalas do Louvor')).toBeInTheDocument();
       expect(screen.getAllByText('Comunidade da Graça').length).toBeGreaterThanOrEqual(1);
     });
 
-    // Check header and desktop sidebar highlight
-    const liturgiesNavButtons = screen.getAllByRole('button', { name: /Liturgias/i });
-    expect(liturgiesNavButtons.length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('Liturgias & Ordem de Culto')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Liturgias/i })).not.toBeInTheDocument();
   });
 
-  it('navigates from sidebar to Liturgias and updates active view', async () => {
-    const user = userEvent.setup();
+  it('does not expose standalone Liturgias button in desktop sidebar', async () => {
     render(
       <MemoryRouter initialEntries={['/']}>
         <App />
@@ -100,13 +87,7 @@ describe('Liturgies Direct Route & App Integration', () => {
       expect(screen.getAllByText('Comunidade da Graça').length).toBeGreaterThanOrEqual(1);
     });
 
-    // Click Liturgias button in sidebar
-    const liturgiesBtn = screen.getByRole('button', { name: /^Liturgias$/i });
-    await user.click(liturgiesBtn);
-
-    await waitFor(() => {
-      expect(screen.getByText('Culto de Domingo Noite')).toBeInTheDocument();
-      expect(screen.getByText('Liturgias & Ordem de Culto')).toBeInTheDocument();
-    });
+    expect(screen.queryByRole('button', { name: /Liturgias/i })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^Escalas$/i }).length).toBeGreaterThanOrEqual(1);
   });
 });

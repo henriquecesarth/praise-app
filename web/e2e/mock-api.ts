@@ -174,7 +174,18 @@ export async function installMockApi(page: Page, options: MockApiOptions = {}) {
     if (path.endsWith('/confirmation')) return json(route, mockSchedule);
     if (/\/schedules\/schedule-1$/.test(path) && method !== 'DELETE') return json(route, mockSchedule);
     if (path.endsWith('/schedules')) return json(route, method === 'GET' ? [mockSchedule] : mockSchedule);
-    if (path.endsWith('/liturgies')) return json(route, []);
+    if (path.endsWith('/liturgies') || path.includes('/liturgies/')) {
+      return json(
+        route,
+        {
+          error: {
+            message: 'Módulo independente de Liturgias descontinuado.',
+            details: { code: 'STANDALONE_LITURGY_MODULE_DISCONTINUED' },
+          },
+        },
+        410
+      );
+    }
     if (path.endsWith('/smart-chords/song/song-long') && options.includeLongSmartChords) {
       return json(route, { data: longLinkedSmartChords });
     }

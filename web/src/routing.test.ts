@@ -9,17 +9,34 @@ describe('application routes', () => {
       repertoire: '/repertorio',
       cifrador: '/cifras',
       ministry: '/ministerio',
-      liturgies: '/liturgias',
       vocal: '/exercicios-vocais',
     });
   });
 
-  it('parses detail deep links and liturgies canonical route', () => {
+  it('parses detail deep links and redirects legacy liturgies route to escalas', () => {
     expect(parseAppRoute('/repertorio/song%201')).toMatchObject({ module: 'repertoire', songId: 'song 1' });
+    expect(parseAppRoute('/repertorio/song%201', '?version=ver-2&fromSchedule=sch-9')).toMatchObject({
+      module: 'repertoire',
+      songId: 'song 1',
+      songVersionId: 'ver-2',
+      fromScheduleId: 'sch-9',
+    });
     expect(parseAppRoute('/escalas/schedule-1')).toMatchObject({ module: 'schedules', scheduleId: 'schedule-1' });
-    expect(parseAppRoute('/liturgias')).toMatchObject({ module: 'liturgies', isKnown: true });
+    expect(parseAppRoute('/liturgias')).toEqual({
+      module: 'schedules',
+      redirectTo: '/escalas',
+      isKnown: true,
+    });
+    expect(parseAppRoute('/liturgias/legado-1')).toEqual({
+      module: 'schedules',
+      redirectTo: '/escalas',
+      isKnown: true,
+    });
     expect(parseAppRoute('/exercicios-vocais')).toMatchObject({ module: 'vocal', isKnown: true });
     expect(pathForSong('song 1')).toBe('/repertorio/song%201');
+    expect(pathForSong('song 1', { versionId: 'ver-2', fromScheduleId: 'sch-9' })).toBe(
+      '/repertorio/song%201?version=ver-2&fromSchedule=sch-9'
+    );
     expect(pathForSchedule('schedule/1')).toBe('/escalas/schedule%2F1');
   });
 

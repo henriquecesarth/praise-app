@@ -23,7 +23,6 @@ import { SchedulesView } from './components/SchedulesView';
 import { ScheduleDetailView } from './components/ScheduleDetailView';
 import { CreateScheduleModal, ScheduleItem } from './components/CreateScheduleModal';
 import { MinistryView } from './components/MinistryView';
-import { LiturgiesView } from './components/LiturgiesView';
 import { VocalExercisePlayer } from './components/VocalExercisePlayer';
 import { WhatsAppCallbackPage } from './components/WhatsAppCallbackPage';
 import { PrivacyPolicyView } from './components/PrivacyPolicyView';
@@ -36,7 +35,7 @@ import { MobileAccountMenu } from './components/MobileAccountMenu';
 import { ConfirmDialog } from './components/ui/ConfirmDialog';
 import { useRepertoireDialog } from './components/useRepertoireDialog';
 import { louvaioTheme } from './theme/louvaioTheme';
-import { Search, SlidersHorizontal, Plus, CheckCircle, XCircle, Menu, Music, Edit3, KeyRound, UserPlus, LogOut, Building2, Home, Calendar as CalendarIcon, Sun, Moon, BookOpen } from 'lucide-react';
+import { Search, SlidersHorizontal, Plus, CheckCircle, XCircle, Menu, Music, Edit3, KeyRound, UserPlus, LogOut, Building2, Home, Calendar as CalendarIcon, Sun, Moon } from 'lucide-react';
 
 interface Toast {
   id: string;
@@ -56,7 +55,7 @@ interface UserState {
 export default function App() {
   const location = useLocation();
   const navigate = useNavigate();
-  const routeState = parseAppRoute(location.pathname);
+  const routeState = parseAppRoute(location.pathname, location.search);
   const mainModule = routeState.module;
 
   // Theme state (dark vs light)
@@ -200,6 +199,13 @@ export default function App() {
     navigate(MODULE_PATHS[module]);
   };
 
+  // Redirecionar rotas legadas do módulo independente de Liturgias para Escalas
+  useEffect(() => {
+    if (routeState.redirectTo && location.pathname !== routeState.redirectTo) {
+      navigate(routeState.redirectTo, { replace: true });
+    }
+  }, [location.pathname, navigate, routeState.redirectTo]);
+
   // Check initial user authentication session
   useEffect(() => {
     if (!shouldBootstrapSession(authReady)) return;
@@ -256,8 +262,6 @@ export default function App() {
       if (activeTab === 'songs') loadSongs();
       else if (activeTab === 'folders') loadFolders();
       else if (activeTab === 'artists') loadArtists();
-    } else if (mainModule === 'liturgies') {
-      loadSongs();
     }
   }, [mainModule, activeTab, activeGroup]);
 
@@ -790,12 +794,32 @@ export default function App() {
     loadFolders();
   };
 
-  const handleSelectSong = async (song: Song) => {
-    if (!groupId) return;
+  const handleBackFromSong = () => {
+    const returnScheduleId = routeState.fromScheduleId;
+    clearDetailSelection();
+    if (returnScheduleId) {
+      navigate(pathForSchedule(returnScheduleId));
+      return;
+    }
+    navigate(MODULE_PATHS[mainModule]);
+    loadSongs();
+    loadFolders();
+  };
+
+  const handleSelectSong = async (
+    song: Song,
+    context?: { versionId?: string; scheduleId?: string; fromScheduleId?: string }
+  ) => {
+    if (!groupId || !song.id) return;
     setDetailLoading(true);
     setDetailError(null);
     setSelectedSong(song);
-    navigate(pathForSong(song.id));
+    navigate(
+      pathForSong(song.id, {
+        versionId: context?.versionId || song.versionId,
+        fromScheduleId: context?.fromScheduleId || context?.scheduleId,
+      })
+    );
   };
 
   useEffect(() => {
@@ -1217,31 +1241,6 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => {
-              setMainModule('liturgies');
-            }}
-            title={sidebarOpen ? undefined : 'Liturgias'}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: sidebarOpen ? 'flex-start' : 'center',
-              gap: '12px',
-              padding: sidebarOpen ? '10px 14px' : '10px 0',
-              borderRadius: '8px',
-              border: 'none',
-              backgroundColor: mainModule === 'liturgies' ? 'var(--primary-color)' : 'transparent',
-              color: mainModule === 'liturgies' ? '#FFFFFF' : 'var(--surface-sidebar-text)',
-              cursor: 'pointer',
-              fontWeight: 600,
-              textAlign: 'left',
-              transition: 'all var(--transition-fast)',
-            }}
-          >
-            <BookOpen size={20} />
-            {sidebarOpen && <span>Liturgias</span>}
-          </button>
-
-          <button
             onClick={() => setMainModule('vocal')}
             title={sidebarOpen ? undefined : 'Exercícios vocais'}
             aria-current={mainModule === 'vocal' ? 'page' : undefined}
@@ -1292,8 +1291,7 @@ export default function App() {
               mainModule === 'dashboard' ? 'Painel Inicial' :
                 mainModule === 'repertoire' ? 'Repertório do Louvor' :
                   mainModule === 'cifrador' ? 'Estúdio de Cifras Inteligentes' :
-                    mainModule === 'schedules' ? 'Escalas do Louvor' :
-                      mainModule === 'liturgies' ? 'Liturgias & Ordem de Culto' : 'Ministério'
+                    mainModule === 'schedules' ? 'Escalas do Louvor' : 'Ministério'
             }
             subtitle={activeGroup ? activeGroup.name : 'Nenhum ministério selecionado'}
             rightActions={
@@ -1365,7 +1363,9 @@ export default function App() {
               ministryId={activeGroup?.id || selectedSong.ministryId || groupId}
               chordFontFamily={currentUser?.preferences?.chordFontFamily}
               classifications={classifications}
-              onBack={handleBackToMain}
+              initialVersionId={routeState.songVersionId}
+              backLabel={routeState.fromScheduleId ? 'Voltar para Escala' : 'Repertório'}
+              onBack={handleBackFromSong}
               onEdit={userRole === 'admin' ? () => {
                 setSongToEdit(selectedSong);
                 setShowSongModal(true);
@@ -1672,17 +1672,7 @@ export default function App() {
                   onTeamModalStateChange={setIsTeamModalOpen}
                   section={routeState.ministrySection}
                   onNavigateSection={(section) => navigate(section ? `/ministerio/${section}` : '/ministerio')}
-                  onNavigateToLiturgies={() => setMainModule('liturgies')}
                   onNavigateToVocal={() => setMainModule('vocal')}
-                />
-              )}
-
-              {mainModule === 'liturgies' && activeGroup && (
-                <LiturgiesView
-                  groupId={activeGroup.id}
-                  userRole={userRole}
-                  allSongs={songs}
-                  showToast={showToast}
                 />
               )}
 
@@ -1694,7 +1684,16 @@ export default function App() {
                     userRole={userRole}
                     currentUserId={currentUser?.id}
                     currentUserName={currentUser?.name}
-                    onBack={() => setSelectedSchedule(null)}
+                    onBack={() => {
+                      setSelectedSchedule(null);
+                      navigate('/escalas');
+                    }}
+                    onSelectSong={(song, ctx) =>
+                      handleSelectSong(song, {
+                        versionId: ctx?.versionId,
+                        fromScheduleId: ctx?.scheduleId || selectedSchedule.id,
+                      })
+                    }
                     onEdit={userRole === 'admin' ? () => {
                       setScheduleToEdit(selectedSchedule);
                       setShowCreateScheduleModal(true);

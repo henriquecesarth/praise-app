@@ -19,7 +19,6 @@ import '../features/availability/presentation/controllers/availability_providers
 import '../features/push_notifications/presentation/controllers/push_notification_providers.dart';
 import '../features/members/presentation/controllers/members_providers.dart';
 import '../features/notifications/presentation/controllers/notification_providers.dart';
-import '../features/liturgies/presentation/controllers/liturgy_providers.dart';
 import '../features/smart_chords/presentation/controllers/smart_chord_providers.dart';
 import '../features/ministry_context/presentation/controllers/create_ministry_controller.dart';
 import '../features/ministry_context/presentation/controllers/join_ministry_controller.dart';
@@ -31,7 +30,6 @@ export '../features/repertoire/presentation/controllers/repertoire_providers.dar
 export '../features/availability/presentation/controllers/availability_providers.dart';
 export '../features/push_notifications/presentation/controllers/push_notification_providers.dart';
 export '../features/members/presentation/controllers/members_providers.dart';
-export '../features/liturgies/presentation/controllers/liturgy_providers.dart';
 export '../features/smart_chords/presentation/controllers/smart_chord_providers.dart';
 export '../features/ministry_context/presentation/controllers/create_ministry_controller.dart';
 export '../features/ministry_context/presentation/controllers/join_ministry_controller.dart';
@@ -108,25 +106,6 @@ void resetAuthenticatedFeatures(
         .reset();
   } catch (_) {}
   try {
-    container.read(liturgyListNotifierProvider.notifier).reset();
-  } catch (_) {}
-  try {
-    container
-        .read(liturgyDetailNotifierProvider.notifier)
-        .invalidateTenant();
-  } catch (_) {}
-  try {
-    container.read(liturgyDetailNotifierProvider.notifier).reset();
-  } catch (_) {}
-  try {
-    container
-        .read(liturgyFormNotifierProvider.notifier)
-        .invalidateTenant();
-  } catch (_) {}
-  try {
-    container.read(liturgyFormNotifierProvider.notifier).reset();
-  } catch (_) {}
-  try {
     container.read(smartChordListNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
@@ -178,9 +157,6 @@ void resetAuthenticatedFeatures(
   container.invalidate(repertoireArtistsNotifierProvider);
   container.invalidate(songDetailNotifierProvider);
   container.invalidate(songFormNotifierProvider);
-  container.invalidate(liturgyListNotifierProvider);
-  container.invalidate(liturgyDetailNotifierProvider);
-  container.invalidate(liturgyFormNotifierProvider);
   container.invalidate(smartChordListNotifierProvider);
   container.invalidate(songSmartChordsNotifierProvider);
   container.invalidate(smartChordRepertoireLinkNotifierProvider);
@@ -225,10 +201,12 @@ class InMemoryPreferencesStorage
         UserChordLineSpacingPreferencesStorage,
         UserPdfMarkerPreferencesStorage,
         UserVocalRangePreferencesStorage,
+        VocalPlayerVolumePreferencesStorage,
         UserMinistrySelectionStorage {
   final Map<String, String> _data = {};
   final Map<String, int> _intData = {};
   final Map<String, bool> _boolData = {};
+  final Map<String, double> _doubleData = {};
 
   @override
   Future<void> setSelectedMinistryId(String? ministryId) async {
@@ -347,10 +325,35 @@ class InMemoryPreferencesStorage
   }
 
   @override
+  Future<void> setVocalPlayerVolume(double volume, {String? userId}) async {
+    final clamped = volume.isFinite ? volume.clamp(0.0, 1.0) : 1.0;
+    final key = userId != null && userId.isNotEmpty
+        ? 'louvaio_vocal_player_volume_user_$userId'
+        : 'louvaio_vocal_player_volume_default';
+    _doubleData[key] = clamped;
+  }
+
+  @override
+  double? getVocalPlayerVolume({String? userId}) {
+    if (userId != null && userId.isNotEmpty) {
+      final specific = _doubleData['louvaio_vocal_player_volume_user_$userId'];
+      if (specific != null && specific.isFinite) {
+        return specific.clamp(0.0, 1.0);
+      }
+    }
+    final fallback = _doubleData['louvaio_vocal_player_volume_default'];
+    if (fallback != null && fallback.isFinite) {
+      return fallback.clamp(0.0, 1.0);
+    }
+    return null;
+  }
+
+  @override
   Future<void> clear() async {
     _data.clear();
     _intData.clear();
     _boolData.clear();
+    _doubleData.clear();
   }
 }
 

@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { TeamsView } from './TeamsView';
 import { RolesView } from './RolesView';
-import { LiturgiesView } from './LiturgiesView';
 import { ClassificationsView } from './ClassificationsView';
 import { TemplatesView } from './TemplatesView';
 import { AdminsView } from './AdminsView';
@@ -11,7 +10,6 @@ const apiMocks = vi.hoisted(() => ({
   getTeams: vi.fn(),
   getMinistryMembers: vi.fn(),
   getRoles: vi.fn(),
-  getLiturgies: vi.fn(),
   getClassifications: vi.fn(),
   getScheduleTemplates: vi.fn(),
 }));
@@ -92,40 +90,6 @@ describe('Phase B — Cross-Ministry Stale Response Isolation', () => {
 
     expect(screen.queryByText('Função Vazada A')).not.toBeInTheDocument();
     expect(screen.getByText('Função B')).toBeInTheDocument();
-  });
-
-  it('LiturgiesView descarta resposta lenta de liturgias do ministério A após troca para ministério B', async () => {
-    let resolveLiturgiesA!: (v: any[]) => void;
-    apiMocks.getLiturgies
-      .mockImplementationOnce(() => new Promise<any[]>((r) => { resolveLiturgiesA = r; }))
-      .mockResolvedValueOnce([
-        { id: 'lit-b', ministryId: 'min-b', title: 'Liturgia B', date: '2099-12-01', items: [] },
-      ]);
-
-    const { rerender } = render(
-      <LiturgiesView groupId="min-a" userRole="admin" allSongs={[]} showToast={vi.fn()} />
-    );
-
-    await waitFor(() => {
-      expect(apiMocks.getLiturgies).toHaveBeenCalledWith('min-a');
-    });
-
-    rerender(
-      <LiturgiesView groupId="min-b" userRole="admin" allSongs={[]} showToast={vi.fn()} />
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText('Liturgia B')).toBeInTheDocument();
-    });
-
-    await flushStaleResolution(() => {
-      resolveLiturgiesA([
-        { id: 'lit-a', ministryId: 'min-a', title: 'Liturgia Vazada A', date: '2099-11-01', items: [] },
-      ]);
-    });
-
-    expect(screen.queryByText('Liturgia Vazada A')).not.toBeInTheDocument();
-    expect(screen.getByText('Liturgia B')).toBeInTheDocument();
   });
 
   it('ClassificationsView, TemplatesView e AdminsView descartam respostas obsoletas do ministério A', async () => {

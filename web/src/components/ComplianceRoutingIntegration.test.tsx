@@ -23,7 +23,6 @@ vi.mock('../api', () => ({
     getMyGroups: vi.fn(),
     getMyMinistries: vi.fn(),
     getMinistrySubscription: vi.fn(),
-    getLiturgies: vi.fn(),
     getSongs: vi.fn(),
     getFolders: vi.fn(),
     getArtists: vi.fn(),
@@ -48,7 +47,6 @@ describe('Compliance Routing & App Integration (/privacidade & /exclusao-conta)'
       usage: { membersCount: 5, songsCount: 20 },
       limits: { maxMembers: 100, maxSongs: 500 },
     } as any);
-    vi.mocked(api.getLiturgies).mockResolvedValue([]);
     vi.mocked(api.getSongs).mockResolvedValue({ songs: [], totalCount: 0 });
     vi.mocked(api.getFolders).mockResolvedValue([]);
     vi.mocked(api.getArtists).mockResolvedValue([]);
