@@ -331,6 +331,7 @@ class _CustomExerciseEditorSheetState extends State<CustomExerciseEditorSheet> {
                     DropdownButtonFormField<String>(
                       key: const ValueKey('custom_exercise_category_dropdown'),
                       initialValue: _categoryOption,
+                      isExpanded: true,
                       decoration: const InputDecoration(
                         labelText: 'Direção melódica',
                         border: OutlineInputBorder(),
@@ -341,19 +342,29 @@ class _CustomExerciseEditorSheetState extends State<CustomExerciseEditorSheet> {
                           value: 'auto',
                           child: Text(
                             'Automático (Detectado: ${_detectedCategory.label})',
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                         const DropdownMenuItem(
                           value: 'ascendente',
-                          child: Text('Ascendente'),
+                          child: Text(
+                            'Ascendente',
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                         const DropdownMenuItem(
                           value: 'descendente',
-                          child: Text('Descendente'),
+                          child: Text(
+                            'Descendente',
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                         const DropdownMenuItem(
                           value: 'misto',
-                          child: Text('Misto (Sobe e Desce)'),
+                          child: Text(
+                            'Misto (Sobe e Desce)',
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                       ],
                       onChanged: (val) {
@@ -456,8 +467,11 @@ class _CustomExerciseEditorSheetState extends State<CustomExerciseEditorSheet> {
               const Divider(height: 1),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
+                child: Wrap(
+                  alignment: WrapAlignment.end,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
+                  runSpacing: 8,
                   children: [
                     TextButton(
                       onPressed: _isSaving
@@ -465,7 +479,6 @@ class _CustomExerciseEditorSheetState extends State<CustomExerciseEditorSheet> {
                           : () => Navigator.of(context).pop(false),
                       child: const Text('Cancelar'),
                     ),
-                    const SizedBox(width: 8),
                     FilledButton(
                       key: const ValueKey('custom_save_exercise_button'),
                       onPressed: _isSaving ? null : _submit,
