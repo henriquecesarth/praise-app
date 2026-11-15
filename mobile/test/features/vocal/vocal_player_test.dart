@@ -691,13 +691,13 @@ void main() {
         methodLog.where((m) => m == 'stop').length,
         greaterThan(stopCountBeforeInactive),
       );
-      expect(tester.widget<FilledButton>(startButton).onPressed, isNotNull);
 
-      // Restore lifecycle back to resumed before tearing down so later tests start cleanly
+      // SchedulerBinding suspends frame builds while paused; returning to foreground pumps the updated UI
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pump();
+      expect(tester.widget<FilledButton>(startButton).onPressed, isNotNull);
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
