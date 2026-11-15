@@ -15,7 +15,8 @@ import 'package:louvaio_mobile/features/vocal/domain/vocal_catalog.dart';
 import 'package:louvaio_mobile/features/vocal/domain/vocal_exercise.dart';
 import 'package:louvaio_mobile/features/vocal/presentation/vocal_player_screen.dart';
 
-class _MockPreviewAuthRepository extends Mock implements AuthRepository {}
+class _MockPreviewAuthRepository extends Mock
+    implements AuthRepository, VocalRangePreferenceUpdater {}
 
 class _MockPreviewVocalExerciseRepository extends Mock
     implements VocalExerciseRepository {}
@@ -809,6 +810,10 @@ void main() {
   testWidgets(
     'vocal player renders without horizontal overflow on narrow phones, scaled text, landscape, tablet, and light/dark themes',
     (tester) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      tester.view.devicePixelRatio = 1.0;
+
       final authRepo = _MockPreviewAuthRepository();
       final vocalRepo = _MockPreviewVocalExerciseRepository();
       when(() => authRepo.authStateChanges())
@@ -834,16 +839,64 @@ void main() {
         name: 'Cantor Responsivo',
       );
 
-      final scenarios = <({Size size, double scale, ThemeMode theme})>[
-        (size: const Size(320, 640), scale: 1.0, theme: ThemeMode.light),
-        (size: const Size(360, 740), scale: 1.35, theme: ThemeMode.dark),
-        (size: const Size(740, 360), scale: 1.0, theme: ThemeMode.light),
-        (size: const Size(1024, 768), scale: 1.2, theme: ThemeMode.dark),
+      final scenarios = <({
+        Size size,
+        double scale,
+        ThemeMode theme,
+        bool keyboard,
+        double imeBottom,
+        bool startPlayback,
+      })>[
+        (size: const Size(360, 740), scale: 1.0, theme: ThemeMode.light, keyboard: false, imeBottom: 0, startPlayback: false),
+        (size: const Size(360, 740), scale: 1.3, theme: ThemeMode.dark, keyboard: false, imeBottom: 0, startPlayback: true),
+        (size: const Size(360, 740), scale: 1.5, theme: ThemeMode.light, keyboard: true, imeBottom: 0, startPlayback: true),
+        (size: const Size(393, 852), scale: 1.0, theme: ThemeMode.dark, keyboard: false, imeBottom: 0, startPlayback: false),
+        (size: const Size(393, 852), scale: 1.3, theme: ThemeMode.light, keyboard: false, imeBottom: 0, startPlayback: false),
+        (size: const Size(393, 852), scale: 1.5, theme: ThemeMode.dark, keyboard: true, imeBottom: 0, startPlayback: false),
+        (size: const Size(740, 360), scale: 1.0, theme: ThemeMode.light, keyboard: false, imeBottom: 260, startPlayback: false),
+        (size: const Size(740, 360), scale: 1.0, theme: ThemeMode.light, keyboard: false, imeBottom: 320, startPlayback: false),
+        (size: const Size(768, 1024), scale: 1.0, theme: ThemeMode.light, keyboard: false, imeBottom: 0, startPlayback: false),
+        (size: const Size(768, 1024), scale: 1.3, theme: ThemeMode.dark, keyboard: false, imeBottom: 0, startPlayback: false),
+        (size: const Size(768, 1024), scale: 1.5, theme: ThemeMode.light, keyboard: false, imeBottom: 0, startPlayback: false),
+        (size: const Size(1024, 768), scale: 1.0, theme: ThemeMode.light, keyboard: true, imeBottom: 0, startPlayback: true),
+        (size: const Size(1024, 768), scale: 1.3, theme: ThemeMode.dark, keyboard: false, imeBottom: 0, startPlayback: false),
+        (size: const Size(1024, 768), scale: 1.5, theme: ThemeMode.light, keyboard: false, imeBottom: 0, startPlayback: false),
       ];
 
+      const channel = MethodChannel('com.louvaio.mobile/vocal_audio');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            final args = call.arguments as Map?;
+            if (call.method == 'playSequence') {
+              return {
+                'sessionId': args?['sessionId'],
+                'sampleRate': 44100,
+                'totalFrames': 441000,
+              };
+            }
+            if (call.method == 'position') {
+              return {
+                'sessionId': args?['sessionId'],
+                'playedFrames': 0,
+                'totalFrames': 441000,
+                'sampleRate': 44100,
+                'state': 'playing',
+              };
+            }
+            return null;
+          });
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null),
+      );
+
       for (final s in scenarios) {
+        tester.view.physicalSize = s.size;
         await tester.pumpWidget(
           ProviderScope(
+            key: ValueKey(
+              'resp_scope_${s.size.width}x${s.size.height}_${s.scale}_${s.theme.name}_${s.imeBottom}',
+            ),
             overrides: [
               authRepositoryProvider.overrideWithValue(authRepo),
               vocalExerciseRepositoryProvider.overrideWithValue(vocalRepo),
@@ -853,17 +906,18 @@ void main() {
                 return notifier;
               }),
             ],
-            child: MediaQuery(
-              data: MediaQueryData(
-                size: s.size,
-                textScaler: TextScaler.linear(s.scale),
+            child: MaterialApp(
+              theme: ThemeData.light(useMaterial3: true),
+              darkTheme: ThemeData.dark(useMaterial3: true),
+              themeMode: s.theme,
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(
+                  textScaler: TextScaler.linear(s.scale),
+                  viewInsets: EdgeInsets.only(bottom: s.imeBottom),
+                ),
+                child: child!,
               ),
-              child: MaterialApp(
-                theme: ThemeData.light(useMaterial3: true),
-                darkTheme: ThemeData.dark(useMaterial3: true),
-                themeMode: s.theme,
-                home: const VocalPlayerScreen(),
-              ),
+              home: const VocalPlayerScreen(),
             ),
           ),
         );
@@ -872,13 +926,648 @@ void main() {
           tester.takeException(),
           isNull,
           reason:
-              'Zero overflow expected for size=${s.size}, scale=${s.scale}, theme=${s.theme}',
+              'Zero overflow expected for size=${s.size}, scale=${s.scale}, theme=${s.theme}, ime=${s.imeBottom}',
         );
-        expect(find.byKey(const ValueKey('vocal_new_custom_button')), findsOneWidget);
+        final barRect = tester.getRect(
+          find.byKey(const ValueKey('vocal_bottom_playback_bar')),
+        );
+        expect(
+          barRect.bottom,
+          lessThanOrEqualTo(s.size.height - s.imeBottom + 0.5),
+          reason: 'Footer must remain above IME inset (${s.imeBottom}) on ${s.size}',
+        );
+        expect(find.byKey(const ValueKey('vocal_start_button')), findsOneWidget);
+        expect(find.byKey(const ValueKey('vocal_volume_slider')), findsOneWidget);
+        if (s.imeBottom == 0) {
+          expect(
+            find.byKey(const ValueKey('vocal_new_custom_button')),
+            findsOneWidget,
+          );
+        }
+        if (s.size.width >= 840) {
+          expect(
+            find.byKey(const ValueKey('vocal_tablet_two_column_layout')),
+            findsOneWidget,
+          );
+        }
+
+        if (s.startPlayback) {
+          await tester.tap(find.byKey(const ValueKey('vocal_start_button')));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 20));
+          expect(tester.takeException(), isNull);
+          expect(find.text('Bloqueado durante execução'), findsWidgets);
+        }
+
+        if (s.keyboard) {
+          final toggleKeyboard = find.byKey(
+            const ValueKey('vocal_toggle_keyboard_button'),
+          );
+          await tester.ensureVisible(toggleKeyboard);
+          await tester.tap(toggleKeyboard);
+          await tester.pumpAndSettle();
+          expect(
+            tester.takeException(),
+            isNull,
+            reason:
+                'Zero overflow with PianoKeyboard open for size=${s.size}, scale=${s.scale}',
+          );
+          expect(
+            find.byKey(const ValueKey('vocal_piano_keyboard')),
+            findsOneWidget,
+          );
+        }
       }
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
     },
   );
+
+  group('VocalPlayerScreen R2.1 UX refactor', () {
+    testWidgets(
+      'monitor shows only single active note without sequence chips and updates through Pronto, Tocando, Pausa, and Concluído',
+      (tester) async {
+        const channel = MethodChannel('com.louvaio.mobile/vocal_audio');
+        var playedFrames = 0;
+        var nativeState = 'playing';
+
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (call) async {
+              final args = call.arguments as Map?;
+              if (call.method == 'playSequence') {
+                return {
+                  'sessionId': args?['sessionId'],
+                  'sampleRate': 44100,
+                  'totalFrames': 441000,
+                };
+              }
+              if (call.method == 'position') {
+                return {
+                  'sessionId': args?['sessionId'],
+                  'playedFrames': playedFrames,
+                  'totalFrames': 441000,
+                  'sampleRate': 44100,
+                  'state': nativeState,
+                };
+              }
+              return null;
+            });
+        addTearDown(
+          () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(channel, null),
+        );
+
+        final authRepo = _MockPreviewAuthRepository();
+        final vocalRepo = _MockPreviewVocalExerciseRepository();
+        when(() => authRepo.authStateChanges())
+            .thenAnswer((_) => const Stream.empty());
+        when(() => vocalRepo.listCustomExercises()).thenAnswer((_) async => []);
+        when(
+          () => authRepo.updateVocalRangePreference(
+            minMidi: any(named: 'minMidi'),
+            maxMidi: any(named: 'maxMidi'),
+          ),
+        ).thenAnswer((_) async => (52, 74));
+        const baseUser = AuthUser(
+          id: 'usr-comp',
+          email: 'comp@louvaio.test',
+          name: 'Cantor',
+        );
+        late AuthNotifier authNotifier;
+
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              authRepositoryProvider.overrideWithValue(authRepo),
+              vocalExerciseRepositoryProvider.overrideWithValue(vocalRepo),
+              authNotifierProvider.overrideWith((ref) {
+                authNotifier = AuthNotifier(authRepo);
+                authNotifier.state = const AuthState.authenticated(baseUser);
+                return authNotifier;
+              }),
+            ],
+            child: const MaterialApp(home: VocalPlayerScreen()),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final monitorCard = find.byKey(const ValueKey('vocal_monitor_card'));
+        expect(monitorCard, findsOneWidget);
+
+        // No sequence Chips rendered anywhere inside monitor
+        expect(
+          find.descendant(of: monitorCard, matching: find.byType(Chip)),
+          findsNothing,
+        );
+        expect(find.textContaining('(1.0t)'), findsNothing);
+        expect(find.textContaining('(2.0t)'), findsNothing);
+
+        // Initial Pronto indicator + single centered prompt
+        expect(find.text('Pronto'), findsOneWidget);
+        expect(
+          tester
+              .widget<Text>(
+                find.byKey(const ValueKey('vocal_active_note_value')),
+              )
+              .data,
+          'Pronto para iniciar',
+        );
+
+        // Start playback -> Tocando & first note (vocal-01 starts at Dó3 = 48 in default Dó3..Dó6 range)
+        await tester.tap(find.byKey(const ValueKey('vocal_start_button')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 20));
+
+        expect(find.text('Tocando'), findsOneWidget);
+        expect(
+          tester
+              .widget<Text>(
+                find.byKey(const ValueKey('vocal_active_note_value')),
+              )
+              .data,
+          'Dó3',
+        );
+        // Other notes of sequence must not be displayed alongside active note
+        expect(
+          find.descendant(of: monitorCard, matching: find.text('Ré3')),
+          findsNothing,
+        );
+        expect(
+          find.descendant(of: monitorCard, matching: find.text('Mi3')),
+          findsNothing,
+        );
+
+        // Advance playedFrames to 2nd note at 80 BPM (1 beat = 0.75s = 33075 frames -> 44100 frames is Ré3)
+        playedFrames = 44100;
+        await tester.pump(const Duration(milliseconds: 60));
+        expect(
+          tester
+              .widget<Text>(
+                find.byKey(const ValueKey('vocal_active_note_value')),
+              )
+              .data,
+          'Ré3',
+        );
+        expect(
+          find.descendant(of: monitorCard, matching: find.text('Dó3')),
+          findsNothing,
+        );
+
+        // Advance playedFrames to 3rd note (70000 frames -> ~1.58s -> Mi3)
+        playedFrames = 70000;
+        await tester.pump(const Duration(milliseconds: 60));
+        expect(
+          tester
+              .widget<Text>(
+                find.byKey(const ValueKey('vocal_active_note_value')),
+              )
+              .data,
+          'Mi3',
+        );
+
+        // Pause updates monitor indicator to Pausa while preserving current note
+        await tester.tap(
+          find.byKey(const ValueKey('vocal_pause_resume_button')),
+        );
+        await tester.pump();
+        expect(find.text('Pausa'), findsOneWidget);
+        expect(
+          tester
+              .widget<Text>(
+                find.byKey(const ValueKey('vocal_active_note_value')),
+              )
+              .data,
+          'Mi3',
+        );
+
+        // Resume and naturally complete -> Concluído
+        await tester.tap(
+          find.byKey(const ValueKey('vocal_pause_resume_button')),
+        );
+        await tester.pump();
+        nativeState = 'completed';
+        await tester.pump(const Duration(milliseconds: 60));
+
+        expect(find.text('Concluído'), findsOneWidget);
+        expect(find.text('Exercício concluído'), findsOneWidget);
+        expect(
+          tester
+              .widget<Text>(
+                find.byKey(const ValueKey('vocal_active_note_value')),
+              )
+              .data,
+          'Exercício concluído',
+        );
+
+        // Changing practice config clears completion state back to Pronto
+        final bpm60 = find.byKey(const ValueKey('vocal_bpm_preset_60'));
+        await tester.ensureVisible(bpm60);
+        await tester.tap(bpm60);
+        await tester.pump();
+        expect(find.text('Pronto'), findsOneWidget);
+        expect(
+          tester
+              .widget<Text>(
+                find.byKey(const ValueKey('vocal_active_note_value')),
+              )
+              .data,
+          'Pronto para iniciar',
+        );
+
+        // Same-user profile range sync also clears completion state
+        nativeState = 'playing';
+        playedFrames = 0;
+        await tester.tap(find.byKey(const ValueKey('vocal_start_button')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 20));
+        nativeState = 'completed';
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(find.text('Concluído'), findsOneWidget);
+
+        authNotifier.state = const AuthState.authenticated(
+          AuthUser(
+            id: 'usr-comp',
+            email: 'comp@louvaio.test',
+            name: 'Cantor',
+            vocalMinMidi: 50,
+            vocalMaxMidi: 72,
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Pronto'), findsOneWidget);
+
+        // Server-clamped vocal range confirmation on save also clears completion state
+        nativeState = 'playing';
+        playedFrames = 0;
+        await tester.tap(find.byKey(const ValueKey('vocal_start_button')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 20));
+        nativeState = 'completed';
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(find.text('Concluído'), findsOneWidget);
+
+        final saveRangeBtn = find.byKey(
+          const ValueKey('vocal_save_range_button'),
+        );
+        await tester.ensureVisible(saveRangeBtn);
+        await tester.pumpAndSettle();
+        await tester.tap(saveRangeBtn);
+        await tester.pumpAndSettle();
+        expect(find.text('Pronto'), findsOneWidget);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      },
+    );
+
+    testWidgets(
+      'fixed footer bar stays accessible immediately and during scroll, respects bottom SafeArea & keyboard inset, and avoids duplicate volume cards',
+      (tester) async {
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        tester.view.devicePixelRatio = 1.0;
+        tester.view.physicalSize = const Size(393, 852);
+
+        final authRepo = _MockPreviewAuthRepository();
+        final vocalRepo = _MockPreviewVocalExerciseRepository();
+        when(() => authRepo.authStateChanges())
+            .thenAnswer((_) => const Stream.empty());
+        when(() => vocalRepo.listCustomExercises()).thenAnswer((_) async => []);
+        when(
+          () => authRepo.updateVocalRangePreference(
+            minMidi: any(named: 'minMidi'),
+            maxMidi: any(named: 'maxMidi'),
+          ),
+        ).thenAnswer(
+          (inv) async => (
+            inv.namedArguments[#minMidi] as int,
+            inv.namedArguments[#maxMidi] as int,
+          ),
+        );
+        const user = AuthUser(
+          id: 'usr-fixed',
+          email: 'fixed@louvaio.test',
+          name: 'Cantor Rodape',
+        );
+
+        Widget buildWithInsets({
+          double bottomPadding = 48,
+          double bottomInset = 0,
+        }) {
+          return ProviderScope(
+            overrides: [
+              authRepositoryProvider.overrideWithValue(authRepo),
+              vocalExerciseRepositoryProvider.overrideWithValue(vocalRepo),
+              authNotifierProvider.overrideWith((ref) {
+                final notifier = AuthNotifier(authRepo);
+                notifier.state = const AuthState.authenticated(user);
+                return notifier;
+              }),
+            ],
+            child: MaterialApp(
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(
+                  padding: EdgeInsets.only(bottom: bottomPadding),
+                  viewInsets: EdgeInsets.only(bottom: bottomInset),
+                ),
+                child: child!,
+              ),
+              home: const VocalPlayerScreen(),
+            ),
+          );
+        }
+
+        await tester.pumpWidget(buildWithInsets(bottomPadding: 48));
+        await tester.pumpAndSettle();
+
+        // Legacy standalone volume card removed -> only single footer volume & transport controls
+        expect(find.byKey(const ValueKey('vocal_volume_card')), findsNothing);
+        expect(find.byKey(const ValueKey('vocal_volume_slider')), findsOneWidget);
+        expect(find.byKey(const ValueKey('vocal_start_button')), findsOneWidget);
+
+        final barFinder = find.byKey(const ValueKey('vocal_bottom_playback_bar'));
+        final startFinder = find.byKey(const ValueKey('vocal_start_button'));
+        final sliderFinder = find.byKey(const ValueKey('vocal_volume_slider'));
+
+        // Immediately visible & above 48dp Android nav bar BEFORE any scrolling
+        final initialBarRect = tester.getRect(barFinder);
+        final initialStartRect = tester.getRect(startFinder);
+        final initialSliderRect = tester.getRect(sliderFinder);
+        expect(initialStartRect.bottom, lessThanOrEqualTo(852.0 - 48.0));
+        expect(initialSliderRect.bottom, lessThanOrEqualTo(852.0 - 48.0));
+        expect(initialStartRect.top, greaterThanOrEqualTo(initialBarRect.top));
+
+        // Scroll body down -> footer stays pinned and last controls + save button stay unobscured above bar
+        final scrollableFinder = find.byKey(
+          const ValueKey('vocal_main_scroll_view'),
+        );
+        await tester.drag(scrollableFinder, const Offset(0, -1200));
+        await tester.pumpAndSettle();
+
+        final scrolledBarRect = tester.getRect(barFinder);
+        expect(scrolledBarRect.top, closeTo(initialBarRect.top, 0.5));
+
+        final descTile = find.byKey(
+          const ValueKey('vocal_progression_descending'),
+        );
+        await tester.ensureVisible(descTile);
+        await tester.pumpAndSettle();
+        final descRect = tester.getRect(descTile);
+        expect(descRect.bottom, lessThanOrEqualTo(scrolledBarRect.top + 0.5));
+        await tester.tap(descTile);
+        await tester.pumpAndSettle();
+
+        final saveRangeBtn = find.byKey(
+          const ValueKey('vocal_save_range_button'),
+        );
+        await tester.ensureVisible(saveRangeBtn);
+        await tester.pumpAndSettle();
+        final saveRect = tester.getRect(saveRangeBtn);
+        expect(saveRect.bottom, lessThanOrEqualTo(scrolledBarRect.top + 0.5));
+        await tester.tap(saveRangeBtn);
+        await tester.pumpAndSettle();
+
+        verify(
+          () => authRepo.updateVocalRangePreference(
+            minMidi: any(named: 'minMidi'),
+            maxMidi: any(named: 'maxMidi'),
+          ),
+        ).called(1);
+
+        // With virtual keyboard open (viewInsets.bottom = 260), bar lifts above keyboard cleanly
+        await tester.pumpWidget(
+          buildWithInsets(bottomPadding: 0, bottomInset: 260),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(
+          tester.getRect(startFinder).bottom,
+          lessThanOrEqualTo(852.0 - 260.0),
+        );
+
+        // Returning from keyboard and opening/closing bottom sheet keeps footer accessible
+        await tester.pumpWidget(buildWithInsets(bottomPadding: 48, bottomInset: 0));
+        await tester.pumpAndSettle();
+        final newCustomBtn = find.byKey(
+          const ValueKey('vocal_new_custom_button'),
+        );
+        await tester.ensureVisible(newCustomBtn);
+        await tester.tap(newCustomBtn);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Cancelar'));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('vocal_bottom_playback_bar')), findsOneWidget);
+        expect(tester.getRect(startFinder).bottom, lessThanOrEqualTo(852.0 - 48.0));
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      },
+    );
+
+    testWidgets(
+      'optional PianoKeyboard stays synchronized with active note updates on narrow 360dp 1.5x phone',
+      (tester) async {
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        tester.view.devicePixelRatio = 1.0;
+        tester.view.physicalSize = const Size(360, 740);
+
+        const channel = MethodChannel('com.louvaio.mobile/vocal_audio');
+        var playedFrames = 0;
+
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (call) async {
+              final args = call.arguments as Map?;
+              if (call.method == 'playSequence') {
+                return {
+                  'sessionId': args?['sessionId'],
+                  'sampleRate': 44100,
+                  'totalFrames': 441000,
+                };
+              }
+              if (call.method == 'position') {
+                return {
+                  'sessionId': args?['sessionId'],
+                  'playedFrames': playedFrames,
+                  'totalFrames': 441000,
+                  'sampleRate': 44100,
+                  'state': 'playing',
+                };
+              }
+              return null;
+            });
+        addTearDown(
+          () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(channel, null),
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                textScaler: const TextScaler.linear(1.5),
+              ),
+              child: child!,
+            ),
+            home: const VocalPlayerScreen(),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final toggleBtn = find.byKey(
+          const ValueKey('vocal_toggle_keyboard_button'),
+        );
+        await tester.ensureVisible(toggleBtn);
+        await tester.tap(toggleBtn);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(
+          find.byKey(const ValueKey('vocal_piano_keyboard')),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.byKey(const ValueKey('vocal_start_button')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 20));
+        expect(find.text('Tocando: Dó3'), findsOneWidget);
+
+        // Advance playback to Ré3 (MIDI 50) -> PianoKeyboard active badge + Semantics sync cleanly
+        playedFrames = 44100;
+        await tester.pump(const Duration(milliseconds: 60));
+        expect(find.text('Tocando: Ré3'), findsOneWidget);
+        expect(
+          tester
+              .widget<Text>(
+                find.byKey(const ValueKey('vocal_active_note_value')),
+              )
+              .data,
+          'Ré3',
+        );
+        expect(find.byKey(const ValueKey('piano_key_50')), findsOneWidget);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      },
+    );
+
+    testWidgets(
+      'stale delayed position poll cannot revert resume back to pause and debounced volume never leaks across account switch',
+      (tester) async {
+        const channel = MethodChannel('com.louvaio.mobile/vocal_audio');
+        final delayedPositionCompleter = Completer<Map<String, Object?>>();
+        var holdNextPoll = false;
+        var nativeState = 'playing';
+
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (call) async {
+              final args = call.arguments as Map?;
+              if (call.method == 'playSequence') {
+                return {
+                  'sessionId': args?['sessionId'],
+                  'sampleRate': 44100,
+                  'totalFrames': 441000,
+                };
+              }
+              if (call.method == 'pause') {
+                nativeState = 'paused';
+              }
+              if (call.method == 'resume') {
+                nativeState = 'playing';
+              }
+              if (call.method == 'position') {
+                if (holdNextPoll && !delayedPositionCompleter.isCompleted) {
+                  return delayedPositionCompleter.future;
+                }
+                return {
+                  'sessionId': args?['sessionId'],
+                  'playedFrames': 0,
+                  'totalFrames': 441000,
+                  'sampleRate': 44100,
+                  'state': nativeState,
+                };
+              }
+              return null;
+            });
+        addTearDown(
+          () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(channel, null),
+        );
+
+        final prefs = InMemoryPreferencesStorage();
+        final authRepo = _MockPreviewAuthRepository();
+        final vocalRepo = _MockPreviewVocalExerciseRepository();
+        when(() => authRepo.authStateChanges())
+            .thenAnswer((_) => const Stream.empty());
+        when(() => vocalRepo.listCustomExercises()).thenAnswer((_) async => []);
+        const userA = AuthUser(id: 'usr-a', email: 'a@louvaio.test', name: 'A');
+        const userB = AuthUser(id: 'usr-b', email: 'b@louvaio.test', name: 'B');
+        late AuthNotifier authNotifier;
+
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              preferencesStorageProvider.overrideWithValue(prefs),
+              authRepositoryProvider.overrideWithValue(authRepo),
+              vocalExerciseRepositoryProvider.overrideWithValue(vocalRepo),
+              authNotifierProvider.overrideWith((ref) {
+                authNotifier = AuthNotifier(authRepo);
+                authNotifier.state = const AuthState.authenticated(userA);
+                return authNotifier;
+              }),
+            ],
+            child: const MaterialApp(home: VocalPlayerScreen()),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // Start playback -> trigger a poll whose response arrives LATE reporting 'paused'
+        await tester.tap(find.byKey(const ValueKey('vocal_start_button')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 20));
+
+        holdNextPoll = true;
+        await tester.pump(const Duration(milliseconds: 55));
+
+        // User pauses and resumes BEFORE delayed poll completes
+        await tester.tap(find.byKey(const ValueKey('vocal_pause_resume_button')));
+        await tester.pump();
+        expect(find.text('Pausa'), findsOneWidget);
+
+        await tester.tap(find.byKey(const ValueKey('vocal_pause_resume_button')));
+        await tester.pump();
+        expect(find.text('Tocando'), findsOneWidget);
+
+        // Now stale delayed 'paused' poll resolves -> must be ignored!
+        delayedPositionCompleter.complete({
+          'sessionId': 1,
+          'playedFrames': 0,
+          'totalFrames': 441000,
+          'sampleRate': 44100,
+          'state': 'paused',
+        });
+        await tester.pump();
+        expect(find.text('Tocando'), findsOneWidget);
+        expect(find.text('Pausa'), findsNothing);
+
+        // Trigger debounced slider write on userA then switch account to userB within 120ms
+        final slider = tester.widget<Slider>(
+          find.byKey(const ValueKey('vocal_volume_slider')),
+        );
+        slider.onChanged!(0.35);
+        await tester.pump();
+        expect(find.text('Volume interno: 35%'), findsOneWidget);
+
+        authNotifier.state = const AuthState.authenticated(userB);
+        await tester.pumpAndSettle();
+        await tester.pump(const Duration(milliseconds: 200));
+
+        expect(prefs.getVocalPlayerVolume(userId: 'usr-b'), isNull);
+        expect(find.text('Volume interno: 100%'), findsOneWidget);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      },
+    );
+  });
 }

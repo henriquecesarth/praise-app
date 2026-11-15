@@ -131,8 +131,11 @@ class _PianoKeyboardState extends State<PianoKeyboard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 6,
             children: [
               Text(
                 'TECLADO DE REFERÊNCIA (${midiLabel(widget.minMidi)} – ${midiLabel(widget.maxMidi)})',
@@ -142,24 +145,33 @@ class _PianoKeyboardState extends State<PianoKeyboard> {
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
-              Container(
-                key: const ValueKey('vocal_piano_active_note_badge'),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                decoration: BoxDecoration(
-                  color: active != null
-                      ? theme.colorScheme.primary.withValues(alpha: 0.16)
-                      : theme.colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  active != null
-                      ? 'Tocando: ${midiLabel(active)}'
-                      : 'Aguardando nota',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
+              Semantics(
+                liveRegion: true,
+                label: active != null
+                    ? 'Teclado marcando ${midiLabel(active)}'
+                    : 'Teclado aguardando nota',
+                child: Container(
+                  key: const ValueKey('vocal_piano_active_note_badge'),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
                     color: active != null
-                        ? theme.colorScheme.primary
-                        : theme.colorScheme.onSurfaceVariant,
+                        ? theme.colorScheme.primary.withValues(alpha: 0.16)
+                        : theme.colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    active != null
+                        ? 'Tocando: ${midiLabel(active)}'
+                        : 'Aguardando nota',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: active != null
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
               ),
@@ -244,14 +256,21 @@ class _PianoKeyboardState extends State<PianoKeyboard> {
                 ]
               : null,
         ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 10,
-            fontWeight: isActive || isC ? FontWeight.w800 : FontWeight.w500,
-            color: isActive
-                ? theme.colorScheme.onPrimary
-                : (isC ? Colors.black87 : Colors.blueGrey.shade600),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              label,
+              maxLines: 1,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: isActive || isC ? FontWeight.w800 : FontWeight.w500,
+                color: isActive
+                    ? theme.colorScheme.onPrimary
+                    : (isC ? Colors.black87 : Colors.blueGrey.shade600),
+              ),
+            ),
           ),
         ),
       ),
@@ -294,14 +313,21 @@ class _PianoKeyboardState extends State<PianoKeyboard> {
             ),
           ],
         ),
-        child: Text(
-          label.replaceAll(RegExp(r'\d+$'), ''),
-          style: TextStyle(
-            fontSize: 8.5,
-            fontWeight: FontWeight.w700,
-            color: isActive
-                ? theme.colorScheme.onTertiary
-                : const Color(0xFFE6DFD3),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              label.replaceAll(RegExp(r'\d+$'), ''),
+              maxLines: 1,
+              style: TextStyle(
+                fontSize: 8.5,
+                fontWeight: FontWeight.w700,
+                color: isActive
+                    ? theme.colorScheme.onTertiary
+                    : const Color(0xFFE6DFD3),
+              ),
+            ),
           ),
         ),
       ),
