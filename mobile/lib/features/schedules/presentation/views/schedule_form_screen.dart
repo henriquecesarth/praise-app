@@ -9,6 +9,7 @@ import '../../domain/ministry_member.dart';
 import '../../domain/ministry_role.dart';
 import '../../domain/schedule.dart';
 import '../../domain/schedule_participant.dart';
+import '../../../repertoire/domain/song_detail.dart';
 import '../../../repertoire/domain/song_summary.dart';
 import '../../../repertoire/presentation/widgets/musical_key_selector.dart';
 import '../../../teams/presentation/widgets/team_picker_sheet.dart';
@@ -395,6 +396,71 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen>
 
   // ─── Content Management Handlers ──────────────────────────────────────────
 
+  Future<void> _handleSongSelected(SongSummary song) async {
+    SongVersion? chosenVersion;
+    if (song.versions.length == 1) {
+      chosenVersion = song.versions.first;
+    } else if (song.versions.length > 1) {
+      chosenVersion = await showDialog<SongVersion>(
+        context: context,
+        builder: (dialogCtx) => AlertDialog(
+          title: Text('Versão para "${song.title}"'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final version in song.versions)
+                    ListTile(
+                      key: ValueKey(
+                        'schedule_form_pick_version_${version.id ?? version.name}',
+                      ),
+                      leading: const Icon(Icons.layers_outlined),
+                      title: Text(version.name),
+                      subtitle: version.key != null && version.key!.isNotEmpty
+                          ? Text('Tom: ${version.key}')
+                          : null,
+                      onTap: () => Navigator.of(dialogCtx).pop(version),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogCtx).pop(),
+              child: const Text('Cancelar'),
+            ),
+          ],
+        ),
+      );
+      if (chosenVersion == null || !mounted) return;
+    }
+
+    final added = ref.read(scheduleFormNotifierProvider.notifier).addSong(
+          ScheduleSong(
+            id: song.id,
+            title: song.title,
+            artist: song.artistName,
+            key: chosenVersion?.key ?? song.originalKey,
+            versionId: chosenVersion?.id,
+            versionName: chosenVersion?.name,
+          ),
+        );
+    if (added && mounted) {
+      final versionSuffix = (chosenVersion?.name.isNotEmpty ?? false)
+          ? ' (${chosenVersion!.name})'
+          : '';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Música "${song.title}"$versionSuffix adicionada à escala'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
   void _openSongPicker(BuildContext context) {
     showModalBottomSheet(
       context: context,
@@ -406,22 +472,7 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen>
       builder: (ctx) => _SongPickerSheet(
         ministryId: widget.ministryId,
         onSongSelected: (song) {
-          final added = ref
-              .read(scheduleFormNotifierProvider.notifier)
-              .addSong(ScheduleSong(
-                id: song.id,
-                title: song.title,
-                artist: song.artistName,
-                key: song.originalKey,
-              ));
-          if (added && mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Música "${song.title}" adicionada à escala'),
-                duration: const Duration(seconds: 2),
-              ),
-            );
-          }
+          _handleSongSelected(song);
         },
       ),
     );
@@ -1496,6 +1547,16 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen>
                                         style: const TextStyle(
                                             fontWeight: FontWeight.w600),
                                       ),
+                                      if (song.versionName != null &&
+                                          song.versionName!.isNotEmpty)
+                                        Text(
+                                          'Versão: ${song.versionName!}',
+                                          style: theme.textTheme.labelSmall
+                                              ?.copyWith(
+                                            color: theme.colorScheme.primary,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
                                       if (song.artist != null &&
                                           song.artist!.isNotEmpty)
                                         Text(
@@ -1674,7 +1735,7 @@ class _ScheduleFormScreenState extends ConsumerState<ScheduleFormScreen>
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            'Toque em "Adicionar" para definir a liturgia do culto.',
+                            'Toque em "Adicionar" para definir o roteiro do culto.',
                             textAlign: TextAlign.center,
                             style: theme.textTheme.bodySmall?.copyWith(
                               color: theme.colorScheme.onSurface

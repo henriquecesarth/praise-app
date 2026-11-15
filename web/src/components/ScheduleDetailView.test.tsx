@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { ScheduleDetailView } from './ScheduleDetailView';
 import { ScheduleItem } from './CreateScheduleModal';
 
@@ -174,5 +174,58 @@ describe('ScheduleDetailView — Phase B Security & Stale Race Guards', () => {
 
     expect(screen.queryByText(/Bateria Vazada A/)).not.toBeInTheDocument();
     expect(screen.getByText(/Violão B/)).toBeInTheDocument();
+  });
+
+  it('FASE 3: abre música diretamente da lista e do roteiro preservando versionId e scheduleId', async () => {
+    const onSelectSong = vi.fn();
+    render(
+      <ScheduleDetailView
+        schedule={buildSchedule({
+          id: 'sch-42',
+          songs: [
+            {
+              id: 'song-1',
+              title: 'Bondade de Deus',
+              artist: 'Isaías Saad',
+              artistName: 'Isaías Saad',
+              originalKey: 'G',
+              versionId: 'ver-acustico',
+              versionName: 'Acústico',
+              versions: [],
+            },
+          ],
+          timeline: [
+            { id: 't1', title: 'Oração Inicial', type: 'Oração', time: '19:30' },
+            { id: 't2', title: 'Música 1', type: 'Música', time: '19:40' },
+          ],
+        })}
+        groupId="min-1"
+        userRole="member"
+        currentUserId="usr-999"
+        onBack={vi.fn()}
+        onSelectSong={onSelectSong}
+      />
+    );
+
+    await waitFor(() => {
+      expect(getScheduleComments).toHaveBeenCalled();
+    });
+
+    const songButton = screen.getByRole('button', { name: /Abrir música Bondade de Deus, versão Acústico/i });
+    expect(songButton).toHaveTextContent('Acústico');
+    fireEvent.click(songButton);
+    expect(onSelectSong).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'song-1', versionId: 'ver-acustico' }),
+      { versionId: 'ver-acustico', scheduleId: 'sch-42' }
+    );
+
+    const timelineSongButton = screen.getByRole('button', {
+      name: /Abrir música do roteiro Bondade de Deus, versão Acústico/i,
+    });
+    fireEvent.click(timelineSongButton);
+    expect(onSelectSong).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 'song-1', versionId: 'ver-acustico' }),
+      { versionId: 'ver-acustico', scheduleId: 'sch-42' }
+    );
   });
 });

@@ -829,6 +829,8 @@ class _SongsSection extends StatelessWidget {
                             ministryId: ministryId,
                             songId: song.id,
                             initialTitle: song.title,
+                            initialVersionId: song.versionId,
+                            backLabel: 'Voltar para Escala',
                           ),
                         ),
                       );
@@ -852,6 +854,18 @@ class _SongsSection extends StatelessWidget {
                             style: theme.textTheme.bodyMedium?.copyWith(
                               fontWeight: FontWeight.w500,
                             )),
+                        if (song.versionName != null &&
+                            song.versionName!.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              'Versão: ${song.versionName!}',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: theme.colorScheme.primary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
                         if (song.artist != null && song.artist!.isNotEmpty)
                           Text(
                             song.artist!,
@@ -930,7 +944,13 @@ class _TimelineSection extends StatelessWidget {
             Expanded(child: InkWell(
               key: ValueKey('timeline_item_${item.id}'),
               onTap: song == null ? null : () => Navigator.of(context).push(MaterialPageRoute<void>(
-                builder: (_) => SongDetailView(ministryId: ministryId, songId: song.id, initialTitle: song.title))),
+                builder: (_) => SongDetailView(
+                  ministryId: ministryId,
+                  songId: song.id,
+                  initialTitle: song.title,
+                  initialVersionId: song.versionId,
+                  backLabel: 'Voltar para Escala',
+                ))),
               child: Padding(padding: const EdgeInsets.only(bottom: 24, top: 4),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(song?.title ?? item.title,
@@ -942,6 +962,11 @@ class _TimelineSection extends StatelessWidget {
                       'word': 'Palavra', 'transition': 'Transição', 'other': 'Outro',
                     }[item.type] ?? item.type),
                       visualDensity: VisualDensity.compact),
+                    if (song?.versionName != null && song!.versionName!.isNotEmpty)
+                      Chip(
+                        label: Text(song.versionName!),
+                        visualDensity: VisualDensity.compact,
+                      ),
                     if (item.time?.isNotEmpty == true) Text(item.time!),
                     if (song != null) const Icon(Icons.chevron_right, size: 20),
                   ]),

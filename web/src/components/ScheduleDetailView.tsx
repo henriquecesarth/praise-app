@@ -20,9 +20,10 @@ import {
   X,
 } from 'lucide-react';
 import { ScheduleItem } from './CreateScheduleModal';
-import { GroupRole } from '../types';
+import { GroupRole, Song } from '../types';
 import { Header } from './Header';
 import { formatScheduleDateTimePtBR, formatTimestampPtBR } from '../utils/locale';
+import { isScheduleSongSlot, resolveScheduleTimelineSong } from '../utils/scheduleSongResolver';
 import { api } from '../api';
 import { useRepertoireDialog } from './useRepertoireDialog';
 
@@ -36,6 +37,7 @@ interface ScheduleDetailViewProps {
   onEdit?: () => void;
   onDelete?: () => void;
   onUpdateSchedule?: (updatedSchedule: ScheduleItem) => void;
+  onSelectSong?: (song: Song, context?: { versionId?: string; scheduleId?: string }) => void;
 }
 
 const formatDate = (dateStr: string, timeStr: string) => {
@@ -63,6 +65,7 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
   onEdit,
   onDelete,
   onUpdateSchedule,
+  onSelectSong,
 }) => {
   const upcoming = isUpcoming(schedule.date);
   const [updating, setUpdating] = useState(false);
@@ -508,19 +511,50 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
               <h2 className="schedule-detail-section-title">Músicas Escaladas</h2>
             </div>
             <div className="schedule-detail-list">
-              {schedule.songs.map((song, idx) => (
-                <div key={song.id} className="schedule-detail-song-item" style={{ minHeight: '52px', padding: '10px 14px', cursor: 'pointer' }}>
-                  <div className="schedule-song-index" style={{ width: '28px', height: '28px', fontSize: '0.85rem' }}>{idx + 1}</div>
-                  <div className="dashboard-item-info">
-                    <div className="dashboard-item-title" style={{ fontSize: '0.95rem', fontWeight: 600 }}>{song.title}</div>
-                    <div className="dashboard-item-desc">
-                      {song.artistName || 'Artista não informado'}
-                      {song.originalKey && <> · <strong>Tom: {song.originalKey}</strong></>}
+              {schedule.songs.map((song, idx) => {
+                const displayArtist = song.artistName || (song as any).artist || 'Artista não informado';
+                const displayKey = song.originalKey || (song as any).key;
+                const displayVersionName = song.versionName || (song as any).version_name;
+                const resolvedVersionId = song.versionId || (song as any).version_id || undefined;
+                const canOpenSong = Boolean(onSelectSong && song.id?.trim());
+
+                return (
+                  <button
+                    key={`${song.id}-${idx}`}
+                    type="button"
+                    className="schedule-detail-song-item schedule-detail-song-btn"
+                    disabled={!canOpenSong}
+                    aria-label={
+                      displayVersionName
+                        ? `Abrir música ${song.title}, versão ${displayVersionName}`
+                        : `Abrir música ${song.title}`
+                    }
+                    onClick={() =>
+                      onSelectSong?.(song, {
+                        versionId: resolvedVersionId,
+                        scheduleId: schedule.id,
+                      })
+                    }
+                  >
+                    <div className="schedule-song-index" style={{ width: '28px', height: '28px', fontSize: '0.85rem' }}>{idx + 1}</div>
+                    <div className="dashboard-item-info">
+                      <div className="dashboard-item-title" style={{ fontSize: '0.95rem', fontWeight: 600 }}>
+                        {song.title}
+                        {displayVersionName && (
+                          <span className="schedule-song-version-badge">
+                            {displayVersionName}
+                          </span>
+                        )}
+                      </div>
+                      <div className="dashboard-item-desc">
+                        {displayArtist}
+                        {displayKey && <> · <strong>Tom: {displayKey}</strong></>}
+                      </div>
                     </div>
-                  </div>
-                  <ChevronRight size={18} style={{ color: 'var(--text-secondary)' }} />
-                </div>
-              ))}
+                    <ChevronRight size={18} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} aria-hidden="true" />
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
@@ -533,19 +567,67 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
               <h2 className="schedule-detail-section-title">Roteiro do Culto</h2>
             </div>
             <div className="schedule-detail-timeline">
-              {schedule.timeline.map((item, idx) => (
-                <div key={item.id} className="schedule-detail-timeline-item">
-                  <div className="schedule-detail-timeline-index">{idx + 1}</div>
-                  <div className="schedule-detail-timeline-line" />
-                  <div className="schedule-detail-timeline-content">
-                    <div className="schedule-detail-timeline-title">{item.title}</div>
-                    <div className="schedule-detail-timeline-meta">
-                      <span className="schedule-detail-timeline-type">{item.type}</span>
-                      {item.time && <span><Clock size={12} /> {item.time}</span>}
+              {(() => {
+                let songSlotIndex = 0;
+                return schedule.timeline.map((item, idx) => {
+                  const slotIdx = isScheduleSongSlot(item) ? songSlotIndex++ : -1;
+                  const resolvedSong =
+                    slotIdx >= 0
+                      ? resolveScheduleTimelineSong(item, slotIdx, schedule.songs)
+                      : null;
+                  const canOpenTimelineSong = Boolean(onSelectSong && resolvedSong);
+                  const resolvedVersionId =
+                    resolvedSong?.versionId || (resolvedSong as any)?.version_id || undefined;
+                  const resolvedVersionName =
+                    resolvedSong?.versionName || (resolvedSong as any)?.version_name;
+
+                  return (
+                    <div key={item.id} className="schedule-detail-timeline-item">
+                      <div className="schedule-detail-timeline-index">{idx + 1}</div>
+                      <div className="schedule-detail-timeline-line" />
+                      {canOpenTimelineSong && resolvedSong ? (
+                        <button
+                          type="button"
+                          className="schedule-detail-timeline-content schedule-detail-timeline-btn"
+                          aria-label={
+                            resolvedVersionName
+                              ? `Abrir música do roteiro ${resolvedSong.title}, versão ${resolvedVersionName}`
+                              : `Abrir música do roteiro ${resolvedSong.title}`
+                          }
+                          onClick={() =>
+                            onSelectSong?.(resolvedSong, {
+                              versionId: resolvedVersionId,
+                              scheduleId: schedule.id,
+                            })
+                          }
+                        >
+                          <div className="schedule-detail-timeline-title">
+                            {resolvedSong.title || item.title}
+                            {resolvedVersionName && (
+                              <span className="schedule-song-version-badge">
+                                {resolvedVersionName}
+                              </span>
+                            )}
+                          </div>
+                          <div className="schedule-detail-timeline-meta">
+                            <span className="schedule-detail-timeline-type">{item.type}</span>
+                            {item.time && <span><Clock size={12} /> {item.time}</span>}
+                            <ChevronRight size={15} style={{ marginLeft: 'auto', color: 'var(--text-secondary)' }} aria-hidden="true" />
+                          </div>
+                        </button>
+                      ) : (
+                        <div className="schedule-detail-timeline-content">
+                          <div className="schedule-detail-timeline-title">{item.title}</div>
+                          <div className="schedule-detail-timeline-meta">
+                            <span className="schedule-detail-timeline-type">{item.type}</span>
+                            {item.time && <span><Clock size={12} /> {item.time}</span>}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                </div>
-              ))}
+                  );
+                });
+              })()}
             </div>
           </div>
         )}

@@ -425,5 +425,52 @@ describe('CreateScheduleModal — Phase 6C Duration & Availability Conflicts', (
       expect(await screen.findByText('Equipe B')).toBeInTheDocument();
       expect(screen.queryByText('Equipe Vazada A')).not.toBeInTheDocument();
     });
+
+    it('FASE 3: permite escolher a versão explícita de música multi-versão ao montar a escala', async () => {
+      const user = userEvent.setup();
+      render(
+        <CreateScheduleModal
+          groupId="min-1"
+          allSongs={[
+            {
+              id: 'song-multi',
+              title: 'Sublime Graça',
+              artist: 'Coral',
+              artistName: 'Coral',
+              originalKey: 'C',
+              versions: [
+                { id: 'ver-1', name: 'Original', classificationIds: [], key: 'C', links: [] },
+                { id: 'ver-2', name: 'Acústico', classificationIds: [], key: 'D', links: [] },
+              ],
+            },
+          ]}
+          currentUserId="user-1"
+          onClose={mockOnClose}
+          onSave={mockOnSave}
+        />
+      );
+
+      await user.click(screen.getByRole('tab', { name: /Músicas/i }));
+      await user.click(screen.getByRole('button', { name: /Adicionar Música/i }));
+      await user.click(screen.getByText('Sublime Graça'));
+      await user.click(screen.getByRole('button', { name: /Concluir \(1 selecionadas\)/i }));
+
+      const select = screen.getByLabelText('Versão de Sublime Graça');
+      await user.selectOptions(select, 'ver-2');
+
+      await user.click(screen.getByRole('button', { name: /salvar escala/i }));
+      expect(mockOnSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          songs: [
+            expect.objectContaining({
+              id: 'song-multi',
+              versionId: 'ver-2',
+              versionName: 'Acústico',
+              originalKey: 'D',
+            }),
+          ],
+        })
+      );
+    });
   });
 });

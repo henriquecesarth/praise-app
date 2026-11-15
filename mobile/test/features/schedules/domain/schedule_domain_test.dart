@@ -259,4 +259,33 @@ void main() {
       expect(formatted, matches(RegExp(r'^\d{2}:\d{2}$')));
     });
   });
+
+  group('ScheduleSong', () {
+    test('fromJson and toJson preserve versionId and versionName from camelCase and snake_case', () {
+      final fromCamel = ScheduleSong.fromJson(const {
+        'id': 'song-1',
+        'title': 'Bondade de Deus',
+        'artistName': 'Isaías Saad',
+        'originalKey': 'G',
+        'versionId': 'ver-2',
+        'versionName': 'Acústico',
+      });
+      expect(fromCamel.artist, equals('Isaías Saad'));
+      expect(fromCamel.key, equals('G'));
+      expect(fromCamel.versionId, equals('ver-2'));
+      expect(fromCamel.versionName, equals('Acústico'));
+      expect(fromCamel.toJson()['versionId'], equals('ver-2'));
+      expect(fromCamel.toJson()['versionName'], equals('Acústico'));
+
+      final fromSnake = ScheduleSong.fromJson(const {
+        'songId': 'song-2',
+        'title': 'Oceanos',
+        'version_id': 'ver-9',
+        'version_name': 'Original',
+      });
+      expect(fromSnake.id, equals('song-2'));
+      expect(fromSnake.versionId, equals('ver-9'));
+      expect(fromSnake.versionName, equals('Original'));
+    });
+  });
 }

@@ -789,6 +789,293 @@ void main() {
       expect(find.text('Tom Original: E • Tom Atual: F (+1)'), findsOneWidget);
       expect(find.text('16px'), findsOneWidget);
     });
+
+    testWidgets(
+        'FASE 2/3/5: respects initialVersionId, scopes smart chords by version, associates pending classification, and wraps cleanly at 320px',
+        (tester) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      const chordV1 = SmartChord(
+        id: 'sc_v1',
+        userId: 'member_user',
+        title: 'Lugar Secreto (Original)',
+        versionId: 'v1',
+        originalKey: 'C',
+        content: '[C]Tu és tudo',
+        createdAt: '2026-11-10T00:00:00Z',
+        updatedAt: '2026-11-10T00:00:00Z',
+        repertoireLink: SmartChordSongLink(
+          id: 'l_v1',
+          userId: 'member_user',
+          smartChordId: 'sc_v1',
+          ministryId: 'min_1',
+          songId: 'song_ver',
+          versionId: 'v1',
+          linkStatus: 'active',
+        ),
+      );
+      const chordV2 = SmartChord(
+        id: 'sc_v2',
+        userId: 'member_user',
+        title: 'Lugar Secreto (Acústica)',
+        versionId: 'v2',
+        originalKey: 'D',
+        content: '[D]Tu és tudo',
+        createdAt: '2026-11-10T00:00:00Z',
+        updatedAt: '2026-11-10T00:00:00Z',
+        repertoireLink: SmartChordSongLink(
+          id: 'l_v2',
+          userId: 'member_user',
+          smartChordId: 'sc_v2',
+          ministryId: 'min_1',
+          songId: 'song_ver',
+          versionId: 'v2',
+          linkStatus: 'active',
+        ),
+      );
+      var pendingResolved = false;
+      String? recordedSetVersionId;
+
+      fakeRepo.detail = const SongDetail(
+        id: 'song_ver',
+        ministryId: 'min_1',
+        title: 'Lugar Secreto',
+        artistName: 'Gabriela Rocha',
+        originalKey: 'C',
+        versions: [
+          SongVersion(id: 'v1', name: 'Original', key: 'C'),
+          SongVersion(id: 'v2', name: 'Acústica', key: 'D'),
+        ],
+      );
+
+      final linkRepo = _FakeLinkRepo(
+        onGetChordsForSong: () async {
+          final pendingChord = SmartChord(
+            id: 'sc_pend',
+            userId: 'member_user',
+            title: 'Cifra Legada',
+            originalKey: 'G',
+            content: '[G]Legado',
+            createdAt: '2026-11-10T00:00:00Z',
+            updatedAt: '2026-11-10T00:00:00Z',
+            repertoireLink: pendingResolved
+                ? const SmartChordSongLink(
+                    id: 'l_pend',
+                    userId: 'member_user',
+                    smartChordId: 'sc_pend',
+                    ministryId: 'min_1',
+                    songId: 'song_ver',
+                    versionId: 'v2',
+                    linkStatus: 'active',
+                  )
+                : const SmartChordSongLink(
+                    id: 'l_pend',
+                    userId: 'member_user',
+                    smartChordId: 'sc_pend',
+                    ministryId: 'min_1',
+                    songId: 'song_ver',
+                    versionId: null,
+                    linkStatus: 'pending_classification',
+                    pendingReason: 'legacy_ambiguous',
+                  ),
+          );
+          return [chordV1, chordV2, pendingChord];
+        },
+        onRemoveLink: (_, __) async {},
+        onSetLink: (ministryId, chordId, songId, versionId) async {
+          recordedSetVersionId = versionId;
+          pendingResolved = true;
+          return SmartChordRepertoireLink(
+            link: SmartChordSongLink(
+              id: 'l_pend',
+              userId: 'member_user',
+              smartChordId: chordId,
+              ministryId: ministryId,
+              songId: songId,
+              versionId: versionId,
+              linkStatus: 'active',
+            ),
+            song: SmartChordSongSummary(id: songId, title: 'Lugar Secreto'),
+          );
+        },
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appEnvironmentProvider.overrideWithValue(
+              const AppEnvironment(
+                env: AppEnv.development,
+                apiBaseUrl: 'http://localhost:3000/api/v1',
+              ),
+            ),
+            repertoireRepositoryProvider.overrideWithValue(fakeRepo),
+            songDetailNotifierProvider.overrideWith((ref) {
+              return SongDetailNotifier(repository: fakeRepo);
+            }),
+            ministryContextNotifierProvider
+                .overrideWith((ref) => FakeMinistryContextNotifier()),
+            authNotifierProvider.overrideWith((ref) => _FakeAuthNotifier()),
+            smartChordRepertoireLinkRepositoryProvider
+                .overrideWithValue(linkRepo),
+            songSmartChordsNotifierProvider.overrideWith(
+              (ref) => SongSmartChordsNotifier(
+                repository: _NoopSmartChordRepo(),
+                linkRepository: linkRepo,
+              ),
+            ),
+            smartChordRepertoireLinkNotifierProvider.overrideWith(
+              (ref) => SmartChordRepertoireLinkNotifier(
+                repository: linkRepo,
+              ),
+            ),
+          ],
+          child: const MaterialApp(
+            home: SongDetailView(
+              ministryId: 'min_1',
+              songId: 'song_ver',
+              initialTitle: 'Lugar Secreto',
+              initialVersionId: 'v2',
+              backLabel: 'Voltar para Escala',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Context back button & active version scoped chord
+      expect(find.text('Voltar para Escala'), findsOneWidget);
+      expect(find.text('Tom: D'), findsOneWidget);
+      expect(
+        find.text('Minha cifra: Lugar Secreto (Acústica) (D)'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Lugar Secreto (Original)'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('song_detail_pending_classification_banner')),
+        findsOneWidget,
+      );
+
+      // Classify pending chord for active version (v2)
+      final classifyBtn = find.byKey(
+        const ValueKey('song_detail_classify_pending_sc_pend'),
+      );
+      await tester.ensureVisible(classifyBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(classifyBtn);
+      await tester.pumpAndSettle();
+
+      expect(recordedSetVersionId, equals('v2'));
+      expect(
+        find.byKey(const ValueKey('song_detail_chord_pill_sc_pend')),
+        findsOneWidget,
+      );
+
+      // Switch to version v1 -> shows only chordV1
+      final v1Chip = find.byKey(const ValueKey('detail_version_chip_v1'));
+      await tester.ensureVisible(v1Chip);
+      await tester.pumpAndSettle();
+      await tester.tap(v1Chip);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Minha cifra: Lugar Secreto (Original) (C)'),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'FASE 3: shows explicit version fallback notice and pops back to schedule on context back button tap',
+        (tester) async {
+      fakeRepo.detail = const SongDetail(
+        id: 'song_ver',
+        ministryId: 'min_1',
+        title: 'Lugar Secreto',
+        artistName: 'Gabriela Rocha',
+        originalKey: 'C',
+        versions: [
+          SongVersion(id: 'v1', name: 'Original', key: 'C'),
+          SongVersion(id: 'v2', name: 'Acústica', key: 'D'),
+        ],
+      );
+
+      final linkRepo = _FakeLinkRepo(
+        onGetChordsForSong: () async => [],
+        onRemoveLink: (_, __) async {},
+      );
+      final navKey = GlobalKey<NavigatorState>();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appEnvironmentProvider.overrideWithValue(
+              const AppEnvironment(
+                env: AppEnv.development,
+                apiBaseUrl: 'http://localhost:3000/api/v1',
+              ),
+            ),
+            repertoireRepositoryProvider.overrideWithValue(fakeRepo),
+            songDetailNotifierProvider.overrideWith((ref) {
+              return SongDetailNotifier(repository: fakeRepo);
+            }),
+            ministryContextNotifierProvider
+                .overrideWith((ref) => FakeMinistryContextNotifier()),
+            authNotifierProvider.overrideWith((ref) => _FakeAuthNotifier()),
+            smartChordRepertoireLinkRepositoryProvider
+                .overrideWithValue(linkRepo),
+            songSmartChordsNotifierProvider.overrideWith(
+              (ref) => SongSmartChordsNotifier(
+                repository: _NoopSmartChordRepo(),
+                linkRepository: linkRepo,
+              ),
+            ),
+            smartChordRepertoireLinkNotifierProvider.overrideWith(
+              (ref) => SmartChordRepertoireLinkNotifier(
+                repository: linkRepo,
+              ),
+            ),
+          ],
+          child: MaterialApp(
+            navigatorKey: navKey,
+            home: const Scaffold(body: Text('Escala Origem')),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      navKey.currentState!.push(
+        MaterialPageRoute<void>(
+          builder: (_) => const SongDetailView(
+            ministryId: 'min_1',
+            songId: 'song_ver',
+            initialTitle: 'Lugar Secreto',
+            initialVersionId: 'ver-removida',
+            backLabel: 'Voltar para Escala',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('song_detail_version_fallback_banner')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('não foi encontrada'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const ValueKey('song_detail_context_back_button')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Escala Origem'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
   });
 }
 
@@ -800,16 +1087,25 @@ class _NoopSmartChordRepo implements SmartChordRepository {
 class _FakeLinkRepo implements SmartChordRepertoireLinkRepository {
   final Future<List<SmartChord>> Function() onGetChordsForSong;
   final Future<void> Function(String ministryId, String chordId) onRemoveLink;
+  final Future<SmartChordRepertoireLink> Function(
+    String ministryId,
+    String chordId,
+    String songId,
+    String? versionId,
+  )? onSetLink;
 
   _FakeLinkRepo({
     required this.onGetChordsForSong,
     required this.onRemoveLink,
+    this.onSetLink,
   });
 
   @override
   Future<List<SmartChord>> getMySmartChordsForSong({
     required String ministryId,
     required String songId,
+    String? versionId,
+    String? linkStatus,
   }) =>
       onGetChordsForSong();
 
@@ -832,6 +1128,11 @@ class _FakeLinkRepo implements SmartChordRepertoireLinkRepository {
     required String ministryId,
     required String chordId,
     required String songId,
-  }) =>
-      throw UnimplementedError();
+    String? versionId,
+  }) async {
+    if (onSetLink != null) {
+      return onSetLink!(ministryId, chordId, songId, versionId);
+    }
+    throw UnimplementedError();
+  }
 }

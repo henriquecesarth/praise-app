@@ -2,6 +2,12 @@ import 'package:flutter/foundation.dart';
 import '../../../../core/utils/date_utils.dart';
 import 'schedule_participant.dart';
 
+String? _readNonEmptyString(dynamic value) {
+  if (value is! String) return null;
+  final trimmed = value.trim();
+  return trimmed.isEmpty ? null : trimmed;
+}
+
 /// Song summary embedded in schedule payload.
 ///
 /// Preserves unknown/opaque fields from backend/web losslessly via [rawJson].
@@ -11,6 +17,8 @@ class ScheduleSong {
   final String? title;
   final String? artist;
   final String? key;
+  final String? versionId;
+  final String? versionName;
   final Map<String, dynamic> rawJson;
 
   const ScheduleSong({
@@ -18,6 +26,8 @@ class ScheduleSong {
     this.title,
     this.artist,
     this.key,
+    this.versionId,
+    this.versionName,
     this.rawJson = const {},
   });
 
@@ -25,8 +35,13 @@ class ScheduleSong {
     return ScheduleSong(
       id: json['id'] as String? ?? json['songId'] as String? ?? '',
       title: json['title'] as String?,
-      artist: json['artist'] as String?,
-      key: json['key'] as String?,
+      artist: (json['artist'] as String?) ??
+          _readNonEmptyString(json['artistName'] ?? json['artist_name']),
+      key: (json['key'] as String?) ??
+          _readNonEmptyString(json['originalKey'] ?? json['original_key']),
+      versionId: _readNonEmptyString(json['versionId'] ?? json['version_id']),
+      versionName:
+          _readNonEmptyString(json['versionName'] ?? json['version_name']),
       rawJson: Map<String, dynamic>.unmodifiable(json),
     );
   }
@@ -38,6 +53,18 @@ class ScheduleSong {
       if (title != null) map['title'] = title;
       if (artist != null) map['artist'] = artist;
       if (key != null) map['key'] = key;
+      if (versionId != null) {
+        map['versionId'] = versionId;
+      } else {
+        map.remove('versionId');
+        map.remove('version_id');
+      }
+      if (versionName != null) {
+        map['versionName'] = versionName;
+      } else {
+        map.remove('versionName');
+        map.remove('version_name');
+      }
       return map;
     }
     return {
@@ -45,6 +72,8 @@ class ScheduleSong {
       if (title != null) 'title': title,
       if (artist != null) 'artist': artist,
       if (key != null) 'key': key,
+      if (versionId != null) 'versionId': versionId,
+      if (versionName != null) 'versionName': versionName,
     };
   }
 
@@ -53,6 +82,8 @@ class ScheduleSong {
     String? title,
     String? artist,
     String? key,
+    String? versionId,
+    String? versionName,
     Map<String, dynamic>? rawJson,
   }) {
     return ScheduleSong(
@@ -60,6 +91,8 @@ class ScheduleSong {
       title: title ?? this.title,
       artist: artist ?? this.artist,
       key: key ?? this.key,
+      versionId: versionId ?? this.versionId,
+      versionName: versionName ?? this.versionName,
       rawJson: rawJson ?? this.rawJson,
     );
   }
@@ -73,10 +106,18 @@ class ScheduleSong {
           title == other.title &&
           artist == other.artist &&
           key == other.key &&
+          versionId == other.versionId &&
+          versionName == other.versionName &&
           mapEquals(rawJson, other.rawJson);
 
   @override
-  int get hashCode => id.hashCode ^ title.hashCode ^ artist.hashCode ^ key.hashCode;
+  int get hashCode =>
+      id.hashCode ^
+      title.hashCode ^
+      artist.hashCode ^
+      key.hashCode ^
+      versionId.hashCode ^
+      versionName.hashCode;
 }
 
 /// Timeline item embedded in schedule payload.

@@ -97,6 +97,42 @@ void main() {
     final destination = route.builder(tester.element(detailFinder())) as SongDetailView;
     expect(destination.songId, 'oceanos');
     expect(destination.ministryId, 'min_1');
+    expect(destination.backLabel, 'Voltar para Escala');
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('opening scheduled song or timeline slot preserves versionId and backLabel', (tester) async {
+    repo.detail = ScheduleDetail(
+      id: 's',
+      ministryId: 'min_1',
+      title: 'Culto Versão',
+      date: '2099-01-01',
+      songs: const [
+        ScheduleSong(
+          id: 'oceanos',
+          title: 'Oceanos',
+          versionId: 'ver-acustico',
+          versionName: 'Acústico',
+        ),
+      ],
+      timeline: const [
+        ScheduleTimelineItem(id: 'slot', title: 'Música 1', type: 'Música'),
+      ],
+    );
+    final observer = RouteObserverSpy();
+    await tester.pumpWidget(subject(detail, observer: observer));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Versão: Acústico'), findsOneWidget);
+    final songRow = find.byKey(const ValueKey('detail_song_row_1'));
+    await tester.ensureVisible(songRow);
+    await tester.tap(songRow);
+    final listRoute = observer.last! as MaterialPageRoute<void>;
+    final listDest = listRoute.builder(tester.element(detailFinder())) as SongDetailView;
+    expect(listDest.songId, 'oceanos');
+    expect(listDest.initialVersionId, 'ver-acustico');
+    expect(listDest.backLabel, 'Voltar para Escala');
+
     await tester.pumpWidget(const SizedBox.shrink());
   });
 

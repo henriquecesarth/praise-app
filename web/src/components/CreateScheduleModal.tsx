@@ -638,8 +638,41 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
     if (selectedSongs.some((s) => s.id === song.id)) {
       setSelectedSongs(selectedSongs.filter((s) => s.id !== song.id));
     } else {
-      setSelectedSongs([...selectedSongs, song]);
+      const singleVersion =
+        !song.versionId && Array.isArray(song.versions) && song.versions.length === 1
+          ? song.versions[0]
+          : null;
+      const normalizedSong: Song = singleVersion
+        ? {
+            ...song,
+            versionId: singleVersion.id,
+            versionName: singleVersion.name,
+            originalKey: singleVersion.key || song.originalKey,
+          }
+        : song;
+      setSelectedSongs([...selectedSongs, normalizedSong]);
     }
+  };
+
+  const handleChangeSongVersion = (songId: string, versionId: string) => {
+    setSelectedSongs((prev) =>
+      prev.map((s) => {
+        if (s.id !== songId) return s;
+        if (!versionId) {
+          return { ...s, versionId: undefined, versionName: undefined };
+        }
+        const catalogSong = allSongs.find((c) => c.id === songId);
+        const versions = s.versions?.length ? s.versions : catalogSong?.versions || [];
+        const matched = versions.find((v) => v.id === versionId);
+        if (!matched) return s;
+        return {
+          ...s,
+          versionId: matched.id,
+          versionName: matched.name,
+          originalKey: matched.key || s.originalKey,
+        };
+      })
+    );
   };
 
   const handleAddTimelineItem = () => {
@@ -830,29 +863,30 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
           </div>
         ) : (
           <>
-            {/* Modal Top Bar (Refactored for 3-Section Ergonomic Mobile Layout) */}
-            <div className="schedule-modal-header">
-              <button
-                type="button"
-                className="action-icon-btn"
-                onClick={onClose}
-                title="Cancelar / Fechar"
-                aria-label="Fechar formulário de escala"
-                style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-              >
-                <X size={20} />
-              </button>
+            {/* Unified Sticky Top Chrome (Header + Segmented Tabs) */}
+            <div className="schedule-modal-top-chrome">
+              <div className="schedule-modal-header">
+                <button
+                  type="button"
+                  className="action-icon-btn"
+                  onClick={onClose}
+                  title="Cancelar / Fechar"
+                  aria-label="Fechar formulário de escala"
+                  style={{ width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                >
+                  <X size={20} />
+                </button>
 
-              <div className="schedule-modal-title">
-                {initialSchedule?.id ? 'Editar Escala' : 'Nova Escala de Louvor'}
+                <div className="schedule-modal-title">
+                  {initialSchedule?.id ? 'Editar Escala' : 'Nova Escala de Louvor'}
+                </div>
+
+                <div className="schedule-modal-header-spacer" aria-hidden="true" />
               </div>
 
-              <div className="schedule-modal-header-spacer" aria-hidden="true" />
-            </div>
-
-            {/* Centralized Main 4 Tabs */}
-            <div className="schedule-tabs-wrapper">
-              <div className="schedule-tabs" role="tablist" aria-label="Etapas da escala">
+              {/* Centralized Main 4 Tabs */}
+              <div className="schedule-tabs-wrapper schedule-modal-tabs-wrapper">
+                <div className="schedule-tabs" role="tablist" aria-label="Etapas da escala">
                 <button
                   type="button"
                   role="tab"
@@ -913,6 +947,7 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                 >
                   Roteiro
                 </button>
+              </div>
               </div>
             </div>
 
@@ -1379,7 +1414,13 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
 
                   {selectedSongs.length > 0 ? (
                     <div className="schedule-items-list">
-                      {selectedSongs.map((song, index) => (
+                      {selectedSongs.map((song, index) => {
+                        const catalogSong = allSongs.find((c) => c.id === song.id);
+                        const availableVersions =
+                          (song.versions && song.versions.length > 0
+                            ? song.versions
+                            : catalogSong?.versions) || [];
+                        return (
                         <div
                           key={song.id}
                           className={`schedule-song-item draggable-row ${dragSongIndex === index ? 'dragging' : ''}`}
@@ -1393,10 +1434,34 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                           </div>
                           <div className="schedule-song-index">{index + 1}</div>
                           <div className="dashboard-item-info">
-                            <div className="dashboard-item-title">{song.title}</div>
+                            <div className="dashboard-item-title">
+                              {song.title}
+                              {song.versionName && (
+                                <span className="schedule-song-version-badge">
+                                  {song.versionName}
+                                </span>
+                              )}
+                            </div>
                             <div className="dashboard-item-desc">
                               {song.artistName || 'Artista Não Informado'} • Tom: {song.originalKey || 'N/I'}
                             </div>
+                            {availableVersions.length > 1 && (
+                              <div className="schedule-song-version-row">
+                                <select
+                                  className="schedule-song-version-select"
+                                  aria-label={`Versão de ${song.title}`}
+                                  value={song.versionId || ''}
+                                  onChange={(e) => handleChangeSongVersion(song.id, e.target.value)}
+                                >
+                                  <option value="">Versão padrão do repertório</option>
+                                  {availableVersions.map((ver) => (
+                                    <option key={ver.id} value={ver.id}>
+                                      Versão: {ver.name}{ver.key ? ` (${ver.key})` : ''}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
                           </div>
                           <button
                             type="button"
@@ -1408,7 +1473,8 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                             <Trash2 size={16} />
                           </button>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : (
                     <div className="empty-state">
@@ -1486,17 +1552,17 @@ export const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
                   </div>
                 </div>
               )}
-
-              {/* Modal Footer Actions */}
-              <div className="schedule-modal-footer">
-                <button type="button" className="btn btn-secondary" style={{ minHeight: '44px' }} onClick={onClose}>
-                  Cancelar
-                </button>
-                <button type="button" className="btn btn-primary" style={{ minHeight: '44px' }} onClick={() => handleSaveSchedule()}>
-                  Salvar Escala
-                </button>
-              </div>
             </form>
+
+            {/* Modal Footer Actions */}
+            <div className="schedule-modal-footer">
+              <button type="button" className="btn btn-secondary" style={{ minHeight: '44px' }} onClick={onClose}>
+                Cancelar
+              </button>
+              <button type="button" className="btn btn-primary" style={{ minHeight: '44px' }} onClick={() => handleSaveSchedule()}>
+                Salvar Escala
+              </button>
+            </div>
           </>
         )}
 
