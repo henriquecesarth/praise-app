@@ -40,6 +40,12 @@ abstract class UserVocalRangePreferencesStorage {
   (int, int)? getUserVocalRange(String userId);
 }
 
+/// Capability interface for local storage supporting internal vocal player volume.
+abstract class VocalPlayerVolumePreferencesStorage {
+  Future<void> setVocalPlayerVolume(double volume, {String? userId});
+  double? getVocalPlayerVolume({String? userId});
+}
+
 /// Optional capability for keeping ministry context preferences per account.
 abstract class UserMinistrySelectionStorage {
   Future<void> setSelectedMinistryIdForUser(String userId, String? ministryId);
@@ -137,6 +143,23 @@ extension UserChordFontPreferencesStorageExtension on PreferencesStorage {
     }
     return null;
   }
+
+  Future<void> setVocalPlayerVolume(double volume, {String? userId}) async {
+    final self = this;
+    if (self is VocalPlayerVolumePreferencesStorage) {
+      final storage = self as VocalPlayerVolumePreferencesStorage;
+      await storage.setVocalPlayerVolume(volume, userId: userId);
+    }
+  }
+
+  double? getVocalPlayerVolume({String? userId}) {
+    final self = this;
+    if (self is VocalPlayerVolumePreferencesStorage) {
+      final storage = self as VocalPlayerVolumePreferencesStorage;
+      return storage.getVocalPlayerVolume(userId: userId);
+    }
+    return null;
+  }
 }
 
 /// SharedPreferences implementation of [PreferencesStorage].
@@ -147,6 +170,7 @@ class SharedPreferencesStorage
         UserChordLineSpacingPreferencesStorage,
         UserPdfMarkerPreferencesStorage,
         UserVocalRangePreferencesStorage,
+        VocalPlayerVolumePreferencesStorage,
         UserMinistrySelectionStorage {
   final SharedPreferences _prefs;
 
@@ -166,6 +190,10 @@ class SharedPreferencesStorage
       'louvaio_vocal_max_midi_user_$userId';
   static String _keyUserSelectedMinistry(String userId) =>
       'louvaio_selected_ministry_user_$userId';
+  static String _keyVocalPlayerVolume(String? userId) =>
+      userId != null && userId.isNotEmpty
+          ? 'louvaio_vocal_player_volume_user_$userId'
+          : 'louvaio_vocal_player_volume_default';
 
   SharedPreferencesStorage(this._prefs);
 
@@ -290,6 +318,27 @@ class SharedPreferencesStorage
     final maxVal = _prefs.getInt(_keyUserVocalMaxMidi(userId));
     if (minVal == null || maxVal == null) return null;
     return (minVal, maxVal);
+  }
+
+  @override
+  Future<void> setVocalPlayerVolume(double volume, {String? userId}) async {
+    final clamped = volume.isFinite ? volume.clamp(0.0, 1.0) : 1.0;
+    await _prefs.setDouble(_keyVocalPlayerVolume(userId), clamped);
+  }
+
+  @override
+  double? getVocalPlayerVolume({String? userId}) {
+    final specific = _prefs.getDouble(_keyVocalPlayerVolume(userId));
+    if (specific != null && specific.isFinite) {
+      return specific.clamp(0.0, 1.0);
+    }
+    if (userId != null && userId.isNotEmpty) {
+      final fallback = _prefs.getDouble(_keyVocalPlayerVolume(null));
+      if (fallback != null && fallback.isFinite) {
+        return fallback.clamp(0.0, 1.0);
+      }
+    }
+    return null;
   }
 
   @override

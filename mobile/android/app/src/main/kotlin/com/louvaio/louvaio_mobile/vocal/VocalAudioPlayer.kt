@@ -29,7 +29,7 @@ interface AudioTrackHandle {
     fun flush()
     fun release()
     fun getPlaybackHeadPositionFrames(): Long
-    fun fadeVolume(fadeDown: Boolean, durationMs: Long)
+    fun fadeVolume(fadeDown: Boolean, durationMs: Long, targetGain: Float = 1.0f)
     fun setVolumeLevel(gain: Float)
 }
 
@@ -93,8 +93,14 @@ private class AndroidAudioTrackHandle(
         track.setVolume(gain.coerceIn(0f, 1f))
     }
 
-    override fun fadeVolume(fadeDown: Boolean, durationMs: Long) {
+    override fun fadeVolume(fadeDown: Boolean, durationMs: Long, targetGain: Float) {
         if (durationMs <= 0L) return
+        val clampedTarget = targetGain.coerceIn(0f, 1f)
+        if (!fadeDown) {
+            try {
+                track.setVolume(clampedTarget)
+            } catch (_: Exception) {}
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             try {
                 val curveX = floatArrayOf(0f, 1f)
@@ -113,7 +119,7 @@ private class AndroidAudioTrackHandle(
             }
         }
         try {
-            track.setVolume(if (fadeDown) 0f else 1f)
+            track.setVolume(if (fadeDown) 0f else clampedTarget)
             Thread.sleep(durationMs)
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
@@ -172,9 +178,10 @@ private class AndroidAudioFocusController(context: Context) : AudioFocusControll
                 .setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                 .build()
-            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                 .setAudioAttributes(attributes)
                 .setAcceptsDelayedFocusGain(false)
+                .setWillPauseWhenDucked(false)
                 .setOnAudioFocusChangeListener(listener)
                 .build()
             focusRequest = request
@@ -184,7 +191,7 @@ private class AndroidAudioFocusController(context: Context) : AudioFocusControll
             manager.requestAudioFocus(
                 listener,
                 AudioManager.STREAM_MUSIC,
-                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
+                AudioManager.AUDIOFOCUS_GAIN
             )
         }
 
@@ -288,7 +295,7 @@ class VocalAudioPlayer internal constructor(
     private companion object {
         const val DEFAULT_TAIL_STALL_TIMEOUT_MS = 1500L
         const val RENDER_THREAD_JOIN_MS = 600L
-        const val DUCKED_VOLUME = 0.25f
+        const val DUCKED_MULTIPLIER = 0.25f
         const val FULL_VOLUME = 1.0f
     }
 
@@ -308,6 +315,20 @@ class VocalAudioPlayer internal constructor(
     @Volatile
     var currentState: State = State.IDLE
         private set
+
+    @Volatile
+    private var internalVolume: Float = FULL_VOLUME
+
+    @Volatile
+    private var isDucked: Boolean = false
+
+    val currentInternalVolume: Float
+        get() = internalVolume
+
+    private fun computeEffectiveGain(): Float {
+        val base = internalVolume.coerceIn(0f, 1f)
+        return (if (isDucked) base * DUCKED_MULTIPLIER else base).coerceIn(0f, 1f)
+    }
 
     @Volatile
     private var currentMixer: SampledPianoMixer? = null
@@ -353,7 +374,8 @@ class VocalAudioPlayer internal constructor(
         durations: List<Double>,
         bpm: Int,
         metronome: Boolean,
-        result: MethodChannel.Result
+        result: MethodChannel.Result,
+        initialVolume: Float? = null
     ) {
         val rejected = {
             dispatcher.post { result.error("PLAYER_RELEASED", "Player liberado.", null) }
@@ -362,6 +384,11 @@ class VocalAudioPlayer internal constructor(
             try {
                 // Stop any existing session before claiming new session state.
                 stopInternal(fadeDurationMs = 15L)
+
+                if (initialVolume != null && initialVolume.isFinite()) {
+                    internalVolume = initialVolume.coerceIn(0f, 1f)
+                }
+                isDucked = false
 
                 currentSessionId = sessionId
                 currentState = State.PREPARING
@@ -395,7 +422,7 @@ class VocalAudioPlayer internal constructor(
                 currentMixer = mixer
 
                 val sampleRate = mixer.outputSampleRate
-                val requestedBufferSize = SampledPianoMixer.BLOCK_SIZE * 4 * 2
+                val requestedBufferSize = SampledPianoMixer.BLOCK_SIZE * 16 * 2
                 val track = trackFactory.create(sampleRate, requestedBufferSize)
 
                 synchronized(headLock) {
@@ -405,7 +432,7 @@ class VocalAudioPlayer internal constructor(
                 }
                 stopRenderRequested.set(false)
 
-                track.setVolumeLevel(FULL_VOLUME)
+                track.setVolumeLevel(computeEffectiveGain())
                 noisyMonitor?.register {
                     handleBecomingNoisy(activeSession)
                 }
@@ -547,13 +574,15 @@ class VocalAudioPlayer internal constructor(
                     pauseInternal(sessionId)
                 }
                 AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                    isDucked = true
                     if (currentState == State.PLAYING) {
-                        currentTrack?.setVolumeLevel(DUCKED_VOLUME)
+                        currentTrack?.setVolumeLevel(computeEffectiveGain())
                     }
                 }
                 AudioManager.AUDIOFOCUS_GAIN -> {
+                    isDucked = false
                     if (currentState == State.PLAYING) {
-                        currentTrack?.setVolumeLevel(FULL_VOLUME)
+                        currentTrack?.setVolumeLevel(computeEffectiveGain())
                     }
                 }
             }
@@ -637,9 +666,10 @@ class VocalAudioPlayer internal constructor(
                 noisyMonitor?.register {
                     handleBecomingNoisy(activeSession)
                 }
-                track.setVolumeLevel(FULL_VOLUME)
+                val targetGain = computeEffectiveGain()
+                track.setVolumeLevel(targetGain)
                 track.play()
-                track.fadeVolume(fadeDown = false, durationMs = 15L)
+                track.fadeVolume(fadeDown = false, durationMs = 15L, targetGain = targetGain)
                 synchronized(completionLock) {
                     if (!stopRenderRequested.get() &&
                         currentSessionId == sessionId &&
@@ -653,6 +683,21 @@ class VocalAudioPlayer internal constructor(
             } catch (e: Exception) {
                 dispatcher.post { result.error("RESUME_ERROR", e.message, null) }
             }
+        }
+    }
+
+    fun setVolume(volume: Float, result: MethodChannel.Result) {
+        if (!volume.isFinite()) {
+            dispatcher.post { result.error("INVALID_VOLUME", "Volume inválido.", null) }
+            return
+        }
+        val clamped = volume.coerceIn(0f, 1f)
+        submitCommand(onRejected = { dispatcher.post { result.success(null) } }) {
+            internalVolume = clamped
+            if (currentState == State.PLAYING || currentState == State.PAUSED) {
+                currentTrack?.setVolumeLevel(computeEffectiveGain())
+            }
+            dispatcher.post { result.success(mapOf("volume" to clamped)) }
         }
     }
 
@@ -782,6 +827,7 @@ class VocalAudioPlayer internal constructor(
 
         renderThread = null
         currentMixer = null
+        isDucked = false
         focusController?.abandonFocus()
         noisyMonitor?.unregister()
         currentState = State.STOPPED

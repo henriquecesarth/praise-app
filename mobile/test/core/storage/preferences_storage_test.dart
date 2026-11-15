@@ -88,5 +88,24 @@ void main() {
       expect(storage.getSelectedMinistryId(), isNull);
       expect(storage.getUserChordFontFamily('usr_a'), 'Georgia');
     });
+
+    test('gets, clamps, and persists vocal player volume per user with fallback', () async {
+      expect(storage.getVocalPlayerVolume(userId: 'usr_a'), isNull);
+
+      await storage.setVocalPlayerVolume(0.45, userId: 'usr_a');
+      expect(storage.getVocalPlayerVolume(userId: 'usr_a'), closeTo(0.45, 0.0001));
+
+      // Out-of-range values clamp safely
+      await storage.setVocalPlayerVolume(2.5, userId: 'usr_a');
+      expect(storage.getVocalPlayerVolume(userId: 'usr_a'), 1.0);
+
+      await storage.setVocalPlayerVolume(-0.3, userId: 'usr_a');
+      expect(storage.getVocalPlayerVolume(userId: 'usr_a'), 0.0);
+
+      // Distinct user inherits fallback only if saved as null userId
+      await storage.setVocalPlayerVolume(0.7, userId: null);
+      expect(storage.getVocalPlayerVolume(userId: 'usr_b'), closeTo(0.7, 0.0001));
+      expect(storage.getVocalPlayerVolume(userId: 'usr_a'), 0.0);
+    });
   });
 }

@@ -113,8 +113,11 @@ class VocalAudioPlayerTest {
             return if (freezePlaybackHead) totalWrittenFrames / 2 else totalWrittenFrames
         }
 
-        override fun fadeVolume(fadeDown: Boolean, durationMs: Long) {
-            eventLog.add("fade:${if (fadeDown) "down" else "up"}:$id")
+        override fun fadeVolume(fadeDown: Boolean, durationMs: Long, targetGain: Float) {
+            eventLog.add("fade:${if (fadeDown) "down" else "up"}:$targetGain:$id")
+            if (!fadeDown) {
+                currentVolume = targetGain.coerceIn(0f, 1f)
+            }
             if (fadeDown) {
                 onFadeDown?.invoke()
             }
@@ -134,9 +137,11 @@ class VocalAudioPlayerTest {
     ) : AudioTrackFactory {
         val events: MutableList<String> = Collections.synchronizedList(mutableListOf())
         val handles: MutableList<RecordingTrackHandle> = Collections.synchronizedList(mutableListOf())
+        val requestedBufferSizes: MutableList<Int> = Collections.synchronizedList(mutableListOf())
         private val idGen = AtomicInteger(0)
 
         override fun create(sampleRate: Int, bufferSizeBytes: Int): AudioTrackHandle {
+            requestedBufferSizes.add(bufferSizeBytes)
             val id = idGen.incrementAndGet()
             val handle = RecordingTrackHandle(
                 id = id,
@@ -509,6 +514,83 @@ class VocalAudioPlayerTest {
         assertEquals(VocalAudioPlayer.State.COMPLETED, player.currentState)
         assertTrue(focus.abandonCalls.get() >= 1)
         assertFalse(noisy.isRegistered)
+        player.release()
+    }
+
+    @Test
+    fun setVolumeUpdatesTrackGainWithoutInterruptingAndPreservesAcrossDuckAndResume() {
+        val factory = FakeTrackFactory(writeDelayMs = 2L)
+        val focus = FakeAudioFocusController(allowFocus = true)
+        val noisy = FakeNoisyMonitor()
+        val player = VocalAudioPlayer(bank, factory, focus, noisy)
+
+        val (playRes, playLatch) = syncResult()
+        player.playSequence(201L, listOf(60, 62, 64, 65), listOf(2.0, 2.0, 2.0, 2.0), 60, false, playRes, initialVolume = 0.5f)
+        assertTrue(playLatch.await(2, TimeUnit.SECONDS))
+
+        assertEquals(1, factory.handles.size)
+        assertTrue(
+            "Buffer headroom should be at least 16 blocks stereo/16-bit equivalent",
+            factory.requestedBufferSizes.first() >= SampledPianoMixer.BLOCK_SIZE * 16 * 2
+        )
+        val track = factory.handles.first()
+        assertEquals(0.5f, track.currentVolume, 0.01f)
+
+        // Update internal volume while actively playing without stopping or creating a new track
+        var updatedVolume: Float? = null
+        val (volRes, volLatch) = syncResult(onSuccess = { res ->
+            updatedVolume = ((res as? Map<*, *>)?.get("volume") as? Number)?.toFloat()
+        })
+        player.setVolume(0.8f, volRes)
+        assertTrue(volLatch.await(2, TimeUnit.SECONDS))
+        assertEquals(0.8f, updatedVolume ?: -1f, 0.01f)
+        assertEquals(VocalAudioPlayer.State.PLAYING, player.currentState)
+        assertEquals(1, factory.handles.size)
+        assertEquals(0.8f, track.currentVolume, 0.01f)
+
+        // Ducking multiplies internal volume proportionally and GAIN restores back to 0.8 (not 1.0)
+        focus.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+        awaitCondition { track.currentVolume < 0.3f }
+        assertEquals(0.2f, track.currentVolume, 0.02f)
+
+        focus.dispatchFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        awaitCondition { track.currentVolume > 0.75f }
+        assertEquals(0.8f, track.currentVolume, 0.01f)
+
+        // Pause and resume must keep 0.8f internal volume
+        val (pauseRes, pauseLatch) = syncResult()
+        player.pause(201L, pauseRes)
+        assertTrue(pauseLatch.await(2, TimeUnit.SECONDS))
+
+        val (resumeRes, resumeLatch) = syncResult()
+        player.resume(201L, resumeRes)
+        assertTrue(resumeLatch.await(2, TimeUnit.SECONDS))
+        assertEquals(0.8f, track.currentVolume, 0.01f)
+
+        player.release()
+    }
+
+    @Test
+    fun setVolumeClampsOutOfRangeAndRejectsNonFiniteValues() {
+        val factory = FakeTrackFactory()
+        val player = VocalAudioPlayer(bank, factory)
+
+        var errCode: String? = null
+        val (nanRes, nanLatch) = syncResult(onError = { code, _, _ -> errCode = code })
+        player.setVolume(Float.NaN, nanRes)
+        assertTrue(nanLatch.await(2, TimeUnit.SECONDS))
+        assertEquals("INVALID_VOLUME", errCode)
+
+        val (highRes, highLatch) = syncResult()
+        player.setVolume(1.8f, highRes)
+        assertTrue(highLatch.await(2, TimeUnit.SECONDS))
+        assertEquals(1.0f, player.currentInternalVolume, 0.001f)
+
+        val (lowRes, lowLatch) = syncResult()
+        player.setVolume(-0.4f, lowRes)
+        assertTrue(lowLatch.await(2, TimeUnit.SECONDS))
+        assertEquals(0.0f, player.currentInternalVolume, 0.001f)
+
         player.release()
     }
 }

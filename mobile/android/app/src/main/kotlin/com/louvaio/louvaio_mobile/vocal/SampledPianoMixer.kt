@@ -17,11 +17,23 @@ class SampledPianoMixer(
     companion object {
         const val BLOCK_SIZE = 256
         const val MAX_VOICES = 8
-        const val MASTER_GAIN = 0.35f
+        const val MASTER_GAIN = 0.92f
+        const val VOICE_BASE_LEVEL = 0.85f
+        const val LIMITER_THRESHOLD = 0.72f
+        const val LIMITER_CEILING = 0.98f
+        const val LIMITER_HEADROOM = LIMITER_CEILING - LIMITER_THRESHOLD
         const val SINC_TAPS = 16
         const val SINC_PHASES = 1024
         const val FADE_FRAMES_15MS = 661 // 0.015 * 44100
-        const val METRONOME_LEVEL = 0.07f
+        const val METRONOME_LEVEL = 0.16f
+
+        internal fun softLimit(sample: Float): Float {
+            val absVal = abs(sample)
+            if (absVal <= LIMITER_THRESHOLD) return sample
+            val excess = (absVal - LIMITER_THRESHOLD) / LIMITER_HEADROOM
+            val compressed = LIMITER_THRESHOLD + LIMITER_HEADROOM * tanh(excess.toDouble()).toFloat()
+            return if (sample >= 0f) compressed else -compressed
+        }
 
         // Cache precalculated sinc interpolation tables by semitone delta (-12..+12)
         private val sincTableCache = HashMap<Int, Array<FloatArray>>()
@@ -343,8 +355,9 @@ class SampledPianoMixer(
                 if (masterFadeRemainingFrames == 0) masterFadeGain = masterFadeTarget
             }
 
-            // 5. Final mix with master gain and headroom bounds
-            val mixFloat = (voicesSum + metronomeSample) * MASTER_GAIN * masterFadeGain
+            // 5. Final mix with master gain, soft-knee anti-clipping limiter, and headroom bounds
+            val preLimiter = (voicesSum + metronomeSample) * MASTER_GAIN * masterFadeGain
+            val mixFloat = softLimit(preLimiter)
             if (mixFloat > 1.0f || mixFloat < -1.0f) {
                 clippedSamplesCount++
             }
@@ -370,7 +383,7 @@ class SampledPianoMixer(
         val semitoneDelta = event.midi - region.root
         val phaseStep = (sample.sampleRate.toDouble() / outputSampleRate.toDouble()) * 2.0.pow(semitoneDelta / 12.0)
         val sincTable = getSincTable(semitoneDelta)
-        val level = 0.32f * (event.velocity.toFloat() / 127.0f).pow(1.5f)
+        val level = VOICE_BASE_LEVEL * (event.velocity.toFloat() / 127.0f).pow(1.5f)
 
         val voice = ActiveVoice(
             midi = event.midi,

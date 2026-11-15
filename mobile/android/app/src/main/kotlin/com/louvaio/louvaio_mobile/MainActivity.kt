@@ -116,6 +116,8 @@ class MainActivity : FlutterActivity() {
 
                     val metronome = call.argument<Boolean>("metronome") ?: true
 
+                    val volume = call.argument<Number>("volume")?.toDouble()?.takeIf { it.isFinite() }?.toFloat()?.coerceIn(0f, 1f)
+
 
 
                     if (notes.isEmpty() || notes.size != durations.size || notes.any { it != -1 && it !in 24..108 } || durations.any { !it.isFinite() || it <= 0 || it > 16 }) {
@@ -126,7 +128,23 @@ class MainActivity : FlutterActivity() {
 
                     }
 
-                    player.playSequence(sessionId, notes, durations, bpm, metronome, result)
+                    player.playSequence(sessionId, notes, durations, bpm, metronome, result, volume)
+
+                }
+
+                "setVolume" -> {
+
+                    val rawVolume = call.argument<Number>("volume")?.toDouble()
+
+                    if (rawVolume == null || !rawVolume.isFinite()) {
+
+                        result.error("INVALID_VOLUME", "Invalid vocal playback volume", null)
+
+                        return@setMethodCallHandler
+
+                    }
+
+                    player.setVolume(rawVolume.toFloat().coerceIn(0f, 1f), result)
 
                 }
 

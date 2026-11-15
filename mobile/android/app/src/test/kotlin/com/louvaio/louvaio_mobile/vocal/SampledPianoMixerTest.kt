@@ -90,8 +90,18 @@ class SampledPianoMixerTest {
         }
 
         assertTrue("Must render audio frames", totalRendered > 0)
-        assertTrue("Peak audio must be audible", peakSample > 1000)
+        assertTrue("Peak audio must be clearly audible (>= 6000 PCM16): $peakSample", peakSample > 6000)
         assertEquals("Headroom bound: 0 clipped samples", 0L, mixer.clippedSamplesCount)
+    }
+
+    @Test
+    fun testSoftLimiterProtectsAgainstClippingAboveThreshold() {
+        assertEquals(0.5f, SampledPianoMixer.softLimit(0.5f), 1e-6f)
+        assertEquals(-0.72f, SampledPianoMixer.softLimit(-0.72f), 1e-6f)
+        val hotPositive = SampledPianoMixer.softLimit(4.0f)
+        val hotNegative = SampledPianoMixer.softLimit(-4.0f)
+        assertTrue("Hot signal must remain strictly below 1.0: $hotPositive", hotPositive in 0.72f..0.99f)
+        assertTrue("Hot negative signal must remain strictly above -1.0: $hotNegative", hotNegative in -0.99f..-0.72f)
     }
 
     @Test

@@ -117,8 +117,8 @@ jobs:
       - name: Run static analysis
         run: flutter analyze
 
-      - name: Run focused tests (Environment, Smart Chords, Repertoire, Auth, Vocal M21)
-        run: flutter test test/app/environment/app_environment_test.dart test/features/smart_chords test/features/repertoire test/features/auth test/features/vocal
+      - name: Run Flutter test suite
+        run: flutter test
 
       - name: Verify staging build consistency gate
         run: |
@@ -155,6 +155,22 @@ jobs:
             "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           }
           EOF
+
+      - name: Run Android Kotlin unit tests
+        run: |
+          set -euo pipefail
+          cd android
+          if [ -f ./gradlew ]; then
+            chmod +x ./gradlew
+            ./gradlew testStagingDebugUnitTest
+          else
+            GRADLE_BIN="$(find "${GRADLE_USER_HOME:-$HOME/.gradle}" -type f -path '*/bin/gradle' 2>/dev/null | head -n 1 || true)"
+            if [ -n "$GRADLE_BIN" ]; then
+              "$GRADLE_BIN" testStagingDebugUnitTest
+            else
+              gradle testStagingDebugUnitTest
+            fi
+          fi
 
       - name: Upload staging APK artifact
         uses: actions/upload-artifact@v4

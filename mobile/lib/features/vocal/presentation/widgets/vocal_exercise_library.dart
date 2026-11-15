@@ -229,20 +229,19 @@ class _VocalExerciseLibraryState extends State<VocalExerciseLibrary> {
                     ),
                   ],
                 ),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     if (widget.isAuthenticated && widget.onCreateCustom != null)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: FilledButton.tonalIcon(
-                          key: const ValueKey('vocal_new_custom_button'),
-                          onPressed: widget.onCreateCustom,
-                          icon: const Icon(Icons.add, size: 16),
-                          label: const Text('Novo exercício'),
-                          style: FilledButton.styleFrom(
-                            visualDensity: VisualDensity.compact,
-                          ),
+                      FilledButton.tonalIcon(
+                        key: const ValueKey('vocal_new_custom_button'),
+                        onPressed: widget.onCreateCustom,
+                        icon: const Icon(Icons.add, size: 16),
+                        label: const Text('Novo exercício'),
+                        style: FilledButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
                         ),
                       ),
                     if (_isExpanded)
@@ -601,8 +600,10 @@ class _VocalExerciseLibraryState extends State<VocalExerciseLibrary> {
                 crossAxisAlignment: WrapCrossAlignment.center,
                 alignment: WrapAlignment.spaceBetween,
                 children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 2,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       Text(
                         '${exercise.notes.length} notas',
@@ -610,8 +611,7 @@ class _VocalExerciseLibraryState extends State<VocalExerciseLibrary> {
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
                       ),
-                      if (exercise.isCustom) ...[
-                        const SizedBox(width: 6),
+                      if (exercise.isCustom)
                         Text(
                           '• Personalizado',
                           style: theme.textTheme.labelSmall?.copyWith(
@@ -621,9 +621,7 @@ class _VocalExerciseLibraryState extends State<VocalExerciseLibrary> {
                                 : Colors.amber.shade900,
                           ),
                         ),
-                      ],
-                      if (isSelected) ...[
-                        const SizedBox(width: 6),
+                      if (isSelected)
                         Text(
                           '• Selecionado',
                           style: theme.textTheme.labelSmall?.copyWith(
@@ -631,12 +629,13 @@ class _VocalExerciseLibraryState extends State<VocalExerciseLibrary> {
                             color: theme.colorScheme.primary,
                           ),
                         ),
-                      ],
                     ],
                   ),
                   if (widget.isAuthenticated)
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
+                    Wrap(
+                      spacing: 4,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         if (widget.onDuplicateExercise != null)
                           TextButton(

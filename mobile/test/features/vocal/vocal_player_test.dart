@@ -619,4 +619,253 @@ void main() {
       await tester.pump();
     },
   );
+
+  testWidgets(
+    'AppLifecycleState.inactive (volume warning/system overlay) keeps playback running while paused stops cleanly',
+    (tester) async {
+      const channel = MethodChannel('com.louvaio.mobile/vocal_audio');
+      final methodLog = <String>[];
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            methodLog.add(call.method);
+            if (call.method == 'playSequence') {
+              final args = call.arguments as Map;
+              return {
+                'sessionId': args['sessionId'],
+                'sampleRate': 44100,
+                'totalFrames': 88200,
+              };
+            }
+            if (call.method == 'position') {
+              final args = call.arguments as Map;
+              return {
+                'sessionId': args['sessionId'],
+                'playedFrames': 4410,
+                'totalFrames': 88200,
+                'sampleRate': 44100,
+                'state': 'playing',
+              };
+            }
+            return null;
+          });
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null),
+      );
+
+      await tester.pumpWidget(const MaterialApp(home: VocalPlayerScreen()));
+      final startButton = find.byKey(const ValueKey('vocal_start_button'));
+      await tester.ensureVisible(startButton);
+      await tester.tap(startButton);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 40));
+
+      final stopCountBeforeInactive = methodLog.where((m) => m == 'stop').length;
+
+      // Android max-volume confirmation dialog / system overlay triggers inactive
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
+      expect(
+        methodLog.where((m) => m == 'stop').length,
+        stopCountBeforeInactive,
+        reason: 'Transient inactive state must not interrupt vocal playback',
+      );
+      expect(
+        tester.widget<FilledButton>(startButton).onPressed,
+        isNull,
+        reason: 'Playback must stay active during inactive overlay',
+      );
+
+      // Genuine backgrounding (paused) stops playback safely
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      expect(
+        methodLog.where((m) => m == 'stop').length,
+        greaterThan(stopCountBeforeInactive),
+      );
+      expect(tester.widget<FilledButton>(startButton).onPressed, isNotNull);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    },
+  );
+
+  testWidgets(
+    'internal volume control updates live without interrupting playback and persists locally',
+    (tester) async {
+      const channel = MethodChannel('com.louvaio.mobile/vocal_audio');
+      final calls = <MethodCall>[];
+      final prefs = InMemoryPreferencesStorage();
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            calls.add(call);
+            if (call.method == 'playSequence') {
+              final args = call.arguments as Map;
+              return {
+                'sessionId': args['sessionId'],
+                'sampleRate': 44100,
+                'totalFrames': 88200,
+              };
+            }
+            if (call.method == 'position') {
+              final args = call.arguments as Map;
+              return {
+                'sessionId': args['sessionId'],
+                'playedFrames': 4410,
+                'totalFrames': 88200,
+                'sampleRate': 44100,
+                'state': 'playing',
+              };
+            }
+            return null;
+          });
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null),
+      );
+
+      Widget buildApp() => ProviderScope(
+        overrides: [preferencesStorageProvider.overrideWithValue(prefs)],
+        child: const MaterialApp(home: VocalPlayerScreen()),
+      );
+
+      await tester.pumpWidget(buildApp());
+      await tester.pumpAndSettle();
+      expect(find.text('Volume interno: 100%'), findsOneWidget);
+
+      // Start playback -> initial volume sent
+      final startButton = find.byKey(const ValueKey('vocal_start_button'));
+      await tester.ensureVisible(startButton);
+      await tester.tap(startButton);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 40));
+
+      final initialPlay = calls.firstWhere((c) => c.method == 'playSequence');
+      expect((initialPlay.arguments as Map)['volume'], 1.0);
+
+      final stopCountDuringPlay = calls.where((c) => c.method == 'stop').length;
+      final playCountDuringPlay = calls.where((c) => c.method == 'playSequence').length;
+
+      // Change volume while playing via slider callbacks & mute button
+      final sliderFinder = find.byKey(const ValueKey('vocal_volume_slider'));
+      await tester.ensureVisible(sliderFinder);
+      final slider = tester.widget<Slider>(sliderFinder);
+      expect(slider.onChanged, isNotNull);
+      slider.onChanged!(0.45);
+      slider.onChangeEnd?.call(0.45);
+      await tester.pump(const Duration(milliseconds: 150));
+
+      expect(find.text('Volume interno: 45%'), findsOneWidget);
+      expect(calls.where((c) => c.method == 'stop').length, stopCountDuringPlay);
+      expect(calls.where((c) => c.method == 'playSequence').length, playCountDuringPlay);
+      final volCalls = calls.where((c) => c.method == 'setVolume').toList();
+      expect(volCalls, isNotEmpty);
+      expect((volCalls.last.arguments as Map)['volume'], closeTo(0.45, 0.01));
+
+      // Mute & unmute restores previous volume without interrupting playback
+      final muteButton = find.byKey(const ValueKey('vocal_volume_mute_button'));
+      await tester.ensureVisible(muteButton);
+      await tester.tap(muteButton);
+      await tester.pump();
+      expect(find.text('Volume interno: 0%'), findsOneWidget);
+      await tester.tap(muteButton);
+      await tester.pump();
+      expect(find.text('Volume interno: 45%'), findsOneWidget);
+      expect(calls.where((c) => c.method == 'stop').length, stopCountDuringPlay);
+
+      // Rebuild screen -> persisted 45% is restored and passed to next playSequence
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await tester.pumpWidget(buildApp());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Volume interno: 45%'), findsOneWidget);
+      await tester.ensureVisible(startButton);
+      await tester.tap(startButton);
+      await tester.pump();
+      final nextPlay = calls.lastWhere((c) => c.method == 'playSequence');
+      expect((nextPlay.arguments as Map)['volume'], closeTo(0.45, 0.01));
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    },
+  );
+
+  testWidgets(
+    'vocal player renders without horizontal overflow on narrow phones, scaled text, landscape, tablet, and light/dark themes',
+    (tester) async {
+      final authRepo = _MockPreviewAuthRepository();
+      final vocalRepo = _MockPreviewVocalExerciseRepository();
+      when(() => authRepo.authStateChanges())
+          .thenAnswer((_) => const Stream.empty());
+      when(() => vocalRepo.listCustomExercises()).thenAnswer(
+        (_) async => [
+          VocalExercise(
+            id: 'custom-1',
+            title: 'Meu exercício personalizado longo para validar responsividade',
+            description: 'Descrição estendida do exercício vocal personalizado',
+            notes: const [60, 62, 64, 65, 67],
+            noteDurations: const [1, 1, 1, 1, 2],
+            minTranspose: -6,
+            maxTranspose: 6,
+            isCustom: true,
+            category: MelodicCategory.ascendente,
+          ),
+        ],
+      );
+      const user = AuthUser(
+        id: 'usr-resp',
+        email: 'resp@louvaio.test',
+        name: 'Cantor Responsivo',
+      );
+
+      final scenarios = <({Size size, double scale, ThemeMode theme})>[
+        (size: const Size(320, 640), scale: 1.0, theme: ThemeMode.light),
+        (size: const Size(360, 740), scale: 1.35, theme: ThemeMode.dark),
+        (size: const Size(740, 360), scale: 1.0, theme: ThemeMode.light),
+        (size: const Size(1024, 768), scale: 1.2, theme: ThemeMode.dark),
+      ];
+
+      for (final s in scenarios) {
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              authRepositoryProvider.overrideWithValue(authRepo),
+              vocalExerciseRepositoryProvider.overrideWithValue(vocalRepo),
+              authNotifierProvider.overrideWith((ref) {
+                final notifier = AuthNotifier(authRepo);
+                notifier.state = const AuthState.authenticated(user);
+                return notifier;
+              }),
+            ],
+            child: MediaQuery(
+              data: MediaQueryData(
+                size: s.size,
+                textScaler: TextScaler.linear(s.scale),
+              ),
+              child: MaterialApp(
+                theme: ThemeData.light(useMaterial3: true),
+                darkTheme: ThemeData.dark(useMaterial3: true),
+                themeMode: s.theme,
+                home: const VocalPlayerScreen(),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          tester.takeException(),
+          isNull,
+          reason:
+              'Zero overflow expected for size=${s.size}, scale=${s.scale}, theme=${s.theme}',
+        );
+        expect(find.byKey(const ValueKey('vocal_new_custom_button')), findsOneWidget);
+      }
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    },
+  );
 }

@@ -54,9 +54,12 @@ class _VocalPlayerScreenContentState
   bool _paused = false;
   bool _ready = false;
   bool _showKeyboard = false;
+  double _volume = 1.0;
+  double _lastNonZeroVolume = 1.0;
   int _runId = 0;
   Timer? _positionTimer;
   Timer? _previewPollTimer;
+  Timer? _volumePersistTimer;
   Completer<void>? _previewCompleter;
 
   List<int> _currentProgNotes = const [];
@@ -74,10 +77,36 @@ class _VocalPlayerScreenContentState
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _loadSavedVolume(
+      userId: ref.read(authNotifierProvider).user?.id,
+      notify: false,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _syncWithAuthState(ref.read(authNotifierProvider));
     });
+  }
+
+  void _loadSavedVolume({String? userId, bool notify = true}) {
+    try {
+      final prefs = ref.read(preferencesStorageProvider);
+      final saved = prefs.getVocalPlayerVolume(userId: userId);
+      if (saved != null && saved.isFinite) {
+        final clamped = saved.clamp(0.0, 1.0);
+        if (notify && mounted) {
+          setState(() {
+            _volume = clamped;
+            if (clamped > 0.02) _lastNonZeroVolume = clamped;
+          });
+        } else {
+          _volume = clamped;
+          if (clamped > 0.02) _lastNonZeroVolume = clamped;
+        }
+        if (_playing) {
+          unawaited(_invoke('setVolume', {'volume': clamped}));
+        }
+      }
+    } catch (_) {}
   }
 
   void _syncWithAuthState(AuthState authState) {
@@ -89,6 +118,7 @@ class _VocalPlayerScreenContentState
       _lastAppliedUserMinMidi = user?.vocalMinMidi;
       _lastAppliedUserMaxMidi = user?.vocalMaxMidi;
       _rangeFeedbackMessage = null;
+      _loadSavedVolume(userId: userId, notify: true);
 
       if (userId != null && userId.isNotEmpty) {
         if (user?.vocalMinMidi != null &&
@@ -155,8 +185,10 @@ class _VocalPlayerScreenContentState
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused ||
+    // Only stop when the app is genuinely backgrounded or closing.
+    // AppLifecycleState.inactive fires transiently on Android system dialogs
+    // and overlays (such as the high-volume warning at max physical volume).
+    if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       _stop(notifyUi: mounted);
     }
@@ -192,6 +224,7 @@ class _VocalPlayerScreenContentState
         'durations': prog.durations,
         'bpm': _bpm,
         'metronome': _metronome,
+        'volume': _volume,
       });
     } catch (_) {
       if (mounted && runId == _runId) {
@@ -240,6 +273,7 @@ class _VocalPlayerScreenContentState
       'durations': durations,
       'bpm': _bpm,
       'metronome': false,
+      'volume': _volume,
     });
     if (!mounted || runId != _runId) return;
 
@@ -556,8 +590,42 @@ class _VocalPlayerScreenContentState
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _volumePersistTimer?.cancel();
     _stop(notifyUi: false);
     super.dispose();
+  }
+
+  void _updateVolume(double nextValue, {bool persistImmediately = false}) {
+    final clamped = nextValue.isFinite ? nextValue.clamp(0.0, 1.0) : 1.0;
+    if (clamped > 0.02) {
+      _lastNonZeroVolume = clamped;
+    }
+    setState(() => _volume = clamped);
+    unawaited(_invoke('setVolume', {'volume': clamped}));
+    _volumePersistTimer?.cancel();
+    if (persistImmediately) {
+      unawaited(_persistVolume(clamped));
+    } else {
+      _volumePersistTimer = Timer(const Duration(milliseconds: 120), () {
+        unawaited(_persistVolume(_volume));
+      });
+    }
+  }
+
+  Future<void> _persistVolume(double volume) async {
+    try {
+      final prefs = ref.read(preferencesStorageProvider);
+      await prefs.setVocalPlayerVolume(volume, userId: _hydratedUserId);
+    } catch (_) {}
+  }
+
+  void _toggleMute() {
+    if (_volume <= 0.001) {
+      final restored = _lastNonZeroVolume > 0.02 ? _lastNonZeroVolume : 0.7;
+      _updateVolume(restored, persistImmediately: true);
+    } else {
+      _updateVolume(0.0, persistImmediately: true);
+    }
   }
 
   @override
@@ -623,15 +691,16 @@ class _VocalPlayerScreenContentState
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
-                      Expanded(
-                        child: Text(
-                          exercise.title,
-                          style: theme.textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w800,
-                          ),
+                      Text(
+                        exercise.title,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
                       OutlinedButton.icon(
@@ -726,6 +795,91 @@ class _VocalPlayerScreenContentState
           ],
 
           const SizedBox(height: 12),
+
+          // Internal App Volume Card (independent from hardware volume)
+          Card(
+            key: const ValueKey('vocal_volume_card'),
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(
+                color: theme.dividerColor.withValues(alpha: 0.25),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      Text(
+                        'Volume interno: ${(_volume * 100).round()}%',
+                        key: const ValueKey('vocal_volume_percent_text'),
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      TextButton.icon(
+                        key: const ValueKey('vocal_volume_mute_button'),
+                        onPressed: _toggleMute,
+                        icon: Icon(
+                          _volume <= 0.001
+                              ? Icons.volume_off
+                              : _volume < 0.5
+                              ? Icons.volume_down
+                              : Icons.volume_up,
+                          size: 18,
+                        ),
+                        label: Text(
+                          _volume <= 0.001 ? 'Reativar som' : 'Silenciar',
+                        ),
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      Icon(
+                        _volume <= 0.001
+                            ? Icons.volume_off_outlined
+                            : Icons.volume_up_outlined,
+                        size: 20,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                      Expanded(
+                        child: Slider(
+                          key: const ValueKey('vocal_volume_slider'),
+                          min: 0.0,
+                          max: 1.0,
+                          divisions: 20,
+                          value: _volume,
+                          label: '${(_volume * 100).round()}%',
+                          onChanged: (val) => _updateVolume(val),
+                          onChangeEnd: (val) =>
+                              _updateVolume(val, persistImmediately: true),
+                        ),
+                      ),
+                    ],
+                  ),
+                  Text(
+                    'Ajusta apenas o áudio do exercício no app, sem alterar o volume físico do aparelho.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 12),
     ];
 
     final rightCards = <Widget>[
@@ -805,27 +959,28 @@ class _VocalPlayerScreenContentState
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Extensão vocal: ${midiLabel(_midiLow)} a ${midiLabel(_midiHigh)}',
-                              style: theme.textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.w700,
-                              ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Extensão vocal: ${midiLabel(_midiLow)} a ${midiLabel(_midiHigh)}',
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
                             ),
-                            Text(
-                              'Selecione a nota mais grave e a nota mais aguda confortável.',
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
+                          ),
+                          Text(
+                            'Selecione a nota mais grave e a nota mais aguda confortável.',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                       if (authState.isAuthenticated)
                         FilledButton.tonalIcon(
@@ -1007,21 +1162,33 @@ class _VocalPlayerScreenContentState
                     ),
                   ),
                   const SizedBox(height: 8),
-                  SegmentedButton<bool>(
-                    segments: const [
-                      ButtonSegment(
-                        value: true,
-                        label: Text('Subir semitom a semitom'),
+                  SizedBox(
+                    width: double.infinity,
+                    child: SegmentedButton<bool>(
+                      style: ButtonStyle(
+                        visualDensity: VisualDensity.compact,
                       ),
-                      ButtonSegment(
-                        value: false,
-                        label: Text('Descer semitom a semitom'),
-                      ),
-                    ],
-                    selected: {_ascending},
-                    onSelectionChanged: _playing
-                        ? null
-                        : (values) => setState(() => _ascending = values.first),
+                      segments: const [
+                        ButtonSegment(
+                          value: true,
+                          label: Text(
+                            'Subir semitom a semitom',
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                        ButtonSegment(
+                          value: false,
+                          label: Text(
+                            'Descer semitom a semitom',
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ],
+                      selected: {_ascending},
+                      onSelectionChanged: _playing
+                          ? null
+                          : (values) => setState(() => _ascending = values.first),
+                    ),
                   ),
                 ],
               ),
