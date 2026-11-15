@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app/providers.dart';
 import '../../../core/errors/app_failure.dart';
+import '../../../core/storage/preferences_storage.dart';
 import '../../auth/presentation/controllers/auth_controller.dart';
 import '../data/vocal_exercise_repository.dart';
 import '../domain/vocal_catalog.dart';

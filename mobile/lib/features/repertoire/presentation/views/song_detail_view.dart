@@ -381,27 +381,6 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
   }
 
   @override
-  void didUpdateWidget(covariant _SongDetailContent oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.song.id != widget.song.id ||
-        oldWidget.initialVersionId != widget.initialVersionId) {
-      setState(() {
-        _selectedVersionIndex = _resolveVersionIndex(
-          widget.song.effectiveVersions,
-          widget.initialVersionId,
-        );
-        _selectedChordIndex = 0;
-        _chordSemitones = 0;
-      });
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _syncSmartChordsForActiveVersion(force: true);
-        }
-      });
-    }
-  }
-
-  @override
   void dispose() {
     _autoScrollTimer?.cancel();
     _autoScrollTimer = null;

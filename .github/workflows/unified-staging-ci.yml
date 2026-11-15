@@ -115,10 +115,31 @@ jobs:
         run: flutter pub get
 
       - name: Run static analysis
-        run: flutter analyze
+        run: |
+          set +e
+          set -o pipefail
+          flutter analyze --no-pub 2>&1 | tee /tmp/flutter_analyze.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            grep -E "^[[:space:]]*(error|warning|info)[[:space:]]" /tmp/flutter_analyze.log | head -n 20 | while IFS= read -r line; do
+              echo "::error title=flutter analyze::$line"
+            done
+            exit "$rc"
+          fi
 
       - name: Run Flutter test suite
-        run: flutter test
+        run: |
+          set +e
+          set -o pipefail
+          flutter test 2>&1 | tee /tmp/flutter_test.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            grep -E "(\[E\]|FAILED|EXCEPTION CAUGHT|Error:)" /tmp/flutter_test.log | head -n 20 | while IFS= read -r line; do
+              echo "::error title=flutter test::$line"
+            done
+            exit "$rc"
+          fi
+          echo "::notice title=flutter test summary::$(tail -n 3 /tmp/flutter_test.log | tr '\n' ' ')"
 
       - name: Verify staging build consistency gate
         run: |
@@ -155,6 +176,8 @@ jobs:
             "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           }
           EOF
+          echo "::notice title=apk-sha256::$(cat build/app/outputs/flutter-apk/apk-sha256.txt)"
+          echo "::notice title=build-manifest::$(tr '\n' ' ' < build/app/outputs/flutter-apk/build-manifest.json)"
 
       - name: Run Android Kotlin unit tests
         run: |
