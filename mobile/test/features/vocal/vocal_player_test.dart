@@ -801,13 +801,13 @@ void main() {
       when(() => authRepo.authStateChanges())
           .thenAnswer((_) => const Stream.empty());
       when(() => vocalRepo.listCustomExercises()).thenAnswer(
-        (_) async => [
+        (_) async => const [
           VocalExercise(
             id: 'custom-1',
             title: 'Meu exercício personalizado longo para validar responsividade',
             description: 'Descrição estendida do exercício vocal personalizado',
-            notes: const [60, 62, 64, 65, 67],
-            noteDurations: const [1, 1, 1, 1, 2],
+            notes: [60, 62, 64, 65, 67],
+            noteDurations: [1, 1, 1, 1, 2],
             minTranspose: -6,
             maxTranspose: 6,
             isCustom: true,

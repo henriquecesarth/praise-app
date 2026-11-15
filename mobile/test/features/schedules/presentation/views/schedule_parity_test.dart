@@ -102,12 +102,12 @@ void main() {
   });
 
   testWidgets('opening scheduled song or timeline slot preserves versionId and backLabel', (tester) async {
-    repo.detail = ScheduleDetail(
+    repo.detail = const ScheduleDetail(
       id: 's',
       ministryId: 'min_1',
       title: 'Culto Versão',
       date: '2099-01-01',
-      songs: const [
+      songs: [
         ScheduleSong(
           id: 'oceanos',
           title: 'Oceanos',
@@ -115,7 +115,7 @@ void main() {
           versionName: 'Acústico',
         ),
       ],
-      timeline: const [
+      timeline: [
         ScheduleTimelineItem(id: 'slot', title: 'Música 1', type: 'Música'),
       ],
     );

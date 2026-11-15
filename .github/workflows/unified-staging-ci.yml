@@ -181,18 +181,27 @@ jobs:
 
       - name: Run Android Kotlin unit tests
         run: |
-          set -euo pipefail
+          set +e
+          set -o pipefail
           cd android
-          if [ -f ./gradlew ]; then
-            chmod +x ./gradlew
-            ./gradlew testStagingDebugUnitTest
-          else
-            GRADLE_BIN="$(find "${GRADLE_USER_HOME:-$HOME/.gradle}" -type f -path '*/bin/gradle' 2>/dev/null | head -n 1 || true)"
-            if [ -n "$GRADLE_BIN" ]; then
-              "$GRADLE_BIN" testStagingDebugUnitTest
+          (
+            if [ -f ./gradlew ]; then
+              chmod +x ./gradlew && ./gradlew testStagingDebugUnitTest
             else
-              gradle testStagingDebugUnitTest
+              GRADLE_BIN="$(find "${GRADLE_USER_HOME:-$HOME/.gradle}" -type f -path '*/bin/gradle' 2>/dev/null | head -n 1 || true)"
+              if [ -n "$GRADLE_BIN" ]; then
+                "$GRADLE_BIN" testStagingDebugUnitTest
+              else
+                gradle testStagingDebugUnitTest
+              fi
             fi
+          ) 2>&1 | tee /tmp/kotlin_test.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            tail -n 30 /tmp/kotlin_test.log | while IFS= read -r line; do
+              echo "::error title=kotlin unit tests::$line"
+            done
+            exit "$rc"
           fi
 
       - name: Upload staging APK artifact

@@ -1166,7 +1166,7 @@ class _VocalPlayerScreenContentState
                   SizedBox(
                     width: double.infinity,
                     child: SegmentedButton<bool>(
-                      style: ButtonStyle(
+                      style: const ButtonStyle(
                         visualDensity: VisualDensity.compact,
                       ),
                       segments: const [
