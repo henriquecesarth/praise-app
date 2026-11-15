@@ -677,7 +677,14 @@ void main() {
         reason: 'Playback must stay active during inactive overlay',
       );
 
-      // Genuine backgrounding (paused) stops playback safely
+      // Genuine backgrounding transitions inactive -> hidden -> paused in Flutter's lifecycle state machine
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      await tester.pump();
+      expect(
+        methodLog.where((m) => m == 'stop').length,
+        stopCountBeforeInactive,
+        reason: 'Transient hidden transition must wait for paused before stopping',
+      );
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
       await tester.pump();
       expect(
@@ -685,6 +692,12 @@ void main() {
         greaterThan(stopCountBeforeInactive),
       );
       expect(tester.widget<FilledButton>(startButton).onPressed, isNotNull);
+
+      // Restore lifecycle back to resumed before tearing down so later tests start cleanly
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();

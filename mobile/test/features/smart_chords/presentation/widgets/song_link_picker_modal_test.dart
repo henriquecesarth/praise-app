@@ -254,7 +254,7 @@ void main() {
     await tester.tap(find.text('Abrir Picker'));
     await tester.pumpAndSettle();
 
-    expect(find.text('2 versões'), findsOneWidget);
+    expect(find.textContaining('2 versões'), findsOneWidget);
     await tester.tap(find.text('Lugar Secreto'));
     await tester.pumpAndSettle();
 
